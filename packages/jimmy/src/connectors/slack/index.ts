@@ -688,10 +688,17 @@ export class SlackConnector implements Connector {
     if (!text || !text.trim()) return undefined;
     const chunks = formatResponse(text);
     let lastTs: string | undefined;
+    // If the caller supplied a thread anchor, honour it. Posting to the
+    // channel root while a `thread` is set would drop the message out of the
+    // conversation it belongs to — the exact bug behind customer replies
+    // landing bare in the channel. `sendMessage` without a thread still posts
+    // a genuine root message.
+    const threadTs = target.thread || undefined;
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
       const res = await this.app.client.chat.postMessage({
         channel: target.channel,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
         text: chunk,
       });
       lastTs = res.ts;

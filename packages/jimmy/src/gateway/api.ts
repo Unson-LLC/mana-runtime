@@ -1554,10 +1554,19 @@ Handle this as a priority request from a colleague.`;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
       if (!body.channel || !body.text) return badRequest(res, "channel and text are required");
-      await connector.sendMessage(
-        { channel: body.channel, thread: body.thread },
-        body.text,
-      );
+      // When a thread is supplied the caller wants a *threaded reply*, not a
+      // bare root-channel post. `sendMessage` ignores `target.thread` entirely
+      // (it always posts to the channel root), so routing a threaded request
+      // through it silently drops the thread and the message lands outside the
+      // conversation. Use `replyMessage` — which honours `target.thread` — for
+      // threaded requests, and reserve `sendMessage` for genuine root posts.
+      const hasThread = typeof body.thread === "string" && body.thread.trim().length > 0;
+      const sendTarget = { channel: body.channel, thread: body.thread };
+      if (hasThread) {
+        await connector.replyMessage(sendTarget, body.text);
+      } else {
+        await connector.sendMessage(sendTarget, body.text);
+      }
       return json(res, { status: "sent" });
     }
 

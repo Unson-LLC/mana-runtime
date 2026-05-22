@@ -645,9 +645,15 @@ function buildConnectorContext(connectors: string[], gatewayUrl: string, portalN
   for (const name of connectors) {
     lines.push(`### ${name}`);
     lines.push(`- **Send message**: \`curl -X POST ${gatewayUrl}/api/connectors/${name}/send -H 'Content-Type: application/json' -d '{"channel":"CHANNEL_ID","text":"message"}'\``);
-    lines.push(`- **Send threaded reply**: add \`"thread":"THREAD_TS"\` to the JSON body`);
+    lines.push(`- **Send threaded reply**: add \`"thread":"THREAD_TS"\` to the JSON body (use the originating message's \`thread_ts\` so the reply lands inside the conversation, never bare in the channel)`);
     lines.push(`- You can proactively send messages without being asked — e.g., to notify about completed tasks, errors, or status updates`);
   }
+
+  lines.push("");
+  lines.push(`### Replying to the current conversation`);
+  lines.push(`- The text you return as your final answer **is** the reply delivered to whoever you are talking to, already routed into the correct thread. Do NOT also call \`/send\` to post that same reply — that produces a duplicate and bypasses threading.`);
+  lines.push(`- Only use \`/send\` to post to a *different* channel/conversation than the one that triggered this session.`);
+  lines.push(`- Your final answer is shown verbatim to the user. Never make it a work-narration or meta-summary (e.g. "I replied to X. Contents: ..."). Internal progress notes belong in logs, not in the reply.`);
 
   lines.push(`\n- **List all connectors**: \`curl ${gatewayUrl}/api/connectors\``);
   lines.push(`- Channel IDs and connector config can be found in \`~/.jinn/config.yaml\``);
