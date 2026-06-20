@@ -807,12 +807,16 @@ export class SessionManager {
         await connector.setTypingStatus(target.channel, threadTs, "").catch(() => {});
       }
       if (!wasInterrupted) {
-        // Multi-turn sessions (driven by /goal) carry every intermediate
-        // turn in `result.turns`. Surface each as its own Slack reply so
-        // the user sees progress chronologically. The last entry contains
-        // the same text as `result.result`, so we send the array directly.
+        // The engine captures every intermediate assistant text block it emitted
+        // during the turn in `result.turns` (chronological). Surface each as its
+        // own reply so the user sees progress as it happened — a kickoff line,
+        // milestone updates, then the conclusion. The last entry duplicates
+        // `result.result`, so iterating the array also delivers the final reply.
+        // This applies to any session that narrates progress, not just /goal.
+        // Disable via `sessions.progressUpdates: false` for final-only delivery.
+        const progressUpdates = this.config.sessions?.progressUpdates !== false;
         const turns = result.turns ?? [];
-        if (turns.length > 1) {
+        if (progressUpdates && turns.length > 1) {
           for (const turnText of turns) {
             if (!turnText || !turnText.trim()) continue;
             await connector.replyMessage(target, turnText);

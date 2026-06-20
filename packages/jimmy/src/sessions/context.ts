@@ -651,9 +651,10 @@ function buildConnectorContext(connectors: string[], gatewayUrl: string, portalN
 
   lines.push("");
   lines.push("### Replying to the current conversation");
-  lines.push("- The text you return as your final answer is delivered to the current user in the correct conversation/thread.");
-  lines.push("- Do not call `/send`, `curl`, or the `send_message` tool for the current conversation. That creates duplicate or meta replies.");
-  lines.push("- Your final answer is shown verbatim to the user, so make it the actual reply rather than work narration.");
+  lines.push("- Every assistant text block you emit during a turn is delivered to the current conversation as its own message, in order. Intermediate blocks show up as live progress; your final block is the conclusion.");
+  lines.push("- For long tasks that run many tools, narrate deliberately: a kickoff line (what you're starting + rough ETA) when you begin, brief milestone updates at meaningful checkpoints, and a completion line with the result. Keep each one short.");
+  lines.push("- Do not stream half-finished drafts, raw tool output, or internal deliberation. Progress updates are polished status lines, not work-in-progress mutterings.");
+  lines.push("- Do not call `/send`, `curl`, or the `send_message` tool for the current conversation — those create duplicate or meta replies. Emitting plain text is the correct way to post progress here.");
 
   lines.push(`\n- **List all connectors**: \`curl ${gatewayUrl}/api/connectors\``);
   lines.push(`- Channel IDs and connector config can be found in \`~/.jinn/config.yaml\``);

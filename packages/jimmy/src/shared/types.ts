@@ -505,6 +505,12 @@ export interface JinnConfig {
     rateLimitStrategy?: "wait" | "fallback";
     /** Engine to use when rateLimitStrategy="fallback". Default: "codex" */
     fallbackEngine?: "codex";
+    /**
+     * Surface each intermediate assistant text block produced during a turn as
+     * its own message to the triggering conversation (live progress), instead of
+     * only the final answer. Default: true. Set false to restore final-only delivery.
+     */
+    progressUpdates?: boolean;
   };
   cron?: {
     defaultDelivery?: CronDelivery;
