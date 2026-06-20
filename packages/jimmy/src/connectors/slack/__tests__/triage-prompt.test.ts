@@ -72,10 +72,13 @@ describe("buildTriagePrompt", () => {
     expect(prompt).toContain("Ryoko is a helpful AI assistant");
   });
 
-  it("biases strongly toward silence in the principles block", () => {
+  it("keeps replies conservative while staying generous with reactions", () => {
     const prompt = buildTriagePrompt(baseInput());
-    expect(prompt).toContain("Err on the side of SILENCE");
+    // text replies stay gated at the ~60% confidence bar
     expect(prompt).toContain("below ~60%");
+    // but a light emoji presence is explicitly encouraged (the moltbot-style air-read)
+    expect(prompt).toContain('CONSERVATIVE with "reply"');
+    expect(prompt).toContain('GENEROUS with "react"');
   });
 });
 
