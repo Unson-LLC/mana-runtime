@@ -114,8 +114,59 @@ export function buildContext(opts: {
       tier: Tier.STANDARD,
       marker: "## Self-evolution",
       content: buildEvolutionContext(portalName, opts.config),
-      summary: `## Self-evolution\nUpdate knowledge files in \`~/.jinn/knowledge/\` when you learn new info about the user or their projects.`,
+      summary: `## Self-evolution\nUpdate knowledge files in \`~/.ryoko/knowledge/\` when you learn new info about the user or their projects.`,
     });
+  }
+
+  // ── ESSENTIAL: Long-term memory (gated by speaker trust) ────
+  // MEMORY.md holds the operator's personal facts/preferences/decisions.
+  // It used to be loaded unconditionally by the engine (Claude @-import /
+  // Codex "Read" instruction), which exposed personal data in shared
+  // channels. It is now loaded gateway-side and injected when the SPEAKER is
+  // trusted: either the session is genuinely private (the operator's own web
+  // chat or a Slack DM), or the speaker is on the configured trustedSpeakers
+  // allowlist (e.g. TEKION Group members) — in which case MEMORY is included
+  // even in a shared channel. For anyone else in a shared context (VBC
+  // students, guests, cron, employees) it is withheld by default.
+  if (!opts.employee) {
+    const isPrivate =
+      opts.source === "web" ||
+      (opts.source === "slack" && (opts.channel || "").startsWith("D"));
+    const speakerId = opts.speakerSlackId || opts.user || "";
+    const trustedSpeakers = opts.config?.portal?.trustedSpeakers ?? [];
+    const speakerIsTrusted = !!speakerId && trustedSpeakers.includes(speakerId);
+    const allowMemory = isPrivate || speakerIsTrusted;
+    let memContent = "";
+    try {
+      memContent = fs.readFileSync(path.join(JINN_HOME, "MEMORY.md"), "utf-8").trim();
+    } catch {
+      /* no MEMORY.md yet — fine */
+    }
+    if (allowMemory && memContent) {
+      sections.push({
+        tier: Tier.ESSENTIAL,
+        marker: "## Long-term memory",
+        content:
+          `## Long-term memory (MEMORY.md)\n` +
+          `Your private long-term memory — durable facts, preferences, and decisions about your operator. ` +
+          `The current speaker is trusted, so it is included. If this is a shared channel, other people may be reading — ` +
+          `use this memory to inform yourself, but never reproduce these personal details verbatim to anyone but the operator.\n\n` +
+          memContent,
+        summary: `## Long-term memory\nPrivate memory lives in \`~/.ryoko/MEMORY.md\` (omitted here to save budget).`,
+      });
+    } else {
+      sections.push({
+        tier: Tier.STANDARD,
+        marker: "## Long-term memory",
+        content:
+          `## Long-term memory\n` +
+          `You are in a SHARED context (channel / group / scheduled / delegated). Your private long-term memory ` +
+          `(\`~/.ryoko/MEMORY.md\`) is intentionally NOT loaded here, to protect the operator's personal data. ` +
+          `Do not pull it into this conversation unless a task truly requires it, and NEVER reveal personal details ` +
+          `(contacts, IDs, roles, credentials, invite codes) from it to anyone else.`,
+        summary: "",
+      });
+    }
   }
 
   // ── ESSENTIAL: Session context ──────────────────────────────
@@ -167,7 +218,7 @@ export function buildContext(opts: {
       tier: Tier.STANDARD,
       marker: "## Scheduled cron",
       content: cronCtx,
-      summary: "## Scheduled cron jobs\nCron definitions are in `~/.jinn/cron/jobs.json`. Read directly when needed.",
+      summary: "## Scheduled cron jobs\nCron definitions are in `~/.ryoko/cron/jobs.json`. Read directly when needed.",
     });
   }
 
@@ -178,7 +229,7 @@ export function buildContext(opts: {
       tier: Tier.OPTIONAL,
       marker: "## Knowledge base",
       content: knowledgeCtx,
-      summary: "## Knowledge base\nKnowledge files are in `~/.jinn/knowledge/` and `~/.jinn/docs/`. Read them directly when needed.",
+      summary: "## Knowledge base\nKnowledge files are in `~/.ryoko/knowledge/` and `~/.ryoko/docs/`. Read them directly when needed.",
     });
   }
 
@@ -268,7 +319,7 @@ ${languageInstruction}
 - **Model**: ${employee.model}
 ${chainOfCommand}
 ## System context
-You are part of the ${portalName} AI gateway — a system that orchestrates AI workers. You have access to the filesystem, can run commands, call APIs, and send messages via connectors. Your working directory is \`~/.jinn\` (${JINN_HOME}).
+You are part of the ${portalName} AI gateway — a system that orchestrates AI workers. You have access to the filesystem, can run commands, call APIs, and send messages via connectors. Your working directory is \`~/.ryoko\` (${JINN_HOME}).
 
 You can:
 - Read and write files in the home directory
@@ -387,7 +438,7 @@ ${portalName} is a personal AI assistant and gateway daemon. You are proactive, 
 - **Remember context**: You're part of a persistent system. Sessions can be resumed. Build on previous work.
 ${languageInstruction}
 ## Your home directory
-Your working directory is \`~/.jinn\` (${JINN_HOME}). This contains:
+Your working directory is \`~/.ryoko\` (${JINN_HOME}). This contains:
 - \`config.yaml\` — your configuration (engines, connectors, logging)
 - \`org/\` — employee definitions (YAML files defining AI workers)
 - \`skills/\` — reusable skill prompts
@@ -574,7 +625,7 @@ function buildCronContext(): string | null {
       lines.push(`- **${job.name}**: \`${job.schedule}\`${job.employee ? ` → ${job.employee}` : ""}`);
     }
     if (disabledCount > 0) {
-      lines.push(`\n_${disabledCount} disabled jobs not shown. See \`~/.jinn/cron/jobs.json\` for the full list._`);
+      lines.push(`\n_${disabledCount} disabled jobs not shown. See \`~/.ryoko/cron/jobs.json\` for the full list._`);
     }
     return lines.join("\n");
   } catch {
@@ -619,7 +670,7 @@ function buildKnowledgeContext(): string | null {
 
   const lines: string[] = [
     `## Knowledge base`,
-    `Knowledge files are in \`~/.jinn/knowledge/\` and \`~/.jinn/docs/\`. Read them directly when needed.`,
+    `Knowledge files are in \`~/.ryoko/knowledge/\` and \`~/.ryoko/docs/\`. Read them directly when needed.`,
     ``,
   ];
 
@@ -656,7 +707,7 @@ function buildConnectorContext(connectors: string[], gatewayUrl: string, portalN
   lines.push("- Your final answer is shown verbatim to the user, so make it the actual reply rather than work narration.");
 
   lines.push(`\n- **List all connectors**: \`curl ${gatewayUrl}/api/connectors\``);
-  lines.push(`- Channel IDs and connector config can be found in \`~/.jinn/config.yaml\``);
+  lines.push(`- Channel IDs and connector config can be found in \`~/.ryoko/config.yaml\``);
   return lines.join("\n");
 }
 
@@ -734,7 +785,7 @@ function buildEvolutionContext(portalName: string, config?: JinnConfig): string 
     lines.push(`2. What should ${portalName} help you automate? (code reviews, deployments, monitoring, etc.)`);
     lines.push(`3. Communication preferences — emoji style, verbosity (concise vs detailed), language`);
     lines.push(`4. Any active projects ${portalName} should know about?`);
-    lines.push(`\nAfter the user responds, write their answers to \`~/.jinn/knowledge/user-profile.md\` and \`~/.jinn/knowledge/preferences.md\`.`);
+    lines.push(`\nAfter the user responds, write their answers to \`~/.ryoko/knowledge/user-profile.md\` and \`~/.ryoko/knowledge/preferences.md\`.`);
     lines.push(`Then proceed to help with their original request.`);
     if (canvasHintApplies) {
       lines.push(
@@ -743,10 +794,10 @@ function buildEvolutionContext(portalName: string, config?: JinnConfig): string 
     }
   } else {
     lines.push(`You learn and evolve over time. When you discover new information about the user, their projects, or their preferences:`);
-    lines.push(`- Update \`~/.jinn/knowledge/user-profile.md\` with business/identity info`);
-    lines.push(`- Update \`~/.jinn/knowledge/preferences.md\` with style/communication preferences`);
-    lines.push(`- Update \`~/.jinn/knowledge/projects.md\` with project details`);
-    lines.push(`- If the user gives you persistent feedback (e.g. "always do X", "never do Y"), update \`~/.jinn/CLAUDE.md\``);
+    lines.push(`- Update \`~/.ryoko/knowledge/user-profile.md\` with business/identity info`);
+    lines.push(`- Update \`~/.ryoko/knowledge/preferences.md\` with style/communication preferences`);
+    lines.push(`- Update \`~/.ryoko/knowledge/projects.md\` with project details`);
+    lines.push(`- If the user gives you persistent feedback (e.g. "always do X", "never do Y"), update \`~/.ryoko/CLAUDE.md\``);
     lines.push(`\nDo this silently — don't announce every file update. Just evolve.`);
     if (canvasHintApplies) {
       lines.push(

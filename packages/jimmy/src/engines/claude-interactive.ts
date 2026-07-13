@@ -4,6 +4,7 @@ import type { InterruptibleEngine, EngineRunOpts, EngineResult, EngineRateLimitI
 import { logger } from "../shared/logger.js";
 import { JINN_HOME, CLAUDE_SETTINGS_DIR, HOOK_RELAY_SCRIPT } from "../shared/paths.js";
 import { writeSessionSettings } from "../shared/claude-settings.js";
+import { awaitFreshClaudeCredentials } from "../shared/claude-oauth-gate.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
 import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-view-engine.js";
 import type { HookRegistry, HookPayload } from "../gateway/hook-registry.js";
@@ -598,6 +599,9 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cliFlags: opts.cliFlags,
       attachments: opts.attachments,
     });
+    // Serialize the spawn herd across the shared-OAuth near-expiry window so only
+    // one child triggers the (single-use) token refresh — others wait for it.
+    await awaitFreshClaudeCredentials();
     const { proxy, port } = await this.startProxy(jinnSessionId);
     const env = this.buildPtyEnv(port || undefined);
     const bin = opts.bin || "claude";
@@ -647,6 +651,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
 
     void (async () => {
       try {
+        await awaitFreshClaudeCredentials();
         const { proxy, port } = await this.startProxy(jinnSessionId);
         // Re-check after the async gap: a real turn (run) or another idle spawn may
         // have claimed the session while we awaited the proxy bind. If so, don't

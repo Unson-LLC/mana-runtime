@@ -459,6 +459,13 @@ export interface PortalConfig {
   operatorName?: string;
   language?: string;
   onboarded?: boolean;
+  /**
+   * Connector-native speaker IDs (e.g. Slack U-IDs) trusted to receive the
+   * operator's long-term memory (MEMORY.md) regardless of channel. When one of
+   * these people is the speaker, MEMORY is injected even in a shared channel.
+   * Anyone not listed only gets MEMORY in genuinely private sessions (web / DM).
+   */
+  trustedSpeakers?: string[];
 }
 
 export interface JinnConfig {

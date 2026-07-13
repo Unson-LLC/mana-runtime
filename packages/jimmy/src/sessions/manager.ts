@@ -224,6 +224,14 @@ export class SessionManager {
 
     const sessionId = session.id;
 
+    // Clear any sticky "cancelled" flag before enqueuing. clearQueue() (called by
+    // the /stop and /reset API endpoints, incl. the nightly gateway-health-check
+    // watchdog) adds the sessionKey to the queue's cancelled set permanently. Only
+    // the web dispatch path cleared it, so connector-ingested messages (Slack etc.)
+    // to a previously-reset session were silently skipped at queue exec time. Mirror
+    // the web path here so a new inbound message always re-enables the queue.
+    this.queue.clearCancelled(msg.sessionKey);
+
     await this.queue.enqueue(msg.sessionKey, () =>
       this.runSession(session!, msg, attachmentPaths, connector, target, opts.employee),
     );

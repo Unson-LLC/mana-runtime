@@ -9,6 +9,10 @@ import { logger } from "../shared/logger.js";
 import type { SessionManager } from "../sessions/manager.js";
 import { loadJobs, saveJobs } from "./jobs.js";
 
+/** Max random delay applied to each scheduled cron fire to de-synchronize the
+ *  herd of jobs that share a schedule (e.g. every-15-min jobs all firing at :00). */
+const CRON_JITTER_MS = 20 * 1000;
+
 let tasks: cron.ScheduledTask[] = [];
 let currentSessionManager: SessionManager;
 let currentConfig: JinnConfig;
@@ -50,7 +54,15 @@ function scheduleJobs(jobs: CronJob[]): void {
     const task = cron.schedule(
       job.schedule,
       () => {
-        runCronJob(job, currentSessionManager, currentConfig, currentConnectors);
+        // Jitter the fire by 0–CRON_JITTER_MS to spread the :00/:15/:30/:45
+        // thundering herd (multiple jobs spawning `claude` in the same instant).
+        // Reduces load spikes and lock contention on shared resources; the OAuth
+        // refresh race is fixed separately by the spawn gate, this is defence in
+        // depth. Manual triggers (triggerCronJob) bypass the jitter intentionally.
+        const jitter = Math.floor(Math.random() * CRON_JITTER_MS);
+        setTimeout(() => {
+          runCronJob(job, currentSessionManager, currentConfig, currentConnectors);
+        }, jitter);
       },
       { timezone: job.timezone },
     );
