@@ -241,6 +241,7 @@ engines:
     bin: claude
     model: opus
     effortLevel: xhigh
+    interactivePermissionMode: bypassPermissions
   codex:
     bin: codex
     model: gpt-5.6-sol

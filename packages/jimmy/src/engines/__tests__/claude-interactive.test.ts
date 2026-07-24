@@ -7,7 +7,26 @@ import { describe, it, expect, vi } from "vitest";
 // focused and CI-portable.
 vi.mock("node-pty", () => ({ spawn: vi.fn() }));
 
-import { TurnResolver, isNativeClaudeCommand } from "../claude-interactive.js";
+import { TurnResolver, buildInteractiveArgs, isNativeClaudeCommand } from "../claude-interactive.js";
+
+describe("interactive Claude permission mode", () => {
+  const base = { prompt: "investigate", settingsPath: "/tmp/settings.json" };
+
+  it("uses Claude plan mode without bypass for draft-only nodes", () => {
+    const args = buildInteractiveArgs({ ...base, permissionMode: "plan" });
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("plan");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("preserves upstream bypass behavior when no mode is configured", () => {
+    const args = buildInteractiveArgs(base);
+
+    expect(args).toContain("--dangerously-skip-permissions");
+    expect(args).not.toContain("--permission-mode");
+  });
+});
 
 describe("TurnResolver", () => {
   it("resolves only after BOTH SessionStart and Stop", async () => {
