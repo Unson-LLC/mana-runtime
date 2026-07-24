@@ -24,6 +24,7 @@ interface InteractiveArgsOpts {
   mcpConfigPath?: string;
   cliFlags?: string[];
   attachments?: string[];
+  permissionMode?: "bypassPermissions" | "plan";
 }
 
 interface TranscriptUsage { inputTokens: number; outputTokens: number; cacheTokens: number; assistantTurns: number; model?: string; }
@@ -198,7 +199,7 @@ function rateLimitFromStopFailure(payload: HookPayload | undefined): EngineRateL
   return { status: "rejected", rateLimitType: "interactive_detected" };
 }
 
-function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
+export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   const args: string[] = [];
   if (o.resumeSessionId) args.push("--resume", o.resumeSessionId);
 
@@ -211,7 +212,11 @@ function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   args.push("--chrome");
   if (o.effortLevel && o.effortLevel !== "default") args.push("--effort", o.effortLevel);
   if (o.model) args.push("--model", o.model);
-  args.push("--dangerously-skip-permissions");
+  if ((o.permissionMode ?? "bypassPermissions") === "plan") {
+    args.push("--permission-mode", "plan");
+  } else {
+    args.push("--dangerously-skip-permissions");
+  }
   args.push("--disallowedTools", "AskUserQuestion", "ExitPlanMode");
   args.push("--settings", o.settingsPath);
   if (o.cliFlags?.length) args.push(...o.cliFlags);
@@ -531,6 +536,8 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
      *  completion/recovery path. Default 90 min — long enough for heavy autonomous
      *  batch runs (e.g. the seminar-demo generator) to complete in a single turn. */
     private turnTimeoutMs = 90 * 60 * 1000,
+    /** Explicit Claude permission boundary for unattended local PTYs. */
+    private permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
   ) {}
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
@@ -940,6 +947,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       mcpConfigPath: opts.mcpConfigPath,
       cliFlags: opts.cliFlags,
       attachments: opts.attachments,
+      permissionMode: this.permissionMode,
     });
     // Serialize the spawn herd across the shared-OAuth near-expiry window so only
     // one child triggers the (single-use) token refresh — others wait for it.
@@ -978,7 +986,9 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     });
     const args: string[] = [
       "--chrome",
-      "--dangerously-skip-permissions",
+      ...(this.permissionMode === "plan"
+        ? ["--permission-mode", "plan"]
+        : ["--dangerously-skip-permissions"]),
       "--disallowedTools", "AskUserQuestion", "ExitPlanMode",
       "--settings", settingsPath,
     ];
