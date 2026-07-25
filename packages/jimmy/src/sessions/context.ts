@@ -230,7 +230,7 @@ export function buildContext(opts: {
       tier: Tier.OPTIONAL,
       marker: "## Employee Delegation",
       content: buildDelegationProtocol(gatewayUrl, portalName, opts.config, opts.sessionId),
-      summary: `## Employee Delegation Protocol\nDelegate via \`POST ${gatewayUrl}/api/sessions\` with \`{prompt, employee, parentSessionId}\`. Check children via \`GET /api/sessions/:id/children\`.`,
+      summary: `## Employee Delegation Protocol\nDelegate via \`POST ${gatewayUrl}/api/sessions/${opts.sessionId ?? "<your-session-id>"}/children\` with \`{prompt, employee}\`. The parent link is enforced by the URL.`,
     });
   }
 
@@ -837,9 +837,9 @@ Reuse an existing child only when it belongs to the same user task and needs a f
 
 5. **Spawn**:
 \`\`\`bash
-curl -s -X POST ${gatewayUrl}/api/sessions \\
+curl -s -X POST ${gatewayUrl}/api/sessions/${parentSessionId}/children \\
   -H 'Content-Type: application/json' \\
-  -d '{"prompt": "<brief>", "employee": "<name>", "parentSessionId": "${parentSessionId}"}'
+  -d '{"prompt": "<brief>", "employee": "<name>"}'
 \`\`\`
 
 6. **Follow up** (existing child for the same task):
@@ -876,7 +876,7 @@ When a department has 3+ employees, promote a senior to **manager**. Managers ha
 
 ### Your session ID
 
-Your current session ID is \`${parentSessionId}\`. Copy this exact value into \`parentSessionId\`; never omit that field when spawning a delegated child.${effortOverrideNote}`;
+Your current session ID is \`${parentSessionId}\`. Always use the session-specific child endpoint shown above; it enforces the parent link even if the request body omits \`parentSessionId\`.${effortOverrideNote}`;
 }
 
 function buildApiReference(gatewayUrl: string, portalName: string): string {

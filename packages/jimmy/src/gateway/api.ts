@@ -813,14 +813,20 @@ export async function handleApiRequest(
       return json(res, serializeSession(session, context), 201);
     }
 
-    // POST /api/sessions
-    if (method === "POST" && pathname === "/api/sessions") {
+    // POST /api/sessions or /api/sessions/:id/children
+    // The session-specific endpoint enforces the parent link server-side so
+    // delegated children cannot become orphaned if an agent omits a body field.
+    const createChildParams = matchRoute("/api/sessions/:id/children", pathname);
+    if (method === "POST" && (pathname === "/api/sessions" || createChildParams)) {
       const _parsed = await readJsonBody(req, res);
       if (!_parsed.ok) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
       const prompt = body.prompt || body.message;
       if (!prompt) return badRequest(res, "prompt or message is required");
+      if (createChildParams && !getSession(createChildParams.id)) {
+        return notFound(res);
+      }
       const config = context.getConfig();
       const employee = body.employee
         ? findEmployee(body.employee, scanOrg())
@@ -839,7 +845,7 @@ export async function handleApiRequest(
         replyContext: { source: "web" },
         employee: employee?.name,
         model: body.model || employee?.model,
-        parentSessionId: body.parentSessionId,
+        parentSessionId: createChildParams?.id || body.parentSessionId,
         effortLevel: body.effortLevel || employee?.effortLevel,
         prompt,
         portalName: config.portal?.portalName,

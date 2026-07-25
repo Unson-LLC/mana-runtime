@@ -13,10 +13,10 @@ describe("delegation context", () => {
     });
 
     expect(context).toContain(
-      '"parentSessionId": "parent-session-123"',
+      "POST http://127.0.0.1:7777/api/sessions/parent-session-123/children",
     );
     expect(context).toContain(
-      "Copy this exact value into `parentSessionId`; never omit that field",
+      "it enforces the parent link even if the request body omits `parentSessionId`",
     );
   });
 });
