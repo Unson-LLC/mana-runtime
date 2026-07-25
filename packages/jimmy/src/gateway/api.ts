@@ -805,7 +805,7 @@ export async function handleApiRequest(
         employee: employee?.name,
         model: body.model || employee?.model,
         parentSessionId: body.parentSessionId,
-        effortLevel: body.effortLevel,
+        effortLevel: body.effortLevel || employee?.effortLevel,
         prompt,
         portalName: config.portal?.portalName,
       });

@@ -94,9 +94,11 @@ describe("notifyParentSession", () => {
     expect(url).toBe("http://127.0.0.1:7777/api/sessions/parent-001/message");
 
     const body = JSON.parse(opts.body);
-    expect(body.message).toContain("replied in session");
+    expect(body.message).toContain("completed session");
     expect(body.message).toContain("GET /api/sessions/child-001?last=N");
-    expect(body.message).not.toContain("completed their task");
+    expect(body.message).toContain("parent session parent-001");
+    expect(body.message).toContain("not a separate or unrelated conversation");
+    expect(body.message).toContain("final answer to the original user");
   });
 
   it("includes truncated 200-char preview for long results", async () => {
@@ -136,6 +138,8 @@ describe("notifyParentSession", () => {
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(body.message).toContain("Something broke");
     expect(body.message).toContain("⚠️");
+    expect(body.message).toContain("continuation of the original user task");
+    expect(body.message).toContain("Do not delegate the same task again");
   });
 
   it('sends with "notification" role', async () => {
