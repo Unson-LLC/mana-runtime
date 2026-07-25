@@ -883,10 +883,14 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  with no Stop hook); a stale proc replaced by a respawn is treated as benign.
    *  `proxy` (the per-PTY SSE forward proxy) is torn down when this PTY exits. */
   private wireProcToStream(jinnSessionId: string, proc: pty.IPty, proxy?: SsePtyProxy): PtyHandle {
+    let teardownRequested = false;
     const handle: PtyHandle = {
       pid: proc.pid,
       get killed() { return (proc as any)._exitCode != null; },
-      kill: (signal?: string) => { try { proc.kill(signal); } catch { /* already gone */ } },
+      kill: (signal?: string) => {
+        teardownRequested = true;
+        try { proc.kill(signal); } catch { /* already gone */ }
+      },
     } as PtyHandle;
     const stream = this.streamFor(jinnSessionId);
     // Distinguish initial spawn from respawn via a per-stream flag rather than
@@ -913,9 +917,15 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // the next run() reused the corpse, injected into a dead socket, and the turn hung
     // until the 90-min watchdog (see issue #18). Cleanup is idempotent (deadHandles).
     (proc as any).on?.("error", (err: Error) => {
-      const code = (err as NodeJS.ErrnoException).code ?? err.message;
-      logger.warn(`PTY socket error for session ${jinnSessionId}: ${err.message}`);
-      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code})`);
+      const code = (err as NodeJS.ErrnoException).code;
+      const expectedTeardownEio =
+        teardownRequested && (code === "EIO" || err.message === "read EIO");
+      if (expectedTeardownEio) {
+        logger.debug(`PTY closed during teardown for session ${jinnSessionId}: ${err.message}`);
+      } else {
+        logger.warn(`PTY socket error for session ${jinnSessionId}: ${err.message}`);
+      }
+      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code ?? err.message})`);
     });
 
     proc.onData((d) => {
