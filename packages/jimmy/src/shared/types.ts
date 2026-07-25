@@ -415,6 +415,12 @@ export interface SlackConnectorConfig {
   triage?: SlackTriageConfig;
   /** Natural-language autonomous goal detection. Off by default because it adds latency. */
   goalExtraction?: SlackGoalExtractionConfig;
+  /** Deterministic gateway routing for high-risk work. Disabled when absent. */
+  criticalRouting?: {
+    enabled?: boolean;
+    /** Employee YAML name. Its model and effort remain the org SSOT. */
+    reviewerEmployee?: string;
+  };
   /** Self-updating Slack Canvas mirroring OpenRyoko's current sessions (Agents View). */
   agentsCanvas?: {
     /** Master switch — defaults to false when the block is absent. */

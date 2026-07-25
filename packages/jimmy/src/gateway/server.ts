@@ -325,7 +325,9 @@ export async function startGateway(
           },
         );
         slack.onMessage((msg) => {
-          const routeOpts: RouteOptions = {};
+          const routeOpts: RouteOptions = {
+            criticalRouting: cfg.connectors.slack?.criticalRouting,
+          };
           if (cfg.connectors.slack?.employee) {
             const emp = employeeRegistry.get(cfg.connectors.slack.employee);
             if (emp) routeOpts.employee = emp;
