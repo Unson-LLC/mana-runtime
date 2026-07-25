@@ -54,6 +54,7 @@ import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, ensureFilesDir } from "./files.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "../sessions/callbacks.js";
 import { loadInstances } from "../cli/instances.js";
+import { findEmployee, scanOrg } from "./org.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -786,7 +787,13 @@ export async function handleApiRequest(
       const prompt = body.prompt || body.message;
       if (!prompt) return badRequest(res, "prompt or message is required");
       const config = context.getConfig();
-      const engineName = body.engine || config.engines.default;
+      const employee = body.employee
+        ? findEmployee(body.employee, scanOrg())
+        : undefined;
+      if (body.employee && !employee) {
+        return badRequest(res, `employee "${body.employee}" not found`);
+      }
+      const engineName = body.engine || employee?.engine || config.engines.default;
       const sessionKey = `web:${Date.now()}`;
       const session = createSession({
         engine: engineName,
@@ -795,7 +802,8 @@ export async function handleApiRequest(
         connector: "web",
         sessionKey,
         replyContext: { source: "web" },
-        employee: body.employee,
+        employee: employee?.name,
+        model: body.model || employee?.model,
         parentSessionId: body.parentSessionId,
         effortLevel: body.effortLevel,
         prompt,
