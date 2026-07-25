@@ -567,9 +567,9 @@ export interface JinnConfig {
        *  key when true. Default false (headless `-p`). */
       interactive?: boolean;
       /** Claude Code permission mode for local interactive PTYs. Defaults to
-       *  bypassPermissions for upstream compatibility. Use plan when the gateway
-       *  must be read/draft-only and no human is present at the terminal. */
-      interactivePermissionMode?: "bypassPermissions" | "plan";
+       *  default, which honors settings allow/deny rules without requiring the
+       *  unattended gateway to approve an ExitPlanMode prompt. */
+      interactivePermissionMode?: "bypassPermissions" | "default" | "plan";
       /** Max simultaneously-live PTYs for the interactive engine (LRU-evicted). Default 8. */
       maxLivePtys?: number;
       /** Hard ceiling (ms) on a single interactive turn before it is force-settled

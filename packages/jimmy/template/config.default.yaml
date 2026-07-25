@@ -16,9 +16,9 @@ engines:
     # instead of metered API usage. Turns resolve via Claude Code Stop hooks.
     # Default false = headless `claude -p`. sshHost employees keep using `-p`.
     # interactive: false
-    # Permission boundary for unattended PTYs. "plan" prevents command execution
-    # and file modification; "bypassPermissions" preserves upstream behavior.
-    # interactivePermissionMode: bypassPermissions
+    # Permission boundary for unattended PTYs. "default" honors Claude settings
+    # allow/deny rules; "plan" requires an attached human to approve execution.
+    # interactivePermissionMode: default
     # maxLivePtys: 8   # max simultaneously-live PTYs (LRU-evicted) when interactive
   codex:
     bin: codex

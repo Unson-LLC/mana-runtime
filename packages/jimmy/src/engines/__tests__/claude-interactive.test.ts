@@ -18,13 +18,22 @@ describe("interactive Claude permission mode", () => {
     expect(args).toContain("--permission-mode");
     expect(args).toContain("plan");
     expect(args).not.toContain("--dangerously-skip-permissions");
+    expect(args).not.toContain("ExitPlanMode");
   });
 
-  it("fails safe to plan mode when no mode is configured", () => {
+  it("uses default mode when no mode is configured", () => {
     const args = buildInteractiveArgs(base);
 
     expect(args).toContain("--permission-mode");
-    expect(args).toContain("plan");
+    expect(args).toContain("default");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("uses explicit default mode without bypass", () => {
+    const args = buildInteractiveArgs({ ...base, permissionMode: "default" });
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("default");
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 

@@ -24,7 +24,7 @@ interface InteractiveArgsOpts {
   mcpConfigPath?: string;
   cliFlags?: string[];
   attachments?: string[];
-  permissionMode?: "bypassPermissions" | "plan";
+  permissionMode?: "bypassPermissions" | "default" | "plan";
 }
 
 interface TranscriptUsage { inputTokens: number; outputTokens: number; cacheTokens: number; assistantTurns: number; model?: string; }
@@ -212,12 +212,19 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   args.push("--chrome");
   if (o.effortLevel && o.effortLevel !== "default") args.push("--effort", o.effortLevel);
   if (o.model) args.push("--model", o.model);
-  if ((o.permissionMode ?? "plan") === "plan") {
+  const permissionMode = o.permissionMode ?? "default";
+  if (permissionMode === "plan") {
     args.push("--permission-mode", "plan");
+  } else if (permissionMode === "default") {
+    args.push("--permission-mode", "default");
   } else {
     args.push("--dangerously-skip-permissions");
   }
-  args.push("--disallowedTools", "AskUserQuestion", "ExitPlanMode");
+  args.push(
+    "--disallowedTools",
+    "AskUserQuestion",
+    ...(permissionMode === "plan" ? [] : ["ExitPlanMode"]),
+  );
   args.push("--settings", o.settingsPath);
   if (o.cliFlags?.length) args.push(...o.cliFlags);
   if (o.mcpConfigPath) args.push("--mcp-config", o.mcpConfigPath);
@@ -537,7 +544,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
      *  batch runs (e.g. the seminar-demo generator) to complete in a single turn. */
     private turnTimeoutMs = 90 * 60 * 1000,
     /** Explicit Claude permission boundary for unattended local PTYs. */
-    private permissionMode: "bypassPermissions" | "plan" = "plan",
+    private permissionMode: "bypassPermissions" | "default" | "plan" = "default",
   ) {}
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
@@ -989,8 +996,12 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       "--chrome",
       ...(this.permissionMode === "plan"
         ? ["--permission-mode", "plan"]
-        : ["--dangerously-skip-permissions"]),
-      "--disallowedTools", "AskUserQuestion", "ExitPlanMode",
+        : this.permissionMode === "default"
+          ? ["--permission-mode", "default"]
+          : ["--dangerously-skip-permissions"]),
+      "--disallowedTools",
+      "AskUserQuestion",
+      ...(this.permissionMode === "plan" ? [] : ["ExitPlanMode"]),
       "--settings", settingsPath,
     ];
     if (opts.engineSessionId) args.unshift("--resume", opts.engineSessionId);
