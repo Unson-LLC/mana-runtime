@@ -53,6 +53,7 @@ import QRCode from "qrcode";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, ensureFilesDir } from "./files.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "../sessions/callbacks.js";
+import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.js";
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 
@@ -95,6 +96,40 @@ export interface ApiContext {
    */
   hookRegistry?: import("./hook-registry.js").HookRegistry;
   hookSecret?: string;
+}
+
+/**
+ * API-triggered turns normally belong to Web UI sessions, but internal
+ * callbacks resume the original parent session through the same endpoint.
+ * When that parent came from Slack/Discord/etc, deliver the generated answer
+ * back through its stored connector just like SessionManager.runSession does.
+ */
+export async function deliverApiSessionResult(
+  session: Session,
+  text: string | null | undefined,
+  context: Pick<ApiContext, "connectors">,
+): Promise<void> {
+  if (!text?.trim() || !session.connector || session.connector === "web" || !session.replyContext) {
+    return;
+  }
+
+  const connector = context.connectors.get(session.connector);
+  if (!connector) {
+    logger.warn(`API session ${session.id} connector "${session.connector}" is unavailable; result was persisted but not delivered`);
+    return;
+  }
+
+  const target = connector.reconstructTarget(session.replyContext);
+  target.messageTs ??= session.messageId ?? undefined;
+  const meta = (session.transportMeta ?? {}) as Record<string, unknown>;
+  const isDM = meta.channelType === "im";
+  const { publicAction } = normalizeDelivery(text, {
+    addressed: session.source !== "cron",
+    channelExternal: isDM ? false : meta.channelExternal === undefined ? true : meta.channelExternal === true,
+    isDM,
+    canReact: connector.getCapabilities().reactions,
+  });
+  await deliverPublic(connector, target, publicAction);
 }
 
 export function resumePendingWebQueueItems(context: ApiContext): void {
@@ -2454,6 +2489,9 @@ async function runWebSession(
 
           if (fallbackResult.result) {
             insertMessage(currentSession.id, "assistant", fallbackResult.result);
+            await deliverApiSessionResult(currentSession, fallbackResult.result, context).catch((err) => {
+              logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
           }
 
           // Persist Codex thread id so future fallbacks can resume it
@@ -2610,6 +2648,9 @@ async function runWebSession(
           // Usage limit cleared — handle result
           if (retryResult.result) {
             insertMessage(currentSession.id, "assistant", retryResult.result);
+            await deliverApiSessionResult(currentSession, retryResult.result, context).catch((err) => {
+              logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
           }
 
           const completedAfterRetry = updateSession(currentSession.id, {
@@ -2669,6 +2710,9 @@ async function runWebSession(
     // Persist the assistant response
     if (result.result) {
       insertMessage(currentSession.id, "assistant", result.result);
+      await deliverApiSessionResult(currentSession, result.result, context).catch((err) => {
+        logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
 
     const completedSession = updateSession(currentSession.id, {
