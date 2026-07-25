@@ -37,6 +37,45 @@ describe("PtyLifecycleManager", () => {
     expect(h.killed).toBe(false); // still inside CLI_KEEPALIVE_AFTER_LEAVE_MS
   });
 
+  it("releases an opted-out PTY immediately after turnEnded", () => {
+    const m = new PtyLifecycleManager({ maxLivePtys: 8 });
+    const h = fakeHandle();
+    m.adopt("connector-session", h);
+    m.turnStarted("connector-session");
+    m.turnEnded("connector-session", false);
+    expect(h.killed).toBe(true);
+    expect(m.getWarm("connector-session")).toBeUndefined();
+  });
+
+  it("keeps an opted-out PTY while viewed, then releases it when the viewer leaves", () => {
+    const m = new PtyLifecycleManager({ maxLivePtys: 8 });
+    const h = fakeHandle();
+    m.adopt("viewed-connector-session", h);
+    m.viewerEnter("viewed-connector-session");
+    m.turnStarted("viewed-connector-session");
+    m.turnEnded("viewed-connector-session", false);
+    expect(h.killed).toBe(false);
+    m.viewerLeave("viewed-connector-session");
+    expect(h.killed).toBe(true);
+  });
+
+  it("uses strict activity, not the keep-warm busy window, for opted-out PTYs", () => {
+    let activelyBusy = true;
+    const m = new PtyLifecycleManager({
+      maxLivePtys: 8,
+      isBusy: () => true,
+      isActivelyBusy: () => activelyBusy,
+    });
+    const h = fakeHandle();
+    m.adopt("background-session", h);
+    m.turnStarted("background-session");
+    m.turnEnded("background-session", false);
+    expect(h.killed).toBe(false);
+    activelyBusy = false;
+    (m as any).sweep();
+    expect(h.killed).toBe(true);
+  });
+
   it("a PTY with an active viewer survives turnEnded indefinitely (within the keep-alive cap)", () => {
     const m = new PtyLifecycleManager({ maxLivePtys: 8 });
     const h = fakeHandle();

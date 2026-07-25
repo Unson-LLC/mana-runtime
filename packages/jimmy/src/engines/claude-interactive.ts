@@ -744,7 +744,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       if (lostStopRecoveryTimer) clearInterval(lostStopRecoveryTimer);
       this.hookRegistry.unregister(jinnSessionId);
       this.active.delete(jinnSessionId);
-      this.lifecycle.turnEnded(jinnSessionId); // manager decides kill vs keep-warm
+      this.lifecycle.turnEnded(jinnSessionId, opts.keepWarmPty !== false);
     }
 
     // Recover lost result text: if the turn settled with no text and no API-level
@@ -1158,6 +1158,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (!handle) return false;
     const proxy = (handle as any)._proxy as SsePtyProxy | undefined;
     return proxy?.isBusy(InteractiveClaudeEngine.BUSY_ACTIVITY_WINDOW_MS) ?? false;
+  }
+
+  /** True only while an upstream request is in flight right now. */
+  isEngineActivelyBusy(sessionId: string): boolean {
+    return this.hasInflightUpstream(sessionId);
   }
 
   /** True while an upstream API request is streaming through the session's SSE

@@ -45,6 +45,12 @@ export interface EngineRunOpts {
   onStream?: (delta: StreamDelta) => void;
   /** Unique Jinn session ID for tracking the spawned process. */
   sessionId?: string;
+  /**
+   * Keep a local interactive PTY warm after the turn completes.
+   * Web UI root sessions opt in; connector, cron, and delegated sessions opt out
+   * so completed autonomous work does not retain a Claude process.
+   */
+  keepWarmPty?: boolean;
   /** If set, run the engine binary on a remote host via SSH instead of locally. */
   sshHost?: string;
   /** Working directory on the remote host (only used when sshHost is set). */

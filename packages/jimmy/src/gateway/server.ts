@@ -191,6 +191,7 @@ export async function startGateway(
       // sub-agents keep streaming after the managed turn settles). Lazily bound:
       // the engine is constructed a few lines below.
       isBusy: (id) => interactiveClaudeEngine?.isEngineBusy(id) ?? false,
+      isActivelyBusy: (id) => interactiveClaudeEngine?.isEngineActivelyBusy(id) ?? false,
     });
     // Pass the headless engine as a remote fallback so sshHost employees still run
     // over SSH (the local PTY can't), while local turns get the Max-subsidized PTY.

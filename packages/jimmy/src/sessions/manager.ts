@@ -649,6 +649,7 @@ export class SessionManager {
         mcpConfigPath,
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
+        keepWarmPty: false,
       });
 
       let wasInterrupted = result.error?.startsWith("Interrupted");
@@ -721,6 +722,7 @@ export class SessionManager {
           mcpConfigPath,
           attachments: attachments.length > 0 ? attachments : undefined,
           sessionId: session.id,
+          keepWarmPty: false,
         });
 
         // Re-evaluate the flags against the retry result. If the retry also
@@ -776,6 +778,7 @@ export class SessionManager {
             remoteCwd: employee?.remoteCwd,
             mcpConfigPath,
             sessionId: session.id,
+            keepWarmPty: false,
           });
           wasInterrupted = result.error?.startsWith("Interrupted");
           if (wasInterrupted || !isTransientServerError(result)) break;
@@ -864,6 +867,7 @@ export class SessionManager {
               remoteCwd: employee?.remoteCwd,
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
+              keepWarmPty: false,
             });
 
             const fallbackText = fallbackResult.result?.trim()
@@ -1008,6 +1012,7 @@ export class SessionManager {
               mcpConfigPath,
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
+              keepWarmPty: false,
             });
 
             const retryInterrupted = retryResult.error?.startsWith("Interrupted");

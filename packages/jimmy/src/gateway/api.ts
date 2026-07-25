@@ -2310,6 +2310,9 @@ async function runWebSession(
     logger.info(`Skipping deleted web session ${session.id} before run start`);
     return;
   }
+  // Only a root Web UI session benefits from a warm terminal. Delegated/cross-
+  // request sessions are autonomous work and should release Claude when done.
+  const keepWarmPty = currentSession.source === "web" && !currentSession.parentSessionId;
   logger.info(`Web session ${currentSession.id} running engine "${currentSession.engine}" (model: ${currentSession.model || "default"})`);
 
   // Ensure status is "running" (may already be set by the POST handler)
@@ -2393,6 +2396,7 @@ async function runWebSession(
       remoteCwd: employee?.remoteCwd,
       attachments: attachments?.length ? attachments : undefined,
       sessionId: currentSession.id,
+      keepWarmPty,
       onStream: (delta) => {
         const now = Date.now();
         if (now - lastHeartbeatAt >= 2000) {
@@ -2501,6 +2505,7 @@ async function runWebSession(
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             sessionId: currentSession.id,
+            keepWarmPty,
             onStream: (delta) => {
               context.emit("session:delta", {
                 sessionId: currentSession.id,
@@ -2637,6 +2642,7 @@ async function runWebSession(
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             sessionId: currentSession.id,
+            keepWarmPty,
             onStream: (delta) => {
               context.emit("session:delta", {
                 sessionId: currentSession.id,
