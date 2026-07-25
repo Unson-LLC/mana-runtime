@@ -229,7 +229,7 @@ export function buildContext(opts: {
     sections.push({
       tier: Tier.OPTIONAL,
       marker: "## Employee Delegation",
-      content: buildDelegationProtocol(gatewayUrl, portalName, opts.config),
+      content: buildDelegationProtocol(gatewayUrl, portalName, opts.config, opts.sessionId),
       summary: `## Employee Delegation Protocol\nDelegate via \`POST ${gatewayUrl}/api/sessions\` with \`{prompt, employee, parentSessionId}\`. Check children via \`GET /api/sessions/:id/children\`.`,
     });
   }
@@ -789,7 +789,12 @@ function buildEvolutionContext(portalName: string, config?: JinnConfig): string 
  * Delegation protocol: condensed version focusing on the essential API patterns.
  * Verbose examples and multi-paragraph explanations have been trimmed.
  */
-function buildDelegationProtocol(gatewayUrl: string, _portalName: string, config?: JinnConfig): string {
+function buildDelegationProtocol(
+  gatewayUrl: string,
+  _portalName: string,
+  config?: JinnConfig,
+  currentSessionId?: string,
+): string {
   const defaultEngine = config?.engines.default || "claude";
   const engineConfig = defaultEngine === "codex"
     ? config?.engines.codex
@@ -801,6 +806,7 @@ function buildDelegationProtocol(gatewayUrl: string, _portalName: string, config
   const effortOverrideNote = childOverride
     ? `\n> **Note**: \`childEffortOverride\` is set to \`"${childOverride}"\`. All child sessions use this effort level.`
     : "";
+  const parentSessionId = currentSessionId ?? "<your-session-id>";
 
   return `## Employee Delegation Protocol
 
@@ -823,7 +829,7 @@ You are the COO. You orchestrate employees by creating **linked child sessions**
 
 3. **Check for existing children first**:
 \`\`\`bash
-curl -s ${gatewayUrl}/api/sessions/<your-session-id>/children
+curl -s ${gatewayUrl}/api/sessions/${parentSessionId}/children
 \`\`\`
 Reuse an existing child only when it belongs to the same user task and needs a follow-up. A completed child from an older task is not reusable for a new task.
 
@@ -833,7 +839,7 @@ Reuse an existing child only when it belongs to the same user task and needs a f
 \`\`\`bash
 curl -s -X POST ${gatewayUrl}/api/sessions \\
   -H 'Content-Type: application/json' \\
-  -d '{"prompt": "<brief>", "employee": "<name>", "parentSessionId": "<your-session-id>"}'
+  -d '{"prompt": "<brief>", "employee": "<name>", "parentSessionId": "${parentSessionId}"}'
 \`\`\`
 
 6. **Follow up** (existing child for the same task):
@@ -870,7 +876,7 @@ When a department has 3+ employees, promote a senior to **manager**. Managers ha
 
 ### Your session ID
 
-Your current session ID is in the "Current session" section above. Use it as \`parentSessionId\`.${effortOverrideNote}`;
+Your current session ID is \`${parentSessionId}\`. Copy this exact value into \`parentSessionId\`; never omit that field when spawning a delegated child.${effortOverrideNote}`;
 }
 
 function buildApiReference(gatewayUrl: string, portalName: string): string {
