@@ -379,6 +379,26 @@ export function deepMerge(target: Record<string, unknown>, source: Record<string
   return result;
 }
 
+export function stripTopLevelSlackCredentials(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const connectors = config.connectors;
+  if (!connectors || typeof connectors !== "object" || Array.isArray(connectors)) return config;
+  const slack = (connectors as Record<string, unknown>).slack;
+  if (!slack || typeof slack !== "object" || Array.isArray(slack)) return config;
+
+  const sanitizedSlack = { ...(slack as Record<string, unknown>) };
+  delete sanitizedSlack.appToken;
+  delete sanitizedSlack.botToken;
+  return {
+    ...config,
+    connectors: {
+      ...(connectors as Record<string, unknown>),
+      slack: sanitizedSlack,
+    },
+  };
+}
+
 function matchRoute(
   pattern: string,
   pathname: string,
@@ -1473,7 +1493,7 @@ Handle this as a priority request from a colleague.`;
       try {
         existing = yaml.load(fs.readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown> || {};
       } catch { /* start fresh if unreadable */ }
-      const merged = deepMerge(existing, body);
+      const merged = stripTopLevelSlackCredentials(deepMerge(existing, body));
       const yamlStr = yaml.dump(merged);
 
       // Compare AGAINST THE MERGED config, not the request body — partial

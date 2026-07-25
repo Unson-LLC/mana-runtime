@@ -20,8 +20,16 @@ describe("interactive Claude permission mode", () => {
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 
-  it("preserves upstream bypass behavior when no mode is configured", () => {
+  it("fails safe to plan mode when no mode is configured", () => {
     const args = buildInteractiveArgs(base);
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("plan");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("uses bypass only when explicitly configured", () => {
+    const args = buildInteractiveArgs({ ...base, permissionMode: "bypassPermissions" });
 
     expect(args).toContain("--dangerously-skip-permissions");
     expect(args).not.toContain("--permission-mode");

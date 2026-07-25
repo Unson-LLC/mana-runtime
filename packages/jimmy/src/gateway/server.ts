@@ -36,6 +36,7 @@ import { TelegramConnector } from "../connectors/telegram/index.js";
 import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
 import { scanOrg } from "./org.js";
+import { resolveSlackRuntimeConfig } from "../shared/slack-runtime-config.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -198,7 +199,7 @@ export async function startGateway(
       hookRegistry,
       claudeEngine,
       config.engines?.claude?.interactiveTurnTimeoutMs ?? 90 * 60 * 1000,
-      config.engines?.claude?.interactivePermissionMode ?? "bypassPermissions",
+      config.engines?.claude?.interactivePermissionMode ?? "plan",
     );
     copyHookRelayAsset();
     // Pre-trust JINN_HOME in the real ~/.claude.json so PTY-spawned Claude (cwd =
@@ -225,7 +226,7 @@ export async function startGateway(
 
   // Derive connector names from config
   const connectorNames: string[] = [];
-  if (config.connectors?.slack?.appToken && config.connectors?.slack?.botToken) {
+  if (resolveSlackRuntimeConfig(config.connectors?.slack)) {
     connectorNames.push("slack");
   }
   if (config.connectors?.discord?.botToken || config.connectors?.discord?.proxyVia) {
@@ -299,28 +300,19 @@ export async function startGateway(
     const started: string[] = [];
     const errors: string[] = [];
 
-    if (
-      cfg.connectors?.slack?.appToken &&
-      cfg.connectors?.slack?.botToken &&
-      !connectorMap.has("slack")
-    ) {
+    const slackConfig = resolveSlackRuntimeConfig(cfg.connectors?.slack);
+    if (slackConfig && !connectorMap.has("slack")) {
       try {
         const slack = new SlackConnector(
           {
-            appToken: cfg.connectors.slack.appToken,
-            botToken: cfg.connectors.slack.botToken,
-            allowFrom: cfg.connectors.slack.allowFrom,
-            ignoreOldMessagesOnBoot: cfg.connectors.slack.ignoreOldMessagesOnBoot,
-            triage: cfg.connectors.slack.triage,
-            goalExtraction: cfg.connectors.slack.goalExtraction,
-            agentsCanvas: cfg.connectors.slack.agentsCanvas,
+            ...slackConfig,
           },
           {
             portalName: cfg.portal?.portalName,
             operatorName: cfg.portal?.operatorName,
             operatorAliases: cfg.portal?.operatorAliases,
-            goalInjectionEnabled: (cfg.connectors.slack.employee
-              ? employeeRegistry.get(cfg.connectors.slack.employee)?.engine
+            goalInjectionEnabled: (slackConfig.employee
+              ? employeeRegistry.get(slackConfig.employee)?.engine
               : cfg.engines.default) === "claude",
           },
         );

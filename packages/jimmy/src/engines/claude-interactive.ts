@@ -212,7 +212,7 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   args.push("--chrome");
   if (o.effortLevel && o.effortLevel !== "default") args.push("--effort", o.effortLevel);
   if (o.model) args.push("--model", o.model);
-  if ((o.permissionMode ?? "bypassPermissions") === "plan") {
+  if ((o.permissionMode ?? "plan") === "plan") {
     args.push("--permission-mode", "plan");
   } else {
     args.push("--dangerously-skip-permissions");
@@ -537,7 +537,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
      *  batch runs (e.g. the seminar-demo generator) to complete in a single turn. */
     private turnTimeoutMs = 90 * 60 * 1000,
     /** Explicit Claude permission boundary for unattended local PTYs. */
-    private permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
+    private permissionMode: "bypassPermissions" | "plan" = "plan",
   ) {}
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
@@ -776,6 +776,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {
       if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_")) continue;
+      if (k.startsWith("OPENRYOKO_SLACK_")) continue;
       // Belt-and-suspenders: a stray API key/token would flip the child to metered
       // API billing instead of the Max subscription. Strip both so the PTY session
       // always resolves to subscription auth (cc_entrypoint=cli).
