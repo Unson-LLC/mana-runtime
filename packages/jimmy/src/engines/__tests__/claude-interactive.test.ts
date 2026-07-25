@@ -37,11 +37,49 @@ describe("interactive Claude permission mode", () => {
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 
+  it("passes an exact unattended tool allowlist without enabling bypass", () => {
+    const args = buildInteractiveArgs({
+      ...base,
+      permissionMode: "default",
+      allowedTools: [
+        "mcp__brainbase__search",
+        "mcp__brainbase__resolve_entity",
+      ],
+    });
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("default");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+    expect(args.slice(args.indexOf("--allowedTools"), args.indexOf("--disallowedTools"))).toEqual([
+      "--allowedTools",
+      "mcp__brainbase__search",
+      "mcp__brainbase__resolve_entity",
+    ]);
+  });
+
+  it("does not add an allowlist flag when no tools are configured", () => {
+    const args = buildInteractiveArgs({ ...base, permissionMode: "default" });
+    expect(args).not.toContain("--allowedTools");
+  });
+
   it("uses bypass only when explicitly configured", () => {
     const args = buildInteractiveArgs({ ...base, permissionMode: "bypassPermissions" });
 
     expect(args).toContain("--dangerously-skip-permissions");
     expect(args).not.toContain("--permission-mode");
+  });
+
+  it("uses dontAsk to deny unlisted tools instead of waiting for a prompt", () => {
+    const args = buildInteractiveArgs({
+      ...base,
+      permissionMode: "dontAsk",
+      allowedTools: ["mcp__brainbase__search"],
+    });
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("dontAsk");
+    expect(args).toContain("--allowedTools");
+    expect(args).not.toContain("--dangerously-skip-permissions");
   });
 });
 

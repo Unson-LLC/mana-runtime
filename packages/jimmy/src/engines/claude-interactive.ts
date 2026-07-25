@@ -24,7 +24,8 @@ interface InteractiveArgsOpts {
   mcpConfigPath?: string;
   cliFlags?: string[];
   attachments?: string[];
-  permissionMode?: "bypassPermissions" | "default" | "plan";
+  permissionMode?: "bypassPermissions" | "default" | "dontAsk" | "plan";
+  allowedTools?: string[];
 }
 
 interface TranscriptUsage { inputTokens: number; outputTokens: number; cacheTokens: number; assistantTurns: number; model?: string; }
@@ -213,12 +214,13 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   if (o.effortLevel && o.effortLevel !== "default") args.push("--effort", o.effortLevel);
   if (o.model) args.push("--model", o.model);
   const permissionMode = o.permissionMode ?? "default";
-  if (permissionMode === "plan") {
-    args.push("--permission-mode", "plan");
-  } else if (permissionMode === "default") {
-    args.push("--permission-mode", "default");
-  } else {
+  if (permissionMode === "bypassPermissions") {
     args.push("--dangerously-skip-permissions");
+  } else {
+    args.push("--permission-mode", permissionMode);
+  }
+  if (o.allowedTools?.length) {
+    args.push("--allowedTools", ...o.allowedTools);
   }
   args.push(
     "--disallowedTools",
@@ -544,7 +546,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
      *  batch runs (e.g. the seminar-demo generator) to complete in a single turn. */
     private turnTimeoutMs = 90 * 60 * 1000,
     /** Explicit Claude permission boundary for unattended local PTYs. */
-    private permissionMode: "bypassPermissions" | "default" | "plan" = "default",
+    private permissionMode: "bypassPermissions" | "default" | "dontAsk" | "plan" = "default",
+    /** Exact tools that default/plan mode may run without an interactive prompt.
+     *  This is intentionally opt-in and should normally contain only named,
+     *  read-only MCP tools required by the deployment. */
+    private allowedTools: string[] = [],
   ) {}
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
@@ -956,6 +962,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cliFlags: opts.cliFlags,
       attachments: opts.attachments,
       permissionMode: this.permissionMode,
+      allowedTools: this.allowedTools,
     });
     // Serialize the spawn herd across the shared-OAuth near-expiry window so only
     // one child triggers the (single-use) token refresh — others wait for it.
@@ -994,11 +1001,10 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     });
     const args: string[] = [
       "--chrome",
-      ...(this.permissionMode === "plan"
-        ? ["--permission-mode", "plan"]
-        : this.permissionMode === "default"
-          ? ["--permission-mode", "default"]
-          : ["--dangerously-skip-permissions"]),
+      ...(this.permissionMode === "bypassPermissions"
+        ? ["--dangerously-skip-permissions"]
+        : ["--permission-mode", this.permissionMode]),
+      ...(this.allowedTools.length ? ["--allowedTools", ...this.allowedTools] : []),
       "--disallowedTools",
       "AskUserQuestion",
       ...(this.permissionMode === "plan" ? [] : ["ExitPlanMode"]),

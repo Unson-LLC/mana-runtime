@@ -569,7 +569,11 @@ export interface JinnConfig {
       /** Claude Code permission mode for local interactive PTYs. Defaults to
        *  default, which honors settings allow/deny rules without requiring the
        *  unattended gateway to approve an ExitPlanMode prompt. */
-      interactivePermissionMode?: "bypassPermissions" | "default" | "plan";
+      interactivePermissionMode?: "bypassPermissions" | "default" | "dontAsk" | "plan";
+      /** Exact Claude Code tool permission rules that unattended local PTYs may
+       *  use without prompting. Keep this narrowly scoped (for example, named
+       *  read-only MCP tools); an empty/absent list grants nothing extra. */
+      interactiveAllowedTools?: string[];
       /** Max simultaneously-live PTYs for the interactive engine (LRU-evicted). Default 8. */
       maxLivePtys?: number;
       /** Hard ceiling (ms) on a single interactive turn before it is force-settled
