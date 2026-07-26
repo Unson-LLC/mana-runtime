@@ -22,6 +22,7 @@ import {
   modelsForEngine,
   withCurrentValue,
 } from "@/lib/model-catalog"
+import { buildSlackManifest } from "@/lib/slack-manifest"
 
 // ---------------------------------------------------------------------------
 // Accent color presets
@@ -41,103 +42,6 @@ const ACCENT_PRESETS = [
   { label: "Violet", value: "#8B5CF6" },
   { label: "Pink", value: "#EC4899" },
 ]
-
-// ---------------------------------------------------------------------------
-// Slack App manifest (minimum config — paste-and-go)
-// ---------------------------------------------------------------------------
-
-// Build the paste-and-go Slack App manifest for a given bot name. The
-// Agents & AI Apps feature (features.assistant_view + assistant:write +
-// assistant_thread_* events) is enabled by default so the "New chat" button is
-// available out of the box — each new chat becomes its own session.
-function buildSlackManifest(botName?: string | null): string {
-  const name = (botName ?? "").trim() || "Ryoko"
-  return JSON.stringify(
-    {
-      display_information: { name },
-      features: {
-        app_home: {
-          messages_tab_enabled: true,
-          messages_tab_read_only_enabled: false,
-        },
-        bot_user: { display_name: name, always_online: true },
-        assistant_view: {
-          assistant_description: `${name} — your AI assistant`,
-          suggested_prompts: [
-            { title: "What can you do?", message: "What can you help me with?" },
-          ],
-        },
-        slash_commands: [
-          {
-            command: "/ryoko-develop",
-            description: "Start an isolated VibePro development task",
-            should_escape: true,
-          },
-        ],
-      },
-      oauth_config: {
-        scopes: {
-          bot: [
-            "app_mentions:read",
-            "assistant:write",
-            "canvases:read",
-            "canvases:write",
-            "channels:history",
-            "channels:read",
-            "chat:write",
-            "chat:write.customize",
-            "commands",
-            "files:read",
-            "files:write",
-            "groups:history",
-            "groups:read",
-            "im:history",
-            "im:read",
-            "im:write",
-            "mpim:history",
-            "mpim:read",
-            "mpim:write",
-            "reactions:read",
-            "reactions:write",
-            "users:read",
-            "users:read.email",
-          ],
-          user: [
-            "channels:history",
-            "channels:read",
-            "files:read",
-            "groups:history",
-            "groups:read",
-            "im:history",
-            "im:read",
-            "mpim:history",
-            "mpim:read",
-            "search:read",
-            "users:read",
-            "bookmarks:read",
-          ],
-        },
-      },
-      settings: {
-        event_subscriptions: {
-          bot_events: [
-            "app_mention",
-            "assistant_thread_context_changed",
-            "assistant_thread_started",
-            "message.channels",
-            "message.groups",
-            "message.im",
-            "message.mpim",
-            "reaction_added",
-          ],
-        },
-        socket_mode_enabled: true,
-      },
-    },
-    null,
-    2,
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Config type (gateway API)
@@ -644,12 +548,15 @@ function SlackSetupGuide() {
               >
                 Slack API の Your Apps ページ
               </a>
-              を開き、「Create New App」を選択。
+              を開き、新規導入なら「Create New App」を選択。既存アプリは対象アプリを開く。
             </li>
-            <li>「From a manifest」を選び、対象ワークスペースを指定。</li>
-            <li>下のJSONをコピーして貼り付け、「Create」で作成。</li>
             <li>
-              「Install to Workspace」を実行し、OAuth & Permissions の「Bot User OAuth
+              新規導入は「From a manifest」を選び、対象ワークスペースを指定。既存アプリは
+              「App Manifest」を開く。
+            </li>
+            <li>下のJSONを貼り付け、新規は「Create」、既存は「Save Changes」で反映。</li>
+            <li>
+              「Install to Workspace」または「Reinstall to Workspace」を実行し、OAuth & Permissions の「Bot User OAuth
               Token」（<code>xoxb-…</code>）を下の Bot Token に貼り付け。
             </li>
             <li>
