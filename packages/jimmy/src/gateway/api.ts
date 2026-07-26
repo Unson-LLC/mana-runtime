@@ -61,6 +61,7 @@ import { isPlacementEmployeeAllowed, placementDeliveryTargets } from "../shared/
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
+  SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
   SYSTEM_NOTIFICATION_SESSION_ID,
   verifySessionDelegationToken,
 } from "../sessions/delegation-auth.js";
@@ -2038,7 +2039,7 @@ Handle this as a priority request from a colleague.`;
       const body = _parsed.body as any;
       if (!body.channel || !body.text) return badRequest(res, "channel and text are required");
       const sessionId = currentSessionId(req);
-      if (sessionId === SYSTEM_NOTIFICATION_SESSION_ID) {
+      if (sessionId === SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID) {
         const notifications = context.getConfig().notifications;
         const authorized = verifySessionDelegationToken(sessionId, sessionDelegationToken(req))
           && notifications?.connector === params.name

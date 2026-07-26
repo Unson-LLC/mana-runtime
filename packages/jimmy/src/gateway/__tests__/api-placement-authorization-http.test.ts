@@ -17,6 +17,7 @@ import {
   CURRENT_SESSION_HEADER,
   getSessionDelegationToken,
   SESSION_DELEGATION_HEADER,
+  SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
   SYSTEM_NOTIFICATION_SESSION_ID,
 } from "../../sessions/delegation-auth.js";
 import { logger } from "../../shared/logger.js";
@@ -87,6 +88,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       gateway: { host: "127.0.0.1", port: 0 },
       engines: { default: "claude" },
       connectors: { discord: { proxyToken: "service-proxy-canary" } },
+      notifications: { connector: "discord", channel: "C-notifications" },
       placements: [{
         id: "pilot",
         connector: "slack",
@@ -204,6 +206,33 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       { message: "unauthorized", role: "notification" },
     );
     expect(missingAuth.status).toBe(403);
+
+    const alternateSend = await post(
+      "/api/connectors/discord/send",
+      { channel: "C-notifications", text: "must not escape through connector send" },
+      token,
+      SYSTEM_NOTIFICATION_SESSION_ID,
+    );
+    expect(alternateSend.status).toBe(403);
+  });
+
+  it("confines connector notifications to a distinct service principal", async () => {
+    const connectorToken = getSessionDelegationToken(SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID);
+    const allowed = await post(
+      "/api/connectors/discord/send",
+      { channel: "C-notifications", text: "rate limit warning" },
+      connectorToken,
+      SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
+    );
+    expect(allowed.status).toBe(200);
+
+    const parentCallback = await post(
+      `/api/sessions/${parentId}/message`,
+      { message: "must not become a parent callback", role: "notification" },
+      connectorToken,
+      SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
+    );
+    expect(parentCallback.status).toBe(403);
   });
 
   it("redacts the Discord proxy service credential from the config API", async () => {
@@ -265,6 +294,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
   });
 
   it("allows only an authenticated placement delivery target on the direct connector route", async () => {
+    sendMessage.mockClear();
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     const token = getSessionDelegationToken(parentId);
     const allowed = await post("/api/connectors/slack/send", { channel: "C1", text: "allowed" }, token, parentId);

@@ -5,6 +5,7 @@ const delegationSecret = crypto.randomBytes(32);
 export const SESSION_DELEGATION_HEADER = "x-jinn-session-token";
 export const CURRENT_SESSION_HEADER = "x-jinn-session-id";
 export const SYSTEM_NOTIFICATION_SESSION_ID = "system:notifications";
+export const SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID = "system:connector-notifications";
 
 export function getSessionDelegationToken(sessionId: string): string {
   return crypto.createHmac("sha256", delegationSecret).update(sessionId).digest("base64url");

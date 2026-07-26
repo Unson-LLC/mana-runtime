@@ -6,6 +6,7 @@ import {
   CURRENT_SESSION_HEADER,
   getSessionDelegationToken,
   SESSION_DELEGATION_HEADER,
+  SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
   SYSTEM_NOTIFICATION_SESSION_ID,
 } from "./delegation-auth.js";
 
@@ -133,8 +134,8 @@ async function _sendDiscordNotification(message: string): Promise<void> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      [CURRENT_SESSION_HEADER]: SYSTEM_NOTIFICATION_SESSION_ID,
-      [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(SYSTEM_NOTIFICATION_SESSION_ID),
+      [CURRENT_SESSION_HEADER]: SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
+      [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID),
     },
     body: JSON.stringify({ channel, text: message }),
   });

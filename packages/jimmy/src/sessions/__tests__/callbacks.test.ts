@@ -18,12 +18,14 @@ vi.mock("../../shared/logger.js", () => ({
   },
 }));
 
-import { notifyParentSession } from "../callbacks.js";
+import { notifyDiscordChannel, notifyParentSession } from "../callbacks.js";
 import { getSession } from "../registry.js";
+import { loadConfig } from "../../shared/config.js";
 import type { Session } from "../../shared/types.js";
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
+  SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
   SYSTEM_NOTIFICATION_SESSION_ID,
   verifySessionDelegationToken,
 } from "../delegation-auth.js";
@@ -164,6 +166,34 @@ describe("notifyParentSession", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(body.role).toBe("notification");
+  });
+});
+
+describe("notifyDiscordChannel", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    globalThis.fetch = originalFetch as typeof fetch;
+  });
+
+  it("uses the connector-notification principal instead of the parent-callback principal", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    vi.mocked(loadConfig).mockReturnValueOnce({
+      gateway: { port: 7777 },
+      notifications: { connector: "discord", channel: "C-notifications" },
+    } as ReturnType<typeof loadConfig>);
+
+    notifyDiscordChannel("rate limit warning");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, opts] = fetchSpy.mock.calls[0];
+    expect(opts.headers[CURRENT_SESSION_HEADER]).toBe(SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID);
+    expect(verifySessionDelegationToken(
+      SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
+      opts.headers[SESSION_DELEGATION_HEADER],
+    )).toBe(true);
+    expect(opts.headers[CURRENT_SESSION_HEADER]).not.toBe(SYSTEM_NOTIFICATION_SESSION_ID);
   });
 });
 
