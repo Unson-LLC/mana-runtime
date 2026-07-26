@@ -199,6 +199,7 @@ export class SessionManager {
         },
         employee: opts.employee?.name ?? undefined,
         model: opts.model ?? opts.employee?.model ?? undefined,
+        effortLevel: opts.employee?.effortLevel ?? undefined,
         title: opts.title,
         prompt: msg.text,
         portalName: this.config.portal?.portalName,
@@ -212,11 +213,21 @@ export class SessionManager {
         ...(msg.transportMeta ?? {}),
         ...(opts.placement ? { placementId: opts.placement.id } : {}),
       });
+      const placementEngine = opts.engine ?? opts.employee?.engine ?? this.config.engines.default;
+      const placementModel = opts.model ?? opts.employee?.model ?? null;
+      const placementEmployee = opts.employee?.name ?? null;
+      const placementEffort = opts.employee?.effortLevel ?? null;
       session = updateSession(session.id, {
         replyContext: msg.replyContext,
         messageId: msg.messageId ?? null,
         transportMeta: mergedMeta,
-        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.placement ? {
+          engine: placementEngine,
+          engineSessionId: session.engine !== placementEngine ? null : session.engineSessionId,
+          employee: placementEmployee,
+          model: placementModel,
+          effortLevel: placementEffort,
+        } : opts.model ? { model: opts.model } : {}),
       }) ?? session;
     }
 

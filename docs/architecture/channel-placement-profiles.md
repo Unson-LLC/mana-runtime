@@ -1,6 +1,6 @@
 # Channel Placement Profiles
 
-Status: Proposed
+Status: Accepted — Phase 1 implemented
 
 Scope: brainbase-mana / OpenRyoko Slack runtime
 
@@ -18,7 +18,7 @@ OpenRyokoを単一の汎用エージェントとして全チャンネルへ露�
 - Graph SSOTを事実の正本とし、Ryoko固有メモリを第二の正本にしない。
 - 権限制御はプロンプトへのお願いではなく、実行前後の認可として強制する。
 
-## 2. Current state
+## 2. Baseline before Phase 1
 
 現在のパイロットは「ランタイム1つ、実質的な配置1つ」である。
 
@@ -27,9 +27,9 @@ OpenRyokoを単一の汎用エージェントとして全チャンネルへ露�
 - Employee YAMLでpersona、model、MCPの一部を切り替えられる。
 - 朝ブリーフィングはcronのprompt、employee、model、delivery channelとして設定されている。
 - Graphの参照範囲や読み取り専用条件は、主にプロンプトで指示している。
-- channel、audience、project、skills、tools、Graph scopeを一つに束ねる正式な設定単位はまだない。
+- channel、audience、project、skills、tools、Graph scopeを一つに束ねる正式な設定単位はなかった。
 
-したがって現在はパイロットとしては成立しているが、複数チャンネル・複数利用者へ安全に展開できる認可モデルにはなっていない。
+Phase 1ではChannel Placement Profile、入力時のfail-closed解決、従業員・モデル・出力先の認可、既存セッションの権限再束縛を実装した。Graphクエリのサーバー側scope強制、cron/skillのplacement統合、監査記録の永続化は後続フェーズで扱う。
 
 ## 3. Target architecture
 

@@ -39,6 +39,11 @@ describe("resolvePlacement", () => {
     expect(resolvePlacement([placement, { ...placement, id: "duplicate" }], message()))
       .toEqual({ status: "denied", reason: "ambiguous" });
   });
+
+  it("fails closed when a placement data scope contains a secret-like value", () => {
+    const unsafe = { ...placement, dataScopes: { apiKey: "sk-canary-never-render" } };
+    expect(resolvePlacement([unsafe], message())).toEqual({ status: "denied", reason: "invalid_config" });
+  });
 });
 
 describe("isPlacementEmployeeAllowed", () => {

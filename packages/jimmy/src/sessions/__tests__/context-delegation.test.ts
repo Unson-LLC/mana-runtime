@@ -50,4 +50,26 @@ describe("delegation context", () => {
     expect(context).toContain("## Placement policy");
     expect(context).not.toContain("/api/org/cross-request");
   });
+
+  it("never renders secret-like placement data in the system context", () => {
+    const canary = "sk-canary-never-render";
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-secret-test",
+      placement: {
+        id: "pilot",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+        dataScopes: { apiKey: canary, graph: { mode: "read-only" } },
+      },
+    });
+
+    expect(context).not.toContain(canary);
+    expect(context).toContain("[REDACTED]");
+    expect(context).toContain("read-only");
+  });
 });

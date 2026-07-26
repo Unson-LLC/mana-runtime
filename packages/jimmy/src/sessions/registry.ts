@@ -303,6 +303,8 @@ export function getSessionBySessionKey(sessionKey: string): Session | undefined 
 export interface UpdateSessionFields {
   engine?: string;
   engineSessionId?: string | null;
+  employee?: string | null;
+  effortLevel?: string | null;
   status?: Session['status'];
   model?: string | null;
   replyContext?: ReplyContext | null;
@@ -326,6 +328,14 @@ export function updateSession(id: string, updates: UpdateSessionFields): Session
   if (updates.engineSessionId !== undefined) {
     sets.push('engine_session_id = ?');
     values.push(updates.engineSessionId);
+  }
+  if (updates.employee !== undefined) {
+    sets.push('employee = ?');
+    values.push(updates.employee);
+  }
+  if (updates.effortLevel !== undefined) {
+    sets.push('effort_level = ?');
+    values.push(updates.effortLevel);
   }
   if (updates.status !== undefined) {
     sets.push('status = ?');

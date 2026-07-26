@@ -5,6 +5,7 @@ import { JINN_HOME, ORG_DIR, CRON_JOBS, DOCS_DIR } from "../shared/paths.js";
 import { isOperatorSpeaker } from "../shared/operator-match.js";
 import { scanOrg } from "../gateway/org.js";
 import { buildServiceRegistry } from "../gateway/services.js";
+import { safePlacementDataScopes } from "../shared/placement-profile.js";
 
 /**
  * Token budget strategy:
@@ -147,7 +148,7 @@ export function buildContext(opts: {
         `- Placement: ${opts.placement.id}`,
         `- Audience: ${opts.placement.audience.type}`,
         `- Projects: ${(opts.placement.projects ?? []).join(", ") || "none"}`,
-        `- Data scopes: ${JSON.stringify(opts.placement.dataScopes ?? {})}`,
+        `- Data scopes: ${JSON.stringify(safePlacementDataScopes(opts.placement.dataScopes))}`,
         "Treat these as hard execution boundaries. Do not broaden them or send outside the allowed delivery targets.",
       ].join("\n"),
       summary: "",

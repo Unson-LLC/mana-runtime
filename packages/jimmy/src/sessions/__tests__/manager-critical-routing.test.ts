@@ -145,4 +145,46 @@ describe("SessionManager deterministic critical routing", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(registry.insertMessage).not.toHaveBeenCalled();
   });
+
+  it("atomically rebinds an existing Slack session to the resolved placement authority", async () => {
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engine: "codex",
+      engineSessionId: "stale-engine-session",
+      employee: "legacy-agent",
+      model: "legacy-model",
+      effortLevel: "low",
+    });
+    const manager = new SessionManager(CONFIG, new Map(), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko",
+        displayName: "Ryoko",
+        department: "operations",
+        rank: "executive",
+        engine: "claude",
+        model: "sonnet",
+        effortLevel: "medium",
+        persona: "Operate within the placement.",
+      },
+      criticalRouting: { enabled: true, reviewerEmployee: "critical-reviewer" },
+    });
+
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engine: "claude",
+      engineSessionId: null,
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: expect.objectContaining({ placementId: "mana-test" }),
+    }));
+  });
 });
