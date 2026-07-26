@@ -25,6 +25,7 @@ import { writeGatewayInfo } from "./gateway-info.js";
 import { cleanupSessionSettings, seedTrust } from "../shared/claude-settings.js";
 import { GATEWAY_INFO_FILE, HOOK_RELAY_SCRIPT, CLAUDE_SETTINGS_DIR, JINN_HOME } from "../shared/paths.js";
 import { handleApiRequest, resumePendingWebQueueItems, type ApiContext } from "./api.js";
+import { webSocketUpgradeAuthorized } from "./operator-auth.js";
 import { ensureFilesDir } from "./files.js";
 import { initStt } from "../stt/stt.js";
 import { startWatchers, stopWatchers, syncSkillSymlinks } from "./watcher.js";
@@ -1050,6 +1051,11 @@ export async function startGateway(
     // DNS-rebinding / cross-host guard — mirror the HTTP request path so a WS
     // upgrade can't bypass it. Applies to both /ws and /ws/pty.
     if (!hostIsAllowed(req.headers.host)) { socket.destroy(); return; }
+    const placementsEnabled = Boolean(currentConfig.placements?.length);
+    if (!webSocketUpgradeAuthorized(placementsEnabled, req.headers["sec-websocket-protocol"])) {
+      socket.destroy();
+      return;
+    }
     if (reqUrl === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req);

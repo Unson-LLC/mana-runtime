@@ -21,7 +21,7 @@
     "dev": "tsc && (tsc --watch &) && node --watch-path=dist dist/bin/jimmy.js start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "vitest run src/sessions/__tests__/development-runner.test.ts src/shared/__tests__/placement-profile.test.ts src/sessions/__tests__/manager-critical-routing.test.ts src/gateway/__tests__/api-placement-authorization-http.test.ts",
+    "test:integration": "vitest run src/sessions/__tests__/development-runner.test.ts src/shared/__tests__/placement-profile.test.ts src/sessions/__tests__/manager-critical-routing.test.ts src/gateway/__tests__/api-placement-authorization-http.test.ts src/gateway/__tests__/operator-auth.test.ts",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },

@@ -161,11 +161,38 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
   });
 
   it("redacts the Discord proxy service credential from the config API", async () => {
-    const response = await fetch(`${baseUrl}/api/config`);
+    const denied = await fetch(`${baseUrl}/api/config`);
+    expect(denied.status).toBe(403);
+
+    const response = await fetch(`${baseUrl}/api/config`, {
+      headers: { "x-openryoko-operator-token": "operator-canary" },
+    });
     expect(response.status).toBe(200);
     const body = await response.json() as { connectors: { discord: { proxyToken?: string } } };
     expect(body.connectors.discord.proxyToken).toBe("***");
     expect(JSON.stringify(body)).not.toContain("service-proxy-canary");
+  });
+
+  it("protects session metadata and transcripts while placements are active", async () => {
+    const paths = [
+      "/api/sessions",
+      `/api/sessions/${parentId}`,
+      `/api/sessions/${parentId}/children`,
+      `/api/sessions/${parentId}/transcript`,
+    ];
+
+    for (const path of paths) {
+      const denied = await fetch(`${baseUrl}${path}`);
+      expect(denied.status).toBe(403);
+
+      const allowed = await fetch(`${baseUrl}${path}`, {
+        headers: { "x-openryoko-operator-token": "operator-canary" },
+      });
+      expect(allowed.status).toBe(200);
+    }
+
+    const status = await fetch(`${baseUrl}/api/status`);
+    expect(status.status).not.toBe(403);
   });
 
   it("allows only an authenticated placement delivery target on the direct connector route", async () => {

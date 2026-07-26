@@ -46,7 +46,7 @@ Slack運用責任者として、同じOpenRyokoランタイムを複数の社内
 9. Placement判定と能力解決には秘密値を含めず、ログにも秘密を出さない。
 10. resolver、MCP制限、送信制限、Slack reaction、子委譲とcross-requestのPlacement継承について正常系と拒否系の自動テストがある。
 11. 子セッションとcross-requestは実在する親セッションを必須とし、親Placementを継承して許可外Employeeへの委譲を拒否する。Placement子でEmployeeを省略した場合は親Employeeを継承し、engine/model/effortのリクエスト上書きは拒否する。
-12. Placement有効時のlocalhost管理mutationはoperator tokenで認証し、token原文を設定API、ログ、Claude子プロセスへ公開しない。
+12. Placement有効時のlocalhost管理mutation、機密read API、WebSocketはoperator tokenで認証し、token原文を設定API、ログ、URL、Claude子プロセスへ公開しない。
 13. Discord remote proxyは専用service principalを必須とし、missing/wrong tokenを拒否する。
 
 ## Configuration contract
@@ -93,4 +93,4 @@ placements:
 
 環境固有IDはInfisicalラッパーが完成済みYAMLへ投影する。OpenRyokoは`${VAR}`のplaceholder展開を行わない。cron/briefing、Skills、Graph/repositoryのサーバー側scope、詳細監査は後続Storyで扱い、Phase 1の完了条件には含めない。
 
-Placement有効時は、operator tokenのSHA-256を`OPENRYOKO_OPERATOR_TOKEN_SHA256`へ注入する。ブラウザは元tokenを`localStorage["openryoko.operatorToken"]`だけに保持し、管理mutationへ`x-openryoko-operator-token`として送る。hash未設定または不一致はfail closedとする。Discord remote proxyの`proxyToken`は別credentialであり、設定APIではredactする。
+Placement有効時は、operator tokenのSHA-256を`OPENRYOKO_OPERATOR_TOKEN_SHA256`へ注入する。ブラウザは元tokenを`localStorage["openryoko.operatorToken"]`だけに保持し、管理mutationと`/api/status`以外のread APIへ`x-openryoko-operator-token`として送る。`/ws`と`/ws/pty/:sessionId`ではURLへtokenを含めず、WebSocket subprotocol metadataで同じtokenを提示する。hash未設定または不一致はfail closedとし、legacy modeでは従来動作を保つ。Discord remote proxyの`proxyToken`は別credentialであり、設定APIではredactする。

@@ -64,6 +64,7 @@ import {
   SYSTEM_NOTIFICATION_SESSION_ID,
   verifySessionDelegationToken,
 } from "../sessions/delegation-auth.js";
+import { constantTimeEqual, OPERATOR_TOKEN_HEADER, verifyOperatorToken } from "./operator-auth.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -117,21 +118,10 @@ function placementAllowsGatewayTool(placement: PlacementProfile, tool: string): 
   return Array.isArray(allowed) && allowed.includes(tool);
 }
 
-function constantTimeEqual(expected: string | undefined, received: string | undefined): boolean {
-  if (!expected || !received) return false;
-  const expectedBuffer = Buffer.from(expected);
-  const receivedBuffer = Buffer.from(received);
-  return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
-}
-
-const OPERATOR_TOKEN_HEADER = "x-openryoko-operator-token";
-
 function operatorAuthorized(req: HttpRequest): boolean {
   const raw = req.headers[OPERATOR_TOKEN_HEADER];
   const received = Array.isArray(raw) ? raw[0] : raw;
-  if (!received) return false;
-  const receivedHash = crypto.createHash("sha256").update(received).digest("hex");
-  return constantTimeEqual(process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256, receivedHash);
+  return verifyOperatorToken(received);
 }
 
 function isOperatorMutation(method: string, pathname: string): boolean {
@@ -144,6 +134,11 @@ function isOperatorMutation(method: string, pathname: string): boolean {
   if (pathname === "/api/sessions" || matchRoute("/api/sessions/:id/children", pathname)) return false;
   if (pathname === "/api/org/cross-request") return false;
   return true;
+}
+
+function isOperatorProtectedRequest(method: string, pathname: string): boolean {
+  if (method === "GET" && pathname.startsWith("/api/") && pathname !== "/api/status") return true;
+  return isOperatorMutation(method, pathname);
 }
 
 function authorizePlacementDelivery(
@@ -676,7 +671,7 @@ export async function handleApiRequest(
     // Loopback is not an authorization boundary: Placement agents can execute
     // shell commands and reach localhost. Operator mutations require a secret
     // kept outside the agent process whenever Placement mode is enabled.
-    if (context.getConfig().placements?.length && isOperatorMutation(method, pathname) && !operatorAuthorized(req)) {
+    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthorized(req)) {
       return json(res, { error: "operator authorization required" }, 403);
     }
 

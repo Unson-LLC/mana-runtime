@@ -1,3 +1,5 @@
+import { operatorToken } from "./operator-auth";
+
 export interface TranscriptContentBlock {
   type: 'text' | 'tool_use' | 'tool_result' | 'thinking'
   text?: string
@@ -60,11 +62,8 @@ const BASE =
     ? window.location.origin
     : "http://127.0.0.1:7777";
 
-const OPERATOR_TOKEN_STORAGE_KEY = "openryoko.operatorToken";
-
 function operatorHeaders(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  const token = window.localStorage.getItem(OPERATOR_TOKEN_STORAGE_KEY);
+  const token = operatorToken();
   return token ? { "x-openryoko-operator-token": token } : {};
 }
 
@@ -80,7 +79,7 @@ async function extractErrorMessage(res: Response): Promise<string> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: operatorHeaders() });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
   return res.json();
 }

@@ -96,7 +96,7 @@ placements:
 
 環境固有IDはInfisicalラッパーが完成済みYAMLへ投影する。OpenRyokoの`loadConfig`自体は`${VAR}`を展開しないため、placeholderを含むYAMLを直接置かない。secretはProfileへ含めず、従来どおりプロセス環境へ注入する。
 
-Placementを1件以上設定する場合、localhostの管理APIも信頼しない。Gatewayプロセスにはoperator tokenそのものではなくSHA-256だけを`OPENRYOKO_OPERATOR_TOKEN_SHA256`として注入し、UIブラウザには元tokenを`localStorage["openryoko.operatorToken"]`へ設定する。UIのPOST/PUT/PATCH/DELETEは`x-openryoko-operator-token`を付け、Gatewayがhashを比較する。元tokenをGateway設定、ログ、Claude子プロセスへ渡してはならない。hash未設定時は管理mutationをfail closedにする。
+Placementを1件以上設定する場合、localhostの管理APIとWebSocketも信頼しない。Gatewayプロセスにはoperator tokenそのものではなくSHA-256だけを`OPENRYOKO_OPERATOR_TOKEN_SHA256`として注入し、UIブラウザには元tokenを`localStorage["openryoko.operatorToken"]`へ設定する。UIは管理mutationと`/api/status`以外のread APIへ`x-openryoko-operator-token`を付け、Gatewayがhashを比較する。`/ws`と`/ws/pty/:sessionId`はURLへtokenを含めず、WebSocket subprotocol metadataで同じtokenを提示する。元tokenをGateway設定、ログ、Claude子プロセスへ渡してはならない。hash未設定時はこれらのcontrol-plane操作をfail closedにする。Placement未設定のlegacy modeでは従来動作を保つ。
 
 Discord remote proxyは別のservice principalであり、`connectors.discord.proxyToken`をremoteとprimaryへ同一secretとして注入する。Placement有効時、missing/wrong tokenのproxy送信は拒否し、設定APIは`proxyToken`を常に`***`へ置換する。これはoperator tokenの代替ではない。
 
