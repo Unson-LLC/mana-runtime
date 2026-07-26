@@ -32,9 +32,9 @@ spec_docs:
 
 ## Scenarios
 
-- S-001: Given placementsが設定されているとき、Slackイベントを受信すると、connector、workspace、channel、userが一致する一意なPlacementへルーティングする。
-- S-002: Given placementsが設定されているとき、未登録channel、許可外user、または複数のPlacementに一致するSlackイベントを受信すると、エージェント実行前に拒否する。
-- S-003: Given Placementが適用されているとき、`send_message`が許可先以外のconnectorまたはchannelを指定すると、Gateway APIを呼ぶ前に拒否する。
+- `PLACEMENT-STORY-S-001`: Given placementsが設定されているとき、Slackイベントを受信すると、connector、workspace、channel、userが一致する一意なPlacementへルーティングする。
+- `PLACEMENT-STORY-S-002`: Given placementsが設定されているとき、未登録channel、許可外user、または複数のPlacementに一致するSlackイベントを受信すると、エージェント実行前に拒否する。
+- `PLACEMENT-STORY-S-003`: Given Placementが適用されているとき、`send_message`が許可先以外のconnectorまたはchannelを指定すると、Gateway APIを呼ぶ前に拒否する。
 
 ## Done Evidence
 

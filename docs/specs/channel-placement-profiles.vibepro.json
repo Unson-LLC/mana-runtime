@@ -17,6 +17,7 @@
     {
       "id": "S-PLACEMENT-MATCH",
       "type": "scenario",
+      "story_scenario_ids": ["PLACEMENT-STORY-S-001"],
       "statement": "placements設定時にSlackイベントを受けるとconnector workspace channel userが一致する一意なPlacementへルーティングする",
       "rationale": "チャンネル配置を実行境界にするため",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
@@ -25,6 +26,7 @@
     {
       "id": "S-PLACEMENT-DENY",
       "type": "scenario",
+      "story_scenario_ids": ["PLACEMENT-STORY-S-002"],
       "statement": "未登録チャンネルまたは許可外userまたは複数一致するSlackイベントを受けるとエージェント実行前に拒否する",
       "rationale": "認可をfail closedにするため",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
@@ -84,6 +86,7 @@
     {
       "id": "S-PLACEMENT-DELIVERY",
       "type": "scenario",
+      "story_scenario_ids": ["PLACEMENT-STORY-S-003"],
       "statement": "send_messageがPlacementの許可先以外を指定するとGateway APIを呼ぶ前に拒否する",
       "rationale": "対象チャンネル外への外部送信を防ぐため",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 7 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
