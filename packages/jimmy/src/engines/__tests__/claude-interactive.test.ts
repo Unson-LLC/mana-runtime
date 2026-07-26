@@ -7,7 +7,35 @@ import { describe, it, expect, vi } from "vitest";
 // focused and CI-portable.
 vi.mock("node-pty", () => ({ spawn: vi.fn() }));
 
-import { TurnResolver, buildInteractiveArgs, isNativeClaudeCommand } from "../claude-interactive.js";
+import {
+  TurnResolver,
+  applyInteractiveDuration,
+  buildInteractiveArgs,
+  isNativeClaudeCommand,
+} from "../claude-interactive.js";
+
+describe("interactive Claude duration", () => {
+  it("fills a missing Stop-hook duration from the measured turn boundary", () => {
+    const result = applyInteractiveDuration(
+      { sessionId: "s1", result: "done" },
+      1_000,
+      1_275,
+    );
+
+    expect(result.durationMs).toBe(275);
+    expect(result.durationMs).toBeGreaterThan(0);
+  });
+
+  it("preserves an authoritative duration already supplied by the result", () => {
+    const result = applyInteractiveDuration(
+      { sessionId: "s1", result: "done", durationMs: 42 },
+      1_000,
+      1_275,
+    );
+
+    expect(result.durationMs).toBe(42);
+  });
+});
 
 describe("interactive Claude permission mode", () => {
   const base = { prompt: "investigate", settingsPath: "/tmp/settings.json" };

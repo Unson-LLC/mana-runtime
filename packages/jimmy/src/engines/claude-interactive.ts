@@ -488,6 +488,16 @@ function pasteAndSubmit(proc: pty.IPty, text: string): void {
   setTimeout(() => proc.write("\r"), 150);
 }
 
+/** Populate the shared engine duration when Interactive Claude's Stop hook omits it. */
+export function applyInteractiveDuration(
+  result: EngineResult,
+  startedAtMs: number,
+  endedAtMs = Date.now(),
+): EngineResult {
+  result.durationMs ??= endedAtMs - startedAtMs;
+  return result;
+}
+
 export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngine {
   name = "claude" as const;
   /** Active turn resolvers keyed by Jinn session id. `boundProc` is the specific
@@ -776,6 +786,10 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // wait/retry/fallback machinery engages exactly as it does for `claude -p`.
     const rl = rateLimitFromStopFailure(resolver.stopFailure);
     if (rl) result.rateLimit = rl;
+    // Interactive Stop hooks do not expose Claude's `duration_ms`, unlike the
+    // headless JSON result event. Preserve a truthful wall-clock duration so
+    // session logs and parent callbacks do not report a successful turn as 0ms.
+    applyInteractiveDuration(result, turnStartedAtMs);
     return result;
   }
 
