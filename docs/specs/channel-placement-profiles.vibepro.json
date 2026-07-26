@@ -159,9 +159,9 @@
       "rationale": "同一ホストのcontrol-planeを通常のGateway操作から分離するため",
       "inherited_behaviors": [
         {
-          "condition": "!cancelled",
+          "condition": "config.placements?.length && isOperatorProtectedRequest",
           "classification": "unchanged",
-          "files": ["packages/web/src/app/settings/page.tsx"]
+          "files": ["packages/jimmy/src/gateway/api.ts"]
         }
       ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 12 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
