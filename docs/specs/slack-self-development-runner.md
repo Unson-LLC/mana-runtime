@@ -13,6 +13,8 @@ developmentRunner:
     - ryoko-dev
     - /usr/local/libexec/openryoko-development-runner
   timeoutMs: 5400000
+  allowedSlackChannels:
+    - C0A2L9FEKEJ # mana テスト
 ```
 
 `bin` must be absolute. Arguments are fixed configuration and must not contain newlines or NUL bytes. The request is encoded as one JSON line on stdin:
@@ -31,13 +33,14 @@ Raw stdout, stderr, prompts, transcripts, tokens, and arbitrary URLs are never r
 
 ```mermaid
 flowchart LR
-  A[Allowlisted Slack user] --> B[OpenRyoko /develop]
-  B --> C[Fixed sudo command]
-  C --> D[ryoko-dev runner]
-  D --> E[Dedicated Git worktree]
-  E --> F[VibePro guarded run]
-  F --> G[Validated JSON result]
-  G --> A
+  A[Allowlisted Slack user] --> B[Slack /ryoko-develop]
+  B --> C[Normalize to internal /develop]
+  C --> D[Fixed sudo command]
+  D --> E[ryoko-dev runner]
+  E --> F[Dedicated Git worktree]
+  F --> G[VibePro guarded run]
+  G --> H[Validated JSON result]
+  H --> A
 ```
 
 ## Threat model
@@ -55,16 +58,18 @@ flowchart LR
 
 ## Explicit scenarios
 
-1. When the feature is absent or disabled, `/develop` returns disabled and starts no process.
+1. When the feature is absent or disabled, `/ryoko-develop` returns disabled and starts no process.
 2. A non-Slack connector does not expose `/develop` and starts no process.
 3. An empty request returns usage guidance and starts no process.
-4. A request longer than 8000 characters is rejected before process creation.
-5. A second request while one is active is rejected rather than silently queued, including across gateway restarts.
-6. A valid request is sent as one JSON line on stdin to an absolute executable with fixed arguments.
-7. The child environment contains only runtime essentials and does not inherit Slack credentials.
-8. Oversized, malformed, foreign-URL, extra-field, timed-out, or non-zero results become a generic safe failure.
-9. Timeout sends termination to the child process group, waits for close, then escalates to `SIGKILL` if required.
-10. A successful guarded run returns a Story ID and `pr_ready` without creating, merging, or deploying a PR.
+4. An unauthorized Slack user receives an ephemeral denial before channel or user lookups. An absent or empty `allowFrom` fails closed for development.
+5. An allowed user outside `allowedSlackChannels` receives an ephemeral denial before lookups or dispatch. An absent or empty allowlist fails closed.
+6. A request longer than 8000 characters is rejected before process creation.
+7. A second request while one is active is rejected rather than silently queued, including across gateway restarts.
+8. A valid request is sent as one JSON line on stdin to an absolute executable with fixed arguments.
+9. The child environment contains only runtime essentials and does not inherit Slack credentials.
+10. Oversized, malformed, foreign-URL, extra-field, timed-out, or non-zero results become a generic safe failure.
+11. Timeout sends termination to the child process group, waits for close, then escalates to `SIGKILL` if required.
+12. A successful guarded run returns a Story ID and `pr_ready` without creating, merging, or deploying a PR.
 
 ## Current reality, invariants, and done evidence
 

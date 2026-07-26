@@ -4,7 +4,8 @@
 
 ```text
 Slack allowlisted user
-  -> OpenRyoko /develop command (ryoko, read-only runtime)
+  -> Slack native /ryoko-develop command (Socket Mode)
+  -> OpenRyoko internal /develop command (ryoko, read-only runtime)
   -> root-owned fixed sudo wrapper
   -> VibePro runner (ryoko-dev, one repository, one worktree per Story)
   -> machine-readable result
@@ -15,7 +16,12 @@ The gateway never executes a shell assembled from Slack text. It starts one abso
 
 The development runner owns GitHub and Claude credentials scoped to its Unix account. It may change only its development clone and worktrees. The runtime checkout remains detached and is updated only by the existing reviewed deployment path.
 
-`/develop` is recognized only for the Slack connector. The gateway's in-memory
+`/ryoko-develop` is registered as a Slack-native command and received through
+the existing Socket Mode connection, so no public HTTP endpoint is required.
+The connector acknowledges Slack immediately, checks `allowFrom` and the
+fail-closed `developmentRunner.allowedSlackChannels`, and converts
+the payload to the internal `/develop` command. `/develop` remains recognized
+only inside the gateway for the Slack connector. The gateway's in-memory
 busy flag provides immediate feedback; the runner's atomic lock directory under
 `/home/ryoko-dev` is the authoritative cross-restart single-flight boundary.
 

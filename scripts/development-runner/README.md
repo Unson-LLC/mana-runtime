@@ -36,6 +36,8 @@ developmentRunner:
     - ryoko-dev
     - /usr/local/libexec/openryoko-development-runner
   timeoutMs: 5400000
+  allowedSlackChannels:
+    - C0A2L9FEKEJ # mana テスト
 ```
 
 The only required sudoers rule is:
@@ -48,8 +50,13 @@ Use `origin/main` as `baseRef` after the current pilot branch has merged. Until
 then, set the explicit reviewed pilot branch in the root-owned config so the
 development worktree contains the code that is actually running.
 
+`allowedSlackChannels` is a required fail-closed boundary for both the native
+command and the internal compatibility route. An absent or empty list permits
+no development command.
+
 Validate with a docs-only request while `enabled: false`, then enable, restart
-the gateway, submit one `/develop` request from an allowlisted Slack user, and
+the gateway, submit one `/ryoko-develop` request from an allowlisted Slack user in
+an allowed channel, and
 confirm that the runtime checkout remains clean and unchanged. VibePro stops at
 `pr_ready`; PR creation, merge, and deployment remain human actions.
 

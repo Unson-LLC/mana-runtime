@@ -1351,8 +1351,12 @@ export class SessionManager {
         await connector.replyMessage(target, "Development runner is disabled.");
         return true;
       }
+      if (!config.allowedSlackChannels?.includes(msg.channel)) {
+        await connector.replyMessage(target, "Development tasks are not enabled in this channel.");
+        return true;
+      }
       if (!request) {
-        await connector.replyMessage(target, "Usage: /develop <request>");
+        await connector.replyMessage(target, "Usage: /ryoko-develop <request>");
         return true;
       }
       if (this.developmentRunning) {

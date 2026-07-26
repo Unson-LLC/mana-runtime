@@ -67,6 +67,13 @@ function buildSlackManifest(botName?: string | null): string {
             { title: "What can you do?", message: "What can you help me with?" },
           ],
         },
+        slash_commands: [
+          {
+            command: "/ryoko-develop",
+            description: "Start an isolated VibePro development task",
+            should_escape: true,
+          },
+        ],
       },
       oauth_config: {
         scopes: {
@@ -79,6 +86,7 @@ function buildSlackManifest(botName?: string | null): string {
             "channels:read",
             "chat:write",
             "chat:write.customize",
+            "commands",
             "files:read",
             "files:write",
             "groups:history",

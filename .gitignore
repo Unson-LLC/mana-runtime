@@ -12,3 +12,6 @@ dist/
 # Jinn runtime dir (safety: never commit tokens)
 .jinn/
 /docs
+.vibepro/*
+!.vibepro/config.json
+.worktrees/vibepro/

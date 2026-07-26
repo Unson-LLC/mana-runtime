@@ -573,6 +573,8 @@ export interface DevelopmentRunnerConfig {
   args?: string[];
   /** Maximum wall time for one request. Default: 90 minutes. */
   timeoutMs?: number;
+  /** Slack channel IDs allowed to start development. Empty or absent fails closed. */
+  allowedSlackChannels?: string[];
 }
 
 export interface PlacementDeliveryTarget {

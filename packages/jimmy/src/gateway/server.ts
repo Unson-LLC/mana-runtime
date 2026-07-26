@@ -372,6 +372,8 @@ export async function startGateway(
             goalInjectionEnabled: (slackConfig.employee
               ? employeeRegistry.get(slackConfig.employee)?.engine
               : cfg.engines.default) === "claude",
+            developmentRunnerEnabled: cfg.developmentRunner?.enabled === true,
+            developmentRunnerAllowedChannels: cfg.developmentRunner?.allowedSlackChannels,
           },
         );
         slack.onMessage((msg) => {
@@ -676,6 +678,8 @@ export async function startGateway(
                 operatorName: freshConfig.portal?.operatorName,
                 operatorAliases: freshConfig.portal?.operatorAliases,
                 goalInjectionEnabled: (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
+                developmentRunnerEnabled: freshConfig.developmentRunner?.enabled === true,
+                developmentRunnerAllowedChannels: freshConfig.developmentRunner?.allowedSlackChannels,
               });
               slack.onMessage((msg) => {
                 const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);
