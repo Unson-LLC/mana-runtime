@@ -30,21 +30,26 @@ export function placementConfigRevision(placements: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(placements ?? [])).digest("hex").slice(0, 16);
 }
 
+function safeMetadata(value: string | undefined): string | null {
+  if (!value) return null;
+  return value.replace(/[\r\n\t]/g, " ").slice(0, 256);
+}
+
 /** Emit a secret-safe, machine-readable authorization decision. Never accepts bodies, prompts, or tokens. */
 export function emitSecurityEvent(input: SecurityEventInput): void {
   const event = {
     event: input.event,
     decision: input.decision ?? "deny",
     reason: input.reason,
-    placementId: input.placementId,
-    connector: input.connector,
-    workspaceId: input.workspaceId,
-    channelId: input.channelId,
-    actorId: hashSecurityIdentifier(input.actorId),
-    sessionId: input.sessionId,
-    capability: input.capability,
-    target: input.target,
-    configRevision: input.configRevision,
+    placementId: safeMetadata(input.placementId),
+    connector: safeMetadata(input.connector),
+    workspaceId: safeMetadata(input.workspaceId),
+    channelId: safeMetadata(input.channelId),
+    actorId: hashSecurityIdentifier(input.actorId) ?? null,
+    sessionId: safeMetadata(input.sessionId),
+    capability: safeMetadata(input.capability),
+    target: safeMetadata(input.target),
+    configRevision: safeMetadata(input.configRevision),
     timestamp: new Date().toISOString(),
   };
   logger.warn(`security_event ${JSON.stringify(event)}`);

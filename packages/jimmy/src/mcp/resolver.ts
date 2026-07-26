@@ -42,6 +42,10 @@ export function resolveMcpServers(
 
   if (employeeMcp === false) {
     // Employee explicitly opted out of all MCP servers
+    for (const name of Object.keys(available)) {
+      emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
+        connector: sessionContext?.connector, channelId: sessionContext?.channel, capability: "mcp", target: name });
+    }
     return { mcpServers: {} };
   }
 
@@ -54,6 +58,12 @@ export function resolveMcpServers(
         emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
           connector: sessionContext?.connector, channelId: sessionContext?.channel, capability: "mcp", target: name });
         logger.warn(`Employee ${employee?.name} requests MCP server "${name}" but it's not configured`);
+      }
+    }
+    for (const name of Object.keys(available)) {
+      if (!employeeMcp.includes(name)) {
+        emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
+          connector: sessionContext?.connector, channelId: sessionContext?.channel, capability: "mcp", target: name });
       }
     }
   } else {

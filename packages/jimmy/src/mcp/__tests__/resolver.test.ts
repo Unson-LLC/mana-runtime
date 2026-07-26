@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveMcpServers } from "../resolver.js";
 import type { JinnConfig, McpServerStdioConfig } from "../../shared/types.js";
+import { logger } from "../../shared/logger.js";
 
 describe("resolveMcpServers", () => {
   it("passes current conversation context to the gateway MCP server", () => {
@@ -53,7 +54,24 @@ describe("resolveMcpServers", () => {
   });
 
   it("denies all MCP servers when a placement omits MCP capability", () => {
-    const config = { gateway: { enabled: true } } satisfies JinnConfig["mcp"];
-    expect(resolveMcpServers(config, undefined, undefined, false).mcpServers).toEqual({});
+    const config = { gateway: { enabled: true }, browser: { enabled: false } } satisfies JinnConfig["mcp"];
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    expect(resolveMcpServers(config, undefined, { sessionId: "S1", connector: "slack", channel: "C1" }, false).mcpServers).toEqual({});
+    const event = warn.mock.calls.map(([message]) => message).find((message) => message.startsWith("security_event "))!;
+    expect(JSON.parse(event.slice("security_event ".length))).toMatchObject({
+      event: "capability", reason: "mcp_denied", sessionId: "S1", connector: "slack", channelId: "C1", target: "gateway",
+    });
+    warn.mockRestore();
+  });
+
+  it("records globally available MCP servers excluded by a placement allowlist", () => {
+    const config = { gateway: { enabled: true }, fetch: { enabled: true } } satisfies JinnConfig["mcp"];
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    expect(Object.keys(resolveMcpServers(config, undefined, { sessionId: "S2" }, ["gateway"]).mcpServers)).toEqual(["gateway"]);
+    const events = warn.mock.calls.map(([message]) => message)
+      .filter((message) => message.startsWith("security_event "))
+      .map((message) => JSON.parse(message.slice("security_event ".length)));
+    expect(events).toContainEqual(expect.objectContaining({ reason: "mcp_denied", sessionId: "S2", target: "fetch" }));
+    warn.mockRestore();
   });
 });

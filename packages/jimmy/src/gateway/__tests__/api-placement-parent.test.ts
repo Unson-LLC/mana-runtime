@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Session } from "../../shared/types.js";
 import {
   authorizeDerivedSessionRequest,
@@ -7,6 +7,7 @@ import {
   resolveRequestedParentSession,
 } from "../api.js";
 import { getSessionDelegationToken } from "../../sessions/delegation-auth.js";
+import { logger } from "../../shared/logger.js";
 
 function makeSession(id: string): Session {
   return {
@@ -85,6 +86,7 @@ describe("placement inheritance for derived sessions", () => {
   });
 
   it("rejects a provider outside the parent placement", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     expect(resolveDerivedPlacement(
       { placements: [placement] },
       makeSession("parent-1"),
@@ -92,14 +94,19 @@ describe("placement inheritance for derived sessions", () => {
     )).toEqual({
       error: 'employee "unscoped-employee" is not allowed by placement "pilot"',
     });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"reason":"employee_denied"'));
+    warn.mockRestore();
   });
 
   it("fails closed when the parent placement is no longer configured", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     expect(resolveDerivedPlacement(
       { placements: [] },
       makeSession("parent-1"),
       "reviewer",
     )).toEqual({ error: 'parent placement "pilot" is not configured' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"reason":"placement_missing_after_config_change"'));
+    warn.mockRestore();
   });
 });
 

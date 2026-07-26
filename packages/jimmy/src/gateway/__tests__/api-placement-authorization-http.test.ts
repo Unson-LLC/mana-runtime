@@ -14,6 +14,7 @@ import type { Connector, JinnConfig } from "../../shared/types.js";
 import { handleApiRequest } from "../api.js";
 import { createSession, getSession, initDb, updateSession } from "../../sessions/registry.js";
 import { CURRENT_SESSION_HEADER, getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "../../sessions/delegation-auth.js";
+import { logger } from "../../shared/logger.js";
 
 describe("placement authorization at HTTP derived-session endpoints", () => {
   let baseUrl = "";
@@ -229,6 +230,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
   });
 
   it("allows only an authenticated placement delivery target on the direct connector route", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     const token = getSessionDelegationToken(parentId);
     const allowed = await post("/api/connectors/slack/send", { channel: "C1", text: "allowed" }, token, parentId);
     expect(allowed.status).toBe(200);
@@ -244,16 +246,31 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     expect(signedLegacy.status).toBe(403);
     await expect(signedLegacy.json()).resolves.toEqual({ error: "session is not bound to a placement" });
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    const events = warn.mock.calls.map(([message]) => message)
+      .filter((message) => message.startsWith("security_event "))
+      .map((message) => JSON.parse(message.slice("security_event ".length)));
+    expect(events).toContainEqual(expect.objectContaining({ reason: "delivery_denied", placementId: "pilot", sessionId: parentId, target: "slack:C2" }));
+    expect(events).toContainEqual(expect.objectContaining({ reason: "delivery_denied", placementId: null, sessionId: null }));
+    warn.mockRestore();
   });
 
   it("enforces the placement gateway tool policy on direct delivery", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     config.placements![0].capabilities!.gatewayTools = [];
     try {
       const response = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(parentId), parentId);
       expect(response.status).toBe(403);
       await expect(response.json()).resolves.toEqual({ error: "send_message is not allowed by placement" });
+      const event = warn.mock.calls.map(([message]) => message)
+        .filter((message) => message.startsWith("security_event "))
+        .map((message) => JSON.parse(message.slice("security_event ".length)))
+        .find((candidate) => candidate.reason === "gateway_tool_denied");
+      expect(event).toMatchObject({
+        reason: "gateway_tool_denied", placementId: "pilot", sessionId: parentId, capability: "gateway_tool:send_message",
+      });
     } finally {
       config.placements![0].capabilities!.gatewayTools = ["send_message"];
+      warn.mockRestore();
     }
   });
 
@@ -346,6 +363,25 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     const response = await post(pathFor(parentId), { ...body, parentSessionId: parentId }, getSessionDelegationToken("other-parent"));
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "invalid parent session authorization" });
+  });
+
+  it("records missing parent rejection on child and cross-request APIs", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const child = await post("/api/sessions/missing-parent/children", { prompt: "review" });
+    expect(child.status).toBe(404);
+    const cross = await post("/api/org/cross-request", {
+      fromEmployee: "ryoko", service: "review", prompt: "review", parentSessionId: "missing-parent",
+    });
+    expect(cross.status).toBe(400);
+    const events = warn.mock.calls.map(([message]) => message)
+      .filter((message) => message.startsWith("security_event "))
+      .map((message) => JSON.parse(message.slice("security_event ".length)))
+      .filter((event) => event.reason === "parent_missing");
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: "missing-parent", capability: "child_execution" }),
+      expect.objectContaining({ sessionId: "missing-parent", capability: "cross_request" }),
+    ]));
+    warn.mockRestore();
   });
 
   it.each([

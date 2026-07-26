@@ -65,7 +65,7 @@ import {
   verifySessionDelegationToken,
 } from "../sessions/delegation-auth.js";
 import { constantTimeEqual, OPERATOR_TOKEN_HEADER, verifyOperatorToken } from "./operator-auth.js";
-import { emitSecurityEvent } from "../shared/security-events.js";
+import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -149,21 +149,29 @@ function authorizePlacementDelivery(
   target: Target | undefined,
 ): { ok: true } | { ok: false; error: string } {
   const sessionId = currentSessionId(req);
+  const config = context.getConfig();
+  const configRevision = placementConfigRevision(config.placements);
+  const deny = (reason: "gateway_tool_denied" | "delivery_denied", error: string, placementId?: string) => {
+    emitSecurityEvent({ event: "capability", reason, placementId, connector, channelId: target?.channel,
+      sessionId, capability: reason === "gateway_tool_denied" ? "gateway_tool:send_message" : "delivery",
+      target: target?.channel ? `${connector}:${target.channel}` : connector, configRevision });
+    return { ok: false as const, error };
+  };
   const session = sessionId ? getSession(sessionId) : undefined;
   if (!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req))) {
-    return { ok: false, error: "invalid session authorization" };
+    return deny("delivery_denied", "invalid session authorization");
   }
   const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
-  if (typeof placementId !== "string") return { ok: false, error: "session is not bound to a placement" };
-  const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
+  if (typeof placementId !== "string") return deny("delivery_denied", "session is not bound to a placement");
+  const placement = config.placements?.find((candidate) => candidate.id === placementId);
   if (!placement || !placementAllowsGatewayTool(placement, "send_message")) {
-    return { ok: false, error: "send_message is not allowed by placement" };
+    return deny("gateway_tool_denied", "send_message is not allowed by placement", placementId);
   }
   const channel = target?.channel;
   const allowed = typeof channel === "string" && (placement.capabilities?.allowedDelivery?.length
     ? placementDeliveryTargets(placement).some((candidate) => candidate.connector === connector && candidate.channel === channel)
     : placement.connector === connector && placement.channelId === channel);
-  return allowed ? { ok: true } : { ok: false, error: "delivery target is not allowed by placement" };
+  return allowed ? { ok: true } : deny("delivery_denied", "delivery target is not allowed by placement", placementId);
 }
 
 export function resolveRequestedParentSession(
@@ -190,8 +198,16 @@ export function resolveDerivedPlacement(
   const placementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
   if (typeof placementId !== "string") return {};
   const placement = config.placements?.find((candidate) => candidate.id === placementId);
-  if (!placement) return { error: `parent placement "${placementId}" is not configured` };
+  if (!placement) {
+    emitSecurityEvent({ event: "placement_resolution", reason: "placement_missing_after_config_change",
+      placementId, sessionId: parentSession.id, capability: "derived_session",
+      configRevision: placementConfigRevision(config.placements) });
+    return { error: `parent placement "${placementId}" is not configured` };
+  }
   if (employee && !isPlacementEmployeeAllowed(placement, employee)) {
+    emitSecurityEvent({ event: "derived_session", reason: "employee_denied", placementId,
+      sessionId: parentSession.id, capability: "derived_session", target: employee,
+      configRevision: placementConfigRevision(config.placements) });
     return { error: `employee "${employee}" is not allowed by placement "${placement.id}"` };
   }
   return { placement };
@@ -1078,9 +1094,15 @@ export async function handleApiRequest(
       );
       const parentSession = parentResolution.parentSession;
       if (parentResolution.urlBound && parentResolution.missing) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_missing",
+          sessionId: parentResolution.parentSessionId, capability: "child_execution",
+          configRevision: placementConfigRevision(context.getConfig().placements) });
         return notFound(res);
       }
       if (parentResolution.missing) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_missing",
+          sessionId: parentResolution.parentSessionId, capability: "child_execution",
+          configRevision: placementConfigRevision(context.getConfig().placements) });
         return badRequest(res, "parentSessionId not found");
       }
       if (parentSession && !authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
@@ -1445,7 +1467,11 @@ export async function handleApiRequest(
         return badRequest(res, "Missing required fields: fromEmployee, service, prompt, parentSessionId");
       }
       const parentSession = getSession(parentSessionId);
-      if (!parentSession) return badRequest(res, "parentSessionId not found");
+      if (!parentSession) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_missing", sessionId: parentSessionId,
+          capability: "cross_request", configRevision: placementConfigRevision(context.getConfig().placements) });
+        return badRequest(res, "parentSessionId not found");
+      }
       if (!authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
         emitSecurityEvent({ event: "derived_session", reason: "parent_token_invalid", placementId:
           String((parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId ?? "") || undefined,
