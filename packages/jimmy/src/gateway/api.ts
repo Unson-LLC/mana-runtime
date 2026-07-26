@@ -114,7 +114,7 @@ export interface ApiContext {
 
 function placementAllowsGatewayTool(placement: PlacementProfile, tool: string): boolean {
   const allowed = placement.capabilities?.gatewayTools;
-  return allowed === undefined || allowed.includes(tool);
+  return Array.isArray(allowed) && allowed.includes(tool);
 }
 
 function constantTimeEqual(expected: string | undefined, received: string | undefined): boolean {
@@ -122,6 +122,28 @@ function constantTimeEqual(expected: string | undefined, received: string | unde
   const expectedBuffer = Buffer.from(expected);
   const receivedBuffer = Buffer.from(received);
   return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+const OPERATOR_TOKEN_HEADER = "x-openryoko-operator-token";
+
+function operatorAuthorized(req: HttpRequest): boolean {
+  const raw = req.headers[OPERATOR_TOKEN_HEADER];
+  const received = Array.isArray(raw) ? raw[0] : raw;
+  if (!received) return false;
+  const receivedHash = crypto.createHash("sha256").update(received).digest("hex");
+  return constantTimeEqual(process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256, receivedHash);
+}
+
+function isOperatorMutation(method: string, pathname: string): boolean {
+  if (!pathname.startsWith("/api/") || !["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
+  // These routes enforce a separate hook, service-principal, or placement-session credential.
+  if (pathname === "/api/internal/hook") return false;
+  if (matchRoute("/api/connectors/:id/incoming", pathname)) return false;
+  if (matchRoute("/api/connectors/:id/proxy", pathname)) return false;
+  if (matchRoute("/api/connectors/:name/send", pathname)) return false;
+  if (pathname === "/api/sessions" || matchRoute("/api/sessions/:id/children", pathname)) return false;
+  if (pathname === "/api/org/cross-request") return false;
+  return true;
 }
 
 function authorizePlacementDelivery(
@@ -136,7 +158,7 @@ function authorizePlacementDelivery(
     return { ok: false, error: "invalid session authorization" };
   }
   const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
-  if (typeof placementId !== "string") return { ok: true };
+  if (typeof placementId !== "string") return { ok: false, error: "session is not bound to a placement" };
   const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
   if (!placement || !placementAllowsGatewayTool(placement, "send_message")) {
     return { ok: false, error: "send_message is not allowed by placement" };
@@ -494,7 +516,7 @@ function serverError(res: ServerResponse, message: string): void {
   json(res, { error: message }, 500);
 }
 
-const SANITIZED_KEYS = new Set(["token", "botToken", "signingSecret", "appToken"]);
+const SANITIZED_KEYS = new Set(["token", "botToken", "signingSecret", "appToken", "proxyToken"]);
 
 export function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
   const result = { ...target };
@@ -649,6 +671,13 @@ export async function handleApiRequest(
         }
       }
       return json(res, { ok: result.status === 200 }, result.status);
+    }
+
+    // Loopback is not an authorization boundary: Placement agents can execute
+    // shell commands and reach localhost. Operator mutations require a secret
+    // kept outside the agent process whenever Placement mode is enabled.
+    if (context.getConfig().placements?.length && isOperatorMutation(method, pathname) && !operatorAuthorized(req)) {
+      return json(res, { error: "operator authorization required" }, 403);
     }
 
     // GET /api/status
@@ -1010,6 +1039,10 @@ export async function handleApiRequest(
         return json(res, { error: "invalid parent session authorization" }, 403);
       }
       const config = context.getConfig();
+      const parentPlacementId = (parentSession?.transportMeta as Record<string, unknown> | undefined)?.placementId;
+      if (config.placements?.length && typeof parentPlacementId !== "string" && !operatorAuthorized(req)) {
+        return json(res, { error: "operator authorization required" }, 403);
+      }
       const placementResolution = parentSession
         ? resolveDerivedPlacement(config, parentSession, body.employee)
         : {};
@@ -1363,6 +1396,12 @@ export async function handleApiRequest(
         return json(res, { error: "invalid parent session authorization" }, 403);
       }
 
+      const config = context.getConfig();
+      const parentPlacementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+      if (config.placements?.length && typeof parentPlacementId !== "string" && !operatorAuthorized(req)) {
+        return json(res, { error: "operator authorization required" }, 403);
+      }
+
       const { scanOrg } = await import("./org.js");
       const { resolveOrgHierarchy } = await import("./org-hierarchy.js");
       const { buildServiceRegistry, buildRoutePath, resolveManagerChain } = await import("./services.js");
@@ -1392,7 +1431,6 @@ ${prompt}
 ---
 Handle this as a priority request from a colleague.`;
 
-      const config = context.getConfig();
       const placementResolution = resolveDerivedPlacement(config, parentSession, entry.provider.name);
       if (placementResolution.error) return badRequest(res, placementResolution.error);
       const placement = placementResolution.placement;
@@ -1603,6 +1641,7 @@ Handle this as a priority request from a colleague.`;
             signingSecret: inst?.signingSecret ? "***" : undefined,
             botToken: inst?.botToken ? "***" : undefined,
             appToken: inst?.appToken ? "***" : undefined,
+            proxyToken: inst?.proxyToken ? "***" : undefined,
           }));
         } else if (v && typeof v === "object") {
           sanitizedConnectors[k] = {
@@ -1611,6 +1650,7 @@ Handle this as a priority request from a colleague.`;
             signingSecret: (v as any)?.signingSecret ? "***" : undefined,
             botToken: (v as any)?.botToken ? "***" : undefined,
             appToken: (v as any)?.appToken ? "***" : undefined,
+            proxyToken: (v as any)?.proxyToken ? "***" : undefined,
           };
         } else {
           sanitizedConnectors[k] = v;
@@ -1780,6 +1820,12 @@ Handle this as a priority request from a colleague.`;
       // Try the exact instance id first, then fall back to "discord" for the legacy path
       const connector = context.connectors.get(params.id) ?? (params.id === "discord" ? context.connectors.get("discord") : undefined);
       if (!connector) return notFound(res);
+      if (context.getConfig().placements?.length && !constantTimeEqual(
+        context.getConfig().connectors.discord?.proxyToken,
+        req.headers["x-jinn-connector-proxy-token"] as string | undefined,
+      )) {
+        return json(res, { error: "invalid connector service authorization" }, 403);
+      }
       if (!("deliverMessage" in connector)) {
         return json(res, { error: "Discord connector is not in remote mode" }, 400);
       }
@@ -1844,7 +1890,7 @@ Handle this as a priority request from a colleague.`;
         context.getConfig().connectors.discord?.proxyToken,
         req.headers["x-jinn-connector-proxy-token"] as string | undefined,
       );
-      if (context.getConfig().placements?.length && !serviceAuthorized) {
+      if (context.getConfig().placements?.length && !serviceAuthorized && !operatorAuthorized(req)) {
         const authorization = authorizePlacementDelivery(context, req, params.id, target);
         if (!authorization.ok) return json(res, { error: authorization.error }, 403);
       }
@@ -1900,7 +1946,7 @@ Handle this as a priority request from a colleague.`;
           && notifications?.connector === params.name
           && notifications?.channel === body.channel;
         if (!authorized) return json(res, { error: "invalid notification authorization" }, 403);
-      } else if (context.getConfig().placements?.length) {
+      } else if (context.getConfig().placements?.length && !operatorAuthorized(req)) {
         const authorization = authorizePlacementDelivery(context, req, params.name, { channel: body.channel, thread: body.thread });
         if (!authorization.ok) return json(res, { error: authorization.error }, 403);
       }
@@ -2532,7 +2578,7 @@ async function runWebSession(
       sessionId: currentSession.id,
       connector: "web",
       channel: currentSession.sourceRef,
-      allowedGatewayTools: placement?.capabilities?.gatewayTools ?? [],
+      allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
       allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
     }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
     if (Object.keys(mcpConfig.mcpServers).length > 0) {

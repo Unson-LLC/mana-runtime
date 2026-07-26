@@ -573,7 +573,7 @@ export class SessionManager {
           connector: connector.name,
           channel: target.channel,
           thread: target.thread || target.messageTs,
-          allowedGatewayTools: placement?.capabilities?.gatewayTools ?? [],
+          allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
           allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
         }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
         if (Object.keys(mcpConfig.mcpServers).length > 0) {

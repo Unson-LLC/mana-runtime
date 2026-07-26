@@ -656,6 +656,7 @@ export default function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const [configError, setConfigError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [operatorToken, setOperatorToken] = useState("")
   const [feedback, setFeedback] = useState<{
     type: "success" | "error"
     message: string
@@ -741,8 +742,15 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
+    setOperatorToken(localStorage.getItem("openryoko.operatorToken") ?? "")
     loadConfig()
   }, [])
+
+  function updateOperatorToken(value: string) {
+    setOperatorToken(value)
+    if (value) localStorage.setItem("openryoko.operatorToken", value)
+    else localStorage.removeItem("openryoko.operatorToken")
+  }
 
   // Poll for WhatsApp QR code when WhatsApp connector is configured
   useEffect(() => {
@@ -1174,6 +1182,14 @@ export default function SettingsPage() {
                     value={config.gateway?.host ?? ""}
                     onChange={(v) => updateConfig(["gateway", "host"], v)}
                     placeholder="127.0.0.1"
+                  />
+                </FieldRow>
+                <FieldRow label="Operator Token">
+                  <SettingsInput
+                    type="password"
+                    value={operatorToken}
+                    onChange={updateOperatorToken}
+                    placeholder="Required when placements are enabled"
                   />
                 </FieldRow>
                 <FieldRow label="Default Engine">

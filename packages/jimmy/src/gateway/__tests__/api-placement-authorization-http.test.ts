@@ -22,8 +22,10 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
   let legacyParentId = "";
   let config: JinnConfig;
   const sendMessage = vi.fn().mockResolvedValue("sent-1");
+  const deliverMessage = vi.fn();
 
   beforeAll(async () => {
+    process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256 = "76af8eef7c7a75fb319976fe592e0ef0f7cc8f14b5f117e97db5b6512d351096";
     const orgDir = path.join(process.env.RYOKO_HOME!, "org");
     fs.mkdirSync(orgDir, { recursive: true });
     fs.writeFileSync(path.join(orgDir, "reviewer.yaml"), [
@@ -102,6 +104,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
         name: "discord",
         sendMessage,
         replyMessage: vi.fn(),
+        deliverMessage,
       } as unknown as Connector]]),
       sessionManager: {
         getEngine: () => undefined,
@@ -118,7 +121,10 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     closeServer = () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   });
 
-  afterAll(async () => closeServer?.());
+  afterAll(async () => {
+    delete process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256;
+    await closeServer?.();
+  });
 
   async function post(pathname: string, body: Record<string, unknown>, token?: string, sessionId?: string) {
     return fetch(`${baseUrl}${pathname}`, {
@@ -132,6 +138,36 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     });
   }
 
+  it("denies localhost operator mutations without the out-of-process operator token", async () => {
+    const deniedConfig = await fetch(`${baseUrl}/api/config`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ placements: [] }),
+    });
+    expect(deniedConfig.status).toBe(403);
+
+    const deniedStub = await post("/api/sessions/stub", { greeting: "bypass" });
+    expect(deniedStub.status).toBe(403);
+
+    const allowedStub = await fetch(`${baseUrl}/api/sessions/stub`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-openryoko-operator-token": "operator-canary",
+      },
+      body: JSON.stringify({ greeting: "operator session" }),
+    });
+    expect(allowedStub.status).toBe(201);
+  });
+
+  it("redacts the Discord proxy service credential from the config API", async () => {
+    const response = await fetch(`${baseUrl}/api/config`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { connectors: { discord: { proxyToken?: string } } };
+    expect(body.connectors.discord.proxyToken).toBe("***");
+    expect(JSON.stringify(body)).not.toContain("service-proxy-canary");
+  });
+
   it("allows only an authenticated placement delivery target on the direct connector route", async () => {
     const token = getSessionDelegationToken(parentId);
     const allowed = await post("/api/connectors/slack/send", { channel: "C1", text: "allowed" }, token, parentId);
@@ -144,6 +180,9 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     expect(missingAuth.status).toBe(403);
     const mismatched = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(legacyParentId), parentId);
     expect(mismatched.status).toBe(403);
+    const signedLegacy = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(legacyParentId), legacyParentId);
+    expect(signedLegacy.status).toBe(403);
+    await expect(signedLegacy.json()).resolves.toEqual({ error: "session is not bound to a placement" });
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
@@ -155,6 +194,17 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       await expect(response.json()).resolves.toEqual({ error: "send_message is not allowed by placement" });
     } finally {
       config.placements![0].capabilities!.gatewayTools = ["send_message"];
+    }
+  });
+
+  it("denies delivery when a placement omits the gateway tool allowlist", async () => {
+    const capabilities = config.placements![0].capabilities;
+    config.placements![0].capabilities = undefined;
+    try {
+      const response = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(parentId), parentId);
+      expect(response.status).toBe(403);
+    } finally {
+      config.placements![0].capabilities = capabilities;
     }
   });
 
@@ -178,6 +228,43 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       body: JSON.stringify({ action: "sendMessage", target: { channel: "REMOTE" }, text: "service send" }),
     });
     expect(response.status).toBe(200);
+
+    for (const token of [undefined, "wrong-token"]) {
+      const denied = await fetch(`${baseUrl}/api/connectors/discord/proxy`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { "x-jinn-connector-proxy-token": token } : {}),
+        },
+        body: JSON.stringify({ action: "sendMessage", target: { channel: "REMOTE" }, text: "denied" }),
+      });
+      expect(denied.status).toBe(403);
+    }
+  });
+
+  it("authenticates proxied Discord input with the same service principal", async () => {
+    for (const token of [undefined, "wrong-token"]) {
+      const denied = await fetch(`${baseUrl}/api/connectors/discord/incoming`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { "x-jinn-connector-proxy-token": token } : {}),
+        },
+        body: JSON.stringify({ channel: "REMOTE", text: "denied" }),
+      });
+      expect(denied.status).toBe(403);
+    }
+
+    const allowed = await fetch(`${baseUrl}/api/connectors/discord/incoming`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-jinn-connector-proxy-token": "service-proxy-canary",
+      },
+      body: JSON.stringify({ channel: "REMOTE", text: "allowed", sessionKey: "remote:1" }),
+    });
+    expect(allowed.status).toBe(200);
+    expect(deliverMessage).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the legacy direct delivery API when placements are not configured", async () => {
@@ -259,13 +346,29 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     });
   });
 
-  it("keeps legacy parent creation compatible without a delegation token", async () => {
-    const response = await post("/api/sessions", {
+  it("requires operator authorization for legacy parent creation while placements are active", async () => {
+    const denied = await post("/api/sessions", {
       prompt: "legacy",
       parentSessionId: legacyParentId,
       engine: "claude",
       model: "opus",
       effortLevel: "high",
+    });
+    expect(denied.status).toBe(403);
+
+    const response = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-openryoko-operator-token": "operator-canary",
+      },
+      body: JSON.stringify({
+        prompt: "legacy",
+        parentSessionId: legacyParentId,
+        engine: "claude",
+        model: "opus",
+        effortLevel: "high",
+      }),
     });
     expect(response.status).toBe(201);
     const body = await response.json() as { id: string };

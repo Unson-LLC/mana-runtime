@@ -60,6 +60,14 @@ const BASE =
     ? window.location.origin
     : "http://127.0.0.1:7777";
 
+const OPERATOR_TOKEN_STORAGE_KEY = "openryoko.operatorToken";
+
+function operatorHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const token = window.localStorage.getItem(OPERATOR_TOKEN_STORAGE_KEY);
+  return token ? { "x-openryoko-operator-token": token } : {};
+}
+
 async function extractErrorMessage(res: Response): Promise<string> {
   try {
     const body = await res.json();
@@ -80,7 +88,7 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...operatorHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
@@ -88,7 +96,7 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function del<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: operatorHeaders() });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
   return res.json();
 }
@@ -96,7 +104,7 @@ async function del<T>(path: string): Promise<T> {
 async function put<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...operatorHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
@@ -106,7 +114,7 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 async function patch<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...operatorHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
@@ -182,7 +190,7 @@ export const api = {
     try {
       const res = await fetch(`${BASE}/api/stt/transcribe${params}`, {
         method: "POST",
-        headers: { "Content-Type": audioBlob.type || "audio/webm" },
+        headers: { "Content-Type": audioBlob.type || "audio/webm", ...operatorHeaders() },
         body: audioBlob,
         signal: controller.signal,
       });
@@ -214,7 +222,7 @@ export const api = {
   uploadFile: async (file: File): Promise<UploadedFile> => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/files`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/api/files`, { method: 'POST', headers: operatorHeaders(), body: form })
     if (!res.ok) throw new Error(await extractErrorMessage(res))
     return res.json()
   },

@@ -96,6 +96,10 @@ placements:
 
 環境固有IDはInfisicalラッパーが完成済みYAMLへ投影する。OpenRyokoの`loadConfig`自体は`${VAR}`を展開しないため、placeholderを含むYAMLを直接置かない。secretはProfileへ含めず、従来どおりプロセス環境へ注入する。
 
+Placementを1件以上設定する場合、localhostの管理APIも信頼しない。Gatewayプロセスにはoperator tokenそのものではなくSHA-256だけを`OPENRYOKO_OPERATOR_TOKEN_SHA256`として注入し、UIブラウザには元tokenを`localStorage["openryoko.operatorToken"]`へ設定する。UIのPOST/PUT/PATCH/DELETEは`x-openryoko-operator-token`を付け、Gatewayがhashを比較する。元tokenをGateway設定、ログ、Claude子プロセスへ渡してはならない。hash未設定時は管理mutationをfail closedにする。
+
+Discord remote proxyは別のservice principalであり、`connectors.discord.proxyToken`をremoteとprimaryへ同一secretとして注入する。Placement有効時、missing/wrong tokenのproxy送信は拒否し、設定APIは`proxyToken`を常に`***`へ置換する。これはoperator tokenの代替ではない。
+
 上記はPhase 1で実装する正本schemaである。Skills、Graph/repositoryのサーバー側scope、cron/briefing、詳細監査は後続Storyとし、`dataScopes`はPhase 1ではpromptへ渡す。session metadataには`placementId`だけを保存し、実行時に正本設定からscopeを再解決する。いずれも認可の代替にはしない。
 
 ## 5. Policy dimensions
