@@ -2682,7 +2682,9 @@ async function runWebSession(
       allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
       allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
     }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
-    if (Object.keys(mcpConfig.mcpServers).length > 0) {
+    // A Placement must always receive an explicit config, including an empty
+    // one, so --strict-mcp-config can exclude user/global MCPs.
+    if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
       mcpConfigPath = writeMcpConfigFile(mcpConfig, currentSession.id);
     }
   }
@@ -2750,6 +2752,8 @@ async function runWebSession(
       sshHost: employee?.sshHost,
       remoteCwd: employee?.remoteCwd,
       mcpConfigPath,
+      strictMcpConfig: Boolean(placement),
+      enableChrome: placement ? false : undefined,
       attachments: attachments?.length ? attachments : undefined,
       sessionId: currentSession.id,
       keepWarmPty,

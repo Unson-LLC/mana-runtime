@@ -579,10 +579,19 @@ export class SessionManager {
           allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
           allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
         }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
-        if (Object.keys(mcpConfig.mcpServers).length > 0) {
+        // A Placement must always receive an explicit config, including an
+        // empty one, so --strict-mcp-config can exclude user/global MCPs.
+        if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
           mcpConfigPath = writeMcpConfigFile(mcpConfig, session.id);
         }
       }
+
+      const placementEngineBoundary = {
+        strictMcpConfig: Boolean(placement),
+        // Placement browser access is supplied by its allowlisted MCP server.
+        // Claude's separate Chrome integration is outside that allowlist.
+        enableChrome: placement ? false : undefined,
+      };
 
       const effortLevel = resolveEffort(
         engineConfig,
@@ -695,6 +704,7 @@ export class SessionManager {
         sshHost: employee?.sshHost,
         remoteCwd: employee?.remoteCwd,
         mcpConfigPath,
+        ...placementEngineBoundary,
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
         keepWarmPty: false,
@@ -768,6 +778,7 @@ export class SessionManager {
           sshHost: employee?.sshHost,
           remoteCwd: employee?.remoteCwd,
           mcpConfigPath,
+          ...placementEngineBoundary,
           attachments: attachments.length > 0 ? attachments : undefined,
           sessionId: session.id,
           keepWarmPty: false,
@@ -825,6 +836,7 @@ export class SessionManager {
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             mcpConfigPath,
+            ...placementEngineBoundary,
             sessionId: session.id,
             keepWarmPty: false,
           });
@@ -1058,6 +1070,7 @@ export class SessionManager {
               sshHost: employee?.sshHost,
               remoteCwd: employee?.remoteCwd,
               mcpConfigPath,
+              ...placementEngineBoundary,
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
               keepWarmPty: false,

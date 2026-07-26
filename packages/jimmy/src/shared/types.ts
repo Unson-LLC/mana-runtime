@@ -33,6 +33,10 @@ export interface EngineRunOpts {
   prompt: string;
   resumeSessionId?: string;
   systemPrompt?: string;
+  /** Restrict Claude Code to the per-session --mcp-config file. */
+  strictMcpConfig?: boolean;
+  /** Enable the separate Claude-in-Chrome integration (legacy default: true). */
+  enableChrome?: boolean;
   cwd: string;
   bin?: string;
   model?: string;
