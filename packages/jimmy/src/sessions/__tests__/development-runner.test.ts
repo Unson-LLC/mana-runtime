@@ -73,6 +73,20 @@ describe("development runner", () => {
     expect(() => parseDevelopmentResult(raw)).toThrow("development runner returned malformed JSON");
   });
 
+  it.each([
+    ["truncated", '{"status":"failed","summary":"truncated"'],
+    ["multiple", '{"status":"failed","summary":"one"}\n{"status":"failed","summary":"two"}'],
+  ])("fails closed for %s JSON emitted as real child-process bytes", async (_caseName, raw) => {
+    await expect(runDevelopmentRequest(
+      {
+        enabled: true,
+        bin: process.execPath,
+        args: ["-e", `process.stdin.resume(); process.stdin.on("end", () => process.stdout.write(${JSON.stringify(raw)}))`],
+      },
+      "READMEを改善する",
+    )).rejects.toThrow("development runner returned malformed JSON");
+  });
+
   it("enforces status-dependent result fields", () => {
     expect(() => parseDevelopmentResult('{"status":"pr_ready","summary":"x"}')).toThrow("without a story id");
     expect(() => parseDevelopmentResult('{"status":"queued","storyId":"story-x","prUrl":"https://github.com/Unson-LLC/brainbase-mana/pull/3","summary":"x"}')).toThrow("PR URL for queued");
