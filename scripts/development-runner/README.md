@@ -15,6 +15,10 @@ logs stay on stderr and are never relayed to Slack.
 - Installed runner: `/usr/local/libexec/openryoko-development-runner` (`0755`, root-owned)
 - Durable single-flight lock: `/home/ryoko-dev/.openryoko-development-runner.lock`
 
+The root-owned config pins `runnerVersion`. The installed script fails closed
+before creating a worktree when its embedded version differs, so rollout must
+update the script and config together and verify the expected version.
+
 The development user's GitHub credential must be scoped to
 `Unson-LLC/brainbase-mana`. Its Claude Code login is the Max account used by the
 pilot. Do not copy Slack tokens or gateway config into this account.

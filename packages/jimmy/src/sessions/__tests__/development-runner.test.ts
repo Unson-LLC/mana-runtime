@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { runCommand } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, runCommand, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
 
 function childReturning(stdout: string, code = 0) {
   const child = new EventEmitter() as any;
@@ -21,6 +21,18 @@ function childReturning(stdout: string, code = 0) {
 }
 
 describe("development runner", () => {
+  it("fails closed when the installed runner version differs from root-owned config", () => {
+    const baseConfig = {
+      repository: "/srv/openryoko-development/repository",
+      worktreesRoot: "/srv/openryoko-development/worktrees",
+      vibeproBin: "/usr/local/bin/vibepro",
+      baseRef: "origin/main",
+      maxDurationMs: 60_000,
+    };
+
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: "stale" })).toThrow("runner version mismatch");
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION })).not.toThrow();
+  });
   it("passes the request over stdin and strips the gateway environment", async () => {
     process.env.SLACK_BOT_TOKEN = "must-not-leak";
     let options: any;

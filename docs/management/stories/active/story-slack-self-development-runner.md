@@ -16,6 +16,17 @@ OpenRyokoの開発手法を佐藤だけの暗黙知にせず、梅田を含むal
 - 通常のClaude PTYは`plan`のままで、稼働中checkoutを変更しない。
 - VibeProはStory、Spec、検証、レビューを記録し、PR作成またはmergeの直前で停止する。
 
+## Explicit scenarios
+
+- S-001: 無効時または非Slack connectorからの`/develop`はプロセスを開始しない。
+- S-002: 空または8000文字超の要求はプロセス生成前に拒否する。
+- S-003: 実行中およびgateway再起動後のロック保持中は、2件目を開始しない。
+- S-004: 受理した要求は固定argvの絶対パス実行ファイルへstdin JSONで渡し、gateway secretを継承しない。
+- S-005: 余分なfield、不正status、Story ID欠落、対象外PR URLを含む結果は拒否する。
+- S-006: timeoutまたは出力上限超過時はプロセス群をTERM後にKILLし、closeまでロックを解放しない。
+- S-007: root所有設定の`runnerVersion`と実行スクリプトのversionが一致しない場合はfail closedする。
+- S-008: guarded runは`pr_ready`で停止し、PR作成・merge・deployを実行しない。
+
 ## Pilot metric
 
 - 梅田がSlackから開始した最初の3件について、要求からDraft PR候補までの工程と停止理由をSlackで追跡できること。

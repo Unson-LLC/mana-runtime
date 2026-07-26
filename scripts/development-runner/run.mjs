@@ -10,6 +10,7 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
+export const RUNNER_VERSION = "2026-07-26.1";
 
 function emit(result, exitCode = 0) {
   process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -101,7 +102,7 @@ export async function runCommand(bin, args, options = {}) {
   });
 }
 
-function validateConfig(config) {
+export function validateConfig(config) {
   for (const key of ["repository", "worktreesRoot", "vibeproBin"]) {
     if (typeof config[key] !== "string" || !path.isAbsolute(config[key])) throw new Error(`invalid ${key}`);
   }
@@ -110,6 +111,9 @@ function validateConfig(config) {
   }
   if (!Number.isInteger(config.maxDurationMs) || config.maxDurationMs < 60000 || config.maxDurationMs > 5_400_000) {
     throw new Error("invalid maxDurationMs");
+  }
+  if (config.runnerVersion !== RUNNER_VERSION) {
+    throw new Error("runner version mismatch");
   }
 }
 

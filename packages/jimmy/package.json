@@ -21,6 +21,7 @@
     "dev": "tsc && (tsc --watch &) && node --watch-path=dist dist/bin/jimmy.js start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "vitest run src/sessions/__tests__/development-runner.test.ts",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
