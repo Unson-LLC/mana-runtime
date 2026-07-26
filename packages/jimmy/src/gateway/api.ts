@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { CronJob, Engine, IncomingMessage, JinnConfig, Session, Target } from "../shared/types.js";
+import type { CronJob, Engine, IncomingMessage, JinnConfig, PlacementProfile, Session, Target } from "../shared/types.js";
 import { isInterruptibleEngine } from "../shared/types.js";
 import type { SessionManager } from "../sessions/manager.js";
 import { buildContext } from "../sessions/context.js";
@@ -110,6 +110,42 @@ export interface ApiContext {
    */
   hookRegistry?: import("./hook-registry.js").HookRegistry;
   hookSecret?: string;
+}
+
+function placementAllowsGatewayTool(placement: PlacementProfile, tool: string): boolean {
+  const allowed = placement.capabilities?.gatewayTools;
+  return allowed === undefined || allowed.includes(tool);
+}
+
+function constantTimeEqual(expected: string | undefined, received: string | undefined): boolean {
+  if (!expected || !received) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+function authorizePlacementDelivery(
+  context: ApiContext,
+  req: HttpRequest,
+  connector: string,
+  target: Target | undefined,
+): { ok: true } | { ok: false; error: string } {
+  const sessionId = currentSessionId(req);
+  const session = sessionId ? getSession(sessionId) : undefined;
+  if (!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req))) {
+    return { ok: false, error: "invalid session authorization" };
+  }
+  const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return { ok: true };
+  const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
+  if (!placement || !placementAllowsGatewayTool(placement, "send_message")) {
+    return { ok: false, error: "send_message is not allowed by placement" };
+  }
+  const channel = target?.channel;
+  const allowed = typeof channel === "string" && (placement.capabilities?.allowedDelivery?.length
+    ? placementDeliveryTargets(placement).some((candidate) => candidate.connector === connector && candidate.channel === channel)
+    : placement.connector === connector && placement.channelId === channel);
+  return allowed ? { ok: true } : { ok: false, error: "delivery target is not allowed by placement" };
 }
 
 export function resolveRequestedParentSession(
@@ -1804,6 +1840,14 @@ Handle this as a priority request from a colleague.`;
 
       const action = body.action as string;
       const target = body.target as Target | undefined;
+      const serviceAuthorized = params.id === "discord" && constantTimeEqual(
+        context.getConfig().connectors.discord?.proxyToken,
+        req.headers["x-jinn-connector-proxy-token"] as string | undefined,
+      );
+      if (context.getConfig().placements?.length && !serviceAuthorized) {
+        const authorization = authorizePlacementDelivery(context, req, params.id, target);
+        if (!authorization.ok) return json(res, { error: authorization.error }, 403);
+      }
       let messageId: string | undefined;
 
       switch (action) {
@@ -1856,19 +1900,9 @@ Handle this as a priority request from a colleague.`;
           && notifications?.connector === params.name
           && notifications?.channel === body.channel;
         if (!authorized) return json(res, { error: "invalid notification authorization" }, 403);
-      } else {
-      const session = sessionId ? getSession(sessionId) : undefined;
-      if (!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req))) {
-        return json(res, { error: "invalid session authorization" }, 403);
-      }
-      const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
-      if (typeof placementId === "string") {
-        const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
-        const allowed = placement?.capabilities?.allowedDelivery?.length
-          ? placementDeliveryTargets(placement).some((target) => target.connector === params!.name && target.channel === body.channel)
-          : placement?.connector === params.name && placement.channelId === body.channel;
-        if (!placement || !allowed) return json(res, { error: "delivery target is not allowed by placement" }, 403);
-      }
+      } else if (context.getConfig().placements?.length) {
+        const authorization = authorizePlacementDelivery(context, req, params.name, { channel: body.channel, thread: body.thread });
+        if (!authorization.ok) return json(res, { error: authorization.error }, 403);
       }
       const hasThread = typeof body.thread === "string" && body.thread.trim().length > 0;
       const target = { channel: body.channel, thread: body.thread };

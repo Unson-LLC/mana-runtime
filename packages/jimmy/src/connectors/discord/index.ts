@@ -34,6 +34,7 @@ export interface DiscordConnectorConfig {
   channelRouting?: Record<string, string>;
   /** If set, this instance proxies all Discord operations through the primary instance at this URL */
   proxyVia?: string;
+  proxyToken?: string;
 }
 
 export class DiscordConnector implements Connector {

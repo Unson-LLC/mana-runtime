@@ -49,6 +49,10 @@ describe("delegation context", () => {
     expect(context).toContain("Run the pilot within its approved channel boundary.");
     expect(context).toContain("## Placement policy");
     expect(context).not.toContain("/api/org/cross-request");
+    expect(context).not.toContain("Gateway API");
+    expect(context).not.toContain("/api/config");
+    expect(context).not.toContain("/api/sessions");
+    expect(context).not.toContain("/api/connectors/slack/send");
   });
 
   it("never renders secret-like placement data in the system context", () => {

@@ -20,6 +20,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
   let closeServer: (() => Promise<void>) | undefined;
   let parentId = "";
   let legacyParentId = "";
+  let config: JinnConfig;
   const sendMessage = vi.fn().mockResolvedValue("sent-1");
 
   beforeAll(async () => {
@@ -74,9 +75,10 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     });
     legacyParentId = legacyParent.id;
 
-    const config = {
+    config = {
       gateway: { host: "127.0.0.1", port: 0 },
       engines: { default: "claude" },
+      connectors: { discord: { proxyToken: "service-proxy-canary" } },
       placements: [{
         id: "pilot",
         connector: "slack",
@@ -84,6 +86,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
         channelId: "C1",
         audience: { type: "operator", allowedUsers: ["U1"] },
         agent: { employee: "ryoko", escalationEmployee: "reviewer" },
+        capabilities: { gatewayTools: ["send_message"] },
       }],
     } as unknown as JinnConfig;
     const context = {
@@ -93,6 +96,10 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       emit: vi.fn(),
       connectors: new Map([["slack", {
         name: "slack",
+        sendMessage,
+        replyMessage: vi.fn(),
+      } as unknown as Connector], ["discord", {
+        name: "discord",
         sendMessage,
         replyMessage: vi.fn(),
       } as unknown as Connector]]),
@@ -138,6 +145,50 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     const mismatched = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(legacyParentId), parentId);
     expect(mismatched.status).toBe(403);
     expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces the placement gateway tool policy on direct delivery", async () => {
+    config.placements![0].capabilities!.gatewayTools = [];
+    try {
+      const response = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(parentId), parentId);
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: "send_message is not allowed by placement" });
+    } finally {
+      config.placements![0].capabilities!.gatewayTools = ["send_message"];
+    }
+  });
+
+  it("closes the connector proxy alternate path with the same session and target policy", async () => {
+    const token = getSessionDelegationToken(parentId);
+    const allowed = await post("/api/connectors/slack/proxy", { action: "sendMessage", target: { channel: "C1" }, text: "allowed proxy" }, token, parentId);
+    expect(allowed.status).toBe(200);
+    const wrongTarget = await post("/api/connectors/slack/proxy", { action: "sendMessage", target: { channel: "C2" }, text: "denied" }, token, parentId);
+    expect(wrongTarget.status).toBe(403);
+    const missingAuth = await post("/api/connectors/slack/proxy", { action: "sendMessage", target: { channel: "C1" }, text: "denied" });
+    expect(missingAuth.status).toBe(403);
+  });
+
+  it("keeps remote Discord proxying on a separate service principal", async () => {
+    const response = await fetch(`${baseUrl}/api/connectors/discord/proxy`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-jinn-connector-proxy-token": "service-proxy-canary",
+      },
+      body: JSON.stringify({ action: "sendMessage", target: { channel: "REMOTE" }, text: "service send" }),
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it("preserves the legacy direct delivery API when placements are not configured", async () => {
+    const placements = config.placements;
+    config.placements = undefined;
+    try {
+      const response = await post("/api/connectors/slack/send", { channel: "legacy", text: "legacy send" });
+      expect(response.status).toBe(200);
+    } finally {
+      config.placements = placements;
+    }
   });
 
   it.each([

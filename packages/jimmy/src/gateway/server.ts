@@ -385,6 +385,7 @@ export async function startGateway(
         const discord = new RemoteDiscordConnector({
           proxyVia: cfg.connectors.discord.proxyVia,
           channelId: cfg.connectors.discord.channelId,
+          proxyToken: cfg.connectors.discord.proxyToken,
         });
         discord.onMessage((msg) => {
           const routeOpts: RouteOptions = {};

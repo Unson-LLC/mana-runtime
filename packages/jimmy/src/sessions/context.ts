@@ -222,7 +222,7 @@ export function buildContext(opts: {
   }
 
   // ── STANDARD: Connectors (Slack, etc.) ──────────────────────
-  if (opts.connectors && opts.connectors.length > 0) {
+  if (!opts.placement && opts.connectors && opts.connectors.length > 0) {
     sections.push({
       tier: Tier.STANDARD,
       marker: "## Available connectors",
@@ -243,7 +243,7 @@ export function buildContext(opts: {
   }
 
   // ── OPTIONAL: Delegation protocol (COO only) ───────────────
-  if (!opts.employee) {
+  if (!opts.placement && !opts.employee) {
     sections.push({
       tier: Tier.OPTIONAL,
       marker: "## Employee Delegation",
@@ -253,12 +253,14 @@ export function buildContext(opts: {
   }
 
   // ── STANDARD: Gateway API reference ─────────────────────────
-  sections.push({
-    tier: Tier.STANDARD,
-    marker: `## ${portalName} Gateway API`,
-    content: buildApiReference(gatewayUrl, portalName),
-    summary: `## ${portalName} Gateway API (${gatewayUrl})\nEndpoints: /api/status, /api/sessions, /api/cron, /api/org, /api/skills, /api/config, /api/connectors, /api/logs`,
-  });
+  if (!opts.placement) {
+    sections.push({
+      tier: Tier.STANDARD,
+      marker: `## ${portalName} Gateway API`,
+      content: buildApiReference(gatewayUrl, portalName),
+      summary: `## ${portalName} Gateway API (${gatewayUrl})\nEndpoints: /api/status, /api/sessions, /api/cron, /api/org, /api/skills, /api/config, /api/connectors, /api/logs`,
+    });
+  }
 
   // ── Assemble with progressive trimming by tier ──────────────
   return trimContext(sections, maxChars);

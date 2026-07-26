@@ -457,6 +457,8 @@ export interface DiscordConnectorConfig {
   channelRouting?: Record<string, string>;
   /** URL of the primary Jinn instance to proxy Discord I/O through (secondary/remote mode) */
   proxyVia?: string;
+  /** Shared service credential for remote Discord proxy calls. Required when placements are configured. */
+  proxyToken?: string;
 }
 
 export interface TelegramConnectorConfig {

@@ -11,6 +11,7 @@ export interface RemoteDiscordConfig {
   /** URL of the primary Jinn instance that holds the Discord WebSocket connection */
   proxyVia: string;
   channelId?: string;
+  proxyToken?: string;
 }
 
 /**
@@ -22,9 +23,11 @@ export class RemoteDiscordConnector implements Connector {
   name = "discord";
   private handler: ((msg: IncomingMessage) => void) | null = null;
   private baseUrl: string;
+  private proxyToken?: string;
 
   constructor(config: RemoteDiscordConfig) {
     this.baseUrl = config.proxyVia.replace(/\/+$/, "");
+    this.proxyToken = config.proxyToken;
   }
 
   onMessage(handler: (msg: IncomingMessage) => void): void {
@@ -99,7 +102,10 @@ export class RemoteDiscordConnector implements Connector {
     try {
       const res = await fetch(`${this.baseUrl}/api/connectors/discord/proxy`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(this.proxyToken ? { "x-jinn-connector-proxy-token": this.proxyToken } : {}),
+        },
         body: JSON.stringify({ action, ...params }),
       });
       if (!res.ok) {
