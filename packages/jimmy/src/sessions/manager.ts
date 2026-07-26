@@ -34,6 +34,7 @@ import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
 import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
+import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
 
 export interface RouteOptions {
   employee?: Employee;
@@ -52,7 +53,7 @@ export interface RouteOptions {
  * command and NOT wrap it with conversation context — handleCommand() matches
  * them by exact string / prefix, so any preamble breaks the parsing.
  */
-export const SLASH_COMMANDS = ["/new", "/status", "/model", "/doctor", "/cron"] as const;
+export const SLASH_COMMANDS = ["/new", "/status", "/model", "/doctor", "/cron", "/develop"] as const;
 
 /** True when `text` begins with a control slash command (see {@link SLASH_COMMANDS}). */
 export function startsWithSlashCommand(text: string): boolean {
@@ -131,6 +132,7 @@ export class SessionManager {
   private queue = new SessionQueue();
   private connectorProvider: () => Map<string, Connector> = () => new Map();
   private criticalDispatches = new Set<string>();
+  private developmentRunning = false;
 
   constructor(
     config: JinnConfig,
@@ -1289,6 +1291,37 @@ export class SessionManager {
 
     if (text.startsWith("/cron")) {
       return this.handleCronCommand(text, connector, target);
+    }
+
+    if (text === "/develop" || text.startsWith("/develop ")) {
+      if (connector.name !== "slack") return false;
+      const request = text.slice("/develop".length).trim();
+      const config = this.config.developmentRunner;
+      if (!config?.enabled) {
+        await connector.replyMessage(target, "Development runner is disabled.");
+        return true;
+      }
+      if (!request) {
+        await connector.replyMessage(target, "Usage: /develop <request>");
+        return true;
+      }
+      if (this.developmentRunning) {
+        await connector.replyMessage(target, "A development task is already running. Try again after it completes.");
+        return true;
+      }
+
+      this.developmentRunning = true;
+      await connector.replyMessage(target, "Development task accepted. VibePro will stop before PR creation or merge.");
+      void runDevelopmentRequest(config, request)
+        .then((result) => connector.replyMessage(target, formatDevelopmentResult(result)))
+        .catch((error) => {
+          logger.error(`Development runner failed: ${error instanceof Error ? error.message : "unknown error"}`);
+          return connector.replyMessage(target, "Development task failed inside the isolated runner. No PR or deployment was performed.");
+        })
+        .finally(() => {
+          this.developmentRunning = false;
+        });
+      return true;
     }
 
     return false;

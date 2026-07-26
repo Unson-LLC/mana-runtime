@@ -11,6 +11,7 @@ describe("startsWithSlashCommand", () => {
   it("matches a slash command with arguments", () => {
     expect(startsWithSlashCommand("/model opus")).toBe(true);
     expect(startsWithSlashCommand("/cron list")).toBe(true);
+    expect(startsWithSlashCommand("/develop READMEを改善する")).toBe(true);
   });
 
   it("tolerates leading whitespace", () => {

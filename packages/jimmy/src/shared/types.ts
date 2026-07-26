@@ -558,6 +558,17 @@ export interface EngineModelsConfig {
 /** `models:` block keyed by engine name (claude | codex | gemini). */
 export type ModelsConfig = Record<string, EngineModelsConfig>;
 
+export interface DevelopmentRunnerConfig {
+  /** Explicit opt-in. The command is never available when false or absent. */
+  enabled?: boolean;
+  /** Absolute executable path. Use a root-owned sudo wrapper in production. */
+  bin: string;
+  /** Fixed arguments. The Slack request is supplied only over stdin. */
+  args?: string[];
+  /** Maximum wall time for one request. Default: 90 minutes. */
+  timeoutMs?: number;
+}
+
 export interface JinnConfig {
   jinn?: { version?: string };
   gateway: { port: number; host: string; streaming?: boolean };
@@ -604,6 +615,8 @@ export interface JinnConfig {
     instances?: ConnectorInstance[];
   };
   logging: { file: boolean; stdout: boolean; level: string };
+  /** Optional isolated development runner used by the /develop command. */
+  developmentRunner?: DevelopmentRunnerConfig;
   mcp?: McpGlobalConfig;
   sessions?: {
     maxDurationMinutes?: number;
