@@ -17,7 +17,8 @@
           "packages/jimmy/src/gateway/**",
           "packages/jimmy/src/mcp/**",
           "packages/jimmy/src/sessions/**",
-          "packages/jimmy/src/shared/*placement*"
+          "packages/jimmy/src/shared/*placement*",
+          "packages/web/src/lib/operator-auth.ts"
         ],
         "symbols": [
           "placementId",
@@ -30,7 +31,10 @@
         ]
       },
       "required_evidence": [
-        "placement_authorization_regression",
+        "auth_denied",
+        "negative_path",
+        "focused_test",
+        "integration_runtime_path",
         "current_head_verification"
       ],
       "unknown_policy": "block_or_review"
