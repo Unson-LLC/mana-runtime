@@ -1,9 +1,67 @@
-import type { IncomingMessage, PlacementDeliveryTarget, PlacementProfile } from "./types.js";
+import type { Engine, EngineResult, EngineRunOpts, IncomingMessage, PlacementDeliveryTarget, PlacementProfile } from "./types.js";
 
 export interface PlacementResolution {
   status: "legacy" | "matched" | "denied";
   placement?: PlacementProfile;
   reason?: "unmatched" | "ambiguous" | "unauthorized_user" | "invalid_config";
+}
+
+export interface PlacementEngineBoundary {
+  strictMcpConfig: boolean;
+  enableChrome: false | undefined;
+}
+
+/** Keep every initial/retry caller on the same fail-closed engine boundary. */
+export function placementEngineBoundary(placement: PlacementProfile | undefined): PlacementEngineBoundary {
+  return {
+    strictMcpConfig: Boolean(placement),
+    enableChrome: placement ? false : undefined,
+  };
+}
+
+/** Single execution choke point so initial and retry call sites cannot drift. */
+export async function runPlacementBoundEngine(
+  engine: Engine,
+  placement: PlacementProfile | undefined,
+  opts: EngineRunOpts,
+): Promise<EngineResult> {
+  if (placement && engine.name !== "claude" && engine.name !== "mock") {
+    throw new Error(
+      `Placement-scoped execution rejects engine without Placement boundary support: ${engine.name}`,
+    );
+  }
+  return engine.run({ ...opts, ...placementEngineBoundary(placement) });
+}
+
+/** Check support before callers announce or persist an engine transition. */
+export function supportsPlacementEngine(
+  engine: Pick<Engine, "name">,
+  placement: PlacementProfile | undefined,
+): boolean {
+  return !placement || engine.name === "claude" || engine.name === "mock";
+}
+
+const PLACEMENT_DENIED_CLAUDE_FLAGS = new Set([
+  "--chrome",
+  "--mcp-config",
+  "--strict-mcp-config",
+]);
+
+/** Preserve ordinary employee flags, but visibly reject Placement-owned surfaces. */
+export function placementSafeCliFlags(
+  cliFlags: string[] | undefined,
+  strictMcpConfig: boolean | undefined,
+): string[] | undefined {
+  if (!strictMcpConfig || !cliFlags?.length) return cliFlags;
+  const denied = cliFlags.filter((flag) =>
+    [...PLACEMENT_DENIED_CLAUDE_FLAGS].some((deniedFlag) =>
+      flag === deniedFlag || flag.startsWith(`${deniedFlag}=`),
+    ),
+  );
+  if (denied.length > 0) {
+    throw new Error(`Placement-scoped Claude run rejects employee cliFlags: ${[...new Set(denied)].join(", ")}`);
+  }
+  return cliFlags;
 }
 
 const SECRET_VALUE = /^(?:Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|sk-ant-[A-Za-z0-9_-]{8,}|xox[baprs]-\S+|gh[opusr]_[A-Za-z0-9_]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i;

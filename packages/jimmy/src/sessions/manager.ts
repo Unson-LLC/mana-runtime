@@ -37,7 +37,7 @@ import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
-import { placementDeliveryTargets } from "../shared/placement-profile.js";
+import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
@@ -579,11 +579,15 @@ export class SessionManager {
           allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
           allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
         }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
-        if (Object.keys(mcpConfig.mcpServers).length > 0) {
+        // A Placement must always receive an explicit config, including an
+        // empty one, so --strict-mcp-config can exclude user/global MCPs.
+        if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
           mcpConfigPath = writeMcpConfigFile(mcpConfig, session.id);
         }
       }
 
+      // Placement browser access is supplied by its allowlisted MCP server.
+      // Claude's separate Chrome integration is outside that allowlist.
       const effortLevel = resolveEffort(
         engineConfig,
         session,
@@ -683,7 +687,7 @@ export class SessionManager {
         }
       }
 
-      let result = await engine.run({
+      let result = await runPlacementBoundEngine(engine, placement, {
         prompt: promptToRun,
         resumeSessionId: session.engineSessionId ?? undefined,
         systemPrompt,
@@ -756,7 +760,7 @@ export class SessionManager {
         // message that happens to land on a stale resume ID is silently lost
         // (the raw engine error propagates back instead of a real answer).
         logger.info(`Retrying session ${session.id} with fresh engine session after dead-session`);
-        result = await engine.run({
+        result = await runPlacementBoundEngine(engine, placement, {
           prompt: promptToRun,
           resumeSessionId: undefined,
           systemPrompt,
@@ -810,7 +814,7 @@ export class SessionManager {
             await new Promise((r) => setTimeout(r, Math.min(20_000, delayMs - waited)));
           }
           const resumeId = result.sessionId?.trim() || session.engineSessionId || undefined;
-          result = await engine.run({
+          result = await runPlacementBoundEngine(engine, placement, {
             prompt:
               "The previous response was interrupted by a temporary Anthropic API server error. " +
               "The conversation history up to that point is intact. Continue and complete the original request now. " +
@@ -848,7 +852,7 @@ export class SessionManager {
         if (session.engine === "claude" && strategy === "fallback") {
           const fallbackName = this.config.sessions?.fallbackEngine ?? "codex";
           const fallbackEngine = this.engines.get(fallbackName);
-          if (fallbackEngine) {
+          if (fallbackEngine && supportsPlacementEngine(fallbackEngine, placement)) {
             const { resumeAt } = computeNextRetryDelayMs(rateLimit.resetsAt);
             const until = resumeAt ?? new Date(Date.now() + 6 * 60 * 60_000);
             const syncSince = new Date().toISOString();
@@ -902,7 +906,7 @@ export class SessionManager {
             const fallbackPrompt = codexResume
               ? msg.text
               : `Continue this conversation and respond to the last USER message.\n\nConversation so far:\n\n${historyText}`;
-            const fallbackResult = await fallbackEngine.run({
+            const fallbackResult = await runPlacementBoundEngine(fallbackEngine, placement, {
               prompt: fallbackPrompt,
               resumeSessionId: codexResume,
               systemPrompt,
@@ -1046,7 +1050,7 @@ export class SessionManager {
             }
 
             logger.info(`Session ${session.id} retrying after usage limit (attempt ${attempt})`);
-            const retryResult = await engine.run({
+            const retryResult = await runPlacementBoundEngine(engine, placement, {
               prompt: msg.text,
               resumeSessionId: currentSession.engineSessionId ?? undefined,
               systemPrompt,

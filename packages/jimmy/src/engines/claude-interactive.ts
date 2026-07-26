@@ -12,16 +12,20 @@ import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-vie
 import type { HookRegistry, HookPayload } from "../gateway/hook-registry.js";
 import { SsePtyProxy, type SseDataEvent, type StreamCtx } from "./sse-pty-proxy.js";
 import { neutralizeForPaste } from "../shared/skill-commands.js";
+import { placementSafeCliFlags } from "../shared/placement-profile.js";
 
 export type { PtyControlEvent } from "./pty-view-engine.js";
 
 interface InteractiveArgsOpts {
   prompt: string;
   settingsPath: string;
+  systemPrompt?: string;
   resumeSessionId?: string;
   model?: string;
   effortLevel?: string;
   mcpConfigPath?: string;
+  strictMcpConfig?: boolean;
+  enableChrome?: boolean;
   cliFlags?: string[];
   attachments?: string[];
   permissionMode?: "bypassPermissions" | "default" | "dontAsk" | "plan";
@@ -210,7 +214,8 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   }
   args.push(prompt); // positional — MUST precede variadic --mcp-config
 
-  args.push("--chrome");
+  if (o.enableChrome !== false) args.push("--chrome");
+  if (o.systemPrompt) args.push("--append-system-prompt", o.systemPrompt);
   if (o.effortLevel && o.effortLevel !== "default") args.push("--effort", o.effortLevel);
   if (o.model) args.push("--model", o.model);
   const permissionMode = o.permissionMode ?? "default";
@@ -228,8 +233,12 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
     ...(permissionMode === "plan" ? [] : ["ExitPlanMode"]),
   );
   args.push("--settings", o.settingsPath);
-  if (o.cliFlags?.length) args.push(...o.cliFlags);
-  if (o.mcpConfigPath) args.push("--mcp-config", o.mcpConfigPath);
+  const cliFlags = placementSafeCliFlags(o.cliFlags, o.strictMcpConfig);
+  if (cliFlags?.length) args.push(...cliFlags);
+  if (o.mcpConfigPath) {
+    args.push("--mcp-config", o.mcpConfigPath);
+    if (o.strictMcpConfig) args.push("--strict-mcp-config");
+  }
   return args;
 }
 
@@ -980,10 +989,13 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     const args = buildInteractiveArgs({
       prompt: opts.prompt,
       settingsPath,
+      systemPrompt: opts.systemPrompt,
       resumeSessionId: opts.resumeSessionId,
       model: opts.model,
       effortLevel: opts.effortLevel,
       mcpConfigPath: opts.mcpConfigPath,
+      strictMcpConfig: opts.strictMcpConfig,
+      enableChrome: opts.enableChrome,
       cliFlags: opts.cliFlags,
       attachments: opts.attachments,
       permissionMode: this.permissionMode,

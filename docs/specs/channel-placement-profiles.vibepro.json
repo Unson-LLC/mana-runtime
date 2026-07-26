@@ -110,6 +110,16 @@
           "condition": "o.resumeSessionId",
           "classification": "unchanged",
           "files": ["packages/jimmy/src/engines/claude-interactive.ts"]
+        },
+        {
+          "condition": "isDeadSessionError(result",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/engines/claude.ts"]
+        },
+        {
+          "condition": "opts.resumeSessionId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/engines/claude.ts"]
         }
       ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },

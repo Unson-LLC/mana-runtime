@@ -57,7 +57,7 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
-import { isPlacementEmployeeAllowed, placementDeliveryTargets } from "../shared/placement-profile.js";
+import { isPlacementEmployeeAllowed, placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
@@ -2682,7 +2682,9 @@ async function runWebSession(
       allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
       allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
     }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
-    if (Object.keys(mcpConfig.mcpServers).length > 0) {
+    // A Placement must always receive an explicit config, including an empty
+    // one, so --strict-mcp-config can exclude user/global MCPs.
+    if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
       mcpConfigPath = writeMcpConfigFile(mcpConfig, currentSession.id);
     }
   }
@@ -2738,7 +2740,7 @@ async function runWebSession(
       })()
       : prompt;
 
-    const result = await engine.run({
+    const result = await runPlacementBoundEngine(engine, placement, {
       prompt: promptToRun,
       resumeSessionId: currentSession.engineSessionId ?? undefined,
       systemPrompt,
@@ -2795,7 +2797,7 @@ async function runWebSession(
       if (currentSession.engine === "claude" && strategy === "fallback") {
         const fallbackName = config.sessions?.fallbackEngine ?? "codex";
         const fallbackEngine = context.sessionManager.getEngine(fallbackName);
-        if (fallbackEngine) {
+        if (fallbackEngine && supportsPlacementEngine(fallbackEngine, placement)) {
           const { resumeAt } = computeNextRetryDelayMs(rateLimit.resetsAt);
           const until = resumeAt ?? new Date(Date.now() + 6 * 60 * 60_000);
           const syncSince = new Date().toISOString();
@@ -2849,7 +2851,7 @@ async function runWebSession(
           const fallbackPrompt = codexResume
             ? prompt
             : `Continue this conversation and respond to the last USER message.\n\nConversation so far:\n\n${historyText}`;
-          const fallbackResult = await fallbackEngine.run({
+          const fallbackResult = await runPlacementBoundEngine(fallbackEngine, placement, {
             prompt: fallbackPrompt,
             resumeSessionId: codexResume,
             systemPrompt,
@@ -2986,7 +2988,7 @@ async function runWebSession(
 
           logger.info(`Web session ${currentSession.id} retrying after usage limit (attempt ${attempt})`);
 
-          const retryResult = await engine.run({
+          const retryResult = await runPlacementBoundEngine(engine, placement, {
             prompt,
             resumeSessionId: current.engineSessionId ?? undefined,
             systemPrompt,
