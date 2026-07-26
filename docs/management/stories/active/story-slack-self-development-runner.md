@@ -18,15 +18,19 @@ OpenRyokoの開発手法を佐藤だけの暗黙知にせず、梅田を含むal
 
 ## Explicit scenarios
 
-- S-001: Given the development runner is disabled, when Slack sends `/develop`, then no process starts and a disabled response is returned.
-- S-002: Given a non-Slack connector, when it sends `/develop`, then the command is not exposed and no process starts.
-- S-003: Given an empty or over-8000-character request, when `/develop` validates it, then the request is rejected before process creation.
-- S-004: Given one development request is active or its restart-safe lock remains, when a second request arrives, then the second request is rejected without spawning another runner.
-- S-005: Given an accepted Slack request, when the gateway starts the runner, then the request is encoded on stdin for an absolute executable with fixed arguments and Slack secrets are absent from the child environment.
-- S-006: Given a malformed or foreign runner result, when the gateway parses it, then unsupported fields, invalid statuses, missing Story IDs, and foreign pull-request URLs are rejected.
-- S-007: Given the gateway runner times out or exceeds its output limit, when termination starts, then TERM is followed by KILL when required and the lock remains held until the child closes.
-- S-008: Given the root-owned configuration and running script expose different runner versions, when validation starts, then execution fails closed before Git, worktree, or VibePro mutation.
-- S-009: Given a valid guarded run, when it completes, then it returns a Story ID and `pr_ready` without creating, merging, or deploying a PR.
+- S-001: Given the feature is absent or disabled, when Slack sends `/develop`, then it returns disabled and starts no process.
+- S-002: Given a non-Slack connector, when it receives `/develop`, then it does not expose the command and starts no process.
+- S-003: Given an empty request, when Slack sends `/develop`, then it returns usage guidance and starts no process.
+- S-004: Given a request longer than 8000 characters, when `/develop` validates it, then it is rejected before process creation.
+- S-005: Given one request is active or its restart-safe lock remains, when a second request arrives, then it is rejected rather than silently queued.
+- S-006: Given a valid request, when the gateway starts the runner, then it sends one JSON line on stdin to an absolute executable with fixed arguments.
+- S-007: Given the gateway starts the development child, when it constructs the child environment, then only runtime essentials are present and Slack credentials are not inherited.
+- S-008: Given an oversized, malformed, foreign-URL, extra-field, timed-out, non-zero, invalid-status, or missing-Story result, when the gateway parses it, then it returns a generic safe failure.
+- S-009: Given the child times out or ignores termination, when shutdown begins, then the process group receives termination, closure is awaited, and `SIGKILL` is used after the grace period when required.
+- S-010: Given a valid guarded run, when it completes, then it returns a Story ID and `pr_ready` without creating, merging, or deploying a PR.
+
+The root-owned `runnerVersion` must also match the running wrapper before Git,
+worktree, or VibePro mutation; a mismatch fails closed.
 
 ## Pilot metric
 
