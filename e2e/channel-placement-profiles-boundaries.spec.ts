@@ -94,6 +94,18 @@ test.describe('Channel Placement Profile execution boundaries', () => {
     expect(output, 'vibepro: AC-11 delegation override rejection').toContain(
       'uses the allowed employee definition and rejects execution overrides',
     )
+    expect(output, 'vibepro: AC-12 operator token protects localhost control plane').toContain(
+      'denies localhost operator mutations without the out-of-process operator token',
+    )
+    expect(output, 'vibepro: AC-12 operator token authorizes protected requests').toContain(
+      'requires operator authorization for legacy parent creation while placements are active',
+    )
+    expect(output, 'vibepro: AC-13 Discord proxy requires a dedicated service principal').toContain(
+      'keeps remote Discord proxying on a separate service principal',
+    )
+    expect(output, 'vibepro: AC-13 Discord input rejects missing and wrong credentials').toContain(
+      'authenticates proxied Discord input with the same service principal',
+    )
     expect(output, 'vibepro: S-001 exact Slack placement match').toContain(
       'matches an exact workspace, channel, and user',
     )
