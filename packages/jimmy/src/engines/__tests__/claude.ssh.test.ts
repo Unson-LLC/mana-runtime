@@ -216,7 +216,7 @@ describe("ClaudeEngine — local execution unchanged", () => {
     await p;
   });
 
-  it("enforces strict MCP and no Chrome for local Placement runs", async () => {
+  it("enforces strict MCP and no Chrome while preserving safe flags for local Placement runs", async () => {
     const proc = createMockProcess();
     mockSpawn.mockReturnValue(proc as any);
 
@@ -227,19 +227,31 @@ describe("ClaudeEngine — local execution unchanged", () => {
       mcpConfigPath: "/tmp/placement-mcp.json",
       strictMcpConfig: true,
       enableChrome: false,
-      cliFlags: ["--chrome", "--mcp-config", "/tmp/untrusted.json", "--debug"],
+      cliFlags: ["--debug"],
     });
 
     const args = mockSpawn.mock.calls[0][1] as string[];
     expect(args).not.toContain("--chrome");
     expect(args).toContain("--strict-mcp-config");
     expect(args).toContain("/tmp/placement-mcp.json");
-    expect(args).not.toContain("/tmp/untrusted.json");
-    expect(args).not.toContain("--debug");
+    expect(args).toContain("--debug");
     expect(args.filter((arg) => arg === "--mcp-config")).toHaveLength(1);
 
     finishOk(proc);
     await p;
+  });
+
+  it("rejects dangerous placement CLI flags before spawning Claude", async () => {
+    await expect(engine.run({
+      prompt: "placement task",
+      cwd: "/tmp",
+      sessionId: "placement-dangerous-flags",
+      mcpConfigPath: "/tmp/placement-mcp.json",
+      strictMcpConfig: true,
+      enableChrome: false,
+      cliFlags: ["--mcp-config", "/tmp/untrusted.json"],
+    })).rejects.toThrow("Placement-scoped Claude run rejects employee cliFlags: --mcp-config");
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("preserves Chrome and employee flags for legacy non-placement runs", async () => {

@@ -4,6 +4,7 @@ import { logger } from "../shared/logger.js";
 import { isDeadSessionError } from "../shared/rateLimit.js";
 import { resolveBin, formatSpawnError } from "../shared/resolveBin.js";
 import { buildChildEnv } from "../shared/childEnv.js";
+import { placementSafeCliFlags } from "../shared/placement-profile.js";
 
 interface LiveProcess {
   proc: ChildProcess;
@@ -222,9 +223,8 @@ export class ClaudeEngine implements InterruptibleEngine {
       trailingArgs.push("--mcp-config", opts.mcpConfigPath);
       if (opts.strictMcpConfig) trailingArgs.push("--strict-mcp-config");
     }
-    // See InteractiveClaudeEngine: arbitrary employee flags can re-enable
-    // Chrome or inject another MCP config, so omit them for strict runs.
-    if (!opts.strictMcpConfig && opts.cliFlags?.length) trailingArgs.push(...opts.cliFlags);
+    const cliFlags = placementSafeCliFlags(opts.cliFlags, opts.strictMcpConfig);
+    if (cliFlags?.length) trailingArgs.push(...cliFlags);
 
     // Local argv keeps the historical ordering: flags, prompt, then trailing.
     const args = [...flagArgs, prompt, ...trailingArgs];

@@ -37,7 +37,7 @@ import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
-import { placementDeliveryTargets, placementEngineBoundary } from "../shared/placement-profile.js";
+import { placementDeliveryTargets, runPlacementBoundEngine } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
@@ -588,8 +588,6 @@ export class SessionManager {
 
       // Placement browser access is supplied by its allowlisted MCP server.
       // Claude's separate Chrome integration is outside that allowlist.
-      const engineBoundary = placementEngineBoundary(placement);
-
       const effortLevel = resolveEffort(
         engineConfig,
         session,
@@ -689,7 +687,7 @@ export class SessionManager {
         }
       }
 
-      let result = await engine.run({
+      let result = await runPlacementBoundEngine(engine, placement, {
         prompt: promptToRun,
         resumeSessionId: session.engineSessionId ?? undefined,
         systemPrompt,
@@ -701,7 +699,6 @@ export class SessionManager {
         sshHost: employee?.sshHost,
         remoteCwd: employee?.remoteCwd,
         mcpConfigPath,
-        ...engineBoundary,
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
         keepWarmPty: false,
@@ -763,7 +760,7 @@ export class SessionManager {
         // message that happens to land on a stale resume ID is silently lost
         // (the raw engine error propagates back instead of a real answer).
         logger.info(`Retrying session ${session.id} with fresh engine session after dead-session`);
-        result = await engine.run({
+        result = await runPlacementBoundEngine(engine, placement, {
           prompt: promptToRun,
           resumeSessionId: undefined,
           systemPrompt,
@@ -775,7 +772,6 @@ export class SessionManager {
           sshHost: employee?.sshHost,
           remoteCwd: employee?.remoteCwd,
           mcpConfigPath,
-          ...engineBoundary,
           attachments: attachments.length > 0 ? attachments : undefined,
           sessionId: session.id,
           keepWarmPty: false,
@@ -818,7 +814,7 @@ export class SessionManager {
             await new Promise((r) => setTimeout(r, Math.min(20_000, delayMs - waited)));
           }
           const resumeId = result.sessionId?.trim() || session.engineSessionId || undefined;
-          result = await engine.run({
+          result = await runPlacementBoundEngine(engine, placement, {
             prompt:
               "The previous response was interrupted by a temporary Anthropic API server error. " +
               "The conversation history up to that point is intact. Continue and complete the original request now. " +
@@ -833,7 +829,6 @@ export class SessionManager {
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             mcpConfigPath,
-            ...engineBoundary,
             sessionId: session.id,
             keepWarmPty: false,
           });
@@ -911,7 +906,7 @@ export class SessionManager {
             const fallbackPrompt = codexResume
               ? msg.text
               : `Continue this conversation and respond to the last USER message.\n\nConversation so far:\n\n${historyText}`;
-            const fallbackResult = await fallbackEngine.run({
+            const fallbackResult = await runPlacementBoundEngine(fallbackEngine, placement, {
               prompt: fallbackPrompt,
               resumeSessionId: codexResume,
               systemPrompt,
@@ -1055,7 +1050,7 @@ export class SessionManager {
             }
 
             logger.info(`Session ${session.id} retrying after usage limit (attempt ${attempt})`);
-            const retryResult = await engine.run({
+            const retryResult = await runPlacementBoundEngine(engine, placement, {
               prompt: msg.text,
               resumeSessionId: currentSession.engineSessionId ?? undefined,
               systemPrompt,
@@ -1067,7 +1062,6 @@ export class SessionManager {
               sshHost: employee?.sshHost,
               remoteCwd: employee?.remoteCwd,
               mcpConfigPath,
-              ...engineBoundary,
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
               keepWarmPty: false,

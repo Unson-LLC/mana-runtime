@@ -138,18 +138,19 @@ describe("interactive Claude placement projection", () => {
     expect(args).not.toContain("--strict-mcp-config");
   });
 
-  it("drops employee CLI flags that could re-enable denied placement surfaces", () => {
-    const args = buildInteractiveArgs({
+  it("rejects employee CLI flags that could re-enable denied placement surfaces", () => {
+    expect(() => buildInteractiveArgs({
       ...base,
       mcpConfigPath: "/tmp/placement-mcp.json",
       strictMcpConfig: true,
       enableChrome: false,
       cliFlags: ["--chrome", "--mcp-config", "/tmp/untrusted-mcp.json", "--debug"],
-    });
-    expect(args).not.toContain("--chrome");
-    expect(args).not.toContain("/tmp/untrusted-mcp.json");
-    expect(args).not.toContain("--debug");
-    expect(args.filter((arg) => arg === "--mcp-config")).toHaveLength(1);
+    })).toThrow("Placement-scoped Claude run rejects employee cliFlags: --chrome, --mcp-config");
+  });
+
+  it("preserves safe employee CLI flags for placement runs", () => {
+    const args = buildInteractiveArgs({ ...base, strictMcpConfig: true, cliFlags: ["--debug"] });
+    expect(args).toContain("--debug");
   });
 
   it("preserves employee CLI flags for legacy non-placement runs", () => {

@@ -57,7 +57,7 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
-import { isPlacementEmployeeAllowed, placementDeliveryTargets, placementEngineBoundary } from "../shared/placement-profile.js";
+import { isPlacementEmployeeAllowed, placementDeliveryTargets, runPlacementBoundEngine } from "../shared/placement-profile.js";
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
@@ -2740,8 +2740,7 @@ async function runWebSession(
       })()
       : prompt;
 
-    const engineBoundary = placementEngineBoundary(placement);
-    const result = await engine.run({
+    const result = await runPlacementBoundEngine(engine, placement, {
       prompt: promptToRun,
       resumeSessionId: currentSession.engineSessionId ?? undefined,
       systemPrompt,
@@ -2753,7 +2752,6 @@ async function runWebSession(
       sshHost: employee?.sshHost,
       remoteCwd: employee?.remoteCwd,
       mcpConfigPath,
-      ...engineBoundary,
       attachments: attachments?.length ? attachments : undefined,
       sessionId: currentSession.id,
       keepWarmPty,
@@ -2853,7 +2851,7 @@ async function runWebSession(
           const fallbackPrompt = codexResume
             ? prompt
             : `Continue this conversation and respond to the last USER message.\n\nConversation so far:\n\n${historyText}`;
-          const fallbackResult = await fallbackEngine.run({
+          const fallbackResult = await runPlacementBoundEngine(fallbackEngine, placement, {
             prompt: fallbackPrompt,
             resumeSessionId: codexResume,
             systemPrompt,
@@ -2990,7 +2988,7 @@ async function runWebSession(
 
           logger.info(`Web session ${currentSession.id} retrying after usage limit (attempt ${attempt})`);
 
-          const retryResult = await engine.run({
+          const retryResult = await runPlacementBoundEngine(engine, placement, {
             prompt,
             resumeSessionId: current.engineSessionId ?? undefined,
             systemPrompt,
@@ -3002,7 +3000,6 @@ async function runWebSession(
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             mcpConfigPath,
-            ...engineBoundary,
             sessionId: currentSession.id,
             keepWarmPty,
             onStream: (delta) => {

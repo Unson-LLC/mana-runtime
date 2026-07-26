@@ -221,4 +221,39 @@ describe("SessionManager deterministic critical routing", () => {
       transportMeta: { placementId: "mana-test" },
     }));
   });
+
+  it("passes the fail-closed Placement boundary to the real Slack engine call site", async () => {
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "claude-1", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      strictMcpConfig: true,
+      enableChrome: false,
+    }));
+  });
+
+  it("keeps the real legacy Slack engine call site non-strict", async () => {
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "claude-legacy", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector());
+
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      strictMcpConfig: false,
+      enableChrome: undefined,
+    }));
+  });
 });

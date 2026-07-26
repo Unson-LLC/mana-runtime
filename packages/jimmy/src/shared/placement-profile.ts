@@ -1,4 +1,4 @@
-import type { IncomingMessage, PlacementDeliveryTarget, PlacementProfile } from "./types.js";
+import type { Engine, EngineResult, EngineRunOpts, IncomingMessage, PlacementDeliveryTarget, PlacementProfile } from "./types.js";
 
 export interface PlacementResolution {
   status: "legacy" | "matched" | "denied";
@@ -17,6 +17,34 @@ export function placementEngineBoundary(placement: PlacementProfile | undefined)
     strictMcpConfig: Boolean(placement),
     enableChrome: placement ? false : undefined,
   };
+}
+
+/** Single execution choke point so initial and retry call sites cannot drift. */
+export function runPlacementBoundEngine(
+  engine: Engine,
+  placement: PlacementProfile | undefined,
+  opts: EngineRunOpts,
+): Promise<EngineResult> {
+  return engine.run({ ...opts, ...placementEngineBoundary(placement) });
+}
+
+const PLACEMENT_DENIED_CLAUDE_FLAGS = new Set([
+  "--chrome",
+  "--mcp-config",
+  "--strict-mcp-config",
+]);
+
+/** Preserve ordinary employee flags, but visibly reject Placement-owned surfaces. */
+export function placementSafeCliFlags(
+  cliFlags: string[] | undefined,
+  strictMcpConfig: boolean | undefined,
+): string[] | undefined {
+  if (!strictMcpConfig || !cliFlags?.length) return cliFlags;
+  const denied = cliFlags.filter((flag) => PLACEMENT_DENIED_CLAUDE_FLAGS.has(flag));
+  if (denied.length > 0) {
+    throw new Error(`Placement-scoped Claude run rejects employee cliFlags: ${[...new Set(denied)].join(", ")}`);
+  }
+  return cliFlags;
 }
 
 const SECRET_VALUE = /^(?:Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|sk-ant-[A-Za-z0-9_-]{8,}|xox[baprs]-\S+|gh[opusr]_[A-Za-z0-9_]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i;

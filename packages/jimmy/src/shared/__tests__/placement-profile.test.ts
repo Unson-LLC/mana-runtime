@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { isPlacementEmployeeAllowed, placementEngineBoundary, resolvePlacement } from "../placement-profile.js";
+import { describe, expect, it, vi } from "vitest";
+import { isPlacementEmployeeAllowed, placementEngineBoundary, placementSafeCliFlags, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -82,5 +82,45 @@ describe("placementEngineBoundary", () => {
       strictMcpConfig: false,
       enableChrome: undefined,
     });
+  });
+});
+
+describe("runPlacementBoundEngine", () => {
+  it("applies the strict boundary at the shared initial/retry execution choke point", async () => {
+    const run = vi.fn().mockResolvedValue({ result: "ok" });
+    await runPlacementBoundEngine({ run } as any, placement, { prompt: "retry", cwd: "/tmp" });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "retry",
+      strictMcpConfig: true,
+      enableChrome: false,
+    }));
+  });
+
+  it("keeps legacy executions non-strict at the same choke point", async () => {
+    const run = vi.fn().mockResolvedValue({ result: "ok" });
+    await runPlacementBoundEngine({ run } as any, undefined, { prompt: "legacy", cwd: "/tmp" });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      strictMcpConfig: false,
+      enableChrome: undefined,
+    }));
+  });
+});
+
+describe("placementSafeCliFlags", () => {
+  it("preserves safe employee flags for strict placement runs", () => {
+    expect(placementSafeCliFlags(["--debug", "--verbose"], true)).toEqual(["--debug", "--verbose"]);
+  });
+
+  it.each(["--chrome", "--mcp-config", "--strict-mcp-config"])(
+    "rejects placement-controlled flag %s with a visible error",
+    (flag) => {
+      expect(() => placementSafeCliFlags(["--debug", flag], true)).toThrow(
+        `Placement-scoped Claude run rejects employee cliFlags: ${flag}`,
+      );
+    },
+  );
+
+  it("preserves legacy flags without a strict placement boundary", () => {
+    expect(placementSafeCliFlags(["--chrome", "--debug"], false)).toEqual(["--chrome", "--debug"]);
   });
 });

@@ -12,6 +12,7 @@ import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-vie
 import type { HookRegistry, HookPayload } from "../gateway/hook-registry.js";
 import { SsePtyProxy, type SseDataEvent, type StreamCtx } from "./sse-pty-proxy.js";
 import { neutralizeForPaste } from "../shared/skill-commands.js";
+import { placementSafeCliFlags } from "../shared/placement-profile.js";
 
 export type { PtyControlEvent } from "./pty-view-engine.js";
 
@@ -232,11 +233,8 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
     ...(permissionMode === "plan" ? [] : ["ExitPlanMode"]),
   );
   args.push("--settings", o.settingsPath);
-  // Placement-scoped runs use strictMcpConfig as the fail-closed boundary.
-  // Employee-provided flags are intentionally omitted there: Claude accepts
-  // flags such as --chrome and --mcp-config, which could otherwise restore a
-  // surface denied by the Placement profile.
-  if (!o.strictMcpConfig && o.cliFlags?.length) args.push(...o.cliFlags);
+  const cliFlags = placementSafeCliFlags(o.cliFlags, o.strictMcpConfig);
+  if (cliFlags?.length) args.push(...cliFlags);
   if (o.mcpConfigPath) {
     args.push("--mcp-config", o.mcpConfigPath);
     if (o.strictMcpConfig) args.push("--strict-mcp-config");
