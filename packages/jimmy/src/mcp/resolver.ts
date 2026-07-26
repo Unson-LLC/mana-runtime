@@ -16,6 +16,8 @@ export interface McpSessionContext {
   connector?: string;
   channel?: string;
   thread?: string;
+  placementId?: string;
+  configRevision?: string;
   allowedGatewayTools?: string[];
   allowedDeliveryTargets?: Array<{ connector: string; channel: string }>;
 }
@@ -44,7 +46,8 @@ export function resolveMcpServers(
     // Employee explicitly opted out of all MCP servers
     for (const name of Object.keys(available)) {
       emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
-        connector: sessionContext?.connector, channelId: sessionContext?.channel, capability: "mcp", target: name });
+        connector: sessionContext?.connector, channelId: sessionContext?.channel, placementId: sessionContext?.placementId,
+        configRevision: sessionContext?.configRevision, capability: "mcp", target: name });
     }
     return { mcpServers: {} };
   }
@@ -56,14 +59,16 @@ export function resolveMcpServers(
         servers[name] = available[name];
       } else {
         emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
-          connector: sessionContext?.connector, channelId: sessionContext?.channel, capability: "mcp", target: name });
+          connector: sessionContext?.connector, channelId: sessionContext?.channel, placementId: sessionContext?.placementId,
+          configRevision: sessionContext?.configRevision, capability: "mcp", target: name });
         logger.warn(`Employee ${employee?.name} requests MCP server "${name}" but it's not configured`);
       }
     }
     for (const name of Object.keys(available)) {
       if (!employeeMcp.includes(name)) {
         emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
-          connector: sessionContext?.connector, channelId: sessionContext?.channel, capability: "mcp", target: name });
+          connector: sessionContext?.connector, channelId: sessionContext?.channel, placementId: sessionContext?.placementId,
+          configRevision: sessionContext?.configRevision, capability: "mcp", target: name });
       }
     }
   } else {

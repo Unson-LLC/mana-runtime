@@ -151,7 +151,11 @@ async function _sendRaw(parentSessionId: string, message: string): Promise<void>
 
   await fetch(`http://127.0.0.1:${port}/api/sessions/${parentSessionId}/message`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      [CURRENT_SESSION_HEADER]: SYSTEM_NOTIFICATION_SESSION_ID,
+      [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(SYSTEM_NOTIFICATION_SESSION_ID),
+    },
     body: JSON.stringify({ message, role: "notification" }),
   });
 }

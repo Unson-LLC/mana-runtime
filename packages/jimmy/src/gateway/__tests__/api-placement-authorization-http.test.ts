@@ -13,7 +13,12 @@ import type { ApiContext } from "../api.js";
 import type { Connector, JinnConfig } from "../../shared/types.js";
 import { handleApiRequest } from "../api.js";
 import { createSession, getSession, initDb, updateSession } from "../../sessions/registry.js";
-import { CURRENT_SESSION_HEADER, getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "../../sessions/delegation-auth.js";
+import {
+  CURRENT_SESSION_HEADER,
+  getSessionDelegationToken,
+  SESSION_DELEGATION_HEADER,
+  SYSTEM_NOTIFICATION_SESSION_ID,
+} from "../../sessions/delegation-auth.js";
 import { logger } from "../../shared/logger.js";
 
 describe("placement authorization at HTTP derived-session endpoints", () => {
@@ -108,10 +113,12 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
         deliverMessage,
       } as unknown as Connector]]),
       sessionManager: {
-        getEngine: () => undefined,
+        getEngine: () => ({ name: "claude" }),
         getQueue: () => ({
           getPendingCount: () => 0,
           getTransportState: (_key: string, status: string) => status,
+          clearCancelled: vi.fn(),
+          enqueue: vi.fn().mockResolvedValue(undefined),
         }),
       },
     } as unknown as ApiContext;
@@ -169,6 +176,34 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       body: JSON.stringify({ greeting: "operator session" }),
     });
     expect(allowedStub.status).toBe(201);
+  });
+
+  it("allows only notification-role parent callbacks with the internal service principal", async () => {
+    const token = getSessionDelegationToken(SYSTEM_NOTIFICATION_SESSION_ID);
+    const allowed = await post(
+      `/api/sessions/${parentId}/message`,
+      { message: "child completed", role: "notification" },
+      token,
+      SYSTEM_NOTIFICATION_SESSION_ID,
+    );
+    expect(allowed.status).toBe(200);
+
+    const wrongRole = await post(
+      `/api/sessions/${parentId}/message`,
+      { message: "not a notification", role: "user" },
+      token,
+      SYSTEM_NOTIFICATION_SESSION_ID,
+    );
+    expect(wrongRole.status).toBe(403);
+    await expect(wrongRole.json()).resolves.toEqual({
+      error: "internal notification authorization is notification-only",
+    });
+
+    const missingAuth = await post(
+      `/api/sessions/${parentId}/message`,
+      { message: "unauthorized", role: "notification" },
+    );
+    expect(missingAuth.status).toBe(403);
   });
 
   it("redacts the Discord proxy service credential from the config API", async () => {

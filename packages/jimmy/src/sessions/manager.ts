@@ -38,6 +38,7 @@ import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
 import { placementDeliveryTargets } from "../shared/placement-profile.js";
+import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
 export interface RouteOptions {
@@ -573,6 +574,8 @@ export class SessionManager {
           connector: connector.name,
           channel: target.channel,
           thread: target.thread || target.messageTs,
+          placementId: placement?.id,
+          configRevision: placementConfigRevision(this.config.placements),
           allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
           allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
         }, placement ? (placement.capabilities?.mcp ?? false) : undefined);

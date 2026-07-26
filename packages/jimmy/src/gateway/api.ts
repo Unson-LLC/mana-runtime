@@ -328,6 +328,17 @@ function authorizedPlacementGatewayRequest(
   return gatewayToolMatchesRoute(tool, method, pathname) ? placementId : undefined;
 }
 
+function authorizedInternalNotificationRequest(
+  req: HttpRequest,
+  method: string,
+  pathname: string,
+): boolean {
+  return method === "POST" &&
+    !!matchRoute("/api/sessions/:id/message", pathname) &&
+    currentSessionId(req) === SYSTEM_NOTIFICATION_SESSION_ID &&
+    verifySessionDelegationToken(SYSTEM_NOTIFICATION_SESSION_ID, sessionDelegationToken(req));
+}
+
 /**
  * API-triggered turns normally belong to Web UI sessions, but internal
  * callbacks resume the original parent session through the same endpoint.
@@ -735,7 +746,8 @@ export async function handleApiRequest(
     // shell commands and reach localhost. Operator mutations require a secret
     // kept outside the agent process whenever Placement mode is enabled.
     const gatewayPlacementId = authorizedPlacementGatewayRequest(context, req, method, pathname);
-    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthorized(req) && !gatewayPlacementId) {
+    const internalNotificationAuthorized = authorizedInternalNotificationRequest(req, method, pathname);
+    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthorized(req) && !gatewayPlacementId && !internalNotificationAuthorized) {
       return json(res, { error: "operator authorization required" }, 403);
     }
 
@@ -1186,6 +1198,9 @@ export async function handleApiRequest(
       if (!_parsed.ok) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
+      if (internalNotificationAuthorized && body.role !== "notification") {
+        return json(res, { error: "internal notification authorization is notification-only" }, 403);
+      }
       const prompt = body.message || body.prompt;
       if (!prompt) return badRequest(res, "message is required");
 
@@ -2661,6 +2676,8 @@ async function runWebSession(
       sessionId: currentSession.id,
       connector: "web",
       channel: currentSession.sourceRef,
+      placementId: placement?.id,
+      configRevision: placementConfigRevision(config.placements),
       allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
       allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
     }, placement ? (placement.capabilities?.mcp ?? false) : undefined);

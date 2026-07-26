@@ -56,10 +56,13 @@ describe("resolveMcpServers", () => {
   it("denies all MCP servers when a placement omits MCP capability", () => {
     const config = { gateway: { enabled: true }, browser: { enabled: false } } satisfies JinnConfig["mcp"];
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
-    expect(resolveMcpServers(config, undefined, { sessionId: "S1", connector: "slack", channel: "C1" }, false).mcpServers).toEqual({});
+    expect(resolveMcpServers(config, undefined, {
+      sessionId: "S1", connector: "slack", channel: "C1", placementId: "pilot", configRevision: "rev-1",
+    }, false).mcpServers).toEqual({});
     const event = warn.mock.calls.map(([message]) => message).find((message) => message.startsWith("security_event "))!;
     expect(JSON.parse(event.slice("security_event ".length))).toMatchObject({
-      event: "capability", reason: "mcp_denied", sessionId: "S1", connector: "slack", channelId: "C1", target: "gateway",
+      event: "capability", reason: "mcp_denied", sessionId: "S1", connector: "slack", channelId: "C1",
+      placementId: "pilot", configRevision: "rev-1", target: "gateway",
     });
     warn.mockRestore();
   });

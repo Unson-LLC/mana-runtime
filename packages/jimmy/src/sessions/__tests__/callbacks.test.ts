@@ -21,6 +21,12 @@ vi.mock("../../shared/logger.js", () => ({
 import { notifyParentSession } from "../callbacks.js";
 import { getSession } from "../registry.js";
 import type { Session } from "../../shared/types.js";
+import {
+  CURRENT_SESSION_HEADER,
+  SESSION_DELEGATION_HEADER,
+  SYSTEM_NOTIFICATION_SESSION_ID,
+  verifySessionDelegationToken,
+} from "../delegation-auth.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -92,6 +98,11 @@ describe("notifyParentSession", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
     const [url, opts] = fetchSpy.mock.calls[0];
     expect(url).toBe("http://127.0.0.1:7777/api/sessions/parent-001/message");
+    expect(opts.headers[CURRENT_SESSION_HEADER]).toBe(SYSTEM_NOTIFICATION_SESSION_ID);
+    expect(verifySessionDelegationToken(
+      SYSTEM_NOTIFICATION_SESSION_ID,
+      opts.headers[SESSION_DELEGATION_HEADER],
+    )).toBe(true);
 
     const body = JSON.parse(opts.body);
     expect(body.message).toContain("completed session");
