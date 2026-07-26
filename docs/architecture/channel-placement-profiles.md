@@ -221,6 +221,32 @@ Graph、repository、NocoDB、filesystem、secretごとに参照範囲と操作�
 7. 社内プロジェクト用の2つ目のprofileを追加する。
 8. 社外・顧客用途は別ランタイムとして設計・評価する。
 
+### 10.1 Safe rollout and rollback contract
+
+Placement有効化はbinaryと完成済みconfigを一組として扱う。適用前に両方の直前版を保存し、Slack受信を停止してから原子的に切り替える。再開前に、登録済み利用者・チャンネルの正常系、未登録利用者・チャンネル、operator tokenなしの管理API/WebSocket、許可外MCP・Gateway tool・delivery、許可外の派生sessionがそれぞれ期待どおり許可・拒否されることをprobeする。
+
+rollbackは次の順序で行う。
+
+1. Slack connectorの受信を停止し、新規セッションと返信を止める。
+2. 直前のbinaryと、それに対応する完成済みconfigを一体で復元する。configだけを先に戻さない。
+3. 少なくとも1件のrestrictive placementを維持した状態で、正常系と拒否系のprobeを再実行する。
+4. probeがすべて期待値と一致した場合だけSlack受信を再開する。
+
+稼働中のconnectorに対して`placements`を空または未設定にする操作をrollbackとして使ってはならない。それはlegacy modeへの移行であり、Placementによる入力、管理API、WebSocketの認可を解除するauthorization downgradeだからである。旧binaryがPlacementを理解しない場合は、Slack connectorを停止したまま旧runtimeへ切り替え、旧来の`allowFrom`と配信先制限を別途確認してから再開する。
+
+### 10.2 Minimum Phase 1 observability contract
+
+永続監査基盤は後続Storyとするが、Phase 1でも認可判断はsecretを含まない構造化security eventとして出力する。最低限の共通fieldは`event`、`decision`、`reason`、`placementId`（解決済みの場合）、`connector`、`workspaceId`、`channelId`、ハッシュ化した`actorId`、`sessionId`、`capability`、`target`、`configRevision`、`timestamp`とする。token、prompt、本文、secret、完全なGraph queryは記録しない。
+
+区別可能なevent/reasonは次を最低限とする。
+
+- placement解決: `unmatched`、`unauthorized_actor`、`ambiguous`、`placement_missing_after_config_change`
+- control plane: `operator_auth_missing`、`operator_auth_invalid`、`operator_hash_missing`
+- capability: `mcp_denied`、`gateway_tool_denied`、`delivery_denied`
+- derived session: `parent_missing`、`parent_token_invalid`、`employee_denied`、`execution_override_denied`
+
+health probeは`/api/status`のlivenessに加え、正しいoperator tokenでの保護read、tokenなしの403、登録Placementの正常入力、未登録channel/userの拒否、許可・拒否MCP/tool/delivery、派生sessionの親束縛を含む。rollout/rollback成功条件は、全probeが期待値と一致し、`ambiguous`、`operator_hash_missing`、予期しない`placement_missing_after_config_change`が0件で、拒否eventにsecretが含まれないことである。不一致が1件でもあればSlack受信を再開しない。
+
 ## 11. Non-goals
 
 - Placement ProfileをGraph SSOTの代替にすること。

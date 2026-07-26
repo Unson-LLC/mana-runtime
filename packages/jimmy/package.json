@@ -21,7 +21,7 @@
     "dev": "tsc && (tsc --watch &) && node --watch-path=dist dist/bin/jimmy.js start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "vitest run src/sessions/__tests__/development-runner.test.ts src/shared/__tests__/placement-profile.test.ts src/sessions/__tests__/manager-critical-routing.test.ts src/gateway/__tests__/api-placement-authorization-http.test.ts src/gateway/__tests__/operator-auth.test.ts",
+    "test:integration": "vitest run --reporter=verbose src/sessions/__tests__/development-runner.test.ts src/shared/__tests__/placement-profile.test.ts src/sessions/__tests__/manager-critical-routing.test.ts src/gateway/__tests__/api-placement-authorization-http.test.ts src/gateway/__tests__/api-placement-parent.test.ts src/gateway/__tests__/operator-auth.test.ts src/connectors/slack/__tests__/connector-authorization.test.ts src/mcp/__tests__/resolver.test.ts src/mcp/__tests__/gateway-policy.test.ts src/sessions/__tests__/context-delegation.test.ts src/sessions/__tests__/delegation-auth.test.ts",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
