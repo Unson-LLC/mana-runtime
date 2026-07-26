@@ -18,6 +18,18 @@ export interface DevelopmentResult {
 
 type SpawnFn = typeof spawn;
 
+async function waitForProcessGroupExit(pid: number): Promise<void> {
+  while (true) {
+    try {
+      process.kill(-pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+}
+
 function validateConfig(config: DevelopmentRunnerConfig): void {
   if (!config.enabled) throw new Error("development runner is disabled");
   if (!path.isAbsolute(config.bin)) throw new Error("development runner bin must be absolute");
@@ -107,7 +119,17 @@ export async function runDevelopmentRequest(
       killTimer = setTimeout(() => {
         killTimer = null;
         signal("SIGKILL");
-        if (closedCode !== undefined) finish(() => reject(terminationError!));
+        void (async () => {
+          if (pid && process.platform !== "win32") {
+            try {
+              await waitForProcessGroupExit(pid);
+            } catch (error) {
+              finish(() => reject(error));
+              return;
+            }
+          }
+          if (closedCode !== undefined) finish(() => reject(terminationError!));
+        })();
       }, 5000);
     };
     const timer = setTimeout(() => {

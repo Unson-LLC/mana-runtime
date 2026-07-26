@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -126,6 +126,34 @@ describe("development runner", () => {
       vi.useRealTimers();
     }
   });
+
+  it("keeps the request pending until a timed-out process group is gone", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "openryoko-development-timeout-"));
+    const descendantPidPath = path.join(directory, "descendant.pid");
+    const script = [
+      "const {spawn}=require('node:child_process')",
+      "const {writeFileSync}=require('node:fs')",
+      "const descendant=spawn(process.execPath,['-e',`process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`],{stdio:'ignore'})",
+      `writeFileSync(${JSON.stringify(descendantPidPath)},String(descendant.pid))`,
+      "process.on('SIGTERM',()=>process.exit(0))",
+      "process.stdin.resume()",
+      "setInterval(()=>{},1000)",
+    ].join(";");
+
+    try {
+      await expect(runDevelopmentRequest({
+        enabled: true,
+        bin: process.execPath,
+        args: ["-e", script],
+        timeoutMs: 25,
+      }, "x")).rejects.toThrow("timed out");
+
+      const descendantPid = Number(await readFile(descendantPidPath, "utf8"));
+      expect(() => process.kill(descendantPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it("requires an absolute executable path", async () => {
     await expect(runDevelopmentRequest({ enabled: true, bin: "sudo" }, "x")).rejects.toThrow("must be absolute");
