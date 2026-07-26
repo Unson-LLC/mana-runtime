@@ -6,7 +6,7 @@
       "kind": "threat_model",
       "format": "mermaid",
       "source": "docs/specs/channel-placement-profiles.md",
-      "diagram": "flowchart LR\n  U[Slack user] --> E[Slack event]\n  E --> R{Placement resolver}\n  R -->|unmatched or ambiguous| X[Reject before agent execution]\n  R -->|unique match| A[Audience authorization]\n  A -->|user denied| X\n  A --> C[Capability resolver]\n  C --> M[Allowed MCP and Gateway tools]\n  M --> G[Agent execution]\n  G --> O{Output authorization}\n  O -->|destination denied| X\n  O -->|allowed| S[Slack response]\n  G --> D{Derived session request}\n  D -->|missing parent or override attempt| X\n  D -->|allowed employee| P[Inherit parent Placement]"
+      "mermaid": "flowchart LR\n  U[Slack user] --> E[Slack event]\n  E --> R{Placement resolver}\n  R -->|unmatched or ambiguous| X[Reject before agent execution]\n  R -->|unique match| A[Audience authorization]\n  A -->|user denied| X\n  A --> C[Capability resolver]\n  C --> M[Allowed MCP and Gateway tools]\n  M --> G[Agent execution]\n  G --> O{Output authorization}\n  O -->|destination denied| X\n  O -->|allowed| S[Slack response]\n  G --> D{Derived session request}\n  D -->|missing parent or override attempt| X\n  D -->|allowed employee| P[Inherit parent Placement]"
     }
   ],
   "generated_by": {
