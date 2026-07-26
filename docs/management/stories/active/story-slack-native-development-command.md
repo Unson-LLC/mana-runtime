@@ -16,6 +16,10 @@ allowlist済みの担当者がパイロットチャンネルで `/ryoko-develop`
 - 旧メンション経由で内部 `/develop` を呼んでも同じチャンネル制限を迂回できない。
 - public HTTP endpointは追加せず、稼働中checkout、secret、merge、deployの境界を変えない。
 
+## Scope decision
+
+Slack handler、二重の権限ガード、Manifest生成、テスト、運用文書は一つの利用可能な変更としてbundled scopeにする。コードだけではSlackにコマンドが登録されず、Manifestだけでは安全にdispatchできず、運用文書を分離すると再インストールとrollbackが欠落するため、別PRには分割しない。
+
 ## Explicit scenarios
 
 - S-001: Given an allowlisted user in an allowed channel, when `/ryoko-develop change docs` is invoked, then Slack is acknowledged and `/develop change docs` is dispatched once.
