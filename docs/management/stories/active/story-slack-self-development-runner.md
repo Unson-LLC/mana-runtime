@@ -18,14 +18,15 @@ OpenRyokoの開発手法を佐藤だけの暗黙知にせず、梅田を含むal
 
 ## Explicit scenarios
 
-- S-001: 無効時または非Slack connectorからの`/develop`はプロセスを開始しない。
-- S-002: 空または8000文字超の要求はプロセス生成前に拒否する。
-- S-003: 実行中およびgateway再起動後のロック保持中は、2件目を開始しない。
-- S-004: 受理した要求は固定argvの絶対パス実行ファイルへstdin JSONで渡し、gateway secretを継承しない。
-- S-005: 余分なfield、不正status、Story ID欠落、対象外PR URLを含む結果は拒否する。
-- S-006: timeoutまたは出力上限超過時はプロセス群をTERM後にKILLし、closeまでロックを解放しない。
-- S-007: root所有設定の`runnerVersion`と実行スクリプトのversionが一致しない場合はfail closedする。
-- S-008: guarded runは`pr_ready`で停止し、PR作成・merge・deployを実行しない。
+- S-001: Given the development runner is disabled, when Slack sends `/develop`, then no process starts and a disabled response is returned.
+- S-002: Given a non-Slack connector, when it sends `/develop`, then the command is not exposed and no process starts.
+- S-003: Given an empty or over-8000-character request, when `/develop` validates it, then the request is rejected before process creation.
+- S-004: Given one development request is active or its restart-safe lock remains, when a second request arrives, then the second request is rejected without spawning another runner.
+- S-005: Given an accepted Slack request, when the gateway starts the runner, then the request is encoded on stdin for an absolute executable with fixed arguments and Slack secrets are absent from the child environment.
+- S-006: Given a malformed or foreign runner result, when the gateway parses it, then unsupported fields, invalid statuses, missing Story IDs, and foreign pull-request URLs are rejected.
+- S-007: Given the gateway runner times out or exceeds its output limit, when termination starts, then TERM is followed by KILL when required and the lock remains held until the child closes.
+- S-008: Given the root-owned configuration and running script expose different runner versions, when validation starts, then execution fails closed before Git, worktree, or VibePro mutation.
+- S-009: Given a valid guarded run, when it completes, then it returns a Story ID and `pr_ready` without creating, merging, or deploying a PR.
 
 ## Pilot metric
 
