@@ -29,11 +29,17 @@ export interface PtyLifecycleOpts {
    *  an autonomous background continuation streaming API requests). A busy PTY
    *  is never reaped or LRU-evicted — killing it would abort in-flight work. */
   isBusy?: (sessionId: string) => boolean;
+  /**
+   * Strict in-flight probe used for sessions that opted out of keep-warm.
+   * Unlike isBusy, this must not include a recent-activity grace window.
+   */
+  isActivelyBusy?: (sessionId: string) => boolean;
 }
 
 interface Entry {
   handle: PtyHandle;
   turnRunning: boolean;
+  keepWarmAfterTurn: boolean;
   viewerCount: number;
   viewingEndedAt: number; // epoch ms; 0 while at least one viewer is attached
   lastTurnEndedAt: number; // epoch ms; 0 if no turn has completed yet
@@ -42,6 +48,7 @@ interface Entry {
 function shouldStayAlive(e: Entry, now: number): boolean {
   if (e.turnRunning) return true;
   if (e.viewerCount > 0) return true;
+  if (!e.keepWarmAfterTurn) return false;
   const since = Math.max(e.viewingEndedAt, e.lastTurnEndedAt);
   if (since > 0 && now - since < CLI_KEEPALIVE_AFTER_LEAVE_MS) return true;
   return false;
@@ -61,6 +68,7 @@ export class PtyLifecycleManager {
     this.entries.set(sessionId, {
       handle,
       turnRunning: false,
+      keepWarmAfterTurn: true,
       viewerCount: 0,
       viewingEndedAt: 0,
       lastTurnEndedAt: 0,
@@ -102,10 +110,11 @@ export class PtyLifecycleManager {
     if (e) e.turnRunning = true;
   }
 
-  turnEnded(sessionId: string): void {
+  turnEnded(sessionId: string, keepWarm = true): void {
     const e = this.entries.get(sessionId);
     if (!e) return;
     e.turnRunning = false;
+    e.keepWarmAfterTurn = keepWarm;
     e.lastTurnEndedAt = Date.now();
     this.reevaluate(sessionId);
   }
@@ -134,7 +143,10 @@ export class PtyLifecycleManager {
   private reevaluate(sessionId: string): void {
     const e = this.entries.get(sessionId);
     if (!e) return;
-    if (this.opts.isBusy?.(sessionId)) return;
+    const busy = e.keepWarmAfterTurn
+      ? this.opts.isBusy?.(sessionId)
+      : (this.opts.isActivelyBusy?.(sessionId) ?? this.opts.isBusy?.(sessionId));
+    if (busy) return;
     if (!shouldStayAlive(e, Date.now())) this.releaseSession(sessionId);
   }
 

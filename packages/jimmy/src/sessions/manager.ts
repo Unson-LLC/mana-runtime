@@ -33,12 +33,17 @@ import { loadJobs } from "../cron/jobs.js";
 import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
 import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
+import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 
 export interface RouteOptions {
   employee?: Employee;
   engine?: string;
   model?: string;
   title?: string;
+  criticalRouting?: {
+    enabled?: boolean;
+    reviewerEmployee?: string;
+  };
 }
 
 /**
@@ -112,7 +117,7 @@ function mergeTransportMeta(
   const merged: Record<string, unknown> = { ...baseExisting, ...baseIncoming };
 
   // Preserve Jinn internal keys from being overwritten by transport adapters.
-  for (const key of ["engineOverride", "engineSessions", "claudeSyncSince"]) {
+  for (const key of ["engineOverride", "engineSessions", "claudeSyncSince", "criticalRouting"]) {
     if (baseExisting[key] !== undefined) merged[key] = baseExisting[key];
   }
 
@@ -125,6 +130,7 @@ export class SessionManager {
   private connectorNames: string[];
   private queue = new SessionQueue();
   private connectorProvider: () => Map<string, Connector> = () => new Map();
+  private criticalDispatches = new Set<string>();
 
   constructor(
     config: JinnConfig,
@@ -210,6 +216,105 @@ export class SessionManager {
     const attachmentPaths = msg.attachments
       .map((attachment) => attachment.localPath)
       .filter((filePath): filePath is string => !!filePath);
+    const sessionId = session.id;
+
+    const criticalConfig = opts.criticalRouting;
+    const criticalDecision = criticalConfig?.enabled
+      ? classifyCriticalTask(msg.text)
+      : { critical: false as const };
+    if (criticalDecision.critical) {
+      const reviewerEmployee = criticalConfig?.reviewerEmployee?.trim() || "critical-reviewer";
+      const dispatchKey = `${session.id}:${msg.messageId || msg.sessionKey}`;
+      const routeMeta = (session.transportMeta && typeof session.transportMeta === "object")
+        ? (session.transportMeta as Record<string, unknown>).criticalRouting as Record<string, unknown> | undefined
+        : undefined;
+      if (this.criticalDispatches.has(dispatchKey) || (msg.messageId && routeMeta?.messageId === msg.messageId)) {
+        logger.info(`Skipping duplicate critical route for parent ${session.id}, message ${msg.messageId}`);
+        return { sessionId };
+      }
+      this.criticalDispatches.add(dispatchKey);
+
+      insertMessage(session.id, "user", msg.text);
+      const dispatchingMeta = {
+        ...((session.transportMeta || {}) as Record<string, unknown>),
+        criticalRouting: {
+          messageId: msg.messageId ?? null,
+          reviewerEmployee,
+          reason: criticalDecision.reason,
+          status: "dispatching",
+        },
+      };
+      updateSession(session.id, {
+        status: "running",
+        replyContext: msg.replyContext,
+        messageId: msg.messageId ?? null,
+        transportMeta: dispatchingMeta as Session["transportMeta"],
+        lastActivity: new Date().toISOString(),
+      });
+
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${this.config.gateway.port}/api/sessions/${session.id}/children`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              employee: reviewerEmployee,
+              prompt: buildCriticalReviewPrompt(msg.text),
+              attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined,
+            }),
+          },
+        );
+        if (!response.ok) {
+          const detail = (await response.text()).slice(0, 300);
+          throw new Error(`child session API returned ${response.status}${detail ? `: ${detail}` : ""}`);
+        }
+        const child = await response.json() as {
+          id?: string;
+          model?: string | null;
+          effortLevel?: string | null;
+        };
+        if (!child.id) throw new Error("child session API did not return an id");
+
+        const routeLabel = [child.model, child.effortLevel].filter(Boolean).join("/");
+        const acknowledgement = `重要タスクとして ${reviewerEmployee}${routeLabel ? `（${routeLabel}）` : ""}へレビューを委譲しました。完了後、このスレッドに統合結果を返します。`;
+        insertMessage(session.id, "assistant", acknowledgement);
+        updateSession(session.id, {
+          status: "idle",
+          transportMeta: {
+            ...dispatchingMeta,
+            criticalRouting: {
+              messageId: msg.messageId ?? null,
+              reviewerEmployee,
+              reason: criticalDecision.reason,
+              status: "delegated",
+              childSessionId: child.id,
+            },
+          } as Session["transportMeta"],
+          lastActivity: new Date().toISOString(),
+          lastError: null,
+        });
+        await connector.replyMessage(target, acknowledgement);
+        logger.info(
+          `Deterministic critical route: parent ${session.id} -> child ${child.id} (${reviewerEmployee}, reason: ${criticalDecision.reason})`,
+        );
+        return { sessionId };
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const failure = `重要レビューの委譲に失敗したため処理を停止しました。運用担当者が確認します。`;
+        insertMessage(session.id, "assistant", failure);
+        updateSession(session.id, {
+          status: "error",
+          lastActivity: new Date().toISOString(),
+          lastError: errMsg,
+        });
+        logger.error(`Critical route failed for parent ${session.id}: ${errMsg}`);
+        await connector.replyMessage(target, failure).catch(() => {});
+        return { sessionId };
+      } finally {
+        this.criticalDispatches.delete(dispatchKey);
+      }
+    }
 
     if (session.status === "waiting") {
       const expectedResetAt = getClaudeExpectedResetAt();
@@ -225,8 +330,6 @@ export class SessionManager {
     if (session.status === "running" && this.queue.isRunning(msg.sessionKey) && connector.getCapabilities().reactions) {
       await connector.addReaction(target, "clock1").catch(() => {});
     }
-
-    const sessionId = session.id;
 
     // Queue cancellation is generational (see SessionQueue.clearQueue): this new
     // inbound message enqueues at the current generation and runs even if the session
@@ -546,6 +649,7 @@ export class SessionManager {
         mcpConfigPath,
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
+        keepWarmPty: false,
       });
 
       let wasInterrupted = result.error?.startsWith("Interrupted");
@@ -618,6 +722,7 @@ export class SessionManager {
           mcpConfigPath,
           attachments: attachments.length > 0 ? attachments : undefined,
           sessionId: session.id,
+          keepWarmPty: false,
         });
 
         // Re-evaluate the flags against the retry result. If the retry also
@@ -673,6 +778,7 @@ export class SessionManager {
             remoteCwd: employee?.remoteCwd,
             mcpConfigPath,
             sessionId: session.id,
+            keepWarmPty: false,
           });
           wasInterrupted = result.error?.startsWith("Interrupted");
           if (wasInterrupted || !isTransientServerError(result)) break;
@@ -761,6 +867,7 @@ export class SessionManager {
               remoteCwd: employee?.remoteCwd,
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
+              keepWarmPty: false,
             });
 
             const fallbackText = fallbackResult.result?.trim()
@@ -905,6 +1012,7 @@ export class SessionManager {
               mcpConfigPath,
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
+              keepWarmPty: false,
             });
 
             const retryInterrupted = retryResult.error?.startsWith("Interrupted");

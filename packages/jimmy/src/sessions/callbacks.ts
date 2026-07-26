@@ -68,11 +68,26 @@ async function _sendNotification(
 
   let message: string;
   if (result.error) {
-    message = `⚠️ Employee "${employeeName}" (session ${childId}) encountered an error: ${result.error}`;
+    message = `⚠️ Linked child employee "${employeeName}" (session ${childId}, parent ${childSession.parentSessionId}) encountered an error: ${result.error}
+
+This is a completion callback for a child session linked to your current session. Treat it as a continuation of the original user task, not as an unrelated conversation. Explain the failure to the original user or recover if safe. Do not delegate the same task again.`;
   } else {
     const raw = result.result || "(no output)";
-    const preview = raw.length > 200 ? raw.substring(0, 200) + "..." : raw;
-    message = `📩 Employee "${employeeName}" replied in session ${childId}.\nRead the latest messages: GET /api/sessions/${childId}?last=N\n\nPreview: ${preview}`;
+    const maxEmbeddedResultChars = 16_000;
+    const embeddedResult =
+      raw.length > maxEmbeddedResultChars
+        ? `${raw.substring(0, maxEmbeddedResultChars)}\n\n[Child result truncated at ${maxEmbeddedResultChars} characters.]`
+        : raw;
+    message = `📩 Linked child employee "${employeeName}" completed session ${childId} for parent session ${childSession.parentSessionId}.
+
+This child was created with parentSessionId equal to your current session ID. It is therefore part of the original user task, not a separate or unrelated conversation.
+
+The child result is embedded below. Use it directly; do not call the gateway API or run a shell command to retrieve it.
+
+Then review and integrate the child's result into a final answer to the original user on the parent connector. Do not delegate this completed task again, do not describe it as orphaned, and do not claim it belongs to another task.
+
+Complete child result:
+${embeddedResult}`;
   }
 
   await _sendRaw(childSession.parentSessionId!, message);

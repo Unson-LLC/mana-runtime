@@ -53,7 +53,10 @@ import QRCode from "qrcode";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
 import { handleFilesRequest, ensureFilesDir } from "./files.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "../sessions/callbacks.js";
+import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.js";
 import { loadInstances } from "../cli/instances.js";
+import { findEmployee, scanOrg } from "./org.js";
+import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -94,6 +97,40 @@ export interface ApiContext {
    */
   hookRegistry?: import("./hook-registry.js").HookRegistry;
   hookSecret?: string;
+}
+
+/**
+ * API-triggered turns normally belong to Web UI sessions, but internal
+ * callbacks resume the original parent session through the same endpoint.
+ * When that parent came from Slack/Discord/etc, deliver the generated answer
+ * back through its stored connector just like SessionManager.runSession does.
+ */
+export async function deliverApiSessionResult(
+  session: Session,
+  text: string | null | undefined,
+  context: Pick<ApiContext, "connectors">,
+): Promise<void> {
+  if (!text?.trim() || !session.connector || session.connector === "web" || !session.replyContext) {
+    return;
+  }
+
+  const connector = context.connectors.get(session.connector);
+  if (!connector) {
+    logger.warn(`API session ${session.id} connector "${session.connector}" is unavailable; result was persisted but not delivered`);
+    return;
+  }
+
+  const target = connector.reconstructTarget(session.replyContext);
+  target.messageTs ??= session.messageId ?? undefined;
+  const meta = (session.transportMeta ?? {}) as Record<string, unknown>;
+  const isDM = meta.channelType === "im";
+  const { publicAction } = normalizeDelivery(text, {
+    addressed: session.source !== "cron",
+    channelExternal: isDM ? false : meta.channelExternal === undefined ? true : meta.channelExternal === true,
+    isDM,
+    canReact: connector.getCapabilities().reactions,
+  });
+  await deliverPublic(connector, target, publicAction);
 }
 
 export function resumePendingWebQueueItems(context: ApiContext): void {
@@ -341,6 +378,26 @@ export function deepMerge(target: Record<string, unknown>, source: Record<string
     }
   }
   return result;
+}
+
+export function stripTopLevelSlackCredentials(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const connectors = config.connectors;
+  if (!connectors || typeof connectors !== "object" || Array.isArray(connectors)) return config;
+  const slack = (connectors as Record<string, unknown>).slack;
+  if (!slack || typeof slack !== "object" || Array.isArray(slack)) return config;
+
+  const sanitizedSlack = { ...(slack as Record<string, unknown>) };
+  delete sanitizedSlack.appToken;
+  delete sanitizedSlack.botToken;
+  return {
+    ...config,
+    connectors: {
+      ...(connectors as Record<string, unknown>),
+      slack: sanitizedSlack,
+    },
+  };
 }
 
 function matchRoute(
@@ -777,16 +834,28 @@ export async function handleApiRequest(
       return json(res, serializeSession(session, context), 201);
     }
 
-    // POST /api/sessions
-    if (method === "POST" && pathname === "/api/sessions") {
+    // POST /api/sessions or /api/sessions/:id/children
+    // The session-specific endpoint enforces the parent link server-side so
+    // delegated children cannot become orphaned if an agent omits a body field.
+    const createChildParams = matchRoute("/api/sessions/:id/children", pathname);
+    if (method === "POST" && (pathname === "/api/sessions" || createChildParams)) {
       const _parsed = await readJsonBody(req, res);
       if (!_parsed.ok) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
       const prompt = body.prompt || body.message;
       if (!prompt) return badRequest(res, "prompt or message is required");
+      if (createChildParams && !getSession(createChildParams.id)) {
+        return notFound(res);
+      }
       const config = context.getConfig();
-      const engineName = body.engine || config.engines.default;
+      const employee = body.employee
+        ? findEmployee(body.employee, scanOrg())
+        : undefined;
+      if (body.employee && !employee) {
+        return badRequest(res, `employee "${body.employee}" not found`);
+      }
+      const engineName = body.engine || employee?.engine || config.engines.default;
       const sessionKey = `web:${Date.now()}`;
       const session = createSession({
         engine: engineName,
@@ -795,9 +864,10 @@ export async function handleApiRequest(
         connector: "web",
         sessionKey,
         replyContext: { source: "web" },
-        employee: body.employee,
-        parentSessionId: body.parentSessionId,
-        effortLevel: body.effortLevel,
+        employee: employee?.name,
+        model: body.model || employee?.model,
+        parentSessionId: createChildParams?.id || body.parentSessionId,
+        effortLevel: body.effortLevel || employee?.effortLevel,
         prompt,
         portalName: config.portal?.portalName,
       });
@@ -1424,7 +1494,7 @@ Handle this as a priority request from a colleague.`;
       try {
         existing = yaml.load(fs.readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown> || {};
       } catch { /* start fresh if unreadable */ }
-      const merged = deepMerge(existing, body);
+      const merged = stripTopLevelSlackCredentials(deepMerge(existing, body));
       const yamlStr = yaml.dump(merged);
 
       // Compare AGAINST THE MERGED config, not the request body — partial
@@ -2241,6 +2311,9 @@ async function runWebSession(
     logger.info(`Skipping deleted web session ${session.id} before run start`);
     return;
   }
+  // Only a root Web UI session benefits from a warm terminal. Delegated/cross-
+  // request sessions are autonomous work and should release Claude when done.
+  const keepWarmPty = currentSession.source === "web" && !currentSession.parentSessionId;
   logger.info(`Web session ${currentSession.id} running engine "${currentSession.engine}" (model: ${currentSession.model || "default"})`);
 
   // Ensure status is "running" (may already be set by the POST handler)
@@ -2259,6 +2332,17 @@ async function runWebSession(
     const { scanOrg } = await import("./org.js");
     const registry = scanOrg();
     employee = findEmployee(currentSession.employee, registry);
+  }
+
+  let mcpConfigPath: string | undefined;
+  if (currentSession.engine === "claude") {
+    const mcpConfig = resolveMcpServers(config.mcp, employee, {
+      connector: "web",
+      channel: currentSession.sourceRef,
+    });
+    if (Object.keys(mcpConfig.mcpServers).length > 0) {
+      mcpConfigPath = writeMcpConfigFile(mcpConfig, currentSession.id);
+    }
   }
 
   const { scanOrg: scanOrgForHierarchy } = await import("./org.js");
@@ -2322,8 +2406,10 @@ async function runWebSession(
       cliFlags: employee?.cliFlags,
       sshHost: employee?.sshHost,
       remoteCwd: employee?.remoteCwd,
+      mcpConfigPath,
       attachments: attachments?.length ? attachments : undefined,
       sessionId: currentSession.id,
+      keepWarmPty,
       onStream: (delta) => {
         const now = Date.now();
         if (now - lastHeartbeatAt >= 2000) {
@@ -2432,6 +2518,7 @@ async function runWebSession(
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             sessionId: currentSession.id,
+            keepWarmPty,
             onStream: (delta) => {
               context.emit("session:delta", {
                 sessionId: currentSession.id,
@@ -2446,6 +2533,9 @@ async function runWebSession(
 
           if (fallbackResult.result) {
             insertMessage(currentSession.id, "assistant", fallbackResult.result);
+            await deliverApiSessionResult(currentSession, fallbackResult.result, context).catch((err) => {
+              logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
           }
 
           // Persist Codex thread id so future fallbacks can resume it
@@ -2564,7 +2654,9 @@ async function runWebSession(
             cliFlags: employee?.cliFlags,
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
+            mcpConfigPath,
             sessionId: currentSession.id,
+            keepWarmPty,
             onStream: (delta) => {
               context.emit("session:delta", {
                 sessionId: currentSession.id,
@@ -2602,6 +2694,9 @@ async function runWebSession(
           // Usage limit cleared — handle result
           if (retryResult.result) {
             insertMessage(currentSession.id, "assistant", retryResult.result);
+            await deliverApiSessionResult(currentSession, retryResult.result, context).catch((err) => {
+              logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
           }
 
           const completedAfterRetry = updateSession(currentSession.id, {
@@ -2661,6 +2756,9 @@ async function runWebSession(
     // Persist the assistant response
     if (result.result) {
       insertMessage(currentSession.id, "assistant", result.result);
+      await deliverApiSessionResult(currentSession, result.result, context).catch((err) => {
+        logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
 
     const completedSession = updateSession(currentSession.id, {
@@ -2717,5 +2815,7 @@ async function runWebSession(
       error: errMsg,
     });
     logger.error(`Web session ${currentSession.id} error: ${errMsg}`);
+  } finally {
+    if (mcpConfigPath) cleanupMcpConfigFile(currentSession.id);
   }
 }

@@ -24,7 +24,8 @@ interface InteractiveArgsOpts {
   mcpConfigPath?: string;
   cliFlags?: string[];
   attachments?: string[];
-  permissionMode?: "bypassPermissions" | "plan";
+  permissionMode?: "bypassPermissions" | "default" | "dontAsk" | "plan";
+  allowedTools?: string[];
 }
 
 interface TranscriptUsage { inputTokens: number; outputTokens: number; cacheTokens: number; assistantTurns: number; model?: string; }
@@ -212,12 +213,20 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
   args.push("--chrome");
   if (o.effortLevel && o.effortLevel !== "default") args.push("--effort", o.effortLevel);
   if (o.model) args.push("--model", o.model);
-  if ((o.permissionMode ?? "bypassPermissions") === "plan") {
-    args.push("--permission-mode", "plan");
-  } else {
+  const permissionMode = o.permissionMode ?? "default";
+  if (permissionMode === "bypassPermissions") {
     args.push("--dangerously-skip-permissions");
+  } else {
+    args.push("--permission-mode", permissionMode);
   }
-  args.push("--disallowedTools", "AskUserQuestion", "ExitPlanMode");
+  if (o.allowedTools?.length) {
+    args.push("--allowedTools", ...o.allowedTools);
+  }
+  args.push(
+    "--disallowedTools",
+    "AskUserQuestion",
+    ...(permissionMode === "plan" ? [] : ["ExitPlanMode"]),
+  );
   args.push("--settings", o.settingsPath);
   if (o.cliFlags?.length) args.push(...o.cliFlags);
   if (o.mcpConfigPath) args.push("--mcp-config", o.mcpConfigPath);
@@ -479,6 +488,16 @@ function pasteAndSubmit(proc: pty.IPty, text: string): void {
   setTimeout(() => proc.write("\r"), 150);
 }
 
+/** Populate the shared engine duration when Interactive Claude's Stop hook omits it. */
+export function applyInteractiveDuration(
+  result: EngineResult,
+  startedAtMs: number,
+  endedAtMs = Date.now(),
+): EngineResult {
+  result.durationMs ??= endedAtMs - startedAtMs;
+  return result;
+}
+
 export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngine {
   name = "claude" as const;
   /** Active turn resolvers keyed by Jinn session id. `boundProc` is the specific
@@ -537,7 +556,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
      *  batch runs (e.g. the seminar-demo generator) to complete in a single turn. */
     private turnTimeoutMs = 90 * 60 * 1000,
     /** Explicit Claude permission boundary for unattended local PTYs. */
-    private permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
+    private permissionMode: "bypassPermissions" | "default" | "dontAsk" | "plan" = "default",
+    /** Exact tools that default/plan mode may run without an interactive prompt.
+     *  This is intentionally opt-in and should normally contain only named,
+     *  read-only MCP tools required by the deployment. */
+    private allowedTools: string[] = [],
   ) {}
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
@@ -731,7 +754,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       if (lostStopRecoveryTimer) clearInterval(lostStopRecoveryTimer);
       this.hookRegistry.unregister(jinnSessionId);
       this.active.delete(jinnSessionId);
-      this.lifecycle.turnEnded(jinnSessionId); // manager decides kill vs keep-warm
+      this.lifecycle.turnEnded(jinnSessionId, opts.keepWarmPty !== false);
     }
 
     // Recover lost result text: if the turn settled with no text and no API-level
@@ -763,6 +786,10 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // wait/retry/fallback machinery engages exactly as it does for `claude -p`.
     const rl = rateLimitFromStopFailure(resolver.stopFailure);
     if (rl) result.rateLimit = rl;
+    // Interactive Stop hooks do not expose Claude's `duration_ms`, unlike the
+    // headless JSON result event. Preserve a truthful wall-clock duration so
+    // session logs and parent callbacks do not report a successful turn as 0ms.
+    applyInteractiveDuration(result, turnStartedAtMs);
     return result;
   }
 
@@ -776,6 +803,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {
       if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_")) continue;
+      if (k.startsWith("OPENRYOKO_SLACK_")) continue;
       // Belt-and-suspenders: a stray API key/token would flip the child to metered
       // API billing instead of the Max subscription. Strip both so the PTY session
       // always resolves to subscription auth (cc_entrypoint=cli).
@@ -869,10 +897,14 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  with no Stop hook); a stale proc replaced by a respawn is treated as benign.
    *  `proxy` (the per-PTY SSE forward proxy) is torn down when this PTY exits. */
   private wireProcToStream(jinnSessionId: string, proc: pty.IPty, proxy?: SsePtyProxy): PtyHandle {
+    let teardownRequested = false;
     const handle: PtyHandle = {
       pid: proc.pid,
       get killed() { return (proc as any)._exitCode != null; },
-      kill: (signal?: string) => { try { proc.kill(signal); } catch { /* already gone */ } },
+      kill: (signal?: string) => {
+        teardownRequested = true;
+        try { proc.kill(signal); } catch { /* already gone */ }
+      },
     } as PtyHandle;
     const stream = this.streamFor(jinnSessionId);
     // Distinguish initial spawn from respawn via a per-stream flag rather than
@@ -899,9 +931,15 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // the next run() reused the corpse, injected into a dead socket, and the turn hung
     // until the 90-min watchdog (see issue #18). Cleanup is idempotent (deadHandles).
     (proc as any).on?.("error", (err: Error) => {
-      const code = (err as NodeJS.ErrnoException).code ?? err.message;
-      logger.warn(`PTY socket error for session ${jinnSessionId}: ${err.message}`);
-      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code})`);
+      const code = (err as NodeJS.ErrnoException).code;
+      const expectedTeardownEio =
+        teardownRequested && (code === "EIO" || err.message === "read EIO");
+      if (expectedTeardownEio) {
+        logger.debug(`PTY closed during teardown for session ${jinnSessionId}: ${err.message}`);
+      } else {
+        logger.warn(`PTY socket error for session ${jinnSessionId}: ${err.message}`);
+      }
+      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code ?? err.message})`);
     });
 
     proc.onData((d) => {
@@ -948,6 +986,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cliFlags: opts.cliFlags,
       attachments: opts.attachments,
       permissionMode: this.permissionMode,
+      allowedTools: this.allowedTools,
     });
     // Serialize the spawn herd across the shared-OAuth near-expiry window so only
     // one child triggers the (single-use) token refresh — others wait for it.
@@ -986,10 +1025,13 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     });
     const args: string[] = [
       "--chrome",
-      ...(this.permissionMode === "plan"
-        ? ["--permission-mode", "plan"]
-        : ["--dangerously-skip-permissions"]),
-      "--disallowedTools", "AskUserQuestion", "ExitPlanMode",
+      ...(this.permissionMode === "bypassPermissions"
+        ? ["--dangerously-skip-permissions"]
+        : ["--permission-mode", this.permissionMode]),
+      ...(this.allowedTools.length ? ["--allowedTools", ...this.allowedTools] : []),
+      "--disallowedTools",
+      "AskUserQuestion",
+      ...(this.permissionMode === "plan" ? [] : ["ExitPlanMode"]),
       "--settings", settingsPath,
     ];
     if (opts.engineSessionId) args.unshift("--resume", opts.engineSessionId);
@@ -1140,6 +1182,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (!handle) return false;
     const proxy = (handle as any)._proxy as SsePtyProxy | undefined;
     return proxy?.isBusy(InteractiveClaudeEngine.BUSY_ACTIVITY_WINDOW_MS) ?? false;
+  }
+
+  /** True only while an upstream request is in flight right now. */
+  isEngineActivelyBusy(sessionId: string): boolean {
+    return this.hasInflightUpstream(sessionId);
   }
 
   /** True while an upstream API request is streaming through the session's SSE

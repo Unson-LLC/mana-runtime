@@ -7,7 +7,35 @@ import { describe, it, expect, vi } from "vitest";
 // focused and CI-portable.
 vi.mock("node-pty", () => ({ spawn: vi.fn() }));
 
-import { TurnResolver, buildInteractiveArgs, isNativeClaudeCommand } from "../claude-interactive.js";
+import {
+  TurnResolver,
+  applyInteractiveDuration,
+  buildInteractiveArgs,
+  isNativeClaudeCommand,
+} from "../claude-interactive.js";
+
+describe("interactive Claude duration", () => {
+  it("fills a missing Stop-hook duration from the measured turn boundary", () => {
+    const result = applyInteractiveDuration(
+      { sessionId: "s1", result: "done" },
+      1_000,
+      1_275,
+    );
+
+    expect(result.durationMs).toBe(275);
+    expect(result.durationMs).toBeGreaterThan(0);
+  });
+
+  it("preserves an authoritative duration already supplied by the result", () => {
+    const result = applyInteractiveDuration(
+      { sessionId: "s1", result: "done", durationMs: 42 },
+      1_000,
+      1_275,
+    );
+
+    expect(result.durationMs).toBe(42);
+  });
+});
 
 describe("interactive Claude permission mode", () => {
   const base = { prompt: "investigate", settingsPath: "/tmp/settings.json" };
@@ -18,13 +46,68 @@ describe("interactive Claude permission mode", () => {
     expect(args).toContain("--permission-mode");
     expect(args).toContain("plan");
     expect(args).not.toContain("--dangerously-skip-permissions");
+    expect(args).not.toContain("ExitPlanMode");
   });
 
-  it("preserves upstream bypass behavior when no mode is configured", () => {
+  it("uses default mode when no mode is configured", () => {
     const args = buildInteractiveArgs(base);
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("default");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("uses explicit default mode without bypass", () => {
+    const args = buildInteractiveArgs({ ...base, permissionMode: "default" });
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("default");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("passes an exact unattended tool allowlist without enabling bypass", () => {
+    const args = buildInteractiveArgs({
+      ...base,
+      permissionMode: "default",
+      allowedTools: [
+        "mcp__brainbase__search",
+        "mcp__brainbase__resolve_entity",
+      ],
+    });
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("default");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+    expect(args.slice(args.indexOf("--allowedTools"), args.indexOf("--disallowedTools"))).toEqual([
+      "--allowedTools",
+      "mcp__brainbase__search",
+      "mcp__brainbase__resolve_entity",
+    ]);
+  });
+
+  it("does not add an allowlist flag when no tools are configured", () => {
+    const args = buildInteractiveArgs({ ...base, permissionMode: "default" });
+    expect(args).not.toContain("--allowedTools");
+  });
+
+  it("uses bypass only when explicitly configured", () => {
+    const args = buildInteractiveArgs({ ...base, permissionMode: "bypassPermissions" });
 
     expect(args).toContain("--dangerously-skip-permissions");
     expect(args).not.toContain("--permission-mode");
+  });
+
+  it("uses dontAsk to deny unlisted tools instead of waiting for a prompt", () => {
+    const args = buildInteractiveArgs({
+      ...base,
+      permissionMode: "dontAsk",
+      allowedTools: ["mcp__brainbase__search"],
+    });
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("dontAsk");
+    expect(args).toContain("--allowedTools");
+    expect(args).not.toContain("--dangerously-skip-permissions");
   });
 });
 

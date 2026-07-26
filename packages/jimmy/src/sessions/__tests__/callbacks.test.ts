@@ -83,7 +83,7 @@ describe("notifyParentSession", () => {
     globalThis.fetch = originalFetch as typeof fetch;
   });
 
-  it('sends success notification saying "replied in session" with API pointer', async () => {
+  it("embeds the complete child result without requiring gateway API access", async () => {
     const child = makeSession();
 
     notifyParentSession(child, { result: "Some result" });
@@ -94,13 +94,17 @@ describe("notifyParentSession", () => {
     expect(url).toBe("http://127.0.0.1:7777/api/sessions/parent-001/message");
 
     const body = JSON.parse(opts.body);
-    expect(body.message).toContain("replied in session");
-    expect(body.message).toContain("GET /api/sessions/child-001?last=N");
-    expect(body.message).not.toContain("completed their task");
+    expect(body.message).toContain("completed session");
+    expect(body.message).toContain("Complete child result:\nSome result");
+    expect(body.message).toContain("do not call the gateway API");
+    expect(body.message).not.toContain("GET /api/sessions/");
+    expect(body.message).toContain("parent session parent-001");
+    expect(body.message).toContain("not a separate or unrelated conversation");
+    expect(body.message).toContain("final answer to the original user");
   });
 
-  it("includes truncated 200-char preview for long results", async () => {
-    const longResult = "x".repeat(300);
+  it("truncates unusually large embedded child results", async () => {
+    const longResult = "x".repeat(16_100);
     const child = makeSession();
 
     notifyParentSession(child, { result: longResult });
@@ -108,12 +112,12 @@ describe("notifyParentSession", () => {
 
     expect(fetchSpy).toHaveBeenCalledOnce();
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    // Should contain exactly 200 chars + "..."
-    expect(body.message).toContain("x".repeat(200) + "...");
-    expect(body.message).not.toContain("x".repeat(201));
+    expect(body.message).toContain("x".repeat(16_000));
+    expect(body.message).not.toContain("x".repeat(16_001));
+    expect(body.message).toContain("[Child result truncated at 16000 characters.]");
   });
 
-  it("includes full preview for short results", async () => {
+  it("includes the full result for ordinary responses", async () => {
     const shortResult = "Task done successfully";
     const child = makeSession();
 
@@ -136,6 +140,8 @@ describe("notifyParentSession", () => {
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(body.message).toContain("Something broke");
     expect(body.message).toContain("⚠️");
+    expect(body.message).toContain("continuation of the original user task");
+    expect(body.message).toContain("Do not delegate the same task again");
   });
 
   it('sends with "notification" role', async () => {

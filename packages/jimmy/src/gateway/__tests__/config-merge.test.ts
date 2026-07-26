@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deepMerge } from "../api.js";
+import { deepMerge, stripTopLevelSlackCredentials } from "../api.js";
 
 /**
  * PUT /api/config deep-merges the incoming partial config into the on-disk one
@@ -44,5 +44,24 @@ describe("deepMerge (PUT /api/config)", () => {
     };
     expect(off.engines.claude.interactive).toBe(false);
     expect((off as typeof existing).connectors.slack.botToken).toBe("xoxb-secret");
+  });
+});
+
+describe("stripTopLevelSlackCredentials", () => {
+  it("removes legacy and submitted Slack credentials before YAML persistence", () => {
+    const input = {
+      connectors: {
+        slack: {
+          appToken: "xapp-secret",
+          botToken: "xoxb-secret",
+          allowFrom: ["U_ALLOWED"],
+        },
+      },
+    };
+
+    expect(stripTopLevelSlackCredentials(input)).toEqual({
+      connectors: { slack: { allowFrom: ["U_ALLOWED"] } },
+    });
+    expect(input.connectors.slack.botToken).toBe("xoxb-secret");
   });
 });

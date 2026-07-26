@@ -32,6 +32,15 @@ describe("buildChildEnv", () => {
     expect(env.UNRELATED_VAR).toBe("keep");
   });
 
+  it("never exposes gateway Slack credentials to child CLIs", () => {
+    process.env.OPENRYOKO_SLACK_APP_TOKEN = "xapp-secret";
+    process.env.OPENRYOKO_SLACK_BOT_TOKEN = "xoxb-secret";
+
+    const env = buildChildEnv();
+    expect(env.OPENRYOKO_SLACK_APP_TOKEN).toBeUndefined();
+    expect(env.OPENRYOKO_SLACK_BOT_TOKEN).toBeUndefined();
+  });
+
   it("strips additional prefixes when requested", () => {
     process.env.CODEX_AUTH = "secret";
     process.env.CODEX_HOME = "/x";

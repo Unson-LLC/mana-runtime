@@ -52,11 +52,17 @@ vi.mock("../sse-pty-proxy.js", () => ({
 vi.mock("../shared/claude-settings.js", () => ({
   writeSessionSettings: () => "/tmp/fake-settings.json",
 }));
+vi.mock("../../shared/logger.js", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 import { InteractiveClaudeEngine } from "../claude-interactive.js";
 import { PtyLifecycleManager } from "../pty-lifecycle.js";
+import { logger } from "../../shared/logger.js";
 
 const flush = () => new Promise((r) => setTimeout(r, 15));
+const mockWarn = vi.mocked(logger.warn);
+const mockDebug = vi.mocked(logger.debug);
 
 describe("InteractiveClaudeEngine — kill->respawn race (Item C)", () => {
   let lifecycle: PtyLifecycleManager;
@@ -64,6 +70,7 @@ describe("InteractiveClaudeEngine — kill->respawn race (Item C)", () => {
   let engine: InteractiveClaudeEngine;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     ptys.length = 0;
     hookCb = undefined;
     lifecycle = new PtyLifecycleManager({ maxLivePtys: 10 });
@@ -126,6 +133,7 @@ describe("InteractiveClaudeEngine — PTY socket error / EIO (issue #18)", () =>
   let engine: InteractiveClaudeEngine;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     ptys.length = 0;
     hookCb = undefined;
     lifecycle = new PtyLifecycleManager({ maxLivePtys: 10 });
@@ -155,6 +163,121 @@ describe("InteractiveClaudeEngine — PTY socket error / EIO (issue #18)", () =>
     expect(r.error).toMatch(/socket error/);
     expect(lifecycle.getWarm("s3")).toBeUndefined();
     expect(pty._killCalled).toBe(true);
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.stringContaining("PTY socket error for session s3: read EIO"),
+    );
+  });
+
+  it("does not warn when intentional teardown emits EIO synchronously", async () => {
+    const p = engine.run({
+      sessionId: "expected-eio",
+      prompt: "x",
+      cwd: "/tmp",
+      keepWarmPty: false,
+    } as any);
+    await flush();
+    const pty = ptys[0];
+    pty.kill = () => {
+      pty._killCalled = true;
+      pty.fireError(Object.assign(new Error("read EIO"), { code: "EIO" }));
+    };
+
+    completeTurn("expected-eio-cli");
+    const r = await p;
+    await flush();
+
+    expect(r.result).toBe("ok");
+    expect(r.error).toBeUndefined();
+    expect(pty._killCalled).toBe(true);
+    expect(lifecycle.getWarm("expected-eio")).toBeUndefined();
+    expect(mockWarn).not.toHaveBeenCalledWith(
+      expect.stringContaining("PTY socket error for session expected-eio"),
+    );
+    expect(mockDebug).toHaveBeenCalledWith(
+      expect.stringContaining("PTY closed during teardown for session expected-eio: read EIO"),
+    );
+  });
+
+  it("still warns when intentional teardown emits a non-EIO socket error", async () => {
+    const p = engine.run({
+      sessionId: "expected-epipe",
+      prompt: "x",
+      cwd: "/tmp",
+      keepWarmPty: false,
+    } as any);
+    await flush();
+    const pty = ptys[0];
+    pty.kill = () => {
+      pty._killCalled = true;
+      pty.fireError(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+    };
+
+    completeTurn("expected-epipe-cli");
+    const r = await p;
+    await flush();
+
+    expect(r.result).toBe("ok");
+    expect(r.error).toBeUndefined();
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.stringContaining("PTY socket error for session expected-epipe: write EPIPE"),
+    );
+  });
+
+  it("keeps expected EIO plus late onExit cleanup idempotent", async () => {
+    const releaseSpy = vi.spyOn(lifecycle, "releaseSession");
+    const p = engine.run({
+      sessionId: "expected-late-exit",
+      prompt: "x",
+      cwd: "/tmp",
+      keepWarmPty: false,
+    } as any);
+    await flush();
+    const pty = ptys[0];
+    pty.kill = () => {
+      pty._killCalled = true;
+      pty.fireError(Object.assign(new Error("read EIO"), { code: "EIO" }));
+    };
+
+    completeTurn("expected-late-exit-cli");
+    const r = await p;
+    pty.fireExit();
+    await flush();
+
+    expect(r.result).toBe("ok");
+    expect(r.error).toBeUndefined();
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+    expect(lifecycle.getWarm("expected-late-exit")).toBeUndefined();
+    expect(mockWarn).not.toHaveBeenCalledWith(
+      expect.stringContaining("PTY socket error for session expected-late-exit"),
+    );
+  });
+
+  it("does not leak an old handle's teardown intent into a respawned PTY", async () => {
+    const p1 = engine.run({ sessionId: "intent-isolation", prompt: "a", cwd: "/tmp" } as any);
+    await flush();
+    const oldPty = ptys[0];
+    engine.kill("intent-isolation", "Interrupted: replace");
+    await p1;
+
+    let r2: any;
+    void engine.run({ sessionId: "intent-isolation", prompt: "b", cwd: "/tmp" } as any)
+      .then((value) => { r2 = value; });
+    await flush();
+    const newPty = ptys[1];
+
+    oldPty.fireError(Object.assign(new Error("read EIO"), { code: "EIO" }));
+    await flush();
+    expect(mockWarn).not.toHaveBeenCalledWith(
+      expect.stringContaining("PTY socket error for session intent-isolation"),
+    );
+
+    vi.clearAllMocks();
+    newPty.fireError(Object.assign(new Error("read EIO"), { code: "EIO" }));
+    await flush();
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.stringContaining("PTY socket error for session intent-isolation: read EIO"),
+    );
+    expect(r2.error).toMatch(/socket error/);
   });
 
   it("a warm PTY killed by EIO is not reused — the next turn cold-spawns a new PTY", async () => {

@@ -1,0 +1,22 @@
+import { describe, expect, it } from "vitest";
+import { buildContext } from "../context.js";
+
+describe("delegation context", () => {
+  it("embeds the exact current session ID in child creation commands", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      thread: "1700000000.000001",
+      user: "U123",
+      sessionId: "parent-session-123",
+      connectors: ["slack"],
+    });
+
+    expect(context).toContain(
+      "POST http://127.0.0.1:7777/api/sessions/parent-session-123/children",
+    );
+    expect(context).toContain(
+      "it enforces the parent link even if the request body omits `parentSessionId`",
+    );
+  });
+});

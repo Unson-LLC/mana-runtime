@@ -45,6 +45,12 @@ export interface EngineRunOpts {
   onStream?: (delta: StreamDelta) => void;
   /** Unique Jinn session ID for tracking the spawned process. */
   sessionId?: string;
+  /**
+   * Keep a local interactive PTY warm after the turn completes.
+   * Web UI root sessions opt in; connector, cron, and delegated sessions opt out
+   * so completed autonomous work does not retain a Claude process.
+   */
+  keepWarmPty?: boolean;
   /** If set, run the engine binary on a remote host via SSH instead of locally. */
   sshHost?: string;
   /** Working directory on the remote host (only used when sshHost is set). */
@@ -415,6 +421,12 @@ export interface SlackConnectorConfig {
   triage?: SlackTriageConfig;
   /** Natural-language autonomous goal detection. Off by default because it adds latency. */
   goalExtraction?: SlackGoalExtractionConfig;
+  /** Deterministic gateway routing for high-risk work. Disabled when absent. */
+  criticalRouting?: {
+    enabled?: boolean;
+    /** Employee YAML name. Its model and effort remain the org SSOT. */
+    reviewerEmployee?: string;
+  };
   /** Self-updating Slack Canvas mirroring OpenRyoko's current sessions (Agents View). */
   agentsCanvas?: {
     /** Master switch — defaults to false when the block is absent. */
@@ -561,9 +573,13 @@ export interface JinnConfig {
        *  key when true. Default false (headless `-p`). */
       interactive?: boolean;
       /** Claude Code permission mode for local interactive PTYs. Defaults to
-       *  bypassPermissions for upstream compatibility. Use plan when the gateway
-       *  must be read/draft-only and no human is present at the terminal. */
-      interactivePermissionMode?: "bypassPermissions" | "plan";
+       *  default, which honors settings allow/deny rules without requiring the
+       *  unattended gateway to approve an ExitPlanMode prompt. */
+      interactivePermissionMode?: "bypassPermissions" | "default" | "dontAsk" | "plan";
+      /** Exact Claude Code tool permission rules that unattended local PTYs may
+       *  use without prompting. Keep this narrowly scoped (for example, named
+       *  read-only MCP tools); an empty/absent list grants nothing extra. */
+      interactiveAllowedTools?: string[];
       /** Max simultaneously-live PTYs for the interactive engine (LRU-evicted). Default 8. */
       maxLivePtys?: number;
       /** Hard ceiling (ms) on a single interactive turn before it is force-settled

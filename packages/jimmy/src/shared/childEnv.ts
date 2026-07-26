@@ -28,6 +28,7 @@ export function buildChildEnv(opts: BuildChildEnvOptions = {}): Record<string, s
 
   for (const [k, v] of Object.entries(process.env)) {
     if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_")) continue;
+    if (k.startsWith("OPENRYOKO_SLACK_")) continue;
     if (stripExact.has(k)) continue;
     if (stripPrefixes.some((p) => k.startsWith(p))) continue;
     if (v !== undefined) env[k] = v;
