@@ -58,7 +58,12 @@ import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
 import { isPlacementEmployeeAllowed, placementDeliveryTargets } from "../shared/placement-profile.js";
-import { SESSION_DELEGATION_HEADER, verifySessionDelegationToken } from "../sessions/delegation-auth.js";
+import {
+  CURRENT_SESSION_HEADER,
+  SESSION_DELEGATION_HEADER,
+  SYSTEM_NOTIFICATION_SESSION_ID,
+  verifySessionDelegationToken,
+} from "../sessions/delegation-auth.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -199,6 +204,11 @@ export function authorizeDerivedSessionRequest(parentSession: Session, token: st
 
 function sessionDelegationToken(req: HttpRequest): string | undefined {
   const value = req.headers[SESSION_DELEGATION_HEADER];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function currentSessionId(req: HttpRequest): string | undefined {
+  const value = req.headers[CURRENT_SESSION_HEADER];
   return Array.isArray(value) ? value[0] : value;
 }
 
@@ -1839,6 +1849,27 @@ Handle this as a priority request from a colleague.`;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
       if (!body.channel || !body.text) return badRequest(res, "channel and text are required");
+      const sessionId = currentSessionId(req);
+      if (sessionId === SYSTEM_NOTIFICATION_SESSION_ID) {
+        const notifications = context.getConfig().notifications;
+        const authorized = verifySessionDelegationToken(sessionId, sessionDelegationToken(req))
+          && notifications?.connector === params.name
+          && notifications?.channel === body.channel;
+        if (!authorized) return json(res, { error: "invalid notification authorization" }, 403);
+      } else {
+      const session = sessionId ? getSession(sessionId) : undefined;
+      if (!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req))) {
+        return json(res, { error: "invalid session authorization" }, 403);
+      }
+      const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
+      if (typeof placementId === "string") {
+        const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
+        const allowed = placement?.capabilities?.allowedDelivery?.length
+          ? placementDeliveryTargets(placement).some((target) => target.connector === params!.name && target.channel === body.channel)
+          : placement?.connector === params.name && placement.channelId === body.channel;
+        if (!placement || !allowed) return json(res, { error: "delivery target is not allowed by placement" }, 403);
+      }
+      }
       const hasThread = typeof body.thread === "string" && body.thread.trim().length > 0;
       const target = { channel: body.channel, thread: body.thread };
       if (hasThread) {

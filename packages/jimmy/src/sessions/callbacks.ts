@@ -2,6 +2,12 @@ import { getSession } from "./registry.js";
 import { loadConfig } from "../shared/config.js";
 import { logger } from "../shared/logger.js";
 import type { Session } from "../shared/types.js";
+import {
+  CURRENT_SESSION_HEADER,
+  getSessionDelegationToken,
+  SESSION_DELEGATION_HEADER,
+  SYSTEM_NOTIFICATION_SESSION_ID,
+} from "./delegation-auth.js";
 
 /**
  * Notify the parent session that a child session has replied.
@@ -125,7 +131,11 @@ async function _sendDiscordNotification(message: string): Promise<void> {
 
   await fetch(`http://127.0.0.1:${port}/api/connectors/${connector}/send`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      [CURRENT_SESSION_HEADER]: SYSTEM_NOTIFICATION_SESSION_ID,
+      [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(SYSTEM_NOTIFICATION_SESSION_ID),
+    },
     body: JSON.stringify({ channel, text: message }),
   });
 }

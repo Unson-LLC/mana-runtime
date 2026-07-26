@@ -6,11 +6,16 @@ export interface PlacementResolution {
   reason?: "unmatched" | "ambiguous" | "unauthorized_user" | "invalid_config";
 }
 
-const SECRET_KEY = /(?:^|[_-])(api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)(?:$|[_-])/i;
 const SECRET_VALUE = /^(?:Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|sk-ant-[A-Za-z0-9_-]{8,}|xox[baprs]-\S+|gh[opusr]_[A-Za-z0-9_]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i;
 
+function isSecretKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return ["token", "secret", "password", "credential", "authorization", "apikey", "privatekey"]
+    .some((term) => normalized.includes(term));
+}
+
 function containsSecret(value: unknown, key?: string, seen = new WeakSet<object>()): boolean {
-  if (key && SECRET_KEY.test(key)) return true;
+  if (key && isSecretKey(key)) return true;
   if (typeof value === "string") return SECRET_VALUE.test(value.trim());
   if (!value || typeof value !== "object") return false;
   if (seen.has(value)) return true;
@@ -23,7 +28,7 @@ function containsSecret(value: unknown, key?: string, seen = new WeakSet<object>
 export function safePlacementDataScopes(dataScopes: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!dataScopes) return {};
   const redact = (value: unknown, key?: string, seen = new WeakSet<object>()): unknown => {
-    if ((key && SECRET_KEY.test(key)) || (typeof value === "string" && SECRET_VALUE.test(value.trim()))) {
+    if ((key && isSecretKey(key)) || (typeof value === "string" && SECRET_VALUE.test(value.trim()))) {
       return "[REDACTED]";
     }
     if (!value || typeof value !== "object") return value;
@@ -59,7 +64,7 @@ export function resolvePlacement(
   if (channelMatches.length > 1) return { status: "denied", reason: "ambiguous" };
 
   const placement = channelMatches[0];
-  if (containsSecret(placement.dataScopes)) {
+  if (containsSecret(placement)) {
     return { status: "denied", reason: "invalid_config" };
   }
   if (!placement.audience.allowedUsers.includes(msg.user)) {

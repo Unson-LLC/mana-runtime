@@ -21,6 +21,7 @@ import {
 
 const GATEWAY_URL = process.env.JINN_GATEWAY_URL || "http://127.0.0.1:7777";
 const SESSION_DELEGATION_TOKEN = process.env.JINN_SESSION_DELEGATION_TOKEN;
+const CURRENT_SESSION_ID = process.env.JINN_CURRENT_SESSION_ID;
 
 // ─── MCP Protocol Types ───
 
@@ -206,6 +207,7 @@ async function apiPost(path: string, body: unknown): Promise<unknown> {
     headers: {
       "Content-Type": "application/json",
       ...(SESSION_DELEGATION_TOKEN ? { "x-jinn-session-token": SESSION_DELEGATION_TOKEN } : {}),
+      ...(CURRENT_SESSION_ID ? { "x-jinn-session-id": CURRENT_SESSION_ID } : {}),
     },
     body: JSON.stringify(body),
   });

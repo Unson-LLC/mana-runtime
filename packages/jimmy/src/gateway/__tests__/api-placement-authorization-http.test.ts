@@ -10,16 +10,17 @@ vi.hoisted(() => {
 
 import type { AddressInfo } from "node:net";
 import type { ApiContext } from "../api.js";
-import type { JinnConfig } from "../../shared/types.js";
+import type { Connector, JinnConfig } from "../../shared/types.js";
 import { handleApiRequest } from "../api.js";
 import { createSession, getSession, initDb, updateSession } from "../../sessions/registry.js";
-import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "../../sessions/delegation-auth.js";
+import { CURRENT_SESSION_HEADER, getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "../../sessions/delegation-auth.js";
 
 describe("placement authorization at HTTP derived-session endpoints", () => {
   let baseUrl = "";
   let closeServer: (() => Promise<void>) | undefined;
   let parentId = "";
   let legacyParentId = "";
+  const sendMessage = vi.fn().mockResolvedValue("sent-1");
 
   beforeAll(async () => {
     const orgDir = path.join(process.env.RYOKO_HOME!, "org");
@@ -90,7 +91,11 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       getConfig: () => config,
       startTime: Date.now(),
       emit: vi.fn(),
-      connectors: new Map(),
+      connectors: new Map([["slack", {
+        name: "slack",
+        sendMessage,
+        replyMessage: vi.fn(),
+      } as unknown as Connector]]),
       sessionManager: {
         getEngine: () => undefined,
         getQueue: () => ({
@@ -108,16 +113,32 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
 
   afterAll(async () => closeServer?.());
 
-  async function post(pathname: string, body: Record<string, unknown>, token?: string) {
+  async function post(pathname: string, body: Record<string, unknown>, token?: string, sessionId?: string) {
     return fetch(`${baseUrl}${pathname}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         ...(token ? { [SESSION_DELEGATION_HEADER]: token } : {}),
+        ...(sessionId ? { [CURRENT_SESSION_HEADER]: sessionId } : {}),
       },
       body: JSON.stringify(body),
     });
   }
+
+  it("allows only an authenticated placement delivery target on the direct connector route", async () => {
+    const token = getSessionDelegationToken(parentId);
+    const allowed = await post("/api/connectors/slack/send", { channel: "C1", text: "allowed" }, token, parentId);
+    expect(allowed.status).toBe(200);
+    expect(sendMessage).toHaveBeenCalledWith({ channel: "C1", thread: undefined }, "allowed");
+
+    const wrongChannel = await post("/api/connectors/slack/send", { channel: "C2", text: "denied" }, token, parentId);
+    expect(wrongChannel.status).toBe(403);
+    const missingAuth = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" });
+    expect(missingAuth.status).toBe(403);
+    const mismatched = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(legacyParentId), parentId);
+    expect(mismatched.status).toBe(403);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     ["nested child", (id: string) => `/api/sessions/${id}/children`, { prompt: "review", employee: "reviewer" }],

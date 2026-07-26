@@ -9,6 +9,7 @@ import type {
   Session,
   Target,
 } from "../shared/types.js";
+import { isInterruptibleEngine } from "../shared/types.js";
 import {
   accumulateSessionCost,
   createSession,
@@ -129,6 +130,12 @@ function mergeTransportMeta(
   return merged as any;
 }
 
+function placementTransportMeta(meta: Session["transportMeta"]): Session["transportMeta"] {
+  const clean = { ...((meta || {}) as Record<string, unknown>) };
+  for (const key of ["engineOverride", "engineSessions", "claudeSyncSince"]) delete clean[key];
+  return clean as Session["transportMeta"];
+}
+
 export class SessionManager {
   private config: JinnConfig;
   private engines: Map<string, Engine>;
@@ -209,7 +216,7 @@ export class SessionManager {
         (opts.employee ? ` (employee: ${opts.employee.name})` : ""),
       );
     } else {
-      const mergedMeta = mergeTransportMeta(session.transportMeta, {
+      let mergedMeta = mergeTransportMeta(session.transportMeta, {
         ...(msg.transportMeta ?? {}),
         ...(opts.placement ? { placementId: opts.placement.id } : {}),
       });
@@ -217,13 +224,20 @@ export class SessionManager {
       const placementModel = opts.model ?? opts.employee?.model ?? null;
       const placementEmployee = opts.employee?.name ?? null;
       const placementEffort = opts.employee?.effortLevel ?? null;
+      if (opts.placement) {
+        const priorEngine = this.engines.get(session.engine);
+        if (priorEngine && isInterruptibleEngine(priorEngine)) {
+          priorEngine.kill(session.id, "placement authority rebind");
+        }
+        mergedMeta = placementTransportMeta(mergedMeta);
+      }
       session = updateSession(session.id, {
         replyContext: msg.replyContext,
         messageId: msg.messageId ?? null,
         transportMeta: mergedMeta,
         ...(opts.placement ? {
           engine: placementEngine,
-          engineSessionId: session.engine !== placementEngine ? null : session.engineSessionId,
+          engineSessionId: null,
           employee: placementEmployee,
           model: placementModel,
           effortLevel: placementEffort,

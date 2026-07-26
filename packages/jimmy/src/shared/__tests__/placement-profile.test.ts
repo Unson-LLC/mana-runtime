@@ -44,6 +44,16 @@ describe("resolvePlacement", () => {
     const unsafe = { ...placement, dataScopes: { apiKey: "sk-canary-never-render" } };
     expect(resolvePlacement([unsafe], message())).toEqual({ status: "denied", reason: "invalid_config" });
   });
+
+  it.each([
+    ["camelCase access token", { dataScopes: { accessToken: "canary-plain-value" } }],
+    ["camelCase client secret", { dataScopes: { clientSecret: "canary-plain-value" } }],
+    ["secret-like project", { projects: ["sk-canary-never-render"] }],
+    ["secret-like id", { id: "sk-canary-never-render" }],
+  ])("fails closed for a %s anywhere in the placement", (_label, override) => {
+    const unsafe = { ...placement, ...override } as PlacementProfile;
+    expect(resolvePlacement([unsafe], message())).toEqual({ status: "denied", reason: "invalid_config" });
+  });
 });
 
 describe("isPlacementEmployeeAllowed", () => {
