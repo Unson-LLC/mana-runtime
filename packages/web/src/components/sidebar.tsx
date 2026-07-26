@@ -15,6 +15,8 @@ import { THEMES } from "@/lib/themes"
 import { NAV_ITEMS } from "@/lib/nav"
 import type { ThemeId } from "@/lib/themes"
 import { cn } from "@/lib/utils"
+import { api } from "@/lib/api"
+import { OPERATOR_AUTH_CHANGED_EVENT } from "@/lib/operator-auth"
 
 // ---------------------------------------------------------------------------
 // Theme icon helper
@@ -48,10 +50,14 @@ export function Sidebar() {
 
   // Fetch available instances
   useEffect(() => {
-    fetch("/api/instances")
-      .then(r => r.json())
-      .then(setInstances)
-      .catch(() => {})
+    const refreshInstances = () => {
+      api.getInstances()
+        .then(setInstances)
+        .catch(() => setInstances([]))
+    }
+    refreshInstances()
+    window.addEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshInstances)
+    return () => window.removeEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshInstances)
   }, [])
 
   function cycleTheme() {

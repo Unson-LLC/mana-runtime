@@ -68,6 +68,19 @@ Modes per scope: `always` | `mention` | `never`.
   all* (hard policy), triage decides *should we* (air-reading). Messages
   dropped by the gate never reach triage.
 
+### Placement Profiles
+
+`placements` binds a connector/workspace/channel to its audience, employee,
+model, MCP servers, gateway tools, proactive delivery destinations, projects,
+and data scope. Once at least one placement exists, unmatched channels,
+ambiguous matches, and users outside `audience.allowedUsers` are rejected before
+a session is created. Omitting `capabilities.mcp` denies all MCP servers for that
+placement; proactive delivery defaults to the placement's own channel.
+
+`dataScopes` is injected into the agent context for retrieval policy and audit.
+The external Graph/NocoDB service must still enforce row/node-level access; this
+gateway field does not replace server-side authorization.
+
 ### Thread Mapping
 
 Slack messages are mapped to sessions based on conversation context:

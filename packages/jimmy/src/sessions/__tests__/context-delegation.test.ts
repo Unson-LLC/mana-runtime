@@ -19,4 +19,67 @@ describe("delegation context", () => {
       "it enforces the parent link even if the request body omits `parentSessionId`",
     );
   });
+
+  it("renders placement identity, audience, projects, and data scope in the system context", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-session",
+      employee: {
+        name: "ryoko",
+        displayName: "Ryoko Pilot",
+        department: "operations",
+        rank: "executive",
+        engine: "claude",
+        model: "sonnet",
+        persona: "Run the pilot within its approved channel boundary.",
+      },
+      placement: {
+        id: "pilot",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+        agent: { employee: "ryoko" },
+        projects: ["brainbase-mana"],
+        dataScopes: { graph: { mode: "read-only" } },
+      },
+    });
+
+    expect(context).toContain("# You are Ryoko Pilot");
+    expect(context).toContain("Run the pilot within its approved channel boundary.");
+    expect(context).toContain("## Placement policy");
+    expect(context).toContain("- Placement: pilot");
+    expect(context).toContain("- Audience: operator");
+    expect(context).toContain("- Projects: brainbase-mana");
+    expect(context).toContain('- Data scopes: {"graph":{"mode":"read-only"}}');
+    expect(context).not.toContain("/api/org/cross-request");
+    expect(context).not.toContain("Gateway API");
+    expect(context).not.toContain("/api/config");
+    expect(context).not.toContain("/api/sessions");
+    expect(context).not.toContain("/api/connectors/slack/send");
+  });
+
+  it("never renders secret-like placement data in the system context", () => {
+    const canary = "sk-canary-never-render";
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-secret-test",
+      placement: {
+        id: "pilot",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+        dataScopes: { apiKey: canary, graph: { mode: "read-only" } },
+      },
+    });
+
+    expect(context).not.toContain(canary);
+    expect(context).toContain("[REDACTED]");
+    expect(context).toContain("read-only");
+  });
 });

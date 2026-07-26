@@ -1,0 +1,38 @@
+{
+  "schema_version": "0.1.0",
+  "domain": "openryoko-channel-placement",
+  "clauses": [
+    {
+      "id": "PLACEMENT-AUTH-001",
+      "statement": "Slack input, derived sessions, MCP and Gateway tools, and external delivery must not expand beyond the uniquely resolved parent Placement authorization boundary.",
+      "applies_to": {
+        "responsibility": "openryoko.placement.authorization_boundary",
+        "paths": [
+          "packages/jimmy/src/connectors/slack/**",
+          "packages/jimmy/src/gateway/**",
+          "packages/jimmy/src/mcp/**",
+          "packages/jimmy/src/sessions/**",
+          "packages/jimmy/src/shared/*placement*"
+        ],
+        "symbols": [
+          "placementId",
+          "resolvePlacement",
+          "resolvePlacementChildExecution"
+        ],
+        "risk_surfaces": [
+          "auth_permission",
+          "external_side_effect"
+        ]
+      },
+      "forbidden_patterns": [
+        "execute an unmatched or ambiguous Slack placement",
+        "create a derived session without a real parent",
+        "override placement-bound engine, model, or effort from request input",
+        "deliver outside allowedDelivery"
+      ],
+      "evidence_requirements": [
+        "placement_authorization_regression"
+      ]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { JinnConfig, Connector, Employee } from "../shared/types.js";
+import type { JinnConfig, Connector, Employee, IncomingMessage } from "../shared/types.js";
 import { loadConfig } from "../shared/config.js";
 import { invalidateModelRegistry } from "../shared/models.js";
 import { configureLogger, logger } from "../shared/logger.js";
@@ -25,6 +25,7 @@ import { writeGatewayInfo } from "./gateway-info.js";
 import { cleanupSessionSettings, seedTrust } from "../shared/claude-settings.js";
 import { GATEWAY_INFO_FILE, HOOK_RELAY_SCRIPT, CLAUDE_SETTINGS_DIR, JINN_HOME } from "../shared/paths.js";
 import { handleApiRequest, resumePendingWebQueueItems, type ApiContext } from "./api.js";
+import { webSocketUpgradeAuthorized } from "./operator-auth.js";
 import { ensureFilesDir } from "./files.js";
 import { initStt } from "../stt/stt.js";
 import { startWatchers, stopWatchers, syncSkillSymlinks } from "./watcher.js";
@@ -37,6 +38,8 @@ import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
 import { scanOrg } from "./org.js";
 import { resolveSlackRuntimeConfig } from "../shared/slack-runtime-config.js";
+import { resolvePlacement } from "../shared/placement-profile.js";
+import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,6 +78,59 @@ const MIME_TYPES: Record<string, string> = {
   ".woff": "font/woff",
   ".woff2": "font/woff2",
 };
+
+function resolveRouteOptions(
+  cfg: JinnConfig,
+  msg: IncomingMessage,
+  employees: Map<string, Employee>,
+  fallbackEmployee?: string,
+  criticalRouting?: RouteOptions["criticalRouting"],
+): RouteOptions | undefined {
+  const resolution = resolvePlacement(cfg.placements, msg);
+  if (resolution.status === "denied") {
+    const reason = resolution.reason === "unauthorized_user" ? "unauthorized_actor"
+      : resolution.reason === "invalid_config" ? "placement_missing_after_config_change"
+      : resolution.reason!;
+    emitSecurityEvent({
+      event: "placement_resolution", reason, connector: msg.connector,
+      workspaceId: String((msg.transportMeta as Record<string, unknown> | undefined)?.team ?? "") || undefined,
+      channelId: msg.channel, actorId: msg.user, configRevision: placementConfigRevision(cfg.placements),
+    });
+    return undefined;
+  }
+
+  const opts: RouteOptions = { criticalRouting };
+  if (resolution.status === "matched") {
+    const placement = resolution.placement!;
+    opts.placement = placement;
+    opts.model = placement.agent?.defaultModel;
+    const employeeName = placement.agent?.employee;
+    if (employeeName) {
+      const employee = employees.get(employeeName);
+      if (!employee) {
+        emitSecurityEvent({ event: "derived_session", reason: "employee_denied", placementId: placement.id,
+          connector: msg.connector, channelId: msg.channel, actorId: msg.user,
+          target: employeeName, configRevision: placementConfigRevision(cfg.placements) });
+        logger.error(`Placement ${placement.id} denied: employee "${employeeName}" is not configured`);
+        return undefined;
+      }
+      opts.employee = employee;
+    }
+    if (placement.agent?.escalationEmployee) {
+      opts.criticalRouting = {
+        enabled: true,
+        reviewerEmployee: placement.agent.escalationEmployee,
+      };
+    }
+    return opts;
+  }
+
+  if (fallbackEmployee) {
+    const employee = employees.get(fallbackEmployee);
+    if (employee) opts.employee = employee;
+  }
+  return opts;
+}
 
 function serveStatic(
   req: http.IncomingMessage,
@@ -319,13 +375,8 @@ export async function startGateway(
           },
         );
         slack.onMessage((msg) => {
-          const routeOpts: RouteOptions = {
-            criticalRouting: cfg.connectors.slack?.criticalRouting,
-          };
-          if (cfg.connectors.slack?.employee) {
-            const emp = employeeRegistry.get(cfg.connectors.slack.employee);
-            if (emp) routeOpts.employee = emp;
-          }
+          const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.slack?.employee, cfg.connectors.slack?.criticalRouting);
+          if (!routeOpts) return;
           sessionManager.route(msg, slack, routeOpts).catch((err) => {
             logger.error(`Slack route error: ${err instanceof Error ? err.message : err}`);
           });
@@ -346,6 +397,7 @@ export async function startGateway(
         const discord = new RemoteDiscordConnector({
           proxyVia: cfg.connectors.discord.proxyVia,
           channelId: cfg.connectors.discord.channelId,
+          proxyToken: cfg.connectors.discord.proxyToken,
         });
         discord.onMessage((msg) => {
           const routeOpts: RouteOptions = {};
@@ -493,11 +545,8 @@ export async function startGateway(
               goalInjectionEnabled: (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
             });
             slack.onMessage((msg) => {
-              const routeOpts: RouteOptions = {};
-              if (employee) {
-                const emp = employeeRegistry.get(employee);
-                if (emp) routeOpts.employee = emp;
-              }
+              const routeOpts = resolveRouteOptions(config, msg, employeeRegistry, employee);
+              if (!routeOpts) return;
               sessionManager.route(msg, slack, routeOpts).catch((err) => {
                 logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
               });
@@ -629,11 +678,8 @@ export async function startGateway(
                 goalInjectionEnabled: (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
               });
               slack.onMessage((msg) => {
-                const routeOpts: RouteOptions = {};
-                if (employee) {
-                  const emp = employeeRegistry.get(employee);
-                  if (emp) routeOpts.employee = emp;
-                }
+                const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);
+                if (!routeOpts) return;
                 sessionManager.route(msg, slack, routeOpts).catch((err) => {
                   logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
                 });
@@ -942,8 +988,8 @@ export async function startGateway(
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
     }
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-OpenRyoko-Operator-Token");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -1016,6 +1062,11 @@ export async function startGateway(
     // DNS-rebinding / cross-host guard — mirror the HTTP request path so a WS
     // upgrade can't bypass it. Applies to both /ws and /ws/pty.
     if (!hostIsAllowed(req.headers.host)) { socket.destroy(); return; }
+    const placementsEnabled = Boolean(currentConfig.placements?.length);
+    if (!webSocketUpgradeAuthorized(placementsEnabled, req.headers["sec-websocket-protocol"])) {
+      socket.destroy();
+      return;
+    }
     if (reqUrl === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req);

@@ -9,6 +9,10 @@ import { useTheme } from "@/app/providers"
 import { THEMES } from "@/lib/themes"
 import type { ThemeId } from "@/lib/themes"
 import { api } from "@/lib/api"
+import {
+  OPERATOR_AUTH_CHANGED_EVENT,
+  storeOperatorToken,
+} from "@/lib/operator-auth"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import {
   CLAUDE_MODELS,
@@ -256,9 +260,11 @@ function Section({
 
 function FieldRow({
   label,
+  htmlFor,
   children,
 }: {
   label: string
+  htmlFor?: string
   children: React.ReactNode
 }) {
   return (
@@ -266,6 +272,7 @@ function FieldRow({
       className="flex items-center justify-between py-[var(--space-2)] gap-[var(--space-4)]"
     >
       <label
+        htmlFor={htmlFor}
         className="text-[length:var(--text-subheadline)] text-[var(--text-secondary)] shrink-0"
       >
         {label}
@@ -276,11 +283,13 @@ function FieldRow({
 }
 
 function SettingsInput({
+  id,
   value,
   onChange,
   type = "text",
   placeholder,
 }: {
+  id?: string
   value: string
   onChange: (v: string) => void
   type?: string
@@ -288,12 +297,47 @@ function SettingsInput({
 }) {
   return (
     <input
+      id={id}
       type={type}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       className="apple-input w-full bg-[var(--bg-secondary)] border border-[var(--separator)] rounded-[var(--radius-sm)] px-[10px] py-[6px] text-[length:var(--text-footnote)] text-[var(--text-primary)]"
     />
+  )
+}
+
+export function OperatorAccessControls({
+  token,
+  onTokenChange,
+  onRetry,
+}: {
+  token: string
+  onTokenChange: (value: string) => void
+  onRetry: () => void
+}) {
+  return (
+    <Section title="Operator access">
+      <FieldRow label="Operator Token" htmlFor="operator-token">
+        <div className="flex w-full gap-2">
+          <SettingsInput
+            id="operator-token"
+            type="password"
+            value={token}
+            onChange={onTokenChange}
+            placeholder="Required when placements are enabled"
+          />
+          <button
+            type="button"
+            onClick={onRetry}
+            aria-label="Save token and retry operator authentication"
+            className="rounded-md border border-[var(--border-primary)] px-3 text-sm"
+          >
+            Save & Retry
+          </button>
+        </div>
+      </FieldRow>
+    </Section>
   )
 }
 
@@ -656,6 +700,7 @@ export default function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const [configError, setConfigError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [operatorToken, setOperatorToken] = useState("")
   const [feedback, setFeedback] = useState<{
     type: "success" | "error"
     message: string
@@ -675,22 +720,25 @@ export default function SettingsPage() {
   const [slackChannelsLoading, setSlackChannelsLoading] = useState(false)
   const [slackChannelsError, setSlackChannelsError] = useState<string | null>(null)
 
-  useEffect(() => {
+  function loadEmployees() {
     api.getOrg().then((org: any) => {
       if (org?.employees) {
         setEmployees(org.employees.map((e: any) => typeof e === 'string' ? { name: e, displayName: e } : { name: e.name, displayName: e.displayName || e.name }))
       }
-    }).catch(() => {})
+    }).catch(() => setEmployees([]))
+  }
+
+  useEffect(() => {
+    loadEmployees()
   }, [])
 
   const refreshSlackChannels = async () => {
     setSlackChannelsLoading(true)
     setSlackChannelsError(null)
     try {
-      const res = await fetch("/api/connectors/slack/channels")
-      const body = await res.json()
+      const body = await api.getSlackChannels()
       if (!body?.ok) {
-        const err = body?.error || `HTTP ${res.status}`
+        const err = body?.error || "unknown_error"
         if (err === "missing_scope") {
           setSlackChannelsError("Bot に canvases / channels scope が足りません。上のSlack App Manifestを貼り直して再インストールしてください。")
         } else if (err === "slack_not_configured") {
@@ -741,8 +789,26 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
+    setOperatorToken(localStorage.getItem("openryoko.operatorToken") ?? "")
     loadConfig()
   }, [])
+
+  useEffect(() => {
+    function refreshProtectedSettings() {
+      loadConfig()
+      loadEmployees()
+    }
+    window.addEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshProtectedSettings)
+    return () => window.removeEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshProtectedSettings)
+  }, [])
+
+  function updateOperatorToken(value: string) {
+    setOperatorToken(value)
+  }
+
+  function retryOperatorAccess() {
+    storeOperatorToken(operatorToken)
+  }
 
   // Poll for WhatsApp QR code when WhatsApp connector is configured
   useEffect(() => {
@@ -758,9 +824,8 @@ export default function SettingsPage() {
         if (!cancelled) setWaStatus(connStatus ?? "unknown")
 
         if (connStatus === "qr_pending") {
-          const qrRes = await fetch("/api/connectors/whatsapp/qr")
-          const data = await qrRes.json()
-          if (!cancelled) setWaQr(data.qr)
+          const data = await api.getWhatsAppQr()
+          if (!cancelled) setWaQr(data.qr ?? null)
         } else {
           if (!cancelled) setWaQr(null)
         }
@@ -1134,6 +1199,12 @@ export default function SettingsPage() {
               {feedback.message}
             </div>
           )}
+
+          <OperatorAccessControls
+            token={operatorToken}
+            onTokenChange={updateOperatorToken}
+            onRetry={retryOperatorAccess}
+          />
 
           {configLoading ? (
             <div

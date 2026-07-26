@@ -2,6 +2,14 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { buildChildEnv, _resetRootWarn } from "../childEnv.js";
 
 describe("buildChildEnv", () => {
+  it("never exposes the operator REST credential to child agents", () => {
+    process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256 = "operator-hash-canary";
+    try {
+      expect(buildChildEnv()).not.toHaveProperty("OPENRYOKO_OPERATOR_TOKEN_SHA256");
+    } finally {
+      delete process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256;
+    }
+  });
   const origGetuid = process.getuid;
   const savedEnvKeys = new Set(Object.keys(process.env));
 

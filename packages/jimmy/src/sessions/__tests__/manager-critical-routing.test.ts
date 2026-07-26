@@ -145,4 +145,80 @@ describe("SessionManager deterministic critical routing", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(registry.insertMessage).not.toHaveBeenCalled();
   });
+
+  it("atomically rebinds an existing Slack session to the resolved placement authority", async () => {
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engine: "codex",
+      engineSessionId: "stale-engine-session",
+      employee: "legacy-agent",
+      model: "legacy-model",
+      effortLevel: "low",
+    });
+    const manager = new SessionManager(CONFIG, new Map(), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko",
+        displayName: "Ryoko",
+        department: "operations",
+        rank: "executive",
+        engine: "claude",
+        model: "sonnet",
+        effortLevel: "medium",
+        persona: "Operate within the placement.",
+      },
+      criticalRouting: { enabled: true, reviewerEmployee: "critical-reviewer" },
+    });
+
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engine: "claude",
+      engineSessionId: null,
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: expect.objectContaining({ placementId: "mana-test" }),
+    }));
+  });
+
+  it("kills and clears a same-engine transcript and stale override metadata on placement rebind", async () => {
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engineSessionId: "stale-claude-transcript",
+      transportMeta: {
+        engineOverride: { originalEngine: "codex", until: "2000-01-01T00:00:00.000Z" },
+        engineSessions: { claude: "stale-claude-transcript", codex: "stale-codex-transcript" },
+        claudeSyncSince: "2020-01-01T00:00:00.000Z",
+      },
+    });
+    const kill = vi.fn();
+    const engine = { name: "claude", run: vi.fn(), kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+      criticalRouting: { enabled: true, reviewerEmployee: "critical-reviewer" },
+    });
+
+    expect(kill).toHaveBeenCalledWith("parent-1", "placement authority rebind");
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engine: "claude",
+      engineSessionId: null,
+      transportMeta: { placementId: "mana-test" },
+    }));
+  });
 });
