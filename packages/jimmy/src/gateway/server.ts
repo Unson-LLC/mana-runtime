@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { JinnConfig, Connector, Employee } from "../shared/types.js";
+import type { JinnConfig, Connector, Employee, IncomingMessage } from "../shared/types.js";
 import { loadConfig } from "../shared/config.js";
 import { invalidateModelRegistry } from "../shared/models.js";
 import { configureLogger, logger } from "../shared/logger.js";
@@ -37,6 +37,7 @@ import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
 import { scanOrg } from "./org.js";
 import { resolveSlackRuntimeConfig } from "../shared/slack-runtime-config.js";
+import { resolvePlacement } from "../shared/placement-profile.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,6 +76,49 @@ const MIME_TYPES: Record<string, string> = {
   ".woff": "font/woff",
   ".woff2": "font/woff2",
 };
+
+function resolveRouteOptions(
+  cfg: JinnConfig,
+  msg: IncomingMessage,
+  employees: Map<string, Employee>,
+  fallbackEmployee?: string,
+  criticalRouting?: RouteOptions["criticalRouting"],
+): RouteOptions | undefined {
+  const resolution = resolvePlacement(cfg.placements, msg);
+  if (resolution.status === "denied") {
+    logger.warn(`Placement denied connector=${msg.connector} channel=${msg.channel} reason=${resolution.reason}`);
+    return undefined;
+  }
+
+  const opts: RouteOptions = { criticalRouting };
+  if (resolution.status === "matched") {
+    const placement = resolution.placement!;
+    opts.placement = placement;
+    opts.model = placement.agent?.defaultModel;
+    const employeeName = placement.agent?.employee;
+    if (employeeName) {
+      const employee = employees.get(employeeName);
+      if (!employee) {
+        logger.error(`Placement ${placement.id} denied: employee "${employeeName}" is not configured`);
+        return undefined;
+      }
+      opts.employee = employee;
+    }
+    if (placement.agent?.escalationEmployee) {
+      opts.criticalRouting = {
+        enabled: true,
+        reviewerEmployee: placement.agent.escalationEmployee,
+      };
+    }
+    return opts;
+  }
+
+  if (fallbackEmployee) {
+    const employee = employees.get(fallbackEmployee);
+    if (employee) opts.employee = employee;
+  }
+  return opts;
+}
 
 function serveStatic(
   req: http.IncomingMessage,
@@ -319,13 +363,8 @@ export async function startGateway(
           },
         );
         slack.onMessage((msg) => {
-          const routeOpts: RouteOptions = {
-            criticalRouting: cfg.connectors.slack?.criticalRouting,
-          };
-          if (cfg.connectors.slack?.employee) {
-            const emp = employeeRegistry.get(cfg.connectors.slack.employee);
-            if (emp) routeOpts.employee = emp;
-          }
+          const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.slack?.employee, cfg.connectors.slack?.criticalRouting);
+          if (!routeOpts) return;
           sessionManager.route(msg, slack, routeOpts).catch((err) => {
             logger.error(`Slack route error: ${err instanceof Error ? err.message : err}`);
           });
@@ -493,11 +532,8 @@ export async function startGateway(
               goalInjectionEnabled: (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
             });
             slack.onMessage((msg) => {
-              const routeOpts: RouteOptions = {};
-              if (employee) {
-                const emp = employeeRegistry.get(employee);
-                if (emp) routeOpts.employee = emp;
-              }
+              const routeOpts = resolveRouteOptions(config, msg, employeeRegistry, employee);
+              if (!routeOpts) return;
               sessionManager.route(msg, slack, routeOpts).catch((err) => {
                 logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
               });
@@ -629,11 +665,8 @@ export async function startGateway(
                 goalInjectionEnabled: (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
               });
               slack.onMessage((msg) => {
-                const routeOpts: RouteOptions = {};
-                if (employee) {
-                  const emp = employeeRegistry.get(employee);
-                  if (emp) routeOpts.employee = emp;
-                }
+                const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);
+                if (!routeOpts) return;
                 sessionManager.route(msg, slack, routeOpts).catch((err) => {
                   logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
                 });

@@ -1,0 +1,99 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "channel-placement-profiles",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "ai_synthesis"
+  },
+  "clauses": [
+    {
+      "id": "INV-PLACEMENT-LEGACY",
+      "type": "invariant",
+      "statement": "placements未設定時は既存のSlack単一配置の挙動を維持する",
+      "rationale": "段階導入で既存パイロットを停止させないため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 1 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "S-PLACEMENT-MATCH",
+      "type": "scenario",
+      "statement": "placements設定時にSlackイベントを受けるとconnector workspace channel userが一致する一意なPlacementへルーティングする",
+      "rationale": "チャンネル配置を実行境界にするため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "S-PLACEMENT-DENY",
+      "type": "scenario",
+      "statement": "未登録チャンネルまたは許可外userまたは複数一致するSlackイベントを受けるとエージェント実行前に拒否する",
+      "rationale": "認可をfail closedにするため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "C-PLACEMENT-AGENT",
+      "type": "contract",
+      "statement": "Placementは担当Employee 通常model 重要レビューEmployeeを明示的に選択できる",
+      "rationale": "配置ごとの職務とモデルルーティングを分離するため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 4 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "INV-PLACEMENT-MCP",
+      "type": "invariant",
+      "statement": "Placement適用時のMCPはdeny-by-defaultで明示されたserverだけをClaudeへ渡す",
+      "rationale": "global MCPの暗黙付与を防ぐため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 5 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "INV-PLACEMENT-GATEWAY-TOOLS",
+      "type": "invariant",
+      "statement": "Gateway MCPはPlacementが許可したtoolだけを公開して実行する",
+      "rationale": "MCP server内の強い操作を配置単位で制限するため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "S-PLACEMENT-DELIVERY",
+      "type": "scenario",
+      "statement": "send_messageがPlacementの許可先以外を指定するとGateway APIを呼ぶ前に拒否する",
+      "rationale": "対象チャンネル外への外部送信を防ぐため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 7 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "C-PLACEMENT-CONTEXT",
+      "type": "contract",
+      "statement": "system promptはplacement ID audience projects data scopeを構造化された実行文脈として含む",
+      "rationale": "データ境界をエージェントと監査へ伝えるため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "INV-PLACEMENT-SECRETS",
+      "type": "invariant",
+      "statement": "Placement設定と監査ログにはtokenやsecret値を含めない",
+      "rationale": "認可設定によるsecret漏洩を防ぐため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 9 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "C-PLACEMENT-TESTS",
+      "type": "contract",
+      "statement": "Placement resolver、MCP制限、Gateway tool制限、delivery制限、Slack reaction、子委譲、cross-requestの正常系と拒否系を自動テストする",
+      "rationale": "権限境界の回帰を防ぐため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 10 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "INV-PLACEMENT-DERIVED-SESSIONS",
+      "type": "invariant",
+      "statement": "子セッションとcross-requestは実在する親を必須とし、親Placementを継承して許可外Employeeを拒否する。Placement子でEmployeeを省略した場合は親Employeeとengine/model/effortを継承し、engine/model/effortのリクエスト上書きを拒否する",
+      "rationale": "派生セッションからPlacement境界を回避できないようにするため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 11 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    }
+  ],
+  "open_questions": []
+}

@@ -5,6 +5,7 @@ import type {
   Engine,
   IncomingMessage,
   JinnConfig,
+  PlacementProfile,
   Session,
   Target,
 } from "../shared/types.js";
@@ -35,12 +36,15 @@ import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
+import { placementDeliveryTargets } from "../shared/placement-profile.js";
+import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
 export interface RouteOptions {
   employee?: Employee;
   engine?: string;
   model?: string;
   title?: string;
+  placement?: PlacementProfile;
   criticalRouting?: {
     enabled?: boolean;
     reviewerEmployee?: string;
@@ -189,7 +193,10 @@ export class SessionManager {
         sessionKey: msg.sessionKey,
         replyContext: msg.replyContext,
         messageId: msg.messageId,
-        transportMeta: msg.transportMeta,
+        transportMeta: {
+          ...(msg.transportMeta ?? {}),
+          ...(opts.placement ? { placementId: opts.placement.id } : {}),
+        },
         employee: opts.employee?.name ?? undefined,
         model: opts.model ?? opts.employee?.model ?? undefined,
         title: opts.title,
@@ -201,7 +208,10 @@ export class SessionManager {
         (opts.employee ? ` (employee: ${opts.employee.name})` : ""),
       );
     } else {
-      const mergedMeta = mergeTransportMeta(session.transportMeta, msg.transportMeta);
+      const mergedMeta = mergeTransportMeta(session.transportMeta, {
+        ...(msg.transportMeta ?? {}),
+        ...(opts.placement ? { placementId: opts.placement.id } : {}),
+      });
       session = updateSession(session.id, {
         replyContext: msg.replyContext,
         messageId: msg.messageId ?? null,
@@ -259,7 +269,10 @@ export class SessionManager {
           `http://127.0.0.1:${this.config.gateway.port}/api/sessions/${session.id}/children`,
           {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(session.id),
+            },
             body: JSON.stringify({
               employee: reviewerEmployee,
               prompt: buildCriticalReviewPrompt(msg.text),
@@ -337,7 +350,7 @@ export class SessionManager {
     // inbound message enqueues at the current generation and runs even if the session
     // was previously /stop- or watchdog-reset, so no explicit un-cancel is needed here.
     await this.queue.enqueue(msg.sessionKey, () =>
-      this.runSession(session!, msg, attachmentPaths, connector, target, opts.employee),
+      this.runSession(session!, msg, attachmentPaths, connector, target, opts.employee, opts.placement),
     );
 
     return { sessionId };
@@ -452,6 +465,7 @@ export class SessionManager {
     connector: Connector,
     target: Target,
     employee?: Employee,
+    placement?: PlacementProfile,
   ): Promise<void> {
     const engine = this.engines.get(session.engine);
     if (!engine) {
@@ -508,6 +522,7 @@ export class SessionManager {
         thread: msg.thread,
         user: msg.user,
         employee,
+        placement,
         connectors: this.connectorNames,
         config: this.config,
         sessionId: session.id,
@@ -529,10 +544,13 @@ export class SessionManager {
           : this.config.engines.claude;
       if (session.engine === "claude") {
         const mcpConfig = resolveMcpServers(this.config.mcp, employee, {
+          sessionId: session.id,
           connector: connector.name,
           channel: target.channel,
           thread: target.thread || target.messageTs,
-        });
+          allowedGatewayTools: placement?.capabilities?.gatewayTools ?? [],
+          allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
+        }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
         if (Object.keys(mcpConfig.mcpServers).length > 0) {
           mcpConfigPath = writeMcpConfigFile(mcpConfig, session.id);
         }

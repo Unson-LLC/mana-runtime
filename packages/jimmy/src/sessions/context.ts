@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Employee, JinnConfig } from "../shared/types.js";
+import type { Employee, JinnConfig, PlacementProfile } from "../shared/types.js";
 import { JINN_HOME, ORG_DIR, CRON_JOBS, DOCS_DIR } from "../shared/paths.js";
 import { isOperatorSpeaker } from "../shared/operator-match.js";
 import { scanOrg } from "../gateway/org.js";
@@ -72,6 +72,7 @@ export function buildContext(opts: {
   /** Speaker's IANA timezone */
   speakerTz?: string;
   hierarchy?: import("../shared/types.js").OrgHierarchy;
+  placement?: PlacementProfile;
 }): string {
   const maxChars = opts.config?.context?.maxChars ?? DEFAULT_MAX_CONTEXT_CHARS;
   const sections: Section[] = [];
@@ -137,6 +138,22 @@ export function buildContext(opts: {
     summary: "", // always included, no trimming
   });
 
+  if (opts.placement) {
+    sections.push({
+      tier: Tier.ESSENTIAL,
+      marker: "## Placement policy",
+      content: [
+        "## Placement policy",
+        `- Placement: ${opts.placement.id}`,
+        `- Audience: ${opts.placement.audience.type}`,
+        `- Projects: ${(opts.placement.projects ?? []).join(", ") || "none"}`,
+        `- Data scopes: ${JSON.stringify(opts.placement.dataScopes ?? {})}`,
+        "Treat these as hard execution boundaries. Do not broaden them or send outside the allowed delivery targets.",
+      ].join("\n"),
+      summary: "",
+    });
+  }
+
   // ── ESSENTIAL: Configuration awareness ──────────────────────
   if (opts.config) {
     sections.push({
@@ -159,8 +176,8 @@ export function buildContext(opts: {
   }
 
   // ── STANDARD: Available services (for employees only) ────────
-  if (opts.employee) {
-    const svcCtx = buildServicesContext(opts.employee, gatewayUrl);
+  if (opts.employee && !opts.placement) {
+    const svcCtx = buildServicesContext(opts.employee, gatewayUrl, opts.sessionId);
     if (svcCtx) {
       sections.push({
         tier: Tier.STANDARD,
@@ -341,7 +358,7 @@ function buildChainOfCommand(
   return "\n" + lines.join("\n") + "\n";
 }
 
-function buildServicesContext(employee: Employee, gatewayUrl: string): string | null {
+function buildServicesContext(employee: Employee, gatewayUrl: string, sessionId?: string): string | null {
   try {
     const registry = scanOrg();
     const services = buildServiceRegistry(registry);
@@ -349,7 +366,7 @@ function buildServicesContext(employee: Employee, gatewayUrl: string): string | 
 
     const lines: string[] = ["## Available services"];
     lines.push("Other employees provide the following services. To request one, use the cross-request API:");
-    lines.push(`\`POST ${gatewayUrl}/api/org/cross-request\` with \`{"fromEmployee": "${employee.name}", "service": "<name>", "prompt": "<what you need>"}\``);
+    lines.push(`\`POST ${gatewayUrl}/api/org/cross-request\` with \`{"fromEmployee": "${employee.name}", "service": "<name>", "prompt": "<what you need>", "parentSessionId": "${sessionId ?? "<current-session-id>"}"}\``);
     lines.push("");
 
     for (const [svcName, entry] of services) {

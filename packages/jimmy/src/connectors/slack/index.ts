@@ -323,7 +323,7 @@ export class SlackConnector implements Connector {
   }
 
   async start() {
-    this.app.message(async ({ event }) => {
+    this.app.message(async ({ event, context }) => {
       logger.info(`[slack] Received message event: user=${(event as any).user} channel=${(event as any).channel} channel_type=${(event as any).channel_type ?? "-"} thread_ts=${(event as any).thread_ts ?? "-"} subtype=${(event as any).subtype ?? "-"} text="${((event as any).text || "").slice(0, 50)}"`);
       // Skip bot's own messages
       if ((event as any).bot_id) {
@@ -482,7 +482,7 @@ export class SlackConnector implements Connector {
         transportMeta: {
           channelType,
           channelExternal,
-          team: ((event as any).team as string) || null,
+          team: context.teamId || null,
           channelName: channelName || null,
           wasMentioned,
           ...this.speakerTransportFields(speaker, slackUserId),
@@ -613,7 +613,7 @@ export class SlackConnector implements Connector {
       );
     }
 
-    this.app.event("reaction_added", async ({ event }) => {
+    this.app.event("reaction_added", async ({ event, context }) => {
       // Only handle reactions on messages (not files, etc.)
       if (event.item.type !== "message") return;
 
@@ -717,7 +717,7 @@ export class SlackConnector implements Connector {
         transportMeta: {
           channelType: "channel",
           channelExternal: channelInfo.isExtShared,
-          team: null,
+          team: context.teamId || null,
           channelName: channelName || null,
           ...this.speakerTransportFields(speaker, event.user),
         },

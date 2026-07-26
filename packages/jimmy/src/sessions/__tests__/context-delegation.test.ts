@@ -19,4 +19,35 @@ describe("delegation context", () => {
       "it enforces the parent link even if the request body omits `parentSessionId`",
     );
   });
+
+  it("keeps the assigned employee persona but omits unsupported cross-service instructions in a placement", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-session",
+      employee: {
+        name: "ryoko",
+        displayName: "Ryoko Pilot",
+        department: "operations",
+        rank: "executive",
+        engine: "claude",
+        model: "sonnet",
+        persona: "Run the pilot within its approved channel boundary.",
+      },
+      placement: {
+        id: "pilot",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+        agent: { employee: "ryoko" },
+      },
+    });
+
+    expect(context).toContain("# You are Ryoko Pilot");
+    expect(context).toContain("Run the pilot within its approved channel boundary.");
+    expect(context).toContain("## Placement policy");
+    expect(context).not.toContain("/api/org/cross-request");
+  });
 });

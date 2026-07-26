@@ -12,8 +12,15 @@
 
 import { createInterface } from "node:readline";
 import { currentConversationFromEnv, isSendToCurrentConversation } from "./current-conversation.js";
+import {
+  allowedGatewayTools,
+  buildCreateChildSessionRequest,
+  isDeliveryTargetAllowed,
+  isGatewayToolAllowed,
+} from "./gateway-policy.js";
 
 const GATEWAY_URL = process.env.JINN_GATEWAY_URL || "http://127.0.0.1:7777";
+const SESSION_DELEGATION_TOKEN = process.env.JINN_SESSION_DELEGATION_TOKEN;
 
 // ─── MCP Protocol Types ───
 
@@ -75,13 +82,11 @@ const TOOLS = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        employee: { type: "string", description: "Employee name to delegate to (e.g. 'homy-writer')" },
+        employee: { type: "string", description: "Employee name to delegate to. Omit to inherit the current employee." },
         prompt: { type: "string", description: "Task/instruction for the employee" },
         parentSessionId: { type: "string", description: "Your current session ID (for tracking)" },
-        engine: { type: "string", description: "Engine override (claude or codex)" },
-        model: { type: "string", description: "Model override" },
       },
-      required: ["employee", "prompt"],
+      required: ["prompt"],
     },
   },
   {
@@ -198,7 +203,10 @@ async function apiGet(path: string): Promise<unknown> {
 async function apiPost(path: string, body: unknown): Promise<unknown> {
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(SESSION_DELEGATION_TOKEN ? { "x-jinn-session-token": SESSION_DELEGATION_TOKEN } : {}),
+    },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -221,9 +229,16 @@ async function apiPut(path: string, body: unknown): Promise<unknown> {
 // ─── Tool Handlers ───
 
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
+  if (!isGatewayToolAllowed(name)) {
+    throw new Error(`Gateway tool "${name}" is not allowed by this placement`);
+  }
   switch (name) {
     case "send_message": {
       const connector = (args.connector as string) || "slack";
+      const channel = String(args.channel || "");
+      if (!isDeliveryTargetAllowed(connector, channel)) {
+        throw new Error(`Delivery to ${connector}:${channel} is not allowed by this placement`);
+      }
       if (isSendToCurrentConversation({ ...args, connector }, currentConversationFromEnv())) {
         throw new Error(
           "send_message cannot post to the current conversation. Return the reply as your final answer instead; Jinn will deliver it to the correct thread.",
@@ -262,12 +277,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
 
     case "create_child_session": {
-      const result = await apiPost("/api/sessions", {
-        prompt: args.prompt,
-        employee: args.employee,
-        engine: args.engine,
-        parentSessionId: args.parentSessionId,
-      });
+      const request = buildCreateChildSessionRequest(args, process.env.JINN_CURRENT_SESSION_ID);
+      const result = await apiPost(request.path, request.body);
       return JSON.stringify(result);
     }
 
@@ -359,7 +370,7 @@ async function handleRequest(request: JsonRpcRequest): Promise<void> {
       sendResponse({
         jsonrpc: "2.0",
         id,
-        result: { tools: TOOLS },
+        result: { tools: allowedGatewayTools(TOOLS) },
       });
       break;
 

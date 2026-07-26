@@ -2,8 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const bolt = vi.hoisted(() => {
   const state: {
-    messageHandler?: (args: { event: Record<string, unknown> }) => Promise<void>;
-    reactionHandler?: (args: { event: Record<string, any> }) => Promise<void>;
+    messageHandler?: (args: {
+      event: Record<string, unknown>;
+      context: { teamId?: string };
+    }) => Promise<void>;
+    reactionHandler?: (args: {
+      event: Record<string, any>;
+      context: { teamId?: string };
+    }) => Promise<void>;
   } = {};
   const client = {
     auth: { test: vi.fn(async () => ({ user_id: "U_BOT" })) },
@@ -13,6 +19,7 @@ const bolt = vi.hoisted(() => {
     },
     conversations: {
       info: vi.fn(async () => ({ channel: { name: "pilot", is_ext_shared: false } })),
+      history: vi.fn(async () => ({ messages: [{ text: "approve this" }] })),
       replies: vi.fn(async () => ({ messages: [] })),
     },
     users: {
@@ -83,6 +90,7 @@ describe("SlackConnector authorization", () => {
         ts: "200.001",
         text: "continue",
       },
+      context: { teamId: "T_WORKSPACE" },
     });
 
     expect(handler).not.toHaveBeenCalled();
@@ -106,8 +114,33 @@ describe("SlackConnector authorization", () => {
         ts: "200.002",
         text: "continue",
       },
+      context: { teamId: "T_WORKSPACE" },
     });
 
     expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      transportMeta: expect.objectContaining({ team: "T_WORKSPACE" }),
+    }));
+  });
+
+  it("uses Bolt context.teamId as the reaction workspace boundary", async () => {
+    const { handler } = await setup();
+
+    await bolt.state.reactionHandler?.({
+      event: {
+        type: "reaction_added",
+        user: "U_ALLOWED",
+        reaction: "white_check_mark",
+        item: { type: "message", channel: "C_PILOT", ts: "200.003" },
+        event_ts: "200.004",
+      },
+      context: { teamId: "T_WORKSPACE" },
+    });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C_PILOT",
+      transportMeta: expect.objectContaining({ team: "T_WORKSPACE" }),
+    }));
   });
 });

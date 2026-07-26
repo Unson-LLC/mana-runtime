@@ -569,6 +569,35 @@ export interface DevelopmentRunnerConfig {
   timeoutMs?: number;
 }
 
+export interface PlacementDeliveryTarget {
+  connector: string;
+  channel: string;
+}
+
+/** Logical trust boundary for one connector/channel placement. */
+export interface PlacementProfile {
+  id: string;
+  connector: string;
+  workspaceId: string;
+  channelId: string;
+  audience: {
+    type: "operator" | "executive" | "project-team" | "client";
+    allowedUsers: string[];
+  };
+  agent?: {
+    employee?: string;
+    defaultModel?: string;
+    escalationEmployee?: string;
+  };
+  projects?: string[];
+  capabilities?: {
+    mcp?: false | string[];
+    gatewayTools?: string[];
+    allowedDelivery?: PlacementDeliveryTarget[];
+  };
+  dataScopes?: Record<string, unknown>;
+}
+
 export interface JinnConfig {
   jinn?: { version?: string };
   gateway: { port: number; host: string; streaming?: boolean };
@@ -617,6 +646,8 @@ export interface JinnConfig {
   logging: { file: boolean; stdout: boolean; level: string };
   /** Optional isolated development runner used by the /develop command. */
   developmentRunner?: DevelopmentRunnerConfig;
+  /** Connector/channel-specific policy. When present, unmatched input fails closed. */
+  placements?: PlacementProfile[];
   mcp?: McpGlobalConfig;
   sessions?: {
     maxDurationMinutes?: number;

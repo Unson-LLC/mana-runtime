@@ -62,73 +62,41 @@ Slack response + audit record
 
 ## 4. Placement Profile
 
-Placement Profileは、Slack上の配置とRyokoの職務・権限を結び付ける最小単位である。原則として`workspaceId + channelId`で解決する。DMや定期実行は明示的なplacement IDを持つ。
+Placement Profileは、Slack上の配置とRyokoの職務・権限を結び付ける最小単位である。原則として必須の`workspaceId + channelId`で解決する。DMや定期実行は後続Storyで明示的なplacement IDを持たせる。
 
 ```yaml
-id: mana-test
+placements:
+  - id: mana-test
+    connector: slack
+    workspaceId: T01234567
+    channelId: C01234567
+    audience:
+      type: operator
+      allowedUsers: [U01234567]
+    agent:
+      employee: ryoko
+      defaultModel: sonnet
+      escalationEmployee: critical-reviewer
+    projects: [brainbase, mana, brainbase-mana]
+    capabilities:
+      mcp: [brainbase, gateway]
+      gatewayTools: [list_sessions, create_child_session]
+      allowedDelivery:
+        - connector: slack
+          channel: C01234567
+    dataScopes:
+      graph:
+        mode: read-only
+        scopes: [project:brainbase, context:philosophy]
+      repositories:
+        mode: read-only
+        allow: [Unson-LLC/brainbase-mana]
 
-placement:
-  connector: slack
-  workspaceId: ${SLACK_WORKSPACE_ID}
-  channelId: ${SLACK_CHANNEL_ID_MANA_TEST}
-
-audience:
-  type: operator
-  allowedUsers:
-    - ${SLACK_USER_ID_SATO}
-
-agent:
-  employee: ryoko
-  defaultModel: sonnet
-  escalationEmployee: critical-reviewer
-
-projects:
-  - brainbase
-  - mana
-  - brainbase-mana
-
-capabilities:
-  skills:
-    allow:
-      - brainbase-graph-philosophy-context
-      - daily-reflection
-      - development
-  tools:
-    allow:
-      - graph.search
-      - repository.read
-      - slack.reply
-    deny:
-      - graph.write
-      - slack.send_outside_placement
-
-dataScopes:
-  graph:
-    mode: read-only
-    scopes:
-      - project:brainbase
-      - context:philosophy
-  repositories:
-    mode: read-only
-    allow:
-      - Unson-LLC/brainbase-mana
-
-delivery:
-  allowedChannels:
-    - ${SLACK_CHANNEL_ID_MANA_TEST}
-
-briefings:
-  - id: operator-morning-briefing
-    audience: sato
-    purpose: daily-operator-briefing
-    schedule: "30 8 * * 1-5"
-    sources:
-      - graph
-    maxItems: 5
-    writesAllowed: false
 ```
 
-環境固有IDとsecretは設定ファイルへ直書きせず、Infisicalから投影する。
+環境固有IDはInfisicalラッパーが完成済みYAMLへ投影する。OpenRyokoの`loadConfig`自体は`${VAR}`を展開しないため、placeholderを含むYAMLを直接置かない。secretはProfileへ含めず、従来どおりプロセス環境へ注入する。
+
+上記はPhase 1で実装する正本schemaである。Skills、Graph/repositoryのサーバー側scope、cron/briefing、詳細監査は後続Storyとし、`dataScopes`はPhase 1ではpromptへ渡す。session metadataには`placementId`だけを保存し、実行時に正本設定からscopeを再解決する。いずれも認可の代替にはしない。
 
 ## 5. Policy dimensions
 
@@ -154,6 +122,7 @@ Employee、model、Skills、MCP、Tools、OS操作、開発Runnerを定義する
 - 未指定のSkillsやToolsは利用不可とするdeny-by-defaultを採用する。
 - グローバルに有効なMCPを全Employeeへ暗黙付与しない。
 - Sonnetを通常処理の既定値とし、重要案件だけ明示的な基準でOpusへ委譲する。
+- Placementから派生する子セッションはEmployee省略時に親Employeeと実行設定を継承する。許可Employeeを明示した場合はそのEmployee定義からengine/model/effortをサーバー側で決定し、呼び出し側による任意overrideは拒否する。
 - 開発Runnerは通常業務のツール群から分離し、許可された配置だけに付与する。
 
 ### 5.4 Data scope
@@ -222,7 +191,7 @@ Graph、repository、NocoDB、filesystem、secretごとに参照範囲と操作�
 
 ## 9. Required enforcement and tests
 
-実装完了条件には正常系だけでなく、次の拒否テストを含める。
+最終構想の実装完了条件には正常系だけでなく、次の拒否テストを含める。Phase 1はuser/channel/workspace、MCP、Gateway tool、delivery、委譲継承を対象とし、それ以外は後続Storyで段階的に満たす。
 
 - allowlist外ユーザーからの依頼を拒否する。
 - 未登録チャンネルからの依頼を拒否する。

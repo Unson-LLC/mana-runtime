@@ -57,9 +57,17 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
+import { isPlacementEmployeeAllowed, placementDeliveryTargets } from "../shared/placement-profile.js";
+import { SESSION_DELEGATION_HEADER, verifySessionDelegationToken } from "../sessions/delegation-auth.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
+
+export const CONFIG_KNOWN_KEYS = [
+  "jinn", "gateway", "engines", "models", "connectors", "logging", "mcp",
+  "sessions", "cron", "notifications", "portal", "context", "stt", "skills",
+  "remotes", "placements",
+] as const;
 
 export interface ApiContext {
   config: JinnConfig;
@@ -97,6 +105,101 @@ export interface ApiContext {
    */
   hookRegistry?: import("./hook-registry.js").HookRegistry;
   hookSecret?: string;
+}
+
+export function resolveRequestedParentSession(
+  urlParentSessionId: string | undefined,
+  bodyParentSessionId: string | undefined,
+  lookup: (id: string) => Session | undefined,
+): { parentSession?: Session; parentSessionId?: string; missing: boolean; urlBound: boolean } {
+  const parentSessionId = urlParentSessionId || bodyParentSessionId;
+  if (!parentSessionId) return { missing: false, urlBound: false };
+  const parentSession = lookup(parentSessionId);
+  return {
+    parentSession,
+    parentSessionId,
+    missing: !parentSession,
+    urlBound: Boolean(urlParentSessionId),
+  };
+}
+
+export function resolveDerivedPlacement(
+  config: Pick<JinnConfig, "placements">,
+  parentSession: Session,
+  employee?: string,
+): { placement?: NonNullable<JinnConfig["placements"]>[number]; error?: string } {
+  const placementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return {};
+  const placement = config.placements?.find((candidate) => candidate.id === placementId);
+  if (!placement) return { error: `parent placement "${placementId}" is not configured` };
+  if (employee && !isPlacementEmployeeAllowed(placement, employee)) {
+    return { error: `employee "${employee}" is not allowed by placement "${placement.id}"` };
+  }
+  return { placement };
+}
+
+export function resolvePlacementChildExecution(
+  parentSession: Session | undefined,
+  placement: NonNullable<JinnConfig["placements"]>[number] | undefined,
+  requested: { employee?: string; engine?: string; model?: string; effortLevel?: string },
+  employees: Map<string, import("../shared/types.js").Employee>,
+): {
+  employee?: string;
+  engine?: string;
+  model?: string;
+  effortLevel?: string;
+  error?: string;
+} {
+  if (!placement) {
+    const employee = requested.employee ? employees.get(requested.employee) : undefined;
+    if (requested.employee && !employee) return { error: `employee "${requested.employee}" not found` };
+    return {
+      employee: employee?.name,
+      engine: requested.engine || employee?.engine,
+      model: requested.model || employee?.model,
+      effortLevel: requested.effortLevel || employee?.effortLevel,
+    };
+  }
+
+  if (requested.engine !== undefined || requested.model !== undefined || requested.effortLevel !== undefined) {
+    return { error: "placement child execution settings cannot be overridden" };
+  }
+
+  if (!parentSession) return { error: "placement child requires a parent session" };
+  const employeeName = requested.employee || parentSession.employee || placement.agent?.employee;
+  if (!employeeName) return { error: `placement "${placement.id}" has no child employee` };
+  if (!isPlacementEmployeeAllowed(placement, employeeName)) {
+    return { error: `employee "${employeeName}" is not allowed by placement "${placement.id}"` };
+  }
+
+  if (employeeName === parentSession.employee) {
+    return {
+      employee: employeeName,
+      engine: parentSession.engine,
+      model: parentSession.model ?? undefined,
+      effortLevel: parentSession.effortLevel ?? undefined,
+    };
+  }
+
+  const employee = employees.get(employeeName);
+  if (!employee) return { error: `employee "${employeeName}" not found` };
+  return {
+    employee: employee.name,
+    engine: employee.engine,
+    model: employee.model,
+    effortLevel: employee.effortLevel,
+  };
+}
+
+export function authorizeDerivedSessionRequest(parentSession: Session, token: string | undefined): boolean {
+  const placementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return true;
+  return verifySessionDelegationToken(parentSession.id, token);
+}
+
+function sessionDelegationToken(req: HttpRequest): string | undefined {
+  const value = req.headers[SESSION_DELEGATION_HEADER];
+  return Array.isArray(value) ? value[0] : value;
 }
 
 /**
@@ -845,17 +948,30 @@ export async function handleApiRequest(
       const body = _parsed.body as any;
       const prompt = body.prompt || body.message;
       if (!prompt) return badRequest(res, "prompt or message is required");
-      if (createChildParams && !getSession(createChildParams.id)) {
+      const parentResolution = resolveRequestedParentSession(
+        createChildParams?.id,
+        body.parentSessionId,
+        getSession,
+      );
+      const parentSession = parentResolution.parentSession;
+      if (parentResolution.urlBound && parentResolution.missing) {
         return notFound(res);
       }
-      const config = context.getConfig();
-      const employee = body.employee
-        ? findEmployee(body.employee, scanOrg())
-        : undefined;
-      if (body.employee && !employee) {
-        return badRequest(res, `employee "${body.employee}" not found`);
+      if (parentResolution.missing) {
+        return badRequest(res, "parentSessionId not found");
       }
-      const engineName = body.engine || employee?.engine || config.engines.default;
+      if (parentSession && !authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
+        return json(res, { error: "invalid parent session authorization" }, 403);
+      }
+      const config = context.getConfig();
+      const placementResolution = parentSession
+        ? resolveDerivedPlacement(config, parentSession, body.employee)
+        : {};
+      if (placementResolution.error) return badRequest(res, placementResolution.error);
+      const parentPlacement = placementResolution.placement;
+      const execution = resolvePlacementChildExecution(parentSession, parentPlacement, body, scanOrg());
+      if (execution.error) return badRequest(res, execution.error);
+      const engineName = execution.engine || config.engines.default;
       const sessionKey = `web:${Date.now()}`;
       const session = createSession({
         engine: engineName,
@@ -864,10 +980,11 @@ export async function handleApiRequest(
         connector: "web",
         sessionKey,
         replyContext: { source: "web" },
-        employee: employee?.name,
-        model: body.model || employee?.model,
-        parentSessionId: createChildParams?.id || body.parentSessionId,
-        effortLevel: body.effortLevel || employee?.effortLevel,
+        employee: execution.employee,
+        model: execution.model,
+        parentSessionId: parentResolution.parentSessionId,
+        transportMeta: parentPlacement ? { placementId: parentPlacement.id } : undefined,
+        effortLevel: execution.effortLevel,
         prompt,
         portalName: config.portal?.portalName,
       });
@@ -1191,8 +1308,13 @@ export async function handleApiRequest(
       if (!parsed.ok) return;
       const body = parsed.body as any;
       const { fromEmployee, service, prompt, parentSessionId } = body;
-      if (!fromEmployee || !service || !prompt) {
-        return badRequest(res, "Missing required fields: fromEmployee, service, prompt");
+      if (!fromEmployee || !service || !prompt || !parentSessionId) {
+        return badRequest(res, "Missing required fields: fromEmployee, service, prompt, parentSessionId");
+      }
+      const parentSession = getSession(parentSessionId);
+      if (!parentSession) return badRequest(res, "parentSessionId not found");
+      if (!authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
+        return json(res, { error: "invalid parent session authorization" }, 403);
       }
 
       const { scanOrg } = await import("./org.js");
@@ -1225,16 +1347,28 @@ ${prompt}
 Handle this as a priority request from a colleague.`;
 
       const config = context.getConfig();
+      const placementResolution = resolveDerivedPlacement(config, parentSession, entry.provider.name);
+      if (placementResolution.error) return badRequest(res, placementResolution.error);
+      const placement = placementResolution.placement;
+      const execution = resolvePlacementChildExecution(
+        parentSession,
+        placement,
+        { employee: entry.provider.name },
+        orgRegistry,
+      );
+      if (execution.error) return badRequest(res, execution.error);
       const session = createSession({
-        engine: entry.provider.engine || config.engines.default,
-        model: entry.provider.model || undefined,
+        engine: execution.engine || config.engines.default,
+        model: execution.model,
+        effortLevel: execution.effortLevel,
         source: "cross-request",
         sourceRef: `cross:${fromEmployee}:${service}`,
         connector: "web",
         sessionKey: `cross:${Date.now()}`,
         replyContext: { source: "cross-request" },
-        employee: entry.provider.name,
-        parentSessionId: parentSessionId || undefined,
+        employee: execution.employee,
+        parentSessionId,
+        transportMeta: placement ? { placementId: placement.id } : undefined,
         prompt: crossBrief,
         portalName: config.portal?.portalName,
         title: `Cross-request: ${fromEmployee} → ${service}`,
@@ -1455,24 +1589,9 @@ Handle this as a priority request from a colleague.`;
       }
       // Validate known top-level keys
       // Keep this aligned with `JinnConfig` in src/shared/types.ts
-      const KNOWN_KEYS = [
-        "jinn",
-        "gateway",
-        "engines",
-        "models",
-        "connectors",
-        "logging",
-        "mcp",
-        "sessions",
-        "cron",
-        "notifications",
-        "portal",
-        "context",
-        "stt",
-        "skills",
-        "remotes",
-      ];
-      const unknownKeys = Object.keys(body).filter((k) => !KNOWN_KEYS.includes(k));
+      const unknownKeys = Object.keys(body).filter(
+        (key) => !(CONFIG_KNOWN_KEYS as readonly string[]).includes(key),
+      );
       if (unknownKeys.length > 0) {
         return badRequest(res, `Unknown config keys: ${unknownKeys.join(", ")}`);
       }
@@ -2335,11 +2454,22 @@ async function runWebSession(
   }
 
   let mcpConfigPath: string | undefined;
+  const placementId = (currentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  const placement = typeof placementId === "string"
+    ? config.placements?.find((candidate) => candidate.id === placementId)
+    : undefined;
+  if (placementId && !placement) {
+    updateSession(currentSession.id, { status: "error", lastError: `Placement "${placementId}" is not configured` });
+    return;
+  }
   if (currentSession.engine === "claude") {
     const mcpConfig = resolveMcpServers(config.mcp, employee, {
+      sessionId: currentSession.id,
       connector: "web",
       channel: currentSession.sourceRef,
-    });
+      allowedGatewayTools: placement?.capabilities?.gatewayTools ?? [],
+      allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
+    }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
     if (Object.keys(mcpConfig.mcpServers).length > 0) {
       mcpConfigPath = writeMcpConfigFile(mcpConfig, currentSession.id);
     }
@@ -2356,6 +2486,7 @@ async function runWebSession(
       channel: currentSession.sourceRef,
       user: "web-user",
       employee,
+      placement,
       connectors: Array.from(context.connectors.keys()),
       config,
       sessionId: currentSession.id,
