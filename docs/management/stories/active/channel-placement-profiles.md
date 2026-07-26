@@ -2,6 +2,7 @@
 story_id: channel-placement-profiles
 title: Slackチャンネル別Placement ProfileでRyokoの権限と文脈を分離する
 status: active
+architecture_reason: "ADR不要。既存のChannel Placement Architecture内の変更であり、代替案はengine別の重複実装または新runtime service、互換性はPlacement未設定のlegacyを維持、rollbackは本PRのrevert、境界はruntime launch/fallback、後続は分散runtimeとprofile管理。"
 architecture_docs:
   - docs/architecture/channel-placement-profiles.md
 spec_docs:
