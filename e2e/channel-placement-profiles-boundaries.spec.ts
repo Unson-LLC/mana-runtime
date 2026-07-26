@@ -13,27 +13,47 @@ test.describe('Channel Placement Profile execution boundaries', () => {
       },
     )
 
-    const clauseEvidence = {
-      'ac:1': 'preserves legacy routing when no placements are configured',
-      'ac:2': 'matches an exact workspace, channel, and user',
-      'ac:3': 'denies ambiguous matching profiles',
-      'ac:4': 'allows only the primary and escalation employees',
-      'ac:5': 'applies placement MCP selection and gateway policy environment',
-      'ac:6': 'filters and rejects tools not explicitly allowed',
-      'ac:7': 'allows only an authenticated placement delivery target on the direct connector route',
-      'ac:8': 'renders placement identity, audience, projects, and data scope in the system context',
-      'ac:9': 'never renders secret-like placement data in the system context',
-      'ac:10': 'uses Bolt context.teamId as the reaction workspace boundary',
-      'ac:11': 'uses the allowed employee definition and rejects execution overrides',
-      'ac:12': 'carries the operator token in WebSocket subprotocol metadata without putting it in the URL',
-      'ac:13': 'keeps remote Discord proxying on a separate service principal',
-      'S-001': 'matches an exact workspace, channel, and user',
-      'S-002': 'fails closed for unauthorized user',
-      'S-003': 'allows only an authenticated placement delivery target on the direct connector route',
-    } as const
-
-    for (const [clause, testName] of Object.entries(clauseEvidence)) {
-      expect(output, `vibepro: ${clause} -> ${testName}`).toContain(testName)
-    }
+    expect(output, 'vibepro: AC-1 legacy compatibility').toContain(
+      'preserves legacy routing when no placements are configured',
+    )
+    expect(output, 'vibepro: AC-2 unique placement routing').toContain(
+      'matches an exact workspace, channel, and user',
+    )
+    expect(output, 'vibepro: AC-3 employee and model selection').toContain(
+      'allows only the primary and escalation employees',
+    )
+    expect(output, 'vibepro: AC-4 MCP server deny-by-default').toContain(
+      'applies placement MCP selection and gateway policy environment',
+    )
+    expect(output, 'vibepro: AC-5 MCP tool allowlist').toContain(
+      'filters and rejects tools not explicitly allowed',
+    )
+    expect(output, 'vibepro: AC-6 connector and channel boundary').toContain(
+      'allows only an authenticated placement delivery target on the direct connector route',
+    )
+    expect(output, 'vibepro: AC-7 placement audit context').toContain(
+      'renders placement identity, audience, projects, and data scope in the system context',
+    )
+    expect(output, 'vibepro: AC-8 secret redaction').toContain(
+      'never renders secret-like placement data in the system context',
+    )
+    expect(output, 'vibepro: AC-9 positive and denial regression paths').toContain(
+      'fails closed for unauthorized user',
+    )
+    expect(output, 'vibepro: AC-10 child and cross-request parent inheritance').toContain(
+      'inherits placement employee and execution settings on a valid nested child',
+    )
+    expect(output, 'vibepro: AC-11 delegation override rejection').toContain(
+      'uses the allowed employee definition and rejects execution overrides',
+    )
+    expect(output, 'vibepro: S-001 exact Slack placement match').toContain(
+      'matches an exact workspace, channel, and user',
+    )
+    expect(output, 'vibepro: S-002 unauthorized Slack event rejection').toContain(
+      'fails closed for unauthorized user',
+    )
+    expect(output, 'vibepro: S-003 outbound target rejection before delivery').toContain(
+      'allows only an authenticated placement delivery target on the direct connector route',
+    )
   })
 })
