@@ -10,7 +10,7 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-26.2";
+export const RUNNER_VERSION = "2026-07-26.3";
 
 export async function acquireDevelopmentLock(lockPath = LOCK_PATH) {
   let directoryCreated = false;
@@ -137,16 +137,25 @@ export function validateConfig(config) {
   }
 }
 
-function safeResultFromRun(raw, storyId) {
+export function safeResultFromRun(raw, storyId) {
   const result = JSON.parse(raw);
   const status = result?.state?.status;
   if (status === "pr_ready") {
     return { status: "pr_ready", storyId, summary: "VibePro gates are ready. PR creation requires a human action." };
   }
-  if (["needs_input", "blocked", "paused"].includes(status)) {
+  if (["needs_input", "waiting_for_human", "waiting_for_runtime", "blocked", "paused"].includes(status)) {
     return { status: "needs_input", storyId, summary: `VibePro stopped safely (${status}). Review the run before resuming.` };
   }
   return { status: "failed", storyId, summary: `VibePro ended without PR readiness (${String(status ?? "unknown")}).` };
+}
+
+export function buildVibeproRunArgs(storyId, maxDurationMs) {
+  return [
+    "execute", "run", ".", "--story-id", storyId,
+    "--until", "pr-ready", "--autonomy", "guarded",
+    "--provider-fallbacks", "codex,claude-code",
+    "--max-duration-ms", String(maxDurationMs), "--json",
+  ];
 }
 
 export async function main() {
@@ -183,12 +192,11 @@ try {
     "",
   ].join("\n"), { flag: "wx" });
 
-  const raw = await runCommand(config.vibeproBin, [
-    "execute", "run", ".", "--story-id", storyId,
-    "--until", "pr-ready", "--autonomy", "guarded",
-    "--provider-fallbacks", "claude-code",
-    "--max-duration-ms", String(config.maxDurationMs), "--json",
-  ], { cwd: worktree });
+  const raw = await runCommand(
+    config.vibeproBin,
+    buildVibeproRunArgs(storyId, config.maxDurationMs),
+    { cwd: worktree },
+  );
   emit(safeResultFromRun(raw, storyId));
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : "unknown runner error"}\n`);

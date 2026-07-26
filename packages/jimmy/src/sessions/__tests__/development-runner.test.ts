@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, runCommand, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, buildVibeproRunArgs, runCommand, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
 
 function childReturning(stdout: string, code = 0) {
   const child = new EventEmitter() as any;
@@ -26,6 +26,21 @@ function childReturning(stdout: string, code = 0) {
 }
 
 describe("development runner", () => {
+  it("uses the locally-contained Codex runtime before Claude Code fallback", () => {
+    expect(buildVibeproRunArgs("story-safe-change", 60_000)).toEqual(expect.arrayContaining([
+      "--provider-fallbacks",
+      "codex,claude-code",
+    ]));
+  });
+
+  it.each(["waiting_for_runtime", "waiting_for_human"])("returns %s as an actionable safe stop", (status) => {
+    expect(safeResultFromRun(JSON.stringify({ state: { status } }), "story-safe-change")).toEqual({
+      status: "needs_input",
+      storyId: "story-safe-change",
+      summary: `VibePro stopped safely (${status}). Review the run before resuming.`,
+    });
+  });
+
   it("fails closed when the installed runner version differs from root-owned config", () => {
     const baseConfig = {
       repository: "/srv/openryoko-development/repository",
