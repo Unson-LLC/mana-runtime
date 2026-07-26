@@ -27,7 +27,12 @@ function validateConfig(config: DevelopmentRunnerConfig): void {
 }
 
 export function parseDevelopmentResult(raw: string): DevelopmentResult {
-  const value = JSON.parse(raw) as Record<string, unknown>;
+  let value: Record<string, unknown>;
+  try {
+    value = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    throw new Error("development runner returned malformed JSON");
+  }
   if (!value || Array.isArray(value) || typeof value !== "object") {
     throw new Error("development runner returned a non-object result");
   }

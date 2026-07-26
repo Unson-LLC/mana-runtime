@@ -1,5 +1,10 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
@@ -59,6 +64,13 @@ describe("development runner", () => {
   it("rejects arbitrary URLs and extra output fields", () => {
     expect(() => parseDevelopmentResult('{"status":"pr_ready","prUrl":"https://evil.example/pr/1","summary":"x"}')).toThrow("invalid PR URL");
     expect(() => parseDevelopmentResult('{"status":"failed","summary":"x","secret":"value"}')).toThrow("unsupported field");
+  });
+
+  it.each([
+    '{"status":"failed","summary":"truncated"',
+    '{"status":"failed","summary":"one"}\n{"status":"failed","summary":"two"}',
+  ])("rejects malformed or multiple JSON results with a stable safe error", (raw) => {
+    expect(() => parseDevelopmentResult(raw)).toThrow("development runner returned malformed JSON");
   });
 
   it("enforces status-dependent result fields", () => {
@@ -134,5 +146,62 @@ describe("development runner", () => {
     ], { maxOutputBytes: 16, terminationGraceMs: 25 });
 
     await expect(promise).rejects.toThrow("command output exceeded limit");
+  });
+
+  it("keeps the durable lock exclusive across runner processes and releases it for a restarted process", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "openryoko-development-lock-"));
+    const lockPath = path.join(directory, "runner.lock");
+    const runnerUrl = pathToFileURL(path.resolve("../..", "scripts/development-runner/run.mjs")).href;
+    const script = [
+      `import { acquireDevelopmentLock } from ${JSON.stringify(runnerUrl)}`,
+      `let release`,
+      `try { release = await acquireDevelopmentLock(${JSON.stringify(lockPath)}) } catch (error) { process.stderr.write(error.message); process.exit(23) }`,
+      `process.stdout.write("acquired\\n")`,
+      `process.stdin.resume()`,
+      `process.stdin.on("end", async () => { await release(); process.exit(0) })`,
+    ].join(";");
+
+    const start = () => spawn(process.execPath, ["--input-type=module", "-e", script], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const waitForExit = (child: ReturnType<typeof start>) => new Promise<number | null>((resolveExit) => {
+      child.once("close", resolveExit);
+    });
+    const collectExit = (child: ReturnType<typeof start>) => new Promise<{ code: number | null; stderr: string }>((resolveExit) => {
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      child.once("close", (code) => resolveExit({ code, stderr }));
+    });
+    const waitForAcquired = (child: ReturnType<typeof start>) => new Promise<void>((resolveAcquired, rejectAcquired) => {
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+        if (stdout.includes("acquired\n")) resolveAcquired();
+      });
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      child.once("close", (code) => rejectAcquired(new Error(`lock process exited ${code}: ${stderr}`)));
+    });
+
+    try {
+      const first = start();
+      await waitForAcquired(first);
+
+      const contender = start();
+      expect(await collectExit(contender)).toEqual({
+        code: 23,
+        stderr: "another development task is already running",
+      });
+
+      first.stdin.end();
+      expect(await waitForExit(first)).toBe(0);
+
+      const restarted = start();
+      await waitForAcquired(restarted);
+      restarted.stdin.end();
+      expect(await waitForExit(restarted)).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

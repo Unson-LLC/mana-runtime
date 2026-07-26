@@ -10,7 +10,27 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-26.1";
+export const RUNNER_VERSION = "2026-07-26.2";
+
+export async function acquireDevelopmentLock(lockPath = LOCK_PATH) {
+  let directoryCreated = false;
+  try {
+    await mkdir(lockPath);
+    directoryCreated = true;
+    await writeFile(path.join(lockPath, "owner"), `${process.pid}\n`, { flag: "wx" });
+  } catch (error) {
+    if (directoryCreated) await rm(lockPath, { recursive: true, force: true });
+    if (error?.code === "EEXIST") throw new Error("another development task is already running");
+    throw error;
+  }
+
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    await rm(lockPath, { recursive: true, force: true });
+  };
+}
 
 function emit(result, exitCode = 0) {
   process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -130,16 +150,9 @@ function safeResultFromRun(raw, storyId) {
 }
 
 export async function main() {
-let lockHeld = false;
+let releaseLock;
 try {
-  try {
-    await mkdir(LOCK_PATH);
-    lockHeld = true;
-    await writeFile(path.join(LOCK_PATH, "owner"), `${process.pid}\n`, { flag: "wx" });
-  } catch (error) {
-    if (error?.code === "EEXIST") throw new Error("another development task is already running");
-    throw error;
-  }
+  releaseLock = await acquireDevelopmentLock();
   const request = await readStdin();
   const config = JSON.parse(await readFile(CONFIG_PATH, "utf8"));
   validateConfig(config);
@@ -181,7 +194,7 @@ try {
   process.stderr.write(`${error instanceof Error ? error.message : "unknown runner error"}\n`);
   emit({ status: "failed", summary: "The isolated development runner stopped safely. No PR or deployment was performed." }, 1);
 } finally {
-  if (lockHeld) await rm(LOCK_PATH, { recursive: true, force: true });
+  if (releaseLock) await releaseLock();
 }
 }
 
