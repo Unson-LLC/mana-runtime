@@ -20,11 +20,16 @@ export function placementEngineBoundary(placement: PlacementProfile | undefined)
 }
 
 /** Single execution choke point so initial and retry call sites cannot drift. */
-export function runPlacementBoundEngine(
+export async function runPlacementBoundEngine(
   engine: Engine,
   placement: PlacementProfile | undefined,
   opts: EngineRunOpts,
 ): Promise<EngineResult> {
+  if (placement && engine.name !== "claude" && engine.name !== "mock") {
+    throw new Error(
+      `Placement-scoped execution rejects engine without Placement boundary support: ${engine.name}`,
+    );
+  }
   return engine.run({ ...opts, ...placementEngineBoundary(placement) });
 }
 
@@ -40,7 +45,11 @@ export function placementSafeCliFlags(
   strictMcpConfig: boolean | undefined,
 ): string[] | undefined {
   if (!strictMcpConfig || !cliFlags?.length) return cliFlags;
-  const denied = cliFlags.filter((flag) => PLACEMENT_DENIED_CLAUDE_FLAGS.has(flag));
+  const denied = cliFlags.filter((flag) =>
+    [...PLACEMENT_DENIED_CLAUDE_FLAGS].some((deniedFlag) =>
+      flag === deniedFlag || flag.startsWith(`${deniedFlag}=`),
+    ),
+  );
   if (denied.length > 0) {
     throw new Error(`Placement-scoped Claude run rejects employee cliFlags: ${[...new Set(denied)].join(", ")}`);
   }

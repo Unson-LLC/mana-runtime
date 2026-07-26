@@ -88,7 +88,7 @@ describe("placementEngineBoundary", () => {
 describe("runPlacementBoundEngine", () => {
   it("applies the strict boundary at the shared initial/retry execution choke point", async () => {
     const run = vi.fn().mockResolvedValue({ result: "ok" });
-    await runPlacementBoundEngine({ run } as any, placement, { prompt: "retry", cwd: "/tmp" });
+    await runPlacementBoundEngine({ name: "claude", run } as any, placement, { prompt: "retry", cwd: "/tmp" });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       prompt: "retry",
       strictMcpConfig: true,
@@ -98,11 +98,20 @@ describe("runPlacementBoundEngine", () => {
 
   it("keeps legacy executions non-strict at the same choke point", async () => {
     const run = vi.fn().mockResolvedValue({ result: "ok" });
-    await runPlacementBoundEngine({ run } as any, undefined, { prompt: "legacy", cwd: "/tmp" });
+    await runPlacementBoundEngine({ name: "codex", run } as any, undefined, { prompt: "legacy", cwd: "/tmp" });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       strictMcpConfig: false,
       enableChrome: undefined,
     }));
+  });
+
+  it.each(["codex", "gemini"])("fails closed before running unsupported Placement engine %s", async (name) => {
+    const run = vi.fn();
+    await expect(runPlacementBoundEngine({ name, run } as any, placement, {
+      prompt: "fallback",
+      cwd: "/tmp",
+    })).rejects.toThrow(`Placement-scoped execution rejects engine without Placement boundary support: ${name}`);
+    expect(run).not.toHaveBeenCalled();
   });
 });
 
@@ -117,6 +126,13 @@ describe("placementSafeCliFlags", () => {
       expect(() => placementSafeCliFlags(["--debug", flag], true)).toThrow(
         `Placement-scoped Claude run rejects employee cliFlags: ${flag}`,
       );
+    },
+  );
+
+  it.each(["--chrome=true", "--mcp-config=/tmp/untrusted.json", "--strict-mcp-config=false"])(
+    "rejects equals-form placement-controlled flag %s",
+    (flag) => {
+      expect(() => placementSafeCliFlags([flag], true)).toThrow(flag);
     },
   );
 
