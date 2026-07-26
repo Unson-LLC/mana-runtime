@@ -27,6 +27,8 @@ spec_docs:
 - resolver、MCP制限、送信制限、Slack reaction、子委譲、cross-requestについて正常系と拒否系を自動検証する。
 - 子セッションとcross-requestは実在する親を必須とし、親Placementを継承する。
 - 許可外Employeeへの委譲、およびengine、model、effortの要求上書きを拒否する。Employee省略時は親Employeeを継承する。
+- Placement有効時のlocalhost管理mutation、機密read API、WebSocketはoperator tokenで認証し、token原文を設定API、ログ、URL、Claude子プロセスへ公開しない。
+- Discord remote proxyは専用service principalを必須とし、missing/wrong tokenを拒否する。
 
 ## Done Evidence
 
