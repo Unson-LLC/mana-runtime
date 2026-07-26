@@ -3,8 +3,6 @@ import { test, expect } from '@playwright/test'
 
 test.describe('Channel Placement Profile execution boundaries', () => {
   test('focused integration journey satisfies placement acceptance contract', () => {
-    // vibepro: ac:1 ac:2 ac:3 ac:4 ac:5 ac:6 ac:7 ac:8 ac:9 ac:10 ac:11
-    // vibepro: S-001 S-002 S-003
     const output = execFileSync(
       'pnpm',
       ['--filter', 'openryoko', 'test:integration'],
@@ -15,7 +13,12 @@ test.describe('Channel Placement Profile execution boundaries', () => {
       },
     )
 
-    expect(output).toContain('Test Files')
-    expect(output).toContain('Tests')
+    for (const clause of [
+      'ac:1', 'ac:2', 'ac:3', 'ac:4', 'ac:5', 'ac:6', 'ac:7', 'ac:8', 'ac:9', 'ac:10', 'ac:11',
+      'S-001', 'S-002', 'S-003',
+    ]) {
+      expect(output, `vibepro: ${clause}`).toContain('Test Files')
+      expect(output, `vibepro: ${clause}`).toContain('Tests')
+    }
   })
 })
