@@ -56,6 +56,7 @@ import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyD
 import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.js";
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
+import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -2333,6 +2334,17 @@ async function runWebSession(
     employee = findEmployee(currentSession.employee, registry);
   }
 
+  let mcpConfigPath: string | undefined;
+  if (currentSession.engine === "claude") {
+    const mcpConfig = resolveMcpServers(config.mcp, employee, {
+      connector: "web",
+      channel: currentSession.sourceRef,
+    });
+    if (Object.keys(mcpConfig.mcpServers).length > 0) {
+      mcpConfigPath = writeMcpConfigFile(mcpConfig, currentSession.id);
+    }
+  }
+
   const { scanOrg: scanOrgForHierarchy } = await import("./org.js");
   const { resolveOrgHierarchy } = await import("./org-hierarchy.js");
   const orgHierarchy = resolveOrgHierarchy(scanOrgForHierarchy());
@@ -2394,6 +2406,7 @@ async function runWebSession(
       cliFlags: employee?.cliFlags,
       sshHost: employee?.sshHost,
       remoteCwd: employee?.remoteCwd,
+      mcpConfigPath,
       attachments: attachments?.length ? attachments : undefined,
       sessionId: currentSession.id,
       keepWarmPty,
@@ -2641,6 +2654,7 @@ async function runWebSession(
             cliFlags: employee?.cliFlags,
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
+            mcpConfigPath,
             sessionId: currentSession.id,
             keepWarmPty,
             onStream: (delta) => {
@@ -2801,5 +2815,7 @@ async function runWebSession(
       error: errMsg,
     });
     logger.error(`Web session ${currentSession.id} error: ${errMsg}`);
+  } finally {
+    if (mcpConfigPath) cleanupMcpConfigFile(currentSession.id);
   }
 }
