@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, buildVibeproRunArgs, runCommand, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, buildStoryCommitArgs, buildVibeproRunArgs, runCommand, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
 
 function childReturning(stdout: string, code = 0) {
   const child = new EventEmitter() as any;
@@ -26,6 +26,14 @@ function childReturning(stdout: string, code = 0) {
 }
 
 describe("development runner", () => {
+  it("records the Slack request as a deterministic local Story commit", () => {
+    expect(buildStoryCommitArgs("story-safe-change")).toEqual([
+      "-c", "user.name=OpenRyoko Development Runner",
+      "-c", "user.email=openryoko-runner@localhost",
+      "commit", "-m", "chore: record story-safe-change request",
+    ]);
+  });
+
   it("uses the locally-contained Codex runtime before Claude Code fallback", () => {
     expect(buildVibeproRunArgs("story-safe-change", 60_000)).toEqual(expect.arrayContaining([
       "--provider-fallbacks",

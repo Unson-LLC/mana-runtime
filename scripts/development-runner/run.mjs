@@ -10,7 +10,7 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-26.3";
+export const RUNNER_VERSION = "2026-07-26.4";
 
 export async function acquireDevelopmentLock(lockPath = LOCK_PATH) {
   let directoryCreated = false;
@@ -158,6 +158,14 @@ export function buildVibeproRunArgs(storyId, maxDurationMs) {
   ];
 }
 
+export function buildStoryCommitArgs(storyId) {
+  return [
+    "-c", "user.name=OpenRyoko Development Runner",
+    "-c", "user.email=openryoko-runner@localhost",
+    "commit", "-m", `chore: record ${storyId} request`,
+  ];
+}
+
 export async function main() {
 let releaseLock;
 try {
@@ -179,7 +187,8 @@ try {
 
   const storyDir = path.join(worktree, "docs", "management", "stories", "active");
   await mkdir(storyDir, { recursive: true });
-  await writeFile(path.join(storyDir, `${storyId}.md`), [
+  const storyPath = path.join(storyDir, `${storyId}.md`);
+  await writeFile(storyPath, [
     `# ${storyId}`,
     "",
     "## Slack request",
@@ -191,6 +200,9 @@ try {
     "VibePro must stop at pr_ready. It must not create a PR, merge, deploy, change secrets, or modify the runtime checkout.",
     "",
   ].join("\n"), { flag: "wx" });
+  const storyRelativePath = path.relative(worktree, storyPath);
+  await runCommand("/usr/bin/git", ["add", "--", storyRelativePath], { cwd: worktree });
+  await runCommand("/usr/bin/git", buildStoryCommitArgs(storyId), { cwd: worktree });
 
   const raw = await runCommand(
     config.vibeproBin,
