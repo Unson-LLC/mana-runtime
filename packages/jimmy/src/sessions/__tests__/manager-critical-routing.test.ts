@@ -258,10 +258,14 @@ describe("SessionManager deterministic critical routing", () => {
   });
 
   it("does not announce or persist an unsupported Placement fallback after a Claude rate limit", async () => {
-    const claudeRun = vi.fn().mockResolvedValue({
-      error: "Claude usage limit reached",
-      durationMs: 1,
-    });
+    vi.useFakeTimers();
+    const claudeRun = vi.fn()
+      .mockResolvedValueOnce({
+        error: "Claude usage limit reached",
+        rateLimit: { status: "rejected" },
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({ result: "recovered", sessionId: "claude-2", durationMs: 1 });
     const codexRun = vi.fn();
     const claude = { name: "claude", run: claudeRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
     const codex = { name: "codex", run: codexRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
@@ -272,7 +276,7 @@ describe("SessionManager deterministic critical routing", () => {
     const manager = new SessionManager(config, new Map([["claude", claude], ["codex", codex]]), ["slack"]);
     const slack = connector();
 
-    await manager.route(incoming(), slack, {
+    const routePromise = manager.route(incoming(), slack, {
       placement: {
         id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
         audience: { type: "operator", allowedUsers: ["U1"] },
@@ -283,11 +287,15 @@ describe("SessionManager deterministic critical routing", () => {
       },
     });
 
+    await vi.advanceTimersByTimeAsync(60_000);
+    await routePromise;
+
     expect(codexRun).not.toHaveBeenCalled();
     expect(registry.updateSession).not.toHaveBeenCalledWith("parent-1", expect.objectContaining({ engine: "codex" }));
     expect(slack.replyMessage).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.stringContaining("Switching to GPT"),
     );
+    vi.useRealTimers();
   });
 });
