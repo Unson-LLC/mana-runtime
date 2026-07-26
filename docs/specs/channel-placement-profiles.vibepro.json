@@ -51,6 +51,33 @@
       "type": "invariant",
       "statement": "Gateway MCPはPlacementが許可したtoolだけを公開して実行する",
       "rationale": "MCP server内の強い操作を配置単位で制限するため",
+      "inherited_behaviors": [
+        {
+          "condition": "tool === \"get_session\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "tool === \"send_to_session\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "!currentSessionId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/mcp/gateway-policy.ts"]
+        },
+        {
+          "condition": "\"get_session\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/mcp/gateway-server.ts"]
+        },
+        {
+          "condition": "\"send_to_session\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/mcp/gateway-server.ts"]
+        }
+      ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
       "confidence": 1
     },
@@ -67,6 +94,13 @@
       "type": "contract",
       "statement": "system promptはplacement ID audience projects data scopeを構造化された実行文脈として含む",
       "rationale": "データ境界をエージェントと監査へ伝えるため",
+      "inherited_behaviors": [
+        {
+          "condition": "o.resumeSessionId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/engines/claude-interactive.ts"]
+        }
+      ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
       "confidence": 1
     },
@@ -75,6 +109,13 @@
       "type": "invariant",
       "statement": "Placement設定と監査ログにはtokenやsecret値を含めない",
       "rationale": "認可設定によるsecret漏洩を防ぐため",
+      "inherited_behaviors": [
+        {
+          "condition": "stripExact.has(k",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/shared/childEnv.ts"]
+        }
+      ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 9 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
       "confidence": 1
     },
@@ -91,6 +132,23 @@
       "type": "invariant",
       "statement": "子セッションとcross-requestは実在する親を必須とし、親Placementを継承して許可外Employeeを拒否する。Placement子でEmployeeを省略した場合は親Employeeとengine/model/effortを継承し、engine/model/effortのリクエスト上書きを拒否する",
       "rationale": "派生セッションからPlacement境界を回避できないようにするため",
+      "inherited_behaviors": [
+        {
+          "condition": "opts.sessionId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/sessions/context.ts"]
+        },
+        {
+          "condition": "session.status === \"waiting\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/sessions/manager.ts"]
+        },
+        {
+          "condition": "refreshedNames.has('session_key'",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/sessions/registry.ts"]
+        }
+      ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 11 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
       "confidence": 1
     },
@@ -99,6 +157,13 @@
       "type": "invariant",
       "statement": "Placement有効時のlocalhost管理mutation 機密read API WebSocketはoperator tokenで認証し token原文を設定API ログ URL Claude子プロセスへ公開しない",
       "rationale": "同一ホストのcontrol-planeを通常のGateway操作から分離するため",
+      "inherited_behaviors": [
+        {
+          "condition": "!cancelled",
+          "classification": "unchanged",
+          "files": ["packages/web/src/app/settings/page.tsx"]
+        }
+      ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 12 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
       "confidence": 1
     },
