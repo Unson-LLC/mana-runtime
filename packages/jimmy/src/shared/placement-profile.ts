@@ -33,6 +33,14 @@ export async function runPlacementBoundEngine(
   return engine.run({ ...opts, ...placementEngineBoundary(placement) });
 }
 
+/** Check support before callers announce or persist an engine transition. */
+export function supportsPlacementEngine(
+  engine: Pick<Engine, "name">,
+  placement: PlacementProfile | undefined,
+): boolean {
+  return !placement || engine.name === "claude" || engine.name === "mock";
+}
+
 const PLACEMENT_DENIED_CLAUDE_FLAGS = new Set([
   "--chrome",
   "--mcp-config",

@@ -37,7 +37,7 @@ import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
-import { placementDeliveryTargets, runPlacementBoundEngine } from "../shared/placement-profile.js";
+import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
@@ -852,7 +852,7 @@ export class SessionManager {
         if (session.engine === "claude" && strategy === "fallback") {
           const fallbackName = this.config.sessions?.fallbackEngine ?? "codex";
           const fallbackEngine = this.engines.get(fallbackName);
-          if (fallbackEngine) {
+          if (fallbackEngine && supportsPlacementEngine(fallbackEngine, placement)) {
             const { resumeAt } = computeNextRetryDelayMs(rateLimit.resetsAt);
             const until = resumeAt ?? new Date(Date.now() + 6 * 60 * 60_000);
             const syncSince = new Date().toISOString();
