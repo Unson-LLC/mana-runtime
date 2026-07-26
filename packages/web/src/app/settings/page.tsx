@@ -688,10 +688,9 @@ export default function SettingsPage() {
     setSlackChannelsLoading(true)
     setSlackChannelsError(null)
     try {
-      const res = await fetch("/api/connectors/slack/channels")
-      const body = await res.json()
+      const body = await api.getSlackChannels()
       if (!body?.ok) {
-        const err = body?.error || `HTTP ${res.status}`
+        const err = body?.error || "unknown_error"
         if (err === "missing_scope") {
           setSlackChannelsError("Bot に canvases / channels scope が足りません。上のSlack App Manifestを貼り直して再インストールしてください。")
         } else if (err === "slack_not_configured") {
@@ -766,9 +765,8 @@ export default function SettingsPage() {
         if (!cancelled) setWaStatus(connStatus ?? "unknown")
 
         if (connStatus === "qr_pending") {
-          const qrRes = await fetch("/api/connectors/whatsapp/qr")
-          const data = await qrRes.json()
-          if (!cancelled) setWaQr(data.qr)
+          const data = await api.getWhatsAppQr()
+          if (!cancelled) setWaQr(data.qr ?? null)
         } else {
           if (!cancelled) setWaQr(null)
         }
@@ -1143,6 +1141,26 @@ export default function SettingsPage() {
             </div>
           )}
 
+          <Section title="Operator access">
+            <FieldRow label="Operator Token">
+              <div className="flex w-full gap-2">
+                <SettingsInput
+                  type="password"
+                  value={operatorToken}
+                  onChange={updateOperatorToken}
+                  placeholder="Required when placements are enabled"
+                />
+                <button
+                  type="button"
+                  onClick={loadConfig}
+                  className="rounded-md border border-[var(--border-primary)] px-3 text-sm"
+                >
+                  Retry
+                </button>
+              </div>
+            </FieldRow>
+          </Section>
+
           {configLoading ? (
             <div
               className="text-center p-[var(--space-8)] text-[var(--text-tertiary)] text-[length:var(--text-footnote)]"
@@ -1182,14 +1200,6 @@ export default function SettingsPage() {
                     value={config.gateway?.host ?? ""}
                     onChange={(v) => updateConfig(["gateway", "host"], v)}
                     placeholder="127.0.0.1"
-                  />
-                </FieldRow>
-                <FieldRow label="Operator Token">
-                  <SettingsInput
-                    type="password"
-                    value={operatorToken}
-                    onChange={updateOperatorToken}
-                    placeholder="Required when placements are enabled"
                   />
                 </FieldRow>
                 <FieldRow label="Default Engine">

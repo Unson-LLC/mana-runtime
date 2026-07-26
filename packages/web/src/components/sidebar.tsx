@@ -15,6 +15,7 @@ import { THEMES } from "@/lib/themes"
 import { NAV_ITEMS } from "@/lib/nav"
 import type { ThemeId } from "@/lib/themes"
 import { cn } from "@/lib/utils"
+import { api } from "@/lib/api"
 
 // ---------------------------------------------------------------------------
 // Theme icon helper
@@ -48,8 +49,7 @@ export function Sidebar() {
 
   // Fetch available instances
   useEffect(() => {
-    fetch("/api/instances")
-      .then(r => r.json())
+    api.getInstances()
       .then(setInstances)
       .catch(() => {})
   }, [])

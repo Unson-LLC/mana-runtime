@@ -89,6 +89,8 @@ placements:
 
 このStoryではOpenRyoko内部のSlack、Employee、MCP、Gateway tool、delivery境界を強制する。Graph APIそのものの行・ノード単位認可はGraph側の別Storyとし、本Storyではdata scopeを実行文脈へ渡して監査可能にする。社外・顧客間の強い隔離は別ランタイムを使用する。
 
+Placementは同一OSユーザー内のアプリケーション認可であり、敵対的な子プロセスに対するOSサンドボックスではない。Claude Code子プロセスとGatewayが同じUIDで動く構成では、filesystemを直接変更できる能力をセキュリティ境界として扱わない。したがって、prompt injectionを含む強い隔離が必要な配置は、別OSユーザーまたは別ランタイムへ分離する。本Storyのoperator tokenはWeb/APIの誤操作と通常のGateway tool経路を制御するが、同一UIDの任意コード実行からcontrol-planeを保護するものではない。
+
 `workspaceId`は必須で、空の`placements`は未設定と同じlegacy modeである。重要案件やGateway toolから作る子セッションは親Placementを継承し、委譲先Employee、実行engine/model/effort、MCP、tool、delivery、dataScopesの境界を緩めない。Employee省略時は親の実行設定を継承し、明示した許可Employeeへの委譲時はEmployee定義から実行設定をサーバー側で決める。Slack reaction経路もイベントのworkspace IDを使う。
 
 環境固有IDはInfisicalラッパーが完成済みYAMLへ投影する。OpenRyokoは`${VAR}`のplaceholder展開を行わない。cron/briefing、Skills、Graph/repositoryのサーバー側scope、詳細監査は後続Storyで扱い、Phase 1の完了条件には含めない。

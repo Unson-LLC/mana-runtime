@@ -150,6 +150,7 @@ export function buildContext(opts: {
         `- Projects: ${(opts.placement.projects ?? []).join(", ") || "none"}`,
         `- Data scopes: ${JSON.stringify(safePlacementDataScopes(opts.placement.dataScopes))}`,
         "Treat these as hard execution boundaries. Do not broaden them or send outside the allowed delivery targets.",
+        "Control-plane files such as config.yaml, org/, and cron/ are read-only in this placement session. Use only the Gateway tools explicitly exposed to you for authorized changes.",
       ].join("\n"),
       summary: "",
     });

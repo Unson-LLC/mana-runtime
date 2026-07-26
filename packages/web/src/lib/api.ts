@@ -129,6 +129,9 @@ interface UploadedFile {
 
 export const api = {
   getStatus: () => get<Record<string, unknown>>("/api/status"),
+  getInstances: () => get<Array<{ name: string; port: number; running: boolean; current: boolean }>>("/api/instances"),
+  getSlackChannels: () => get<{ ok: boolean; channels?: Array<{ id: string; name: string; isPrivate: boolean }>; error?: string }>("/api/connectors/slack/channels"),
+  getWhatsAppQr: () => get<{ qr?: string }>("/api/connectors/whatsapp/qr"),
   getSessions: () => get<Record<string, unknown>[]>("/api/sessions"),
   getSession: (id: string) => get<Record<string, unknown>>(`/api/sessions/${id}`),
   getSessionChildren: (id: string) => get<Record<string, unknown>[]>(`/api/sessions/${id}/children`),

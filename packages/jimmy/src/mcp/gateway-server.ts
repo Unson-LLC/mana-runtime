@@ -195,19 +195,26 @@ const TOOLS = [
 
 // ─── API Helpers ───
 
-async function apiGet(path: string): Promise<unknown> {
-  const res = await fetch(`${GATEWAY_URL}${path}`);
+function sessionHeaders(tool: string): Record<string, string> {
+  return {
+    "x-jinn-gateway-tool": tool,
+    ...(SESSION_DELEGATION_TOKEN ? { "x-jinn-session-token": SESSION_DELEGATION_TOKEN } : {}),
+    ...(CURRENT_SESSION_ID ? { "x-jinn-session-id": CURRENT_SESSION_ID } : {}),
+  };
+}
+
+async function apiGet(path: string, tool: string): Promise<unknown> {
+  const res = await fetch(`${GATEWAY_URL}${path}`, { headers: sessionHeaders(tool) });
   if (!res.ok) throw new Error(`API ${path}: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
-async function apiPost(path: string, body: unknown): Promise<unknown> {
+async function apiPost(path: string, body: unknown, tool: string): Promise<unknown> {
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(SESSION_DELEGATION_TOKEN ? { "x-jinn-session-token": SESSION_DELEGATION_TOKEN } : {}),
-      ...(CURRENT_SESSION_ID ? { "x-jinn-session-id": CURRENT_SESSION_ID } : {}),
+      ...sessionHeaders(tool),
     },
     body: JSON.stringify(body),
   });
@@ -218,10 +225,10 @@ async function apiPost(path: string, body: unknown): Promise<unknown> {
   return res.json();
 }
 
-async function apiPut(path: string, body: unknown): Promise<unknown> {
+async function apiPut(path: string, body: unknown, tool: string): Promise<unknown> {
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders(tool) },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`API ${path}: ${res.status} ${res.statusText}`);
@@ -250,12 +257,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         channel: args.channel,
         text: args.text,
         thread: args.thread,
-      });
+      }, name);
       return JSON.stringify(result);
     }
 
     case "list_sessions": {
-      const sessions = await apiGet("/api/sessions") as any[];
+      const sessions = await apiGet("/api/sessions", name) as any[];
       const filtered = args.status
         ? sessions.filter((s: any) => s.status === args.status)
         : sessions;
@@ -274,55 +281,55 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
 
     case "get_session": {
-      const session = await apiGet(`/api/sessions/${args.sessionId}`);
+      const session = await apiGet(`/api/sessions/${args.sessionId}`, name);
       return JSON.stringify(session);
     }
 
     case "create_child_session": {
       const request = buildCreateChildSessionRequest(args, process.env.JINN_CURRENT_SESSION_ID);
-      const result = await apiPost(request.path, request.body);
+      const result = await apiPost(request.path, request.body, name);
       return JSON.stringify(result);
     }
 
     case "send_to_session": {
       const result = await apiPost(`/api/sessions/${args.sessionId}/message`, {
         message: args.message,
-      });
+      }, name);
       return JSON.stringify(result);
     }
 
     case "list_employees": {
-      const org = await apiGet("/api/org") as any;
+      const org = await apiGet("/api/org", name) as any;
       return JSON.stringify(org);
     }
 
     case "get_employee": {
-      const employee = await apiGet(`/api/org/employees/${args.name}`);
+      const employee = await apiGet(`/api/org/employees/${args.name}`, name);
       return JSON.stringify(employee);
     }
 
     case "update_board": {
-      const result = await apiPut(`/api/org/departments/${args.department}/board`, args.board);
+      const result = await apiPut(`/api/org/departments/${args.department}/board`, args.board, name);
       return JSON.stringify(result);
     }
 
     case "get_board": {
-      const board = await apiGet(`/api/org/departments/${args.department}/board`);
+      const board = await apiGet(`/api/org/departments/${args.department}/board`, name);
       return JSON.stringify(board);
     }
 
     case "list_cron_jobs": {
-      const jobs = await apiGet("/api/cron");
+      const jobs = await apiGet("/api/cron", name);
       return JSON.stringify(jobs);
     }
 
     case "trigger_cron_job": {
       // Resolve job ID (allow passing name or id)
-      const jobs = await apiGet("/api/cron") as any[];
+      const jobs = await apiGet("/api/cron", name) as any[];
       const job = jobs.find((j: any) => j.id === args.jobId || j.name === args.jobId);
       if (!job) return JSON.stringify({ error: `Job "${args.jobId}" not found` });
       // Actually trigger the job via the gateway REST API (fire-and-forget)
-      apiPost(`/api/cron/${job.id}/trigger`, {}).catch(() => {});
+      apiPost(`/api/cron/${job.id}/trigger`, {}, name).catch(() => {});
       return JSON.stringify({ triggered: true, jobId: job.id, message: `Cron job "${job.name}" triggered manually` });
     }
 
@@ -331,7 +338,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ...(args.enabled !== undefined ? { enabled: args.enabled } : {}),
         ...(args.schedule ? { schedule: args.schedule } : {}),
         ...(args.prompt ? { prompt: args.prompt } : {}),
-      });
+      }, name);
       return JSON.stringify(result);
     }
 

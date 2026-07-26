@@ -138,6 +138,16 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     });
   }
 
+  function gatewayGet(pathname: string, tool: string, token = getSessionDelegationToken(parentId), sessionId = parentId) {
+    return fetch(`${baseUrl}${pathname}`, {
+      headers: {
+        [SESSION_DELEGATION_HEADER]: token,
+        [CURRENT_SESSION_HEADER]: sessionId,
+        "x-jinn-gateway-tool": tool,
+      },
+    });
+  }
+
   it("denies localhost operator mutations without the out-of-process operator token", async () => {
     const deniedConfig = await fetch(`${baseUrl}/api/config`, {
       method: "PUT",
@@ -193,6 +203,29 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
 
     const status = await fetch(`${baseUrl}/api/status`);
     expect(status.status).not.toBe(403);
+  });
+
+  it("allows only a signed and explicitly allowed Gateway tool on its bound REST route", async () => {
+    config.placements![0].capabilities!.gatewayTools = ["list_sessions", "get_session"];
+    try {
+      const listed = await gatewayGet("/api/sessions", "list_sessions");
+      expect(listed.status).toBe(200);
+      const sessions = await listed.json() as Array<{ id: string }>;
+      expect(sessions.some((session) => session.id === parentId)).toBe(true);
+      expect(sessions.some((session) => session.id === legacyParentId)).toBe(false);
+
+      const current = await gatewayGet(`/api/sessions/${parentId}`, "get_session");
+      expect(current.status).toBe(200);
+      const outside = await gatewayGet(`/api/sessions/${legacyParentId}`, "get_session");
+      expect(outside.status).toBe(403);
+
+      const mismatchedRoute = await gatewayGet("/api/config", "list_sessions");
+      expect(mismatchedRoute.status).toBe(403);
+      const wrongSignature = await gatewayGet("/api/sessions", "list_sessions", getSessionDelegationToken("wrong"));
+      expect(wrongSignature.status).toBe(403);
+    } finally {
+      config.placements![0].capabilities!.gatewayTools = ["send_message"];
+    }
   });
 
   it("allows only an authenticated placement delivery target on the direct connector route", async () => {

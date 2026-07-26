@@ -265,6 +265,45 @@ function currentSessionId(req: HttpRequest): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function gatewayToolFromRequest(req: HttpRequest): string | undefined {
+  const value = req.headers["x-jinn-gateway-tool"];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function gatewayToolMatchesRoute(tool: string, method: string, pathname: string): boolean {
+  if (tool === "list_sessions") return method === "GET" && pathname === "/api/sessions";
+  if (tool === "get_session") return method === "GET" && pathname !== "/api/sessions/interrupted" && !!matchRoute("/api/sessions/:id", pathname);
+  if (tool === "send_to_session") return method === "POST" && !!matchRoute("/api/sessions/:id/message", pathname);
+  if (tool === "list_employees") return method === "GET" && pathname === "/api/org";
+  if (tool === "get_employee") return method === "GET" && !!matchRoute("/api/org/employees/:name", pathname);
+  if (tool === "get_board") return method === "GET" && !!matchRoute("/api/org/departments/:name/board", pathname);
+  if (tool === "update_board") return method === "PUT" && !!matchRoute("/api/org/departments/:name/board", pathname);
+  if (tool === "list_cron_jobs") return method === "GET" && pathname === "/api/cron";
+  if (tool === "trigger_cron_job") {
+    return (method === "GET" && pathname === "/api/cron") ||
+      (method === "POST" && !!matchRoute("/api/cron/:id/trigger", pathname));
+  }
+  if (tool === "update_cron_job") return method === "PUT" && !!matchRoute("/api/cron/:id", pathname);
+  return false;
+}
+
+function authorizedPlacementGatewayRequest(
+  context: ApiContext,
+  req: HttpRequest,
+  method: string,
+  pathname: string,
+): string | undefined {
+  const sessionId = currentSessionId(req);
+  const session = sessionId ? getSession(sessionId) : undefined;
+  if (!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req))) return undefined;
+  const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return undefined;
+  const tool = gatewayToolFromRequest(req);
+  const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
+  if (!tool || !placement || !placementAllowsGatewayTool(placement, tool)) return undefined;
+  return gatewayToolMatchesRoute(tool, method, pathname) ? placementId : undefined;
+}
+
 /**
  * API-triggered turns normally belong to Web UI sessions, but internal
  * callbacks resume the original parent session through the same endpoint.
@@ -671,7 +710,8 @@ export async function handleApiRequest(
     // Loopback is not an authorization boundary: Placement agents can execute
     // shell commands and reach localhost. Operator mutations require a secret
     // kept outside the agent process whenever Placement mode is enabled.
-    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthorized(req)) {
+    const gatewayPlacementId = authorizedPlacementGatewayRequest(context, req, method, pathname);
+    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthorized(req) && !gatewayPlacementId) {
       return json(res, { error: "operator authorization required" }, 403);
     }
 
@@ -718,7 +758,9 @@ export async function handleApiRequest(
 
     // GET /api/sessions
     if (method === "GET" && pathname === "/api/sessions") {
-      const sessions = listSessions();
+      const sessions = gatewayPlacementId
+        ? listSessions().filter((session) => (session.transportMeta as Record<string, unknown> | undefined)?.placementId === gatewayPlacementId)
+        : listSessions();
       return json(res, sessions.map((session) => serializeSession(session, context)));
     }
 
@@ -734,6 +776,9 @@ export async function handleApiRequest(
     if (method === "GET" && params) {
       const session = getSession(params.id);
       if (!session) return notFound(res);
+      if (gatewayPlacementId && (session.transportMeta as Record<string, unknown> | undefined)?.placementId !== gatewayPlacementId) {
+        return json(res, { error: "session is outside the current placement" }, 403);
+      }
       let messages = getMessages(params.id);
 
       // Backfill from Claude Code's JSONL transcript if our DB has no messages
@@ -1100,6 +1145,9 @@ export async function handleApiRequest(
     if (method === "POST" && params) {
       let session = getSession(params.id);
       if (!session) return notFound(res);
+      if (gatewayPlacementId && (session.transportMeta as Record<string, unknown> | undefined)?.placementId !== gatewayPlacementId) {
+        return json(res, { error: "session is outside the current placement" }, 403);
+      }
       session = maybeRevertEngineOverride(session);
       const _parsed = await readJsonBody(req, res);
       if (!_parsed.ok) return;
