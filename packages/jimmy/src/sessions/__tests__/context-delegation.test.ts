@@ -20,7 +20,7 @@ describe("delegation context", () => {
     );
   });
 
-  it("keeps the assigned employee persona but omits unsupported cross-service instructions in a placement", () => {
+  it("renders placement identity, audience, projects, and data scope in the system context", () => {
     const context = buildContext({
       source: "slack",
       channel: "C123",
@@ -42,12 +42,18 @@ describe("delegation context", () => {
         channelId: "C123",
         audience: { type: "operator", allowedUsers: ["U123"] },
         agent: { employee: "ryoko" },
+        projects: ["brainbase-mana"],
+        dataScopes: { graph: { mode: "read-only" } },
       },
     });
 
     expect(context).toContain("# You are Ryoko Pilot");
     expect(context).toContain("Run the pilot within its approved channel boundary.");
     expect(context).toContain("## Placement policy");
+    expect(context).toContain("- Placement: pilot");
+    expect(context).toContain("- Audience: operator");
+    expect(context).toContain("- Projects: brainbase-mana");
+    expect(context).toContain('- Data scopes: {"graph":{"mode":"read-only"}}');
     expect(context).not.toContain("/api/org/cross-request");
     expect(context).not.toContain("Gateway API");
     expect(context).not.toContain("/api/config");

@@ -93,6 +93,22 @@
       "rationale": "派生セッションからPlacement境界を回避できないようにするため",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 11 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
       "confidence": 1
+    },
+    {
+      "id": "INV-PLACEMENT-OPERATOR-AUTH",
+      "type": "invariant",
+      "statement": "Placement有効時のlocalhost管理mutation 機密read API WebSocketはoperator tokenで認証し token原文を設定API ログ URL Claude子プロセスへ公開しない",
+      "rationale": "同一ホストのcontrol-planeを通常のGateway操作から分離するため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 12 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
+    },
+    {
+      "id": "INV-DISCORD-PROXY-PRINCIPAL",
+      "type": "invariant",
+      "statement": "Discord remote proxyは専用service principalを必須とし missingまたはwrong tokenを拒否する",
+      "rationale": "Slack Placementのoperator credentialとremote connector credentialを分離するため",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 13 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "confidence": 1
     }
   ],
   "open_questions": []
