@@ -217,6 +217,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
   });
 
   it("confines connector notifications to a distinct service principal", async () => {
+    sendMessage.mockClear();
     const connectorToken = getSessionDelegationToken(SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID);
     const allowed = await post(
       "/api/connectors/discord/send",
@@ -225,6 +226,24 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
     );
     expect(allowed.status).toBe(200);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    const wrongConnector = await post(
+      "/api/connectors/slack/send",
+      { channel: "C-notifications", text: "must not cross connector scope" },
+      connectorToken,
+      SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
+    );
+    expect(wrongConnector.status).toBe(403);
+
+    const wrongChannel = await post(
+      "/api/connectors/discord/send",
+      { channel: "C-other", text: "must not cross channel scope" },
+      connectorToken,
+      SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
+    );
+    expect(wrongChannel.status).toBe(403);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
 
     const parentCallback = await post(
       `/api/sessions/${parentId}/message`,
