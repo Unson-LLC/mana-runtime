@@ -19,18 +19,6 @@
       "type": "invariant",
       "statement": "placements未設定時は既存のSlack単一配置の挙動を維持する",
       "rationale": "段階導入で既存パイロットを停止させないため",
-      "inherited_behaviors": [
-        {
-          "condition": "isDeadSessionError(result",
-          "classification": "unchanged",
-          "files": ["packages/jimmy/src/engines/claude.ts"]
-        },
-        {
-          "condition": "opts.resumeSessionId",
-          "classification": "unchanged",
-          "files": ["packages/jimmy/src/engines/claude.ts"]
-        }
-      ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 1 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
       "confidence": 1
     },
@@ -122,6 +110,16 @@
           "condition": "o.resumeSessionId",
           "classification": "unchanged",
           "files": ["packages/jimmy/src/engines/claude-interactive.ts"]
+        },
+        {
+          "condition": "isDeadSessionError(result",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/engines/claude.ts"]
+        },
+        {
+          "condition": "opts.resumeSessionId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/engines/claude.ts"]
         }
       ],
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
