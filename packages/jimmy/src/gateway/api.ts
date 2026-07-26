@@ -65,6 +65,7 @@ import {
   verifySessionDelegationToken,
 } from "../sessions/delegation-auth.js";
 import { constantTimeEqual, OPERATOR_TOKEN_HEADER, verifyOperatorToken } from "./operator-auth.js";
+import { emitSecurityEvent } from "../shared/security-events.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -220,13 +221,20 @@ export function resolvePlacementChildExecution(
   }
 
   if (requested.engine !== undefined || requested.model !== undefined || requested.effortLevel !== undefined) {
+    emitSecurityEvent({ event: "derived_session", reason: "execution_override_denied", placementId: placement.id,
+      sessionId: parentSession?.id, capability: "child_execution" });
     return { error: "placement child execution settings cannot be overridden" };
   }
 
-  if (!parentSession) return { error: "placement child requires a parent session" };
+  if (!parentSession) {
+    emitSecurityEvent({ event: "derived_session", reason: "parent_missing", placementId: placement.id, capability: "child_execution" });
+    return { error: "placement child requires a parent session" };
+  }
   const employeeName = requested.employee || parentSession.employee || placement.agent?.employee;
   if (!employeeName) return { error: `placement "${placement.id}" has no child employee` };
   if (!isPlacementEmployeeAllowed(placement, employeeName)) {
+    emitSecurityEvent({ event: "derived_session", reason: "employee_denied", placementId: placement.id,
+      sessionId: parentSession.id, capability: "child_execution", target: employeeName });
     return { error: `employee "${employeeName}" is not allowed by placement "${placement.id}"` };
   }
 
@@ -1076,6 +1084,9 @@ export async function handleApiRequest(
         return badRequest(res, "parentSessionId not found");
       }
       if (parentSession && !authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_token_invalid", placementId:
+          String((parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId ?? "") || undefined,
+          sessionId: parentSession.id, capability: "child_execution" });
         return json(res, { error: "invalid parent session authorization" }, 403);
       }
       const config = context.getConfig();
@@ -1436,6 +1447,9 @@ export async function handleApiRequest(
       const parentSession = getSession(parentSessionId);
       if (!parentSession) return badRequest(res, "parentSessionId not found");
       if (!authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_token_invalid", placementId:
+          String((parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId ?? "") || undefined,
+          sessionId: parentSession.id, capability: "cross_request" });
         return json(res, { error: "invalid parent session authorization" }, 403);
       }
 

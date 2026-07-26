@@ -1,3 +1,5 @@
+import { emitSecurityEvent } from "../shared/security-events.js";
+
 interface DeliveryTarget {
   connector: string;
   channel: string;
@@ -16,7 +18,9 @@ function parseArray<T>(raw: string | undefined): T[] | undefined {
 /** Missing policy preserves legacy behavior; present-but-invalid policy fails closed. */
 export function isGatewayToolAllowed(name: string, raw = process.env.JINN_ALLOWED_GATEWAY_TOOLS): boolean {
   const allowed = parseArray<string>(raw);
-  return allowed === undefined || allowed.includes(name);
+  const result = allowed === undefined || allowed.includes(name);
+  if (!result) emitSecurityEvent({ event: "capability", reason: "gateway_tool_denied", capability: "gateway_tool", target: name });
+  return result;
 }
 
 export function allowedGatewayTools<T extends { name: string }>(tools: T[], raw = process.env.JINN_ALLOWED_GATEWAY_TOOLS): T[] {
@@ -29,9 +33,11 @@ export function isDeliveryTargetAllowed(
   raw = process.env.JINN_ALLOWED_DELIVERY_TARGETS,
 ): boolean {
   const allowed = parseArray<DeliveryTarget>(raw);
-  return allowed === undefined || allowed.some((target) =>
+  const result = allowed === undefined || allowed.some((target) =>
     target?.connector === connector && target?.channel === channel,
   );
+  if (!result) emitSecurityEvent({ event: "capability", reason: "delivery_denied", connector, channelId: channel, capability: "delivery", target: `${connector}:${channel}` });
+  return result;
 }
 
 export function buildCreateChildSessionRequest(

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { emitSecurityEvent } from "../shared/security-events.js";
 
 export const OPERATOR_TOKEN_HEADER = "x-openryoko-operator-token";
 export const OPERATOR_WS_PROTOCOL = "openryoko-operator";
@@ -12,9 +13,18 @@ export function constantTimeEqual(expected: string | undefined, received: string
 }
 
 export function verifyOperatorToken(received: string | undefined): boolean {
-  if (!received) return false;
+  if (!process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256) {
+    emitSecurityEvent({ event: "control_plane", reason: "operator_hash_missing" });
+    return false;
+  }
+  if (!received) {
+    emitSecurityEvent({ event: "control_plane", reason: "operator_auth_missing" });
+    return false;
+  }
   const receivedHash = crypto.createHash("sha256").update(received).digest("hex");
-  return constantTimeEqual(process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256, receivedHash);
+  const allowed = constantTimeEqual(process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256, receivedHash);
+  if (!allowed) emitSecurityEvent({ event: "control_plane", reason: "operator_auth_invalid" });
+  return allowed;
 }
 
 export function encodeOperatorWebSocketProtocols(token: string): string[] {

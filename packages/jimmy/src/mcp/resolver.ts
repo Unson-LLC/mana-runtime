@@ -5,6 +5,7 @@ import type { McpGlobalConfig, McpServerConfig, McpServerUrlConfig, Employee } f
 import { JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
 import { getSessionDelegationToken } from "../sessions/delegation-auth.js";
+import { emitSecurityEvent } from "../shared/security-events.js";
 
 export interface ResolvedMcpConfig {
   mcpServers: Record<string, McpServerConfig>;
@@ -50,6 +51,8 @@ export function resolveMcpServers(
       if (available[name]) {
         servers[name] = available[name];
       } else {
+        emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
+          connector: sessionContext?.connector, channelId: sessionContext?.channel, capability: "mcp", target: name });
         logger.warn(`Employee ${employee?.name} requests MCP server "${name}" but it's not configured`);
       }
     }

@@ -39,6 +39,7 @@ import { startScheduler, reloadScheduler, stopScheduler } from "../cron/schedule
 import { scanOrg } from "./org.js";
 import { resolveSlackRuntimeConfig } from "../shared/slack-runtime-config.js";
 import { resolvePlacement } from "../shared/placement-profile.js";
+import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -87,7 +88,14 @@ function resolveRouteOptions(
 ): RouteOptions | undefined {
   const resolution = resolvePlacement(cfg.placements, msg);
   if (resolution.status === "denied") {
-    logger.warn(`Placement denied connector=${msg.connector} channel=${msg.channel} reason=${resolution.reason}`);
+    const reason = resolution.reason === "unauthorized_user" ? "unauthorized_actor"
+      : resolution.reason === "invalid_config" ? "placement_missing_after_config_change"
+      : resolution.reason!;
+    emitSecurityEvent({
+      event: "placement_resolution", reason, connector: msg.connector,
+      workspaceId: String((msg.transportMeta as Record<string, unknown> | undefined)?.team ?? "") || undefined,
+      channelId: msg.channel, actorId: msg.user, configRevision: placementConfigRevision(cfg.placements),
+    });
     return undefined;
   }
 
@@ -100,6 +108,9 @@ function resolveRouteOptions(
     if (employeeName) {
       const employee = employees.get(employeeName);
       if (!employee) {
+        emitSecurityEvent({ event: "derived_session", reason: "employee_denied", placementId: placement.id,
+          connector: msg.connector, channelId: msg.channel, actorId: msg.user,
+          target: employeeName, configRevision: placementConfigRevision(cfg.placements) });
         logger.error(`Placement ${placement.id} denied: employee "${employeeName}" is not configured`);
         return undefined;
       }
