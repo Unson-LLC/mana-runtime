@@ -10,7 +10,7 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-26.4";
+export const RUNNER_VERSION = "2026-07-26.5";
 
 export async function acquireDevelopmentLock(lockPath = LOCK_PATH) {
   let directoryCreated = false;
@@ -166,6 +166,10 @@ export function buildStoryCommitArgs(storyId) {
   ];
 }
 
+export function buildStoryAddArgs(storyRelativePath) {
+  return ["add", "-f", "--", storyRelativePath];
+}
+
 export async function main() {
 let releaseLock;
 try {
@@ -201,7 +205,7 @@ try {
     "",
   ].join("\n"), { flag: "wx" });
   const storyRelativePath = path.relative(worktree, storyPath);
-  await runCommand("/usr/bin/git", ["add", "--", storyRelativePath], { cwd: worktree });
+  await runCommand("/usr/bin/git", buildStoryAddArgs(storyRelativePath), { cwd: worktree });
   await runCommand("/usr/bin/git", buildStoryCommitArgs(storyId), { cwd: worktree });
 
   const raw = await runCommand(

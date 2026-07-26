@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, buildStoryCommitArgs, buildVibeproRunArgs, runCommand, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, buildStoryAddArgs, buildStoryCommitArgs, buildVibeproRunArgs, runCommand, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
 
 function childReturning(stdout: string, code = 0) {
   const child = new EventEmitter() as any;
@@ -26,6 +26,12 @@ function childReturning(stdout: string, code = 0) {
 }
 
 describe("development runner", () => {
+  it("force-adds only the generated Story path even when docs are ignored", () => {
+    expect(buildStoryAddArgs("docs/management/stories/active/story-safe-change.md")).toEqual([
+      "add", "-f", "--", "docs/management/stories/active/story-safe-change.md",
+    ]);
+  });
+
   it("records the Slack request as a deterministic local Story commit", () => {
     expect(buildStoryCommitArgs("story-safe-change")).toEqual([
       "-c", "user.name=OpenRyoko Development Runner",
