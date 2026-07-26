@@ -9,6 +9,7 @@ import { useTheme } from "@/app/providers"
 import { THEMES } from "@/lib/themes"
 import type { ThemeId } from "@/lib/themes"
 import { api } from "@/lib/api"
+import { storeOperatorToken } from "@/lib/operator-auth"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import {
   CLAUDE_MODELS,
@@ -256,9 +257,11 @@ function Section({
 
 function FieldRow({
   label,
+  htmlFor,
   children,
 }: {
   label: string
+  htmlFor?: string
   children: React.ReactNode
 }) {
   return (
@@ -266,6 +269,7 @@ function FieldRow({
       className="flex items-center justify-between py-[var(--space-2)] gap-[var(--space-4)]"
     >
       <label
+        htmlFor={htmlFor}
         className="text-[length:var(--text-subheadline)] text-[var(--text-secondary)] shrink-0"
       >
         {label}
@@ -276,11 +280,13 @@ function FieldRow({
 }
 
 function SettingsInput({
+  id,
   value,
   onChange,
   type = "text",
   placeholder,
 }: {
+  id?: string
   value: string
   onChange: (v: string) => void
   type?: string
@@ -288,12 +294,47 @@ function SettingsInput({
 }) {
   return (
     <input
+      id={id}
       type={type}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       className="apple-input w-full bg-[var(--bg-secondary)] border border-[var(--separator)] rounded-[var(--radius-sm)] px-[10px] py-[6px] text-[length:var(--text-footnote)] text-[var(--text-primary)]"
     />
+  )
+}
+
+export function OperatorAccessControls({
+  token,
+  onTokenChange,
+  onRetry,
+}: {
+  token: string
+  onTokenChange: (value: string) => void
+  onRetry: () => void
+}) {
+  return (
+    <Section title="Operator access">
+      <FieldRow label="Operator Token" htmlFor="operator-token">
+        <div className="flex w-full gap-2">
+          <SettingsInput
+            id="operator-token"
+            type="password"
+            value={token}
+            onChange={onTokenChange}
+            placeholder="Required when placements are enabled"
+          />
+          <button
+            type="button"
+            onClick={onRetry}
+            aria-label="Retry operator authentication"
+            className="rounded-md border border-[var(--border-primary)] px-3 text-sm"
+          >
+            Retry
+          </button>
+        </div>
+      </FieldRow>
+    </Section>
   )
 }
 
@@ -676,12 +717,16 @@ export default function SettingsPage() {
   const [slackChannelsLoading, setSlackChannelsLoading] = useState(false)
   const [slackChannelsError, setSlackChannelsError] = useState<string | null>(null)
 
-  useEffect(() => {
+  function loadEmployees() {
     api.getOrg().then((org: any) => {
       if (org?.employees) {
         setEmployees(org.employees.map((e: any) => typeof e === 'string' ? { name: e, displayName: e } : { name: e.name, displayName: e.displayName || e.name }))
       }
-    }).catch(() => {})
+    }).catch(() => setEmployees([]))
+  }
+
+  useEffect(() => {
+    loadEmployees()
   }, [])
 
   const refreshSlackChannels = async () => {
@@ -747,8 +792,12 @@ export default function SettingsPage() {
 
   function updateOperatorToken(value: string) {
     setOperatorToken(value)
-    if (value) localStorage.setItem("openryoko.operatorToken", value)
-    else localStorage.removeItem("openryoko.operatorToken")
+    storeOperatorToken(value)
+  }
+
+  function retryOperatorAccess() {
+    loadConfig()
+    loadEmployees()
   }
 
   // Poll for WhatsApp QR code when WhatsApp connector is configured
@@ -1141,25 +1190,11 @@ export default function SettingsPage() {
             </div>
           )}
 
-          <Section title="Operator access">
-            <FieldRow label="Operator Token">
-              <div className="flex w-full gap-2">
-                <SettingsInput
-                  type="password"
-                  value={operatorToken}
-                  onChange={updateOperatorToken}
-                  placeholder="Required when placements are enabled"
-                />
-                <button
-                  type="button"
-                  onClick={loadConfig}
-                  className="rounded-md border border-[var(--border-primary)] px-3 text-sm"
-                >
-                  Retry
-                </button>
-              </div>
-            </FieldRow>
-          </Section>
+          <OperatorAccessControls
+            token={operatorToken}
+            onTokenChange={updateOperatorToken}
+            onRetry={retryOperatorAccess}
+          />
 
           {configLoading ? (
             <div
