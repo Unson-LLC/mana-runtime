@@ -30,6 +30,12 @@ spec_docs:
 - Placement有効時のlocalhost管理mutation、機密read API、WebSocketはoperator tokenで認証し、token原文を設定API、ログ、URL、Claude子プロセスへ公開しない。
 - Discord remote proxyは専用service principalを必須とし、missing/wrong tokenを拒否する。
 
+## Scenarios
+
+- S-001: Given placementsが設定されているとき、Slackイベントを受信すると、connector、workspace、channel、userが一致する一意なPlacementへルーティングする。
+- S-002: Given placementsが設定されているとき、未登録channel、許可外user、または複数のPlacementに一致するSlackイベントを受信すると、エージェント実行前に拒否する。
+- S-003: Given Placementが適用されているとき、`send_message`が許可先以外のconnectorまたはchannelを指定すると、Gateway APIを呼ぶ前に拒否する。
+
 ## Done Evidence
 
 - OpenRyoko全テスト、typecheck、buildが最終HEADで成功する。
