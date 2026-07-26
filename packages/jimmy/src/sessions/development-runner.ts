@@ -80,11 +80,11 @@ export async function runDevelopmentRequest(
     let settled = false;
     let terminationError: Error | null = null;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let closedCode: number | null | undefined;
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
       fn();
     };
     const terminate = (error: Error) => {
@@ -99,7 +99,11 @@ export async function runDevelopmentRequest(
         }
       };
       signal("SIGTERM");
-      killTimer = setTimeout(() => signal("SIGKILL"), 5000);
+      killTimer = setTimeout(() => {
+        killTimer = null;
+        signal("SIGKILL");
+        if (closedCode !== undefined) finish(() => reject(terminationError!));
+      }, 5000);
     };
     const timer = setTimeout(() => {
       terminate(new Error("development runner timed out"));
@@ -115,7 +119,12 @@ export async function runDevelopmentRequest(
     });
     child.stderr.resume();
     child.on("error", (error) => finish(() => reject(error)));
-    child.on("close", (code) => finish(() => {
+    child.on("close", (code) => {
+      closedCode = code;
+      // A detached group leader may exit on SIGTERM while a descendant keeps
+      // running. Keep the lock/state until the scheduled group SIGKILL fires.
+      if (terminationError && killTimer) return;
+      finish(() => {
       if (terminationError) {
         reject(terminationError);
         return;
@@ -129,7 +138,8 @@ export async function runDevelopmentRequest(
       } catch (error) {
         reject(error);
       }
-    }));
+      });
+    });
     child.stdin.end(JSON.stringify({ request: request.trim() }) + "\n");
   });
 }

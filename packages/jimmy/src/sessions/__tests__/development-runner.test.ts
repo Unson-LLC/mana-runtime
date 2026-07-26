@@ -79,6 +79,10 @@ describe("development runner", () => {
       expect(settled).toBe(false);
 
       child.emit("close", null);
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
       await expect(promise).rejects.toThrow("timed out");
     } finally {
       vi.useRealTimers();
@@ -101,6 +105,21 @@ describe("development runner", () => {
       "-e",
       "process.on('SIGTERM',()=>{}); process.stdout.write('x'.repeat(1024)); setInterval(()=>{},1000)",
     ], { maxOutputBytes: 16, terminationGraceMs: 10 });
+
+    await expect(promise).rejects.toThrow("command output exceeded limit");
+  });
+
+  it("escalates the process group after its leader exits", async () => {
+    const promise = runCommand(process.execPath, [
+      "-e",
+      [
+        "const {spawn}=require('node:child_process')",
+        "spawn(process.execPath,['-e',`process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`],{stdio:'ignore'})",
+        "process.stdout.write('x'.repeat(1024))",
+        "process.on('SIGTERM',()=>process.exit(0))",
+        "setInterval(()=>{},1000)",
+      ].join(";"),
+    ], { maxOutputBytes: 16, terminationGraceMs: 25 });
 
     await expect(promise).rejects.toThrow("command output exceeded limit");
   });

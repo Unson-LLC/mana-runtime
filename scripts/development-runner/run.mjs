@@ -50,10 +50,10 @@ export async function runCommand(bin, args, options = {}) {
     let settled = false;
     let terminationError = null;
     let killTimer = null;
+    let closedCode;
     const finish = (fn) => {
       if (settled) return;
       settled = true;
-      if (killTimer) clearTimeout(killTimer);
       fn();
     };
     const signalGroup = (signal) => {
@@ -67,7 +67,11 @@ export async function runCommand(bin, args, options = {}) {
       if (terminationError || settled) return;
       terminationError = error;
       signalGroup("SIGTERM");
-      killTimer = setTimeout(() => signalGroup("SIGKILL"), options.terminationGraceMs ?? 5000);
+      killTimer = setTimeout(() => {
+        killTimer = null;
+        signalGroup("SIGKILL");
+        if (closedCode !== undefined) finish(() => reject(terminationError));
+      }, options.terminationGraceMs ?? 5000);
     };
     const collect = (target) => (chunk) => {
       if (terminationError) return;
@@ -83,6 +87,10 @@ export async function runCommand(bin, args, options = {}) {
     child.stderr.on("data", collect("stderr"));
     child.on("error", (error) => finish(() => reject(error)));
     child.on("close", (code) => {
+      closedCode = code;
+      // The group leader can close before SIGTERM-resistant descendants.
+      // Preserve the lock until escalation has targeted the whole group.
+      if (terminationError && killTimer) return;
       finish(() => {
         if (stderr) process.stderr.write(stderr);
         if (terminationError) reject(terminationError);
