@@ -141,14 +141,28 @@ describe("development runner", () => {
     ].join(";");
 
     try {
-      await expect(runDevelopmentRequest({
+      const request = runDevelopmentRequest({
         enabled: true,
         bin: process.execPath,
         args: ["-e", script],
-        timeoutMs: 25,
-      }, "x")).rejects.toThrow("timed out");
+        timeoutMs: 1_000,
+      }, "x");
+      const rejection = expect(request).rejects.toThrow("timed out");
 
-      const descendantPid = Number(await readFile(descendantPidPath, "utf8"));
+      let descendantPid: number | undefined;
+      const readyDeadline = Date.now() + 750;
+      while (descendantPid === undefined && Date.now() < readyDeadline) {
+        try {
+          descendantPid = Number(await readFile(descendantPidPath, "utf8"));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+        }
+      }
+      expect(descendantPid).toEqual(expect.any(Number));
+      if (descendantPid === undefined) throw new Error("descendant did not become ready before timeout");
+
+      await rejection;
       expect(() => process.kill(descendantPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
     } finally {
       await rm(directory, { recursive: true, force: true });

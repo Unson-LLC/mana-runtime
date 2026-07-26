@@ -24,6 +24,10 @@ async function waitForProcessGroupExit(pid: number): Promise<void> {
       process.kill(-pid, 0);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+        continue;
+      }
       throw error;
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 10));
