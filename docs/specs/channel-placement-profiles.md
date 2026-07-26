@@ -1,3 +1,30 @@
+---
+story_id: channel-placement-profiles
+title: Channel Placement Profiles Spec
+status: accepted
+architecture_docs:
+  - docs/architecture/channel-placement-profiles.md
+diagrams:
+  - kind: threat_model
+    mermaid: |
+      flowchart LR
+        U[Slack user] --> E[Slack event]
+        E --> R{Placement resolver}
+        R -->|unmatched or ambiguous| X[Reject before agent execution]
+        R -->|unique match| A[Audience authorization]
+        A -->|user denied| X
+        A --> C[Capability resolver]
+        C --> M[Allowed MCP and Gateway tools]
+        M --> G[Agent execution]
+        G --> O{Output authorization}
+        O -->|destination denied| X
+        O -->|allowed| S[Slack response]
+        G --> D{Derived session request}
+        D -->|missing parent or override attempt| X
+        D -->|allowed employee| P[Inherit parent Placement]
+    rationale: Placement解決、派生セッション、外部送信の各境界で権限拡張をfail closedにする。
+---
+
 # Channel Placement Profiles Spec
 
 Story: `channel-placement-profiles`

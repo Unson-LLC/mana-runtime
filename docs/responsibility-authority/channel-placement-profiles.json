@@ -1,0 +1,39 @@
+{
+  "schema_version": "0.1.0",
+  "responsibilities": [
+    {
+      "id": "openryoko.placement.authorization_boundary",
+      "primary_authority": {
+        "kind": "domain_contract",
+        "ref": "docs/contracts/channel-placement-authorization.json#PLACEMENT-AUTH-001"
+      },
+      "supporting_authority": [
+        "docs/architecture/channel-placement-profiles.md",
+        "docs/specs/channel-placement-profiles.md"
+      ],
+      "owned_surfaces": {
+        "paths": [
+          "packages/jimmy/src/connectors/slack/**",
+          "packages/jimmy/src/gateway/**",
+          "packages/jimmy/src/mcp/**",
+          "packages/jimmy/src/sessions/**",
+          "packages/jimmy/src/shared/*placement*"
+        ],
+        "symbols": [
+          "placementId",
+          "resolvePlacement",
+          "resolvePlacementChildExecution"
+        ],
+        "risk_surfaces": [
+          "auth_permission",
+          "external_side_effect"
+        ]
+      },
+      "required_evidence": [
+        "placement_authorization_regression",
+        "current_head_verification"
+      ],
+      "unknown_policy": "block_or_review"
+    }
+  ]
+}
