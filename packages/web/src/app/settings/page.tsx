@@ -9,7 +9,10 @@ import { useTheme } from "@/app/providers"
 import { THEMES } from "@/lib/themes"
 import type { ThemeId } from "@/lib/themes"
 import { api } from "@/lib/api"
-import { storeOperatorToken } from "@/lib/operator-auth"
+import {
+  OPERATOR_AUTH_CHANGED_EVENT,
+  storeOperatorToken,
+} from "@/lib/operator-auth"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import {
   CLAUDE_MODELS,
@@ -327,10 +330,10 @@ export function OperatorAccessControls({
           <button
             type="button"
             onClick={onRetry}
-            aria-label="Retry operator authentication"
+            aria-label="Save token and retry operator authentication"
             className="rounded-md border border-[var(--border-primary)] px-3 text-sm"
           >
-            Retry
+            Save & Retry
           </button>
         </div>
       </FieldRow>
@@ -790,14 +793,21 @@ export default function SettingsPage() {
     loadConfig()
   }, [])
 
+  useEffect(() => {
+    function refreshProtectedSettings() {
+      loadConfig()
+      loadEmployees()
+    }
+    window.addEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshProtectedSettings)
+    return () => window.removeEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshProtectedSettings)
+  }, [])
+
   function updateOperatorToken(value: string) {
     setOperatorToken(value)
-    storeOperatorToken(value)
   }
 
   function retryOperatorAccess() {
-    loadConfig()
-    loadEmployees()
+    storeOperatorToken(operatorToken)
   }
 
   // Poll for WhatsApp QR code when WhatsApp connector is configured

@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { OperatorAccessControls } from "../page"
 
 describe("OperatorAccessControls", () => {
-  it("labels the token input and exposes a purpose-specific retry action", () => {
+  it("keeps typing local and exposes an explicit save-and-retry action", () => {
     const onTokenChange = vi.fn()
     const onRetry = vi.fn()
     render(
@@ -16,7 +16,8 @@ describe("OperatorAccessControls", () => {
 
     const input = screen.getByLabelText("Operator Token")
     fireEvent.change(input, { target: { value: "pilot-token" } })
-    fireEvent.click(screen.getByRole("button", { name: "Retry operator authentication" }))
+    expect(onRetry).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Save token and retry operator authentication" }))
 
     expect(onTokenChange).toHaveBeenCalledWith("pilot-token")
     expect(onRetry).toHaveBeenCalledOnce()
