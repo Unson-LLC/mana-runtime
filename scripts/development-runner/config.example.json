@@ -1,5 +1,5 @@
 {
-  "runnerVersion": "2026-07-26.5",
+  "runnerVersion": "2026-07-26.6",
   "repository": "/srv/openryoko-development/repository",
   "worktreesRoot": "/srv/openryoko-development/worktrees",
   "baseRef": "origin/codex/fix-employee-model-routing",

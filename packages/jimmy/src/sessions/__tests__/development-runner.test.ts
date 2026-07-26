@@ -26,9 +26,10 @@ function childReturning(stdout: string, code = 0) {
 }
 
 describe("development runner", () => {
-  it("force-adds only the generated Story path even when docs are ignored", () => {
+  it("records only the generated Story and VibePro selection inputs", () => {
     expect(buildStoryAddArgs("docs/management/stories/active/story-safe-change.md")).toEqual([
-      "add", "-f", "--", "docs/management/stories/active/story-safe-change.md",
+      "add", "-f", "--", ".gitignore", ".vibepro/config.json",
+      "docs/management/stories/active/story-safe-change.md",
     ]);
   });
 
