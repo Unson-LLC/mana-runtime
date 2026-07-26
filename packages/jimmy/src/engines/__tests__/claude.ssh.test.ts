@@ -100,6 +100,21 @@ describe("ClaudeEngine — SSH remote execution", () => {
     await p;
   });
 
+  it("fails closed instead of losing a Placement MCP boundary over SSH", async () => {
+    const result = await engine.run({
+      prompt: "hi",
+      cwd: "/tmp",
+      sshHost: "h",
+      sessionId: "strict-ssh",
+      mcpConfigPath: "/local/mcp.json",
+      strictMcpConfig: true,
+      enableChrome: false,
+    });
+
+    expect(result.error).toMatch(/cannot run over SSH/);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
   it("prepends a cd to remoteCwd when provided", async () => {
     const proc = createMockProcess();
     mockSpawn.mockReturnValue(proc as any);
@@ -196,6 +211,46 @@ describe("ClaudeEngine — local execution unchanged", () => {
     expect(bin).toBe("/usr/local/bin/claude");
     expect(args).toContain("hello world");
     expect(proc.stdin.write).not.toHaveBeenCalled();
+
+    finishOk(proc);
+    await p;
+  });
+
+  it("enforces strict MCP and no Chrome for local Placement runs", async () => {
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc as any);
+
+    const p = engine.run({
+      prompt: "placement task",
+      cwd: "/tmp",
+      sessionId: "placement-local",
+      mcpConfigPath: "/tmp/placement-mcp.json",
+      strictMcpConfig: true,
+      enableChrome: false,
+      cliFlags: ["--chrome", "--mcp-config", "/tmp/untrusted.json", "--debug"],
+    });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain("--chrome");
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).toContain("/tmp/placement-mcp.json");
+    expect(args).not.toContain("/tmp/untrusted.json");
+    expect(args).not.toContain("--debug");
+    expect(args.filter((arg) => arg === "--mcp-config")).toHaveLength(1);
+
+    finishOk(proc);
+    await p;
+  });
+
+  it("preserves Chrome and employee flags for legacy non-placement runs", async () => {
+    const proc = createMockProcess();
+    mockSpawn.mockReturnValue(proc as any);
+
+    const p = engine.run({ prompt: "legacy", cwd: "/tmp", sessionId: "legacy-local", cliFlags: ["--debug"] });
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain("--chrome");
+    expect(args).toContain("--debug");
+    expect(args).not.toContain("--strict-mcp-config");
 
     finishOk(proc);
     await p;

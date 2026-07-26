@@ -6,6 +6,19 @@ export interface PlacementResolution {
   reason?: "unmatched" | "ambiguous" | "unauthorized_user" | "invalid_config";
 }
 
+export interface PlacementEngineBoundary {
+  strictMcpConfig: boolean;
+  enableChrome: false | undefined;
+}
+
+/** Keep every initial/retry caller on the same fail-closed engine boundary. */
+export function placementEngineBoundary(placement: PlacementProfile | undefined): PlacementEngineBoundary {
+  return {
+    strictMcpConfig: Boolean(placement),
+    enableChrome: placement ? false : undefined,
+  };
+}
+
 const SECRET_VALUE = /^(?:Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|sk-ant-[A-Za-z0-9_-]{8,}|xox[baprs]-\S+|gh[opusr]_[A-Za-z0-9_]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i;
 
 function isSecretKey(key: string): boolean {

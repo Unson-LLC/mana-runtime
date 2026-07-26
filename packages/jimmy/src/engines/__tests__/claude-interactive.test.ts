@@ -137,6 +137,27 @@ describe("interactive Claude placement projection", () => {
     const args = buildInteractiveArgs({ ...base, strictMcpConfig: true });
     expect(args).not.toContain("--strict-mcp-config");
   });
+
+  it("drops employee CLI flags that could re-enable denied placement surfaces", () => {
+    const args = buildInteractiveArgs({
+      ...base,
+      mcpConfigPath: "/tmp/placement-mcp.json",
+      strictMcpConfig: true,
+      enableChrome: false,
+      cliFlags: ["--chrome", "--mcp-config", "/tmp/untrusted-mcp.json", "--debug"],
+    });
+    expect(args).not.toContain("--chrome");
+    expect(args).not.toContain("/tmp/untrusted-mcp.json");
+    expect(args).not.toContain("--debug");
+    expect(args.filter((arg) => arg === "--mcp-config")).toHaveLength(1);
+  });
+
+  it("preserves employee CLI flags for legacy non-placement runs", () => {
+    const args = buildInteractiveArgs({ ...base, cliFlags: ["--debug"] });
+    expect(args).toContain("--chrome");
+    expect(args).toContain("--debug");
+    expect(args).not.toContain("--strict-mcp-config");
+  });
 });
 
 describe("TurnResolver", () => {

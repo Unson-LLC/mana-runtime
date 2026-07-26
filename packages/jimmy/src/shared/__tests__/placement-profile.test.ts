@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPlacementEmployeeAllowed, resolvePlacement } from "../placement-profile.js";
+import { isPlacementEmployeeAllowed, placementEngineBoundary, resolvePlacement } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -66,5 +66,21 @@ describe("isPlacementEmployeeAllowed", () => {
     expect(isPlacementEmployeeAllowed(delegated, "ryoko")).toBe(true);
     expect(isPlacementEmployeeAllowed(delegated, "critical-reviewer")).toBe(true);
     expect(isPlacementEmployeeAllowed(delegated, "unscoped-employee")).toBe(false);
+  });
+});
+
+describe("placementEngineBoundary", () => {
+  it("enforces strict MCP and disables Chrome for every placement execution", () => {
+    expect(placementEngineBoundary(placement)).toEqual({
+      strictMcpConfig: true,
+      enableChrome: false,
+    });
+  });
+
+  it("preserves legacy engine behavior when no placement is bound", () => {
+    expect(placementEngineBoundary(undefined)).toEqual({
+      strictMcpConfig: false,
+      enableChrome: undefined,
+    });
   });
 });

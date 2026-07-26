@@ -37,7 +37,7 @@ import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
-import { placementDeliveryTargets } from "../shared/placement-profile.js";
+import { placementDeliveryTargets, placementEngineBoundary } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
@@ -586,12 +586,9 @@ export class SessionManager {
         }
       }
 
-      const placementEngineBoundary = {
-        strictMcpConfig: Boolean(placement),
-        // Placement browser access is supplied by its allowlisted MCP server.
-        // Claude's separate Chrome integration is outside that allowlist.
-        enableChrome: placement ? false : undefined,
-      };
+      // Placement browser access is supplied by its allowlisted MCP server.
+      // Claude's separate Chrome integration is outside that allowlist.
+      const engineBoundary = placementEngineBoundary(placement);
 
       const effortLevel = resolveEffort(
         engineConfig,
@@ -704,7 +701,7 @@ export class SessionManager {
         sshHost: employee?.sshHost,
         remoteCwd: employee?.remoteCwd,
         mcpConfigPath,
-        ...placementEngineBoundary,
+        ...engineBoundary,
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
         keepWarmPty: false,
@@ -778,7 +775,7 @@ export class SessionManager {
           sshHost: employee?.sshHost,
           remoteCwd: employee?.remoteCwd,
           mcpConfigPath,
-          ...placementEngineBoundary,
+          ...engineBoundary,
           attachments: attachments.length > 0 ? attachments : undefined,
           sessionId: session.id,
           keepWarmPty: false,
@@ -836,7 +833,7 @@ export class SessionManager {
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             mcpConfigPath,
-            ...placementEngineBoundary,
+            ...engineBoundary,
             sessionId: session.id,
             keepWarmPty: false,
           });
@@ -1070,7 +1067,7 @@ export class SessionManager {
               sshHost: employee?.sshHost,
               remoteCwd: employee?.remoteCwd,
               mcpConfigPath,
-              ...placementEngineBoundary,
+              ...engineBoundary,
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
               keepWarmPty: false,

@@ -57,7 +57,7 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
-import { isPlacementEmployeeAllowed, placementDeliveryTargets } from "../shared/placement-profile.js";
+import { isPlacementEmployeeAllowed, placementDeliveryTargets, placementEngineBoundary } from "../shared/placement-profile.js";
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
@@ -2740,6 +2740,7 @@ async function runWebSession(
       })()
       : prompt;
 
+    const engineBoundary = placementEngineBoundary(placement);
     const result = await engine.run({
       prompt: promptToRun,
       resumeSessionId: currentSession.engineSessionId ?? undefined,
@@ -2752,8 +2753,7 @@ async function runWebSession(
       sshHost: employee?.sshHost,
       remoteCwd: employee?.remoteCwd,
       mcpConfigPath,
-      strictMcpConfig: Boolean(placement),
-      enableChrome: placement ? false : undefined,
+      ...engineBoundary,
       attachments: attachments?.length ? attachments : undefined,
       sessionId: currentSession.id,
       keepWarmPty,
@@ -3002,6 +3002,7 @@ async function runWebSession(
             sshHost: employee?.sshHost,
             remoteCwd: employee?.remoteCwd,
             mcpConfigPath,
+            ...engineBoundary,
             sessionId: currentSession.id,
             keepWarmPty,
             onStream: (delta) => {
