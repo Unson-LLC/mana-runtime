@@ -22,15 +22,15 @@
     {
       "id": "INV-BOUNDED-RESUME-WORKTREE",
       "type": "invariant",
-      "statement": "resume対象worktreeはrealpath解決後も現在のStory用managed root配下に存在しsymlink escapeまたは別Storyを許可しない",
+      "statement": "resume対象worktreeはrealpath解決後も現在のStory用managed rootとpath separatorで区切られた配下に存在しsymlink escapeまたは別Storyを許可しない",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md", "section": "Decision" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "allowedRoot" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "rejects a managed-worktree symlink that escapes the current Story" }] },
-      "inherited_behaviors": [{ "condition": "!managedWorktree.startsWith(allowedRoot)", "classification": "unchanged", "files": ["scripts/development-runner/run.mjs"] }],
+      "inherited_behaviors": [{ "condition": "!managedWorktree.startsWith(`${allowedRoot}${path.sep}`)", "classification": "unchanged", "files": ["scripts/development-runner/run.mjs"] }],
       "confidence": 1
     },
     {
       "id": "INV-BOUNDED-RESUME-BUDGET",
       "type": "invariant",
-      "statement": "自動resumeは最大1回で初回実行と同じwall-clock deadlineを共有し残時間が0以下ならspawnしない",
+      "statement": "自動resumeは最大1回で初回実行と同じwall-clock deadlineを共有し残時間が1,000ms未満ならspawnしない",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md", "section": "State and failure boundaries" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "resumeNoProgressOnce" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "does not resume after the wall-clock budget is exhausted" }] },
       "inherited_behaviors": [{ "condition": "remainingMs < 1_000", "classification": "unchanged", "files": ["scripts/development-runner/run.mjs"] }],
       "confidence": 1
