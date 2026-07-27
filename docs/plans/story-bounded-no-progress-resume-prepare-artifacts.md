@@ -10,7 +10,7 @@ Story `story-bounded-no-progress-resume` の実装と検証を、対象Story専�
 - [x] Story frontmatterへArchitecture、Spec、Taskの正規リンクを追加する。
 - [x] fixed argv、realpath containment、single resume、shared deadline、人間境界をArchitectureに固定する。
 - [x] ACと明示Scenarioをmachine-readable Spec clauseへ対応付け、threat modelを追加する。
-- [ ] `pnpm --filter jinn-cli test -- development-runner.test.ts`でclause固有のunit evidenceを取得する。
+- [x] `pnpm --dir packages/jimmy test -- development-runner.test.ts`でclause固有のunit evidenceを取得する。
 - [ ] `pnpm typecheck`と`pnpm build`をcurrent HEADで実行し、VibePro verification evidenceへ記録する。
 - [ ] running sessionで`RUNNER_VERSION`、配備済み`run.mjs`のSHA-256、期待Git HEADを採取し、一致を確認する。ソースcheckoutの値だけをrunning-session証跡として扱わない。
 - [ ] docs-only pilotで1回のbounded resumeが`pr_ready`に達し、PR作成、merge、deployが行われないことを確認する。
@@ -21,6 +21,10 @@ Story `story-bounded-no-progress-resume` の実装と検証を、対象Story専�
 - `docs/architecture/story-bounded-no-progress-resume.md`
 - `docs/specs/story-bounded-no-progress-resume.vibepro.json`
 - `docs/plans/story-bounded-no-progress-resume-prepare-artifacts.md`
+- `scripts/development-runner/run.mjs`
+- `scripts/development-runner/README.md`
+- `scripts/development-runner/config.example.json`
+- `packages/jimmy/src/sessions/__tests__/development-runner.test.ts`
 
 ## Completion evidence
 

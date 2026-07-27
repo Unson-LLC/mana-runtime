@@ -11,7 +11,7 @@ Slack self-development runnerの既存プロセス境界内で、初回VibePro�
 最大1回のresumeを行う。recoveryの`next_command`は実行せず、厳密な構文検証から
 Story ID、run ID、managed worktree候補だけを抽出し、runner自身が固定argvを再構築する。
 
-managed worktreeは設定済みrepository rootの`.worktrees/vibepro/<story-id>-*`配下に限定し、
+managed worktreeはrunnerが作成したisolated worktree内の`.worktrees/vibepro/<story-id>-*`配下に限定し、
 候補と許可rootの双方を`realpath`で比較する。存在しないpath、別Story、symlink escape、
 追加引数を拒否する。初回とresumeは同じdeadlineを共有し、残時間がなければspawnしない。
 
