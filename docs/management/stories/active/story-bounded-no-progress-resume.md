@@ -41,12 +41,12 @@ secret変更、runtime checkout更新はこのStoryの権限外とする。
 
 ## Scenarios
 
-- `BOUNDED-RESUME-STORY-S-001`: Given 正規の`blocked/no_progress` recoveryがあるとき、1回再開して`pr_ready`になれば、Slackへ`pr_ready`を返す。
-- `BOUNDED-RESUME-STORY-S-002`: Given 再開後も`blocked/no_progress`のとき、2回目は実行せず`needs_input`で停止する。
-- `BOUNDED-RESUME-STORY-S-003`: Given Story、run ID、path、または引数が不正なとき、再開せず`needs_input`で停止する。
-- `BOUNDED-RESUME-STORY-S-004`: Given managed worktreeのsymlinkが現在のStory root外へ解決されるとき、再開しない。
-- `BOUNDED-RESUME-STORY-S-005`: Given 初回実行からの総wall-clock budgetを使い切ったとき、新しい子プロセスを開始しない。
-- `BOUNDED-RESUME-STORY-S-006`: Given running sessionを検証するとき、`RUNNER_VERSION`と実行中artifactのdigestが期待するcurrent HEAD版と一致する証跡を取得できる。
+- `RESUME-STORY-S-001`: Given 正規の`blocked/no_progress` recoveryがあるとき、1回再開して`pr_ready`になれば、Slackへ`pr_ready`を返す。
+- `RESUME-STORY-S-002`: Given 再開後も`blocked/no_progress`のとき、2回目は実行せず`needs_input`で停止する。
+- `RESUME-STORY-S-003`: Given Story、run ID、path、または引数が不正なとき、再開せず`needs_input`で停止する。
+- `RESUME-STORY-S-004`: Given managed worktreeのsymlinkが現在のStory root外へ解決されるとき、再開しない。
+- `RESUME-STORY-S-005`: Given 初回実行からの総wall-clock budgetを使い切ったとき、新しい子プロセスを開始しない。
+- `RESUME-STORY-S-006`: Given running sessionを検証するとき、`RUNNER_VERSION`と実行中artifactのdigestが期待するcurrent HEAD版と一致する証跡を取得できる。
 
 ## Out of Scope
 

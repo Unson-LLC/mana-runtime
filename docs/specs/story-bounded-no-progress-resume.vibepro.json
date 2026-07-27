@@ -53,7 +53,7 @@
     {
       "id": "S-BOUNDED-RESUME-SUCCESS",
       "type": "scenario",
-      "story_scenario_ids": ["BOUNDED-RESUME-STORY-S-001"],
+      "story_scenario_ids": ["RESUME-STORY-S-001"],
       "statement": "正規のblocked/no_progressから1回resumeしてpr_readyになった場合Slack向け結果はpr_readyになる",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "status === \"pr_ready\"" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "reaches pr_ready after one bounded resume" }] },
       "confidence": 1
@@ -61,31 +61,39 @@
     {
       "id": "S-BOUNDED-RESUME-SECOND-STOP",
       "type": "scenario",
-      "story_scenario_ids": ["BOUNDED-RESUME-STORY-S-002"],
+      "story_scenario_ids": ["RESUME-STORY-S-002"],
       "statement": "resume後もblocked/no_progressなら2回目を起動せずSlack向け結果はneeds_inputになる",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 7 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "MAX_NO_PROGRESS_RESUME_ATTEMPTS" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "stops after a resumed run reports no_progress again" }] },
       "confidence": 1
     },
     {
-      "id": "S-BOUNDED-RESUME-INVALID",
+      "id": "S-BOUNDED-RESUME-INVALID-RECOVERY",
       "type": "scenario",
-      "story_scenario_ids": ["BOUNDED-RESUME-STORY-S-003", "BOUNDED-RESUME-STORY-S-004"],
-      "statement": "Story、run ID、argv、worktree path、またはrealpath境界が不正ならresumeせずneeds_inputになる",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }, { "kind": "acceptance_criteria", "index": 9 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "return null" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "rejects unsafe recovery" }, { "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "rejects a managed-worktree symlink that escapes the current Story" }] },
+      "story_scenario_ids": ["RESUME-STORY-S-003"],
+      "statement": "Story、run ID、argv、またはworktree pathが不正ならresumeせずneeds_inputになる",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "return null" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "rejects unsafe recovery" }] },
+      "confidence": 1
+    },
+    {
+      "id": "S-BOUNDED-RESUME-SYMLINK-ESCAPE",
+      "type": "scenario",
+      "story_scenario_ids": ["RESUME-STORY-S-004"],
+      "statement": "managed worktreeのrealpathが現在のStory root外ならresumeしない",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 9 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "allowedRoot" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "rejects a managed-worktree symlink that escapes the current Story" }] },
       "confidence": 1
     },
     {
       "id": "S-BOUNDED-RESUME-EXHAUSTED",
       "type": "scenario",
-      "story_scenario_ids": ["BOUNDED-RESUME-STORY-S-005"],
+      "story_scenario_ids": ["RESUME-STORY-S-005"],
       "statement": "共有wall-clock budgetが尽きていればresume子プロセスを開始せずneeds_inputになる",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 10 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "remainingMs = options.deadlineMs - Date.now()" }], "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/development-runner.test.ts", "case": "does not resume after the wall-clock budget is exhausted" }] },
       "confidence": 1
     },
     {
-      "id": "C-BOUNDED-RESUME-RUNTIME-VERSION",
-      "type": "contract",
-      "story_scenario_ids": ["BOUNDED-RESUME-STORY-S-006"],
+      "id": "S-BOUNDED-RESUME-RUNTIME-VERSION",
+      "type": "scenario",
+      "story_scenario_ids": ["RESUME-STORY-S-006"],
       "statement": "deployment検証はrunning sessionのRUNNER_VERSION、run.mjs SHA-256 digest、期待Git HEADの一致を証跡として記録する",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 11 }], "architecture_refs": [{ "file": "docs/architecture/story-bounded-no-progress-resume.md", "section": "Deployment version evidence" }], "code_refs": [{ "file": "scripts/development-runner/run.mjs", "anchor": "RUNNER_VERSION" }], "test_refs": [] },
       "confidence": 1
