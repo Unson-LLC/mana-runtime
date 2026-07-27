@@ -19,7 +19,11 @@ function config(enabled: boolean): JinnConfig {
     },
     connectors: {},
     logging: { level: "info", stdout: false, file: "" },
-    developmentRunner: { enabled, bin: "/usr/bin/sudo" },
+    developmentRunner: {
+      enabled,
+      bin: "/usr/bin/sudo",
+      allowedSlackChannels: ["C1"],
+    },
   } as unknown as JinnConfig;
 }
 
@@ -63,6 +67,20 @@ describe("SessionManager /develop boundary", () => {
     expect(await manager.handleCommand(message("/develop change docs"), slack)).toBe(true);
     expect(runDevelopmentRequest).not.toHaveBeenCalled();
     expect(slack.replyMessage).toHaveBeenCalledWith(expect.anything(), "Development runner is disabled.");
+  });
+
+  it("fails closed outside the configured Slack channels", async () => {
+    const cfg = config(true);
+    cfg.developmentRunner!.allowedSlackChannels = ["C_PILOT"];
+    const manager = new SessionManager(cfg, new Map(), ["slack"]);
+    const slack = connector();
+
+    expect(await manager.handleCommand(message("/develop change docs"), slack)).toBe(true);
+    expect(runDevelopmentRequest).not.toHaveBeenCalled();
+    expect(slack.replyMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      "Development tasks are not enabled in this channel.",
+    );
   });
 
   it("accepts only one development request at a time", async () => {

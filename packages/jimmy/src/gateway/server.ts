@@ -29,7 +29,7 @@ import { webSocketUpgradeAuthorized } from "./operator-auth.js";
 import { ensureFilesDir } from "./files.js";
 import { initStt } from "../stt/stt.js";
 import { startWatchers, stopWatchers, syncSkillSymlinks } from "./watcher.js";
-import { SlackConnector } from "../connectors/slack/index.js";
+import { SlackConnector, type SlackConnectorContext } from "../connectors/slack/index.js";
 import { DiscordConnector, type DiscordConnectorConfig } from "../connectors/discord/index.js";
 import { RemoteDiscordConnector } from "../connectors/discord/remote.js";
 import { WhatsAppConnector } from "../connectors/whatsapp/index.js";
@@ -78,6 +78,20 @@ const MIME_TYPES: Record<string, string> = {
   ".woff": "font/woff",
   ".woff2": "font/woff2",
 };
+
+export function buildSlackConnectorContext(
+  cfg: JinnConfig,
+  goalInjectionEnabled: boolean,
+): SlackConnectorContext {
+  return {
+    portalName: cfg.portal?.portalName,
+    operatorName: cfg.portal?.operatorName,
+    operatorAliases: cfg.portal?.operatorAliases,
+    goalInjectionEnabled,
+    developmentRunnerEnabled: cfg.developmentRunner?.enabled === true,
+    developmentRunnerAllowedChannels: cfg.developmentRunner?.allowedSlackChannels,
+  };
+}
 
 function resolveRouteOptions(
   cfg: JinnConfig,
@@ -365,14 +379,12 @@ export async function startGateway(
           {
             ...slackConfig,
           },
-          {
-            portalName: cfg.portal?.portalName,
-            operatorName: cfg.portal?.operatorName,
-            operatorAliases: cfg.portal?.operatorAliases,
-            goalInjectionEnabled: (slackConfig.employee
+          buildSlackConnectorContext(
+            cfg,
+            (slackConfig.employee
               ? employeeRegistry.get(slackConfig.employee)?.engine
               : cfg.engines.default) === "claude",
-          },
+          ),
         );
         slack.onMessage((msg) => {
           const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.slack?.employee, cfg.connectors.slack?.criticalRouting);
@@ -538,12 +550,13 @@ export async function startGateway(
           }
           case "slack": {
             const slackConfig = { ...typeConfig, id } as any;
-            const slack = new SlackConnector(slackConfig, {
-              portalName: config.portal?.portalName,
-              operatorName: config.portal?.operatorName,
-              operatorAliases: config.portal?.operatorAliases,
-              goalInjectionEnabled: (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
-            });
+            const slack = new SlackConnector(
+              slackConfig,
+              buildSlackConnectorContext(
+                config,
+                (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
+              ),
+            );
             slack.onMessage((msg) => {
               const routeOpts = resolveRouteOptions(config, msg, employeeRegistry, employee);
               if (!routeOpts) return;
@@ -671,12 +684,13 @@ export async function startGateway(
               const slackConfig = { ...typeConfig, id } as any;
               // Use freshConfig.portal (not the closure-captured boot-time
               // `config`) so renamed portals show up after a hot-reload.
-              const slack = new SlackConnector(slackConfig, {
-                portalName: freshConfig.portal?.portalName,
-                operatorName: freshConfig.portal?.operatorName,
-                operatorAliases: freshConfig.portal?.operatorAliases,
-                goalInjectionEnabled: (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
-              });
+              const slack = new SlackConnector(
+                slackConfig,
+                buildSlackConnectorContext(
+                  freshConfig,
+                  (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
+                ),
+              );
               slack.onMessage((msg) => {
                 const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);
                 if (!routeOpts) return;

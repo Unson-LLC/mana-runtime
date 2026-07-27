@@ -1,0 +1,87 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-native-development-command",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "RNDC-001",
+      "type": "scenario",
+      "statement": "An allowlisted Slack user in an allowed channel can invoke /ryoko-develop and the request is acknowledged then dispatched exactly once through the existing internal /develop boundary.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "ryoko-develop" }],
+        "test_refs": [{ "file": "packages/jimmy/src/connectors/slack/__tests__/connector-authorization.test.ts" }]
+      }
+    },
+    {
+      "id": "RNDC-002",
+      "type": "invariant",
+      "statement": "Missing, empty, or non-matching Slack user allowlists fail closed before identity lookups or session dispatch.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "allowFrom" }],
+        "test_refs": [{ "file": "packages/jimmy/src/connectors/slack/__tests__/connector-authorization.test.ts" }]
+      }
+    },
+    {
+      "id": "RNDC-003",
+      "type": "invariant",
+      "statement": "Missing, empty, or non-matching development channel allowlists fail closed before Slack lookups or session dispatch.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "developmentRunnerAllowedChannels" }],
+        "test_refs": [{ "file": "packages/jimmy/src/connectors/slack/__tests__/connector-authorization.test.ts" }]
+      }
+    },
+    {
+      "id": "RNDC-004",
+      "type": "invariant",
+      "statement": "The SessionManager enforces the same channel boundary so legacy mention-based internal /develop input cannot bypass the Slack command guard.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/sessions/manager.ts", "anchor": "allowedSlackChannels" }],
+        "test_refs": [{ "file": "packages/jimmy/src/sessions/__tests__/manager-development-runner.test.ts" }]
+      }
+    },
+    {
+      "id": "RNDC-005",
+      "type": "contract",
+      "statement": "The generated Slack App Manifest declares the /ryoko-develop command and commands OAuth scope while continuing to use Socket Mode without a public command endpoint.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/web/src/app/settings/page.tsx", "anchor": "slash_commands" }]
+      }
+    },
+    {
+      "id": "RNDC-006",
+      "type": "scenario",
+      "statement": "When the development runner is disabled, /ryoko-develop returns an ephemeral denial and does not dispatch or fall back to another execution path.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "developmentRunnerEnabled" }],
+        "test_refs": [{ "file": "packages/jimmy/src/connectors/slack/__tests__/connector-authorization.test.ts" }]
+      }
+    },
+    {
+      "id": "RNDC-007",
+      "type": "contract",
+      "statement": "Activation requires Slack App reinstall, explicit pilot channel configuration, and gateway restart; rollback disables the runner and requires no data migration.",
+      "origin": {
+        "story_refs": [{ "kind": "policy" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-slack-native-development-command.md" }]
+      }
+    }
+  ],
+  "diagrams": [
+    {
+      "kind": "flow",
+      "title": "Slack native development command flow",
+      "mermaid": "flowchart LR\n  User[Slack user] --> Command[/ryoko-develop]\n  Command --> Ack[Immediate ack]\n  Ack --> Guards[User and channel guards]\n  Guards --> Session[SessionManager]\n  Session --> Runner[Isolated VibePro runner]"
+    },
+    {
+      "kind": "threat_model",
+      "title": "Slack command trust boundaries",
+      "mermaid": "flowchart LR\n  Input[Untrusted Slack input] --> Ack[Immediate ack]\n  Ack --> UserGuard{User allowlisted}\n  UserGuard -- no --> Deny[Ephemeral denial]\n  UserGuard -- yes --> ChannelGuard{Channel allowlisted}\n  ChannelGuard -- no --> Deny\n  ChannelGuard -- yes --> Dispatch[Session dispatch]\n  Dispatch --> Isolated[Isolated runner]"
+    }
+  ]
+}
