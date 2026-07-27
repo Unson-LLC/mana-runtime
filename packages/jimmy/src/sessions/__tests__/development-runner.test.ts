@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, buildStoryAddArgs, buildStoryCommitArgs, buildVibeproRunArgs, runCommand, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, buildStoryAddArgs, buildStoryCommitArgs, buildValidatedResumeArgs, buildVibeproRunArgs, parseNoProgressRecovery, resumeNoProgressOnce, runCommand, runVibeproUntilSafeStop, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
 
 function childReturning(stdout: string, code = 0) {
   const child = new EventEmitter() as any;
@@ -54,6 +54,179 @@ describe("development runner", () => {
       storyId: "story-safe-change",
       summary: `VibePro stopped safely (${status}). Review the run before resuming.`,
     });
+  });
+
+  it("reconstructs a fixed resume argv only for the current no_progress Story", async () => {
+    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
+    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
+    await mkdir(managed, { recursive: true });
+    const raw = JSON.stringify({ state: {
+      status: "blocked",
+      stop_reason: { code: "no_progress", details: { recovery: {
+        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
+      } } },
+    } });
+
+    try {
+      expect(parseNoProgressRecovery(raw, "story-safe-change")).toEqual({
+        managedWorktree: managed,
+        runId: "run-20260727T003335Z-373e6b15",
+      });
+      expect(await buildValidatedResumeArgs(raw, "story-safe-change", outer)).toEqual([
+        "execute", "resume", await realpath(managed),
+        "--story-id", "story-safe-change",
+        "--run-id", "run-20260727T003335Z-373e6b15",
+        "--until", "pr-ready",
+        "--json",
+      ]);
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["other stop", { status: "blocked", stop_reason: { code: "needs_decision" } }],
+    ["other Story", { status: "blocked", stop_reason: { code: "no_progress", details: { recovery: { next_command: "vibepro execute resume /tmp/x --story-id story-other --run-id run-20260727T003335Z-373e6b15 --until pr-ready" } } } }],
+    ["extra argument", { status: "blocked", stop_reason: { code: "no_progress", details: { recovery: { next_command: "vibepro execute resume /tmp/x --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready; touch /tmp/x" } } } }],
+  ])("rejects unsafe recovery: %s", (_name, state) => {
+    expect(parseNoProgressRecovery(JSON.stringify({ state }), "story-safe-change")).toBeNull();
+  });
+
+  it("rejects a managed-worktree symlink that escapes the current Story", async () => {
+    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "openryoko-outside-"));
+    const root = path.join(outer, ".worktrees", "vibepro");
+    const linked = path.join(root, "story-safe-change-escape");
+    await mkdir(root, { recursive: true });
+    await symlink(outside, linked);
+    const raw = JSON.stringify({ state: { status: "blocked", stop_reason: {
+      code: "no_progress", details: { recovery: {
+        next_command: `vibepro execute resume ${linked} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
+      } },
+    } } });
+
+    try {
+      expect(await buildValidatedResumeArgs(raw, "story-safe-change", outer)).toBeNull();
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes no_progress once inside the remaining wall-clock budget", async () => {
+    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
+    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
+    await mkdir(managed, { recursive: true });
+    const raw = JSON.stringify({ state: { status: "blocked", stop_reason: {
+      code: "no_progress", details: { recovery: {
+        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
+      } },
+    } } });
+    const runCommandFn = vi.fn(async (_bin: string, _args: string[], _options: Record<string, unknown>) =>
+      JSON.stringify({ state: { status: "pr_ready" } }));
+
+    try {
+      const result = await resumeNoProgressOnce(raw, {
+        storyId: "story-safe-change",
+        outerWorktree: outer,
+        vibeproBin: "/usr/local/bin/vibepro",
+        deadlineMs: Date.now() + 60_000,
+        runCommandFn,
+      });
+      expect(safeResultFromRun(result, "story-safe-change").status).toBe("pr_ready");
+      expect(runCommandFn).toHaveBeenCalledTimes(1);
+      expect(runCommandFn.mock.calls[0][2]).toEqual(expect.objectContaining({
+        cwd: outer,
+        timeoutMs: expect.any(Number),
+      }));
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  });
+
+  it("does not resume after the wall-clock budget is exhausted", async () => {
+    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
+    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
+    await mkdir(managed, { recursive: true });
+    const raw = JSON.stringify({ state: { status: "blocked", stop_reason: {
+      code: "no_progress", details: { recovery: {
+        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
+      } },
+    } } });
+    const runCommandFn = vi.fn();
+
+    try {
+      expect(await resumeNoProgressOnce(raw, {
+        storyId: "story-safe-change",
+        outerWorktree: outer,
+        vibeproBin: "/usr/local/bin/vibepro",
+        deadlineMs: Date.now() - 1,
+        runCommandFn,
+      })).toBe(raw);
+      expect(runCommandFn).not.toHaveBeenCalled();
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["reaches pr_ready after one bounded resume", "pr_ready", "pr_ready", 1],
+    ["stops after a resumed run reports no_progress again", "blocked", "needs_input", 1],
+  ])("orchestrates the final output surface: %s", async (_name, resumedStatus, expectedStatus, expectedCalls) => {
+    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-flow-"));
+    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
+    await mkdir(managed, { recursive: true });
+    const noProgress = () => JSON.stringify({ state: { status: "blocked", stop_reason: {
+      code: "no_progress", details: { recovery: {
+        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
+      } },
+    } } });
+    const runCommandFn = vi.fn(async () => resumedStatus === "pr_ready"
+      ? JSON.stringify({ state: { status: "pr_ready" } })
+      : noProgress());
+
+    try {
+      const result = await runVibeproUntilSafeStop(noProgress(), {
+        storyId: "story-safe-change",
+        outerWorktree: outer,
+        vibeproBin: "/usr/local/bin/vibepro",
+        deadlineMs: Date.now() + 60_000,
+        runCommandFn,
+      });
+      expect(result.status).toBe(expectedStatus);
+      expect(runCommandFn).toHaveBeenCalledTimes(expectedCalls);
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["invalid recovery", Date.now() + 60_000],
+    ["exhausted budget", Date.now() - 1],
+  ])("keeps a safe final stop without spawning for %s", async (caseName, deadlineMs) => {
+    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-flow-"));
+    const runCommandFn = vi.fn();
+    const raw = caseName === "invalid recovery"
+      ? JSON.stringify({ state: { status: "blocked", stop_reason: { code: "no_progress" } } })
+      : JSON.stringify({ state: { status: "blocked", stop_reason: { code: "no_progress", details: { recovery: {
+        next_command: `vibepro execute resume ${outer}/.worktrees/vibepro/story-safe-change-abc123 --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
+      } } } } });
+    if (caseName === "exhausted budget") {
+      await mkdir(path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123"), { recursive: true });
+    }
+
+    try {
+      expect((await runVibeproUntilSafeStop(raw, {
+        storyId: "story-safe-change",
+        outerWorktree: outer,
+        vibeproBin: "/usr/local/bin/vibepro",
+        deadlineMs,
+        runCommandFn,
+      })).status).toBe("needs_input");
+      expect(runCommandFn).not.toHaveBeenCalled();
+    } finally {
+      await rm(outer, { recursive: true, force: true });
+    }
   });
 
   it("fails closed when the installed runner version differs from root-owned config", () => {
@@ -217,6 +390,13 @@ describe("development runner", () => {
     ], { maxOutputBytes: 16, terminationGraceMs: 10 });
 
     await expect(promise).rejects.toThrow("command output exceeded limit");
+  });
+
+  it("terminates a command when its wall-clock budget expires", async () => {
+    await expect(runCommand(process.execPath, [
+      "-e",
+      "process.on('SIGTERM',()=>process.exit(0)); setInterval(()=>{},1000)",
+    ], { timeoutMs: 10, terminationGraceMs: 10 })).rejects.toThrow("command timed out");
   });
 
   it("escalates the process group after its leader exits", async () => {
