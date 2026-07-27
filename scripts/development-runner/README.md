@@ -60,6 +60,13 @@ an allowed channel, and
 confirm that the runtime checkout remains clean and unchanged. VibePro stops at
 `pr_ready`; PR creation, merge, and deployment remain human actions.
 
+When VibePro stops with the exact `blocked/no_progress` recovery shape, the
+runner validates that the referenced Story, run ID, and real managed-worktree
+path belong to the current isolated Story. It then reconstructs a fixed argv
+and resumes at most once within the original wall-clock budget. The recovery
+string is never executed through a shell. Any mismatch, second `no_progress`,
+timeout, or other stop reason fails closed as `needs_input` or `failed`.
+
 The gateway also keeps an in-process busy flag, but the development user's
 lock directory is the authoritative cross-restart guard. The runner removes it
 only after its VibePro child has closed. If the host or runner is killed

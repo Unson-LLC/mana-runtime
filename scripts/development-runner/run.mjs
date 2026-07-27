@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -10,7 +10,8 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-26.6";
+export const RUNNER_VERSION = "2026-07-27.1";
+export const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 1;
 
 export async function acquireDevelopmentLock(lockPath = LOCK_PATH) {
   let directoryCreated = false;
@@ -71,10 +72,12 @@ export async function runCommand(bin, args, options = {}) {
     let settled = false;
     let terminationError = null;
     let killTimer = null;
+    let timeoutTimer = null;
     let closedCode;
     const finish = (fn) => {
       if (settled) return;
       settled = true;
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       fn();
     };
     const signalGroup = (signal) => {
@@ -119,6 +122,9 @@ export async function runCommand(bin, args, options = {}) {
         else reject(new Error(`${path.basename(bin)} exited with code ${code ?? "unknown"}`));
       });
     });
+    if (options.timeoutMs !== undefined) {
+      timeoutTimer = setTimeout(() => terminate(new Error("command timed out")), options.timeoutMs);
+    }
   });
 }
 
@@ -147,6 +153,66 @@ export function safeResultFromRun(raw, storyId) {
     return { status: "needs_input", storyId, summary: `VibePro stopped safely (${status}). Review the run before resuming.` };
   }
   return { status: "failed", storyId, summary: `VibePro ended without PR readiness (${String(status ?? "unknown")}).` };
+}
+
+export function parseNoProgressRecovery(raw, storyId) {
+  const result = JSON.parse(raw);
+  const state = result?.state;
+  if (state?.status !== "blocked" || state?.stop_reason?.code !== "no_progress") return null;
+
+  const nextCommand = state.stop_reason?.details?.recovery?.next_command;
+  if (typeof nextCommand !== "string") return null;
+  const match = nextCommand.match(
+    /^vibepro execute resume (\/\S+) --story-id ([a-z0-9][a-z0-9-]*) --run-id (run-\d{8}T\d{6}Z-[a-f0-9]+) --until pr-ready$/,
+  );
+  if (!match || match[2] !== storyId) return null;
+  return { managedWorktree: match[1], runId: match[3] };
+}
+
+export async function buildValidatedResumeArgs(raw, storyId, outerWorktree) {
+  const recovery = parseNoProgressRecovery(raw, storyId);
+  if (!recovery) return null;
+
+  let allowedRoot;
+  let managedWorktree;
+  try {
+    allowedRoot = await realpath(path.join(outerWorktree, ".worktrees", "vibepro"));
+    managedWorktree = await realpath(recovery.managedWorktree);
+  } catch {
+    return null;
+  }
+  if (!managedWorktree.startsWith(`${allowedRoot}${path.sep}`)) return null;
+  if (!path.basename(managedWorktree).startsWith(`${storyId}-`)) return null;
+
+  return [
+    "execute", "resume", managedWorktree,
+    "--story-id", storyId,
+    "--run-id", recovery.runId,
+    "--until", "pr-ready",
+    "--json",
+  ];
+}
+
+export async function resumeNoProgressOnce(raw, options) {
+  const args = await buildValidatedResumeArgs(raw, options.storyId, options.outerWorktree);
+  if (!args) return raw;
+
+  const remainingMs = options.deadlineMs - Date.now();
+  if (remainingMs < 1_000) return raw;
+  return options.runCommandFn(options.vibeproBin, args, {
+    cwd: options.outerWorktree,
+    timeoutMs: remainingMs,
+  });
+}
+
+export async function runVibeproUntilSafeStop(initialRaw, options) {
+  let finalRaw = initialRaw;
+  for (let attempt = 0; attempt < MAX_NO_PROGRESS_RESUME_ATTEMPTS; attempt += 1) {
+    const resumedRaw = await resumeNoProgressOnce(finalRaw, options);
+    if (resumedRaw === finalRaw) break;
+    finalRaw = resumedRaw;
+  }
+  return safeResultFromRun(finalRaw, options.storyId);
 }
 
 export function buildVibeproRunArgs(storyId, maxDurationMs) {
@@ -208,12 +274,19 @@ try {
   await runCommand("/usr/bin/git", buildStoryAddArgs(storyRelativePath), { cwd: worktree });
   await runCommand("/usr/bin/git", buildStoryCommitArgs(storyId), { cwd: worktree });
 
+  const deadlineMs = Date.now() + config.maxDurationMs;
   const raw = await runCommand(
     config.vibeproBin,
     buildVibeproRunArgs(storyId, config.maxDurationMs),
-    { cwd: worktree },
+    { cwd: worktree, timeoutMs: config.maxDurationMs },
   );
-  emit(safeResultFromRun(raw, storyId));
+  emit(await runVibeproUntilSafeStop(raw, {
+    storyId,
+    outerWorktree: worktree,
+    vibeproBin: config.vibeproBin,
+    deadlineMs,
+    runCommandFn: runCommand,
+  }));
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : "unknown runner error"}\n`);
   emit({ status: "failed", summary: "The isolated development runner stopped safely. No PR or deployment was performed." }, 1);
