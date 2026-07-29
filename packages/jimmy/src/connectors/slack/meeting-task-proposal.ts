@@ -1,13 +1,18 @@
 /**
- * Meeting minutes → task-candidate proposal → one-tap registration.
+ * Meeting minutes → task extraction → default registration → Slack undo/edit.
  *
  * Ported from mana's `meeting-flow-integration.js` design onto mana-runtime
- * conventions. Watches allowlisted Slack channels for posted meeting minutes
- * (typically another bot — mana — posting the minutes text), extracts task
- * candidates with an LLM, proposes them as Slack Blocks with approve/reject
- * buttons, and registers approved candidates into the canonical Brainbase
- * task store (companion API) with a deterministic idempotency key
- * `meeting:<channelId>:<sourceTs>:<index>`.
+ * conventions, then inverted from approve-first to register-first (operator
+ * decision 2026-07-30): extracted candidates are registered into the
+ * canonical Brainbase task store immediately, and the Slack message offers
+ * 取り消し (delete) and 編集 (modal) per task instead of an approval gate.
+ * Registration is idempotent per candidate via the deterministic key
+ * `meeting:<channelId>:<sourceTs>:<index>`, so retries never double-register.
+ *
+ * Assignees are resolved from Graph SSOT person entities (names/aliases) at
+ * registration time — best-effort and fail-open. The edit modal's assignee
+ * select is populated from the same Graph list, which makes this the first
+ * runtime Graph consumer (roadmap pillar 2).
  *
  * Proposal context is persisted under `${JINN_HOME}/.meeting-task-proposals.json`
  * with a 72h TTL (mana used DynamoDB TTL for the same window). Expired
@@ -27,6 +32,11 @@ import {
   BrainbaseTaskClient,
   isBrainbaseTaskStoreConfigured,
 } from "../../shared/brainbase-tasks.js";
+import {
+  GraphPeopleClient,
+  resolvePersonByName,
+  type GraphPerson,
+} from "../../shared/brainbase-graph.js";
 import { JINN_HOME } from "../../shared/paths.js";
 import { logger } from "../../shared/logger.js";
 import {
@@ -41,8 +51,8 @@ export interface MeetingTaskProposalConfig {
   /** Channel IDs to watch. Required; empty means the feature stays off. */
   channels?: string[];
   /**
-   * Slack user IDs allowed to press approve/reject. The connector falls back
-   * to its allowFrom list when unset. Empty means the feature stays off.
+   * Slack user IDs allowed to cancel/edit registered tasks. The connector
+   * falls back to its allowFrom list when unset. Empty keeps the feature off.
    */
   approverUserIds?: string[];
   /** Minimum message length to consider as minutes. Default 200. */
@@ -57,8 +67,8 @@ export interface MeetingTaskProposalConfig {
 }
 
 /**
- * Who may approve proposals. The static implementation covers the pilot
- * (operator only); the interface is the extension point for resolving
+ * Who may cancel/edit registered tasks. The static implementation covers the
+ * pilot (operator only); the interface is the extension point for resolving
  * approvers from Graph SSOT RACI (roadmap pillar 2).
  */
 export interface ApproverResolver {
@@ -78,20 +88,29 @@ export class StaticApproverResolver implements ApproverResolver {
   }
 }
 
-export type CandidateStatus = "pending" | "approved" | "rejected";
+/**
+ * pending  — extraction produced the candidate but registration failed
+ *            (canonical store unreachable etc.); a retry button is shown.
+ * registered — task exists in the canonical store (default outcome).
+ * removed  — operator pressed 取り消し and the task was deleted.
+ */
+export type CandidateStatus = "pending" | "registered" | "removed";
 
 export interface StoredCandidate extends MeetingTaskCandidate {
   index: number;
   status: CandidateStatus;
-  /** Canonical task id once approved and registered. */
+  /** Canonical task id once registered. */
   taskId?: string;
+  /** Graph person resolved from the minutes assignee name, when unambiguous. */
+  assigneePersonId?: string;
+  assigneePersonName?: string;
 }
 
 export interface StoredProposal {
   channelId: string;
   /** ts of the source minutes message — part of the idempotency key. */
   sourceTs: string;
-  /** ts of our posted proposal message (chat.update target). */
+  /** ts of our posted message (chat.update target). */
   proposalTs: string;
   createdAt: number;
   expiresAt: number;
@@ -105,10 +124,12 @@ const DEFAULT_MIN_MESSAGE_CHARS = 200;
 const DEFAULT_TTL_HOURS = 72;
 const HOUR_MS = 3_600_000;
 
-export const ACTION_APPROVE = "meeting_task_approve";
-export const ACTION_REJECT = "meeting_task_reject";
-export const ACTION_APPROVE_ALL = "meeting_task_approve_all";
-export const ACTION_REJECT_ALL = "meeting_task_reject_all";
+export const ACTION_CANCEL = "meeting_task_cancel";
+export const ACTION_EDIT = "meeting_task_edit";
+export const ACTION_RETRY = "meeting_task_retry";
+export const ACTION_CANCEL_ALL = "meeting_task_cancel_all";
+export const EDIT_VIEW_CALLBACK_ID = "meeting_task_edit_submit";
+const ASSIGNEE_NONE = "__none__";
 
 const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u001f\\u007f]", "g");
 
@@ -155,34 +176,41 @@ export function candidateIdempotencyKey(proposal: StoredProposal, index: number)
   return `meeting:${proposal.channelId}:${proposal.sourceTs}:${index}`;
 }
 
-const STATUS_SUFFIX: Record<CandidateStatus, string> = {
-  pending: "",
-  approved: " — ✅ _登録済み_",
-  rejected: " — ❌ _却下済み_",
-};
-
 /**
- * Renders the proposal message blocks from stored state. Re-rendered in full
- * on every approval/rejection (chat.update), so buttons for settled
- * candidates disappear and bulk buttons vanish once nothing is pending.
+ * Renders the message blocks from stored state. Re-rendered in full after
+ * every cancel/edit (chat.update), so buttons always reflect current status.
  */
 export function buildProposalBlocks(proposal: StoredProposal): unknown[] {
-  const pending = proposal.candidates.filter((c) => c.status === "pending");
+  const registered = proposal.candidates.filter((c) => c.status === "registered");
   const blocks: unknown[] = [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `📋 *議事録からのタスク候補*（${proposal.candidates.length}件） — 承認すると正本タスクボードに登録されます`,
+        text: `📋 *議事録から${proposal.candidates.length}件のタスクを正本に登録しました* — 間違いは取り消し/編集できます`,
       },
     },
     { type: "divider" },
   ];
 
   for (const candidate of proposal.candidates) {
-    const lines = [`*${sanitize(candidate.title)}*${STATUS_SUFFIX[candidate.status]}`];
+    const value = JSON.stringify({
+      key: proposalKey(proposal.channelId, proposal.sourceTs),
+      index: candidate.index,
+    });
+    const statusPrefix =
+      candidate.status === "registered" ? "✅" : candidate.status === "removed" ? "🗑" : "⚠️";
+    const lines = [
+      `${statusPrefix} *${sanitize(candidate.title)}*` +
+        (candidate.status === "removed"
+          ? " — _取り消し済み_"
+          : candidate.status === "pending"
+            ? " — _登録失敗（再試行できます）_"
+            : ""),
+    ];
     const meta: string[] = [];
-    if (candidate.assignee && candidate.assignee !== "未定") meta.push(`担当: ${sanitize(candidate.assignee)}`);
+    const assigneeLabel = candidate.assigneePersonName ?? candidate.assignee;
+    if (assigneeLabel && assigneeLabel !== "未定") meta.push(`担当: ${sanitize(assigneeLabel)}`);
     if (candidate.due) meta.push(`期限: ${candidate.due}`);
     if (meta.length > 0) lines.push(meta.join(" | "));
     if (candidate.context) lines.push(`_${sanitize(candidate.context)}_`);
@@ -190,22 +218,40 @@ export function buildProposalBlocks(proposal: StoredProposal): unknown[] {
       type: "section",
       text: { type: "mrkdwn", text: lines.join("\n") },
     });
-    if (candidate.status === "pending") {
-      const value = JSON.stringify({ key: proposalKey(proposal.channelId, proposal.sourceTs), index: candidate.index });
+    if (candidate.status === "registered") {
+      blocks.push({
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "編集" },
+            action_id: ACTION_EDIT,
+            value,
+          },
+          {
+            type: "button",
+            style: "danger",
+            text: { type: "plain_text", text: "取り消し" },
+            action_id: ACTION_CANCEL,
+            value,
+            confirm: {
+              title: { type: "plain_text", text: "タスクの取り消し" },
+              text: { type: "plain_text", text: "正本タスクボードから削除します。よろしいですか？" },
+              confirm: { type: "plain_text", text: "削除する" },
+              deny: { type: "plain_text", text: "やめる" },
+            },
+          },
+        ],
+      });
+    } else if (candidate.status === "pending") {
       blocks.push({
         type: "actions",
         elements: [
           {
             type: "button",
             style: "primary",
-            text: { type: "plain_text", text: "承認して登録" },
-            action_id: ACTION_APPROVE,
-            value,
-          },
-          {
-            type: "button",
-            text: { type: "plain_text", text: "却下" },
-            action_id: ACTION_REJECT,
+            text: { type: "plain_text", text: "登録を再試行" },
+            action_id: ACTION_RETRY,
             value,
           },
         ],
@@ -213,7 +259,7 @@ export function buildProposalBlocks(proposal: StoredProposal): unknown[] {
     }
   }
 
-  if (pending.length > 1) {
+  if (registered.length > 1) {
     const value = JSON.stringify({ key: proposalKey(proposal.channelId, proposal.sourceTs) });
     blocks.push({ type: "divider" });
     blocks.push({
@@ -221,16 +267,16 @@ export function buildProposalBlocks(proposal: StoredProposal): unknown[] {
       elements: [
         {
           type: "button",
-          style: "primary",
-          text: { type: "plain_text", text: `全承認（${pending.length}件）` },
-          action_id: ACTION_APPROVE_ALL,
+          style: "danger",
+          text: { type: "plain_text", text: `全取り消し（${registered.length}件）` },
+          action_id: ACTION_CANCEL_ALL,
           value,
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "全却下" },
-          action_id: ACTION_REJECT_ALL,
-          value,
+          confirm: {
+            title: { type: "plain_text", text: "全タスクの取り消し" },
+            text: { type: "plain_text", text: "登録済みの全タスクを正本から削除します。よろしいですか？" },
+            confirm: { type: "plain_text", text: "全て削除する" },
+            deny: { type: "plain_text", text: "やめる" },
+          },
         },
       ],
     });
@@ -241,7 +287,75 @@ export function buildProposalBlocks(proposal: StoredProposal): unknown[] {
 
 /** Plain-text fallback for notifications (Slack requires text alongside blocks). */
 export function proposalFallbackText(proposal: StoredProposal): string {
-  return `議事録からのタスク候補 ${proposal.candidates.length}件`;
+  return `議事録から${proposal.candidates.length}件のタスクを登録しました`;
+}
+
+/** Builds the edit modal view. People list may be empty (Graph unavailable). */
+export function buildEditModalView(
+  proposal: StoredProposal,
+  candidate: StoredCandidate,
+  people: GraphPerson[],
+): Record<string, unknown> {
+  const options = [
+    { text: { type: "plain_text", text: "（担当なし）" }, value: ASSIGNEE_NONE },
+    ...people.slice(0, 99).map((person) => ({
+      text: { type: "plain_text", text: person.name.slice(0, 75) },
+      value: person.id,
+    })),
+  ];
+  const initialOption = candidate.assigneePersonId
+    ? options.find((o) => o.value === candidate.assigneePersonId)
+    : undefined;
+  const blocks: unknown[] = [
+    {
+      type: "input",
+      block_id: "title",
+      label: { type: "plain_text", text: "タイトル" },
+      element: {
+        type: "plain_text_input",
+        action_id: "value",
+        initial_value: candidate.title,
+        max_length: 120,
+      },
+    },
+    {
+      type: "input",
+      block_id: "due",
+      optional: true,
+      label: { type: "plain_text", text: "期限" },
+      element: {
+        type: "datepicker",
+        action_id: "value",
+        ...(candidate.due ? { initial_date: candidate.due } : {}),
+      },
+    },
+  ];
+  if (options.length > 1) {
+    blocks.push({
+      type: "input",
+      block_id: "assignee",
+      optional: true,
+      label: { type: "plain_text", text: "担当者（Graph SSOT）" },
+      element: {
+        type: "static_select",
+        action_id: "value",
+        options,
+        ...(initialOption ? { initial_option: initialOption } : {}),
+      },
+    });
+  }
+  return {
+    type: "modal",
+    callback_id: EDIT_VIEW_CALLBACK_ID,
+    private_metadata: JSON.stringify({
+      key: proposalKey(proposal.channelId, proposal.sourceTs),
+      index: candidate.index,
+    }),
+    title: { type: "plain_text", text: "タスクを編集" },
+    submit: { type: "plain_text", text: "保存" },
+    close: { type: "plain_text", text: "キャンセル" },
+    blocks,
+  };
 }
 
 interface SlackClientLike {
@@ -250,6 +364,7 @@ interface SlackClientLike {
 
 export interface MeetingTaskProposalDeps {
   taskClientFactory?: () => BrainbaseTaskClient;
+  peopleClient?: GraphPeopleClient;
   extractImpl?: (
     transcript: string,
     projectName?: string,
@@ -268,6 +383,7 @@ export class MeetingTaskProposalNotifier {
   private readonly extractOptions: ExtractMeetingTasksOptions;
   private readonly extractImpl: NonNullable<MeetingTaskProposalDeps["extractImpl"]>;
   private readonly taskClientFactory: () => BrainbaseTaskClient;
+  private readonly peopleClient: GraphPeopleClient;
   private readonly enabled: boolean;
   private readonly bootTimeMs = Date.now();
   private active = false;
@@ -288,6 +404,7 @@ export class MeetingTaskProposalNotifier {
     };
     this.extractImpl = deps.extractImpl ?? extractMeetingTaskCandidates;
     this.taskClientFactory = deps.taskClientFactory ?? (() => new BrainbaseTaskClient());
+    this.peopleClient = deps.peopleClient ?? new GraphPeopleClient();
     this.enabled = config.enabled === true;
   }
 
@@ -317,7 +434,7 @@ export class MeetingTaskProposalNotifier {
 
     this.active = true;
     logger.info(
-      `[meeting-task-proposal] starting (channels=${[...this.channels].join(",")})`,
+      `[meeting-task-proposal] starting (channels=${[...this.channels].join(",")}, mode=register-first)`,
     );
 
     this.app.message(async ({ event }) => {
@@ -328,29 +445,29 @@ export class MeetingTaskProposalNotifier {
       }
     });
 
-    const single = async ({ ack, body, action }: any, approve: boolean) => {
+    const wrap = (fn: (body: any, action: any) => Promise<void>) => async ({ ack, body, action }: any) => {
       await ack();
-      await this.handleSingleAction(body, action, approve).catch((err) => {
+      await fn(body, action).catch((err) => {
         logger.warn(`[meeting-task-proposal] action handling failed: ${err}`);
       });
     };
-    const bulk = async ({ ack, body, action }: any, approve: boolean) => {
+    this.app.action(ACTION_CANCEL, wrap((body, action) => this.handleCancelAction(body, action)));
+    this.app.action(ACTION_RETRY, wrap((body, action) => this.handleRetryAction(body, action)));
+    this.app.action(ACTION_CANCEL_ALL, wrap((body, action) => this.handleCancelAllAction(body, action)));
+    this.app.action(ACTION_EDIT, wrap((body, action) => this.handleEditOpenAction(body, action)));
+    this.app.view(EDIT_VIEW_CALLBACK_ID, async ({ ack, body, view }: any) => {
       await ack();
-      await this.handleBulkAction(body, action, approve).catch((err) => {
-        logger.warn(`[meeting-task-proposal] bulk action handling failed: ${err}`);
+      await this.handleEditSubmit(body, view).catch((err) => {
+        logger.warn(`[meeting-task-proposal] edit submit failed: ${err}`);
       });
-    };
-    this.app.action(ACTION_APPROVE, (args: any) => single(args, true));
-    this.app.action(ACTION_REJECT, (args: any) => single(args, false));
-    this.app.action(ACTION_APPROVE_ALL, (args: any) => bulk(args, true));
-    this.app.action(ACTION_REJECT_ALL, (args: any) => bulk(args, false));
+    });
   }
 
   stop(): void {
     this.active = false;
   }
 
-  /** Exposed for tests: detection gates + extraction + proposal posting. */
+  /** Exposed for tests: detection gates + extraction + default registration. */
   async maybeHandleMessage(event: Record<string, unknown>, now: number = Date.now()): Promise<void> {
     if (!this.active) return;
     const channel = event.channel as string | undefined;
@@ -375,7 +492,7 @@ export class MeetingTaskProposalNotifier {
     const key = proposalKey(channel, ts);
     if (state[key]) {
       if (pruned) saveState(state);
-      return; // already proposed for this message (Slack retry)
+      return; // already handled for this message (Slack retry)
     }
 
     const candidates = await this.extractImpl(text, undefined, this.extractOptions);
@@ -394,6 +511,25 @@ export class MeetingTaskProposalNotifier {
       candidates: candidates.map((candidate, index) => ({ ...candidate, index, status: "pending" })),
     };
 
+    // Best-effort Graph assignee resolution — [] when Graph is unavailable.
+    const people = await this.peopleClient.listPeople();
+    let registeredCount = 0;
+    for (const candidate of proposal.candidates) {
+      const person = candidate.assignee !== "未定" ? resolvePersonByName(people, candidate.assignee) : null;
+      if (person) {
+        candidate.assigneePersonId = person.id;
+        candidate.assigneePersonName = person.name;
+      }
+      try {
+        await this.registerCandidate(proposal, candidate);
+        registeredCount++;
+      } catch (err) {
+        logger.warn(
+          `[meeting-task-proposal] registration failed for ${key}#${candidate.index}: ${err}`,
+        );
+      }
+    }
+
     const result = await this.client.apiCall("chat.postMessage", {
       channel,
       thread_ts: (event.thread_ts as string) ?? ts,
@@ -403,13 +539,15 @@ export class MeetingTaskProposalNotifier {
     });
     proposal.proposalTs = (result.ts as string) ?? "";
 
-    // Re-load: the extraction + postMessage awaits above could interleave
-    // with a button handler writing the file.
+    // Re-load: the awaits above could interleave with a button handler
+    // writing the file.
     const fresh = loadState();
     pruneExpired(fresh, now);
     fresh[key] = proposal;
     saveState(fresh);
-    logger.info(`[meeting-task-proposal] proposed ${candidates.length} candidate(s) for ${key}`);
+    logger.info(
+      `[meeting-task-proposal] registered ${registeredCount}/${candidates.length} task(s) for ${key}`,
+    );
   }
 
   private parseActionValue(action: any): { key: string; index?: number } | null {
@@ -422,7 +560,7 @@ export class MeetingTaskProposalNotifier {
     return null;
   }
 
-  private async denyOrExpire(body: any, message: string): Promise<void> {
+  private async notifyEphemeral(body: any, message: string): Promise<void> {
     const channel = body?.channel?.id ?? body?.container?.channel_id;
     const user = body?.user?.id;
     if (!channel || !user) return;
@@ -435,22 +573,21 @@ export class MeetingTaskProposalNotifier {
 
   private async loadAuthorizedProposal(
     body: any,
-    action: any,
+    value: { key: string } | null,
   ): Promise<{ state: PersistedState; key: string; proposal: StoredProposal } | null> {
-    const value = this.parseActionValue(action);
     const userId = body?.user?.id as string | undefined;
     const channelId = body?.channel?.id ?? body?.container?.channel_id;
     if (!value || !userId) return null;
     if (!(await this.approvers.canApprove(userId, channelId ?? ""))) {
       logger.warn(`[meeting-task-proposal] unauthorized action from ${userId}`);
-      await this.denyOrExpire(body, "この操作の権限がありません。");
+      await this.notifyEphemeral(body, "この操作の権限がありません。");
       return null;
     }
     const state = loadState();
     pruneExpired(state, Date.now());
     const proposal = state[value.key];
     if (!proposal) {
-      await this.denyOrExpire(body, "この提案は期限切れです（72時間）。議事録を再投稿してください。");
+      await this.notifyEphemeral(body, "この提案は期限切れです（72時間）。タスクボード上で直接操作してください。");
       return null;
     }
     return { state, key: value.key, proposal };
@@ -458,19 +595,30 @@ export class MeetingTaskProposalNotifier {
 
   private async registerCandidate(proposal: StoredProposal, candidate: StoredCandidate): Promise<void> {
     const client = this.taskClientFactory();
-    const descriptionParts = [candidate.context, `担当（議事録記載）: ${candidate.assignee}`, `出典: 議事録 ${proposal.channelId}/${proposal.sourceTs}`];
+    const descriptionParts = [
+      candidate.context,
+      `担当（議事録記載）: ${candidate.assignee}`,
+      `出典: 議事録 ${proposal.channelId}/${proposal.sourceTs}`,
+    ];
     const task = await client.createTask(
       {
         title: candidate.title,
         description: descriptionParts.filter(Boolean).join("\n"),
-        // assignee_person_id is intentionally omitted: it requires Graph
-        // person resolution which the pilot operator id does not satisfy.
+        ...(candidate.assigneePersonId ? { assignee_person_id: candidate.assigneePersonId } : {}),
         ...(candidate.due ? { due_at: `${candidate.due}T00:00:00+09:00` } : {}),
       },
       candidateIdempotencyKey(proposal, candidate.index),
     );
-    candidate.status = "approved";
+    candidate.status = "registered";
     candidate.taskId = task.id;
+  }
+
+  private async deleteCandidateTask(candidate: StoredCandidate): Promise<void> {
+    if (!candidate.taskId) return;
+    const client = this.taskClientFactory();
+    const task = await client.getTask(candidate.taskId);
+    await client.deleteTask(candidate.taskId, task.version);
+    candidate.status = "removed";
   }
 
   private async updateProposalMessage(proposal: StoredProposal): Promise<void> {
@@ -484,54 +632,144 @@ export class MeetingTaskProposalNotifier {
   }
 
   /** Exposed for tests. */
-  async handleSingleAction(body: any, action: any, approve: boolean): Promise<void> {
-    const loaded = await this.loadAuthorizedProposal(body, action);
+  async handleCancelAction(body: any, action: any): Promise<void> {
+    const value = this.parseActionValue(action);
+    const loaded = await this.loadAuthorizedProposal(body, value);
     if (!loaded) return;
     const { state, proposal } = loaded;
-    const value = this.parseActionValue(action)!;
-    const candidate = proposal.candidates.find((c) => c.index === value.index);
-    if (!candidate || candidate.status !== "pending") return;
-
-    if (approve) {
-      try {
-        await this.registerCandidate(proposal, candidate);
-      } catch (err) {
-        logger.warn(`[meeting-task-proposal] task registration failed: ${err}`);
-        await this.denyOrExpire(body, `タスク登録に失敗しました: ${err}。もう一度押すと再試行します（二重登録はされません）。`);
-        return; // stays pending — retry is safe thanks to the idempotency key
-      }
-    } else {
-      candidate.status = "rejected";
+    const candidate = proposal.candidates.find((c) => c.index === value!.index);
+    if (!candidate || candidate.status !== "registered") return;
+    try {
+      await this.deleteCandidateTask(candidate);
+    } catch (err) {
+      logger.warn(`[meeting-task-proposal] task deletion failed: ${err}`);
+      await this.notifyEphemeral(body, `タスクの取り消しに失敗しました: ${err}`);
+      return;
     }
     saveState(state);
     await this.updateProposalMessage(proposal);
   }
 
   /** Exposed for tests. */
-  async handleBulkAction(body: any, action: any, approve: boolean): Promise<void> {
-    const loaded = await this.loadAuthorizedProposal(body, action);
+  async handleRetryAction(body: any, action: any): Promise<void> {
+    const value = this.parseActionValue(action);
+    const loaded = await this.loadAuthorizedProposal(body, value);
+    if (!loaded) return;
+    const { state, proposal } = loaded;
+    const candidate = proposal.candidates.find((c) => c.index === value!.index);
+    if (!candidate || candidate.status !== "pending") return;
+    try {
+      await this.registerCandidate(proposal, candidate);
+    } catch (err) {
+      logger.warn(`[meeting-task-proposal] retry registration failed: ${err}`);
+      await this.notifyEphemeral(body, `タスク登録に失敗しました: ${err}。もう一度押すと再試行します（二重登録はされません）。`);
+      return;
+    }
+    saveState(state);
+    await this.updateProposalMessage(proposal);
+  }
+
+  /** Exposed for tests. */
+  async handleCancelAllAction(body: any, action: any): Promise<void> {
+    const value = this.parseActionValue(action);
+    const loaded = await this.loadAuthorizedProposal(body, value);
     if (!loaded) return;
     const { state, proposal } = loaded;
     const failures: string[] = [];
     for (const candidate of proposal.candidates) {
-      if (candidate.status !== "pending") continue;
-      if (approve) {
-        try {
-          await this.registerCandidate(proposal, candidate);
-        } catch (err) {
-          failures.push(`${candidate.title}: ${err}`);
-        }
-      } else {
-        candidate.status = "rejected";
+      if (candidate.status !== "registered") continue;
+      try {
+        await this.deleteCandidateTask(candidate);
+      } catch (err) {
+        failures.push(`${candidate.title}: ${err}`);
       }
     }
     saveState(state);
     await this.updateProposalMessage(proposal);
     if (failures.length > 0) {
-      await this.denyOrExpire(
+      await this.notifyEphemeral(
         body,
-        `一部のタスク登録に失敗しました（${failures.length}件）。残りは再度「全承認」で再試行できます。\n${failures.join("\n")}`,
+        `一部のタスク取り消しに失敗しました（${failures.length}件）。\n${failures.join("\n")}`,
       );
     }
+  }
+
+  /** Exposed for tests. Opens the edit modal. */
+  async handleEditOpenAction(body: any, action: any): Promise<void> {
+    const value = this.parseActionValue(action);
+    const loaded = await this.loadAuthorizedProposal(body, value);
+    if (!loaded) return;
+    const { proposal } = loaded;
+    const candidate = proposal.candidates.find((c) => c.index === value!.index);
+    if (!candidate || candidate.status !== "registered") return;
+    const triggerId = body?.trigger_id as string | undefined;
+    if (!triggerId) return;
+    const people = await this.peopleClient.listPeople();
+    await this.client.apiCall("views.open", {
+      trigger_id: triggerId,
+      view: buildEditModalView(proposal, candidate, people),
+    });
+  }
+
+  /** Exposed for tests. Applies the edit modal submission to the canonical task. */
+  async handleEditSubmit(body: any, view: any): Promise<void> {
+    let meta: { key: string; index?: number } | null = null;
+    try {
+      meta = JSON.parse(view?.private_metadata ?? "");
+    } catch {
+      return;
+    }
+    if (!meta || typeof meta.key !== "string") return;
+    const userId = body?.user?.id as string | undefined;
+    if (!userId || !(await this.approvers.canApprove(userId, ""))) {
+      logger.warn(`[meeting-task-proposal] unauthorized edit submit from ${userId}`);
+      return;
+    }
+    const state = loadState();
+    pruneExpired(state, Date.now());
+    const proposal = state[meta.key];
+    const candidate = proposal?.candidates.find((c) => c.index === meta!.index);
+    if (!proposal || !candidate || candidate.status !== "registered" || !candidate.taskId) return;
+
+    const values = view?.state?.values ?? {};
+    const newTitle = (values.title?.value?.value as string | undefined)?.trim();
+    const newDue = (values.due?.value?.selected_date as string | undefined) || null;
+    const assigneeSelection = values.assignee?.value?.selected_option?.value as string | undefined;
+
+    const client = this.taskClientFactory();
+    try {
+      const current = await client.getTask(candidate.taskId);
+      await client.updateTask(candidate.taskId, {
+        expected_version: current.version,
+        ...(newTitle ? { title: newTitle } : {}),
+        ...(newDue ? { due_at: `${newDue}T00:00:00+09:00` } : {}),
+        ...(assigneeSelection === ASSIGNEE_NONE
+          ? { assignee_person_id: null }
+          : assigneeSelection
+            ? { assignee_person_id: assigneeSelection }
+            : {}),
+      });
+    } catch (err) {
+      logger.warn(`[meeting-task-proposal] task update failed: ${err}`);
+      await this.notifyEphemeral(
+        { user: { id: userId }, channel: { id: proposal.channelId } },
+        `タスクの更新に失敗しました: ${err}`,
+      );
+      return;
+    }
+
+    if (newTitle) candidate.title = newTitle;
+    candidate.due = newDue;
+    if (assigneeSelection === ASSIGNEE_NONE) {
+      candidate.assigneePersonId = undefined;
+      candidate.assigneePersonName = undefined;
+    } else if (assigneeSelection) {
+      candidate.assigneePersonId = assigneeSelection;
+      const people = await this.peopleClient.listPeople();
+      candidate.assigneePersonName =
+        people.find((p) => p.id === assigneeSelection)?.name ?? candidate.assigneePersonName;
+    }
+    saveState(state);
+    await this.updateProposalMessage(proposal);
   }
 }
