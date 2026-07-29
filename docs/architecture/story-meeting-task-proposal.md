@@ -127,4 +127,9 @@ meetingTaskProposal:
 
 ## Done evidence
 
-実装後に追記する: unit test / typecheck / pilot E2E（候補提示→承認→正本実在確認）。
+- `npx tsc --noEmit` 通過、`npx vitest run` 78 files / 827 tests 全通過（新規23件）。
+- pilot E2E成立(2026-07-30): mana bot投稿のテスト議事録
+  （C0A2L9FEKEJ ts=1785338593.726489、別bot投稿への反応を実証）→ 2候補を抽出・
+  スレッドに提案（共有事項は正しく除外、担当・期限も正確）→ operator承認タップ →
+  companion API登録 → bb.unson.jp正本でGETし2タスクの実在・期限
+  （2026-08-01 / 2026-08-04 JST）を確認。Interactivityは既存Slack App設定で有効だった。

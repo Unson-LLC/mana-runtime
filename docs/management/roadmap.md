@@ -44,9 +44,9 @@
 - **人間確認ステップの型化**: 承認待ち→Slackで選択肢カード提示→承認で続行、のhuman-in-the-loopプリミティブを内蔵
 - **ワークフロー定義の量産フォーマット**: 1業務=1定義（トリガー・placement・手順・確認ポイント）。第1号は月次経理
 
-### 4. 会議→タスク→リマインドの動線完結
+### 4. 会議→タスク→リマインドの動線完結 — ✅完了(2026-07-30)
 
-- **議事録→タスク自動抽出→ワンタップ登録**: 会議後にSlackへ議事録とタスク候補が届き、「登録して」で正本入り
+- **議事録→タスク自動抽出→ワンタップ登録** — ✅完了(2026-07-30): mana `meeting-flow-integration.js`を設計の正に`MeetingTaskProposalNotifier`をmana-runtimeへ移植（PR #18、設計は`docs/architecture/story-meeting-task-proposal.md`）。議事録メッセージ検知→LLM抽出→Slack Blocks提案→承認ボタンでcompanion APIへ冪等登録（キー`meeting:<ch>:<ts>:<index>`）。pilot E2Eで mana bot投稿の議事録→2候補提示→承認→bb.unson.jp正本実在まで確認済み。承認者は`ApproverResolver`で抽象化（柱2のGraph RACI解決の差し替え点）。manaのLambda版承認フローは凍結対象（発火条件が.txtアップロードで本実装と重ならないことを確認済み。実チャンネル展開時はmana botを対象チャンネルからleave）
 - **期限リマインド**: canonical storeを定期クエリし、期限接近・超過をチャンネルへ通知（cron + Canonical Task API）
 - **Canvasミラーの運用定着**: タスクCanvasを「見える正本ビュー」として磨く
 
@@ -81,3 +81,4 @@
 ### 進捗記録
 
 - 2026-07-29: 柱4第1弾の期限リマインダー（`TaskReminderNotifier`）実装・pilot稼働・実投稿確認（PR #13）。柱4の残りは議事録→タスク候補提示→ワンタップ登録のmana-runtime移植（設計はmana `meeting-flow-integration.js` を参照実装として移す。manaのLambda版は移行後に凍結）
+- 2026-07-30: 柱4完了。議事録→タスク候補提示→ワンタップ登録を移植（PR #18）、pilot E2E成立（候補提示→承認→正本実在確認）。Canonical Task `mana-roadmap-2026-07-29-pillar4-task-loop` をcompletedへ遷移
