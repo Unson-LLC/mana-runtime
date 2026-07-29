@@ -61,10 +61,10 @@
 
 ## 依存インフラの脱属人化（brainbase側、2026-07-29追記）
 
-柱4以降をチーム運用に載せるための前提。現状、Canonical Taskの単一writerは佐藤ローカルMacのlaunchd `com.brainbase.ui`（port 31013）で、pilotは`https://bb.brain-base.work`（Cloudflareトンネル経由で同Macに着地）へ書いている。single-writer設計（writer lease・readiness・冪等・監査・他所fail-closed）は正しく維持し、**leaseの持ち主だけをサーバーへ移す**。
+柱4以降をチーム運用に載せるための前提。着手時点では、Canonical Taskの**データ本体（MacローカルHomebrew PostgreSQL）とwriter**（launchd `com.brainbase.ui`、port 31013）の両方が佐藤ローカルMacにあり、pilotは`https://bb.brain-base.work`（Cloudflareトンネル経由で同Macに着地）へ書いていた。single-writer設計（writer lease・readiness・冪等・監査・他所fail-closed）は正しく維持し、置き場所だけをサーバーへ移す。
 
-1. **writer移設**: サーバー常駐のcompanion APIインスタンスへwriter leaseを移譲（runbook: brainbase `docs/runbooks/canonical-task-cutover.md`）。pilotの`BRAINBASE_TASK_API_BASE_URL`をサーバーへ向け直し、Macのトンネルを本番経路から外す
-2. **Brainbase MCPへのtask mutationツール追加**: create/update/transitionを公開（deleteは非公開のまま）し、机上エージェントの正規登録経路を作る。サービスごとの`bbsvc_`トークン正規発行もあわせて整理
+1. **writer移設** — ✅完了(2026-07-29): データ本体+writer leaseをLightsail（bb.unson.jp、PostgreSQL 16.14）へ移設。pilotの`BRAINBASE_TASK_API_BASE_URL`は`https://bb.unson.jp`へ切替済み、Mac側31013のmutationは`writer_migrated_to_lightsail_20260729`でfail-closed。移設後のSlack経由E2E作成も実証済み。**残作業**: Macのcloudflared ingressから`bb.brain-base.work`を外す（同一トンネルが`line.mana-bot.win`を担ぐため全停止は不可）、E2E検証行の削除
+2. **Brainbase MCPへのtask mutationツール追加**: create/update/transitionを公開（deleteは非公開のまま）し、机上エージェントの正規登録経路を作る。サーバー側は`BRAINBASE_SERVICE_TOKEN_SECRET`が正規分離済みなので、サービスごとの`bbsvc_`トークン発行（`svc_mana_runtime`等）をこの経路に載せる
 
 ## 優先順位
 
