@@ -4,15 +4,22 @@ import os from "node:os";
 import type { McpGlobalConfig, McpServerConfig, McpServerUrlConfig, Employee } from "../shared/types.js";
 import { JINN_HOME } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
+import { getSessionDelegationToken } from "../sessions/delegation-auth.js";
+import { emitSecurityEvent } from "../shared/security-events.js";
 
 export interface ResolvedMcpConfig {
   mcpServers: Record<string, McpServerConfig>;
 }
 
 export interface McpSessionContext {
+  sessionId?: string;
   connector?: string;
   channel?: string;
   thread?: string;
+  placementId?: string;
+  configRevision?: string;
+  allowedGatewayTools?: string[];
+  allowedDeliveryTargets?: Array<{ connector: string; channel: string }>;
 }
 
 /**
@@ -23,6 +30,7 @@ export function resolveMcpServers(
   globalMcp: McpGlobalConfig | undefined,
   employee?: Employee,
   sessionContext?: McpSessionContext,
+  placementMcp?: false | string[],
 ): ResolvedMcpConfig {
   const servers: Record<string, McpServerConfig> = {};
 
@@ -32,10 +40,15 @@ export function resolveMcpServers(
   const available = buildAvailableServers(globalMcp, sessionContext);
 
   // Determine which servers this employee gets
-  const employeeMcp = employee?.mcp;
+  const employeeMcp = placementMcp === undefined ? employee?.mcp : placementMcp;
 
   if (employeeMcp === false) {
     // Employee explicitly opted out of all MCP servers
+    for (const name of Object.keys(available)) {
+      emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
+        connector: sessionContext?.connector, channelId: sessionContext?.channel, placementId: sessionContext?.placementId,
+        configRevision: sessionContext?.configRevision, capability: "mcp", target: name });
+    }
     return { mcpServers: {} };
   }
 
@@ -45,7 +58,17 @@ export function resolveMcpServers(
       if (available[name]) {
         servers[name] = available[name];
       } else {
+        emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
+          connector: sessionContext?.connector, channelId: sessionContext?.channel, placementId: sessionContext?.placementId,
+          configRevision: sessionContext?.configRevision, capability: "mcp", target: name });
         logger.warn(`Employee ${employee?.name} requests MCP server "${name}" but it's not configured`);
+      }
+    }
+    for (const name of Object.keys(available)) {
+      if (!employeeMcp.includes(name)) {
+        emitSecurityEvent({ event: "capability", reason: "mcp_denied", sessionId: sessionContext?.sessionId,
+          connector: sessionContext?.connector, channelId: sessionContext?.channel, placementId: sessionContext?.placementId,
+          configRevision: sessionContext?.configRevision, capability: "mcp", target: name });
       }
     }
   } else {
@@ -121,9 +144,19 @@ function buildAvailableServers(config: McpGlobalConfig, sessionContext?: McpSess
       args: [scriptPath],
       env: {
         JINN_GATEWAY_URL: `http://127.0.0.1:${process.env.JINN_PORT || "7777"}`,
+        ...(sessionContext?.sessionId ? { JINN_CURRENT_SESSION_ID: sessionContext.sessionId } : {}),
+        ...(sessionContext?.sessionId
+          ? { JINN_SESSION_DELEGATION_TOKEN: getSessionDelegationToken(sessionContext.sessionId) }
+          : {}),
         ...(sessionContext?.connector ? { JINN_CURRENT_CONNECTOR: sessionContext.connector } : {}),
         ...(sessionContext?.channel ? { JINN_CURRENT_CHANNEL: sessionContext.channel } : {}),
         ...(sessionContext?.thread ? { JINN_CURRENT_THREAD: sessionContext.thread } : {}),
+        ...(sessionContext?.allowedGatewayTools
+          ? { JINN_ALLOWED_GATEWAY_TOOLS: JSON.stringify(sessionContext.allowedGatewayTools) }
+          : {}),
+        ...(sessionContext?.allowedDeliveryTargets
+          ? { JINN_ALLOWED_DELIVERY_TARGETS: JSON.stringify(sessionContext.allowedDeliveryTargets) }
+          : {}),
       },
     };
   }
@@ -161,8 +194,10 @@ function buildAvailableServers(config: McpGlobalConfig, sessionContext?: McpSess
 export function writeMcpConfigFile(config: ResolvedMcpConfig, sessionId: string): string {
   const tmpDir = path.join(JINN_HOME, "tmp", "mcp");
   fs.mkdirSync(tmpDir, { recursive: true });
+  fs.chmodSync(tmpDir, 0o700);
   const filePath = path.join(tmpDir, `${sessionId}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
+  fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { mode: 0o600 });
+  fs.chmodSync(filePath, 0o600);
   return filePath;
 }
 

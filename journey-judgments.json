@@ -1,0 +1,10 @@
+{
+  "open_questions": [
+    {
+      "id": "gap:discover",
+      "status": "deferred",
+      "reason": "Placement Profile is an internal execution-boundary enabler, not the user-discovery step; discovery belongs to a separate product Story."
+    }
+  ],
+  "next_slice": "multi-channel-team-pilot"
+}

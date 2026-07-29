@@ -5,9 +5,11 @@ import type {
   Engine,
   IncomingMessage,
   JinnConfig,
+  PlacementProfile,
   Session,
   Target,
 } from "../shared/types.js";
+import { isInterruptibleEngine } from "../shared/types.js";
 import {
   accumulateSessionCost,
   createSession,
@@ -34,12 +36,17 @@ import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
 import { checkBudget } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
+import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
+import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
+import { placementConfigRevision } from "../shared/security-events.js";
+import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
 export interface RouteOptions {
   employee?: Employee;
   engine?: string;
   model?: string;
   title?: string;
+  placement?: PlacementProfile;
   criticalRouting?: {
     enabled?: boolean;
     reviewerEmployee?: string;
@@ -52,7 +59,7 @@ export interface RouteOptions {
  * command and NOT wrap it with conversation context — handleCommand() matches
  * them by exact string / prefix, so any preamble breaks the parsing.
  */
-export const SLASH_COMMANDS = ["/new", "/status", "/model", "/doctor", "/cron"] as const;
+export const SLASH_COMMANDS = ["/new", "/status", "/model", "/doctor", "/cron", "/develop"] as const;
 
 /** True when `text` begins with a control slash command (see {@link SLASH_COMMANDS}). */
 export function startsWithSlashCommand(text: string): boolean {
@@ -124,6 +131,12 @@ function mergeTransportMeta(
   return merged as any;
 }
 
+function placementTransportMeta(meta: Session["transportMeta"]): Session["transportMeta"] {
+  const clean = { ...((meta || {}) as Record<string, unknown>) };
+  for (const key of ["engineOverride", "engineSessions", "claudeSyncSince"]) delete clean[key];
+  return clean as Session["transportMeta"];
+}
+
 export class SessionManager {
   private config: JinnConfig;
   private engines: Map<string, Engine>;
@@ -131,6 +144,7 @@ export class SessionManager {
   private queue = new SessionQueue();
   private connectorProvider: () => Map<string, Connector> = () => new Map();
   private criticalDispatches = new Set<string>();
+  private developmentRunning = false;
 
   constructor(
     config: JinnConfig,
@@ -187,9 +201,13 @@ export class SessionManager {
         sessionKey: msg.sessionKey,
         replyContext: msg.replyContext,
         messageId: msg.messageId,
-        transportMeta: msg.transportMeta,
+        transportMeta: {
+          ...(msg.transportMeta ?? {}),
+          ...(opts.placement ? { placementId: opts.placement.id } : {}),
+        },
         employee: opts.employee?.name ?? undefined,
         model: opts.model ?? opts.employee?.model ?? undefined,
+        effortLevel: opts.employee?.effortLevel ?? undefined,
         title: opts.title,
         prompt: msg.text,
         portalName: this.config.portal?.portalName,
@@ -199,12 +217,32 @@ export class SessionManager {
         (opts.employee ? ` (employee: ${opts.employee.name})` : ""),
       );
     } else {
-      const mergedMeta = mergeTransportMeta(session.transportMeta, msg.transportMeta);
+      let mergedMeta = mergeTransportMeta(session.transportMeta, {
+        ...(msg.transportMeta ?? {}),
+        ...(opts.placement ? { placementId: opts.placement.id } : {}),
+      });
+      const placementEngine = opts.engine ?? opts.employee?.engine ?? this.config.engines.default;
+      const placementModel = opts.model ?? opts.employee?.model ?? null;
+      const placementEmployee = opts.employee?.name ?? null;
+      const placementEffort = opts.employee?.effortLevel ?? null;
+      if (opts.placement) {
+        const priorEngine = this.engines.get(session.engine);
+        if (priorEngine && isInterruptibleEngine(priorEngine)) {
+          priorEngine.kill(session.id, "placement authority rebind");
+        }
+        mergedMeta = placementTransportMeta(mergedMeta);
+      }
       session = updateSession(session.id, {
         replyContext: msg.replyContext,
         messageId: msg.messageId ?? null,
         transportMeta: mergedMeta,
-        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.placement ? {
+          engine: placementEngine,
+          engineSessionId: null,
+          employee: placementEmployee,
+          model: placementModel,
+          effortLevel: placementEffort,
+        } : opts.model ? { model: opts.model } : {}),
       }) ?? session;
     }
 
@@ -257,7 +295,10 @@ export class SessionManager {
           `http://127.0.0.1:${this.config.gateway.port}/api/sessions/${session.id}/children`,
           {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(session.id),
+            },
             body: JSON.stringify({
               employee: reviewerEmployee,
               prompt: buildCriticalReviewPrompt(msg.text),
@@ -335,7 +376,7 @@ export class SessionManager {
     // inbound message enqueues at the current generation and runs even if the session
     // was previously /stop- or watchdog-reset, so no explicit un-cancel is needed here.
     await this.queue.enqueue(msg.sessionKey, () =>
-      this.runSession(session!, msg, attachmentPaths, connector, target, opts.employee),
+      this.runSession(session!, msg, attachmentPaths, connector, target, opts.employee, opts.placement),
     );
 
     return { sessionId };
@@ -450,6 +491,7 @@ export class SessionManager {
     connector: Connector,
     target: Target,
     employee?: Employee,
+    placement?: PlacementProfile,
   ): Promise<void> {
     const engine = this.engines.get(session.engine);
     if (!engine) {
@@ -506,6 +548,7 @@ export class SessionManager {
         thread: msg.thread,
         user: msg.user,
         employee,
+        placement,
         connectors: this.connectorNames,
         config: this.config,
         sessionId: session.id,
@@ -527,15 +570,24 @@ export class SessionManager {
           : this.config.engines.claude;
       if (session.engine === "claude") {
         const mcpConfig = resolveMcpServers(this.config.mcp, employee, {
+          sessionId: session.id,
           connector: connector.name,
           channel: target.channel,
           thread: target.thread || target.messageTs,
-        });
-        if (Object.keys(mcpConfig.mcpServers).length > 0) {
+          placementId: placement?.id,
+          configRevision: placementConfigRevision(this.config.placements),
+          allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
+          allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
+        }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
+        // A Placement must always receive an explicit config, including an
+        // empty one, so --strict-mcp-config can exclude user/global MCPs.
+        if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
           mcpConfigPath = writeMcpConfigFile(mcpConfig, session.id);
         }
       }
 
+      // Placement browser access is supplied by its allowlisted MCP server.
+      // Claude's separate Chrome integration is outside that allowlist.
       const effortLevel = resolveEffort(
         engineConfig,
         session,
@@ -635,7 +687,7 @@ export class SessionManager {
         }
       }
 
-      let result = await engine.run({
+      let result = await runPlacementBoundEngine(engine, placement, {
         prompt: promptToRun,
         resumeSessionId: session.engineSessionId ?? undefined,
         systemPrompt,
@@ -708,7 +760,7 @@ export class SessionManager {
         // message that happens to land on a stale resume ID is silently lost
         // (the raw engine error propagates back instead of a real answer).
         logger.info(`Retrying session ${session.id} with fresh engine session after dead-session`);
-        result = await engine.run({
+        result = await runPlacementBoundEngine(engine, placement, {
           prompt: promptToRun,
           resumeSessionId: undefined,
           systemPrompt,
@@ -762,7 +814,7 @@ export class SessionManager {
             await new Promise((r) => setTimeout(r, Math.min(20_000, delayMs - waited)));
           }
           const resumeId = result.sessionId?.trim() || session.engineSessionId || undefined;
-          result = await engine.run({
+          result = await runPlacementBoundEngine(engine, placement, {
             prompt:
               "The previous response was interrupted by a temporary Anthropic API server error. " +
               "The conversation history up to that point is intact. Continue and complete the original request now. " +
@@ -800,7 +852,7 @@ export class SessionManager {
         if (session.engine === "claude" && strategy === "fallback") {
           const fallbackName = this.config.sessions?.fallbackEngine ?? "codex";
           const fallbackEngine = this.engines.get(fallbackName);
-          if (fallbackEngine) {
+          if (fallbackEngine && supportsPlacementEngine(fallbackEngine, placement)) {
             const { resumeAt } = computeNextRetryDelayMs(rateLimit.resetsAt);
             const until = resumeAt ?? new Date(Date.now() + 6 * 60 * 60_000);
             const syncSince = new Date().toISOString();
@@ -854,7 +906,7 @@ export class SessionManager {
             const fallbackPrompt = codexResume
               ? msg.text
               : `Continue this conversation and respond to the last USER message.\n\nConversation so far:\n\n${historyText}`;
-            const fallbackResult = await fallbackEngine.run({
+            const fallbackResult = await runPlacementBoundEngine(fallbackEngine, placement, {
               prompt: fallbackPrompt,
               resumeSessionId: codexResume,
               systemPrompt,
@@ -998,7 +1050,7 @@ export class SessionManager {
             }
 
             logger.info(`Session ${session.id} retrying after usage limit (attempt ${attempt})`);
-            const retryResult = await engine.run({
+            const retryResult = await runPlacementBoundEngine(engine, placement, {
               prompt: msg.text,
               resumeSessionId: currentSession.engineSessionId ?? undefined,
               systemPrompt,
@@ -1289,6 +1341,41 @@ export class SessionManager {
 
     if (text.startsWith("/cron")) {
       return this.handleCronCommand(text, connector, target);
+    }
+
+    if (text === "/develop" || text.startsWith("/develop ")) {
+      if (connector.name !== "slack") return false;
+      const request = text.slice("/develop".length).trim();
+      const config = this.config.developmentRunner;
+      if (!config?.enabled) {
+        await connector.replyMessage(target, "Development runner is disabled.");
+        return true;
+      }
+      if (!config.allowedSlackChannels?.includes(msg.channel)) {
+        await connector.replyMessage(target, "Development tasks are not enabled in this channel.");
+        return true;
+      }
+      if (!request) {
+        await connector.replyMessage(target, "Usage: /ryoko-develop <request>");
+        return true;
+      }
+      if (this.developmentRunning) {
+        await connector.replyMessage(target, "A development task is already running. Try again after it completes.");
+        return true;
+      }
+
+      this.developmentRunning = true;
+      await connector.replyMessage(target, "Development task accepted. VibePro will stop before PR creation or merge.");
+      void runDevelopmentRequest(config, request)
+        .then((result) => connector.replyMessage(target, formatDevelopmentResult(result)))
+        .catch((error) => {
+          logger.error(`Development runner failed: ${error instanceof Error ? error.message : "unknown error"}`);
+          return connector.replyMessage(target, "Development task failed inside the isolated runner. No PR or deployment was performed.");
+        })
+        .finally(() => {
+          this.developmentRunning = false;
+        });
+      return true;
     }
 
     return false;

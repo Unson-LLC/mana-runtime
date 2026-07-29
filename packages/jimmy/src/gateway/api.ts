@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { CronJob, Engine, IncomingMessage, JinnConfig, Session, Target } from "../shared/types.js";
+import type { CronJob, Engine, IncomingMessage, JinnConfig, PlacementProfile, Session, Target } from "../shared/types.js";
 import { isInterruptibleEngine } from "../shared/types.js";
 import type { SessionManager } from "../sessions/manager.js";
 import { buildContext } from "../sessions/context.js";
@@ -64,9 +64,25 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
+import { isPlacementEmployeeAllowed, placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
+import {
+  CURRENT_SESSION_HEADER,
+  SESSION_DELEGATION_HEADER,
+  SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID,
+  SYSTEM_NOTIFICATION_SESSION_ID,
+  verifySessionDelegationToken,
+} from "../sessions/delegation-auth.js";
+import { constantTimeEqual, OPERATOR_TOKEN_HEADER, verifyOperatorToken } from "./operator-auth.js";
+import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
+
+export const CONFIG_KNOWN_KEYS = [
+  "jinn", "gateway", "engines", "models", "connectors", "logging", "mcp",
+  "sessions", "cron", "notifications", "portal", "context", "stt", "skills",
+  "remotes", "placements",
+] as const;
 
 export interface ApiContext {
   config: JinnConfig;
@@ -104,6 +120,231 @@ export interface ApiContext {
    */
   hookRegistry?: import("./hook-registry.js").HookRegistry;
   hookSecret?: string;
+}
+
+function placementAllowsGatewayTool(placement: PlacementProfile, tool: string): boolean {
+  const allowed = placement.capabilities?.gatewayTools;
+  return Array.isArray(allowed) && allowed.includes(tool);
+}
+
+function operatorAuthorized(req: HttpRequest): boolean {
+  const raw = req.headers[OPERATOR_TOKEN_HEADER];
+  const received = Array.isArray(raw) ? raw[0] : raw;
+  return verifyOperatorToken(received);
+}
+
+function isOperatorMutation(method: string, pathname: string): boolean {
+  if (!pathname.startsWith("/api/") || !["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
+  // These routes enforce a separate hook, service-principal, or placement-session credential.
+  if (pathname === "/api/internal/hook") return false;
+  if (matchRoute("/api/connectors/:id/incoming", pathname)) return false;
+  if (matchRoute("/api/connectors/:id/proxy", pathname)) return false;
+  if (matchRoute("/api/connectors/:name/send", pathname)) return false;
+  if (pathname === "/api/sessions" || matchRoute("/api/sessions/:id/children", pathname)) return false;
+  if (pathname === "/api/org/cross-request") return false;
+  return true;
+}
+
+function isOperatorProtectedRequest(method: string, pathname: string): boolean {
+  if (method === "GET" && pathname.startsWith("/api/") && pathname !== "/api/status") return true;
+  return isOperatorMutation(method, pathname);
+}
+
+function authorizePlacementDelivery(
+  context: ApiContext,
+  req: HttpRequest,
+  connector: string,
+  target: Target | undefined,
+): { ok: true } | { ok: false; error: string } {
+  const sessionId = currentSessionId(req);
+  const config = context.getConfig();
+  const configRevision = placementConfigRevision(config.placements);
+  const deny = (reason: "gateway_tool_denied" | "delivery_denied", error: string, placementId?: string) => {
+    emitSecurityEvent({ event: "capability", reason, placementId, connector, channelId: target?.channel,
+      sessionId, capability: reason === "gateway_tool_denied" ? "gateway_tool:send_message" : "delivery",
+      target: target?.channel ? `${connector}:${target.channel}` : connector, configRevision });
+    return { ok: false as const, error };
+  };
+  const session = sessionId ? getSession(sessionId) : undefined;
+  if (!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req))) {
+    return deny("delivery_denied", "invalid session authorization");
+  }
+  const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return deny("delivery_denied", "session is not bound to a placement");
+  const placement = config.placements?.find((candidate) => candidate.id === placementId);
+  if (!placement || !placementAllowsGatewayTool(placement, "send_message")) {
+    return deny("gateway_tool_denied", "send_message is not allowed by placement", placementId);
+  }
+  const channel = target?.channel;
+  const allowed = typeof channel === "string" && (placement.capabilities?.allowedDelivery?.length
+    ? placementDeliveryTargets(placement).some((candidate) => candidate.connector === connector && candidate.channel === channel)
+    : placement.connector === connector && placement.channelId === channel);
+  return allowed ? { ok: true } : deny("delivery_denied", "delivery target is not allowed by placement", placementId);
+}
+
+export function resolveRequestedParentSession(
+  urlParentSessionId: string | undefined,
+  bodyParentSessionId: string | undefined,
+  lookup: (id: string) => Session | undefined,
+): { parentSession?: Session; parentSessionId?: string; missing: boolean; urlBound: boolean } {
+  const parentSessionId = urlParentSessionId || bodyParentSessionId;
+  if (!parentSessionId) return { missing: false, urlBound: false };
+  const parentSession = lookup(parentSessionId);
+  return {
+    parentSession,
+    parentSessionId,
+    missing: !parentSession,
+    urlBound: Boolean(urlParentSessionId),
+  };
+}
+
+export function resolveDerivedPlacement(
+  config: Pick<JinnConfig, "placements">,
+  parentSession: Session,
+  employee?: string,
+): { placement?: NonNullable<JinnConfig["placements"]>[number]; error?: string } {
+  const placementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return {};
+  const placement = config.placements?.find((candidate) => candidate.id === placementId);
+  if (!placement) {
+    emitSecurityEvent({ event: "placement_resolution", reason: "placement_missing_after_config_change",
+      placementId, sessionId: parentSession.id, capability: "derived_session",
+      configRevision: placementConfigRevision(config.placements) });
+    return { error: `parent placement "${placementId}" is not configured` };
+  }
+  if (employee && !isPlacementEmployeeAllowed(placement, employee)) {
+    emitSecurityEvent({ event: "derived_session", reason: "employee_denied", placementId,
+      sessionId: parentSession.id, capability: "derived_session", target: employee,
+      configRevision: placementConfigRevision(config.placements) });
+    return { error: `employee "${employee}" is not allowed by placement "${placement.id}"` };
+  }
+  return { placement };
+}
+
+export function resolvePlacementChildExecution(
+  parentSession: Session | undefined,
+  placement: NonNullable<JinnConfig["placements"]>[number] | undefined,
+  requested: { employee?: string; engine?: string; model?: string; effortLevel?: string },
+  employees: Map<string, import("../shared/types.js").Employee>,
+): {
+  employee?: string;
+  engine?: string;
+  model?: string;
+  effortLevel?: string;
+  error?: string;
+} {
+  if (!placement) {
+    const employee = requested.employee ? employees.get(requested.employee) : undefined;
+    if (requested.employee && !employee) return { error: `employee "${requested.employee}" not found` };
+    return {
+      employee: employee?.name,
+      engine: requested.engine || employee?.engine,
+      model: requested.model || employee?.model,
+      effortLevel: requested.effortLevel || employee?.effortLevel,
+    };
+  }
+
+  if (requested.engine !== undefined || requested.model !== undefined || requested.effortLevel !== undefined) {
+    emitSecurityEvent({ event: "derived_session", reason: "execution_override_denied", placementId: placement.id,
+      sessionId: parentSession?.id, capability: "child_execution" });
+    return { error: "placement child execution settings cannot be overridden" };
+  }
+
+  if (!parentSession) {
+    emitSecurityEvent({ event: "derived_session", reason: "parent_missing", placementId: placement.id, capability: "child_execution" });
+    return { error: "placement child requires a parent session" };
+  }
+  const employeeName = requested.employee || parentSession.employee || placement.agent?.employee;
+  if (!employeeName) return { error: `placement "${placement.id}" has no child employee` };
+  if (!isPlacementEmployeeAllowed(placement, employeeName)) {
+    emitSecurityEvent({ event: "derived_session", reason: "employee_denied", placementId: placement.id,
+      sessionId: parentSession.id, capability: "child_execution", target: employeeName });
+    return { error: `employee "${employeeName}" is not allowed by placement "${placement.id}"` };
+  }
+
+  if (employeeName === parentSession.employee) {
+    return {
+      employee: employeeName,
+      engine: parentSession.engine,
+      model: parentSession.model ?? undefined,
+      effortLevel: parentSession.effortLevel ?? undefined,
+    };
+  }
+
+  const employee = employees.get(employeeName);
+  if (!employee) return { error: `employee "${employeeName}" not found` };
+  return {
+    employee: employee.name,
+    engine: employee.engine,
+    model: employee.model,
+    effortLevel: employee.effortLevel,
+  };
+}
+
+export function authorizeDerivedSessionRequest(parentSession: Session, token: string | undefined): boolean {
+  const placementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return true;
+  return verifySessionDelegationToken(parentSession.id, token);
+}
+
+function sessionDelegationToken(req: HttpRequest): string | undefined {
+  const value = req.headers[SESSION_DELEGATION_HEADER];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function currentSessionId(req: HttpRequest): string | undefined {
+  const value = req.headers[CURRENT_SESSION_HEADER];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function gatewayToolFromRequest(req: HttpRequest): string | undefined {
+  const value = req.headers["x-jinn-gateway-tool"];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function gatewayToolMatchesRoute(tool: string, method: string, pathname: string): boolean {
+  if (tool === "list_sessions") return method === "GET" && pathname === "/api/sessions";
+  if (tool === "get_session") return method === "GET" && pathname !== "/api/sessions/interrupted" && !!matchRoute("/api/sessions/:id", pathname);
+  if (tool === "send_to_session") return method === "POST" && !!matchRoute("/api/sessions/:id/message", pathname);
+  if (tool === "list_employees") return method === "GET" && pathname === "/api/org";
+  if (tool === "get_employee") return method === "GET" && !!matchRoute("/api/org/employees/:name", pathname);
+  if (tool === "get_board") return method === "GET" && !!matchRoute("/api/org/departments/:name/board", pathname);
+  if (tool === "update_board") return method === "PUT" && !!matchRoute("/api/org/departments/:name/board", pathname);
+  if (tool === "list_cron_jobs") return method === "GET" && pathname === "/api/cron";
+  if (tool === "trigger_cron_job") {
+    return (method === "GET" && pathname === "/api/cron") ||
+      (method === "POST" && !!matchRoute("/api/cron/:id/trigger", pathname));
+  }
+  if (tool === "update_cron_job") return method === "PUT" && !!matchRoute("/api/cron/:id", pathname);
+  return false;
+}
+
+function authorizedPlacementGatewayRequest(
+  context: ApiContext,
+  req: HttpRequest,
+  method: string,
+  pathname: string,
+): string | undefined {
+  const sessionId = currentSessionId(req);
+  const session = sessionId ? getSession(sessionId) : undefined;
+  if (!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req))) return undefined;
+  const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  if (typeof placementId !== "string") return undefined;
+  const tool = gatewayToolFromRequest(req);
+  const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
+  if (!tool || !placement || !placementAllowsGatewayTool(placement, tool)) return undefined;
+  return gatewayToolMatchesRoute(tool, method, pathname) ? placementId : undefined;
+}
+
+function authorizedInternalNotificationRequest(
+  req: HttpRequest,
+  method: string,
+  pathname: string,
+): boolean {
+  return method === "POST" &&
+    !!matchRoute("/api/sessions/:id/message", pathname) &&
+    currentSessionId(req) === SYSTEM_NOTIFICATION_SESSION_ID &&
+    verifySessionDelegationToken(SYSTEM_NOTIFICATION_SESSION_ID, sessionDelegationToken(req));
 }
 
 /**
@@ -361,7 +602,7 @@ function serverError(res: ServerResponse, message: string): void {
   json(res, { error: message }, 500);
 }
 
-const SANITIZED_KEYS = new Set(["token", "botToken", "signingSecret", "appToken"]);
+const SANITIZED_KEYS = new Set(["token", "botToken", "signingSecret", "appToken", "proxyToken"]);
 
 export function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
   const result = { ...target };
@@ -518,6 +759,15 @@ export async function handleApiRequest(
       return json(res, { ok: result.status === 200 }, result.status);
     }
 
+    // Loopback is not an authorization boundary: Placement agents can execute
+    // shell commands and reach localhost. Operator mutations require a secret
+    // kept outside the agent process whenever Placement mode is enabled.
+    const gatewayPlacementId = authorizedPlacementGatewayRequest(context, req, method, pathname);
+    const internalNotificationAuthorized = authorizedInternalNotificationRequest(req, method, pathname);
+    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthorized(req) && !gatewayPlacementId && !internalNotificationAuthorized) {
+      return json(res, { error: "operator authorization required" }, 403);
+    }
+
     // GET /api/status
     if (method === "GET" && pathname === "/api/status") {
       const config = context.getConfig();
@@ -561,7 +811,9 @@ export async function handleApiRequest(
 
     // GET /api/sessions
     if (method === "GET" && pathname === "/api/sessions") {
-      const sessions = listSessions();
+      const sessions = gatewayPlacementId
+        ? listSessions().filter((session) => (session.transportMeta as Record<string, unknown> | undefined)?.placementId === gatewayPlacementId)
+        : listSessions();
       return json(res, sessions.map((session) => serializeSession(session, context)));
     }
 
@@ -577,6 +829,9 @@ export async function handleApiRequest(
     if (method === "GET" && params) {
       const session = getSession(params.id);
       if (!session) return notFound(res);
+      if (gatewayPlacementId && (session.transportMeta as Record<string, unknown> | undefined)?.placementId !== gatewayPlacementId) {
+        return json(res, { error: "session is outside the current placement" }, 403);
+      }
       let messages = getMessages(params.id);
 
       // Backfill from Claude Code's JSONL transcript if our DB has no messages
@@ -861,17 +1116,43 @@ export async function handleApiRequest(
       const body = _parsed.body as any;
       const prompt = body.prompt || body.message;
       if (!prompt) return badRequest(res, "prompt or message is required");
-      if (createChildParams && !getSession(createChildParams.id)) {
+      const parentResolution = resolveRequestedParentSession(
+        createChildParams?.id,
+        body.parentSessionId,
+        getSession,
+      );
+      const parentSession = parentResolution.parentSession;
+      if (parentResolution.urlBound && parentResolution.missing) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_missing",
+          sessionId: parentResolution.parentSessionId, capability: "child_execution",
+          configRevision: placementConfigRevision(context.getConfig().placements) });
         return notFound(res);
       }
-      const config = context.getConfig();
-      const employee = body.employee
-        ? findEmployee(body.employee, scanOrg())
-        : undefined;
-      if (body.employee && !employee) {
-        return badRequest(res, `employee "${body.employee}" not found`);
+      if (parentResolution.missing) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_missing",
+          sessionId: parentResolution.parentSessionId, capability: "child_execution",
+          configRevision: placementConfigRevision(context.getConfig().placements) });
+        return badRequest(res, "parentSessionId not found");
       }
-      const engineName = body.engine || employee?.engine || config.engines.default;
+      if (parentSession && !authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_token_invalid", placementId:
+          String((parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId ?? "") || undefined,
+          sessionId: parentSession.id, capability: "child_execution" });
+        return json(res, { error: "invalid parent session authorization" }, 403);
+      }
+      const config = context.getConfig();
+      const parentPlacementId = (parentSession?.transportMeta as Record<string, unknown> | undefined)?.placementId;
+      if (config.placements?.length && typeof parentPlacementId !== "string" && !operatorAuthorized(req)) {
+        return json(res, { error: "operator authorization required" }, 403);
+      }
+      const placementResolution = parentSession
+        ? resolveDerivedPlacement(config, parentSession, body.employee)
+        : {};
+      if (placementResolution.error) return badRequest(res, placementResolution.error);
+      const parentPlacement = placementResolution.placement;
+      const execution = resolvePlacementChildExecution(parentSession, parentPlacement, body, scanOrg());
+      if (execution.error) return badRequest(res, execution.error);
+      const engineName = execution.engine || config.engines.default;
       const sessionKey = `web:${Date.now()}`;
       const session = createSession({
         engine: engineName,
@@ -880,10 +1161,11 @@ export async function handleApiRequest(
         connector: "web",
         sessionKey,
         replyContext: { source: "web" },
-        employee: employee?.name,
-        model: body.model || employee?.model,
-        parentSessionId: createChildParams?.id || body.parentSessionId,
-        effortLevel: body.effortLevel || employee?.effortLevel,
+        employee: execution.employee,
+        model: execution.model,
+        parentSessionId: parentResolution.parentSessionId,
+        transportMeta: parentPlacement ? { placementId: parentPlacement.id } : undefined,
+        effortLevel: execution.effortLevel,
         prompt,
         portalName: config.portal?.portalName,
       });
@@ -925,11 +1207,17 @@ export async function handleApiRequest(
     if (method === "POST" && params) {
       let session = getSession(params.id);
       if (!session) return notFound(res);
+      if (gatewayPlacementId && (session.transportMeta as Record<string, unknown> | undefined)?.placementId !== gatewayPlacementId) {
+        return json(res, { error: "session is outside the current placement" }, 403);
+      }
       session = maybeRevertEngineOverride(session);
       const _parsed = await readJsonBody(req, res);
       if (!_parsed.ok) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
+      if (internalNotificationAuthorized && body.role !== "notification") {
+        return json(res, { error: "internal notification authorization is notification-only" }, 403);
+      }
       const prompt = body.message || body.prompt;
       if (!prompt) return badRequest(res, "message is required");
 
@@ -1207,8 +1495,26 @@ export async function handleApiRequest(
       if (!parsed.ok) return;
       const body = parsed.body as any;
       const { fromEmployee, service, prompt, parentSessionId } = body;
-      if (!fromEmployee || !service || !prompt) {
-        return badRequest(res, "Missing required fields: fromEmployee, service, prompt");
+      if (!fromEmployee || !service || !prompt || !parentSessionId) {
+        return badRequest(res, "Missing required fields: fromEmployee, service, prompt, parentSessionId");
+      }
+      const parentSession = getSession(parentSessionId);
+      if (!parentSession) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_missing", sessionId: parentSessionId,
+          capability: "cross_request", configRevision: placementConfigRevision(context.getConfig().placements) });
+        return badRequest(res, "parentSessionId not found");
+      }
+      if (!authorizeDerivedSessionRequest(parentSession, sessionDelegationToken(req))) {
+        emitSecurityEvent({ event: "derived_session", reason: "parent_token_invalid", placementId:
+          String((parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId ?? "") || undefined,
+          sessionId: parentSession.id, capability: "cross_request" });
+        return json(res, { error: "invalid parent session authorization" }, 403);
+      }
+
+      const config = context.getConfig();
+      const parentPlacementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+      if (config.placements?.length && typeof parentPlacementId !== "string" && !operatorAuthorized(req)) {
+        return json(res, { error: "operator authorization required" }, 403);
       }
 
       const { scanOrg } = await import("./org.js");
@@ -1240,17 +1546,28 @@ ${prompt}
 ---
 Handle this as a priority request from a colleague.`;
 
-      const config = context.getConfig();
+      const placementResolution = resolveDerivedPlacement(config, parentSession, entry.provider.name);
+      if (placementResolution.error) return badRequest(res, placementResolution.error);
+      const placement = placementResolution.placement;
+      const execution = resolvePlacementChildExecution(
+        parentSession,
+        placement,
+        { employee: entry.provider.name },
+        orgRegistry,
+      );
+      if (execution.error) return badRequest(res, execution.error);
       const session = createSession({
-        engine: entry.provider.engine || config.engines.default,
-        model: entry.provider.model || undefined,
+        engine: execution.engine || config.engines.default,
+        model: execution.model,
+        effortLevel: execution.effortLevel,
         source: "cross-request",
         sourceRef: `cross:${fromEmployee}:${service}`,
         connector: "web",
         sessionKey: `cross:${Date.now()}`,
         replyContext: { source: "cross-request" },
-        employee: entry.provider.name,
-        parentSessionId: parentSessionId || undefined,
+        employee: execution.employee,
+        parentSessionId,
+        transportMeta: placement ? { placementId: placement.id } : undefined,
         prompt: crossBrief,
         portalName: config.portal?.portalName,
         title: `Cross-request: ${fromEmployee} → ${service}`,
@@ -1565,6 +1882,7 @@ Handle this as a priority request from a colleague.`;
             signingSecret: inst?.signingSecret ? "***" : undefined,
             botToken: inst?.botToken ? "***" : undefined,
             appToken: inst?.appToken ? "***" : undefined,
+            proxyToken: inst?.proxyToken ? "***" : undefined,
           }));
         } else if (v && typeof v === "object") {
           sanitizedConnectors[k] = {
@@ -1573,6 +1891,7 @@ Handle this as a priority request from a colleague.`;
             signingSecret: (v as any)?.signingSecret ? "***" : undefined,
             botToken: (v as any)?.botToken ? "***" : undefined,
             appToken: (v as any)?.appToken ? "***" : undefined,
+            proxyToken: (v as any)?.proxyToken ? "***" : undefined,
           };
         } else {
           sanitizedConnectors[k] = v;
@@ -1597,24 +1916,9 @@ Handle this as a priority request from a colleague.`;
       }
       // Validate known top-level keys
       // Keep this aligned with `JinnConfig` in src/shared/types.ts
-      const KNOWN_KEYS = [
-        "jinn",
-        "gateway",
-        "engines",
-        "models",
-        "connectors",
-        "logging",
-        "mcp",
-        "sessions",
-        "cron",
-        "notifications",
-        "portal",
-        "context",
-        "stt",
-        "skills",
-        "remotes",
-      ];
-      const unknownKeys = Object.keys(body).filter((k) => !KNOWN_KEYS.includes(k));
+      const unknownKeys = Object.keys(body).filter(
+        (key) => !(CONFIG_KNOWN_KEYS as readonly string[]).includes(key),
+      );
       if (unknownKeys.length > 0) {
         return badRequest(res, `Unknown config keys: ${unknownKeys.join(", ")}`);
       }
@@ -1757,6 +2061,12 @@ Handle this as a priority request from a colleague.`;
       // Try the exact instance id first, then fall back to "discord" for the legacy path
       const connector = context.connectors.get(params.id) ?? (params.id === "discord" ? context.connectors.get("discord") : undefined);
       if (!connector) return notFound(res);
+      if (context.getConfig().placements?.length && !constantTimeEqual(
+        context.getConfig().connectors.discord?.proxyToken,
+        req.headers["x-jinn-connector-proxy-token"] as string | undefined,
+      )) {
+        return json(res, { error: "invalid connector service authorization" }, 403);
+      }
       if (!("deliverMessage" in connector)) {
         return json(res, { error: "Discord connector is not in remote mode" }, 400);
       }
@@ -1817,6 +2127,14 @@ Handle this as a priority request from a colleague.`;
 
       const action = body.action as string;
       const target = body.target as Target | undefined;
+      const serviceAuthorized = params.id === "discord" && constantTimeEqual(
+        context.getConfig().connectors.discord?.proxyToken,
+        req.headers["x-jinn-connector-proxy-token"] as string | undefined,
+      );
+      if (context.getConfig().placements?.length && !serviceAuthorized && !operatorAuthorized(req)) {
+        const authorization = authorizePlacementDelivery(context, req, params.id, target);
+        if (!authorization.ok) return json(res, { error: authorization.error }, 403);
+      }
       let messageId: string | undefined;
 
       switch (action) {
@@ -1862,6 +2180,17 @@ Handle this as a priority request from a colleague.`;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
       if (!body.channel || !body.text) return badRequest(res, "channel and text are required");
+      const sessionId = currentSessionId(req);
+      if (sessionId === SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID) {
+        const notifications = context.getConfig().notifications;
+        const authorized = verifySessionDelegationToken(sessionId, sessionDelegationToken(req))
+          && notifications?.connector === params.name
+          && notifications?.channel === body.channel;
+        if (!authorized) return json(res, { error: "invalid notification authorization" }, 403);
+      } else if (context.getConfig().placements?.length && !operatorAuthorized(req)) {
+        const authorization = authorizePlacementDelivery(context, req, params.name, { channel: body.channel, thread: body.thread });
+        if (!authorization.ok) return json(res, { error: authorization.error }, 403);
+      }
       const hasThread = typeof body.thread === "string" && body.thread.trim().length > 0;
       const target = { channel: body.channel, thread: body.thread };
       if (hasThread) {
@@ -2477,12 +2806,27 @@ async function runWebSession(
   }
 
   let mcpConfigPath: string | undefined;
+  const placementId = (currentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
+  const placement = typeof placementId === "string"
+    ? config.placements?.find((candidate) => candidate.id === placementId)
+    : undefined;
+  if (placementId && !placement) {
+    updateSession(currentSession.id, { status: "error", lastError: `Placement "${placementId}" is not configured` });
+    return;
+  }
   if (currentSession.engine === "claude") {
     const mcpConfig = resolveMcpServers(config.mcp, employee, {
+      sessionId: currentSession.id,
       connector: "web",
       channel: currentSession.sourceRef,
-    });
-    if (Object.keys(mcpConfig.mcpServers).length > 0) {
+      placementId: placement?.id,
+      configRevision: placementConfigRevision(config.placements),
+      allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
+      allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
+    }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
+    // A Placement must always receive an explicit config, including an empty
+    // one, so --strict-mcp-config can exclude user/global MCPs.
+    if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
       mcpConfigPath = writeMcpConfigFile(mcpConfig, currentSession.id);
     }
   }
@@ -2498,6 +2842,7 @@ async function runWebSession(
       channel: currentSession.sourceRef,
       user: "web-user",
       employee,
+      placement,
       connectors: Array.from(context.connectors.keys()),
       config,
       sessionId: currentSession.id,
@@ -2537,7 +2882,7 @@ async function runWebSession(
       })()
       : prompt;
 
-    const result = await engine.run({
+    const result = await runPlacementBoundEngine(engine, placement, {
       prompt: promptToRun,
       resumeSessionId: currentSession.engineSessionId ?? undefined,
       systemPrompt,
@@ -2594,7 +2939,7 @@ async function runWebSession(
       if (currentSession.engine === "claude" && strategy === "fallback") {
         const fallbackName = config.sessions?.fallbackEngine ?? "codex";
         const fallbackEngine = context.sessionManager.getEngine(fallbackName);
-        if (fallbackEngine) {
+        if (fallbackEngine && supportsPlacementEngine(fallbackEngine, placement)) {
           const { resumeAt } = computeNextRetryDelayMs(rateLimit.resetsAt);
           const until = resumeAt ?? new Date(Date.now() + 6 * 60 * 60_000);
           const syncSince = new Date().toISOString();
@@ -2648,7 +2993,7 @@ async function runWebSession(
           const fallbackPrompt = codexResume
             ? prompt
             : `Continue this conversation and respond to the last USER message.\n\nConversation so far:\n\n${historyText}`;
-          const fallbackResult = await fallbackEngine.run({
+          const fallbackResult = await runPlacementBoundEngine(fallbackEngine, placement, {
             prompt: fallbackPrompt,
             resumeSessionId: codexResume,
             systemPrompt,
@@ -2785,7 +3130,7 @@ async function runWebSession(
 
           logger.info(`Web session ${currentSession.id} retrying after usage limit (attempt ${attempt})`);
 
-          const retryResult = await engine.run({
+          const retryResult = await runPlacementBoundEngine(engine, placement, {
             prompt,
             resumeSessionId: current.engineSessionId ?? undefined,
             systemPrompt,

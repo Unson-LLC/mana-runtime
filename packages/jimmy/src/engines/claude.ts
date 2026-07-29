@@ -4,6 +4,7 @@ import { logger } from "../shared/logger.js";
 import { isDeadSessionError } from "../shared/rateLimit.js";
 import { resolveBin, formatSpawnError } from "../shared/resolveBin.js";
 import { buildChildEnv } from "../shared/childEnv.js";
+import { placementSafeCliFlags } from "../shared/placement-profile.js";
 
 interface LiveProcess {
   proc: ChildProcess;
@@ -140,6 +141,17 @@ export class ClaudeEngine implements InterruptibleEngine {
   }
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
+    // A local MCP config cannot be projected to the remote host. Continuing
+    // would let Claude load that host's user/global MCP configuration instead
+    // of the Placement allowlist, so strict runs must fail closed over SSH.
+    if (opts.sshHost && opts.strictMcpConfig) {
+      return {
+        sessionId: opts.resumeSessionId ?? "",
+        result: "",
+        error: "Placement-scoped Claude sessions cannot run over SSH",
+      };
+    }
+
     let lastResult: EngineResult | undefined;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -190,7 +202,9 @@ export class ClaudeEngine implements InterruptibleEngine {
     // single-JSON path threw away intermediate turns. Delta callbacks fire
     // only when the caller provides `opts.onStream`.
     const streaming = true;
-    const flagArgs = ["-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--chrome", "--include-partial-messages"];
+    const flagArgs = ["-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"];
+    if (opts.enableChrome !== false) flagArgs.push("--chrome");
+    flagArgs.push("--include-partial-messages");
     if (opts.resumeSessionId) flagArgs.push("--resume", opts.resumeSessionId);
     if (opts.model) flagArgs.push("--model", opts.model);
     if (opts.effortLevel && opts.effortLevel !== "default") flagArgs.push("--effort", opts.effortLevel);
@@ -205,8 +219,12 @@ export class ClaudeEngine implements InterruptibleEngine {
     // variadic, so the prompt has to precede it or it would swallow the prompt
     // as another config path.
     const trailingArgs: string[] = [];
-    if (opts.mcpConfigPath) trailingArgs.push("--mcp-config", opts.mcpConfigPath);
-    if (opts.cliFlags?.length) trailingArgs.push(...opts.cliFlags);
+    if (opts.mcpConfigPath) {
+      trailingArgs.push("--mcp-config", opts.mcpConfigPath);
+      if (opts.strictMcpConfig) trailingArgs.push("--strict-mcp-config");
+    }
+    const cliFlags = placementSafeCliFlags(opts.cliFlags, opts.strictMcpConfig);
+    if (cliFlags?.length) trailingArgs.push(...cliFlags);
 
     // Local argv keeps the historical ordering: flags, prompt, then trailing.
     const args = [...flagArgs, prompt, ...trailingArgs];

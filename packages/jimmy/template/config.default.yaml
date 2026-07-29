@@ -49,6 +49,30 @@ connectors:
     #   model: gpt-5-nano
     #   timeoutMs: 30000
 
+# Slack常駐先ごとの権限・文脈プロファイル。1件でも設定すると、未登録の
+# チャンネル・workspace・userは受信時点で拒否される（deny by default）。
+# placements:
+#   - id: mana-test
+#     connector: slack
+#     workspaceId: T01234567
+#     channelId: C01234567
+#     audience:
+#       type: project-team
+#       allowedUsers: [U01234567]
+#     agent:
+#       employee: ryoko
+#       defaultModel: sonnet
+#       escalationEmployee: critical-reviewer
+#     projects: [mana]
+#     capabilities:
+#       mcp: [gateway, brainbase]
+#       gatewayTools: [list_sessions, create_child_session]
+#       allowedDelivery:
+#         - connector: slack
+#           channel: C01234567
+#     dataScopes:
+#       graphProjects: [mana]
+
 # MCPサーバーは従業員にブラウザ・検索・メッセージング機能を提供する。
 # Claude Codeセッションに --mcp-config 経由で自動注入される。
 mcp:

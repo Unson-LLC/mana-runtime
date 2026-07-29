@@ -1,3 +1,5 @@
+import { operatorToken } from "./operator-auth";
+
 export interface TranscriptContentBlock {
   type: 'text' | 'tool_use' | 'tool_result' | 'thinking'
   text?: string
@@ -60,6 +62,11 @@ const BASE =
     ? window.location.origin
     : "http://127.0.0.1:7777";
 
+function operatorHeaders(): Record<string, string> {
+  const token = operatorToken();
+  return token ? { "x-openryoko-operator-token": token } : {};
+}
+
 async function extractErrorMessage(res: Response): Promise<string> {
   try {
     const body = await res.json();
@@ -72,7 +79,7 @@ async function extractErrorMessage(res: Response): Promise<string> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: operatorHeaders() });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
   return res.json();
 }
@@ -80,7 +87,7 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...operatorHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
@@ -88,7 +95,7 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function del<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: operatorHeaders() });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
   return res.json();
 }
@@ -96,7 +103,7 @@ async function del<T>(path: string): Promise<T> {
 async function put<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...operatorHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
@@ -106,7 +113,7 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 async function patch<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...operatorHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractErrorMessage(res));
@@ -122,6 +129,9 @@ interface UploadedFile {
 
 export const api = {
   getStatus: () => get<Record<string, unknown>>("/api/status"),
+  getInstances: () => get<Array<{ name: string; port: number; running: boolean; current: boolean }>>("/api/instances"),
+  getSlackChannels: () => get<{ ok: boolean; channels?: Array<{ id: string; name: string; isPrivate: boolean }>; error?: string }>("/api/connectors/slack/channels"),
+  getWhatsAppQr: () => get<{ qr?: string }>("/api/connectors/whatsapp/qr"),
   getSessions: () => get<Record<string, unknown>[]>("/api/sessions"),
   getSession: (id: string) => get<Record<string, unknown>>(`/api/sessions/${id}`),
   getSessionChildren: (id: string) => get<Record<string, unknown>[]>(`/api/sessions/${id}/children`),
@@ -182,7 +192,7 @@ export const api = {
     try {
       const res = await fetch(`${BASE}/api/stt/transcribe${params}`, {
         method: "POST",
-        headers: { "Content-Type": audioBlob.type || "audio/webm" },
+        headers: { "Content-Type": audioBlob.type || "audio/webm", ...operatorHeaders() },
         body: audioBlob,
         signal: controller.signal,
       });
@@ -214,7 +224,7 @@ export const api = {
   uploadFile: async (file: File): Promise<UploadedFile> => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/files`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/api/files`, { method: 'POST', headers: operatorHeaders(), body: form })
     if (!res.ok) throw new Error(await extractErrorMessage(res))
     return res.json()
   },

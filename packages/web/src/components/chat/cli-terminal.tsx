@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { operatorWebSocketProtocols } from '@/lib/operator-auth'
 
 function getPtyWsUrl(sessionId: string): string {
   const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL
@@ -65,7 +66,7 @@ export function CliTerminal({ sessionId }: { sessionId: string }) {
     term.loadAddon(fit)
     term.open(containerRef.current)
 
-    const ws = new WebSocket(getPtyWsUrl(sessionId))
+    const ws = new WebSocket(getPtyWsUrl(sessionId), operatorWebSocketProtocols())
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 

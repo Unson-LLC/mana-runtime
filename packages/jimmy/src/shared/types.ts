@@ -33,6 +33,10 @@ export interface EngineRunOpts {
   prompt: string;
   resumeSessionId?: string;
   systemPrompt?: string;
+  /** Restrict Claude Code to the per-session --mcp-config file. */
+  strictMcpConfig?: boolean;
+  /** Enable the separate Claude-in-Chrome integration (legacy default: true). */
+  enableChrome?: boolean;
   cwd: string;
   bin?: string;
   model?: string;
@@ -473,6 +477,8 @@ export interface DiscordConnectorConfig {
   channelRouting?: Record<string, string>;
   /** URL of the primary Jinn instance to proxy Discord I/O through (secondary/remote mode) */
   proxyVia?: string;
+  /** Shared service credential for remote Discord proxy calls. Required when placements are configured. */
+  proxyToken?: string;
 }
 
 export interface TelegramConnectorConfig {
@@ -574,6 +580,48 @@ export interface EngineModelsConfig {
 /** `models:` block keyed by engine name (claude | codex | gemini). */
 export type ModelsConfig = Record<string, EngineModelsConfig>;
 
+export interface DevelopmentRunnerConfig {
+  /** Explicit opt-in. The command is never available when false or absent. */
+  enabled?: boolean;
+  /** Absolute executable path. Use a root-owned sudo wrapper in production. */
+  bin: string;
+  /** Fixed arguments. The Slack request is supplied only over stdin. */
+  args?: string[];
+  /** Maximum wall time for one request. Default: 90 minutes. */
+  timeoutMs?: number;
+  /** Slack channel IDs allowed to start development. Empty or absent fails closed. */
+  allowedSlackChannels?: string[];
+}
+
+export interface PlacementDeliveryTarget {
+  connector: string;
+  channel: string;
+}
+
+/** Logical trust boundary for one connector/channel placement. */
+export interface PlacementProfile {
+  id: string;
+  connector: string;
+  workspaceId: string;
+  channelId: string;
+  audience: {
+    type: "operator" | "executive" | "project-team" | "client";
+    allowedUsers: string[];
+  };
+  agent?: {
+    employee?: string;
+    defaultModel?: string;
+    escalationEmployee?: string;
+  };
+  projects?: string[];
+  capabilities?: {
+    mcp?: false | string[];
+    gatewayTools?: string[];
+    allowedDelivery?: PlacementDeliveryTarget[];
+  };
+  dataScopes?: Record<string, unknown>;
+}
+
 export interface JinnConfig {
   jinn?: { version?: string };
   gateway: { port: number; host: string; streaming?: boolean };
@@ -620,6 +668,10 @@ export interface JinnConfig {
     instances?: ConnectorInstance[];
   };
   logging: { file: boolean; stdout: boolean; level: string };
+  /** Optional isolated development runner used by the /develop command. */
+  developmentRunner?: DevelopmentRunnerConfig;
+  /** Connector/channel-specific policy. When present, unmatched input fails closed. */
+  placements?: PlacementProfile[];
   mcp?: McpGlobalConfig;
   sessions?: {
     maxDurationMinutes?: number;
