@@ -1,0 +1,8 @@
+{
+  "runnerVersion": "2026-07-27.1",
+  "repository": "/srv/openryoko-development/repository",
+  "worktreesRoot": "/srv/openryoko-development/worktrees",
+  "baseRef": "origin/codex/fix-employee-model-routing",
+  "vibeproBin": "/usr/local/bin/vibepro",
+  "maxDurationMs": 4800000
+}

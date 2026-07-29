@@ -12,8 +12,16 @@
 
 import { createInterface } from "node:readline";
 import { currentConversationFromEnv, isSendToCurrentConversation } from "./current-conversation.js";
+import {
+  allowedGatewayTools,
+  buildCreateChildSessionRequest,
+  isDeliveryTargetAllowed,
+  isGatewayToolAllowed,
+} from "./gateway-policy.js";
 
 const GATEWAY_URL = process.env.JINN_GATEWAY_URL || "http://127.0.0.1:7777";
+const SESSION_DELEGATION_TOKEN = process.env.JINN_SESSION_DELEGATION_TOKEN;
+const CURRENT_SESSION_ID = process.env.JINN_CURRENT_SESSION_ID;
 
 // ─── MCP Protocol Types ───
 
@@ -75,13 +83,11 @@ const TOOLS = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        employee: { type: "string", description: "Employee name to delegate to (e.g. 'homy-writer')" },
+        employee: { type: "string", description: "Employee name to delegate to. Omit to inherit the current employee." },
         prompt: { type: "string", description: "Task/instruction for the employee" },
         parentSessionId: { type: "string", description: "Your current session ID (for tracking)" },
-        engine: { type: "string", description: "Engine override (claude or codex)" },
-        model: { type: "string", description: "Model override" },
       },
-      required: ["employee", "prompt"],
+      required: ["prompt"],
     },
   },
   {
@@ -250,16 +256,27 @@ const TOOLS = [
 
 // ─── API Helpers ───
 
-async function apiGet(path: string): Promise<unknown> {
-  const res = await fetch(`${GATEWAY_URL}${path}`);
+function sessionHeaders(tool: string): Record<string, string> {
+  return {
+    "x-jinn-gateway-tool": tool,
+    ...(SESSION_DELEGATION_TOKEN ? { "x-jinn-session-token": SESSION_DELEGATION_TOKEN } : {}),
+    ...(CURRENT_SESSION_ID ? { "x-jinn-session-id": CURRENT_SESSION_ID } : {}),
+  };
+}
+
+async function apiGet(path: string, tool: string): Promise<unknown> {
+  const res = await fetch(`${GATEWAY_URL}${path}`, { headers: sessionHeaders(tool) });
   if (!res.ok) throw new Error(`API ${path}: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
-async function apiPost(path: string, body: unknown): Promise<unknown> {
+async function apiPost(path: string, body: unknown, tool: string): Promise<unknown> {
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...sessionHeaders(tool),
+    },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -269,20 +286,20 @@ async function apiPost(path: string, body: unknown): Promise<unknown> {
   return res.json();
 }
 
-async function apiPut(path: string, body: unknown): Promise<unknown> {
+async function apiPut(path: string, body: unknown, tool: string): Promise<unknown> {
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders(tool) },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`API ${path}: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
-async function apiPatch(path: string, body: unknown): Promise<unknown> {
+async function apiPatch(path: string, body: unknown, tool: string): Promise<unknown> {
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders(tool) },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -295,9 +312,16 @@ async function apiPatch(path: string, body: unknown): Promise<unknown> {
 // ─── Tool Handlers ───
 
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
+  if (!isGatewayToolAllowed(name)) {
+    throw new Error(`Gateway tool "${name}" is not allowed by this placement`);
+  }
   switch (name) {
     case "send_message": {
       const connector = (args.connector as string) || "slack";
+      const channel = String(args.channel || "");
+      if (!isDeliveryTargetAllowed(connector, channel)) {
+        throw new Error(`Delivery to ${connector}:${channel} is not allowed by this placement`);
+      }
       if (isSendToCurrentConversation({ ...args, connector }, currentConversationFromEnv())) {
         throw new Error(
           "send_message cannot post to the current conversation. Return the reply as your final answer instead; Jinn will deliver it to the correct thread.",
@@ -307,12 +331,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         channel: args.channel,
         text: args.text,
         thread: args.thread,
-      });
+      }, name);
       return JSON.stringify(result);
     }
 
     case "list_sessions": {
-      const sessions = await apiGet("/api/sessions") as any[];
+      const sessions = await apiGet("/api/sessions", name) as any[];
       const filtered = args.status
         ? sessions.filter((s: any) => s.status === args.status)
         : sessions;
@@ -331,34 +355,30 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
 
     case "get_session": {
-      const session = await apiGet(`/api/sessions/${args.sessionId}`);
+      const session = await apiGet(`/api/sessions/${args.sessionId}`, name);
       return JSON.stringify(session);
     }
 
     case "create_child_session": {
-      const result = await apiPost("/api/sessions", {
-        prompt: args.prompt,
-        employee: args.employee,
-        engine: args.engine,
-        parentSessionId: args.parentSessionId,
-      });
+      const request = buildCreateChildSessionRequest(args, process.env.JINN_CURRENT_SESSION_ID);
+      const result = await apiPost(request.path, request.body, name);
       return JSON.stringify(result);
     }
 
     case "send_to_session": {
       const result = await apiPost(`/api/sessions/${args.sessionId}/message`, {
         message: args.message,
-      });
+      }, name);
       return JSON.stringify(result);
     }
 
     case "list_employees": {
-      const org = await apiGet("/api/org") as any;
+      const org = await apiGet("/api/org", name) as any;
       return JSON.stringify(org);
     }
 
     case "get_employee": {
-      const employee = await apiGet(`/api/org/employees/${args.name}`);
+      const employee = await apiGet(`/api/org/employees/${args.name}`, name);
       return JSON.stringify(employee);
     }
 
@@ -368,7 +388,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ...(args.description ? { description: args.description } : {}),
         ...(args.priority ? { priority: args.priority } : {}),
         ...(args.due_at ? { due_at: args.due_at } : {}),
-      });
+      }, name);
       return JSON.stringify(result);
     }
 
@@ -378,44 +398,44 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       if (args.priority) params.set("priority", String(args.priority));
       if (args.limit) params.set("limit", String(args.limit));
       const suffix = params.size > 0 ? `?${params.toString()}` : "";
-      const result = await apiGet(`/api/tasks${suffix}`);
+      const result = await apiGet(`/api/tasks${suffix}`, name);
       return JSON.stringify(result);
     }
 
     case "update_task": {
       const { task_id, ...rest } = args as { task_id: string } & Record<string, unknown>;
-      const result = await apiPatch(`/api/tasks/${encodeURIComponent(task_id)}`, rest);
+      const result = await apiPatch(`/api/tasks/${encodeURIComponent(task_id)}`, rest, name);
       return JSON.stringify(result);
     }
 
     case "transition_task": {
       const { task_id, ...rest } = args as { task_id: string } & Record<string, unknown>;
-      const result = await apiPost(`/api/tasks/${encodeURIComponent(task_id)}/transitions`, rest);
+      const result = await apiPost(`/api/tasks/${encodeURIComponent(task_id)}/transitions`, rest, name);
       return JSON.stringify(result);
     }
 
     case "update_board": {
-      const result = await apiPut(`/api/org/departments/${args.department}/board`, args.board);
+      const result = await apiPut(`/api/org/departments/${args.department}/board`, args.board, name);
       return JSON.stringify(result);
     }
 
     case "get_board": {
-      const board = await apiGet(`/api/org/departments/${args.department}/board`);
+      const board = await apiGet(`/api/org/departments/${args.department}/board`, name);
       return JSON.stringify(board);
     }
 
     case "list_cron_jobs": {
-      const jobs = await apiGet("/api/cron");
+      const jobs = await apiGet("/api/cron", name);
       return JSON.stringify(jobs);
     }
 
     case "trigger_cron_job": {
       // Resolve job ID (allow passing name or id)
-      const jobs = await apiGet("/api/cron") as any[];
+      const jobs = await apiGet("/api/cron", name) as any[];
       const job = jobs.find((j: any) => j.id === args.jobId || j.name === args.jobId);
       if (!job) return JSON.stringify({ error: `Job "${args.jobId}" not found` });
       // Actually trigger the job via the gateway REST API (fire-and-forget)
-      apiPost(`/api/cron/${job.id}/trigger`, {}).catch(() => {});
+      apiPost(`/api/cron/${job.id}/trigger`, {}, name).catch(() => {});
       return JSON.stringify({ triggered: true, jobId: job.id, message: `Cron job "${job.name}" triggered manually` });
     }
 
@@ -424,7 +444,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ...(args.enabled !== undefined ? { enabled: args.enabled } : {}),
         ...(args.schedule ? { schedule: args.schedule } : {}),
         ...(args.prompt ? { prompt: args.prompt } : {}),
-      });
+      }, name);
       return JSON.stringify(result);
     }
 
@@ -465,7 +485,7 @@ async function handleRequest(request: JsonRpcRequest): Promise<void> {
       sendResponse({
         jsonrpc: "2.0",
         id,
-        result: { tools: TOOLS },
+        result: { tools: allowedGatewayTools(TOOLS) },
       });
       break;
 

@@ -9,6 +9,10 @@ import { useTheme } from "@/app/providers"
 import { THEMES } from "@/lib/themes"
 import type { ThemeId } from "@/lib/themes"
 import { api } from "@/lib/api"
+import {
+  OPERATOR_AUTH_CHANGED_EVENT,
+  storeOperatorToken,
+} from "@/lib/operator-auth"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import {
   CLAUDE_MODELS,
@@ -18,6 +22,7 @@ import {
   modelsForEngine,
   withCurrentValue,
 } from "@/lib/model-catalog"
+import { buildSlackManifest } from "@/lib/slack-manifest"
 
 // ---------------------------------------------------------------------------
 // Accent color presets
@@ -37,95 +42,6 @@ const ACCENT_PRESETS = [
   { label: "Violet", value: "#8B5CF6" },
   { label: "Pink", value: "#EC4899" },
 ]
-
-// ---------------------------------------------------------------------------
-// Slack App manifest (minimum config — paste-and-go)
-// ---------------------------------------------------------------------------
-
-// Build the paste-and-go Slack App manifest for a given bot name. The
-// Agents & AI Apps feature (features.assistant_view + assistant:write +
-// assistant_thread_* events) is enabled by default so the "New chat" button is
-// available out of the box — each new chat becomes its own session.
-function buildSlackManifest(botName?: string | null): string {
-  const name = (botName ?? "").trim() || "Ryoko"
-  return JSON.stringify(
-    {
-      display_information: { name },
-      features: {
-        app_home: {
-          messages_tab_enabled: true,
-          messages_tab_read_only_enabled: false,
-        },
-        bot_user: { display_name: name, always_online: true },
-        assistant_view: {
-          assistant_description: `${name} — your AI assistant`,
-          suggested_prompts: [
-            { title: "What can you do?", message: "What can you help me with?" },
-          ],
-        },
-      },
-      oauth_config: {
-        scopes: {
-          bot: [
-            "app_mentions:read",
-            "assistant:write",
-            "canvases:read",
-            "canvases:write",
-            "channels:history",
-            "channels:read",
-            "chat:write",
-            "chat:write.customize",
-            "files:read",
-            "files:write",
-            "groups:history",
-            "groups:read",
-            "im:history",
-            "im:read",
-            "im:write",
-            "mpim:history",
-            "mpim:read",
-            "mpim:write",
-            "reactions:read",
-            "reactions:write",
-            "users:read",
-            "users:read.email",
-          ],
-          user: [
-            "channels:history",
-            "channels:read",
-            "files:read",
-            "groups:history",
-            "groups:read",
-            "im:history",
-            "im:read",
-            "mpim:history",
-            "mpim:read",
-            "search:read",
-            "users:read",
-            "bookmarks:read",
-          ],
-        },
-      },
-      settings: {
-        event_subscriptions: {
-          bot_events: [
-            "app_mention",
-            "assistant_thread_context_changed",
-            "assistant_thread_started",
-            "message.channels",
-            "message.groups",
-            "message.im",
-            "message.mpim",
-            "reaction_added",
-          ],
-        },
-        socket_mode_enabled: true,
-      },
-    },
-    null,
-    2,
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Config type (gateway API)
@@ -256,9 +172,11 @@ function Section({
 
 function FieldRow({
   label,
+  htmlFor,
   children,
 }: {
   label: string
+  htmlFor?: string
   children: React.ReactNode
 }) {
   return (
@@ -266,6 +184,7 @@ function FieldRow({
       className="flex items-center justify-between py-[var(--space-2)] gap-[var(--space-4)]"
     >
       <label
+        htmlFor={htmlFor}
         className="text-[length:var(--text-subheadline)] text-[var(--text-secondary)] shrink-0"
       >
         {label}
@@ -276,11 +195,13 @@ function FieldRow({
 }
 
 function SettingsInput({
+  id,
   value,
   onChange,
   type = "text",
   placeholder,
 }: {
+  id?: string
   value: string
   onChange: (v: string) => void
   type?: string
@@ -288,12 +209,47 @@ function SettingsInput({
 }) {
   return (
     <input
+      id={id}
       type={type}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       className="apple-input w-full bg-[var(--bg-secondary)] border border-[var(--separator)] rounded-[var(--radius-sm)] px-[10px] py-[6px] text-[length:var(--text-footnote)] text-[var(--text-primary)]"
     />
+  )
+}
+
+export function OperatorAccessControls({
+  token,
+  onTokenChange,
+  onRetry,
+}: {
+  token: string
+  onTokenChange: (value: string) => void
+  onRetry: () => void
+}) {
+  return (
+    <Section title="Operator access">
+      <FieldRow label="Operator Token" htmlFor="operator-token">
+        <div className="flex w-full gap-2">
+          <SettingsInput
+            id="operator-token"
+            type="password"
+            value={token}
+            onChange={onTokenChange}
+            placeholder="Required when placements are enabled"
+          />
+          <button
+            type="button"
+            onClick={onRetry}
+            aria-label="Save token and retry operator authentication"
+            className="rounded-md border border-[var(--border-primary)] px-3 text-sm"
+          >
+            Save & Retry
+          </button>
+        </div>
+      </FieldRow>
+    </Section>
   )
 }
 
@@ -592,12 +548,15 @@ function SlackSetupGuide() {
               >
                 Slack API の Your Apps ページ
               </a>
-              を開き、「Create New App」を選択。
+              を開き、新規導入なら「Create New App」を選択。既存アプリは対象アプリを開く。
             </li>
-            <li>「From a manifest」を選び、対象ワークスペースを指定。</li>
-            <li>下のJSONをコピーして貼り付け、「Create」で作成。</li>
             <li>
-              「Install to Workspace」を実行し、OAuth & Permissions の「Bot User OAuth
+              新規導入は「From a manifest」を選び、対象ワークスペースを指定。既存アプリは
+              「App Manifest」を開く。
+            </li>
+            <li>下のJSONを貼り付け、新規は「Create」、既存は「Save Changes」で反映。</li>
+            <li>
+              「Install to Workspace」または「Reinstall to Workspace」を実行し、OAuth & Permissions の「Bot User OAuth
               Token」（<code>xoxb-…</code>）を下の Bot Token に貼り付け。
             </li>
             <li>
@@ -656,6 +615,7 @@ export default function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const [configError, setConfigError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [operatorToken, setOperatorToken] = useState("")
   const [feedback, setFeedback] = useState<{
     type: "success" | "error"
     message: string
@@ -675,22 +635,25 @@ export default function SettingsPage() {
   const [slackChannelsLoading, setSlackChannelsLoading] = useState(false)
   const [slackChannelsError, setSlackChannelsError] = useState<string | null>(null)
 
-  useEffect(() => {
+  function loadEmployees() {
     api.getOrg().then((org: any) => {
       if (org?.employees) {
         setEmployees(org.employees.map((e: any) => typeof e === 'string' ? { name: e, displayName: e } : { name: e.name, displayName: e.displayName || e.name }))
       }
-    }).catch(() => {})
+    }).catch(() => setEmployees([]))
+  }
+
+  useEffect(() => {
+    loadEmployees()
   }, [])
 
   const refreshSlackChannels = async () => {
     setSlackChannelsLoading(true)
     setSlackChannelsError(null)
     try {
-      const res = await fetch("/api/connectors/slack/channels")
-      const body = await res.json()
+      const body = await api.getSlackChannels()
       if (!body?.ok) {
-        const err = body?.error || `HTTP ${res.status}`
+        const err = body?.error || "unknown_error"
         if (err === "missing_scope") {
           setSlackChannelsError("Bot に canvases / channels scope が足りません。上のSlack App Manifestを貼り直して再インストールしてください。")
         } else if (err === "slack_not_configured") {
@@ -741,8 +704,26 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
+    setOperatorToken(localStorage.getItem("openryoko.operatorToken") ?? "")
     loadConfig()
   }, [])
+
+  useEffect(() => {
+    function refreshProtectedSettings() {
+      loadConfig()
+      loadEmployees()
+    }
+    window.addEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshProtectedSettings)
+    return () => window.removeEventListener(OPERATOR_AUTH_CHANGED_EVENT, refreshProtectedSettings)
+  }, [])
+
+  function updateOperatorToken(value: string) {
+    setOperatorToken(value)
+  }
+
+  function retryOperatorAccess() {
+    storeOperatorToken(operatorToken)
+  }
 
   // Poll for WhatsApp QR code when WhatsApp connector is configured
   useEffect(() => {
@@ -758,9 +739,8 @@ export default function SettingsPage() {
         if (!cancelled) setWaStatus(connStatus ?? "unknown")
 
         if (connStatus === "qr_pending") {
-          const qrRes = await fetch("/api/connectors/whatsapp/qr")
-          const data = await qrRes.json()
-          if (!cancelled) setWaQr(data.qr)
+          const data = await api.getWhatsAppQr()
+          if (!cancelled) setWaQr(data.qr ?? null)
         } else {
           if (!cancelled) setWaQr(null)
         }
@@ -1134,6 +1114,12 @@ export default function SettingsPage() {
               {feedback.message}
             </div>
           )}
+
+          <OperatorAccessControls
+            token={operatorToken}
+            onTokenChange={updateOperatorToken}
+            onRetry={retryOperatorAccess}
+          />
 
           {configLoading ? (
             <div

@@ -111,6 +111,56 @@ describe("interactive Claude permission mode", () => {
   });
 });
 
+describe("interactive Claude placement projection", () => {
+  const base = { prompt: "investigate", settingsPath: "/tmp/settings.json" };
+
+  it("passes the runtime context through Claude Code's supported CLI flag", () => {
+    const args = buildInteractiveArgs({ ...base, systemPrompt: "Placement: mana-test" });
+    const index = args.indexOf("--append-system-prompt");
+    expect(index).toBeGreaterThan(-1);
+    expect(args[index + 1]).toBe("Placement: mana-test");
+  });
+
+  it("strictly scopes MCP and disables the separate Chrome integration", () => {
+    const args = buildInteractiveArgs({
+      ...base,
+      mcpConfigPath: "/tmp/mcp.json",
+      strictMcpConfig: true,
+      enableChrome: false,
+    });
+    expect(args).toContain("--mcp-config");
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).not.toContain("--chrome");
+  });
+
+  it("does not enable strict MCP mode without a config file", () => {
+    const args = buildInteractiveArgs({ ...base, strictMcpConfig: true });
+    expect(args).not.toContain("--strict-mcp-config");
+  });
+
+  it("rejects employee CLI flags that could re-enable denied placement surfaces", () => {
+    expect(() => buildInteractiveArgs({
+      ...base,
+      mcpConfigPath: "/tmp/placement-mcp.json",
+      strictMcpConfig: true,
+      enableChrome: false,
+      cliFlags: ["--chrome", "--mcp-config", "/tmp/untrusted-mcp.json", "--debug"],
+    })).toThrow("Placement-scoped Claude run rejects employee cliFlags: --chrome, --mcp-config");
+  });
+
+  it("preserves safe employee CLI flags for placement runs", () => {
+    const args = buildInteractiveArgs({ ...base, strictMcpConfig: true, cliFlags: ["--debug"] });
+    expect(args).toContain("--debug");
+  });
+
+  it("preserves employee CLI flags for legacy non-placement runs", () => {
+    const args = buildInteractiveArgs({ ...base, cliFlags: ["--debug"] });
+    expect(args).toContain("--chrome");
+    expect(args).toContain("--debug");
+    expect(args).not.toContain("--strict-mcp-config");
+  });
+});
+
 describe("TurnResolver", () => {
   it("resolves only after BOTH SessionStart and Stop", async () => {
     const r = new TurnResolver({ fallbackSessionId: "old" });

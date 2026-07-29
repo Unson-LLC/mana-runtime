@@ -1,3 +1,5 @@
+import { operatorWebSocketProtocols } from "./operator-auth";
+
 type EventHandler = (event: string, payload: unknown) => void;
 
 export function createGatewaySocket(
@@ -17,7 +19,7 @@ export function createGatewaySocket(
 
   function connect() {
     if (closed) return;
-    ws = new WebSocket(wsUrl);
+    ws = new WebSocket(wsUrl, operatorWebSocketProtocols());
     ws.onopen = () => {
       opts?.onOpen?.();
     };

@@ -34,6 +34,7 @@ export interface DiscordConnectorConfig {
   channelRouting?: Record<string, string>;
   /** If set, this instance proxies all Discord operations through the primary instance at this URL */
   proxyVia?: string;
+  proxyToken?: string;
 }
 
 export class DiscordConnector implements Connector {
@@ -339,7 +340,10 @@ export class DiscordConnector implements Connector {
 
       const res = await fetch(`${remoteUrl.replace(/\/+$/, "")}/api/connectors/discord/incoming`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(this.config.proxyToken ? { "x-jinn-connector-proxy-token": this.config.proxyToken } : {}),
+        },
         body: JSON.stringify(payload),
       });
 

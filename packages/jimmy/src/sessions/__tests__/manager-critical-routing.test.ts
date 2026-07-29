@@ -145,4 +145,157 @@ describe("SessionManager deterministic critical routing", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(registry.insertMessage).not.toHaveBeenCalled();
   });
+
+  it("atomically rebinds an existing Slack session to the resolved placement authority", async () => {
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engine: "codex",
+      engineSessionId: "stale-engine-session",
+      employee: "legacy-agent",
+      model: "legacy-model",
+      effortLevel: "low",
+    });
+    const manager = new SessionManager(CONFIG, new Map(), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko",
+        displayName: "Ryoko",
+        department: "operations",
+        rank: "executive",
+        engine: "claude",
+        model: "sonnet",
+        effortLevel: "medium",
+        persona: "Operate within the placement.",
+      },
+      criticalRouting: { enabled: true, reviewerEmployee: "critical-reviewer" },
+    });
+
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engine: "claude",
+      engineSessionId: null,
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: expect.objectContaining({ placementId: "mana-test" }),
+    }));
+  });
+
+  it("kills and clears a same-engine transcript and stale override metadata on placement rebind", async () => {
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engineSessionId: "stale-claude-transcript",
+      transportMeta: {
+        engineOverride: { originalEngine: "codex", until: "2000-01-01T00:00:00.000Z" },
+        engineSessions: { claude: "stale-claude-transcript", codex: "stale-codex-transcript" },
+        claudeSyncSince: "2020-01-01T00:00:00.000Z",
+      },
+    });
+    const kill = vi.fn();
+    const engine = { name: "claude", run: vi.fn(), kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+      criticalRouting: { enabled: true, reviewerEmployee: "critical-reviewer" },
+    });
+
+    expect(kill).toHaveBeenCalledWith("parent-1", "placement authority rebind");
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engine: "claude",
+      engineSessionId: null,
+      transportMeta: { placementId: "mana-test" },
+    }));
+  });
+
+  it("passes the fail-closed Placement boundary to the real Slack engine call site", async () => {
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "claude-1", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      strictMcpConfig: true,
+      enableChrome: false,
+    }));
+  });
+
+  it("keeps the real legacy Slack engine call site non-strict", async () => {
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "claude-legacy", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector());
+
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      strictMcpConfig: false,
+      enableChrome: undefined,
+    }));
+  });
+
+  it("does not announce or persist an unsupported Placement fallback after a Claude rate limit", async () => {
+    vi.useFakeTimers();
+    const claudeRun = vi.fn()
+      .mockResolvedValueOnce({
+        error: "Claude usage limit reached",
+        rateLimit: { status: "rejected" },
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({ result: "recovered", sessionId: "claude-2", durationMs: 1 });
+    const codexRun = vi.fn();
+    const claude = { name: "claude", run: claudeRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const codex = { name: "codex", run: codexRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const config = {
+      ...CONFIG,
+      sessions: { rateLimitStrategy: "fallback", fallbackEngine: "codex", maxRetries: 0 },
+    } as unknown as JinnConfig;
+    const manager = new SessionManager(config, new Map([["claude", claude], ["codex", codex]]), ["slack"]);
+    const slack = connector();
+
+    const routePromise = manager.route(incoming(), slack, {
+      placement: {
+        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await routePromise;
+
+    expect(codexRun).not.toHaveBeenCalled();
+    expect(registry.updateSession).not.toHaveBeenCalledWith("parent-1", expect.objectContaining({ engine: "codex" }));
+    expect(slack.replyMessage).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("Switching to GPT"),
+    );
+    vi.useRealTimers();
+  });
 });
