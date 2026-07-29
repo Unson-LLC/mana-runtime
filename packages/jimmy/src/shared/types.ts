@@ -460,6 +460,21 @@ export interface SlackConnectorConfig {
     /** Max tasks rendered per status section. Default 50. */
     maxPerSection?: number;
   };
+  /**
+   * Due-date reminders sourced from the canonical Brainbase task store:
+   * posts to a channel when an open task approaches or passes its due date
+   * (requires BRAINBASE_TASK_API_BASE_URL / _TOKEN).
+   */
+  taskReminder?: {
+    /** Master switch — defaults to false when the block is absent. */
+    enabled?: boolean;
+    /** Slack channel ID to post reminders into. Required. */
+    channelId?: string;
+    /** Polling interval in ms (min 60000, default 1800000). */
+    checkIntervalMs?: number;
+    /** Hours before due_at a task counts as "due soon". Default 24. */
+    dueSoonHours?: number;
+  };
 }
 
 export interface DiscordConnectorConfig {
