@@ -59,6 +59,13 @@
 
 ---
 
+## 依存インフラの脱属人化（brainbase側、2026-07-29追記）
+
+柱4以降をチーム運用に載せるための前提。現状、Canonical Taskの単一writerは佐藤ローカルMacのlaunchd `com.brainbase.ui`（port 31013）で、pilotは`https://bb.brain-base.work`（Cloudflareトンネル経由で同Macに着地）へ書いている。single-writer設計（writer lease・readiness・冪等・監査・他所fail-closed）は正しく維持し、**leaseの持ち主だけをサーバーへ移す**。
+
+1. **writer移設**: サーバー常駐のcompanion APIインスタンスへwriter leaseを移譲（runbook: brainbase `docs/runbooks/canonical-task-cutover.md`）。pilotの`BRAINBASE_TASK_API_BASE_URL`をサーバーへ向け直し、Macのトンネルを本番経路から外す
+2. **Brainbase MCPへのtask mutationツール追加**: create/update/transitionを公開（deleteは非公開のまま）し、机上エージェントの正規登録経路を作る。サービスごとの`bbsvc_`トークン正規発行もあわせて整理
+
 ## 優先順位
 
 | 順 | 項目 | 理由 |
@@ -69,4 +76,8 @@
 | 4 | 柱5: Slack Connect + オンボーディング型化 | 2026-08-25の安部様定例までに見せられる形へ |
 | 5 | 柱2: Graph実行時参照 | 効果は大きいがbrainbase側との共同設計が必要で足が長い |
 
-上位3項目はCanonical Taskに登録済み（2026-07-29）。
+上位3項目と脱属人化2項目（writer移設・MCP taskツール追加）はCanonical Taskに登録済み（2026-07-29、冪等キー`mana-roadmap-2026-07-29-*`）。
+
+### 進捗記録
+
+- 2026-07-29: 柱4第1弾の期限リマインダー（`TaskReminderNotifier`）実装・pilot稼働・実投稿確認（PR #13）。柱4の残りは議事録→タスク候補提示→ワンタップ登録のmana-runtime移植（設計はmana `meeting-flow-integration.js` を参照実装として移す。manaのLambda版は移行後に凍結）
