@@ -475,6 +475,28 @@ export interface SlackConnectorConfig {
     /** Hours before due_at a task counts as "due soon". Default 24. */
     dueSoonHours?: number;
   };
+  /**
+   * Meeting minutes → task-candidate proposals with approve/reject buttons,
+   * registering approved candidates into the canonical Brainbase task store
+   * (requires BRAINBASE_TASK_API_BASE_URL / _TOKEN and Slack Interactivity).
+   */
+  meetingTaskProposal?: {
+    /** Master switch — defaults to false when the block is absent. */
+    enabled?: boolean;
+    /** Channel IDs to watch for minutes. Required; empty keeps the feature off. */
+    channels?: string[];
+    /** User IDs allowed to approve/reject. Defaults to allowFrom. */
+    approverUserIds?: string[];
+    /** Minimum message length considered as minutes. Default 200. */
+    minMessageChars?: number;
+    /** Proposal lifetime in hours. Default 72. */
+    ttlHours?: number;
+    /** LLM extraction overrides. */
+    engine?: "claude" | "codex";
+    bin?: string;
+    model?: string;
+    timeoutMs?: number;
+  };
 }
 
 export interface DiscordConnectorConfig {
