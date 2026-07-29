@@ -116,8 +116,69 @@ const TOOLS = [
     },
   },
   {
+    name: "create_task",
+    description:
+      "Create a task in the canonical Brainbase task store (the single source of truth for tasks). ALWAYS use this — never a department board — when asked to create, register, or record a task. Returns the created task with its canonical ID.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Task title" },
+        description: { type: "string", description: "Task description (optional)" },
+        priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "Priority (default medium)" },
+        due_at: { type: "string", description: "Due date-time in ISO 8601 (optional)" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "list_tasks",
+    description:
+      "List tasks from the canonical Brainbase task store. Filter by status or priority.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        status: { type: "string", enum: ["pending", "in_progress", "waiting", "completed"], description: "Filter by status" },
+        priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "Filter by priority" },
+        limit: { type: "number", description: "Max items to return (default 20)" },
+      },
+    },
+  },
+  {
+    name: "update_task",
+    description:
+      "Update a canonical task's title, description, priority, or due date. Requires the task's current version (expected_version) from create_task/list_tasks.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        task_id: { type: "string", description: "Canonical task ID" },
+        expected_version: { type: "number", description: "Current task version (optimistic lock)" },
+        title: { type: "string" },
+        description: { type: "string" },
+        priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+        due_at: { type: "string", description: "ISO 8601 due date-time" },
+      },
+      required: ["task_id", "expected_version"],
+    },
+  },
+  {
+    name: "transition_task",
+    description:
+      "Move a canonical task to another status (pending, in_progress, waiting, completed). Use this to start, block, or complete tasks. waiting requires waiting_on.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        task_id: { type: "string", description: "Canonical task ID" },
+        expected_version: { type: "number", description: "Current task version (optimistic lock)" },
+        to_status: { type: "string", enum: ["pending", "in_progress", "waiting", "completed"], description: "Target status" },
+        waiting_on: { type: "string", description: "What the task is waiting on (required for waiting)" },
+      },
+      required: ["task_id", "expected_version", "to_status"],
+    },
+  },
+  {
     name: "update_board",
-    description: "Update a department's task board. Use to add, move, or complete tasks.",
+    description:
+      "Update a department's board view. Boards are a local workflow visualization only — they are NOT the task store. To create or complete actual tasks, use create_task / transition_task (canonical Brainbase store) instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -218,6 +279,19 @@ async function apiPut(path: string, body: unknown): Promise<unknown> {
   return res.json();
 }
 
+async function apiPatch(path: string, body: unknown): Promise<unknown> {
+  const res = await fetch(`${GATEWAY_URL}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`API ${path}: ${res.status} ${res.statusText}${detail ? ` ${detail.slice(0, 300)}` : ""}`);
+  }
+  return res.json();
+}
+
 // ─── Tool Handlers ───
 
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -286,6 +360,38 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     case "get_employee": {
       const employee = await apiGet(`/api/org/employees/${args.name}`);
       return JSON.stringify(employee);
+    }
+
+    case "create_task": {
+      const result = await apiPost("/api/tasks", {
+        title: args.title,
+        ...(args.description ? { description: args.description } : {}),
+        ...(args.priority ? { priority: args.priority } : {}),
+        ...(args.due_at ? { due_at: args.due_at } : {}),
+      });
+      return JSON.stringify(result);
+    }
+
+    case "list_tasks": {
+      const params = new URLSearchParams();
+      if (args.status) params.set("status", String(args.status));
+      if (args.priority) params.set("priority", String(args.priority));
+      if (args.limit) params.set("limit", String(args.limit));
+      const suffix = params.size > 0 ? `?${params.toString()}` : "";
+      const result = await apiGet(`/api/tasks${suffix}`);
+      return JSON.stringify(result);
+    }
+
+    case "update_task": {
+      const { task_id, ...rest } = args as { task_id: string } & Record<string, unknown>;
+      const result = await apiPatch(`/api/tasks/${encodeURIComponent(task_id)}`, rest);
+      return JSON.stringify(result);
+    }
+
+    case "transition_task": {
+      const { task_id, ...rest } = args as { task_id: string } & Record<string, unknown>;
+      const result = await apiPost(`/api/tasks/${encodeURIComponent(task_id)}/transitions`, rest);
+      return JSON.stringify(result);
     }
 
     case "update_board": {

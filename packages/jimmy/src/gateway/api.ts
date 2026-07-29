@@ -39,6 +39,13 @@ import {
   FILES_DIR,
 } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
+import {
+  BrainbaseTaskClient,
+  BrainbaseTaskError,
+  type CreateTaskInput,
+  type TransitionTaskInput,
+  type UpdateTaskInput,
+} from "../shared/brainbase-tasks.js";
 import { getSttStatus, downloadModel, transcribe as sttTranscribe, resolveLanguages, WHISPER_LANGUAGES } from "../stt/stt.js";
 import { JINN_HOME } from "../shared/paths.js";
 import { handleHookPost, LOOPBACK as HOOK_LOOPBACK } from "./hook-endpoint.js";
@@ -339,6 +346,15 @@ function notFound(res: ServerResponse): void {
 
 function badRequest(res: ServerResponse, message: string): void {
   json(res, { error: message }, 400);
+}
+
+function brainbaseTaskErrorResponse(res: ServerResponse, err: unknown): void {
+  if (err instanceof BrainbaseTaskError) {
+    json(res, { error: err.message, code: err.code, details: err.details }, err.status);
+    return;
+  }
+  logger.error(`Brainbase task API request failed: ${err instanceof Error ? err.message : String(err)}`);
+  json(res, { error: "Brainbase task store is unreachable", code: "task_store_unreachable" }, 502);
 }
 
 function serverError(res: ServerResponse, message: string): void {
@@ -1253,6 +1269,132 @@ Handle this as a priority request from a colleague.`;
         managers: managers.map((m) => m.employee.name),
         service,
       }, 201);
+    }
+
+    // ─── Canonical tasks (Brainbase task store) ───
+    // The source of truth for tasks is Brainbase PostgreSQL, not local board
+    // files. These routes proxy to the companion task API and fail loud when
+    // the store is unreachable — no silent fallback to board.json.
+
+    // GET /api/tasks
+    if (method === "GET" && pathname === "/api/tasks") {
+      try {
+        const client = new BrainbaseTaskClient();
+        const result = await client.listTasks({
+          status: url.searchParams.get("status") || undefined,
+          priority: url.searchParams.get("priority") || undefined,
+          assignee_person_id: url.searchParams.get("assignee_person_id") || undefined,
+          limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+          cursor: url.searchParams.get("cursor") || undefined,
+        });
+        return json(res, result);
+      } catch (err) {
+        return brainbaseTaskErrorResponse(res, err);
+      }
+    }
+
+    // POST /api/tasks
+    if (method === "POST" && pathname === "/api/tasks") {
+      const _parsed = await readJsonBody(req, res);
+      if (!_parsed.ok) return;
+      const body = _parsed.body as Record<string, unknown>;
+      if (!body || typeof body.title !== "string" || !body.title.trim()) {
+        return badRequest(res, "title is required");
+      }
+      try {
+        const client = new BrainbaseTaskClient();
+        const task = await client.createTask(
+          {
+            title: body.title as string,
+            description: typeof body.description === "string" ? body.description : undefined,
+            priority: typeof body.priority === "string" ? (body.priority as CreateTaskInput["priority"]) : undefined,
+            assignee_person_id:
+              typeof body.assignee_person_id === "string" ? body.assignee_person_id : undefined,
+            due_at: typeof body.due_at === "string" ? body.due_at : undefined,
+          },
+          typeof body.idempotency_key === "string" ? body.idempotency_key : undefined,
+        );
+        return json(res, task, 201);
+      } catch (err) {
+        return brainbaseTaskErrorResponse(res, err);
+      }
+    }
+
+    // GET /api/tasks/:id
+    params = matchRoute("/api/tasks/:id", pathname);
+    if (method === "GET" && params) {
+      try {
+        const client = new BrainbaseTaskClient();
+        return json(res, await client.getTask(params.id));
+      } catch (err) {
+        return brainbaseTaskErrorResponse(res, err);
+      }
+    }
+
+    // PATCH /api/tasks/:id
+    params = matchRoute("/api/tasks/:id", pathname);
+    if (method === "PATCH" && params) {
+      const _parsed = await readJsonBody(req, res);
+      if (!_parsed.ok) return;
+      const body = _parsed.body as Record<string, unknown>;
+      if (!Number.isInteger(body?.expected_version)) {
+        return badRequest(res, "expected_version is required");
+      }
+      try {
+        const client = new BrainbaseTaskClient();
+        const task = await client.updateTask(
+          params.id,
+          body as unknown as UpdateTaskInput,
+          typeof body.idempotency_key === "string" ? body.idempotency_key : undefined,
+        );
+        return json(res, task);
+      } catch (err) {
+        return brainbaseTaskErrorResponse(res, err);
+      }
+    }
+
+    // POST /api/tasks/:id/transitions
+    params = matchRoute("/api/tasks/:id/transitions", pathname);
+    if (method === "POST" && params) {
+      const _parsed = await readJsonBody(req, res);
+      if (!_parsed.ok) return;
+      const body = _parsed.body as Record<string, unknown>;
+      if (!Number.isInteger(body?.expected_version) || typeof body?.to_status !== "string") {
+        return badRequest(res, "expected_version and to_status are required");
+      }
+      try {
+        const client = new BrainbaseTaskClient();
+        const task = await client.transitionTask(
+          params.id,
+          body as unknown as TransitionTaskInput,
+          typeof body.idempotency_key === "string" ? body.idempotency_key : undefined,
+        );
+        return json(res, task);
+      } catch (err) {
+        return brainbaseTaskErrorResponse(res, err);
+      }
+    }
+
+    // DELETE /api/tasks/:id
+    params = matchRoute("/api/tasks/:id", pathname);
+    if (method === "DELETE" && params) {
+      const _parsed = await readJsonBody(req, res);
+      if (!_parsed.ok) return;
+      const body = _parsed.body as Record<string, unknown>;
+      if (!Number.isInteger(body?.expected_version)) {
+        return badRequest(res, "expected_version is required");
+      }
+      try {
+        const client = new BrainbaseTaskClient();
+        const result = await client.deleteTask(
+          params.id,
+          body.expected_version as number,
+          typeof body.idempotency_key === "string" ? body.idempotency_key : undefined,
+        );
+        return json(res, result);
+      } catch (err) {
+        return brainbaseTaskErrorResponse(res, err);
+      }
     }
 
     // GET /api/org/departments/:name/board
