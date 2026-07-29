@@ -7,7 +7,7 @@
  * here, never through local board files.
  *
  * Configuration (environment):
- *   BRAINBASE_TASK_API_BASE_URL  e.g. https://bb.brain-base.work
+ *   BRAINBASE_TASK_API_BASE_URL  e.g. https://bb.unson.jp
  *   BRAINBASE_TASK_API_TOKEN     bearer token (bbsvc_ service token)
  */
 
