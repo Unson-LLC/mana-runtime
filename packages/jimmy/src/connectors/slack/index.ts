@@ -25,6 +25,7 @@ import { ConversationTracker } from "./conversation-tracker.js";
 import { AgentsCanvasUpdater } from "./agents-canvas.js";
 import { TaskCanvasUpdater } from "./task-canvas.js";
 import { TaskReminderNotifier } from "./task-reminder.js";
+import { MeetingTaskProposalNotifier } from "./meeting-task-proposal.js";
 import { extractGoalCondition, shouldExtractGoal } from "./goal-extractor.js";
 import { startsWithSlashCommand } from "../../sessions/manager.js";
 import type { SlackTriageConfig } from "../../shared/types.js";
@@ -72,6 +73,7 @@ export class SlackConnector implements Connector {
   private readonly agentsCanvas: AgentsCanvasUpdater | null;
   private readonly taskCanvas: TaskCanvasUpdater | null;
   private readonly taskReminder: TaskReminderNotifier | null;
+  private readonly meetingTaskProposal: MeetingTaskProposalNotifier | null;
   private static CHANNEL_CACHE_TTL_MS = 3600_000; // 1 hour
   private static USER_CACHE_TTL_MS = 3600_000; // 1 hour
 
@@ -167,6 +169,9 @@ export class SlackConnector implements Connector {
       : null;
     this.taskReminder = config.taskReminder?.enabled
       ? new TaskReminderNotifier(this.app, config.taskReminder)
+      : null;
+    this.meetingTaskProposal = config.meetingTaskProposal?.enabled
+      ? new MeetingTaskProposalNotifier(this.app, config.meetingTaskProposal, allowFrom)
       : null;
   }
 
@@ -817,6 +822,9 @@ export class SlackConnector implements Connector {
       this.handler(msg);
     });
 
+    // Bolt listeners must be registered before app.start().
+    this.meetingTaskProposal?.register();
+
     await this.app.start();
     this.started = true;
     this.lastError = null;
@@ -830,6 +838,7 @@ export class SlackConnector implements Connector {
     this.agentsCanvas?.stop();
     this.taskCanvas?.stop();
     this.taskReminder?.stop();
+    this.meetingTaskProposal?.stop();
     for (const interval of this.typingIntervals.values()) {
       clearInterval(interval);
     }
