@@ -440,6 +440,22 @@ export interface SlackConnectorConfig {
     /** Max sessions rendered per status group. Default 10. */
     maxPerGroup?: number;
   };
+  /**
+   * Self-updating Slack Canvas mirroring the canonical Brainbase task store
+   * (read-only projection; requires BRAINBASE_TASK_API_BASE_URL / _TOKEN).
+   */
+  taskCanvas?: {
+    /** Master switch — defaults to false when the block is absent. */
+    enabled?: boolean;
+    /** Slack channel ID to host the canvas in. If unset, a standalone canvas is created. */
+    channelId?: string;
+    /** Canvas title. Default: "タスクボード". */
+    title?: string;
+    /** Refresh interval in ms (min 30000, default 300000). */
+    pollIntervalMs?: number;
+    /** Max tasks rendered per status section. Default 50. */
+    maxPerSection?: number;
+  };
 }
 
 export interface DiscordConnectorConfig {
