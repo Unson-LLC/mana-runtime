@@ -296,10 +296,10 @@ async function apiPut(path: string, body: unknown, tool: string): Promise<unknow
   return res.json();
 }
 
-async function apiPatch(path: string, body: unknown): Promise<unknown> {
+async function apiPatch(path: string, body: unknown, tool: string): Promise<unknown> {
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...sessionHeaders(tool) },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -388,7 +388,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ...(args.description ? { description: args.description } : {}),
         ...(args.priority ? { priority: args.priority } : {}),
         ...(args.due_at ? { due_at: args.due_at } : {}),
-      });
+      }, name);
       return JSON.stringify(result);
     }
 
@@ -398,19 +398,19 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       if (args.priority) params.set("priority", String(args.priority));
       if (args.limit) params.set("limit", String(args.limit));
       const suffix = params.size > 0 ? `?${params.toString()}` : "";
-      const result = await apiGet(`/api/tasks${suffix}`);
+      const result = await apiGet(`/api/tasks${suffix}`, name);
       return JSON.stringify(result);
     }
 
     case "update_task": {
       const { task_id, ...rest } = args as { task_id: string } & Record<string, unknown>;
-      const result = await apiPatch(`/api/tasks/${encodeURIComponent(task_id)}`, rest);
+      const result = await apiPatch(`/api/tasks/${encodeURIComponent(task_id)}`, rest, name);
       return JSON.stringify(result);
     }
 
     case "transition_task": {
       const { task_id, ...rest } = args as { task_id: string } & Record<string, unknown>;
-      const result = await apiPost(`/api/tasks/${encodeURIComponent(task_id)}/transitions`, rest);
+      const result = await apiPost(`/api/tasks/${encodeURIComponent(task_id)}/transitions`, rest, name);
       return JSON.stringify(result);
     }
 
