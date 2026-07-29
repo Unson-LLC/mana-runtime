@@ -47,7 +47,8 @@ const DEFAULT_POLL_MS = 300_000;
 const MIN_POLL_MS = 30_000;
 const DEFAULT_MAX_PER_SECTION = 50;
 const MAX_CONSECUTIVE_FAILURES = 10;
-const FETCH_PAGE_LIMIT = 100;
+// Canonical Task API caps list page size at 50 (must_be_between_1_and_50).
+const FETCH_PAGE_LIMIT = 50;
 const FETCH_MAX_TASKS = 1000;
 
 const PRIORITY_LABEL: Record<string, string> = {
