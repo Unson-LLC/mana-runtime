@@ -24,6 +24,7 @@ import { isOperatorSpeaker } from "../../shared/operator-match.js";
 import { ConversationTracker } from "./conversation-tracker.js";
 import { AgentsCanvasUpdater } from "./agents-canvas.js";
 import { TaskCanvasUpdater } from "./task-canvas.js";
+import { TaskReminderNotifier } from "./task-reminder.js";
 import { extractGoalCondition, shouldExtractGoal } from "./goal-extractor.js";
 import { startsWithSlashCommand } from "../../sessions/manager.js";
 import type { SlackTriageConfig } from "../../shared/types.js";
@@ -70,6 +71,7 @@ export class SlackConnector implements Connector {
   private readonly conversations: ConversationTracker;
   private readonly agentsCanvas: AgentsCanvasUpdater | null;
   private readonly taskCanvas: TaskCanvasUpdater | null;
+  private readonly taskReminder: TaskReminderNotifier | null;
   private static CHANNEL_CACHE_TTL_MS = 3600_000; // 1 hour
   private static USER_CACHE_TTL_MS = 3600_000; // 1 hour
 
@@ -162,6 +164,9 @@ export class SlackConnector implements Connector {
       : null;
     this.taskCanvas = config.taskCanvas?.enabled
       ? new TaskCanvasUpdater(this.app, config.taskCanvas)
+      : null;
+    this.taskReminder = config.taskReminder?.enabled
+      ? new TaskReminderNotifier(this.app, config.taskReminder)
       : null;
   }
 
@@ -818,11 +823,13 @@ export class SlackConnector implements Connector {
     logger.info("Slack connector started (socket mode)");
     this.agentsCanvas?.start();
     this.taskCanvas?.start();
+    this.taskReminder?.start();
   }
 
   async stop() {
     this.agentsCanvas?.stop();
     this.taskCanvas?.stop();
+    this.taskReminder?.stop();
     for (const interval of this.typingIntervals.values()) {
       clearInterval(interval);
     }
