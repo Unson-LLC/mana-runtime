@@ -312,6 +312,64 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     }
   });
 
+  it("binds canonical task tools to their /api/tasks routes under placement policy", async () => {
+    config.placements![0].capabilities!.gatewayTools = ["list_tasks", "create_task"];
+    try {
+      // Authorized tool + matching route passes the placement gate; the request
+      // then reaches the task proxy, which fails loud (503) because the
+      // Brainbase store is unconfigured in tests — proving the gate was passed.
+      const listed = await fetch(`${baseUrl}/api/tasks`, {
+        headers: {
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "list_tasks",
+        },
+      });
+      expect(listed.status).toBe(503);
+      expect(((await listed.json()) as { code?: string }).code).toBe("task_store_not_configured");
+
+      const created = await fetch(`${baseUrl}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "create_task",
+        },
+        body: JSON.stringify({ title: "placement-bound task" }),
+      });
+      expect(created.status).toBe(503);
+
+      // A tool not in the placement allowlist is rejected before the proxy.
+      const denied = await fetch(`${baseUrl}/api/tasks/some-id`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "update_task",
+        },
+        body: JSON.stringify({ expected_version: 1 }),
+      });
+      expect(denied.status).toBe(403);
+
+      // A route/tool mismatch is rejected even for an allowed tool.
+      const mismatched = await fetch(`${baseUrl}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "list_tasks",
+        },
+        body: JSON.stringify({ title: "mismatched" }),
+      });
+      expect(mismatched.status).toBe(403);
+    } finally {
+      config.placements![0].capabilities!.gatewayTools = ["send_message"];
+    }
+  });
+
   it("allows only an authenticated placement delivery target on the direct connector route", async () => {
     sendMessage.mockClear();
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
