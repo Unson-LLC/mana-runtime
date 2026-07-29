@@ -64,7 +64,7 @@
 柱4以降をチーム運用に載せるための前提。着手時点では、Canonical Taskの**データ本体（MacローカルHomebrew PostgreSQL）とwriter**（launchd `com.brainbase.ui`、port 31013）の両方が佐藤ローカルMacにあり、pilotは`https://bb.brain-base.work`（Cloudflareトンネル経由で同Macに着地）へ書いていた。single-writer設計（writer lease・readiness・冪等・監査・他所fail-closed）は正しく維持し、置き場所だけをサーバーへ移す。
 
 1. **writer移設** — ✅完了(2026-07-29): データ本体+writer leaseをLightsail（bb.unson.jp、PostgreSQL 16.14）へ移設。pilotの`BRAINBASE_TASK_API_BASE_URL`は`https://bb.unson.jp`へ切替済み、Mac側31013のmutationは`writer_migrated_to_lightsail_20260729`でfail-closed。移設後のSlack経由E2E作成も実証済み。Macのcloudflared ingressからの`bb.brain-base.work`除去も完了(2026-07-29、`~/.cloudflared/config.yml`から当該hostnameのみ削除、`line.mana-bot.win`は継続稼働を確認)。E2E検証行も削除済み(2026-07-29、companion API DELETE経由・GET 404確認)
-2. **Brainbase MCPへのtask mutationツール追加**: create/update/transitionを公開（deleteは非公開のまま）し、机上エージェントの正規登録経路を作る。サーバー側は`BRAINBASE_SERVICE_TOKEN_SECRET`が正規分離済みなので、サービスごとの`bbsvc_`トークン発行（`svc_mana_runtime`等）をこの経路に載せる
+2. **Brainbase MCPへのtask mutationツール追加** — ✅完了(2026-07-29): `create_task`/`update_task`/`transition_task`をBrainbase MCPサーバーに追加（deleteは非公開のまま）。companion task API（bb.unson.jp）の薄いクライアント実装で、認証は専用サービストークン`svc_brainbase_mcp`（member role、Infisical `brainbase-mcp` target管理、期限2026-10-27）。MCP stdio E2Eでcreate→update→transition→completedのLightsail正本反映を検証済み（brainbase-unson PR #1094）
 
 ## 優先順位
 
