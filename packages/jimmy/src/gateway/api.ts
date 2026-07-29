@@ -310,6 +310,10 @@ function gatewayToolMatchesRoute(tool: string, method: string, pathname: string)
   if (tool === "get_employee") return method === "GET" && !!matchRoute("/api/org/employees/:name", pathname);
   if (tool === "get_board") return method === "GET" && !!matchRoute("/api/org/departments/:name/board", pathname);
   if (tool === "update_board") return method === "PUT" && !!matchRoute("/api/org/departments/:name/board", pathname);
+  if (tool === "create_task") return method === "POST" && pathname === "/api/tasks";
+  if (tool === "list_tasks") return method === "GET" && pathname === "/api/tasks";
+  if (tool === "update_task") return method === "PATCH" && !!matchRoute("/api/tasks/:id", pathname);
+  if (tool === "transition_task") return method === "POST" && !!matchRoute("/api/tasks/:id/transitions", pathname);
   if (tool === "list_cron_jobs") return method === "GET" && pathname === "/api/cron";
   if (tool === "trigger_cron_job") {
     return (method === "GET" && pathname === "/api/cron") ||
