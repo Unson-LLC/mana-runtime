@@ -93,7 +93,16 @@ export function buildSlackConnectorContext(
   };
 }
 
-function resolveRouteOptions(
+/**
+ * Single routing gate for EVERY connector message. When `placements` are
+ * configured this is fail-closed: a message that does not resolve to a unique,
+ * enabled, audience-authorized placement returns undefined and must not be
+ * routed. Non-Slack connectors go through here too — bypassing this function
+ * reopens the placement-bypass hole recorded in
+ * docs/discovery/gap-analysis-2026-07-30.md (A-1).
+ * Exported for tests.
+ */
+export function resolveRouteOptions(
   cfg: JinnConfig,
   msg: IncomingMessage,
   employees: Map<string, Employee>,
@@ -413,11 +422,8 @@ export async function startGateway(
           proxyToken: cfg.connectors.discord.proxyToken,
         });
         discord.onMessage((msg) => {
-          const routeOpts: RouteOptions = {};
-          if (cfg.connectors.discord?.employee) {
-            const emp = employeeRegistry.get(cfg.connectors.discord.employee);
-            if (emp) routeOpts.employee = emp;
-          }
+          const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.discord?.employee);
+          if (!routeOpts) return;
           sessionManager.route(msg, discord, routeOpts).catch((err) => {
             logger.error(`Discord route error: ${err instanceof Error ? err.message : err}`);
           });
@@ -436,11 +442,8 @@ export async function startGateway(
       try {
         const discord = new DiscordConnector(cfg.connectors.discord as DiscordConnectorConfig);
         discord.onMessage((msg) => {
-          const routeOpts: RouteOptions = {};
-          if (cfg.connectors.discord?.employee) {
-            const emp = employeeRegistry.get(cfg.connectors.discord.employee);
-            if (emp) routeOpts.employee = emp;
-          }
+          const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.discord?.employee);
+          if (!routeOpts) return;
           sessionManager.route(msg, discord, routeOpts).catch((err) => {
             logger.error(`Discord route error: ${err instanceof Error ? err.message : err}`);
           });
@@ -465,11 +468,8 @@ export async function startGateway(
           ignoreOldMessagesOnBoot: cfg.connectors.telegram.ignoreOldMessagesOnBoot,
         });
         telegram.onMessage((msg) => {
-          const routeOpts: RouteOptions = {};
-          if (cfg.connectors.telegram?.employee) {
-            const emp = employeeRegistry.get(cfg.connectors.telegram.employee);
-            if (emp) routeOpts.employee = emp;
-          }
+          const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.telegram?.employee);
+          if (!routeOpts) return;
           sessionManager.route(msg, telegram, routeOpts).catch((err) => {
             logger.error(`Telegram route error: ${err instanceof Error ? err.message : err}`);
           });
@@ -489,11 +489,8 @@ export async function startGateway(
       try {
         const whatsapp = new WhatsAppConnector(cfg.connectors.whatsapp ?? {});
         whatsapp.onMessage((msg) => {
-          const routeOpts: RouteOptions = {};
-          if (cfg.connectors.whatsapp?.employee) {
-            const emp = employeeRegistry.get(cfg.connectors.whatsapp.employee);
-            if (emp) routeOpts.employee = emp;
-          }
+          const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.whatsapp?.employee);
+          if (!routeOpts) return;
           sessionManager.route(msg, whatsapp, routeOpts).catch((err) => {
             logger.error(`WhatsApp route error: ${err instanceof Error ? err.message : err}`);
           });
@@ -536,11 +533,8 @@ export async function startGateway(
             const discordConfig = { ...typeConfig, id } as DiscordConnectorConfig;
             const discord = new DiscordConnector(discordConfig);
             discord.onMessage((msg) => {
-              const routeOpts: RouteOptions = {};
-              if (employee) {
-                const emp = employeeRegistry.get(employee);
-                if (emp) routeOpts.employee = emp;
-              }
+              const routeOpts = resolveRouteOptions(config, msg, employeeRegistry, employee);
+              if (!routeOpts) return;
               sessionManager.route(msg, discord, routeOpts).catch((err) => {
                 logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
               });
@@ -572,11 +566,8 @@ export async function startGateway(
           case "whatsapp": {
             const whatsapp = new WhatsAppConnector({ ...typeConfig } as any);
             whatsapp.onMessage((msg) => {
-              const routeOpts: RouteOptions = {};
-              if (employee) {
-                const emp = employeeRegistry.get(employee);
-                if (emp) routeOpts.employee = emp;
-              }
+              const routeOpts = resolveRouteOptions(config, msg, employeeRegistry, employee);
+              if (!routeOpts) return;
               sessionManager.route(msg, whatsapp, routeOpts).catch((err) => {
                 logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
               });
@@ -589,11 +580,8 @@ export async function startGateway(
             const telegramConfig = { ...typeConfig, id } as any;
             const tg = new TelegramConnector(telegramConfig);
             tg.onMessage((msg) => {
-              const routeOpts: RouteOptions = {};
-              if (employee) {
-                const emp = employeeRegistry.get(employee);
-                if (emp) routeOpts.employee = emp;
-              }
+              const routeOpts = resolveRouteOptions(config, msg, employeeRegistry, employee);
+              if (!routeOpts) return;
               sessionManager.route(msg, tg, routeOpts).catch((err) => {
                 logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
               });
@@ -668,11 +656,8 @@ export async function startGateway(
               const discordConfig = { ...typeConfig, id } as DiscordConnectorConfig;
               const discord = new DiscordConnector(discordConfig);
               discord.onMessage((msg) => {
-                const routeOpts: RouteOptions = {};
-                if (employee) {
-                  const emp = employeeRegistry.get(employee);
-                  if (emp) routeOpts.employee = emp;
-                }
+                const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);
+                if (!routeOpts) return;
                 sessionManager.route(msg, discord, routeOpts).catch((err) => {
                   logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
                 });
@@ -706,11 +691,8 @@ export async function startGateway(
             case "whatsapp": {
               const whatsapp = new WhatsAppConnector({ ...typeConfig } as any);
               whatsapp.onMessage((msg) => {
-                const routeOpts: RouteOptions = {};
-                if (employee) {
-                  const emp = employeeRegistry.get(employee);
-                  if (emp) routeOpts.employee = emp;
-                }
+                const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);
+                if (!routeOpts) return;
                 sessionManager.route(msg, whatsapp, routeOpts).catch((err) => {
                   logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
                 });
@@ -723,11 +705,8 @@ export async function startGateway(
               const telegramConfig = { ...typeConfig, id } as any;
               const tg = new TelegramConnector(telegramConfig);
               tg.onMessage((msg) => {
-                const routeOpts: RouteOptions = {};
-                if (employee) {
-                  const emp = employeeRegistry.get(employee);
-                  if (emp) routeOpts.employee = emp;
-                }
+                const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);
+                if (!routeOpts) return;
                 sessionManager.route(msg, tg, routeOpts).catch((err) => {
                   logger.error(`${id} route error: ${err instanceof Error ? err.message : err}`);
                 });
