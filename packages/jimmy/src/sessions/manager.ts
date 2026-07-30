@@ -225,10 +225,24 @@ export class SessionManager {
       const placementModel = opts.model ?? opts.employee?.model ?? null;
       const placementEmployee = opts.employee?.name ?? null;
       const placementEffort = opts.employee?.effortLevel ?? null;
+      // A placement message may only resume the prior engine transcript when the
+      // session's authority binding is unchanged: same placement, same engine,
+      // same employee, and no stale cross-engine metadata. Anything else is a
+      // rebind — kill the running engine and clear the transcript so context
+      // gained under one authority can never leak into another.
+      const priorMeta = (session.transportMeta || {}) as Record<string, unknown>;
+      const samePlacementAuthority = Boolean(opts.placement) &&
+        priorMeta["placementId"] === opts.placement?.id &&
+        session.engine === placementEngine &&
+        (session.employee ?? null) === placementEmployee &&
+        priorMeta["engineOverride"] === undefined &&
+        priorMeta["engineSessions"] === undefined;
       if (opts.placement) {
-        const priorEngine = this.engines.get(session.engine);
-        if (priorEngine && isInterruptibleEngine(priorEngine)) {
-          priorEngine.kill(session.id, "placement authority rebind");
+        if (!samePlacementAuthority) {
+          const priorEngine = this.engines.get(session.engine);
+          if (priorEngine && isInterruptibleEngine(priorEngine)) {
+            priorEngine.kill(session.id, "placement authority rebind");
+          }
         }
         mergedMeta = placementTransportMeta(mergedMeta);
       }
@@ -238,7 +252,7 @@ export class SessionManager {
         transportMeta: mergedMeta,
         ...(opts.placement ? {
           engine: placementEngine,
-          engineSessionId: null,
+          engineSessionId: samePlacementAuthority ? session.engineSessionId : null,
           employee: placementEmployee,
           model: placementModel,
           effortLevel: placementEffort,

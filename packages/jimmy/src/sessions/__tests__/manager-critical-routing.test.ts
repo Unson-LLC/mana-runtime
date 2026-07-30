@@ -222,6 +222,42 @@ describe("SessionManager deterministic critical routing", () => {
     }));
   });
 
+  it("keeps the engine transcript across turns when the placement authority is unchanged", async () => {
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engineSessionId: "live-claude-transcript",
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: { placementId: "mana-test" },
+    });
+    const kill = vi.fn();
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "live-claude-transcript", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: {
+        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+        audience: { type: "operator", allowedUsers: ["U1"] },
+      },
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    expect(kill).not.toHaveBeenCalled();
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engine: "claude",
+      engineSessionId: "live-claude-transcript",
+      transportMeta: expect.objectContaining({ placementId: "mana-test" }),
+    }));
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: "live-claude-transcript",
+    }));
+  });
+
   it("passes the fail-closed Placement boundary to the real Slack engine call site", async () => {
     const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "claude-1", durationMs: 1 });
     const engine = { name: "claude", run: engineRun, kill: vi.fn(), isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
