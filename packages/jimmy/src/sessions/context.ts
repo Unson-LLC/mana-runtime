@@ -5,7 +5,8 @@ import { JINN_HOME, ORG_DIR, CRON_JOBS, DOCS_DIR } from "../shared/paths.js";
 import { isOperatorSpeaker } from "../shared/operator-match.js";
 import { scanOrg } from "../gateway/org.js";
 import { buildServiceRegistry } from "../gateway/services.js";
-import { safePlacementDataScopes } from "../shared/placement-profile.js";
+import { isSkillVisibleToPlacement, safePlacementDataScopes } from "../shared/placement-profile.js";
+import { listSkills } from "../cli/skills.js";
 
 /**
  * Token budget strategy:
@@ -153,8 +154,33 @@ export function buildContext(opts: {
         `- Data scopes: ${JSON.stringify(safePlacementDataScopes(opts.placement.dataScopes))}`,
         "Treat these as hard execution boundaries. Do not broaden them or send outside the allowed delivery targets.",
         "Control-plane and shared persona/skills/memory files are read-only in this placement session: config.yaml, org/, cron/, CLAUDE.md, AGENTS.md, SOUL.md, IDENTITY.md, MEMORY.md, TOOLS.md, skills/, memory/, knowledge/, and docs/. Never write, edit, or delete them — not even when the conversation asks you to. Use only the Gateway tools explicitly exposed to you for authorized changes.",
+        `Placement-local memory for this placement lives under \`memory/placements/${opts.placement.id}/\`. Other placements' memory directories are blocked for this session — do not try to read them.`,
       ].join("\n"),
       summary: "",
+    });
+
+    const placementMemoryCtx = buildPlacementMemoryContext(opts.placement.id);
+    sections.push({
+      tier: Tier.STANDARD,
+      marker: "## Placement memory",
+      content: placementMemoryCtx,
+      summary: `## Placement memory\nPlacement-local memory files are in \`memory/placements/${opts.placement.id}/\`. Read them directly when needed.`,
+    });
+  }
+
+  // ── STANDARD: Skill manifest ────────────────────────────────
+  // Placement sessions only see skills their capabilities can execute and
+  // whose scope matches (11章§3.2 derived visibility). Non-placement
+  // sessions keep the full listing.
+  const skillsCtx = buildSkillManifest(opts.placement);
+  if (skillsCtx) {
+    sections.push({
+      tier: Tier.STANDARD,
+      marker: "## Skills",
+      content: skillsCtx,
+      summary: opts.placement
+        ? "## Skills\nOnly the skills in your injected manifest are available in this placement session."
+        : `## Skills\nSkill instructions are in \`${JINN_HOME}/skills/<name>/SKILL.md\`. Read them directly when needed.`,
     });
   }
 
@@ -619,6 +645,63 @@ function buildCronContext(): string | null {
  * Knowledge context: lists filenames and sizes only — never inlines content.
  * The AI reads files on demand. This saves ~200K+ chars compared to full inlining.
  */
+/**
+ * Skill manifest (11章§3.2). For a placement session, list only the skills the
+ * placement's capabilities can execute and whose scope matches its projects —
+ * a skill's visibility is derived, never independently managed, and skills
+ * grant no capability. Without a placement, list every installed skill.
+ */
+function buildSkillManifest(placement?: PlacementProfile): string | null {
+  let skills: ReturnType<typeof listSkills>;
+  try {
+    skills = listSkills();
+  } catch {
+    return null;
+  }
+  if (placement) {
+    skills = skills.filter((skill) => isSkillVisibleToPlacement(skill, placement));
+  }
+  if (skills.length === 0) {
+    return placement
+      ? "## Skills\nNo skills are available to this placement (none match its capabilities and scope)."
+      : null;
+  }
+  const lines = skills.map((skill) => {
+    const scopeLabel = skill.scope ? ` (scope: ${skill.scope})` : "";
+    return `- ${skill.name}${scopeLabel} — ${skill.description || "no description"}`;
+  });
+  return [
+    "## Skills",
+    placement
+      ? "Only the skills listed below are available in this placement session (derived from the placement's capabilities and scope). Skill instructions are in `skills/<name>/SKILL.md`."
+      : "Installed skills. Skill instructions are in `skills/<name>/SKILL.md` — read them when a task matches.",
+    ...lines,
+  ].join("\n");
+}
+
+/**
+ * Placement-local memory view (11章§3.1): list only this placement's files.
+ * Other placements' directories are read-denied at the engine boundary, so the
+ * view and the enforcement agree on what this session can see.
+ */
+function buildPlacementMemoryContext(placementId: string): string {
+  const dir = path.join(JINN_HOME, "memory", "placements", placementId);
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(dir).filter((f) => !f.startsWith("."));
+  } catch {
+    // no placement-local memory yet
+  }
+  const header = [
+    "## Placement memory",
+    `Placement-local memory for this channel is in \`${dir}/\`. It is readable (not writable) in this session and is never shared with other placements.`,
+  ];
+  if (files.length === 0) {
+    return [...header, "No placement-local memory files exist yet."].join("\n");
+  }
+  return [...header, ...files.map((f) => `- ${f}`)].join("\n");
+}
+
 function buildKnowledgeContext(): string | null {
   const dirs = [
     { dir: DOCS_DIR, label: "docs" },
