@@ -1,19 +1,42 @@
 import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import type { DevelopmentRunnerConfig } from "../shared/types.js";
+import type {
+  DevelopmentRunnerConfig,
+  DevelopmentQuestion,
+  DevelopmentQuestionOption,
+  DevelopmentAnswer,
+} from "../shared/types.js";
+
+export type { DevelopmentQuestion, DevelopmentQuestionOption, DevelopmentAnswer } from "../shared/types.js";
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_REQUEST_CHARS = 8000;
 const DEFAULT_TIMEOUT_MS = 90 * 60 * 1000;
-const ALLOWED_RESULT_KEYS = new Set(["status", "storyId", "prUrl", "summary"]);
-const ALLOWED_STATUSES = new Set(["queued", "pr_ready", "needs_input", "failed"]);
+const ALLOWED_RESULT_KEYS = new Set(["status", "storyId", "prUrl", "summary", "questions"]);
+const ALLOWED_STATUSES = new Set(["queued", "pr_ready", "needs_input", "needs_decision", "failed"]);
 const PR_URL_RE = /^https:\/\/github\.com\/Unson-LLC\/brainbase-mana\/pull\/\d+$/;
+const STORY_ID_RE = /^story-[a-z0-9-]+$/;
+const QUESTION_ID_RE = /^[a-z0-9_-]{1,64}$/;
+const MAX_QUESTIONS = 5;
+const MAX_QUESTION_CHARS = 300;
+const MAX_OPTIONS_PER_QUESTION = 5;
+const MAX_OPTION_LABEL_CHARS = 80;
+const MAX_OPTION_DESCRIPTION_CHARS = 200;
+const MAX_ANSWERS = 10;
+const MAX_ANSWER_CHARS = 2000;
 
 export interface DevelopmentResult {
-  status: "queued" | "pr_ready" | "needs_input" | "failed";
+  status: "queued" | "pr_ready" | "needs_input" | "needs_decision" | "failed";
   storyId?: string;
   prUrl?: string;
   summary: string;
+  questions?: DevelopmentQuestion[];
+}
+
+/** Resume request: continue a Story that previously stopped with `needs_decision`. */
+export interface DevelopmentResumeRequest {
+  storyId: string;
+  answers: DevelopmentAnswer[];
 }
 
 type SpawnFn = typeof spawn;
@@ -40,6 +63,68 @@ function validateConfig(config: DevelopmentRunnerConfig): void {
   if ((config.args ?? []).some((arg) => arg.includes("\0") || arg.includes("\n"))) {
     throw new Error("development runner args contain forbidden characters");
   }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertBoundedString(value: unknown, min: number, max: number, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length < min || value.length > max) {
+    throw new Error(`development runner returned an invalid ${label}`);
+  }
+}
+
+function parseQuestions(value: unknown): DevelopmentQuestion[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_QUESTIONS) {
+    throw new Error(`development runner returned needs_decision without 1-${MAX_QUESTIONS} questions`);
+  }
+  const seenIds = new Set<string>();
+  return value.map((raw) => {
+    if (!isPlainObject(raw)) throw new Error("development runner returned an invalid question entry");
+    const allowedKeys = new Set(["id", "question", "options", "allow_free_text"]);
+    if (Object.keys(raw).some((key) => !allowedKeys.has(key))) {
+      throw new Error("development runner returned an unsupported question field");
+    }
+    if (typeof raw.id !== "string" || !QUESTION_ID_RE.test(raw.id)) {
+      throw new Error("development runner returned an invalid question id");
+    }
+    if (seenIds.has(raw.id)) throw new Error(`development runner returned a duplicate question id: ${raw.id}`);
+    seenIds.add(raw.id);
+    assertBoundedString(raw.question, 1, MAX_QUESTION_CHARS, "question text");
+    const options = raw.options === undefined ? [] : raw.options;
+    if (!Array.isArray(options) || options.length > MAX_OPTIONS_PER_QUESTION) {
+      throw new Error("development runner returned invalid question options");
+    }
+    const normalizedOptions: DevelopmentQuestionOption[] = options.map((rawOption) => {
+      if (!isPlainObject(rawOption)) throw new Error("development runner returned an invalid option entry");
+      const allowedOptionKeys = new Set(["label", "description", "recommended"]);
+      if (Object.keys(rawOption).some((key) => !allowedOptionKeys.has(key))) {
+        throw new Error("development runner returned an unsupported option field");
+      }
+      assertBoundedString(rawOption.label, 1, MAX_OPTION_LABEL_CHARS, "option label");
+      if (rawOption.description !== undefined) {
+        assertBoundedString(rawOption.description, 0, MAX_OPTION_DESCRIPTION_CHARS, "option description");
+      }
+      if (rawOption.recommended !== undefined && typeof rawOption.recommended !== "boolean") {
+        throw new Error("development runner returned an invalid option recommended flag");
+      }
+      return {
+        label: rawOption.label as string,
+        ...(rawOption.description !== undefined ? { description: rawOption.description as string } : {}),
+        ...(rawOption.recommended !== undefined ? { recommended: rawOption.recommended as boolean } : {}),
+      };
+    });
+    if (raw.allow_free_text !== undefined && typeof raw.allow_free_text !== "boolean") {
+      throw new Error("development runner returned an invalid allow_free_text flag");
+    }
+    return {
+      id: raw.id,
+      question: raw.question as string,
+      options: normalizedOptions,
+      allow_free_text: raw.allow_free_text === true,
+    };
+  });
 }
 
 export function parseDevelopmentResult(raw: string): DevelopmentResult {
@@ -74,17 +159,57 @@ export function parseDevelopmentResult(raw: string): DevelopmentResult {
   if (status !== "pr_ready" && value.prUrl !== undefined) {
     throw new Error(`development runner returned a PR URL for ${status}`);
   }
-  return value as unknown as DevelopmentResult;
+  if (status === "needs_decision" && value.questions === undefined) {
+    throw new Error("development runner returned needs_decision without questions");
+  }
+  if (status !== "needs_decision" && value.questions !== undefined) {
+    throw new Error(`development runner returned questions for ${status}`);
+  }
+  const result: DevelopmentResult = {
+    status,
+    summary: value.summary,
+    ...(typeof value.storyId === "string" ? { storyId: value.storyId } : {}),
+    ...(typeof value.prUrl === "string" ? { prUrl: value.prUrl } : {}),
+    ...(value.questions !== undefined ? { questions: parseQuestions(value.questions) } : {}),
+  };
+  return result;
+}
+
+function validateResumeRequest(request: DevelopmentResumeRequest): DevelopmentResumeRequest {
+  if (typeof request.storyId !== "string" || !STORY_ID_RE.test(request.storyId)) {
+    throw new Error("development resume storyId is invalid");
+  }
+  if (!Array.isArray(request.answers) || request.answers.length < 1 || request.answers.length > MAX_ANSWERS) {
+    throw new Error(`development resume answers must contain 1-${MAX_ANSWERS} entries`);
+  }
+  const seenIds = new Set<string>();
+  const answers = request.answers.map((answer) => {
+    if (typeof answer.id !== "string" || !QUESTION_ID_RE.test(answer.id)) {
+      throw new Error("development resume answer id is invalid");
+    }
+    if (seenIds.has(answer.id)) throw new Error(`development resume has a duplicate answer id: ${answer.id}`);
+    seenIds.add(answer.id);
+    if (typeof answer.answer !== "string" || answer.answer.length === 0 || answer.answer.length > MAX_ANSWER_CHARS) {
+      throw new Error("development resume answer text is invalid");
+    }
+    return { id: answer.id, answer: answer.answer };
+  });
+  return { storyId: request.storyId, answers };
 }
 
 export async function runDevelopmentRequest(
   config: DevelopmentRunnerConfig,
-  request: string,
+  request: string | DevelopmentResumeRequest,
   spawnFn: SpawnFn = spawn,
 ): Promise<DevelopmentResult> {
   validateConfig(config);
-  if (!request.trim()) throw new Error("development request is empty");
-  if (request.length > MAX_REQUEST_CHARS) throw new Error("development request is too large");
+  const stdinPayload: string = typeof request === "string"
+    ? (() => {
+        if (!request.trim()) throw new Error("development request is empty");
+        if (request.length > MAX_REQUEST_CHARS) throw new Error("development request is too large");
+        return JSON.stringify({ request: request.trim() });
+      })()
+    : JSON.stringify(validateResumeRequest(request));
 
   return new Promise((resolve, reject) => {
     const child = spawnFn(config.bin, config.args ?? [], {
@@ -171,7 +296,7 @@ export async function runDevelopmentRequest(
       }
       });
     });
-    child.stdin.end(JSON.stringify({ request: request.trim() }) + "\n");
+    child.stdin.end(`${stdinPayload}\n`);
   });
 }
 
@@ -180,6 +305,9 @@ export function formatDevelopmentResult(result: DevelopmentResult): string {
     `Development: ${result.status}`,
     result.storyId ? `Story: ${result.storyId}` : null,
     result.prUrl ? `PR: ${result.prUrl}` : null,
+    result.status === "needs_decision"
+      ? `質問${result.questions?.length ?? 0}件（Slackカードで回答してください）`
+      : null,
     result.summary,
   ].filter(Boolean);
   return lines.join("\n");

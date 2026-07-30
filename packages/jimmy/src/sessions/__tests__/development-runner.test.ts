@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -9,7 +9,27 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, buildAgentArgs, buildAgentPrompt, buildPrShipArgs, buildStoryAddArgs, buildStoryCommitArgs, extractBlockingGates, parseEnvFile, parsePrShipReadiness, resultFromAgentRun, runCommand, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, buildAgentArgs, buildAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildStoryAddArgs, buildStoryCommitArgs, ensureGitignoreEntry, extractBlockingGates, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
+
+const RUNNER_URL = pathToFileURL(path.resolve("../..", "scripts/development-runner/run.mjs")).href;
+
+/** Drives the standalone runner's readStdin() in a real child process (it reads the live process.stdin global). */
+async function callReadStdin(input: string): Promise<{ ok: true; payload: any } | { ok: false; message: string }> {
+  const script = [
+    `import { readStdin } from ${JSON.stringify(RUNNER_URL)};`,
+    `try { const payload = await readStdin(); process.stdout.write(JSON.stringify(payload)) }`,
+    `catch (error) { process.stderr.write(error.message); process.exitCode = 1 }`,
+  ].join("\n");
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  child.stdin.end(input);
+  const code: number | null = await new Promise((resolveExit) => child.once("close", resolveExit));
+  if (code === 0) return { ok: true, payload: JSON.parse(stdout) };
+  return { ok: false, message: stderr };
+}
 
 function childReturning(stdout: string, code = 0) {
   const child = new EventEmitter() as any;
@@ -349,5 +369,204 @@ describe("development runner", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Human-in-the-Loop stdin contract", () => {
+  it("accepts a new-request payload", async () => {
+    const result = await callReadStdin(JSON.stringify({ request: "READMEを改善する" }));
+    expect(result).toEqual({ ok: true, payload: { mode: "new", request: "READMEを改善する" } });
+  });
+
+  it("accepts a resume payload with storyId and answers", async () => {
+    const result = await callReadStdin(JSON.stringify({
+      storyId: "story-safe-change",
+      answers: [{ id: "q1", answer: "option A" }],
+    }));
+    expect(result).toEqual({
+      ok: true,
+      payload: { mode: "resume", storyId: "story-safe-change", answers: [{ id: "q1", answer: "option A" }] },
+    });
+  });
+
+  it("rejects a payload carrying both request and storyId/answers", async () => {
+    const result = await callReadStdin(JSON.stringify({
+      request: "x", storyId: "story-safe-change", answers: [{ id: "q1", answer: "a" }],
+    }));
+    expect(result).toEqual({ ok: false, message: "request and storyId/answers are mutually exclusive" });
+  });
+
+  it("rejects an unsupported field", async () => {
+    const result = await callReadStdin(JSON.stringify({ request: "x", extra: "y" }));
+    expect(result).toEqual({ ok: false, message: "unsupported request field" });
+  });
+
+  it("rejects an invalid storyId", async () => {
+    const result = await callReadStdin(JSON.stringify({ storyId: "not-a-story", answers: [{ id: "q1", answer: "a" }] }));
+    expect(result).toEqual({ ok: false, message: "invalid storyId" });
+  });
+
+  it("rejects zero or more than 10 answers", async () => {
+    expect(await callReadStdin(JSON.stringify({ storyId: "story-x", answers: [] })))
+      .toEqual({ ok: false, message: "answers must contain 1-10 entries" });
+    const tooMany = Array.from({ length: 11 }, (_, i) => ({ id: `q${i}`, answer: "a" }));
+    expect(await callReadStdin(JSON.stringify({ storyId: "story-x", answers: tooMany })))
+      .toEqual({ ok: false, message: "answers must contain 1-10 entries" });
+  });
+
+  it("rejects an invalid answer id and an oversized answer", async () => {
+    expect(await callReadStdin(JSON.stringify({ storyId: "story-x", answers: [{ id: "BAD ID", answer: "a" }] })))
+      .toEqual({ ok: false, message: "invalid answer id" });
+    expect(await callReadStdin(JSON.stringify({ storyId: "story-x", answers: [{ id: "q1", answer: "x".repeat(2001) }] })))
+      .toEqual({ ok: false, message: "invalid answer text" });
+  });
+
+  it("rejects duplicate answer ids", async () => {
+    const result = await callReadStdin(JSON.stringify({
+      storyId: "story-x",
+      answers: [{ id: "q1", answer: "a" }, { id: "q1", answer: "b" }],
+    }));
+    expect(result).toEqual({ ok: false, message: "duplicate answer id: q1" });
+  });
+});
+
+describe("questions.json Human-in-the-Loop contract", () => {
+  it("validates a well-formed questions document", () => {
+    const doc = {
+      questions: [
+        {
+          id: "auth_strategy",
+          question: "認証はどちらにしますか？",
+          options: [
+            { label: "OAuth", description: "既存IdPを使う", recommended: true },
+            { label: "独自実装" },
+          ],
+          allow_free_text: true,
+        },
+      ],
+    };
+    expect(validateQuestionsDocument(doc)).toEqual(doc);
+  });
+
+  it("normalizes an omitted options/allow_free_text into defaults", () => {
+    expect(validateQuestionsDocument({ questions: [{ id: "q1", question: "続けますか？" }] })).toEqual({
+      questions: [{ id: "q1", question: "続けますか？", options: [], allow_free_text: false }],
+    });
+  });
+
+  it("rejects an unsupported top-level field", () => {
+    expect(() => validateQuestionsDocument({ questions: [], extra: true }))
+      .toThrow("unsupported field");
+  });
+
+  it("rejects zero or more than 5 questions", () => {
+    expect(() => validateQuestionsDocument({ questions: [] })).toThrow("1-5 questions");
+    const many = Array.from({ length: 6 }, (_, i) => ({ id: `q${i}`, question: "x" }));
+    expect(() => validateQuestionsDocument({ questions: many })).toThrow("1-5 questions");
+  });
+
+  it("rejects more than 5 options per question", () => {
+    const options = Array.from({ length: 6 }, (_, i) => ({ label: `opt${i}` }));
+    expect(() => validateQuestionsDocument({ questions: [{ id: "q1", question: "x", options }] }))
+      .toThrow("at most 5 entries");
+  });
+
+  it("rejects an oversized question or option field", () => {
+    expect(() => validateQuestionsDocument({ questions: [{ id: "q1", question: "x".repeat(301) }] }))
+      .toThrow("invalid question text");
+    expect(() => validateQuestionsDocument({
+      questions: [{ id: "q1", question: "x", options: [{ label: "y".repeat(81) }] }],
+    })).toThrow("invalid option label");
+    expect(() => validateQuestionsDocument({
+      questions: [{ id: "q1", question: "x", options: [{ label: "y", description: "z".repeat(201) }] }],
+    })).toThrow("invalid option description");
+  });
+
+  it("rejects a duplicate question id and an invalid id shape", () => {
+    expect(() => validateQuestionsDocument({
+      questions: [{ id: "q1", question: "a" }, { id: "q1", question: "b" }],
+    })).toThrow("duplicate question id: q1");
+    expect(() => validateQuestionsDocument({ questions: [{ id: "BAD ID", question: "a" }] }))
+      .toThrow("invalid question id");
+  });
+
+  it("reads and validates .openryoko/questions.json from a worktree", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "openryoko-questions-"));
+    try {
+      expect(await readQuestionsFile(directory)).toBeNull();
+
+      await mkdir(path.join(directory, ".openryoko"), { recursive: true });
+      const doc = { questions: [{ id: "q1", question: "続けますか？", options: [], allow_free_text: true }] };
+      await writeFile(path.join(directory, ".openryoko", "questions.json"), JSON.stringify(doc));
+      expect(await readQuestionsFile(directory)).toEqual(doc);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on a malformed questions.json instead of silently ignoring it", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "openryoko-questions-bad-"));
+    try {
+      await mkdir(path.join(directory, ".openryoko"), { recursive: true });
+      await writeFile(path.join(directory, ".openryoko", "questions.json"), JSON.stringify({ questions: [] }));
+      await expect(readQuestionsFile(directory)).rejects.toThrow("1-5 questions");
+
+      await writeFile(path.join(directory, ".openryoko", "questions.json"), "{not json");
+      await expect(readQuestionsFile(directory)).rejects.toThrow("not valid JSON");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("emits a needs_decision result shape from a validated questions document", () => {
+    const doc = validateQuestionsDocument({ questions: [{ id: "q1", question: "続けますか？" }] });
+    const result = resultFromQuestions("story-x", doc);
+    expect(result.status).toBe("needs_decision");
+    expect(result.storyId).toBe("story-x");
+    expect(result.questions).toEqual(doc.questions);
+    expect(result.summary).toContain("1 question(s)");
+  });
+});
+
+describe(".gitignore and Story-doc helpers for the resume round-trip", () => {
+  it("appends a missing .gitignore entry exactly once", () => {
+    expect(ensureGitignoreEntry("", ".openryoko/")).toBe(".openryoko/\n");
+    expect(ensureGitignoreEntry("node_modules/\n", ".openryoko/")).toBe("node_modules/\n.openryoko/\n");
+    expect(ensureGitignoreEntry("node_modules/\n.openryoko/\n", ".openryoko/")).toBe("node_modules/\n.openryoko/\n");
+  });
+
+  it("renders the Human answers section appended to a Story doc", () => {
+    const section = buildHumanAnswersSection([
+      { id: "auth_strategy", answer: "OAuth / 既存IdPで進める" },
+      { id: "q2", answer: "はい" },
+    ]);
+    expect(section).toBe(
+      "\n## Human answers\n\n- auth_strategy: OAuth / 既存IdPで進める\n- q2: はい\n",
+    );
+  });
+
+  it("records the human answers as a scoped, deterministic local commit", () => {
+    expect(buildAnswersAddArgs("docs/management/stories/active/story-safe-change.md")).toEqual([
+      "add", "-f", "--", "docs/management/stories/active/story-safe-change.md",
+    ]);
+    expect(buildAnswersCommitArgs("story-safe-change")).toEqual([
+      "-c", "user.name=OpenRyoko Development Runner",
+      "-c", "user.email=openryoko-runner@localhost",
+      "commit", "-m", "chore: record story-safe-change human answers",
+    ]);
+  });
+
+  it("builds a resume agent prompt bounded to the 1-round-trip rule", () => {
+    const prompt = buildResumeAgentPrompt("story-safe-change", "main");
+    expect(prompt).toContain("story-safe-change");
+    expect(prompt).toContain("## Human answers");
+    expect(prompt).toContain("再度質問はしない");
+    expect(prompt).toContain("vibepro pr prepare . --story-id story-safe-change --base main");
+  });
+
+  it("tells the first-round agent prompt about the questions.json escape hatch", () => {
+    const prompt = buildAgentPrompt("story-safe-change", "何かを実装して", "main");
+    expect(prompt).toContain(".openryoko/questions.json");
+    expect(prompt).toContain("最大5問");
   });
 });

@@ -72,6 +72,48 @@ are never trusted for the Slack result. Agent credentials (for example
 owned by `ryoko-dev`). An agent error or timeout fails closed as
 `needs_input`; the partially completed worktree stays available for review.
 
+## Human-in-the-Loop question/answer round-trip
+
+When a `/vibepro` request has ambiguity that is expensive to guess, the agent
+may stop without implementing anything and instead run
+`vibepro story diagnose . --id <storyId> --phase design-input`, then write up
+to 5 questions to `.openryoko/questions.json` in the worktree:
+
+```json
+{
+  "questions": [
+    {
+      "id": "auth_strategy",
+      "question": "認証方式はどちらにしますか？",
+      "options": [
+        { "label": "OAuth", "description": "既存IdPを使う", "recommended": true },
+        { "label": "独自実装" }
+      ],
+      "allow_free_text": true
+    }
+  ]
+}
+```
+
+The runner validates this document itself (fail-closed on any shape mismatch —
+a malformed file becomes `needs_input`, never a silently-ignored guess) and,
+when it validates, emits `{status: "needs_decision", storyId, questions,
+summary}` instead of running `vibepro pr ship --dry-run`. `.openryoko/` is
+gitignored in the worktree so this scratch file never becomes part of the
+Story's commits.
+
+The gateway renders `needs_decision` as a Slack Block Kit question card with a
+button that opens an answer modal (see `packages/jimmy/src/connectors/slack/vibepro-decision.ts`).
+Submitting the modal resumes the same Story exactly once: the gateway sends
+`{"storyId": "...", "answers": [{"id": "...", "answer": "..."}]}` over stdin
+instead of `{"request": "..."}`. The runner appends a `## Human answers`
+section to the Story doc, commits it, deletes `.openryoko/questions.json`, and
+re-runs the agent with a resume prompt that explicitly forbids asking again
+(the 1-round-trip rule) before falling through to the same `pr ship --dry-run`
+readiness check. A Story resume requires its worktree to still exist under
+`worktreesRoot`; a missing worktree fails closed as `failed`, not as a fresh
+Story.
+
 The gateway also keeps an in-process busy flag, but the development user's
 lock directory is the authoritative cross-restart guard. The runner removes it
 only after its VibePro child has closed. If the host or runner is killed
@@ -83,11 +125,13 @@ before retrying.
 
 ### Release note
 
-The runner version advances to `2026-07-30.1`. It replaces the headless
-`vibepro execute run` engine (Codex-first provider chain) with a Claude Code
-agent session that drives the VibePro CLI directly, keeping the existing
-fail-closed Slack result contract. The config gains required `claudeBin` and
-optional `agentEnvFile` fields.
+The runner version advances to `2026-07-31.1`. It adds the Human-in-the-Loop
+question/answer round-trip described above: a new `needs_decision` result
+status, the `.openryoko/questions.json` contract, and a resume stdin shape
+(`{"storyId", "answers"}`) alongside the existing `{"request"}` shape. The
+config and Slack result contract are otherwise unchanged from `2026-07-30.1`,
+which replaced the headless `vibepro execute run` engine (Codex-first provider
+chain) with a Claude Code agent session that drives the VibePro CLI directly.
 
 ### Rollout plan and operator action
 
