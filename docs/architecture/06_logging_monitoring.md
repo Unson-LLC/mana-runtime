@@ -9,8 +9,8 @@
 | systemd journal（pilot） | gateway全ログ。`journalctl -u openryoko.service` が一次調査窓口 |
 | logger INFO/WARN/ERROR | 受信イベント・エンジンspawn（`resume:`/model/geom）・ターン完了（所要時間・$コスト）・回復系の警告 |
 | `security_event`（WARN, 構造化JSON） | 権限拒否の監査ログ。下記 |
-| run receipt | pilotホスト上のsystemd timerがレシートを収集しbrainbaseへ配送（state/outbox/dead-letter）。**unit実体はpilot手置きでリポジトリ未管理**（回収対象、gap-analysis D） |
-| pilot health | 5分毎のtimerで死活確認。**同じくpilot手置き・リポジトリ未管理** |
+| run receipt | 1分毎のtimerがレシートを収集しbrainbaseへ配送（state/outbox/dead-letter）。正本は [scripts/systemd/run-receipt/](../../scripts/systemd/run-receipt/)（2026-07-31回収）。operator token必須 |
+| pilot health | 5分毎のtimerで死活・dead-letter滞留・リソース検査。同ディレクトリが正本 |
 
 ## 2. security_event（監査の正本）
 

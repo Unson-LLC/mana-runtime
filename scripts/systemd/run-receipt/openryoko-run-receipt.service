@@ -1,0 +1,21 @@
+[Unit]
+Description=Collect and deliver OpenRyoko run receipts
+After=openryoko.service
+Wants=openryoko.service
+
+[Service]
+Type=oneshot
+User=ryoko
+Group=ryoko
+WorkingDirectory=/home/ryoko
+EnvironmentFile=/home/ryoko/.config/openryoko/run-receipt.env
+Environment=OPENRYOKO_GATEWAY_URL=http://127.0.0.1:7777
+Environment=OPENRYOKO_RUN_RECEIPT_STATE_FILE=/home/ryoko/.local/state/openryoko-run-receipt/state.json
+Environment=OPENRYOKO_RUN_RECEIPT_OUTBOX_DIR=/home/ryoko/.local/state/openryoko-run-receipt/outbox
+Environment=OPENRYOKO_RUN_RECEIPT_DEAD_LETTER_DIR=/home/ryoko/.local/state/openryoko-run-receipt/dead-letter
+ExecStart=/home/ryoko/.nvm/versions/node/v22.23.1/bin/node /home/ryoko/lib/openryoko-run-receipt/openryoko-reporter.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ryoko/.local/state/openryoko-run-receipt
