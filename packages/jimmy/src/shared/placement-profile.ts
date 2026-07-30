@@ -3,7 +3,29 @@ import type { Engine, EngineResult, EngineRunOpts, IncomingMessage, PlacementDel
 export interface PlacementResolution {
   status: "legacy" | "matched" | "denied";
   placement?: PlacementProfile;
-  reason?: "unmatched" | "ambiguous" | "unauthorized_user" | "invalid_config";
+  reason?: "unmatched" | "ambiguous" | "unauthorized_user" | "invalid_config" | "disabled";
+  /** Audit context for denials where the placement was identified (e.g. kill switch). */
+  placementId?: string;
+}
+
+/** Agent-ledger kill switch: only explicit `enabled: false` disables; absent means enabled. */
+export function isPlacementEnabled(placement: Pick<PlacementProfile, "enabled">): boolean {
+  return placement.enabled !== false;
+}
+
+/**
+ * Resolve a placement by id for session-bound authorization. Disabled placements
+ * are reported distinctly so callers can fail closed with an auditable reason.
+ */
+export function findEnabledPlacement(
+  placements: PlacementProfile[] | undefined,
+  placementId: unknown,
+): { placement?: PlacementProfile; disabled: boolean } {
+  if (typeof placementId !== "string") return { disabled: false };
+  const placement = placements?.find((candidate) => candidate.id === placementId);
+  if (!placement) return { disabled: false };
+  if (!isPlacementEnabled(placement)) return { disabled: true };
+  return { placement, disabled: false };
 }
 
 export interface PlacementEngineBoundary {
@@ -122,6 +144,9 @@ export function resolvePlacement(
   if (channelMatches.length > 1) return { status: "denied", reason: "ambiguous" };
 
   const placement = channelMatches[0];
+  if (!isPlacementEnabled(placement)) {
+    return { status: "denied", reason: "disabled", placementId: placement.id };
+  }
   if (containsSecret(placement)) {
     return { status: "denied", reason: "invalid_config" };
   }

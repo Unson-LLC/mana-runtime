@@ -416,6 +416,24 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     }
   });
 
+  it("fail-closes direct delivery when the placement kill switch is off", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    config.placements![0].enabled = false;
+    try {
+      const response = await post("/api/connectors/slack/send", { channel: "C1", text: "denied" }, getSessionDelegationToken(parentId), parentId);
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'placement "pilot" is disabled' });
+      const event = warn.mock.calls.map(([message]) => message)
+        .filter((message) => message.startsWith("security_event "))
+        .map((message) => JSON.parse(message.slice("security_event ".length)))
+        .find((candidate) => candidate.reason === "placement_disabled");
+      expect(event).toMatchObject({ reason: "placement_disabled", placementId: "pilot", sessionId: parentId });
+    } finally {
+      delete config.placements![0].enabled;
+      warn.mockRestore();
+    }
+  });
+
   it("denies delivery when a placement omits the gateway tool allowlist", async () => {
     const capabilities = config.placements![0].capabilities;
     config.placements![0].capabilities = undefined;

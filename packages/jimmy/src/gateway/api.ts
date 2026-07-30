@@ -64,7 +64,7 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
-import { isPlacementEmployeeAllowed, placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
@@ -159,7 +159,7 @@ function authorizePlacementDelivery(
   const sessionId = currentSessionId(req);
   const config = context.getConfig();
   const configRevision = placementConfigRevision(config.placements);
-  const deny = (reason: "gateway_tool_denied" | "delivery_denied", error: string, placementId?: string) => {
+  const deny = (reason: "gateway_tool_denied" | "delivery_denied" | "placement_disabled", error: string, placementId?: string) => {
     emitSecurityEvent({ event: "capability", reason, placementId, connector, channelId: target?.channel,
       sessionId, capability: reason === "gateway_tool_denied" ? "gateway_tool:send_message" : "delivery",
       target: target?.channel ? `${connector}:${target.channel}` : connector, configRevision });
@@ -171,7 +171,10 @@ function authorizePlacementDelivery(
   }
   const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
   if (typeof placementId !== "string") return deny("delivery_denied", "session is not bound to a placement");
-  const placement = config.placements?.find((candidate) => candidate.id === placementId);
+  const { placement, disabled } = findEnabledPlacement(config.placements, placementId);
+  if (disabled) {
+    return deny("placement_disabled", `placement "${placementId}" is disabled`, placementId);
+  }
   if (!placement || !placementAllowsGatewayTool(placement, "send_message")) {
     return deny("gateway_tool_denied", "send_message is not allowed by placement", placementId);
   }
@@ -205,7 +208,13 @@ export function resolveDerivedPlacement(
 ): { placement?: NonNullable<JinnConfig["placements"]>[number]; error?: string } {
   const placementId = (parentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
   if (typeof placementId !== "string") return {};
-  const placement = config.placements?.find((candidate) => candidate.id === placementId);
+  const { placement, disabled } = findEnabledPlacement(config.placements, placementId);
+  if (disabled) {
+    emitSecurityEvent({ event: "placement_resolution", reason: "placement_disabled",
+      placementId, sessionId: parentSession.id, capability: "derived_session",
+      configRevision: placementConfigRevision(config.placements) });
+    return { error: `parent placement "${placementId}" is disabled` };
+  }
   if (!placement) {
     emitSecurityEvent({ event: "placement_resolution", reason: "placement_missing_after_config_change",
       placementId, sessionId: parentSession.id, capability: "derived_session",
@@ -335,7 +344,7 @@ function authorizedPlacementGatewayRequest(
   const placementId = (session.transportMeta as Record<string, unknown> | undefined)?.placementId;
   if (typeof placementId !== "string") return undefined;
   const tool = gatewayToolFromRequest(req);
-  const placement = context.getConfig().placements?.find((candidate) => candidate.id === placementId);
+  const { placement } = findEnabledPlacement(context.getConfig().placements, placementId);
   if (!tool || !placement || !placementAllowsGatewayTool(placement, tool)) return undefined;
   return gatewayToolMatchesRoute(tool, method, pathname) ? placementId : undefined;
 }
@@ -2811,9 +2820,14 @@ async function runWebSession(
 
   let mcpConfigPath: string | undefined;
   const placementId = (currentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
-  const placement = typeof placementId === "string"
-    ? config.placements?.find((candidate) => candidate.id === placementId)
-    : undefined;
+  const { placement, disabled } = findEnabledPlacement(config.placements, placementId);
+  if (disabled) {
+    emitSecurityEvent({ event: "placement_resolution", reason: "placement_disabled",
+      placementId: placementId as string, sessionId: currentSession.id, capability: "session_run",
+      configRevision: placementConfigRevision(config.placements) });
+    updateSession(currentSession.id, { status: "error", lastError: `Placement "${placementId}" is disabled` });
+    return;
+  }
   if (placementId && !placement) {
     updateSession(currentSession.id, { status: "error", lastError: `Placement "${placementId}" is not configured` });
     return;
