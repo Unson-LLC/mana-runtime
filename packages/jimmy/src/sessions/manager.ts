@@ -1370,7 +1370,7 @@ export class SessionManager {
         return true;
       }
       if (!request) {
-        await connector.replyMessage(target, "Usage: /ryoko-develop <request>");
+        await connector.replyMessage(target, "Usage: /vibepro <request>");
         return true;
       }
       if (this.developmentRunning) {

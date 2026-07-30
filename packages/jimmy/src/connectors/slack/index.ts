@@ -355,76 +355,81 @@ export class SlackConnector implements Connector {
   }
 
   async start() {
-    this.app.command("/ryoko-develop", async ({ command, ack, respond }) => {
-      // Slack requires interactive payloads to be acknowledged within three
-      // seconds. Do that before any lookup or development-runner work.
-      await ack();
+    // "/vibepro" is the primary command name; "/ryoko-develop" stays registered
+    // so Slack apps whose installed manifest still declares the old command
+    // keep working until they are re-installed with the updated manifest.
+    for (const slashCommand of ["/vibepro", "/ryoko-develop"] as const) {
+      this.app.command(slashCommand, async ({ command, ack, respond }) => {
+        // Slack requires interactive payloads to be acknowledged within three
+        // seconds. Do that before any lookup or development-runner work.
+        await ack();
 
-      // Development is privileged: unlike ordinary Slack conversation routing,
-      // an absent allowFrom list must not mean "everyone" for this command.
-      if (!this.allowedUsers?.has(command.user_id)) {
-        logger.warn(`[slack] Ignoring unauthorized /ryoko-develop from ${command.user_id}`);
-        await respond({
-          response_type: "ephemeral",
-          text: "You are not authorized to start development tasks.",
-        });
-        return;
-      }
-      if (!this.developmentRunnerEnabled) {
-        await respond({
-          response_type: "ephemeral",
-          text: "The development runner is disabled.",
-        });
-        return;
-      }
-      if (!this.developmentRunnerAllowedChannels.has(command.channel_id)) {
-        logger.warn(`[slack] Rejecting /ryoko-develop outside an allowed channel: ${command.channel_id}`);
-        await respond({
-          response_type: "ephemeral",
-          text: "Development tasks are not enabled in this channel.",
-        });
-        return;
-      }
-      if (!this.handler) {
-        logger.warn("[slack] No handler registered for /ryoko-develop");
-        await respond({
-          response_type: "ephemeral",
-          text: "The development gateway is not ready. Try again shortly.",
-        });
-        return;
-      }
+        // Development is privileged: unlike ordinary Slack conversation routing,
+        // an absent allowFrom list must not mean "everyone" for this command.
+        if (!this.allowedUsers?.has(command.user_id)) {
+          logger.warn(`[slack] Ignoring unauthorized ${command.command} from ${command.user_id}`);
+          await respond({
+            response_type: "ephemeral",
+            text: "You are not authorized to start development tasks.",
+          });
+          return;
+        }
+        if (!this.developmentRunnerEnabled) {
+          await respond({
+            response_type: "ephemeral",
+            text: "The development runner is disabled.",
+          });
+          return;
+        }
+        if (!this.developmentRunnerAllowedChannels.has(command.channel_id)) {
+          logger.warn(`[slack] Rejecting ${command.command} outside an allowed channel: ${command.channel_id}`);
+          await respond({
+            response_type: "ephemeral",
+            text: "Development tasks are not enabled in this channel.",
+          });
+          return;
+        }
+        if (!this.handler) {
+          logger.warn(`[slack] No handler registered for ${command.command}`);
+          await respond({
+            response_type: "ephemeral",
+            text: "The development gateway is not ready. Try again shortly.",
+          });
+          return;
+        }
 
-      const channelId = command.channel_id;
-      const userId = command.user_id;
-      const request = command.text.trim();
-      const [channelInfo, speaker] = await Promise.all([
-        this.resolveChannelInfo(channelId),
-        this.resolveSpeakerInfo(userId),
-      ]);
-      const channelType = command.channel_name === "directmessage" ? "im" : "channel";
-      const msg: IncomingMessage = {
-        connector: this.name,
-        source: "slack",
-        sessionKey: `slack:command:${channelId}:${userId}`,
-        replyContext: { channel: channelId },
-        channel: channelId,
-        user: userId,
-        userId,
-        text: request ? `/develop ${request}` : "/develop",
-        attachments: [],
-        raw: command,
-        transportMeta: {
-          channelType,
-          channelExternal: channelType !== "im" && channelInfo.isExtShared,
-          team: command.team_id || null,
-          channelName: channelInfo.name || command.channel_name || null,
-          wasMentioned: false,
-          ...this.speakerTransportFields(speaker, userId),
-        },
-      };
+        const channelId = command.channel_id;
+        const userId = command.user_id;
+        const request = command.text.trim();
+        const [channelInfo, speaker] = await Promise.all([
+          this.resolveChannelInfo(channelId),
+          this.resolveSpeakerInfo(userId),
+        ]);
+        const channelType = command.channel_name === "directmessage" ? "im" : "channel";
+        const msg: IncomingMessage = {
+          connector: this.name,
+          source: "slack",
+          sessionKey: `slack:command:${channelId}:${userId}`,
+          replyContext: { channel: channelId },
+          channel: channelId,
+          user: userId,
+          userId,
+          text: request ? `/develop ${request}` : "/develop",
+          attachments: [],
+          raw: command,
+          transportMeta: {
+            channelType,
+            channelExternal: channelType !== "im" && channelInfo.isExtShared,
+            team: command.team_id || null,
+            channelName: channelInfo.name || command.channel_name || null,
+            wasMentioned: false,
+            ...this.speakerTransportFields(speaker, userId),
+          },
+        };
 
-      this.handler(msg);
-    });
+        this.handler(msg);
+      });
+    }
 
     this.app.message(async ({ event, context }) => {
       logger.info(`[slack] Received message event: user=${(event as any).user} channel=${(event as any).channel} channel_type=${(event as any).channel_type ?? "-"} thread_ts=${(event as any).thread_ts ?? "-"} subtype=${(event as any).subtype ?? "-"} text="${((event as any).text || "").slice(0, 50)}"`);

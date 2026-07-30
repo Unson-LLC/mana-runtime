@@ -7,6 +7,7 @@ const bolt = vi.hoisted(() => {
       ack: ReturnType<typeof vi.fn>;
       respond: ReturnType<typeof vi.fn>;
     }) => Promise<void>;
+    registeredCommands: string[];
     messageHandler?: (args: {
       event: Record<string, unknown>;
       context: { teamId?: string };
@@ -15,7 +16,7 @@ const bolt = vi.hoisted(() => {
       event: Record<string, any>;
       context: { teamId?: string };
     }) => Promise<void>;
-  } = {};
+  } = { registeredCommands: [] };
   const client = {
     auth: { test: vi.fn(async () => ({ user_id: "U_BOT" })) },
     chat: {
@@ -51,7 +52,9 @@ vi.mock("@slack/bolt", () => ({
       bolt.state.messageHandler = handler;
     }
     command(name: string, handler: typeof bolt.state.commandHandler) {
-      if (name === "/ryoko-develop") bolt.state.commandHandler = handler;
+      bolt.state.registeredCommands.push(name);
+      // Both names share one handler in the connector; keep the last one.
+      bolt.state.commandHandler = handler;
     }
     event(name: string, handler: typeof bolt.state.reactionHandler) {
       if (name === "reaction_added") bolt.state.reactionHandler = handler;
@@ -69,6 +72,7 @@ describe("SlackConnector authorization", () => {
     bolt.state.messageHandler = undefined;
     bolt.state.reactionHandler = undefined;
     bolt.state.commandHandler = undefined;
+    bolt.state.registeredCommands.length = 0;
   });
 
   async function setup(options: {
@@ -94,7 +98,38 @@ describe("SlackConnector authorization", () => {
     return { connector, handler };
   }
 
-  it("routes the native /ryoko-develop command into the existing development boundary", async () => {
+  it("registers /vibepro as the primary command and keeps /ryoko-develop as a legacy alias", async () => {
+    await setup();
+    expect(bolt.state.registeredCommands).toEqual(["/vibepro", "/ryoko-develop"]);
+  });
+
+  it("routes the native /vibepro command into the existing development boundary", async () => {
+    const { handler } = await setup();
+    const ack = vi.fn(async () => {});
+    const respond = vi.fn(async () => {});
+
+    await bolt.state.commandHandler?.({
+      command: {
+        command: "/vibepro",
+        text: "change docs",
+        user_id: "U_ALLOWED",
+        channel_id: "C_PILOT",
+        channel_name: "pilot",
+        team_id: "T_WORKSPACE",
+      },
+      ack,
+      respond,
+    });
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(respond).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      text: "/develop change docs",
+      sessionKey: "slack:command:C_PILOT:U_ALLOWED",
+    }));
+  });
+
+  it("routes the legacy /ryoko-develop command into the existing development boundary", async () => {
     const { handler } = await setup();
     const ack = vi.fn(async () => {});
     const respond = vi.fn(async () => {});

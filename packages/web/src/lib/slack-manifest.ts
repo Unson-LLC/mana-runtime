@@ -11,7 +11,7 @@ export function buildSlackManifest(botName?: string | null): string {
           suggested_prompts: [{ title: "What can you do?", message: "What can you help me with?" }],
         },
         slash_commands: [{
-          command: "/ryoko-develop",
+          command: "/vibepro",
           description: "Start an isolated VibePro development task",
           should_escape: true,
         }],
