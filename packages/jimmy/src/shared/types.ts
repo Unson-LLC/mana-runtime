@@ -497,6 +497,28 @@ export interface SlackConnectorConfig {
     model?: string;
     timeoutMs?: number;
   };
+  /**
+   * Transcript (.txt) upload in a router channel → default routing → minutes
+   * generation → expansion into the project channel → task-flow handoff
+   * (docs/architecture/story-meeting-minutes-pipeline.md).
+   */
+  meetingMinutesPipeline?: {
+    /** Master switch — defaults to false when the block is absent. */
+    enabled?: boolean;
+    /** Router channel IDs to watch for .txt uploads. Required; empty = off. */
+    routerChannels?: string[];
+    /** Destination projects (projectId / name / channelId). Required; empty = off. */
+    destinations?: { projectId: string; name: string; channelId: string }[];
+    /** User IDs allowed to reroute/retry. Defaults to allowFrom. */
+    operatorUserIds?: string[];
+    /** Max transcript file size in bytes. Default 1 MiB. */
+    maxFileBytes?: number;
+    /** Run context lifetime in days. Default 14. */
+    ttlDays?: number;
+    /** LLM overrides per stage. */
+    routing?: { engine?: "claude" | "codex"; bin?: string; model?: string; timeoutMs?: number };
+    generation?: { engine?: "claude" | "codex"; bin?: string; model?: string; timeoutMs?: number };
+  };
 }
 
 export interface DiscordConnectorConfig {

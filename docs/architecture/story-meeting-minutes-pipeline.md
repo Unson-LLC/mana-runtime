@@ -126,8 +126,11 @@ flowchart TD
 - 実行state: `${JINN_HOME}/.meeting-minutes-runs.json`
   - key: `router:<channelId>:<fileId>:<ts>`
   - value: `{ routerChannelId, fileId, sourceTs, fileName, sourceTextHash,
-    status, projectId?, destinationChannelId?, postedParentTs?, controlTs?,
-    minutesTitle?, createdAt, updatedAt, expiresAt }`
+    status, projectId?, routingReason?, destinationChannelId?, postedParentTs?,
+    controlTs?, minutes?{title,overview,body}, createdAt, updatedAt, expiresAt }`
+  - 生成済み議事録（title/overview/body）はTTL内stateに保持する。振り直しを
+    再生成なしで決定論的に行うため（本文はSlackに公開済みの内容であり機密性は
+    transcriptと異なる）
   - TTL 14日（振り直しは議事録の有効期間内に起きる想定。期限切れ操作は
     ephemeralで案内）。`status` は単調遷移のみ許可。
   - `lastMinutesByChannel: { <channelId>: { title, overview, postedTs } }` を
@@ -258,4 +261,15 @@ meetingMinutesPipeline:
 
 ## Done evidence
 
-- （実装後に記録）
+- 実装(2026-07-30): `npx tsc --noEmit` 通過、vitest 81 files / 878 tests 全通過
+  （新規41: generator 24 + pipeline 17）。実装物:
+  - `connectors/slack/meeting-minutes-pipeline.ts` — DAG直列制御・stateマシン・
+    振り直し/宛先select/再試行のBlocks UI
+  - `connectors/slack/meeting-minutes-generator.ts` — routing/生成プロンプト・
+    契約バリデータ・mrkdwn保持サニタイザ・2900字分割
+  - `shared/oneShotCli.ts` — `promptViaStdin`（Linux MAX_ARG_STRLEN 128KiB対策）
+  - `shared/brainbase-graph.ts` — 汎用 `GraphEntityClient`（person/project/brand/
+    decision、type別5分キャッシュ）
+  - `meeting-task-proposal.ts` — `processMinutesText()` 直接ハンドオフ経路
+- pilot E2E: 未実施（デプロイ・mana bot leave・実transcript投入は
+  Release and operator actions の手順で実施する）
