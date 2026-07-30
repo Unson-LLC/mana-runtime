@@ -3,7 +3,7 @@
 **最終更新**: 2026-07-30
 **性格**: 10章と同じく「目標」を書く章。マナの人格（CLAUDE.md・SOUL.md・IDENTITY.md）、スキル（skills/）、記憶（memory/・knowledge/）という**振る舞いを永続的に変える資産**の管理方針を定める。
 
-> **更新（2026-07-30）**: §1の境界の穴は [PR #29](https://github.com/Unson-LLC/mana-runtime/pull/29) で closed — placementセッションは`--disallowedTools`のdenyルール（bypassPermissionsでも有効）で人格・スキル・記憶ファイルへのWrite/Edit不可となり、自己改変促し文言・Self-evolution節もplacement時は注入されない。残ギャップ: Bash経由のシェル書込はdenyルールの対象外（08章に記載）、および§3の可視性フィルタ（読取側）は未実装。
+> **更新（2026-07-30）**: §1の境界の穴は [PR #29](https://github.com/Unson-LLC/mana-runtime/pull/29) で closed — placementセッションは`--disallowedTools`のdenyルール（bypassPermissionsでも有効）で人格・スキル・記憶ファイルへのWrite/Edit不可となり、自己改変促し文言・Self-evolution節もplacement時は注入されない。残ギャップ: Bash経由のシェル書込はdenyルールの対象外（08章に記載）。§3の可視性フィルタ（読取側）は中間段階をStory `placement-read-filters` で実装済み（§3.3参照）。
 
 ## 1. 当初の問題（fact、PR #29前）
 
@@ -52,8 +52,7 @@
 
 | 段階 | 内容 |
 |---|---|
-| 現状 | 読取フィルタなし。全セッションが全スキル・全記憶を読める（書込はPR #29のdenyルールで遮断済み） |
-| 中間 | gatewayがセッションごとにスキルマニフェスト・記憶ビューを生成して注入。書込禁止はread-onlyリスト+パス制限 |
+| 中間（**現状**、Story `placement-read-filters`で実装） | gatewayがセッションごとにスキルマニフェスト・記憶ビューを生成して注入。スキルはfrontmatterの`requiredMcp`/`requiredTools`/`scope`とplacementのcapabilities/projectsの突き合わせで可視性を導出し、記憶は`memory/placements/<placementId>/`を自placement分だけ注入・他placement分をRead/Glob/Grepのdenyルールで遮断する。残ギャップ: Bash経由のシェル読取と、セッション走行中に新設されたplacementディレクトリ（denyルールはセッション開始時の列挙。次セッションから遮断される） |
 | 最終 | placementごとに実行ホームを分離（自placementのビューしかファイルシステム上に存在しない状態）。業務データはMCP経由なので、分離しても脳への参照は損なわれない |
 
 ## 4. 書込は境界イベントとして扱う
@@ -101,8 +100,8 @@
 | 実行時の自己改変 | placementでは禁止済み（PR #29。非placementは許可のまま） | HITL提案 + PR着地への置換 |
 | placementからの書込 | denyルールで遮断済み（PR #29。**Bash経由は残ギャップ**） | シェル書込含む完全遮断 |
 | 記憶の行き先 | すべてJINN_HOME共有ファイル | 3分類ルール（§2）: 運用記憶/業務事実/会話文脈 |
-| 記憶の読取権限 | 全placement共有（無権限） | 3層モデル（§3.1）: 脳=RACI / placementローカル=自placementのみ / 共通=全公開かつ機微禁止 |
-| スキルの可視性 | 全placementへ全公開 | capabilities+scopeからの導出フィルタ（§3.2） |
+| 記憶の読取権限 | placementローカル層（`memory/placements/`）実装済み: 自placement分のみ注入+他placementはdeny遮断（Story `placement-read-filters`） | 3層モデル（§3.1）: 脳=RACI / placementローカル=自placementのみ / 共通=全公開かつ機微禁止 |
+| スキルの可視性 | capabilities+scopeの導出フィルタ実装済み（マニフェスト注入。Story `placement-read-filters`。本文のファイル読取遮断は最終段階） | capabilities+scopeからの導出フィルタ（§3.2）+実行ホーム分離 |
 | 変更管理 | バックアップファイル慣行 | git履歴 + 台帳統合 |
 
 §1の境界の穴（placementセッションからの人格・記憶書込）はPR #29で遮断済み（冒頭の更新注記参照）。残るはBash経由のシェル書込と読取側フィルタ。[08_security_design.md](./08_security_design.md)の攻撃面（2.1 信頼できないSlack入力）の具体例として扱う。
