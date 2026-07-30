@@ -1,7 +1,7 @@
 # Jinn Design Document
 
 **Date:** 2026-03-06
-**Status:** Approved
+**Status:** Superseded（歴史資料 — placement・Canonical Task・議事録パイプライン導入以前の初期設計。現在地は [docs/architecture/01_system_overview.md](../architecture/01_system_overview.md) を正とする）
 **Package:** `jinn-cli`
 
 ---
