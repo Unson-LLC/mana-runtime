@@ -2788,7 +2788,8 @@ function loadTranscriptMessages(engineSessionId: string): Array<{ role: string; 
   return [];
 }
 
-async function runWebSession(
+/** Exported for placement kill-switch boundary tests. */
+export async function runWebSession(
   session: Session,
   prompt: string,
   engine: Engine,

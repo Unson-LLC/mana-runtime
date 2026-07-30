@@ -416,6 +416,37 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     }
   });
 
+  it("fail-closes the session-run boundary when the placement kill switch is off", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    config.placements![0].enabled = false;
+    try {
+      const runSession = createSession({
+        engine: "claude", source: "slack", sourceRef: "slack:C1-run", connector: "slack",
+        sessionKey: `placement-run-${Date.now()}`, replyContext: { channel: "C1" },
+      });
+      updateSession(runSession.id, { transportMeta: { placementId: "pilot" } });
+      const { runWebSession } = await import("../api.js");
+      await runWebSession(
+        getSession(runSession.id)!,
+        "blocked prompt",
+        { name: "claude" } as never,
+        config,
+        {} as never,
+      );
+      const after = getSession(runSession.id);
+      expect(after?.status).toBe("error");
+      expect(after?.lastError).toBe('Placement "pilot" is disabled');
+      const event = warn.mock.calls.map(([message]) => message)
+        .filter((message) => message.startsWith("security_event "))
+        .map((message) => JSON.parse(message.slice("security_event ".length)))
+        .find((candidate) => candidate.reason === "placement_disabled" && candidate.capability === "session_run");
+      expect(event).toMatchObject({ reason: "placement_disabled", placementId: "pilot", sessionId: runSession.id });
+    } finally {
+      delete config.placements![0].enabled;
+      warn.mockRestore();
+    }
+  });
+
   it("fail-closes direct delivery when the placement kill switch is off", async () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     config.placements![0].enabled = false;
