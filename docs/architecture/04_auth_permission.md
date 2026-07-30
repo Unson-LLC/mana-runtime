@@ -20,6 +20,8 @@ mana-runtimeの権限設計は一貫して **deny-by-default / fail-closed** で
 
 Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placements:`、pilotが正本・hot-reload）。仕様の正本は [channel-placement-profiles spec](../specs/channel-placement-profiles.md)。
 
+> **注**: config.yaml手書きが権限の正本であるのは**暫定の現在地**。目標はGraphのオントロジー（RACI・権限定義）を正本とし、placement設定をその写像として生成すること（[10_company_brain.md §4](./10_company_brain.md)）。
+
 ```yaml
 - id: <placement-id>            # 管理用ラベル。ログ・security_eventに出る
   connector: slack
