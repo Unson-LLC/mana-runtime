@@ -28,3 +28,4 @@ ADRはすべての判断に対して作るものではありません。以下�
 | [0001](./0001-placement-deny-by-default.md) | placementの能力はdeny-by-default、制限はハード境界で強制する | 2026-07-30 |
 | [0002](./0002-placement-rebind-transcript-clearing.md) | placementのtranscriptクリアは「権限バインド変更時のみ」 | 2026-07-30 |
 | [0003](./0003-broad-credential-with-tool-layer-enforcement.md) | 広権限クレデンシャル+ツール層強制を許容する条件 | 2026-07-30 |
+| [0004](./0004-no-second-permission-system.md) | ランタイムに第二の権限体系を作らない（スコープ語彙はbrainbaseから借りる） | 2026-07-30 |

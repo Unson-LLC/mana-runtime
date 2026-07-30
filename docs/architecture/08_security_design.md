@@ -24,6 +24,7 @@
 - 外部送信は `allowedDelivery` の宛先検査を通ったものだけ
 - ある権限で得た会話文脈を別権限へ持ち込まない（authority rebindでtranscriptクリア）
 - 全権クレデンシャルはgateway所有のツール層に置き、モデルからはツールしか見えない（[ADR-0003](../adr/0003-broad-credential-with-tool-layer-enforcement.md)）
+- **既知の未カバー領域**: placementセッションから全チャンネル共有のCLAUDE.md・skills/・memory/へ書込可能（インジェクションの永続化経路）。対策方針は [11_persona_skills_memory.md](./11_persona_skills_memory.md) §3 — 台帳実装より先に塞ぐ
 
 ### 2.2 自己開発経路（コード実行権限）
 

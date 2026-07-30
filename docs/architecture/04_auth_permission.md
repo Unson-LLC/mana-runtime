@@ -69,6 +69,10 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
 
 子セッション・cross-requestは**実在する親セッションを必須**とし、親placementを継承。engine/model/effortのリクエスト上書きは拒否。許可外employeeへの委譲は拒否。
 
+### スキル・記憶の権限
+
+placementが制御するのはツール・MCPだけではなく、**セッションに何を見せるか**（スキル・記憶）も含む。権限モデルは [11章§3](./11_persona_skills_memory.md) を正とする — 要点: ランタイムに独自の権限体系を作らず、業務の記憶はbrainbaseのRACI/projectに判定させ、ランタイム側は「記憶3層（脳/placementローカル/共通）」と「capabilities+scopeからのスキル可視性導出」のフィルタだけを持つ。現状はフィルタ未実装（全共有）であり、目標とのギャップは11章§7。
+
 ## 3. 認証方式
 
 | 経路 | 認証 |

@@ -81,7 +81,7 @@ flowchart TD
 ## 7. 関連資料
 
 - [認証・権限設計](./04_auth_permission.md) — placement境界の詳細
-- [会社の脳と学習ループ](./10_company_brain.md) — **目標アーキテクチャ**。本章は現在地であり、実行時Graph参照・学習昇格ループ・裏側ルーティング層は10が方向を定める
+- [会社の脳との接続](./10_company_brain.md) — **目標アーキテクチャ**。本章は現在地であり、実行時Graph参照・学習候補送信・裏側ルーティング層は10が方向を定める（脳そのものの設計はbrainbase側が正本）
 - [データストア設計](./02_data_design.md)
 - [ログ・監視設計](./06_logging_monitoring.md)
 - 機能単位の設計: `story-*.md`（VibePro系統）
