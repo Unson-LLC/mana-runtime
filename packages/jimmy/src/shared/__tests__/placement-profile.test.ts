@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isPlacementEmployeeAllowed, placementEngineBoundary, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, placementEngineBoundary, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -35,6 +35,16 @@ describe("resolvePlacement", () => {
     expect(resolvePlacement([placement], msg)).toEqual({ status: "denied", reason });
   });
 
+  it("fails closed with an auditable reason when the placement kill switch is off", () => {
+    expect(resolvePlacement([{ ...placement, enabled: false }], message()))
+      .toEqual({ status: "denied", reason: "disabled", placementId: "mana-test" });
+  });
+
+  it("treats explicit enabled: true and absent enabled as active", () => {
+    expect(resolvePlacement([{ ...placement, enabled: true }], message()).status).toBe("matched");
+    expect(resolvePlacement([placement], message()).status).toBe("matched");
+  });
+
   it("denies ambiguous matching profiles", () => {
     expect(resolvePlacement([placement, { ...placement, id: "duplicate" }], message()))
       .toEqual({ status: "denied", reason: "ambiguous" });
@@ -53,6 +63,22 @@ describe("resolvePlacement", () => {
   ])("fails closed for a %s anywhere in the placement", (_label, override) => {
     const unsafe = { ...placement, ...override } as PlacementProfile;
     expect(resolvePlacement([unsafe], message())).toEqual({ status: "denied", reason: "invalid_config" });
+  });
+});
+
+describe("findEnabledPlacement", () => {
+  it("resolves an enabled placement by id", () => {
+    expect(findEnabledPlacement([placement], "mana-test")).toEqual({ placement, disabled: false });
+  });
+
+  it("reports a disabled placement distinctly so callers fail closed", () => {
+    expect(findEnabledPlacement([{ ...placement, enabled: false }], "mana-test"))
+      .toEqual({ disabled: true });
+  });
+
+  it("returns nothing for unknown or non-string ids", () => {
+    expect(findEnabledPlacement([placement], "other")).toEqual({ disabled: false });
+    expect(findEnabledPlacement([placement], undefined)).toEqual({ disabled: false });
   });
 });
 

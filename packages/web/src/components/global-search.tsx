@@ -55,6 +55,7 @@ const STATIC_PAGES = [
   { id: "page-cron", label: "Cron", icon: Clock, href: "/cron" },
   { id: "page-costs", label: "Costs", icon: DollarSign, href: "/costs" },
   { id: "page-logs", label: "Activity", icon: Activity, href: "/logs" },
+  { id: "page-placements", label: "Placements", icon: LayoutGrid, href: "/placements" },
   { id: "page-skills", label: "Skills", icon: Zap, href: "/skills" },
   { id: "page-settings", label: "Settings", icon: Settings, href: "/settings" },
   { id: "page-goals", label: "Goals", icon: Target, href: "/goals" },

@@ -104,9 +104,10 @@ function resolveRouteOptions(
   if (resolution.status === "denied") {
     const reason = resolution.reason === "unauthorized_user" ? "unauthorized_actor"
       : resolution.reason === "invalid_config" ? "placement_missing_after_config_change"
+      : resolution.reason === "disabled" ? "placement_disabled"
       : resolution.reason!;
     emitSecurityEvent({
-      event: "placement_resolution", reason, connector: msg.connector,
+      event: "placement_resolution", reason, placementId: resolution.placementId, connector: msg.connector,
       workspaceId: String((msg.transportMeta as Record<string, unknown> | undefined)?.team ?? "") || undefined,
       channelId: msg.channel, actorId: msg.user, configRevision: placementConfigRevision(cfg.placements),
     });

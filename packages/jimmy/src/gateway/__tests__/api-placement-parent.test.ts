@@ -98,6 +98,17 @@ describe("placement inheritance for derived sessions", () => {
     warn.mockRestore();
   });
 
+  it("fails closed when the parent placement kill switch is off", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    expect(resolveDerivedPlacement(
+      { placements: [{ ...placement, enabled: false }] },
+      makeSession("parent-1"),
+      "reviewer",
+    )).toEqual({ error: 'parent placement "pilot" is disabled' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"reason":"placement_disabled"'));
+    warn.mockRestore();
+  });
+
   it("fails closed when the parent placement is no longer configured", () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     expect(resolveDerivedPlacement(
