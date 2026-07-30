@@ -106,3 +106,4 @@ Slackからの自己開発は通常の会話権限と完全に分離する（[sp
 - placement新設時は `capabilities`・`projects`・`agent` まで書く（雛形: 既存の `mana-backoffice` ブロック）。空のまま運用しない
 - 能力追加時のチェック: 「この制限はどの層で強制されるか？」「チャンネルaudience全員に見せてよい範囲か？」
 - 変更前バックアップ: `config.yaml.bak-<date>-<intent>`
+- **設定ミスの既知の症状**: placement定義のどこかに秘密値らしきものがあると`invalid_config`でチャンネルが**丸ごと無反応**になる。判定はキー名ベースで広く、`apiKeyRotationPolicy`のような無害キーでも発動する。manaが無言になったらまず `journalctl | grep placement_missing_after_config_change` を確認し、直近のconfig変更のキー名を疑う
