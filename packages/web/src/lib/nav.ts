@@ -7,6 +7,7 @@ import {
   Activity,
   Zap,
   Settings,
+  BookOpen,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
@@ -23,6 +24,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/kanban", label: "カンバン", icon: LayoutGrid },
   { href: "/cron", label: "スケジュール", icon: Clock },
   { href: "/logs", label: "アクティビティ", icon: Activity },
+  { href: "/placements", label: "台帳", icon: BookOpen },
   { href: "/skills", label: "スキル", icon: Zap },
   { href: "/settings", label: "設定", icon: Settings },
 ]

@@ -807,6 +807,12 @@ export async function handleApiRequest(
       });
     }
 
+    // GET /api/placements — agent ledger view (operator-protected like other GET APIs)
+    if (method === "GET" && pathname === "/api/placements") {
+      const { buildPlacementLedger } = await import("./placements.js");
+      return json(res, buildPlacementLedger(context.getConfig().placements));
+    }
+
     // GET /api/instances
     if (method === "GET" && pathname === "/api/instances") {
       const instances = loadInstances();

@@ -127,8 +127,36 @@ interface UploadedFile {
   mimetype: string | null
 }
 
+export interface PlacementLedgerEntry {
+  id: string;
+  connector: string;
+  workspaceId: string;
+  channelId: string;
+  owner: string | null;
+  purpose: string | null;
+  enabled: boolean;
+  audienceType: string;
+  allowedUserCount: number;
+  employee: string | null;
+  defaultModel: string | null;
+  budgetTracked: boolean;
+  mcp: false | string[];
+  gatewayTools: string[];
+  deliveryTargets: string[];
+  monthlyCost: number;
+  monthlySessions: number;
+  lastActivity: string | null;
+}
+
+export interface PlacementLedger {
+  placements: PlacementLedgerEntry[];
+  unplaced: { monthlyCost: number; monthlySessions: number; lastActivity: string | null };
+  orphanCosts: Array<{ placementId: string; cost: number; sessions: number; lastActivity: string | null }>;
+}
+
 export const api = {
   getStatus: () => get<Record<string, unknown>>("/api/status"),
+  getPlacements: () => get<PlacementLedger>("/api/placements"),
   getInstances: () => get<Array<{ name: string; port: number; running: boolean; current: boolean }>>("/api/instances"),
   getSlackChannels: () => get<{ ok: boolean; channels?: Array<{ id: string; name: string; isPrivate: boolean }>; error?: string }>("/api/connectors/slack/channels"),
   getWhatsAppQr: () => get<{ qr?: string }>("/api/connectors/whatsapp/qr"),
