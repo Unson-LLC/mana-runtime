@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveSlackInstanceRuntimeConfig,
   resolveSlackRuntimeConfig,
   SLACK_APP_TOKEN_ENV,
   SLACK_BOT_TOKEN_ENV,
@@ -65,5 +66,38 @@ describe("resolveSlackRuntimeConfig", () => {
         },
       ),
     ).toThrow("non-empty allowFrom");
+  });
+});
+
+describe("resolveSlackInstanceRuntimeConfig", () => {
+  it("resolves per-instance tokens from the named env vars", () => {
+    const config = { id: "slack-biz", appTokenEnv: "BIZ_APP", botTokenEnv: "BIZ_BOT" };
+    const result = resolveSlackInstanceRuntimeConfig(config, {
+      BIZ_APP: "xapp-biz",
+      BIZ_BOT: "xoxb-biz",
+    });
+
+    expect(result).toMatchObject({ id: "slack-biz", appToken: "xapp-biz", botToken: "xoxb-biz" });
+    expect(config).toEqual({ id: "slack-biz", appTokenEnv: "BIZ_APP", botTokenEnv: "BIZ_BOT" });
+  });
+
+  it("passes inline credentials through when no *TokenEnv is set", () => {
+    const config = { appToken: "xapp-inline", botToken: "xoxb-inline" };
+    expect(resolveSlackInstanceRuntimeConfig(config, {})).toBe(config);
+  });
+
+  it("fails closed when only one *TokenEnv field is set", () => {
+    expect(() =>
+      resolveSlackInstanceRuntimeConfig({ appTokenEnv: "BIZ_APP" }, { BIZ_APP: "xapp-biz" }),
+    ).toThrow("both appTokenEnv and botTokenEnv");
+  });
+
+  it("fails closed when a named env var is missing or empty", () => {
+    expect(() =>
+      resolveSlackInstanceRuntimeConfig(
+        { appTokenEnv: "BIZ_APP", botTokenEnv: "BIZ_BOT" },
+        { BIZ_APP: "xapp-biz", BIZ_BOT: "  " },
+      ),
+    ).toThrow("set BIZ_APP and BIZ_BOT");
   });
 });

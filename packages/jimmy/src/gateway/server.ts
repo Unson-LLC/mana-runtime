@@ -37,7 +37,7 @@ import { TelegramConnector } from "../connectors/telegram/index.js";
 import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
 import { scanOrg } from "./org.js";
-import { resolveSlackRuntimeConfig } from "../shared/slack-runtime-config.js";
+import { resolveSlackRuntimeConfig, resolveSlackInstanceRuntimeConfig } from "../shared/slack-runtime-config.js";
 import { resolvePlacement } from "../shared/placement-profile.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 
@@ -549,7 +549,7 @@ export async function startGateway(
             break;
           }
           case "slack": {
-            const slackConfig = { ...typeConfig, id } as any;
+            const slackConfig = resolveSlackInstanceRuntimeConfig({ ...typeConfig, id } as any);
             const slack = new SlackConnector(
               slackConfig,
               buildSlackConnectorContext(
@@ -681,7 +681,7 @@ export async function startGateway(
               break;
             }
             case "slack": {
-              const slackConfig = { ...typeConfig, id } as any;
+              const slackConfig = resolveSlackInstanceRuntimeConfig({ ...typeConfig, id } as any);
               // Use freshConfig.portal (not the closure-captured boot-time
               // `config`) so renamed portals show up after a hot-reload.
               const slack = new SlackConnector(
