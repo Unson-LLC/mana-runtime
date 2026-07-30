@@ -126,6 +126,32 @@ export interface ConnectorHealth {
 
 export type ReplyContext = JsonObject;
 
+/** One selectable option for a VibePro human-in-the-loop question. */
+export interface DevelopmentQuestionOption {
+  label: string;
+  description?: string;
+  recommended?: boolean;
+}
+
+/**
+ * One question the isolated VibePro development runner asked because a
+ * Slack `/vibepro` request was too ambiguous to implement safely. Rendered
+ * as a Slack Block Kit card + modal by the Slack connector; other connectors
+ * may ignore `postDecisionQuestions` and fall back to plain text.
+ */
+export interface DevelopmentQuestion {
+  id: string;
+  question: string;
+  options: DevelopmentQuestionOption[];
+  allow_free_text: boolean;
+}
+
+/** One human answer to a previously-asked DevelopmentQuestion. */
+export interface DevelopmentAnswer {
+  id: string;
+  answer: string;
+}
+
 export interface Connector {
   name: string;
   start(): Promise<void>;
@@ -142,6 +168,16 @@ export interface Connector {
   onMessage(handler: (msg: IncomingMessage) => void): void;
   /** Return the bound employee name, if any */
   getEmployee?(): string | undefined;
+  /**
+   * Post a rich human-in-the-loop question card for a `/vibepro needs_decision`
+   * result (e.g. Slack Block Kit + a modal to collect answers). Connectors
+   * that don't implement this leave it undefined; callers must fall back to
+   * a plain-text `replyMessage` in that case.
+   */
+  postDecisionQuestions?(
+    target: Target,
+    payload: { storyId: string; questions: DevelopmentQuestion[]; summary: string },
+  ): Promise<void>;
 }
 
 export interface IncomingMessage {
