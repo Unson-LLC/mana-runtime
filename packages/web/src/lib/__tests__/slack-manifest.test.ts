@@ -6,7 +6,7 @@ describe("buildSlackManifest", () => {
     const manifest = JSON.parse(buildSlackManifest("Pilot Ryoko"))
 
     expect(manifest.features.slash_commands).toContainEqual(
-      expect.objectContaining({ command: "/ryoko-develop" }),
+      expect.objectContaining({ command: "/vibepro" }),
     )
     expect(manifest.oauth_config.scopes.bot).toContain("commands")
     expect(manifest.settings.socket_mode_enabled).toBe(true)
