@@ -7,17 +7,24 @@ pr_scope_reason: >-
   本Storyは「エージェント台帳」という単一のガバナンス境界を成立させる変更であり、
   台帳フィールド（owner/purpose/enabled）・placement単位コスト集計・kill switchの
   fail-closed境界・台帳API/ビュー・運用手順は相互に参照し合う一体のリリース単位である。
-  分割するとkill switchだけが先行して台帳ビューに表示されない等、レビューアが
-  境界全体の整合を検証できなくなるため、1 PRで原子的にレビューする。
+  e2e受け入れ契約（e2e-gate）はruntime-behaviorのテスト出力とmisc-follow-upの
+  運用文書本文の双方をassertするため単独では成立せず、分割するとkill switchだけが
+  先行して台帳ビューに表示されない等、レビューアが境界全体の整合を検証できなくなる。
+  repo-controlの.gitignore 3行はこのStory自身のVibePro Gate証跡（.vibepro workspace）を
+  リポジトリ汚染なしに保持するための付随変更であり、独立mergeの価値がないため同梱する。
+  以上により1 PRで原子的にレビューする。
 pr_scope_review_facets:
   - repo-control
   - requirements-ssot
   - runtime-behavior
   - misc-follow-up
+  - e2e-gate
 pr_scope_dependency_boundaries:
   - "repo-control -> requirements-ssot"
   - "requirements-ssot -> runtime-behavior"
   - "runtime-behavior -> misc-follow-up"
+  - "runtime-behavior -> e2e-gate"
+  - "misc-follow-up -> e2e-gate"
 ---
 
 # エージェント台帳の不足を埋める
