@@ -12,7 +12,8 @@ mana-runtime自身は「会話の経路・状態」だけを持ち、**業務デ
 | Claude transcripts | `~/.claude/projects/<cwd-slug>/<claudeSessionId>.jsonl` | Claude Code CLI自身の会話履歴。engineSessionIdで`--resume`する。lost-Stop回復・コスト再計算にも使用 |
 | Runtime config | `~/.ryoko/config.yaml`（**pilotが正本**・file watcherでhot-reload） | connectors・placements・engines・developmentRunner等。変更前に`config.yaml.bak-<date>-<intent>`でバックアップ |
 | Gateway info | `~/.ryoko/gateway.json` | port・hook secret・pid（hook-relay discovery用） |
-| その他 | `~/.ryoko/`（memory/ knowledge/ org/ cron/ logs/ など） | 人格・組織定義・cron定義等の運用ファイル |
+| 人格・スキル・記憶 | `~/.ryoko/`（CLAUDE.md・skills/・memory/・knowledge/） | 振る舞いを永続的に変える資産。正本・権限・書込ゲートは [11章](./11_persona_skills_memory.md) を正とする（現状は全placement共有・履歴なしで、目標と乖離） |
+| その他 | `~/.ryoko/`（org/ cron/ logs/ など） | 組織定義・cron定義等の運用ファイル |
 
 ### sessions の要点
 
