@@ -5,20 +5,28 @@ interface DeliveryTarget {
   channel: string;
 }
 
-function parseArray<T>(raw: string | undefined): T[] | undefined {
-  if (raw === undefined) return undefined;
+/** Explicit allow-all marker the resolver sets for legacy (non-placement) sessions. */
+export const POLICY_ALLOW_ALL = "*";
+
+type PolicyDecision<T> = { kind: "allow-all" } | { kind: "allowlist"; allowed: T[] } | { kind: "deny-all" };
+
+function parsePolicy<T>(raw: string | undefined): PolicyDecision<T> {
+  // Missing policy fails closed: the resolver ALWAYS sets the env (placement →
+  // JSON allowlist, legacy → "*"), so an absent variable means this gateway MCP
+  // server was spawned outside the resolver and must not grant anything.
+  if (raw === undefined) return { kind: "deny-all" };
+  if (raw === POLICY_ALLOW_ALL) return { kind: "allow-all" };
   try {
     const value = JSON.parse(raw);
-    return Array.isArray(value) ? value as T[] : [];
+    return Array.isArray(value) ? { kind: "allowlist", allowed: value as T[] } : { kind: "deny-all" };
   } catch {
-    return [];
+    return { kind: "deny-all" };
   }
 }
 
-/** Missing policy preserves legacy behavior; present-but-invalid policy fails closed. */
 export function isGatewayToolAllowed(name: string, raw = process.env.JINN_ALLOWED_GATEWAY_TOOLS): boolean {
-  const allowed = parseArray<string>(raw);
-  const result = allowed === undefined || allowed.includes(name);
+  const policy = parsePolicy<string>(raw);
+  const result = policy.kind === "allow-all" || (policy.kind === "allowlist" && policy.allowed.includes(name));
   if (!result) emitSecurityEvent({ event: "capability", reason: "gateway_tool_denied", capability: "gateway_tool", target: name });
   return result;
 }
@@ -32,10 +40,10 @@ export function isDeliveryTargetAllowed(
   channel: string,
   raw = process.env.JINN_ALLOWED_DELIVERY_TARGETS,
 ): boolean {
-  const allowed = parseArray<DeliveryTarget>(raw);
-  const result = allowed === undefined || allowed.some((target) =>
+  const policy = parsePolicy<DeliveryTarget>(raw);
+  const result = policy.kind === "allow-all" || (policy.kind === "allowlist" && policy.allowed.some((target) =>
     target?.connector === connector && target?.channel === channel,
-  );
+  ));
   if (!result) emitSecurityEvent({ event: "capability", reason: "delivery_denied", connector, channelId: channel, capability: "delivery", target: `${connector}:${channel}` });
   return result;
 }

@@ -151,12 +151,16 @@ function buildAvailableServers(config: McpGlobalConfig, sessionContext?: McpSess
         ...(sessionContext?.connector ? { JINN_CURRENT_CONNECTOR: sessionContext.connector } : {}),
         ...(sessionContext?.channel ? { JINN_CURRENT_CHANNEL: sessionContext.channel } : {}),
         ...(sessionContext?.thread ? { JINN_CURRENT_THREAD: sessionContext.thread } : {}),
-        ...(sessionContext?.allowedGatewayTools
-          ? { JINN_ALLOWED_GATEWAY_TOOLS: JSON.stringify(sessionContext.allowedGatewayTools) }
-          : {}),
-        ...(sessionContext?.allowedDeliveryTargets
-          ? { JINN_ALLOWED_DELIVERY_TARGETS: JSON.stringify(sessionContext.allowedDeliveryTargets) }
-          : {}),
+        // Always set the policy envs: placement sessions get their JSON
+        // allowlist, legacy sessions get the explicit "*" marker. The policy
+        // layer treats a MISSING env as deny-all (fail-closed), so a gateway
+        // MCP server spawned outside this resolver grants nothing.
+        JINN_ALLOWED_GATEWAY_TOOLS: sessionContext?.allowedGatewayTools
+          ? JSON.stringify(sessionContext.allowedGatewayTools)
+          : "*",
+        JINN_ALLOWED_DELIVERY_TARGETS: sessionContext?.allowedDeliveryTargets
+          ? JSON.stringify(sessionContext.allowedDeliveryTargets)
+          : "*",
       },
     };
   }
