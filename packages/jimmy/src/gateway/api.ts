@@ -2912,7 +2912,7 @@ export async function runWebSession(
           logger.warn(`Failed to emit stream delta for session ${currentSession.id}: ${err instanceof Error ? err.message : err}`);
         }
       },
-    }).finally(() => {
+    }, config.placements).finally(() => {
       clearInterval(runHeartbeat);
     });
 
@@ -3009,7 +3009,7 @@ export async function runWebSession(
                 subAgent: delta.subAgent,
               });
             },
-          });
+          }, config.placements);
 
           if (fallbackResult.result) {
             insertMessage(currentSession.id, "assistant", fallbackResult.result);
@@ -3147,7 +3147,7 @@ export async function runWebSession(
                 subAgent: delta.subAgent,
               });
             },
-          });
+          }, config.placements);
 
           const retryInterrupted = retryResult.error?.startsWith("Interrupted");
           const retryRateLimit = !retryInterrupted ? detectRateLimit(retryResult) : { limited: false as const };
