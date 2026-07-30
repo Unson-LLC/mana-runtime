@@ -72,6 +72,9 @@ placements:
     connector: slack
     workspaceId: T01234567
     channelId: C01234567
+    owner: U01234567        # 台帳: 所有者・スポンサー（任意）
+    purpose: "brainbase運用のoperator対話"  # 台帳: 目的（任意）
+    enabled: true           # 台帳: kill switch。false で即fail-closed。未設定は有効
     audience:
       type: operator
       allowedUsers: [U01234567]
