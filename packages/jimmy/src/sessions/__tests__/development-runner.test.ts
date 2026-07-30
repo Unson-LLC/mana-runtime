@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, buildStoryAddArgs, buildStoryCommitArgs, buildValidatedResumeArgs, buildVibeproRunArgs, parseNoProgressRecovery, resumeNoProgressOnce, runCommand, runVibeproUntilSafeStop, safeResultFromRun, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, buildAgentArgs, buildAgentPrompt, buildPrShipArgs, buildStoryAddArgs, buildStoryCommitArgs, extractBlockingGates, parseEnvFile, parsePrShipReadiness, resultFromAgentRun, runCommand, validateConfig } from "../../../../../scripts/development-runner/run.mjs";
 
 function childReturning(stdout: string, code = 0) {
   const child = new EventEmitter() as any;
@@ -41,192 +41,68 @@ describe("development runner", () => {
     ]);
   });
 
-  it("uses the locally-contained Codex runtime before Claude Code fallback", () => {
-    expect(buildVibeproRunArgs("story-safe-change", 60_000)).toEqual(expect.arrayContaining([
-      "--provider-fallbacks",
-      "codex,claude-code",
-    ]));
+  it("drives development through a Claude Code agent bounded by the VibePro safety boundary", () => {
+    const prompt = buildAgentPrompt("story-safe-change", "READMEを改善する", "main");
+    expect(prompt).toContain("READMEを改善する");
+    expect(prompt).toContain("story-safe-change");
+    expect(prompt).toContain("vibepro pr prepare . --story-id story-safe-change --base main");
+    expect(prompt).toContain("PR作成・merge・push・deploy・secretsの変更・runtime本体checkoutの変更は行わない");
+    expect(buildAgentArgs(prompt)).toEqual(["-p", "--dangerously-skip-permissions", prompt]);
   });
 
-  it.each(["waiting_for_runtime", "waiting_for_human"])("returns %s as an actionable safe stop", (status) => {
-    expect(safeResultFromRun(JSON.stringify({ state: { status } }), "story-safe-change")).toEqual({
-      status: "needs_input",
+  it("re-derives readiness deterministically from pr ship instead of trusting the agent", () => {
+    expect(buildPrShipArgs("story-safe-change", "codex/story-safe-change", "main")).toEqual([
+      "pr", "ship", ".",
+      "--base", "main", "--head", "codex/story-safe-change",
+      "--story-id", "story-safe-change", "--dry-run",
+    ]);
+  });
+
+  it("treats a pr create next command as the only pr_ready signal", () => {
+    const ready = "## Blocking\n\n## Next Commands\n\n- vibepro pr create . --base main --head codex/story-x --story-id story-x\n";
+    const notReady = [
+      "- critical_gate: 必須設計図が不足: threat_model",
+      "- waiver_or_evidence: 10 non-critical unresolved gate(s) require evidence or an auditable waiver.",
+      "## Next Commands",
+      "- vibepro review prepare . --id story-x --stage gate --role gate_evidence",
+      "- vibepro pr prepare . --story-id story-x --base main",
+    ].join("\n");
+    expect(parsePrShipReadiness(ready)).toBe(true);
+    expect(parsePrShipReadiness(notReady)).toBe(false);
+    expect(parsePrShipReadiness("")).toBe(false);
+
+    expect(resultFromAgentRun(ready, "story-safe-change")).toEqual({
+      status: "pr_ready",
       storyId: "story-safe-change",
-      summary: `VibePro stopped safely (${status}). Review the run before resuming.`,
+      summary: "VibePro gates are ready. PR creation requires a human action.",
     });
+    const stopped = resultFromAgentRun(notReady, "story-safe-change");
+    expect(stopped.status).toBe("needs_input");
+    expect(stopped.storyId).toBe("story-safe-change");
+    expect(stopped.summary).toContain("2 gate(s) remain");
+    expect(stopped.summary.length).toBeLessThanOrEqual(1000);
   });
 
-  it("reconstructs a fixed resume argv only for the current no_progress Story", async () => {
-    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
-    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
-    await mkdir(managed, { recursive: true });
-    const raw = JSON.stringify({ state: {
-      status: "blocked",
-      stop_reason: { code: "no_progress", details: { recovery: {
-        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
-      } } },
-    } });
-
-    try {
-      expect(parseNoProgressRecovery(raw, "story-safe-change")).toEqual({
-        managedWorktree: managed,
-        runId: "run-20260727T003335Z-373e6b15",
-      });
-      expect(await buildValidatedResumeArgs(raw, "story-safe-change", outer)).toEqual([
-        "execute", "resume", await realpath(managed),
-        "--story-id", "story-safe-change",
-        "--run-id", "run-20260727T003335Z-373e6b15",
-        "--until", "pr-ready",
-        "--json",
-      ]);
-    } finally {
-      await rm(outer, { recursive: true, force: true });
-    }
+  it("ignores a pr create mention outside the Next Commands section", () => {
+    const output = "- vibepro pr create . --base main --head x --story-id story-x\n## Next Commands\n- vibepro pr prepare . --story-id story-x --base main\n";
+    expect(parsePrShipReadiness(output)).toBe(false);
   });
 
-  it.each([
-    ["other stop", { status: "blocked", stop_reason: { code: "needs_decision" } }],
-    ["other Story", { status: "blocked", stop_reason: { code: "no_progress", details: { recovery: { next_command: "vibepro execute resume /tmp/x --story-id story-other --run-id run-20260727T003335Z-373e6b15 --until pr-ready" } } } }],
-    ["extra argument", { status: "blocked", stop_reason: { code: "no_progress", details: { recovery: { next_command: "vibepro execute resume /tmp/x --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready; touch /tmp/x" } } } }],
-  ])("rejects unsafe recovery: %s", (_name, state) => {
-    expect(parseNoProgressRecovery(JSON.stringify({ state }), "story-safe-change")).toBeNull();
+  it("lists unresolved gates from the pr ship report", () => {
+    expect(extractBlockingGates([
+      "- critical_gate: Scope requires a split decision",
+      "- other: noise",
+      "- waiver_or_evidence: 3 unresolved gate(s)",
+    ].join("\n"))).toEqual(["Scope requires a split decision", "3 unresolved gate(s)"]);
   });
 
-  it("rejects a managed-worktree symlink that escapes the current Story", async () => {
-    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
-    const outside = await mkdtemp(path.join(tmpdir(), "openryoko-outside-"));
-    const root = path.join(outer, ".worktrees", "vibepro");
-    const linked = path.join(root, "story-safe-change-escape");
-    await mkdir(root, { recursive: true });
-    await symlink(outside, linked);
-    const raw = JSON.stringify({ state: { status: "blocked", stop_reason: {
-      code: "no_progress", details: { recovery: {
-        next_command: `vibepro execute resume ${linked} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
-      } },
-    } } });
-
-    try {
-      expect(await buildValidatedResumeArgs(raw, "story-safe-change", outer)).toBeNull();
-    } finally {
-      await rm(outer, { recursive: true, force: true });
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
-
-  it("resumes no_progress once inside the remaining wall-clock budget", async () => {
-    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
-    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
-    await mkdir(managed, { recursive: true });
-    const raw = JSON.stringify({ state: { status: "blocked", stop_reason: {
-      code: "no_progress", details: { recovery: {
-        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
-      } },
-    } } });
-    const runCommandFn = vi.fn(async (_bin: string, _args: string[], _options: Record<string, unknown>) =>
-      JSON.stringify({ state: { status: "pr_ready" } }));
-
-    try {
-      const result = await resumeNoProgressOnce(raw, {
-        storyId: "story-safe-change",
-        outerWorktree: outer,
-        vibeproBin: "/usr/local/bin/vibepro",
-        deadlineMs: Date.now() + 60_000,
-        runCommandFn,
-      });
-      expect(safeResultFromRun(result, "story-safe-change").status).toBe("pr_ready");
-      expect(runCommandFn).toHaveBeenCalledTimes(1);
-      expect(runCommandFn.mock.calls[0][2]).toEqual(expect.objectContaining({
-        cwd: outer,
-        timeoutMs: expect.any(Number),
-      }));
-    } finally {
-      await rm(outer, { recursive: true, force: true });
-    }
-  });
-
-  it("does not resume after the wall-clock budget is exhausted", async () => {
-    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-"));
-    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
-    await mkdir(managed, { recursive: true });
-    const raw = JSON.stringify({ state: { status: "blocked", stop_reason: {
-      code: "no_progress", details: { recovery: {
-        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
-      } },
-    } } });
-    const runCommandFn = vi.fn();
-
-    try {
-      expect(await resumeNoProgressOnce(raw, {
-        storyId: "story-safe-change",
-        outerWorktree: outer,
-        vibeproBin: "/usr/local/bin/vibepro",
-        deadlineMs: Date.now() - 1,
-        runCommandFn,
-      })).toBe(raw);
-      expect(runCommandFn).not.toHaveBeenCalled();
-    } finally {
-      await rm(outer, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    ["reaches pr_ready after one bounded resume", "pr_ready", "pr_ready", 1],
-    ["stops after a resumed run reports no_progress again", "blocked", "needs_input", 1],
-  ])("orchestrates the final output surface: %s", async (_name, resumedStatus, expectedStatus, expectedCalls) => {
-    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-flow-"));
-    const managed = path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123");
-    await mkdir(managed, { recursive: true });
-    const noProgress = () => JSON.stringify({ state: { status: "blocked", stop_reason: {
-      code: "no_progress", details: { recovery: {
-        next_command: `vibepro execute resume ${managed} --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
-      } },
-    } } });
-    const runCommandFn = vi.fn(async () => resumedStatus === "pr_ready"
-      ? JSON.stringify({ state: { status: "pr_ready" } })
-      : noProgress());
-
-    try {
-      const result = await runVibeproUntilSafeStop(noProgress(), {
-        storyId: "story-safe-change",
-        outerWorktree: outer,
-        vibeproBin: "/usr/local/bin/vibepro",
-        deadlineMs: Date.now() + 60_000,
-        runCommandFn,
-      });
-      expect(result.status).toBe(expectedStatus);
-      expect(runCommandFn).toHaveBeenCalledTimes(expectedCalls);
-    } finally {
-      await rm(outer, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    ["invalid recovery", Date.now() + 60_000],
-    ["exhausted budget", Date.now() - 1],
-  ])("keeps a safe final stop without spawning for %s", async (caseName, deadlineMs) => {
-    const outer = await mkdtemp(path.join(tmpdir(), "openryoko-resume-flow-"));
-    const runCommandFn = vi.fn();
-    const raw = caseName === "invalid recovery"
-      ? JSON.stringify({ state: { status: "blocked", stop_reason: { code: "no_progress" } } })
-      : JSON.stringify({ state: { status: "blocked", stop_reason: { code: "no_progress", details: { recovery: {
-        next_command: `vibepro execute resume ${outer}/.worktrees/vibepro/story-safe-change-abc123 --story-id story-safe-change --run-id run-20260727T003335Z-373e6b15 --until pr-ready`,
-      } } } } });
-    if (caseName === "exhausted budget") {
-      await mkdir(path.join(outer, ".worktrees", "vibepro", "story-safe-change-abc123"), { recursive: true });
-    }
-
-    try {
-      expect((await runVibeproUntilSafeStop(raw, {
-        storyId: "story-safe-change",
-        outerWorktree: outer,
-        vibeproBin: "/usr/local/bin/vibepro",
-        deadlineMs,
-        runCommandFn,
-      })).status).toBe("needs_input");
-      expect(runCommandFn).not.toHaveBeenCalled();
-    } finally {
-      await rm(outer, { recursive: true, force: true });
-    }
+  it("parses the agent environment file strictly", () => {
+    expect(parseEnvFile('# key for the agent\nANTHROPIC_API_KEY="sk-test"\n\nCLAUDE_CODE_FLAG=1\n')).toEqual({
+      ANTHROPIC_API_KEY: "sk-test",
+      CLAUDE_CODE_FLAG: "1",
+    });
+    expect(() => parseEnvFile("export FOO=bar\n")).toThrow("invalid agent environment line");
+    expect(() => parseEnvFile("foo=bar\n")).toThrow("invalid agent environment line");
   });
 
   it("fails closed when the installed runner version differs from root-owned config", () => {
@@ -234,12 +110,16 @@ describe("development runner", () => {
       repository: "/srv/openryoko-development/repository",
       worktreesRoot: "/srv/openryoko-development/worktrees",
       vibeproBin: "/usr/local/bin/vibepro",
+      claudeBin: "/usr/local/bin/claude",
       baseRef: "origin/main",
       maxDurationMs: 60_000,
     };
 
     expect(() => validateConfig({ ...baseConfig, runnerVersion: "stale" })).toThrow("runner version mismatch");
     expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION })).not.toThrow();
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, claudeBin: "claude" })).toThrow("invalid claudeBin");
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, agentEnvFile: "relative.env" })).toThrow("invalid agentEnvFile");
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, agentEnvFile: "/home/ryoko-dev/.config/openryoko/agent-environment" })).not.toThrow();
   });
   it("passes the request over stdin and strips the gateway environment", async () => {
     process.env.SLACK_BOT_TOKEN = "must-not-leak";

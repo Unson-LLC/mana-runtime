@@ -10,8 +10,7 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-27.1";
-export const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 1;
+export const RUNNER_VERSION = "2026-07-30.1";
 
 export async function acquireDevelopmentLock(lockPath = LOCK_PATH) {
   let directoryCreated = false;
@@ -62,6 +61,7 @@ export async function runCommand(bin, args, options = {}) {
         HOME: process.env.HOME,
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         LANG: process.env.LANG ?? "C.UTF-8",
+        ...(options.extraEnv ?? {}),
       },
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
@@ -129,8 +129,11 @@ export async function runCommand(bin, args, options = {}) {
 }
 
 export function validateConfig(config) {
-  for (const key of ["repository", "worktreesRoot", "vibeproBin"]) {
+  for (const key of ["repository", "worktreesRoot", "vibeproBin", "claudeBin"]) {
     if (typeof config[key] !== "string" || !path.isAbsolute(config[key])) throw new Error(`invalid ${key}`);
+  }
+  if (config.agentEnvFile !== undefined && (typeof config.agentEnvFile !== "string" || !path.isAbsolute(config.agentEnvFile))) {
+    throw new Error("invalid agentEnvFile");
   }
   if (typeof config.baseRef !== "string" || !/^origin\/[a-zA-Z0-9._/-]+$/.test(config.baseRef)) {
     throw new Error("invalid baseRef");
@@ -143,85 +146,82 @@ export function validateConfig(config) {
   }
 }
 
-export function safeResultFromRun(raw, storyId) {
-  const result = JSON.parse(raw);
-  const status = result?.state?.status;
-  if (status === "pr_ready") {
+// ─── Agent-driven VibePro development ───
+// The development engine is a Claude Code session that follows the VibePro
+// workflow itself (Story -> Spec -> Code -> Gate evidence -> pr prepare).
+// The runner never trusts the agent's own claim of success: readiness is
+// re-derived afterwards from `vibepro pr ship --dry-run` output.
+
+export function parseEnvFile(content) {
+  const env = {};
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (!match) throw new Error("invalid agent environment line");
+    let value = match[2];
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    env[match[1]] = value;
+  }
+  return env;
+}
+
+export function buildAgentPrompt(storyId, request, baseBranch) {
+  return [
+    "あなたはOpenRyokoの自己開発セッションです。隔離worktreeの中で、VibePro CLIを制御プレーンとして使いながら次の依頼を実装してください。",
+    "",
+    "## 依頼",
+    "",
+    request,
+    "",
+    "## 進め方",
+    "",
+    `- Story ID は ${storyId}。Story本文は docs/management/stories/active/${storyId}.md にある。`,
+    "- VibePro workflow に従う: Story確認 -> 必要なら vibepro spec / graphify -> 実装 -> テスト -> `vibepro verify record` で検証証跡 -> `vibepro pr prepare . --story-id " + storyId + " --base " + baseBranch + "`。",
+    "- Gate が evidence を要求したら、実際に検証してから記録する。証跡の捏造は禁止。",
+    "- 変更は意図ごとに小さくコミットする。",
+    "",
+    "## 安全境界(違反禁止)",
+    "",
+    "- PR作成・merge・push・deploy・secretsの変更・runtime本体checkoutの変更は行わない。pr_ready 相当で停止する。",
+    "- このworktreeの外のファイルを変更しない。",
+    "- `vibepro pr create` / `git push` / `gh` は実行しない。",
+    "",
+    "完了したら、最後に到達状態(gateの残り、未解決事項)を簡潔に報告して終了する。",
+  ].join("\n");
+}
+
+export function buildAgentArgs(prompt) {
+  return ["-p", "--dangerously-skip-permissions", prompt];
+}
+
+export function buildPrShipArgs(storyId, branch, baseBranch) {
+  return [
+    "pr", "ship", ".",
+    "--base", baseBranch, "--head", branch,
+    "--story-id", storyId, "--dry-run",
+  ];
+}
+
+export function parsePrShipReadiness(stdout) {
+  const marker = stdout.lastIndexOf("## Next Commands");
+  const nextCommands = marker === -1 ? "" : stdout.slice(marker);
+  return /^- vibepro pr create /m.test(nextCommands);
+}
+
+export function extractBlockingGates(stdout) {
+  return [...stdout.matchAll(/^- (?:critical_gate|waiver_or_evidence): (.+)$/gm)].map((m) => m[1]);
+}
+
+export function resultFromAgentRun(shipStdout, storyId) {
+  if (parsePrShipReadiness(shipStdout)) {
     return { status: "pr_ready", storyId, summary: "VibePro gates are ready. PR creation requires a human action." };
   }
-  if (["needs_input", "waiting_for_human", "waiting_for_runtime", "blocked", "paused"].includes(status)) {
-    return { status: "needs_input", storyId, summary: `VibePro stopped safely (${status}). Review the run before resuming.` };
-  }
-  return { status: "failed", storyId, summary: `VibePro ended without PR readiness (${String(status ?? "unknown")}).` };
-}
-
-export function parseNoProgressRecovery(raw, storyId) {
-  const result = JSON.parse(raw);
-  const state = result?.state;
-  if (state?.status !== "blocked" || state?.stop_reason?.code !== "no_progress") return null;
-
-  const nextCommand = state.stop_reason?.details?.recovery?.next_command;
-  if (typeof nextCommand !== "string") return null;
-  const match = nextCommand.match(
-    /^vibepro execute resume (\/\S+) --story-id ([a-z0-9][a-z0-9-]*) --run-id (run-\d{8}T\d{6}Z-[a-f0-9]+) --until pr-ready$/,
-  );
-  if (!match || match[2] !== storyId) return null;
-  return { managedWorktree: match[1], runId: match[3] };
-}
-
-export async function buildValidatedResumeArgs(raw, storyId, outerWorktree) {
-  const recovery = parseNoProgressRecovery(raw, storyId);
-  if (!recovery) return null;
-
-  let allowedRoot;
-  let managedWorktree;
-  try {
-    allowedRoot = await realpath(path.join(outerWorktree, ".worktrees", "vibepro"));
-    managedWorktree = await realpath(recovery.managedWorktree);
-  } catch {
-    return null;
-  }
-  if (!managedWorktree.startsWith(`${allowedRoot}${path.sep}`)) return null;
-  if (!path.basename(managedWorktree).startsWith(`${storyId}-`)) return null;
-
-  return [
-    "execute", "resume", managedWorktree,
-    "--story-id", storyId,
-    "--run-id", recovery.runId,
-    "--until", "pr-ready",
-    "--json",
-  ];
-}
-
-export async function resumeNoProgressOnce(raw, options) {
-  const args = await buildValidatedResumeArgs(raw, options.storyId, options.outerWorktree);
-  if (!args) return raw;
-
-  const remainingMs = options.deadlineMs - Date.now();
-  if (remainingMs < 1_000) return raw;
-  return options.runCommandFn(options.vibeproBin, args, {
-    cwd: options.outerWorktree,
-    timeoutMs: remainingMs,
-  });
-}
-
-export async function runVibeproUntilSafeStop(initialRaw, options) {
-  let finalRaw = initialRaw;
-  for (let attempt = 0; attempt < MAX_NO_PROGRESS_RESUME_ATTEMPTS; attempt += 1) {
-    const resumedRaw = await resumeNoProgressOnce(finalRaw, options);
-    if (resumedRaw === finalRaw) break;
-    finalRaw = resumedRaw;
-  }
-  return safeResultFromRun(finalRaw, options.storyId);
-}
-
-export function buildVibeproRunArgs(storyId, maxDurationMs) {
-  return [
-    "execute", "run", ".", "--story-id", storyId,
-    "--until", "pr-ready", "--autonomy", "guarded",
-    "--provider-fallbacks", "codex,claude-code",
-    "--max-duration-ms", String(maxDurationMs), "--json",
-  ];
+  const gates = extractBlockingGates(shipStdout);
+  const detail = gates.length > 0 ? ` ${gates.length} gate(s) remain, e.g.: ${gates[0].slice(0, 200)}` : "";
+  return { status: "needs_input", storyId, summary: `VibePro gates are not resolved yet.${detail} Review the worktree before resuming.` };
 }
 
 export function buildStoryCommitArgs(storyId) {
@@ -274,19 +274,25 @@ try {
   await runCommand("/usr/bin/git", buildStoryAddArgs(storyRelativePath), { cwd: worktree });
   await runCommand("/usr/bin/git", buildStoryCommitArgs(storyId), { cwd: worktree });
 
-  const deadlineMs = Date.now() + config.maxDurationMs;
-  const raw = await runCommand(
+  const agentEnv = config.agentEnvFile ? parseEnvFile(await readFile(config.agentEnvFile, "utf8")) : {};
+  const baseBranch = config.baseRef.replace(/^origin\//, "");
+  try {
+    await runCommand(
+      config.claudeBin,
+      buildAgentArgs(buildAgentPrompt(storyId, request, baseBranch)),
+      { cwd: worktree, timeoutMs: config.maxDurationMs, extraEnv: agentEnv },
+    );
+  } catch (error) {
+    const reason = (error instanceof Error ? error.message : "unknown agent error").replace(/\s+/g, " ").slice(0, 200);
+    emit({ status: "needs_input", storyId, summary: `Development agent stopped (${reason}). Inspect the worktree before resuming.` });
+    return;
+  }
+  const shipStdout = await runCommand(
     config.vibeproBin,
-    buildVibeproRunArgs(storyId, config.maxDurationMs),
-    { cwd: worktree, timeoutMs: config.maxDurationMs },
+    buildPrShipArgs(storyId, branch, baseBranch),
+    { cwd: worktree, timeoutMs: 300_000 },
   );
-  emit(await runVibeproUntilSafeStop(raw, {
-    storyId,
-    outerWorktree: worktree,
-    vibeproBin: config.vibeproBin,
-    deadlineMs,
-    runCommandFn: runCommand,
-  }));
+  emit(resultFromAgentRun(shipStdout, storyId));
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : "unknown runner error"}\n`);
   emit({ status: "failed", summary: "The isolated development runner stopped safely. No PR or deployment was performed." }, 1);
