@@ -1,4 +1,6 @@
+import path from "node:path";
 import type { Engine, EngineResult, EngineRunOpts, IncomingMessage, PlacementDeliveryTarget, PlacementProfile } from "./types.js";
+import { JINN_HOME } from "./paths.js";
 
 export interface PlacementResolution {
   status: "legacy" | "matched" | "denied";
@@ -31,6 +33,40 @@ export function findEnabledPlacement(
 export interface PlacementEngineBoundary {
   strictMcpConfig: boolean;
   enableChrome: false | undefined;
+  disallowedTools: string[] | undefined;
+}
+
+// JINN_HOME files shared by EVERY placement. A single channel's untrusted input
+// (prompt injection included) must never rewrite persona, skills, or memory —
+// that would persist instructions across the placement authority boundary even
+// after an authority rebind clears the transcript.
+const PLACEMENT_PROTECTED_FILES = [
+  "config.yaml",
+  "CLAUDE.md",
+  "AGENTS.md",
+  "SOUL.md",
+  "IDENTITY.md",
+  "MEMORY.md",
+  "TOOLS.md",
+];
+const PLACEMENT_PROTECTED_DIRS = ["org", "cron", "skills", "memory", "knowledge", "docs"];
+const PLACEMENT_WRITE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+
+/**
+ * Permission deny rules for shared-state writes in a Placement session.
+ * Passed as --disallowedTools; Claude Code enforces deny rules in every
+ * permission mode (including bypassPermissions), so this is a hard boundary,
+ * not a prompt instruction. The `//` prefix marks an absolute path pattern.
+ * Residual gap (documented in docs/architecture/08_security_design.md): Bash
+ * remains available for Gateway API calls, so shell-level writes are not
+ * covered by these rules.
+ */
+export function placementWriteDenyRules(home: string = JINN_HOME): string[] {
+  const targets = [
+    ...PLACEMENT_PROTECTED_FILES.map((f) => path.join(home, f)),
+    ...PLACEMENT_PROTECTED_DIRS.map((d) => path.join(home, d, "**")),
+  ];
+  return PLACEMENT_WRITE_TOOLS.flatMap((tool) => targets.map((t) => `${tool}(/${t})`));
 }
 
 /** Keep every initial/retry caller on the same fail-closed engine boundary. */
@@ -38,6 +74,7 @@ export function placementEngineBoundary(placement: PlacementProfile | undefined)
   return {
     strictMcpConfig: Boolean(placement),
     enableChrome: placement ? false : undefined,
+    disallowedTools: placement ? placementWriteDenyRules() : undefined,
   };
 }
 

@@ -44,6 +44,12 @@ export interface EngineRunOpts {
   attachments?: string[];
   /** Extra CLI flags to pass to the engine binary (e.g. ["--chrome"]) */
   cliFlags?: string[];
+  /**
+   * Permission deny rules passed as --disallowedTools (e.g. "Write(//abs/path/**)").
+   * Claude Code enforces deny rules in every permission mode, including
+   * bypassPermissions — this is the hard boundary for Placement-protected paths.
+   */
+  disallowedTools?: string[];
   /** Path to MCP config JSON file (passed as --mcp-config to Claude Code) */
   mcpConfigPath?: string;
   onStream?: (delta: StreamDelta) => void;

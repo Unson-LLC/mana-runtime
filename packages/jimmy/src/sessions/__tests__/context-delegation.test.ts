@@ -61,6 +61,40 @@ describe("delegation context", () => {
     expect(context).not.toContain("/api/connectors/slack/send");
   });
 
+  it("marks shared persona/skills/memory files read-only and drops self-modification grants in placement sessions", () => {
+    const placement = {
+      id: "pilot",
+      connector: "slack" as const,
+      workspaceId: "T1",
+      channelId: "C123",
+      audience: { type: "operator" as const, allowedUsers: ["U123"] },
+    };
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-write-boundary",
+      placement,
+    });
+
+    for (const name of ["CLAUDE.md", "SOUL.md", "IDENTITY.md", "MEMORY.md", "TOOLS.md", "skills/", "memory/", "knowledge/"]) {
+      expect(context).toContain(name);
+    }
+    expect(context).toContain("read-only in this placement session");
+    expect(context).not.toContain("You can read, write, and modify any of these files");
+    expect(context).not.toContain("## Self-evolution");
+    expect(context).not.toContain("You can create new employees by writing YAML files");
+
+    const legacyContext = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "legacy-session",
+    });
+    expect(legacyContext).toContain("You can read, write, and modify any of these files");
+    expect(legacyContext).toContain("## Self-evolution");
+  });
+
   it("never renders secret-like placement data in the system context", () => {
     const canary = "sk-canary-never-render";
     const context = buildContext({

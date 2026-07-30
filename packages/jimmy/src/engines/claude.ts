@@ -223,6 +223,12 @@ export class ClaudeEngine implements InterruptibleEngine {
       trailingArgs.push("--mcp-config", opts.mcpConfigPath);
       if (opts.strictMcpConfig) trailingArgs.push("--strict-mcp-config");
     }
+    // Deny rules are enforced by Claude Code even with
+    // --dangerously-skip-permissions — this is the hard write boundary for
+    // Placement-protected shared files (persona/skills/memory), not a prompt hint.
+    if (opts.disallowedTools?.length) {
+      trailingArgs.push("--disallowedTools", ...opts.disallowedTools);
+    }
     const cliFlags = placementSafeCliFlags(opts.cliFlags, opts.strictMcpConfig);
     if (cliFlags?.length) trailingArgs.push(...cliFlags);
 
