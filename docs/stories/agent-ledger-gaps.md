@@ -30,16 +30,16 @@ AIガバナンス責任者として、社内チャンネルに配置した各エ
 
 ギャップ分析の正本は `docs/architecture/10_company_brain.md` §7（PR #27 / branch `docs/architecture-restructure`）。Microsoft Entra / AWSの管理水準と突き合わせ、所有者・目的・placement単位費用・kill switch・変更管理・廃止フロー・台帳一覧が欠落と判定された。実装仕様は [docs/specs/agent-ledger-gaps.md](../specs/agent-ledger-gaps.md)、権限設計は [docs/architecture/channel-placement-profiles.md](../architecture/channel-placement-profiles.md)。
 
-## Acceptance criteria
+## 受け入れ基準
 
-1. `PlacementProfile`が任意フィールド`owner`/`purpose`を持ち、未設定の既存configは後方互換で動作する。
-2. placement単位の月次コスト集計が`sessions.transport_meta.placementId`から取得でき、未紐付けセッションは`(unplaced)`として漏れなく可視化される。
-3. `enabled: false`のplacementは解決・配信・派生セッション・session実行の各境界でfail closedに拒否される。`enabled`未設定は有効。
-4. 無効化による拒否は`security_event`（`placement_disabled`）として監査ログに記録される。
-5. `GET /api/placements`が台帳項目と当月コスト・セッション数・最終利用を返し、secret様の値はredactされ、operator token認可に従う。
-6. web panelの台帳ビューでowner/purpose未設定・budget対象外・無効化済みplacementが識別できる。
-7. placement廃止手順とpilot config.yamlのgit変更管理手順が運用文書として存在する。
-8. 追加挙動に自動テストがあり、既存sessions/gatewayテストとtypecheckが通る。
+- PlacementProfileが任意フィールドowner/purposeを持ち、enabled未設定・owner未設定の既存configは後方互換で動作する（backward compatibility）。
+- placement単位の月次コスト集計がtransport_meta.placementIdから取得でき、未紐付けセッションはunplacedとして漏れなく可視化される（monthly cost aggregation）。
+- enabled falseのkill switchはresolver・delivery・派生セッション・session実行の各境界でfail closedに拒否する。
+- 無効化による拒否はsecurity_eventのplacement_disabledとして監査ログに記録される。
+- GET /api/placementsの台帳（ledger）が当月コスト・セッション数・最終利用を返し、secret様の値はredactされ、operator認可のfail-closed保護に従う。
+- web panelの台帳ビューでowner未設定・purpose未設定・budget対象外・disabledのplacementがgap badgeで識別できる。
+- placement廃止手順（decommission）とpilot config.yamlのgit変更管理手順が運用文書として存在する。
+- 追加挙動に自動テストがあり、既存sessions/gatewayテストとtypecheckが通る。
 
 ## Scope
 
