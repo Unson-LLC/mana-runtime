@@ -55,17 +55,22 @@ command and the internal compatibility route. An absent or empty list permits
 no development command.
 
 Validate with a docs-only request while `enabled: false`, then enable, restart
-the gateway, submit one `/ryoko-develop` request from an allowlisted Slack user in
+the gateway, submit one `/vibepro` request from an allowlisted Slack user in
 an allowed channel, and
 confirm that the runtime checkout remains clean and unchanged. VibePro stops at
 `pr_ready`; PR creation, merge, and deployment remain human actions.
 
-When VibePro stops with the exact `blocked/no_progress` recovery shape, the
-runner validates that the referenced Story, run ID, and real managed-worktree
-path belong to the current isolated Story. It then reconstructs a fixed argv
-and resumes at most once within the original wall-clock budget. The recovery
-string is never executed through a shell. Any mismatch, second `no_progress`,
-timeout, or other stop reason fails closed as `needs_input` or `failed`.
+The development engine is a Claude Code session spawned in the isolated
+worktree. The agent follows the VibePro workflow itself (Story -> Spec ->
+implementation -> verification evidence -> `vibepro pr prepare`), while the
+runner keeps the safety boundary: after the agent exits, readiness is
+re-derived deterministically from `vibepro pr ship --dry-run` output, and only
+a `vibepro pr create` next command maps to `pr_ready`. The agent's own claims
+are never trusted for the Slack result. Agent credentials (for example
+`ANTHROPIC_API_KEY`) load from the optional root-configured `agentEnvFile`
+(recommended: `/home/ryoko-dev/.config/openryoko/agent-environment`, `0600`,
+owned by `ryoko-dev`). An agent error or timeout fails closed as
+`needs_input`; the partially completed worktree stays available for review.
 
 The gateway also keeps an in-process busy flag, but the development user's
 lock directory is the authoritative cross-restart guard. The runner removes it
@@ -78,9 +83,11 @@ before retrying.
 
 ### Release note
 
-The runner version advances to `2026-07-27.1`. It adds one bounded automatic
-resume for the exact `blocked/no_progress` recovery result and otherwise keeps
-the existing fail-closed Slack result contract.
+The runner version advances to `2026-07-30.1`. It replaces the headless
+`vibepro execute run` engine (Codex-first provider chain) with a Claude Code
+agent session that drives the VibePro CLI directly, keeping the existing
+fail-closed Slack result contract. The config gains required `claudeBin` and
+optional `agentEnvFile` fields.
 
 ### Rollout plan and operator action
 
@@ -98,14 +105,12 @@ Slack development request:
 
 ### Observability evidence
 
-For the pilot smoke test, submit one bounded `/ryoko-develop` request in the
+For the pilot smoke test, submit one bounded `/vibepro` request in the
 allowlisted channel and follow the session until `pr_ready` or a fail-closed
-terminal result. Capture the VibePro run state and systemd journal alongside
-the final runner result; do not infer success only from an acknowledged Slack
-message. For the exact first `blocked/no_progress` recovery path, verify one
-subsequent `vibepro execute resume` invocation in that evidence and no more than
-one. A second `no_progress`, invalid recovery metadata, or exhausted budget
-must end as `needs_input` without another resume invocation.
+terminal result. Capture the worktree git log, the `vibepro pr ship --dry-run`
+output, and the systemd journal alongside the final runner result; do not infer
+success only from an acknowledged Slack message or from the agent's own
+summary.
 
 ### Rollback instruction
 
