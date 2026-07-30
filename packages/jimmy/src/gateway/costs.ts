@@ -41,6 +41,36 @@ export function getCostSummary(period: 'day' | 'week' | 'month' = 'month'): Cost
   return { total: totalRow.total, daily, byEmployee, byDepartment: [] };
 }
 
+export const UNPLACED_COST_KEY = '(unplaced)';
+
+export interface PlacementCostRow {
+  placementId: string;
+  cost: number;
+  sessions: number;
+  lastActivity: string | null;
+}
+
+/**
+ * Agent-ledger monthly cost per placement, keyed by transport_meta.placementId.
+ * Sessions without a placement binding are reported under UNPLACED_COST_KEY so
+ * no spend disappears from the ledger.
+ */
+export function getCostsByPlacement(period: 'month' | 'week' = 'month'): PlacementCostRow[] {
+  const db = initDb();
+
+  const now = new Date();
+  const cutoff = period === 'week'
+    ? (() => { const d = new Date(now); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })()
+    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+  return db.prepare(
+    `SELECT COALESCE(json_extract(transport_meta, '$.placementId'), ?) as placementId,
+            COALESCE(SUM(total_cost), 0) as cost, COUNT(*) as sessions, MAX(last_activity) as lastActivity
+     FROM sessions WHERE created_at >= ?
+     GROUP BY placementId ORDER BY cost DESC`
+  ).all(UNPLACED_COST_KEY, cutoff) as PlacementCostRow[];
+}
+
 export function getCostsByEmployee(period: 'month' | 'week' = 'month') {
   const db = initDb();
 

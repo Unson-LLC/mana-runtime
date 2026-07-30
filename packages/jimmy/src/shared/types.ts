@@ -671,6 +671,15 @@ export interface PlacementProfile {
   connector: string;
   workspaceId: string;
   channelId: string;
+  /** Agent ledger: owner/sponsor (Slack user ID or name). Optional for backward compat. */
+  owner?: string;
+  /** Agent ledger: what this placement exists for. Optional for backward compat. */
+  purpose?: string;
+  /**
+   * Agent ledger: placement kill switch. `false` fail-closes the channel at
+   * resolve/delivery/derived-session boundaries. Absent means enabled.
+   */
+  enabled?: boolean;
   audience: {
     type: "operator" | "executive" | "project-team" | "client";
     allowedUsers: string[];
