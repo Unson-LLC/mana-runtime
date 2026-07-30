@@ -9,8 +9,8 @@
 | systemd journal（pilot） | gateway全ログ。`journalctl -u openryoko.service` が一次調査窓口 |
 | logger INFO/WARN/ERROR | 受信イベント・エンジンspawn（`resume:`/model/geom）・ターン完了（所要時間・$コスト）・回復系の警告 |
 | `security_event`（WARN, 構造化JSON） | 権限拒否の監査ログ。下記 |
-| run receipt | `scripts/systemd/` のtimerがターミナルセッションからレシートを収集しbrainbaseへ配送（state/outbox/dead-letter） |
-| pilot health | 5分毎のtimerで死活確認 |
+| run receipt | pilotホスト上のsystemd timerがレシートを収集しbrainbaseへ配送（state/outbox/dead-letter）。**unit実体はpilot手置きでリポジトリ未管理**（回収対象、gap-analysis D） |
+| pilot health | 5分毎のtimerで死活確認。**同じくpilot手置き・リポジトリ未管理** |
 
 ## 2. security_event（監査の正本）
 
@@ -20,7 +20,8 @@
  "capability":"mcp","target":"brainbase","configRevision":"…","timestamp":"…"}
 ```
 
-- `event`: `capability`（実行時の能力判定）/ `control_plane`（管理API認証）
+- `event`: `capability`（実行時の能力判定）/ `control_plane`（管理API・WS認証）/ `placement_resolution`（placement解決の拒否）/ `derived_session`（派生セッション認可の拒否）
+- `control_plane` イベントは `target` にアクセス先（`METHOD /path` または `ws-upgrade`）を含む（発生源特定のため。2026-07-30追加）
 - `configRevision` で「どの設定でその判定になったか」まで追える
 - **秘密値は含めない**（フィールド固定）
 - roadmap柱5の「エージェント台帳・監査の製品化」はこのイベントの可視化が土台
