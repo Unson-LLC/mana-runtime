@@ -3,13 +3,15 @@ story_id: agent-ledger-gaps
 title: エージェント台帳の不足を埋める（owner/purpose・placement月次コスト・kill switch・台帳ビュー・config変更管理）
 status: active
 pr_scope_strategy: atomic_single_pr
-pr_scope_reason: "本Storyは「エージェント台帳」という単一のガバナンス境界を成立させる変更であり、台帳フィールド（owner/purpose/enabled）・placement単位コスト集計・kill switchのfail-closed境界・台帳API/ビュー・運用手順は相互に参照し合う一体のリリース単位である。e2e受け入れ契約（e2e-gate）はruntime-behaviorのテスト出力とmisc-follow-upの運用文書本文の双方をassertするため単独では成立せず、分割するとkill switchだけが先行して台帳ビューに表示されない等、レビューアが境界全体の整合を検証できなくなる。よって1 PRで原子的にレビューする。"
+pr_scope_reason: "本Storyは「エージェント台帳」という単一のガバナンス境界を成立させる変更であり、台帳フィールド（owner/purpose/enabled）・placement単位コスト集計・kill switchのfail-closed境界・台帳API/ビュー・運用手順は相互に参照し合う一体のリリース単位である。e2e受け入れ契約（e2e-gate）はruntime-behaviorのテスト出力とmisc-follow-upの運用文書本文の双方をassertするため単独では成立せず、分割するとkill switchだけが先行して台帳ビューに表示されない等、レビューアが境界全体の整合を検証できなくなる。よって1 PRで原子的にレビューする。なおrepo-controlの.gitignore 3行はvibepro CLI自身が全コマンド実行時に強制追記する行であり、コミットしない限りworktreeが恒常的にdirty化して証跡束縛が壊れるため、本PRに同梱してリポジトリ状態を安定化する。"
 pr_scope_review_facets:
+  - repo-control
   - requirements-ssot
   - runtime-behavior
   - misc-follow-up
   - e2e-gate
 pr_scope_dependency_boundaries:
+  - "repo-control -> requirements-ssot"
   - "requirements-ssot -> runtime-behavior"
   - "runtime-behavior -> misc-follow-up"
   - "runtime-behavior -> e2e-gate"
