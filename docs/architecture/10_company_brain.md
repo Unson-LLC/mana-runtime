@@ -70,28 +70,24 @@ Slack（窓口=マナ1体）
 
 ## 6. エージェント台帳 — 目標水準と現状ギャップ
 
-台帳の思想（roadmap柱5「台帳=placement一覧、監査=security_event、停止=budget/kill switch」）は方向として正しいが、会議で参照した管理水準（Microsoft Entra / AWSの警告）と突き合わせると**現状は台帳と呼ぶには不足がある**:
+台帳の思想（roadmap柱5「台帳=placement一覧、監査=security_event、停止=budget/kill switch」）は方向として正しい。初期ギャップの大半は [PR #30](https://github.com/Unson-LLC/mana-runtime/pull/30)（owner/purpose・placement単位月次コスト・`enabled` kill switch・`GET /api/placements` 台帳API・web台帳ビュー・運用文書 [placement-lifecycle](../operations/placement-lifecycle.md) / [config変更管理](../operations/pilot-config-change-management.md)）で解消済み（2026-07-30）。現状:
 
 | 台帳項目 | 現状 | 評価 |
 |---|---|---|
 | ID・所属チャンネル・対話相手 | placement id / channelId / audience | ✅ |
 | 権限（ツール・MCP・配信先） | capabilities | ✅ |
 | モデル | agent.defaultModel | ✅ |
-| 監査ログ | security_event（placementId・configRevision付き） | ✅ |
+| 所有者・目的 | owner / purpose（PR #30） | ✅ |
+| 月次費用（placement単位） | `getCostsByPlacement`（`transport_meta.placementId`の`json_extract`集計。**専用カラムではない**ため大規模化したらカラム昇格を検討）。unplaced/orphanコストも可視 | ✅ |
+| kill switch | `enabled: false` で解決時・配信認可・派生セッションの3箇所fail-closed | ✅ |
+| 台帳ビュー | `GET /api/placements` + web panel placements画面（owner未設定・budget対象外・無効placementを識別表示） | ✅ |
+| 廃止フロー | [placement-lifecycle.md](../operations/placement-lifecycle.md)（削除ではなく`enabled: false`で監査痕跡を残す） | ✅ |
+| 監査ログ | security_event（capability系はplacementId・configRevision付き。control_plane系は2026-07-30から`target`=アクセス先を含む） | ✅ |
 | 参照データ範囲 | dataScopes | ⚠️ ソフト境界のみ（宣言であり強制ではない） |
-| **所有者・スポンサー** | フィールド自体が無い | ❌ |
-| **目的・説明** | 無い（idの命名頼み） | ❌ |
-| **月次費用（placement単位）** | budgetはemployee単位月次のみ。placementのemployee未設定だと**budget対象外** | ❌ |
-| **停止条件・kill switch（placement単位）** | 無い（employeeのbudget pauseと、config手編集での無効化のみ） | ❌ |
-| **変更管理** | pilotのconfig.yamlは**git管理外**。バックアップファイル慣行のみで、誰がいつ何を変えたかの履歴が無い | ❌ |
-| **廃止フロー** | 未定義（作りっぱなし。空placementが放置される） | ❌ |
-| **新設前の重複調査**（既存台帳から能力を検索してから作る） | 台帳の一覧ビュー自体が無い | ❌ |
+| **変更管理** | 運用文書 [pilot-config-change-management.md](../operations/pilot-config-change-management.md) はあるが、**コード支援なし**。`PUT /api/config` はスナップショット無しで書き換わる。`cron/jobs.json`（時間トリガー定義）も履歴なし | ⚠️ 残ギャップ |
+| **budget連動** | budgetは依然employee単位。`agent.employee`未設定placementは台帳ビューで警告表示されるが、上限は効かない | ⚠️ 残ギャップ |
 
-**埋める順序の提案**:
-1. **変更管理**: pilotの`~/.ryoko/config.yaml`をgit管理（privateリポジトリ）に移し、変更をコミット履歴にする — 実装ゼロで最大の欠落が埋まる
-2. **owner / purpose フィールド追加** + placement単位の月次コスト集計（sessionsにplacementIdは既にあるため集計クエリのみ）
-3. **placement単位のkill switch**（`enabled: false`で該当チャンネルを即fail-closed化）と廃止手順の文書化
-4. 台帳一覧ビュー（web panel）— 他社展開時の「AIガバナンス診断」商品の土台（roadmap柱5）
+**残作業**: (1) config.yaml / cron/jobs.json のgit管理化とAPI変更時スナップショット、(2) placement単位のbudget上限。
 
 ## 7. まとめ — どの柱がどこを埋めるか
 
@@ -100,8 +96,8 @@ Slack（窓口=マナ1体）
 | §1 読む（実行時参照） | 柱1（文脈注入）・柱2（実行時Graph参照） | 未実装 |
 | §2 送る（学習候補） | 柱2（昇格フック） | 未実装・最難所 |
 | §3 受ける（権限写像） | 柱2 | 未実装（brainbase共同設計待ち） |
-| §4 HITL | 柱3 | 個別実装1件のみ、型化未 |
-| §5 ルーティング層 | 柱1 | 未実装 |
-| §6 台帳 | 柱5 | 骨格のみ、不足項目は§6の表 |
+| §4 HITL | 柱3 | 2系統の個別実装あり（register-first補償型=タスク承認 / ブロッキング型=議事録宛先選択）。汎用プリミティブ化は未。`ApproverResolver`は両者でDI共有済み |
+| §5 ルーティング層 | 柱1 | 単一宛先のみ実装（critical-routing: 決定論分類器+子セッション委譲+fail-closed）。複数宛先への動的ディスパッチは未 |
+| §6 台帳 | 柱5 | 主要項目は実装済み（PR #30）。残: 変更管理のコード支援・placement単位budget |
 
 脳そのもの（3層の定義・グラフ/オントロジーの設計・candidate-storeからの昇格運用）はbrainbase側の設計文書が正本であり、本章はその**接続契約の受け口・送り口**だけを規定する。brainbase側の設計が変わったら本章のインターフェース記述を追従させる。

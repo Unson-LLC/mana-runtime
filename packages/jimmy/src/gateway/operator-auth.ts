@@ -12,18 +12,24 @@ export function constantTimeEqual(expected: string | undefined, received: string
   return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
-export function verifyOperatorToken(received: string | undefined): boolean {
+/**
+ * @param target Where the unauthenticated access hit (HTTP "METHOD /path" or
+ * "ws-upgrade"). Included in the security_event so a recurring
+ * operator_auth_missing can be traced to its caller from the journal alone
+ * (gap-analysis 2026-07-30 D: without this, the event was unattributable).
+ */
+export function verifyOperatorToken(received: string | undefined, target?: string): boolean {
   if (!process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256) {
-    emitSecurityEvent({ event: "control_plane", reason: "operator_hash_missing" });
+    emitSecurityEvent({ event: "control_plane", reason: "operator_hash_missing", target });
     return false;
   }
   if (!received) {
-    emitSecurityEvent({ event: "control_plane", reason: "operator_auth_missing" });
+    emitSecurityEvent({ event: "control_plane", reason: "operator_auth_missing", target });
     return false;
   }
   const receivedHash = crypto.createHash("sha256").update(received).digest("hex");
   const allowed = constantTimeEqual(process.env.OPENRYOKO_OPERATOR_TOKEN_SHA256, receivedHash);
-  if (!allowed) emitSecurityEvent({ event: "control_plane", reason: "operator_auth_invalid" });
+  if (!allowed) emitSecurityEvent({ event: "control_plane", reason: "operator_auth_invalid", target });
   return allowed;
 }
 
@@ -45,7 +51,7 @@ export function operatorTokenFromWebSocketProtocol(header: string | undefined): 
 }
 
 export function webSocketOperatorAuthorized(header: string | undefined): boolean {
-  return verifyOperatorToken(operatorTokenFromWebSocketProtocol(header));
+  return verifyOperatorToken(operatorTokenFromWebSocketProtocol(header), "ws-upgrade");
 }
 
 export function webSocketUpgradeAuthorized(placementsEnabled: boolean, header: string | undefined): boolean {

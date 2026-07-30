@@ -45,7 +45,8 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
 
 ### 解決とfail-closed
 
-- connector・workspace・channel・userが**一意に**一致するplacementだけにルーティング。未登録・曖昧一致・許可外ユーザーは実行前に拒否
+- **全コネクタ**（Slack/Discord/Telegram/WhatsApp）が単一のルーティングゲート `resolveRouteOptions` を通る。placements設定時、どのコネクタでも一意なplacementに解決できないメッセージは実行前に拒否（2026-07-30まで非Slackコネクタが迂回路だった — gap-analysis A-1で閉鎖）
+- connector・workspace・channel・userが**一意に**一致するplacementだけにルーティング。未登録・曖昧一致・許可外ユーザー・`enabled: false` は実行前に拒否
 - `capabilities` 未設定のplacementは**全MCP拒否**で動く（データ参照なしの一般論回答になる。これは仕様。2026-07-30の事業運営チャンネル初期不良の原因）
 - 拒否はすべて `security_event`（`mcp_denied` 等）として構造化ログに残る
 
@@ -86,6 +87,8 @@ placementが制御するのはツール・MCPだけではなく、**セッショ
 ## 4. シークレット取り扱いの原則
 
 - **子プロセス非継承**: Claude PTY・development runnerの子環境にSlackトークン等のgatewayシークレットを渡さない
+  - 明文化された例外: `JINN_SESSION_DELEGATION_TOKEN`（session→placement束縛の委譲トークン）は子プロセスenvに渡る。トークン単体では自セッションのplacement権限を超えられない設計だが、例外であることをここに記録する
+- **gateway MCPのpolicy envはfail-closed**: resolverが常に`JINN_ALLOWED_GATEWAY_TOOLS`等を明示設定（placement=許可リスト、legacy=`"*"`）し、env欠落＝resolver外からの起動は全拒否（gap-analysis A-3で反転）
 - **placement解決・能力解決・ログに秘密値を含めない**（`security_event`は構造化フィールドのみ）
 - 全権クレデンシャルを持つのはgateway所有のプロキシ層だけ。モデルには能力（ツール）だけを見せる
 

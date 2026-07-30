@@ -69,3 +69,18 @@ placement解決（`resolvePlacement`）を通るのはSlackの3経路のみ。**
 3. **A-1修正**（非Slackコネクタのfail-closed化）— 未着手の中で最重大
 4. A-3（env欠落時allow-allの既定値反転）
 5. E（docs訂正）+ D（security_eventへのパス追加 → operator_auth_missing犯人特定）
+
+---
+
+## 対応状況（2026-07-30 追記）
+
+| 項目 | 状態 |
+|---|---|
+| A-1 非Slackコネクタの迂回路 | ✅ [PR #34](https://github.com/Unson-LLC/mana-runtime/pull/34) — 全コネクタをresolveRouteOptions経由に統一 |
+| A-2 書込境界 + 促し文言 | ✅ [PR #29](https://github.com/Unson-LLC/mana-runtime/pull/29) — denyルール（bypassでも有効）+ プロンプト条件化。残: Bash経由書込 |
+| A-3 policy env fail-open | ✅ PR #34 — env欠落=deny-all、legacy=明示`"*"` |
+| A-4 delegation token例外 | ✅ 04章に例外として明文化 |
+| B 台帳 | ✅ [PR #30](https://github.com/Unson-LLC/mana-runtime/pull/30)。残: 変更管理のコード支援・placement単位budget |
+| D security_eventパス | ✅ control_plane系にtarget（METHOD /path / ws-upgrade）追加。operator_auth_missingの発生源はpilotで次回観測時に特定可能 |
+| E docs訂正 | ✅ 04/06/10/11章を実装に合わせ更新 |
+| 未着手 | placements未設定時のlegacy全許可の文書化のみ（意図的仕様として04章に記載済み）、run receipt/health timerのリポジトリ回収、containsSecretの誤爆モード文書化 |

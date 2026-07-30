@@ -130,7 +130,8 @@ function placementAllowsGatewayTool(placement: PlacementProfile, tool: string): 
 function operatorAuthorized(req: HttpRequest): boolean {
   const raw = req.headers[OPERATOR_TOKEN_HEADER];
   const received = Array.isArray(raw) ? raw[0] : raw;
-  return verifyOperatorToken(received);
+  const pathname = (req.url || "/").split("?")[0];
+  return verifyOperatorToken(received, `${req.method || "GET"} ${pathname}`);
 }
 
 function isOperatorMutation(method: string, pathname: string): boolean {
