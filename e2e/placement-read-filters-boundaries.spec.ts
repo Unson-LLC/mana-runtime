@@ -51,8 +51,11 @@ test.describe('Placement read filter boundaries', () => {
     expect(output, 'vibepro: ac:6 memory/直下の共通記憶は読取denyの対象にならない').toContain(
       "never denies the placement's own memory directory or the shared memory root",
     )
-    expect(output, 'vibepro: ac:8 deny by default — capabilities.mcpがfalse/未設定ならMCP要求スキルは不可視').toContain(
+    expect(output, 'vibepro: ac:2 deny by default — capabilities.mcpがfalse/未設定ならMCP要求スキルは不可視').toContain(
       'hides every MCP-requiring skill when capabilities.mcp is false or absent (deny by default)',
+    )
+    expect(output, 'vibepro: ac:8 追加・変更した挙動の自動テストが焦点スイート（cli/shared/sessions）として全て通る').toContain(
+      'returns no rules when nothing else is configured and no directory exists',
     )
   })
 
