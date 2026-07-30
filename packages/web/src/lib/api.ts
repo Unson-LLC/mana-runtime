@@ -145,6 +145,8 @@ export interface PlacementLedgerEntry {
   deliveryTargets: string[];
   monthlyCost: number;
   monthlySessions: number;
+  monthlyBudgetUsd: number | null;
+  budgetPercent: number | null;
   lastActivity: string | null;
 }
 

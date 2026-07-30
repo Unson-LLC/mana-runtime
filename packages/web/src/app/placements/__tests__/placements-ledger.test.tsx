@@ -10,7 +10,8 @@ const ledger: PlacementLedger = {
       audienceType: "operator", allowedUserCount: 1, employee: "ryoko",
       defaultModel: "sonnet", budgetTracked: true, mcp: ["brainbase"],
       gatewayTools: ["send_message"], deliveryTargets: ["slack:C1"],
-      monthlyCost: 2.5, monthlySessions: 3, lastActivity: "2026-07-30T00:00:00.000Z",
+      monthlyCost: 2.5, monthlySessions: 3, monthlyBudgetUsd: 10, budgetPercent: 25,
+      lastActivity: "2026-07-30T00:00:00.000Z",
     },
     {
       id: "legacy-experiment", connector: "slack", workspaceId: "T1", channelId: "C9",
@@ -18,7 +19,8 @@ const ledger: PlacementLedger = {
       audienceType: "project-team", allowedUserCount: 0, employee: null,
       defaultModel: null, budgetTracked: false, mcp: false,
       gatewayTools: [], deliveryTargets: ["slack:C9"],
-      monthlyCost: 0, monthlySessions: 0, lastActivity: null,
+      monthlyCost: 0, monthlySessions: 0, monthlyBudgetUsd: null, budgetPercent: null,
+      lastActivity: null,
     },
   ],
   unplaced: { monthlyCost: 0.5, monthlySessions: 1, lastActivity: null },
@@ -51,6 +53,8 @@ describe("Placements ledger view", () => {
     expect(getByText("U0KSATO")).toBeTruthy()
     expect(getByText("brainbase運用のoperator対話")).toBeTruthy()
     expect(getByText("$2.50")).toBeTruthy()
+    expect(getByText(/上限 \$10\.00 \(25%\)/)).toBeTruthy()
+    expect(getByText("上限なし")).toBeTruthy()
     expect(queryByText("placementsが未設定です（legacy単一配置モード）。")).toBeNull()
     expect(getByText(/placement未紐付けコスト（当月）: \$0\.50 \/ 1 sessions/)).toBeTruthy()
     expect(getByText(/removed \(\$1\.00\)/)).toBeTruthy()
