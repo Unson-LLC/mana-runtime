@@ -44,3 +44,29 @@ export function resolveSlackRuntimeConfig(
     allowFrom,
   };
 }
+
+/**
+ * Resolve credentials for a named Slack connector instance
+ * (connectors.instances[]). Instances can't reuse the fixed
+ * OPENRYOKO_SLACK_* env vars — each Slack workspace needs its own app
+ * install — so the instance names its env vars via appTokenEnv/botTokenEnv.
+ * Inline appToken/botToken pass through unchanged for backwards
+ * compatibility when neither *TokenEnv field is set.
+ */
+export function resolveSlackInstanceRuntimeConfig<
+  T extends Partial<Pick<SlackConnectorConfig, "appToken" | "botToken" | "appTokenEnv" | "botTokenEnv">>,
+>(config: T, env: NodeJS.ProcessEnv = process.env): T {
+  const { appTokenEnv, botTokenEnv } = config;
+  if (!appTokenEnv && !botTokenEnv) return config;
+  if (!appTokenEnv || !botTokenEnv) {
+    throw new Error("Slack instance requires both appTokenEnv and botTokenEnv when either is set");
+  }
+  const appToken = env[appTokenEnv]?.trim();
+  const botToken = env[botTokenEnv]?.trim();
+  if (!appToken || !botToken) {
+    throw new Error(
+      `Slack instance credentials missing: set ${appTokenEnv} and ${botTokenEnv} in the gateway environment`,
+    );
+  }
+  return { ...config, appToken, botToken };
+}

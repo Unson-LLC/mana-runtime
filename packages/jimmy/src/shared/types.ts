@@ -417,6 +417,14 @@ export interface SlackConnectorConfig {
   employee?: string;
   appToken: string;
   botToken: string;
+  /**
+   * For named instances only: env var names holding this instance's tokens.
+   * Instances can't share the fixed OPENRYOKO_SLACK_* env vars (each Slack
+   * workspace needs its own app install), and inline tokens would put
+   * secrets in config.yaml — name per-instance env vars here instead.
+   */
+  appTokenEnv?: string;
+  botTokenEnv?: string;
   allowFrom?: string | string[];
   ignoreOldMessagesOnBoot?: boolean;
   /** Deterministic per-scope response gate (DM / group DM / channel). */
