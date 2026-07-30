@@ -271,5 +271,15 @@ meetingMinutesPipeline:
   - `shared/brainbase-graph.ts` — 汎用 `GraphEntityClient`（person/project/brand/
     decision、type別5分キャッシュ）
   - `meeting-task-proposal.ts` — `processMinutesText()` 直接ハンドオフ経路
-- pilot E2E: 未実施（デプロイ・mana bot leave・実transcript投入は
-  Release and operator actions の手順で実施する）
+- pilot E2E成立(2026-07-30): pilotへデプロイし config
+  （routerChannels=C0A2L9FEKEJ、destinations=proj_test）で起動確認。
+  テストtranscript(.txt)をmana botとしてアップロード（mana Lambdaは自bot投稿を
+  無視するためleave不要で二重動作を回避。leaveは本番切替時のみ必要）→
+  50秒で全段完了: LLM振り分け（proj_test、判定理由もログに記録）→
+  narrative_minutes.v1準拠の議事録生成（`-要約`タイトル・概要複数段落・
+  `------------`区切りトピック・話の流れ保存・`@未確認`なしで担当者別
+  アクションアイテム）→ 親=概要/スレッド=本文で展開 →
+  `processMinutesText()`ハンドオフで2/2タスク自動登録（Graph解決済み担当者
+  「星野 秀弥」「佐藤 圭吾」・期限2026-08-04/08-08 JSTを正本GETで確認）。
+  同一ファイル再アップロードはhash一致でスキップされることも確認。
+  振り直しselect・認可外拒否のSlack実機タップ検証は未実施（機能はunit test済み）。
