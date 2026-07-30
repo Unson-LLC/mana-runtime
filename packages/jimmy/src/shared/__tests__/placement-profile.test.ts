@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isPlacementEmployeeAllowed, placementEngineBoundary, placementSafeCliFlags, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
+import { isPlacementEmployeeAllowed, placementEngineBoundary, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -74,6 +74,7 @@ describe("placementEngineBoundary", () => {
     expect(placementEngineBoundary(placement)).toEqual({
       strictMcpConfig: true,
       enableChrome: false,
+      disallowedTools: placementWriteDenyRules(),
     });
   });
 
@@ -81,8 +82,30 @@ describe("placementEngineBoundary", () => {
     expect(placementEngineBoundary(undefined)).toEqual({
       strictMcpConfig: false,
       enableChrome: undefined,
+      disallowedTools: undefined,
     });
   });
+});
+
+describe("placementWriteDenyRules", () => {
+  const rules = placementWriteDenyRules("/home/test/.ryoko");
+
+  it.each([
+    "CLAUDE.md", "AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md", "TOOLS.md", "config.yaml",
+  ])("denies every write tool on shared file %s with an absolute-path pattern", (file) => {
+    for (const tool of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) {
+      expect(rules).toContain(`${tool}(//home/test/.ryoko/${file})`);
+    }
+  });
+
+  it.each(["skills", "memory", "knowledge", "docs", "org", "cron"])(
+    "denies recursive writes under shared directory %s/",
+    (dir) => {
+      for (const tool of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) {
+        expect(rules).toContain(`${tool}(//home/test/.ryoko/${dir}/**)`);
+      }
+    },
+  );
 });
 
 describe("runPlacementBoundEngine", () => {
@@ -93,6 +116,7 @@ describe("runPlacementBoundEngine", () => {
       prompt: "retry",
       strictMcpConfig: true,
       enableChrome: false,
+      disallowedTools: placementWriteDenyRules(),
     }));
   });
 

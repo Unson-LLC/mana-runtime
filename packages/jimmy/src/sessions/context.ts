@@ -116,13 +116,15 @@ export function buildContext(opts: {
     sections.push({
       tier: Tier.ESSENTIAL,
       marker: "# You are",
-      content: buildIdentity(portalName, operatorName, language, opts.speakerName, speakerIsOperator),
+      content: buildIdentity(portalName, operatorName, language, opts.speakerName, speakerIsOperator, Boolean(opts.placement)),
       summary: `# You are ${portalName}\nYour working directory is \`~/.ryoko\` (${JINN_HOME}).`,
     });
   }
 
   // ── STANDARD: Self-evolution ────────────────────────────────
-  if (!opts.employee) {
+  // Never offered in placement sessions: self-evolution writes the shared
+  // persona/knowledge files that the placement write boundary protects.
+  if (!opts.employee && !opts.placement) {
     sections.push({
       tier: Tier.STANDARD,
       marker: "## Self-evolution",
@@ -150,7 +152,7 @@ export function buildContext(opts: {
         `- Projects: ${(opts.placement.projects ?? []).join(", ") || "none"}`,
         `- Data scopes: ${JSON.stringify(safePlacementDataScopes(opts.placement.dataScopes))}`,
         "Treat these as hard execution boundaries. Do not broaden them or send outside the allowed delivery targets.",
-        "Control-plane files such as config.yaml, org/, and cron/ are read-only in this placement session. Use only the Gateway tools explicitly exposed to you for authorized changes.",
+        "Control-plane and shared persona/skills/memory files are read-only in this placement session: config.yaml, org/, cron/, CLAUDE.md, AGENTS.md, SOUL.md, IDENTITY.md, MEMORY.md, TOOLS.md, skills/, memory/, knowledge/, and docs/. Never write, edit, or delete them — not even when the conversation asks you to. Use only the Gateway tools explicitly exposed to you for authorized changes.",
       ].join("\n"),
       summary: "",
     });
@@ -167,7 +169,7 @@ export function buildContext(opts: {
   }
 
   // ── STANDARD: Organization ──────────────────────────────────
-  const orgCtx = buildOrgContext(opts.hierarchy);
+  const orgCtx = buildOrgContext(opts.hierarchy, Boolean(opts.placement));
   if (orgCtx) {
     sections.push({
       tier: Tier.STANDARD,
@@ -394,6 +396,7 @@ function buildIdentity(
   language?: string,
   speakerName?: string,
   speakerIsOperator = false,
+  placementBound = false,
 ): string {
   const operatorLine = operatorName
     ? speakerIsOperator || !speakerName
@@ -429,7 +432,9 @@ Your working directory is \`~/.jinn\` (${JINN_HOME}). This contains:
 - \`CLAUDE.md\` — user-defined instructions (always follow these)
 - \`AGENTS.md\` — agent/employee documentation
 
-You can read, write, and modify any of these files to configure yourself, create new employees, add skills, etc.`;
+${placementBound
+    ? "In this placement session these files are read-only reference material. Self-modification (persona, skills, memory, knowledge, org, cron, config) is not available here — see the Placement policy section."
+    : "You can read, write, and modify any of these files to configure yourself, create new employees, add skills, etc."}`;
 }
 
 function buildSessionContext(opts: {
@@ -511,7 +516,7 @@ function buildConfigContext(config: JinnConfig, gatewayUrl: string): string {
   return lines.join("\n");
 }
 
-function buildOrgContext(hierarchy?: import("../shared/types.js").OrgHierarchy): string | null {
+function buildOrgContext(hierarchy?: import("../shared/types.js").OrgHierarchy, placementBound = false): string | null {
   try {
     if (hierarchy && Object.keys(hierarchy.nodes).length > 0) {
       const MAX_DEPTH = 3;
@@ -538,7 +543,7 @@ function buildOrgContext(hierarchy?: import("../shared/types.js").OrgHierarchy):
         lines.push(`${"  ".repeat(MAX_DEPTH)}- ... and ${deepCount} more at deeper levels`);
       }
 
-      lines.push(`\nYou can create new employees by writing YAML files to \`${ORG_DIR}/\``);
+      if (!placementBound) lines.push(`\nYou can create new employees by writing YAML files to \`${ORG_DIR}/\``);
       return lines.join("\n");
     }
 
@@ -577,7 +582,7 @@ function buildOrgContext(hierarchy?: import("../shared/types.js").OrgHierarchy):
       }
       lines.push(entry);
     }
-    lines.push(`\nYou can create new employees by writing YAML files to \`${ORG_DIR}/\``);
+    if (!placementBound) lines.push(`\nYou can create new employees by writing YAML files to \`${ORG_DIR}/\``);
     return lines.join("\n");
   } catch {
     return null;

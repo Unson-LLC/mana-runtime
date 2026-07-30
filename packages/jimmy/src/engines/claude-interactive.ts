@@ -30,6 +30,8 @@ interface InteractiveArgsOpts {
   attachments?: string[];
   permissionMode?: "bypassPermissions" | "default" | "dontAsk" | "plan";
   allowedTools?: string[];
+  /** Extra deny rules (Placement write boundary) merged into --disallowedTools. */
+  disallowedTools?: string[];
 }
 
 interface TranscriptUsage { inputTokens: number; outputTokens: number; cacheTokens: number; assistantTurns: number; model?: string; }
@@ -231,6 +233,10 @@ export function buildInteractiveArgs(o: InteractiveArgsOpts): string[] {
     "--disallowedTools",
     "AskUserQuestion",
     ...(permissionMode === "plan" ? [] : ["ExitPlanMode"]),
+    // Placement write boundary: deny rules apply in every permission mode
+    // (including bypassPermissions), so shared persona/skills/memory files
+    // stay read-only even if the prompt-layer instruction is ignored.
+    ...(o.disallowedTools ?? []),
   );
   args.push("--settings", o.settingsPath);
   const cliFlags = placementSafeCliFlags(o.cliFlags, o.strictMcpConfig);
@@ -539,10 +545,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  warm PTY was reaped — otherwise spawn() falls back to 120×40 and the TUI
    *  text body is locked in at the wrong width. */
   private lastGeom = new Map<string, { cols: number; rows: number }>();
-  /** Model/effort the live PTY was spawned with, per session. `--model`/`--effort`
-   *  apply only at spawn, so a mid-chat switch must cold-respawn rather than reuse
-   *  the warm PTY (which would keep running the old model). */
-  private spawnParams = new Map<string, { model?: string; effortLevel?: string }>();
+  /** Model/effort/deny-rules the live PTY was spawned with, per session. These
+   *  flags apply only at spawn, so a mid-chat switch must cold-respawn rather than
+   *  reuse the warm PTY (which would keep running the old model — or, worse for
+   *  `denyKey`, keep running WITHOUT the Placement write boundary). */
+  private spawnParams = new Map<string, { model?: string; effortLevel?: string; denyKey?: string }>();
   /** PTY handles already torn down by handlePtyDeath(). A socket `error` (EIO) and
    *  the proc's `onExit` can both fire for the same PTY (in either order, or only
    *  one of them), and run()'s warm-reuse guard may also report it dead — so death
@@ -600,8 +607,12 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (warm) {
       const prev = this.spawnParams.get(jinnSessionId);
       const norm = (v?: string) => (!v || v === "default" ? "" : v);
-      if (prev && (norm(opts.model) !== norm(prev.model) || norm(opts.effortLevel) !== norm(prev.effortLevel))) {
-        logger.info(`InteractiveClaudeEngine: model/effort changed for ${jinnSessionId} (model ${prev.model ?? "default"}→${opts.model ?? "default"}, effort ${prev.effortLevel ?? "default"}→${opts.effortLevel ?? "default"}) — cold respawn`);
+      // Deny rules (--disallowedTools) also bind at spawn. A warm PTY spawned
+      // without the requested Placement write boundary must never serve a turn
+      // that requires it — cold-respawn so the boundary actually applies.
+      const denyKey = (opts.disallowedTools ?? []).join("\n");
+      if (prev && (norm(opts.model) !== norm(prev.model) || norm(opts.effortLevel) !== norm(prev.effortLevel) || denyKey !== (prev.denyKey ?? ""))) {
+        logger.info(`InteractiveClaudeEngine: spawn params changed for ${jinnSessionId} (model ${prev.model ?? "default"}→${opts.model ?? "default"}, effort ${prev.effortLevel ?? "default"}→${opts.effortLevel ?? "default"}, denyRules ${prev.denyKey ? "set" : "none"}→${denyKey ? "set" : "none"}) — cold respawn`);
         this.lifecycle.releaseSession(jinnSessionId);
         warm = undefined;
       }
@@ -1000,6 +1011,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       attachments: opts.attachments,
       permissionMode: this.permissionMode,
       allowedTools: this.allowedTools,
+      disallowedTools: opts.disallowedTools,
     });
     // Serialize the spawn herd across the shared-OAuth near-expiry window so only
     // one child triggers the (single-use) token refresh — others wait for it.
@@ -1016,7 +1028,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cwd: opts.cwd || JINN_HOME,
       env,
     });
-    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel });
+    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, denyKey: (opts.disallowedTools ?? []).join("\n") });
     return this.wireProcToStream(jinnSessionId, proc, port ? proxy : undefined);
   }
 

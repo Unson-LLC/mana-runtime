@@ -90,6 +90,25 @@ describe("interactive Claude permission mode", () => {
     expect(args).not.toContain("--allowedTools");
   });
 
+  it("merges placement write-boundary deny rules into --disallowedTools even under bypass", () => {
+    const denyRules = [
+      "Write(//home/test/.ryoko/CLAUDE.md)",
+      "Edit(//home/test/.ryoko/skills/**)",
+    ];
+    const args = buildInteractiveArgs({
+      ...base,
+      permissionMode: "bypassPermissions",
+      disallowedTools: denyRules,
+    });
+
+    const start = args.indexOf("--disallowedTools");
+    const tail = args.slice(start);
+    for (const rule of denyRules) {
+      expect(tail).toContain(rule);
+    }
+    expect(args).toContain("--dangerously-skip-permissions");
+  });
+
   it("uses bypass only when explicitly configured", () => {
     const args = buildInteractiveArgs({ ...base, permissionMode: "bypassPermissions" });
 
