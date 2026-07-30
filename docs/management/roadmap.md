@@ -84,3 +84,4 @@
 - 2026-07-29: 柱4第1弾の期限リマインダー（`TaskReminderNotifier`）実装・pilot稼働・実投稿確認（PR #13）。柱4の残りは議事録→タスク候補提示→ワンタップ登録のmana-runtime移植（設計はmana `meeting-flow-integration.js` を参照実装として移す。manaのLambda版は移行後に凍結）
 - 2026-07-30: 柱4完了。議事録→タスク候補提示→ワンタップ登録を移植（PR #18）、pilot E2E成立（候補提示→承認→正本実在確認）。Canonical Task `mana-roadmap-2026-07-29-pillar4-task-loop` をcompletedへ遷移
 - 2026-07-30: 同日中にregister-first化＋Graph担当者解決・編集モーダル（PR #20）、議事録パイプライン移植（PR #22、Eve DAG資産組み込み）までpilot E2E成立。transcript.txt→振り分け→narrative議事録→展開→タスク正本入りが50秒・人手ゼロで動作。残りは本番切替（routerを`9940-meeting-router`へ・destinations実プロジェクト転記・mana bot leave・mana Lambda凍結）
+- 2026-07-30: **本番切替実施**。routerChannels=`9940-meeting-router`(C08SYTDR7R8)、destinations=10（unsonのbot在籍済みチャンネル。私有6チャンネルは手動招待後に追加、暫定受け皿はproj_other=9999-manaテスト）、mana botはmeeting-routerからleave済み（議事録intakeの二重処理停止）。残作業はCanonical Task `mana-roadmap-2026-07-30-minutes-pipeline-rollout`（私有チャンネル招待・mana Lambda凍結・初週監視〜08-08）に集約
