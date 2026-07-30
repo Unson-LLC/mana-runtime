@@ -16,7 +16,9 @@ const bolt = vi.hoisted(() => {
       event: Record<string, any>;
       context: { teamId?: string };
     }) => Promise<void>;
-  } = { registeredCommands: [] };
+    actionHandlers: Record<string, (args: any) => Promise<void>>;
+    viewHandlers: Record<string, (args: any) => Promise<void>>;
+  } = { registeredCommands: [], actionHandlers: {}, viewHandlers: {} };
   const client = {
     auth: { test: vi.fn(async () => ({ user_id: "U_BOT" })) },
     chat: {
@@ -59,6 +61,12 @@ vi.mock("@slack/bolt", () => ({
     event(name: string, handler: typeof bolt.state.reactionHandler) {
       if (name === "reaction_added") bolt.state.reactionHandler = handler;
     }
+    action(actionId: string, handler: (args: any) => Promise<void>) {
+      bolt.state.actionHandlers[actionId] = handler;
+    }
+    view(callbackId: string, handler: (args: any) => Promise<void>) {
+      bolt.state.viewHandlers[callbackId] = handler;
+    }
     start = vi.fn(async () => {});
     stop = vi.fn(async () => {});
   },
@@ -73,6 +81,8 @@ describe("SlackConnector authorization", () => {
     bolt.state.reactionHandler = undefined;
     bolt.state.commandHandler = undefined;
     bolt.state.registeredCommands.length = 0;
+    bolt.state.actionHandlers = {};
+    bolt.state.viewHandlers = {};
   });
 
   async function setup(options: {

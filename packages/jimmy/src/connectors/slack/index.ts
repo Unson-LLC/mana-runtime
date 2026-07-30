@@ -3,6 +3,8 @@ import type {
   Connector,
   ConnectorCapabilities,
   ConnectorHealth,
+  DevelopmentAnswer,
+  DevelopmentQuestion,
   IncomingMessage,
   ReplyContext,
   SlackConnectorConfig,
@@ -27,6 +29,7 @@ import { TaskCanvasUpdater } from "./task-canvas.js";
 import { TaskReminderNotifier } from "./task-reminder.js";
 import { MeetingTaskProposalNotifier } from "./meeting-task-proposal.js";
 import { MeetingMinutesPipeline } from "./meeting-minutes-pipeline.js";
+import { VibeproDecisionNotifier } from "./vibepro-decision.js";
 import { extractGoalCondition, shouldExtractGoal } from "./goal-extractor.js";
 import { startsWithSlashCommand } from "../../sessions/manager.js";
 import type { SlackTriageConfig } from "../../shared/types.js";
@@ -46,6 +49,18 @@ export interface SlackConnectorContext {
   developmentRunnerEnabled?: boolean;
   /** Slack channel IDs allowed to invoke the native development command. */
   developmentRunnerAllowedChannels?: string[];
+  /**
+   * Resumes a `/vibepro` Story that stopped with `needs_decision`, after a
+   * human answered the question modal. Bound to
+   * `SessionManager.resumeDevelopmentDecision` in the gateway. Returns false
+   * when the runner is busy or disabled.
+   */
+  resumeDevelopmentDecision?: (
+    storyId: string,
+    answers: DevelopmentAnswer[],
+    connector: Connector,
+    target: Target,
+  ) => boolean;
 }
 
 export class SlackConnector implements Connector {
@@ -76,6 +91,7 @@ export class SlackConnector implements Connector {
   private readonly taskReminder: TaskReminderNotifier | null;
   private readonly meetingTaskProposal: MeetingTaskProposalNotifier | null;
   private readonly meetingMinutesPipeline: MeetingMinutesPipeline | null;
+  private readonly vibeproDecision: VibeproDecisionNotifier | null;
   private static CHANNEL_CACHE_TTL_MS = 3600_000; // 1 hour
   private static USER_CACHE_TTL_MS = 3600_000; // 1 hour
 
@@ -178,6 +194,12 @@ export class SlackConnector implements Connector {
     this.meetingMinutesPipeline = config.meetingMinutesPipeline?.enabled
       ? new MeetingMinutesPipeline(this.app, config.meetingMinutesPipeline, allowFrom, {
           taskProposalNotifier: this.meetingTaskProposal,
+        })
+      : null;
+    this.vibeproDecision = this.developmentRunnerEnabled
+      ? new VibeproDecisionNotifier(this.app, allowFrom, {
+          resumeDecision: (storyId, answers, target) =>
+            context.resumeDevelopmentDecision?.(storyId, answers, this, target) ?? false,
         })
       : null;
   }
@@ -837,6 +859,7 @@ export class SlackConnector implements Connector {
     // Bolt listeners must be registered before app.start().
     this.meetingTaskProposal?.register();
     this.meetingMinutesPipeline?.register();
+    this.vibeproDecision?.register();
 
     await this.app.start();
     this.started = true;
@@ -964,6 +987,25 @@ export class SlackConnector implements Connector {
       this.conversations.recordBotInitiatedThread(target.channel, threadTs);
     }
     return lastTs;
+  }
+
+  /**
+   * Posts a `/vibepro needs_decision` question card (Block Kit + a button
+   * that opens an answer modal). Falls back to plain text when the
+   * development runner isn't enabled for this connector instance.
+   */
+  async postDecisionQuestions(
+    target: Target,
+    payload: { storyId: string; questions: DevelopmentQuestion[]; summary: string },
+  ): Promise<void> {
+    if (!this.vibeproDecision) {
+      await this.replyMessage(
+        target,
+        `Development: needs_decision\nStory: ${payload.storyId}\n質問${payload.questions.length}件\n${payload.summary}`,
+      );
+      return;
+    }
+    await this.vibeproDecision.postQuestions(target, payload.storyId, payload.questions, payload.summary);
   }
 
   async addReaction(target: Target, emoji: string) {
