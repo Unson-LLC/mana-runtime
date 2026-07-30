@@ -40,6 +40,7 @@ import { scanOrg } from "./org.js";
 import { resolveSlackRuntimeConfig, resolveSlackInstanceRuntimeConfig } from "../shared/slack-runtime-config.js";
 import { resolvePlacement } from "../shared/placement-profile.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
+import { getPlacementBudgetStatus } from "./budgets.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -126,6 +127,20 @@ export function resolveRouteOptions(
   const opts: RouteOptions = { criticalRouting };
   if (resolution.status === "matched") {
     const placement = resolution.placement!;
+    // Monthly placement budget: an exceeded placement fails closed at the same
+    // gate as the kill switch, so no connector path can spend past the cap.
+    if (placement.monthlyBudgetUsd !== undefined) {
+      const budget = getPlacementBudgetStatus(placement.id, placement.monthlyBudgetUsd);
+      if (budget.status === "paused") {
+        emitSecurityEvent({
+          event: "placement_resolution", reason: "placement_budget_exceeded", placementId: placement.id,
+          connector: msg.connector, channelId: msg.channel, actorId: msg.user,
+          configRevision: placementConfigRevision(cfg.placements),
+        });
+        logger.warn(`Placement ${placement.id} blocked: monthly budget exceeded ($${budget.spend.toFixed(2)} / $${budget.limit})`);
+        return undefined;
+      }
+    }
     opts.placement = placement;
     opts.model = placement.agent?.defaultModel;
     const employeeName = placement.agent?.employee;

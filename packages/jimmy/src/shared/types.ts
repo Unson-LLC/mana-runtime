@@ -695,6 +695,12 @@ export interface PlacementProfile {
     defaultModel?: string;
     escalationEmployee?: string;
   };
+  /**
+   * Agent ledger: monthly spend ceiling (USD) for this placement. When the
+   * placement's month-to-date session cost reaches this limit, routing fails
+   * closed (same effect as `enabled: false`). Absent means no placement cap.
+   */
+  monthlyBudgetUsd?: number;
   projects?: string[];
   capabilities?: {
     mcp?: false | string[];
