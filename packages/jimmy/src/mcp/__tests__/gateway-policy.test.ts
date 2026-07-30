@@ -7,9 +7,14 @@ import {
 } from "../gateway-policy.js";
 
 describe("gateway placement policy", () => {
-  it("preserves legacy behavior when policy is absent", () => {
-    expect(isGatewayToolAllowed("send_message", undefined)).toBe(true);
-    expect(isDeliveryTargetAllowed("slack", "C1", undefined)).toBe(true);
+  it("fails closed when policy is absent (spawned outside the resolver)", () => {
+    expect(isGatewayToolAllowed("send_message", undefined)).toBe(false);
+    expect(isDeliveryTargetAllowed("slack", "C1", undefined)).toBe(false);
+  });
+
+  it("allows everything only via the explicit legacy marker", () => {
+    expect(isGatewayToolAllowed("send_message", "*")).toBe(true);
+    expect(isDeliveryTargetAllowed("slack", "C1", "*")).toBe(true);
   });
 
   it("filters and rejects tools not explicitly allowed", () => {
