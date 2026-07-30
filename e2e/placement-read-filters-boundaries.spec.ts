@@ -73,7 +73,7 @@ test.describe('Placement read filter boundaries', () => {
       },
     )
 
-    expect(output, 'vibepro: ac:7 ledger view columns — scope/requiredMcp列がスキル台帳に表示される (SKILLVIS-STORY-S-001)').toContain(
+    expect(output, 'vibepro: ac:7 ledger view columns — scope/requiredMcp列がスキル台帳に表示される (SKILLVIS-STORY-S-001, spec S-004)').toContain(
       'renders scope and requiredMcp as ledger columns for every skill',
     )
   })
