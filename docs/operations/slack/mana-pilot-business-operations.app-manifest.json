@@ -1,0 +1,99 @@
+{
+  "display_information": {
+    "name": "まなPilot",
+    "description": "新しいまなです",
+    "background_color": "#004492"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "OpenRyoko Pilot",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/ryoko-develop",
+        "description": "Start an isolated VibePro development task",
+        "should_escape": true
+      }
+    ],
+    "assistant_view": {
+      "assistant_description": "OpenRyoko Pilot — your AI assistant",
+      "suggested_prompts": [
+        {
+          "title": "What can you do?",
+          "message": "What can you help me with?"
+        }
+      ]
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "user": [
+        "channels:history",
+        "channels:read",
+        "files:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "mpim:history",
+        "mpim:read",
+        "search:read",
+        "users:read",
+        "bookmarks:read"
+      ],
+      "bot": [
+        "app_mentions:read",
+        "assistant:write",
+        "canvases:read",
+        "canvases:write",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "chat:write.customize",
+        "commands",
+        "files:read",
+        "files:write",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "mpim:history",
+        "mpim:read",
+        "mpim:write",
+        "reactions:read",
+        "reactions:write",
+        "users:read",
+        "users:read.email"
+      ]
+    },
+    "pkce_enabled": false
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_mention",
+        "assistant_thread_context_changed",
+        "assistant_thread_started",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim",
+        "reaction_added"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false,
+    "is_mcp_enabled": false
+  }
+}
