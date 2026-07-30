@@ -39,6 +39,10 @@ AIガバナンス責任者として、社内チャンネルに配置した各エ
 - placement廃止手順（decommission）とpilot config.yamlのgit変更管理手順が運用文書として存在する。
 - 追加挙動に自動テストがあり、既存sessions/gatewayテストとtypecheckが通る。
 
+## シナリオ
+
+- LEDGER-STORY-S-001: web panelの台帳ビュー（Placementsページ）で、owner未設定・purpose未設定・budget対象外・disabledのplacementがgap badgeで識別できる。
+
 ## Scope
 
 - 対象: `packages/jimmy`のplacement境界・コスト集計・台帳API、`packages/web`の台帳ページ、運用文書、pilot configのgit管理化（運用作業）。
