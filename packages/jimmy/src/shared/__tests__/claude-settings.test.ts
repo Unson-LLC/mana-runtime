@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildSessionSettings, seedTrust } from "../claude-settings.js";
+import { buildSessionSettings, seedTrust, writePlacementGuardSettings } from "../claude-settings.js";
 
 describe("buildSessionSettings", () => {
   it("registers SessionStart/Stop/StopFailure/PreToolUse/PostToolUse hooks", () => {
@@ -34,6 +34,23 @@ describe("buildSessionSettings", () => {
     expect(cmd.startsWith("node '")).toBe(true);
   });
 
+  it("registers the placement Bash guard as the first PreToolUse hook with matcher Bash", () => {
+    const s = buildSessionSettings({
+      sessionId: "p1",
+      relayScript: "/home/.ryoko/hook-relay.mjs",
+      placementGuardScript: "/home/.ryoko/placement-guard.mjs",
+    });
+    expect(s.hooks.PreToolUse).toHaveLength(2);
+    expect(s.hooks.PreToolUse[0].matcher).toBe("Bash");
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toBe("node '/home/.ryoko/placement-guard.mjs'");
+    // The relay entry (no matcher — all tools) stays registered after the guard.
+    expect(s.hooks.PreToolUse[1].matcher).toBeUndefined();
+    // Non-placement sessions get no guard entry.
+    const plain = buildSessionSettings({ sessionId: "p2", relayScript: "/r.mjs" });
+    expect(plain.hooks.PreToolUse).toHaveLength(1);
+    expect(plain.hooks.PreToolUse[0].matcher).toBeUndefined();
+  });
+
   it("includes appendSystemPrompt only when provided", () => {
     const without = buildSessionSettings({ sessionId: "a", relayScript: "/r.mjs" });
     expect(without.appendSystemPrompt).toBeUndefined();
@@ -57,6 +74,25 @@ describe("seedTrust", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("writePlacementGuardSettings", () => {
+  it("writes a guard-only settings file (Bash matcher, mode 0600) idempotently", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guardset-"));
+    try {
+      const p1 = writePlacementGuardSettings(dir, "/home/.ryoko/placement-guard.mjs");
+      const p2 = writePlacementGuardSettings(dir, "/home/.ryoko/placement-guard.mjs");
+      expect(p1).toBe(p2);
+      const data = JSON.parse(fs.readFileSync(p1, "utf-8"));
+      expect(data.hooks.PreToolUse).toHaveLength(1);
+      expect(data.hooks.PreToolUse[0].matcher).toBe("Bash");
+      expect(data.hooks.PreToolUse[0].hooks[0].command).toBe("node '/home/.ryoko/placement-guard.mjs'");
+      expect(Object.keys(data.hooks)).toEqual(["PreToolUse"]); // no relay hooks for headless runs
+      expect(fs.statSync(p1).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

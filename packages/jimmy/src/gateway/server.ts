@@ -23,7 +23,7 @@ import { HookRegistry } from "./hook-registry.js";
 import { startStatusReconciler } from "./status-reconciler.js";
 import { writeGatewayInfo } from "./gateway-info.js";
 import { cleanupSessionSettings, seedTrust } from "../shared/claude-settings.js";
-import { GATEWAY_INFO_FILE, HOOK_RELAY_SCRIPT, CLAUDE_SETTINGS_DIR, JINN_HOME } from "../shared/paths.js";
+import { GATEWAY_INFO_FILE, HOOK_RELAY_SCRIPT, PLACEMENT_GUARD_SCRIPT, CLAUDE_SETTINGS_DIR, JINN_HOME } from "../shared/paths.js";
 import { handleApiRequest, resumePendingWebQueueItems, type ApiContext } from "./api.js";
 import { webSocketUpgradeAuthorized } from "./operator-auth.js";
 import { ensureFilesDir } from "./files.js";
@@ -45,26 +45,31 @@ import { emitSecurityEvent, placementConfigRevision } from "../shared/security-e
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/** Copy the hook-relay.mjs asset next to JINN_HOME so PTY-spawned Claude (running
- *  with our per-session --settings) can invoke it to POST turn hooks back to the
- *  gateway. Tries dev (src) and built (dist) layouts. Best-effort: a failure only
- *  degrades interactive turn resolution, which we log. */
-function copyHookRelayAsset(): void {
+/** Copy a runtime .mjs asset next to JINN_HOME. Tries dev (src) and built (dist)
+ *  layouts. Best-effort: a failure only degrades the feature, which we log. */
+function copyRuntimeAsset(assetName: string, dest: string, degradation: string): void {
   const candidates = [
-    path.join(__dirname, "..", "..", "..", "assets", "hook-relay.mjs"), // dev: src/gateway → packages/jimmy/assets
-    path.join(__dirname, "..", "..", "assets", "hook-relay.mjs"),       // built: dist/src/gateway → dist/assets
-    path.join(__dirname, "..", "assets", "hook-relay.mjs"),
+    path.join(__dirname, "..", "..", "..", "assets", assetName), // dev: src/gateway → packages/jimmy/assets
+    path.join(__dirname, "..", "..", "assets", assetName),       // built: dist/src/gateway → dist/assets
+    path.join(__dirname, "..", "assets", assetName),
   ];
   try {
     const src = candidates.find((p) => fs.existsSync(p));
     if (!src) {
-      logger.warn("hook-relay.mjs asset not found in any candidate location; interactive Claude hooks may not work");
+      logger.warn(`${assetName} asset not found in any candidate location; ${degradation}`);
       return;
     }
-    fs.copyFileSync(src, HOOK_RELAY_SCRIPT);
+    fs.copyFileSync(src, dest);
   } catch (err) {
-    logger.warn(`Failed to copy hook-relay.mjs: ${err instanceof Error ? err.message : err}`);
+    logger.warn(`Failed to copy ${assetName}: ${err instanceof Error ? err.message : err}`);
   }
+}
+
+/** hook-relay: POSTs turn hooks back to the gateway (interactive PTY turns).
+ *  placement-guard: PreToolUse Bash write guard for placement sessions. */
+function copyHookRelayAsset(): void {
+  copyRuntimeAsset("hook-relay.mjs", HOOK_RELAY_SCRIPT, "interactive Claude hooks may not work");
+  copyRuntimeAsset("placement-guard.mjs", PLACEMENT_GUARD_SCRIPT, "placement Bash write guard unavailable");
 }
 
 const MIME_TYPES: Record<string, string> = {

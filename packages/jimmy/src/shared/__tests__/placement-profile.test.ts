@@ -101,6 +101,7 @@ describe("placementEngineBoundary", () => {
       strictMcpConfig: true,
       enableChrome: false,
       disallowedTools: placementWriteDenyRules(),
+      placementBashGuard: true,
     });
   });
 
@@ -109,6 +110,7 @@ describe("placementEngineBoundary", () => {
       strictMcpConfig: false,
       enableChrome: undefined,
       disallowedTools: undefined,
+      placementBashGuard: false,
     });
   });
 });
@@ -122,6 +124,18 @@ describe("placementWriteDenyRules", () => {
     for (const tool of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) {
       expect(rules).toContain(`${tool}(//home/test/.ryoko/${file})`);
     }
+  });
+
+  it.each([
+    "gateway.json", "gateway.pid", "hook-relay.mjs", "placement-guard.mjs",
+  ])("denies every write tool on enforcement runtime file %s", (file) => {
+    for (const tool of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) {
+      expect(rules).toContain(`${tool}(//home/test/.ryoko/${file})`);
+    }
+  });
+
+  it("denies recursive writes under the per-session settings dir", () => {
+    expect(rules).toContain("Write(//home/test/.ryoko/tmp/settings/**)");
   });
 
   it.each(["skills", "memory", "knowledge", "docs", "org", "cron"])(
