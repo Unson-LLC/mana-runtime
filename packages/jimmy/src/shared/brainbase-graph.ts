@@ -38,11 +38,22 @@ export function isBrainbaseGraphConfigured(env: NodeJS.ProcessEnv = process.env)
 
 const CACHE_TTL_MS = 300_000;
 
-export class GraphPeopleClient {
+/** Any Graph entity reduced to what the meeting flows need. */
+export interface GraphEntity {
+  id: string;
+  name: string;
+  aliases: string[];
+}
+
+/**
+ * Generic read-only entity client with a per-type 5-minute cache. All lookups
+ * fail open (return []) — Graph being unreachable must never break a flow.
+ */
+export class GraphEntityClient {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
-  private cache: { people: GraphPerson[]; fetchedAt: number } | null = null;
+  private readonly cache = new Map<string, { entities: GraphEntity[]; fetchedAt: number }>();
 
   constructor(options: { baseUrl?: string; token?: string; fetchImpl?: typeof fetch } = {}) {
     const baseUrl =
@@ -56,40 +67,52 @@ export class GraphPeopleClient {
   }
 
   /**
-   * Lists person entities (name + aliases). Cached for 5 minutes. Returns []
-   * on any failure — callers must treat an empty list as "Graph unavailable",
-   * not "no people exist".
+   * Lists entities of one type (name + aliases). Cached for 5 minutes per
+   * type. Returns [] on any failure — callers must treat an empty list as
+   * "Graph unavailable", not "no entities exist".
    */
-  async listPeople(now: number = Date.now()): Promise<GraphPerson[]> {
-    if (this.cache && now - this.cache.fetchedAt < CACHE_TTL_MS) {
-      return this.cache.people;
+  async listEntities(type: string, now: number = Date.now()): Promise<GraphEntity[]> {
+    const cached = this.cache.get(type);
+    if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+      return cached.entities;
     }
     if (!this.baseUrl || !this.token) return [];
     try {
       const res = await this.fetchImpl(
-        `${this.baseUrl}/api/info/graph/entities?type=person&limit=500`,
+        `${this.baseUrl}/api/info/graph/entities?type=${encodeURIComponent(type)}&limit=500`,
         { headers: { Authorization: `Bearer ${this.token}` } },
       );
       if (!res.ok) {
-        logger.warn(`[brainbase-graph] person list failed: ${res.status}`);
+        logger.warn(`[brainbase-graph] ${type} list failed: ${res.status}`);
         return [];
       }
       const body = (await res.json()) as { records?: GraphEntityRecord[] };
-      const people: GraphPerson[] = [];
+      const entities: GraphEntity[] = [];
       for (const record of body.records ?? []) {
         const name = typeof record.payload?.name === "string" ? record.payload.name.trim() : "";
         if (!record.id || !name) continue;
         const aliases = Array.isArray(record.payload?.aliases)
           ? record.payload.aliases.filter((a): a is string => typeof a === "string")
           : [];
-        people.push({ id: record.id, name, aliases });
+        entities.push({ id: record.id, name, aliases });
       }
-      this.cache = { people, fetchedAt: now };
-      return people;
+      this.cache.set(type, { entities, fetchedAt: now });
+      return entities;
     } catch (err) {
-      logger.warn(`[brainbase-graph] person list failed: ${err}`);
+      logger.warn(`[brainbase-graph] ${type} list failed: ${err}`);
       return [];
     }
+  }
+}
+
+export class GraphPeopleClient extends GraphEntityClient {
+  /**
+   * Lists person entities (name + aliases). Cached for 5 minutes. Returns []
+   * on any failure — callers must treat an empty list as "Graph unavailable",
+   * not "no people exist".
+   */
+  async listPeople(now: number = Date.now()): Promise<GraphPerson[]> {
+    return this.listEntities("person", now);
   }
 }
 

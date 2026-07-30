@@ -11,6 +11,13 @@ export interface OneShotOptions {
   timeoutMs: number;
   spawnFn?: typeof spawn;
   label: string;
+  /**
+   * Pass the prompt over stdin instead of argv. Required for long prompts:
+   * Linux caps a single argv entry at MAX_ARG_STRLEN (128KiB), which long
+   * meeting transcripts exceed. Only supported for the claude engine
+   * (`claude -p` reads stdin when the prompt argument is omitted).
+   */
+  promptViaStdin?: boolean;
 }
 
 export function defaultBinForEngine(engine: OneShotEngine): string {
@@ -23,13 +30,21 @@ export function defaultModelForEngine(engine: OneShotEngine): string {
 
 export async function invokeOneShot(prompt: string, opts: OneShotOptions): Promise<string> {
   const engine = opts.engine ?? "claude";
+  const viaStdin = opts.promptViaStdin === true;
+  if (viaStdin && engine !== "claude") {
+    throw new Error(`${opts.label}: promptViaStdin is only supported for the claude engine`);
+  }
   return new Promise((resolve, reject) => {
-    const args = buildArgs(engine, opts.model, prompt);
+    const args = buildArgs(engine, opts.model, viaStdin ? null : prompt);
     const resolvedBin = resolveBin(opts.bin);
     const proc = (opts.spawnFn ?? spawn)(resolvedBin, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"],
       env: buildChildEnv(),
     });
+    if (viaStdin) {
+      proc.stdin?.on("error", () => { /* EPIPE when the CLI exits early — close reports it */ });
+      proc.stdin?.end(prompt);
+    }
 
     let stdout = "";
     let stderr = "";
@@ -71,7 +86,8 @@ export async function invokeOneShot(prompt: string, opts: OneShotOptions): Promi
   });
 }
 
-function buildArgs(engine: OneShotEngine, model: string, prompt: string): string[] {
+/** `prompt: null` omits the positional prompt (claude then reads stdin). */
+function buildArgs(engine: OneShotEngine, model: string, prompt: string | null): string[] {
   if (engine === "codex") {
     return [
       "exec",
@@ -82,7 +98,7 @@ function buildArgs(engine: OneShotEngine, model: string, prompt: string): string
       model,
       "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
-      prompt,
+      prompt ?? "",
     ];
   }
   return [
@@ -92,7 +108,7 @@ function buildArgs(engine: OneShotEngine, model: string, prompt: string): string
     "--model",
     model,
     "--dangerously-skip-permissions",
-    prompt,
+    ...(prompt === null ? [] : [prompt]),
   ];
 }
 

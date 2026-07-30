@@ -26,6 +26,7 @@ import { AgentsCanvasUpdater } from "./agents-canvas.js";
 import { TaskCanvasUpdater } from "./task-canvas.js";
 import { TaskReminderNotifier } from "./task-reminder.js";
 import { MeetingTaskProposalNotifier } from "./meeting-task-proposal.js";
+import { MeetingMinutesPipeline } from "./meeting-minutes-pipeline.js";
 import { extractGoalCondition, shouldExtractGoal } from "./goal-extractor.js";
 import { startsWithSlashCommand } from "../../sessions/manager.js";
 import type { SlackTriageConfig } from "../../shared/types.js";
@@ -74,6 +75,7 @@ export class SlackConnector implements Connector {
   private readonly taskCanvas: TaskCanvasUpdater | null;
   private readonly taskReminder: TaskReminderNotifier | null;
   private readonly meetingTaskProposal: MeetingTaskProposalNotifier | null;
+  private readonly meetingMinutesPipeline: MeetingMinutesPipeline | null;
   private static CHANNEL_CACHE_TTL_MS = 3600_000; // 1 hour
   private static USER_CACHE_TTL_MS = 3600_000; // 1 hour
 
@@ -172,6 +174,11 @@ export class SlackConnector implements Connector {
       : null;
     this.meetingTaskProposal = config.meetingTaskProposal?.enabled
       ? new MeetingTaskProposalNotifier(this.app, config.meetingTaskProposal, allowFrom)
+      : null;
+    this.meetingMinutesPipeline = config.meetingMinutesPipeline?.enabled
+      ? new MeetingMinutesPipeline(this.app, config.meetingMinutesPipeline, allowFrom, {
+          taskProposalNotifier: this.meetingTaskProposal,
+        })
       : null;
   }
 
@@ -824,6 +831,7 @@ export class SlackConnector implements Connector {
 
     // Bolt listeners must be registered before app.start().
     this.meetingTaskProposal?.register();
+    this.meetingMinutesPipeline?.register();
 
     await this.app.start();
     this.started = true;
@@ -839,6 +847,7 @@ export class SlackConnector implements Connector {
     this.taskCanvas?.stop();
     this.taskReminder?.stop();
     this.meetingTaskProposal?.stop();
+    this.meetingMinutesPipeline?.stop();
     for (const interval of this.typingIntervals.values()) {
       clearInterval(interval);
     }

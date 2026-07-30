@@ -49,6 +49,7 @@
 - **議事録→タスク自動抽出→ワンタップ登録** — ✅完了(2026-07-30): mana `meeting-flow-integration.js`を設計の正に`MeetingTaskProposalNotifier`をmana-runtimeへ移植（PR #18、設計は`docs/architecture/story-meeting-task-proposal.md`）。議事録メッセージ検知→LLM抽出→Slack Blocks提案→承認ボタンでcompanion APIへ冪等登録（キー`meeting:<ch>:<ts>:<index>`）。pilot E2Eで mana bot投稿の議事録→2候補提示→承認→bb.unson.jp正本実在まで確認済み。承認者は`ApproverResolver`で抽象化（柱2のGraph RACI解決の差し替え点）。manaのLambda版承認フローは凍結対象（発火条件が.txtアップロードで本実装と重ならないことを確認済み。実チャンネル展開時はmana botを対象チャンネルからleave）
 - **期限リマインド**: canonical storeを定期クエリし、期限接近・超過をチャンネルへ通知（cron + Canonical Task API）
 - **Canvasミラーの運用定着**: タスクCanvasを「見える正本ビュー」として磨く
+- **議事録パイプラインのmana-runtime移植（Eve設計資産のDAG化組み込み）** — 承認(2026-07-30): transcript(.txt)が`9940-meeting-router`に届く→デフォルト振り分け（register-first思想: 間違いはワンタップ振り直し）→議事録生成（Graph SSOT・関連Decision・進行中タスク・前回議事録を参照、Eveの Meeting Minutes Quality Contract を採用）→プロジェクトチャンネルへ展開→既存タスク自動登録動線へ接続。DAG段構成はEve `meeting-agent` の設計を移植し、段の直列制御は決定論的コード・各段のみ`invokeOneShot`。正はmana-runtime、Eveは設計ドナー、mana Lambdaは移植完了後に凍結
 
 ### 5. 他社展開できる形にする — 安部様人柱・グローウィン様商品化の裏付け
 

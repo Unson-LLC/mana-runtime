@@ -487,6 +487,37 @@ export class MeetingTaskProposalNotifier {
     const text = ((event.text as string) || "").trim();
     if (text.length < this.minMessageChars) return;
 
+    await this.processMinutes(channel, ts, (event.thread_ts as string) ?? ts, text, now);
+  }
+
+  /**
+   * Direct entry point for minutes this bot posted itself (the meeting-minutes
+   * pipeline hands off here — Bolt's ignoreSelf hides our own posts from the
+   * message listener above). Skips the channel/subtype gates but keeps the
+   * state-file idempotency, so a redelivered handoff never double-registers.
+   * Requires the feature to be registered and active.
+   */
+  async processMinutesText(
+    channel: string,
+    ts: string,
+    text: string,
+    now: number = Date.now(),
+  ): Promise<boolean> {
+    if (!this.active) {
+      logger.warn("[meeting-task-proposal] handoff ignored — feature not active");
+      return false;
+    }
+    await this.processMinutes(channel, ts, ts, text, now);
+    return true;
+  }
+
+  private async processMinutes(
+    channel: string,
+    ts: string,
+    threadTs: string,
+    text: string,
+    now: number,
+  ): Promise<void> {
     const state = loadState();
     const pruned = pruneExpired(state, now);
     const key = proposalKey(channel, ts);
@@ -532,7 +563,7 @@ export class MeetingTaskProposalNotifier {
 
     const result = await this.client.apiCall("chat.postMessage", {
       channel,
-      thread_ts: (event.thread_ts as string) ?? ts,
+      thread_ts: threadTs,
       text: proposalFallbackText(proposal),
       blocks: buildProposalBlocks(proposal),
       unfurl_links: false,
