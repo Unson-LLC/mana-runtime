@@ -159,5 +159,15 @@ meetingTaskProposal:
   担当・期限も正確）→ operator承認タップ → companion API登録 → bb.unson.jp正本で
   GETし2タスクの実在・期限（2026-08-01 / 2026-08-04 JST）を確認。Interactivityは
   既存Slack App設定で有効だった。
-- register-first改版(2026-07-30): E2E実施後に追記する（自動登録・取り消し・
-  編集モーダルのGraph担当者反映）。
+- register-first改版(2026-07-30): `npx tsc --noEmit` 通過、vitest 79 files /
+  837 tests 全通過。pilot E2E成立: mana bot投稿のテスト議事録
+  （C0A2L9FEKEJ ts=1785342578.967079）→ 2/2タスクを人手ゼロで自動登録、
+  「佐藤圭吾」はGraph aliasesで一意解決され正本に`assignee_person_id`+表示名が
+  付与、「田村」はGraph不在で設計通り担当なし → operator取り消しタップで正本から
+  削除確認 → 編集モーダルで担当（星野秀弥）・期限（2026-08-06）の変更が正本へ
+  反映されることを確認。
+- 運用注意(2026-07-30): companion APIの担当者検証はリクエストトークンの可視範囲で
+  Graphを照合するため、**project scopeなしのサービストークンではproject紐付き
+  personへの担当設定が422になる**。pilotは全project scope付きの統合トークン
+  `openryoko-pilot`（member、期限約1年）へ差し替え済み。旧トークン
+  （初代task用と`openryoko-pilot-graph`）は未使用化。
