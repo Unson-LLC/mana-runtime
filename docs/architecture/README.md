@@ -19,6 +19,6 @@
 | `07_non_functional_requirements.md` | 性能・可用性・同時実行・コスト管理 |
 | `08_security_design.md` | 守るべき情報・脅威モデル・実装時の注意点 |
 | `09_directory_structure.md` | リポジトリ構成と責務分離 |
-| `10_company_brain.md` | **目標アーキテクチャ**: 会社の脳（SSOT/グラフ/オントロジー）・学習ループ・HITL・エージェント台帳 |
+| `10_company_brain.md` | **目標アーキテクチャ**: 会社の脳（brainbase）との接続境界・HITL・エージェント台帳。脳そのものの設計はbrainbase側が正本 |
 
 01〜09は「現在地」、10は「目標」を書く。現在地と目標のギャップはroadmapの柱に対応づけて10に集約する。
