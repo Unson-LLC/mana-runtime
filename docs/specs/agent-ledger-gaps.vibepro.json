@@ -19,7 +19,21 @@
       "type": "contract",
       "statement": "PlacementProfileは任意のowner/purposeフィールドを持ち、未設定の既存configは後方互換で動作する",
       "rationale": "所有者・目的の欠落という台帳ギャップを埋めつつ既存pilotを止めないため",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 1 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 1
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/channel-placement-profiles.md"
+          }
+        ],
+        "code_refs": [],
+        "test_refs": []
+      },
       "confidence": 1
     },
     {
@@ -27,7 +41,21 @@
       "type": "contract",
       "statement": "placement単位の月次コスト集計はsessions.transport_metaのplacementIdをキーに算出し、未紐付けセッションを(unplaced)として漏れなく可視化する",
       "rationale": "budgetがemployee単位のみでplacement費用が不可視というギャップを埋めるため",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 2
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/channel-placement-profiles.md"
+          }
+        ],
+        "code_refs": [],
+        "test_refs": []
+      },
       "confidence": 1
     },
     {
@@ -35,7 +63,25 @@
       "type": "invariant",
       "statement": "enabled: falseのplacementはresolvePlacementでdenied(reason: disabled)となり、配信認可・派生セッション認可でも拒否され、enabled未設定は有効として扱う",
       "rationale": "placement単位の停止手段を即時fail-closedで提供するため（deny-by-default原則の維持）",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }, { "kind": "acceptance_criteria", "index": 4 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 3
+          },
+          {
+            "kind": "acceptance_criteria",
+            "index": 4
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/channel-placement-profiles.md"
+          }
+        ],
+        "code_refs": [],
+        "test_refs": []
+      },
       "confidence": 1
     },
     {
@@ -43,7 +89,17 @@
       "type": "invariant",
       "statement": "無効化placementによる拒否はsecurity_eventとして監査ログへ記録される",
       "rationale": "停止判断の監査可能性を保つため",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 5 }], "architecture_refs": [], "code_refs": [], "test_refs": [] },
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 5
+          }
+        ],
+        "architecture_refs": [],
+        "code_refs": [],
+        "test_refs": []
+      },
       "confidence": 1
     },
     {
@@ -51,16 +107,62 @@
       "type": "contract",
       "statement": "GET /api/placementsは全placementの台帳項目と当月コスト・セッション数・最終利用時刻を返し、secret様の値はREDACTEDとなり、operator token認可規則に従う",
       "rationale": "台帳一覧ビューの土台をsecret非露出かつ認可の内側で提供するため",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }, { "kind": "acceptance_criteria", "index": 7 }], "architecture_refs": [{ "file": "docs/architecture/channel-placement-profiles.md" }], "code_refs": [], "test_refs": [] },
-      "confidence": 1
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 6
+          },
+          {
+            "kind": "acceptance_criteria",
+            "index": 7
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/channel-placement-profiles.md"
+          }
+        ],
+        "code_refs": [],
+        "test_refs": []
+      },
+      "confidence": 1,
+      "inherited_behaviors": [
+        {
+          "condition": "tool === \"get_session\"",
+          "classification": "inherited",
+          "files": [
+            "packages/jimmy/src/gateway/api.ts"
+          ]
+        },
+        {
+          "condition": "tool === \"send_to_session\"",
+          "classification": "inherited",
+          "files": [
+            "packages/jimmy/src/gateway/api.ts"
+          ]
+        }
+      ]
     },
     {
       "id": "S-LEDGER-VIEW",
       "type": "scenario",
-      "story_scenario_ids": ["LEDGER-STORY-S-001"],
+      "story_scenario_ids": [
+        "LEDGER-STORY-S-001"
+      ],
       "statement": "web panelの台帳ビューでowner/purpose未設定・budget対象外・無効化済みplacementが識別できる",
       "rationale": "新設前の重複調査と放置placement検出を可能にするため",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }], "architecture_refs": [], "code_refs": [], "test_refs": [] },
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 8
+          }
+        ],
+        "architecture_refs": [],
+        "code_refs": [],
+        "test_refs": []
+      },
       "confidence": 1
     },
     {
@@ -68,7 +170,17 @@
       "type": "contract",
       "statement": "placement廃止手順とpilot config.yamlのgit変更管理手順（secretをcommitへ含めない）が運用文書として存在する",
       "rationale": "変更管理・廃止フローの欠落という台帳ギャップを埋めるため",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 9 }], "architecture_refs": [], "code_refs": [], "test_refs": [] },
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 9
+          }
+        ],
+        "architecture_refs": [],
+        "code_refs": [],
+        "test_refs": []
+      },
       "confidence": 1
     },
     {
@@ -76,7 +188,17 @@
       "type": "invariant",
       "statement": "追加挙動に自動テストがあり、既存のsessions/gatewayテストとtypecheckが全て通る",
       "rationale": "セキュリティ境界の退行を防ぐため",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "index": 10 }], "architecture_refs": [], "code_refs": [], "test_refs": [] },
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 10
+          }
+        ],
+        "architecture_refs": [],
+        "code_refs": [],
+        "test_refs": []
+      },
       "confidence": 1
     }
   ]
