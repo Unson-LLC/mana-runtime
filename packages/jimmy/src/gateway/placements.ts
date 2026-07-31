@@ -57,7 +57,7 @@ export function buildPlacementLedger(placements: PlacementProfile[] | undefined)
       purpose: typeof freeText.purpose === 'string' ? freeText.purpose : null,
       enabled: placement.enabled !== false,
       audienceType: placement.audience.type,
-      allowedUserCount: placement.audience.allowedUsers.length,
+      allowedUserCount: placement.audience.allowedUsers?.length ?? 0,
       employee: placement.agent?.employee ?? null,
       defaultModel: placement.agent?.defaultModel ?? null,
       budgetTracked: Boolean(placement.agent?.employee),

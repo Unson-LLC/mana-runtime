@@ -60,6 +60,33 @@ describe("Placements ledger view", () => {
     expect(getByText(/removed \(\$1\.00\)/)).toBeTruthy()
   })
 
+  it("renders an auto-provisioned placement row with owner and purpose (AUTOPROV-STORY-S-001)", async () => {
+    getPlacements.mockResolvedValue({
+      ...ledger,
+      placements: [
+        {
+          ...ledger.placements[0],
+          id: "auto-C777", channelId: "C777",
+          owner: "U42", purpose: "auto-provisioned (invited by U42)",
+          audienceType: "channel-members", allowedUserCount: 0,
+          employee: null, budgetTracked: false,
+          mcp: ["brainbase", "gateway"],
+          gatewayTools: ["send_message", "create_task", "list_tasks", "update_task", "transition_task"],
+          deliveryTargets: ["slack:C777"],
+        },
+      ],
+    })
+    const { getByText, queryByText } = render(<PlacementsPage />)
+
+    await waitFor(() => expect(getByText("auto-C777")).toBeTruthy())
+    expect(getByText("U42")).toBeTruthy()
+    expect(getByText("auto-provisioned (invited by U42)")).toBeTruthy()
+    expect(getByText(/audience: channel-members/)).toBeTruthy()
+    // owner/purpose are set, so their gap badges must NOT appear.
+    expect(queryByText("owner未設定")).toBeNull()
+    expect(queryByText("purpose未設定")).toBeNull()
+  })
+
   it("shows the operator authorization error state instead of ledger data on denial", async () => {
     getPlacements.mockRejectedValue(new Error("operator authorization required"))
     const { getByText, queryByText } = render(<PlacementsPage />)

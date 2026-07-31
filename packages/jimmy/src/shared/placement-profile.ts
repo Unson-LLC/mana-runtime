@@ -84,6 +84,16 @@ export function placementWriteDenyRules(home: string = JINN_HOME): string[] {
 const PLACEMENT_READ_TOOLS = ["Read", "Glob", "Grep"];
 
 /**
+ * MCP tools denied in EVERY placement session, regardless of what
+ * capabilities.mcp allows. The operator's personal knowledge graph must never
+ * surface in any channel — allowing the brainbase server for Graph/wiki access
+ * must not drag the personal KG along with it. Enforced through the same
+ * --disallowedTools mechanism as placementWriteDenyRules (hard boundary in
+ * every permission mode, including bypassPermissions).
+ */
+export const PLACEMENT_MCP_TOOL_DENY = ["mcp__brainbase__search_personal_kg"];
+
+/**
  * Placement-local memory layer (docs/architecture/11_persona_skills_memory.md §3.1):
  * memory/placements/<placementId>/ is visible only to that placement's sessions.
  * Claude Code permissions cannot express "allow own, deny the rest", so the deny
@@ -152,6 +162,7 @@ export function placementEngineBoundary(
           placement.id,
           (configuredPlacements ?? []).map((p) => p.id),
         ),
+        ...PLACEMENT_MCP_TOOL_DENY,
       ]
       : undefined,
     placementBashGuard: Boolean(placement),
@@ -245,19 +256,50 @@ function clean(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-/** Resolve before session creation. Configured placements are fail-closed. */
-export function resolvePlacement(
-  placements: PlacementProfile[] | undefined,
-  msg: Pick<IncomingMessage, "connector" | "channel" | "user" | "transportMeta">,
-): PlacementResolution {
-  if (!placements || placements.length === 0) return { status: "legacy" };
+/**
+ * Speaker membership verdict for "channel-members" audiences, resolved by the
+ * connector (Slack conversations.members). Anything other than "member" —
+ * including "unknown" (API failure) and an absent verdict (connector without
+ * membership support) — denies.
+ */
+export type ChannelMembership = "member" | "non-member" | "unknown";
 
+function matchChannelPlacements(
+  placements: PlacementProfile[],
+  msg: Pick<IncomingMessage, "connector" | "channel" | "transportMeta">,
+): PlacementProfile[] {
   const workspaceId = clean((msg.transportMeta as Record<string, unknown> | undefined)?.team);
-  const channelMatches = placements.filter((placement) =>
+  return placements.filter((placement) =>
     placement.connector === msg.connector
     && placement.channelId === msg.channel
     && placement.workspaceId === workspaceId,
   );
+}
+
+/**
+ * True when this channel's unique placement delegates its audience to
+ * connector-side channel membership. Callers use this to decide whether a
+ * membership lookup is needed before resolvePlacement — skipping the network
+ * round-trip for static-audience placements.
+ */
+export function placementNeedsChannelMembership(
+  placements: PlacementProfile[] | undefined,
+  msg: Pick<IncomingMessage, "connector" | "channel" | "transportMeta">,
+): boolean {
+  if (!placements || placements.length === 0) return false;
+  const matches = matchChannelPlacements(placements, msg);
+  return matches.length === 1 && matches[0].audience.type === "channel-members";
+}
+
+/** Resolve before session creation. Configured placements are fail-closed. */
+export function resolvePlacement(
+  placements: PlacementProfile[] | undefined,
+  msg: Pick<IncomingMessage, "connector" | "channel" | "user" | "transportMeta">,
+  opts?: { channelMembership?: ChannelMembership },
+): PlacementResolution {
+  if (!placements || placements.length === 0) return { status: "legacy" };
+
+  const channelMatches = matchChannelPlacements(placements, msg);
   if (channelMatches.length === 0) return { status: "denied", reason: "unmatched" };
   if (channelMatches.length > 1) return { status: "denied", reason: "ambiguous" };
 
@@ -268,7 +310,11 @@ export function resolvePlacement(
   if (containsSecret(placement)) {
     return { status: "denied", reason: "invalid_config" };
   }
-  if (!placement.audience.allowedUsers.includes(msg.user)) {
+  if (placement.audience.type === "channel-members") {
+    if (opts?.channelMembership !== "member") {
+      return { status: "denied", reason: "unauthorized_user", placementId: placement.id };
+    }
+  } else if (!(placement.audience.allowedUsers ?? []).includes(msg.user)) {
     return { status: "denied", reason: "unauthorized_user" };
   }
   return { status: "matched", placement };

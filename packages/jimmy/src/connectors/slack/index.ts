@@ -25,6 +25,7 @@ import {
   respondPolicyNeedsTracking,
 } from "./respond-policy.js";
 import { isOperatorSpeaker } from "../../shared/operator-match.js";
+import type { ChannelMembership } from "../../shared/placement-profile.js";
 import { ConversationTracker } from "./conversation-tracker.js";
 import { AgentsCanvasUpdater } from "./agents-canvas.js";
 import { TaskCanvasUpdater } from "./task-canvas.js";
@@ -65,6 +66,18 @@ export interface SlackConnectorContext {
     target: Target,
   ) => boolean;
   /**
+   * Fired when the BOT ITSELF is added to a channel (invite-driven placement
+   * auto-provisioning). A returned string is posted to the channel as the
+   * one-time greeting; undefined posts nothing.
+   */
+  onBotJoinedChannel?: (info: {
+    channelId: string;
+    workspaceId: string | null;
+    inviterUserId: string | null;
+  }) => Promise<string | undefined | void> | string | undefined | void;
+  /** Fired when the bot leaves / is removed from a channel (placement disable). */
+  onBotLeftChannel?: (info: { channelId: string; workspaceId: string | null }) => void;
+  /**
    * Continues a `/vibepro` Story that stopped with `needs_input` because
    * VibePro gates were unresolved, after a human clicked "続行してGateを
    * 解消させる" on the needs_input result card. Bound to
@@ -88,6 +101,7 @@ export class SlackConnector implements Connector {
   private started = false;
   private lastError: string | null = null;
   private channelNameCache = new Map<string, { name?: string; isExtShared: boolean; cachedAt: number }>();
+  private channelMembersCache = new Map<string, { members: Set<string>; cachedAt: number }>();
   private userInfoCache = new Map<string, { info: SpeakerInfo; cachedAt: number }>();
   private botUserId: string | null = null;
   private typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
@@ -100,6 +114,8 @@ export class SlackConnector implements Connector {
   private readonly goalInjectionEnabled: boolean;
   private readonly developmentRunnerEnabled: boolean;
   private readonly developmentRunnerAllowedChannels: Set<string>;
+  private readonly onBotJoinedChannel: SlackConnectorContext["onBotJoinedChannel"];
+  private readonly onBotLeftChannel: SlackConnectorContext["onBotLeftChannel"];
   private readonly conversations: ConversationTracker;
   private readonly agentsCanvas: AgentsCanvasUpdater | null;
   private readonly taskCanvas: TaskCanvasUpdater | null;
@@ -110,6 +126,9 @@ export class SlackConnector implements Connector {
   private readonly vibeproGateResult: VibeproGateResultNotifier | null;
   private static CHANNEL_CACHE_TTL_MS = 3600_000; // 1 hour
   private static USER_CACHE_TTL_MS = 3600_000; // 1 hour
+  // Short TTL: membership gates authorization, so a removed member must lose
+  // access quickly while normal traffic still avoids per-message API calls.
+  private static MEMBERS_CACHE_TTL_MS = 300_000; // 5 minutes
 
   private readonly capabilities: ConnectorCapabilities = {
     threading: true,
@@ -194,6 +213,8 @@ export class SlackConnector implements Connector {
     this.developmentRunnerAllowedChannels = new Set(
       context.developmentRunnerAllowedChannels?.filter(Boolean) ?? [],
     );
+    this.onBotJoinedChannel = context.onBotJoinedChannel;
+    this.onBotLeftChannel = context.onBotLeftChannel;
     this.conversations = new ConversationTracker();
     this.agentsCanvas = config.agentsCanvas?.enabled
       ? new AgentsCanvasUpdater(this.app, config.agentsCanvas)
@@ -396,6 +417,43 @@ export class SlackConnector implements Connector {
 
   private async resolveChannelName(channelId: string): Promise<string | undefined> {
     return (await this.resolveChannelInfo(channelId)).name;
+  }
+
+  /**
+   * Membership verdict for "channel-members" placements. Backed by
+   * conversations.members with a short TTL cache; any failure returns
+   * "unknown", which resolvePlacement treats as a denial (fail-closed —
+   * a Slack outage must never widen access).
+   */
+  async getChannelMembership(channelId: string, userId: string): Promise<ChannelMembership> {
+    const cached = this.channelMembersCache.get(channelId);
+    if (cached && Date.now() - cached.cachedAt < SlackConnector.MEMBERS_CACHE_TTL_MS) {
+      return cached.members.has(userId) ? "member" : "non-member";
+    }
+    try {
+      const members = new Set<string>();
+      let cursor: string | undefined;
+      // Bounded pagination (25 × 200 = 5000 members) so a huge channel can't
+      // make us loop forever; hitting the bound falls through to fail-closed.
+      for (let page = 0; page < 25; page++) {
+        const res = await this.app.client.conversations.members({
+          channel: channelId,
+          limit: 200,
+          cursor,
+        });
+        for (const member of res.members ?? []) members.add(member);
+        cursor = res.response_metadata?.next_cursor || undefined;
+        if (!cursor) {
+          this.channelMembersCache.set(channelId, { members, cachedAt: Date.now() });
+          return members.has(userId) ? "member" : "non-member";
+        }
+      }
+      logger.warn(`[slack] conversations.members pagination bound hit for ${channelId} — failing closed`);
+      return "unknown";
+    } catch (err) {
+      logger.warn(`[slack] conversations.members failed for ${channelId}: ${this.formatSlackError(err)}`);
+      return "unknown";
+    }
   }
 
   async start() {
@@ -877,6 +935,42 @@ export class SlackConnector implements Connector {
 
       this.handler(msg);
     });
+
+    // Invite-driven placement auto-provisioning: only the BOT'S OWN join
+    // event provisions anything — another user joining a channel must never
+    // trigger a config write. botUserId is resolved by the auth.test above;
+    // if that failed we cannot prove the join is ours, so do nothing
+    // (fail-closed no-op, same as every other error in this path).
+    this.app.event("member_joined_channel", async ({ event, context }) => {
+      if (!this.onBotJoinedChannel) return;
+      if (!this.botUserId || (event as any).user !== this.botUserId) return;
+      const channelId = (event as any).channel as string;
+      const workspaceId = ((event as any).team as string | undefined) || context.teamId || null;
+      const inviterUserId = ((event as any).inviter as string | undefined) || null;
+      try {
+        const greeting = await this.onBotJoinedChannel({ channelId, workspaceId, inviterUserId });
+        if (typeof greeting === "string" && greeting.trim()) {
+          await this.sendMessage({ channel: channelId }, greeting);
+        }
+      } catch (err) {
+        logger.error(`[slack] auto-provision on join failed for ${channelId}: ${this.formatSlackError(err)}`);
+      }
+    });
+
+    // channel_left / group_left fire for the bot itself when it leaves or is
+    // removed from a public/private channel — the placement disable path.
+    for (const leftEvent of ["channel_left", "group_left"] as const) {
+      this.app.event(leftEvent, async ({ event, context }) => {
+        if (!this.onBotLeftChannel) return;
+        const channelId = (event as any).channel as string;
+        const workspaceId = ((event as any).team as string | undefined) || context.teamId || null;
+        try {
+          this.onBotLeftChannel({ channelId, workspaceId });
+        } catch (err) {
+          logger.error(`[slack] placement disable on leave failed for ${channelId}: ${this.formatSlackError(err)}`);
+        }
+      });
+    }
 
     // Bolt listeners must be registered before app.start().
     this.meetingTaskProposal?.register();
