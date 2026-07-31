@@ -5,7 +5,13 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../shared/logger.js", () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import { logger } from "../../shared/logger.js";
 import { parseDevelopmentResult, parseProgressLine, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
@@ -46,6 +52,10 @@ function childReturning(stdout: string, code = 0) {
 }
 
 describe("development runner", () => {
+  beforeEach(() => {
+    vi.mocked(logger.error).mockClear();
+  });
+
   it("records only the generated Story and VibePro selection inputs", () => {
     expect(buildStoryAddArgs("docs/management/stories/active/story-safe-change.md")).toEqual([
       "add", "-f", "--", ".gitignore", ".vibepro/config.json",
@@ -264,7 +274,7 @@ describe("development runner", () => {
   });
 
   /** Like childReturning, but lets the caller write stderr before stdout/close. */
-  function childReturningAfterStderr(stdout: string, stderrLines: string[], code = 0) {
+  function childReturningAfterStderr(stdout: string, stderrLines: string[], code = 0, signal: NodeJS.Signals | null = null) {
     const child = new EventEmitter() as any;
     child.stdin = new PassThrough();
     child.stdout = new PassThrough();
@@ -274,7 +284,7 @@ describe("development runner", () => {
       for (const line of stderrLines) child.stderr.write(line);
       child.stderr.end();
       child.stdout.end(stdout);
-      child.emit("close", code);
+      child.emit("close", code, signal);
     });
     return child;
   }
@@ -324,6 +334,73 @@ describe("development runner", () => {
 
     expect(result.status).toBe("pr_ready");
     expect(seen).toEqual([]);
+  });
+
+  it("logs the exit code, signal, and diagnostic stderr tail when the child exits non-zero", async () => {
+    const spawnFn = vi.fn(() => childReturningAfterStderr(
+      "",
+      [
+        'PROGRESS {"phase":"agent","elapsedSec":10,"commits":0}\n',
+        "fatal: something went wrong in the runner\n",
+        "worktree checkout failed\n",
+      ],
+      1,
+      "SIGKILL",
+    )) as any;
+
+    await expect(runDevelopmentRequest(
+      { enabled: true, bin: "/usr/bin/sudo" },
+      "READMEを改善する",
+      spawnFn,
+    )).rejects.toThrow("exited with code 1");
+
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("code=1"));
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("signal=SIGKILL"));
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("fatal: something went wrong in the runner"));
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("worktree checkout failed"));
+    // The PROGRESS line is diagnostic-line noise, not stderr — it must not
+    // leak into the logged tail.
+    expect(logger.error).not.toHaveBeenCalledWith(expect.stringContaining("PROGRESS"));
+  });
+
+  it("logs the diagnostic stderr tail when stdout can't be parsed even though the process exited cleanly", async () => {
+    const spawnFn = vi.fn(() => childReturningAfterStderr(
+      "not valid json at all",
+      ["a diagnostic line right before the bad stdout\n"],
+      0,
+    )) as any;
+
+    await expect(runDevelopmentRequest(
+      { enabled: true, bin: "/usr/bin/sudo" },
+      "READMEを改善する",
+      spawnFn,
+    )).rejects.toThrow("malformed JSON");
+
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("a diagnostic line right before the bad stdout"));
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("code=0"));
+  });
+
+  it("bounds the logged stderr tail to the most recent ~2KB of diagnostic output", async () => {
+    const firstLine = "A".repeat(3000);
+    const lastLine = "the important final diagnostic line";
+    const spawnFn = vi.fn(() => childReturningAfterStderr(
+      "",
+      [`${firstLine}\n`, `${lastLine}\n`],
+      1,
+    )) as any;
+
+    await expect(runDevelopmentRequest(
+      { enabled: true, bin: "/usr/bin/sudo" },
+      "READMEを改善する",
+      spawnFn,
+    )).rejects.toThrow("exited with code 1");
+
+    const errorCalls = (logger.error as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as string);
+    const relevantCall = errorCalls.find((message) => message.includes("child exited abnormally"));
+    expect(relevantCall).toBeDefined();
+    expect(relevantCall).toContain(lastLine);
+    // The oldest line was pushed out of the bounded tail.
+    expect(relevantCall).not.toContain(firstLine);
   });
 
   it("rejects arbitrary URLs and extra output fields", () => {

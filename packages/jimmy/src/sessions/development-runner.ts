@@ -9,6 +9,7 @@ import type {
   DevelopmentGate,
   DevelopmentCommits,
 } from "../shared/types.js";
+import { logger } from "../shared/logger.js";
 
 export type { DevelopmentQuestion, DevelopmentQuestionOption, DevelopmentAnswer, DevelopmentProgress, DevelopmentGate, DevelopmentCommits } from "../shared/types.js";
 
@@ -18,6 +19,11 @@ export const DEFAULT_DEVELOPMENT_TIMEOUT_MS = 90 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = DEFAULT_DEVELOPMENT_TIMEOUT_MS;
 const PROGRESS_LINE_PREFIX = "PROGRESS ";
 const MAX_STDERR_PARSE_BYTES = 1 * 1024 * 1024;
+/** Cap on the diagnostic stderr tail kept for failure logging (see
+ * `attachProgressParsing`'s returned `getTail()`). Bounded so a runaway or
+ * malicious stderr stream can't bloat a log line — only the most recent
+ * output matters for diagnosing why the process just exited. */
+const MAX_STDERR_TAIL_CHARS = 2 * 1024;
 const MAX_PROGRESS_LATEST_CHARS = 300;
 const PROGRESS_PHASES = new Set(["agent", "gate"]);
 const ALLOWED_RESULT_KEYS = new Set(["status", "storyId", "prUrl", "summary", "questions", "gates", "commits"]);
@@ -132,20 +138,50 @@ export function parseProgressLine(line: string): DevelopmentProgress | null {
   };
 }
 
+export interface StderrCapture {
+  /** Diagnostic (non-`PROGRESS`) stderr lines seen so far, newline-joined and
+   * bounded to the last `MAX_STDERR_TAIL_CHARS` characters — the tail is
+   * what matters when a process just died, not everything it ever wrote. */
+  getTail(): string;
+}
+
 /**
  * Wires a child's stderr into the `PROGRESS` line parser, draining stderr
- * either way (the runner also writes plain diagnostic text there, which is
- * still discarded). Bounded by `MAX_STDERR_PARSE_BYTES` total: once stderr
- * exceeds that, parsing stops silently but the process keeps running — a
- * runaway or malicious stderr stream must not be able to affect the run.
+ * either way (the runner also writes plain diagnostic text there). Bounded
+ * by `MAX_STDERR_PARSE_BYTES` total: once stderr exceeds that, parsing stops
+ * silently but the process keeps running — a runaway or malicious stderr
+ * stream must not be able to affect the run.
+ *
+ * Lines that aren't `PROGRESS`-prefixed are also captured into a rolling
+ * tail (see `StderrCapture.getTail`) so a caller whose process exits
+ * abnormally (non-zero code, unexpected signal, unparsable stdout) can log
+ * what the process was actually saying right before it died — previously
+ * this diagnostic text was parsed for progress and then discarded outright,
+ * leaving no trail to investigate an unexplained runner death.
  */
 function attachProgressParsing(
   stderr: NodeJS.ReadableStream,
   onProgress?: (progress: DevelopmentProgress) => void,
-): void {
+): StderrCapture {
   let buffer = "";
   let consumedBytes = 0;
   let truncated = false;
+  let tail = "";
+  const appendTail = (line: string) => {
+    if (line.length === 0) return;
+    tail = tail.length > 0 ? `${tail}\n${line}` : line;
+    if (tail.length > MAX_STDERR_TAIL_CHARS) {
+      tail = tail.slice(tail.length - MAX_STDERR_TAIL_CHARS);
+    }
+  };
+  const handleLine = (line: string) => {
+    if (line.startsWith(PROGRESS_LINE_PREFIX)) {
+      const progress = parseProgressLine(line);
+      if (progress && onProgress) onProgress(progress);
+      return;
+    }
+    appendTail(line);
+  };
   stderr.on("data", (chunk: Buffer) => {
     if (truncated) return;
     consumedBytes += chunk.length;
@@ -159,13 +195,16 @@ function attachProgressParsing(
     while (newlineIndex !== -1) {
       const line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
-      if (onProgress) {
-        const progress = parseProgressLine(line);
-        if (progress) onProgress(progress);
-      }
+      handleLine(line);
       newlineIndex = buffer.indexOf("\n");
     }
   });
+  stderr.on("end", () => {
+    if (!truncated && buffer.length > 0) handleLine(buffer);
+  });
+  return {
+    getTail: () => tail,
+  };
 }
 
 function assertBoundedString(value: unknown, min: number, max: number, label: string): asserts value is string {
@@ -436,9 +475,9 @@ export async function runDevelopmentRequest(
       }
       stdout += chunk.toString("utf8");
     });
-    attachProgressParsing(child.stderr, onProgress);
+    const stderrCapture = attachProgressParsing(child.stderr, onProgress);
     child.on("error", (error) => finish(() => reject(error)));
-    child.on("close", (code) => {
+    child.on("close", (code, exitSignal) => {
       closedCode = code;
       // A detached group leader may exit on SIGTERM while a descendant keeps
       // running. Keep the lock/state until the scheduled group SIGKILL fires.
@@ -449,12 +488,24 @@ export async function runDevelopmentRequest(
         return;
       }
       if (code !== 0) {
+        // The runner process disappearing mid-run (killed, crashed, orphaned
+        // by its own supervisor) previously left no trail beyond "exited
+        // with code X" — stderr was parsed for PROGRESS lines and otherwise
+        // discarded. Logging the exit signal and the diagnostic stderr tail
+        // here (not surfaced to Slack — this is operator-only) is what makes
+        // that class of failure investigable after the fact.
+        logger.error(
+          `[development-runner] child exited abnormally (code=${code ?? "null"}, signal=${exitSignal ?? "none"}); stderr tail: ${stderrCapture.getTail() || "(empty)"}`,
+        );
         reject(new Error(`development runner exited with code ${code ?? "unknown"}`));
         return;
       }
       try {
         resolve(parseDevelopmentResult(stdout.trim()));
       } catch (error) {
+        logger.error(
+          `[development-runner] failed to parse result from stdout (code=${code}, signal=${exitSignal ?? "none"}): ${error instanceof Error ? error.message : "unknown error"}; stderr tail: ${stderrCapture.getTail() || "(empty)"}`,
+        );
         reject(error);
       }
       });

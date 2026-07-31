@@ -93,6 +93,14 @@ export interface SlackConnectorContext {
 
 export class SlackConnector implements Connector {
   name = "slack";
+  // `name` is fixed across every instance (both the default workspace and any
+  // named `connectors.instances[]` entry report "slack"), so it cannot
+  // distinguish which Slack workspace a given instance is bound to.
+  // `instanceId` carries the actual registry key (config.id, e.g. "slack-biz")
+  // so callers that need to route back to this exact instance — the
+  // development-reconciler in particular — don't misdeliver to whichever
+  // Slack connector happens to be registered under the shared "slack" name.
+  instanceId: string;
   private app: App;
   private handler: ((msg: IncomingMessage) => void) | null = null;
   private readonly allowedUsers: Set<string> | null;
@@ -190,6 +198,7 @@ export class SlackConnector implements Connector {
   }
 
   constructor(config: SlackConnectorConfig, context: SlackConnectorContext = {}) {
+    this.instanceId = config.id || "slack";
     this.app = new App({
       token: config.botToken,
       appToken: config.appToken,

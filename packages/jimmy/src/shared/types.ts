@@ -205,6 +205,20 @@ export interface DevelopmentProgress {
 
 export interface Connector {
   name: string;
+  /**
+   * The registry key this specific connector instance is registered under in
+   * the gateway's connector map (see gateway/server.ts's `connectorMap`).
+   * Distinct from `name` when multiple instances share one connector type —
+   * every SlackConnector reports `name: "slack"` regardless of which Slack
+   * workspace it's bound to, so two instances (e.g. the default workspace and
+   * a named `connectors.instances[]` entry like "slack-biz") are otherwise
+   * indistinguishable. Consumers that need to resolve back to the exact
+   * running instance (e.g. development-reconciler.ts delivering a result to
+   * the workspace the request actually came from) must key off `instanceId`,
+   * not `name`. Optional and may equal `name` for connectors that don't
+   * support named instances.
+   */
+  instanceId?: string;
   start(): Promise<void>;
   stop(): Promise<void>;
   getCapabilities(): ConnectorCapabilities;

@@ -29,13 +29,33 @@ export interface PendingDevelopmentRun {
   storyId: string | null;
   /** `sha256(request.trim()).slice(0, 8)` — only set for `kind: "new"`. */
   requestDigest?: string;
+  /** `Connector.name` — kept for backwards compatibility with records
+   * written before `connectorInstanceId` existed, and as the fallback key
+   * for connector types that don't support named instances. NOT sufficient
+   * on its own to resolve the right connector: every SlackConnector reports
+   * `name: "slack"` regardless of which workspace it's bound to, so two
+   * connected workspaces are indistinguishable by `connectorName` alone. */
   connectorName: string;
+  /** The exact registry key (`Connector.instanceId`, e.g. "slack-biz") the
+   * originating connector was registered under in the gateway's connector
+   * map. Set whenever the connector reports one; absent for records written
+   * before this field existed, or for connector types that don't support
+   * named instances. The reconciler resolves strictly by this key when
+   * present — never falls back to a `connectorName` match, since that could
+   * silently pick the wrong workspace's connector. */
+  connectorInstanceId?: string;
   channel: string;
   thread?: string;
   /** ISO timestamp of when this run was recorded (used as the reconciler's
    * timeout baseline and as the spool-matching lower bound for `new`). */
   startedAt: string;
   kind: "new" | "resume" | "continue";
+  /** Count of consecutive failed delivery attempts (result delivery or the
+   * timeout interruption notice), recorded via `recordDeliveryFailure`.
+   * Absent/undefined is treated as 0. There is no successful-delivery
+   * counter — a successful delivery always removes the record instead of
+   * resetting this. */
+  deliveryAttempts?: number;
 }
 
 type PersistedState = Record<string, PendingDevelopmentRun>;
@@ -76,6 +96,28 @@ export function removePendingDevelopmentRun(runId: string): void {
   if (!(runId in state)) return;
   delete state[runId];
   saveState(state);
+}
+
+/**
+ * Increments and persists the failed-delivery counter for a pending run
+ * whose result post or interruption notice threw (API error, connector
+ * exception, etc.) — so a delivery failure keeps the record for the next
+ * sweep to retry instead of the reconciler discarding it outright. Callers
+ * are expected to give up (remove the record) once the returned count
+ * reaches their retry cap.
+ *
+ * Returns the new attempt count, or `null` if the run is no longer pending
+ * (e.g. delivered by a racing sweep in between) — callers should treat
+ * `null` as "nothing to do".
+ */
+export function recordDeliveryFailure(runId: string): number | null {
+  const state = loadState();
+  const run = state[runId];
+  if (!run) return null;
+  const attempts = (run.deliveryAttempts ?? 0) + 1;
+  state[runId] = { ...run, deliveryAttempts: attempts };
+  saveState(state);
+  return attempts;
 }
 
 /** All currently-pending runs, oldest first. Never throws — a corrupt or

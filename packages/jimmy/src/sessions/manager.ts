@@ -1515,11 +1515,22 @@ export class SessionManager {
     // process dies mid-run (its own cgroup killed, etc.), the reconciler
     // needs this record to know a run was in flight and where to deliver
     // the result once the isolated runner's result spool shows up.
+    //
+    // `connectorName` (== connector.name) is NOT enough on its own to route
+    // the eventual delivery back to this exact connector: every SlackConnector
+    // instance reports `name: "slack"` regardless of which Slack workspace
+    // it's bound to, so two connected workspaces are indistinguishable by
+    // name alone. `connectorInstanceId` carries the actual registry key
+    // (e.g. "slack-biz" for a named `connectors.instances[]` entry) whenever
+    // the connector reports one, so development-reconciler.ts can resolve
+    // strictly to the right instance instead of guessing by name.
+    const instanceIdFields = connector.instanceId ? { connectorInstanceId: connector.instanceId } : {};
     const pendingRun: Omit<PendingDevelopmentRun, "runId"> = typeof request === "string"
       ? {
           storyId: null,
           requestDigest: createHash("sha256").update(request.trim()).digest("hex").slice(0, 8),
           connectorName: connector.name,
+          ...instanceIdFields,
           channel: target.channel,
           ...(target.thread ? { thread: target.thread } : {}),
           startedAt: new Date().toISOString(),
@@ -1529,6 +1540,7 @@ export class SessionManager {
         ? {
             storyId: request.storyId,
             connectorName: connector.name,
+            ...instanceIdFields,
             channel: target.channel,
             ...(target.thread ? { thread: target.thread } : {}),
             startedAt: new Date().toISOString(),
@@ -1537,6 +1549,7 @@ export class SessionManager {
         : {
             storyId: request.storyId,
             connectorName: connector.name,
+            ...instanceIdFields,
             channel: target.channel,
             ...(target.thread ? { thread: target.thread } : {}),
             startedAt: new Date().toISOString(),
