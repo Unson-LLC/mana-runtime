@@ -3,7 +3,7 @@ import { logger } from "./logger.js";
 
 export type SecurityEventReason =
   | "unmatched" | "unauthorized_actor" | "ambiguous" | "placement_missing_after_config_change"
-  | "placement_disabled"
+  | "placement_disabled" | "placement_budget_exceeded"
   | "operator_auth_missing" | "operator_auth_invalid" | "operator_hash_missing"
   | "mcp_denied" | "gateway_tool_denied" | "delivery_denied"
   | "parent_missing" | "parent_token_invalid" | "employee_denied" | "execution_override_denied";

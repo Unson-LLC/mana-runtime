@@ -33,7 +33,7 @@ import { getClaudeExpectedResetAt, isLikelyNearClaudeUsageLimit, recordClaudeRat
 import { isOperatorSpeaker } from "../shared/operator-match.js";
 import { loadJobs } from "../cron/jobs.js";
 import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
-import { checkBudget } from "../gateway/budgets.js";
+import { checkBudget, getPlacementBudgetStatus, shouldNotifyPlacementBudgetWarning } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
 import {
@@ -684,6 +684,21 @@ export class SessionManager {
             }
             return;
           }
+        }
+      }
+
+      // Placement budget warning — 80% notifies once per month; the hard stop
+      // at 100% happens fail-closed in resolveRouteOptions before routing.
+      if (placement?.monthlyBudgetUsd !== undefined) {
+        const placementBudget = getPlacementBudgetStatus(placement.id, placement.monthlyBudgetUsd);
+        if (
+          placementBudget.status === 'warning' &&
+          shouldNotifyPlacementBudgetWarning(placement.id, placementBudget.spend, placementBudget.limit)
+        ) {
+          await connector.replyMessage(
+            target,
+            `⚠️ Placement "${placement.id}" has used ${placementBudget.percent}% of its monthly budget ($${placementBudget.spend.toFixed(2)} / $${placementBudget.limit}). It will be blocked at 100%.`,
+          ).catch(() => {});
         }
       }
 
