@@ -616,7 +616,10 @@ export interface SlackConnectorConfig {
   meetingMinutesPipeline?: {
     /** Master switch — defaults to false when the block is absent. */
     enabled?: boolean;
-    /** Router channel IDs to watch for .txt uploads. Required; empty = off. */
+    /**
+     * Router channel IDs to watch for .txt uploads. Required; empty = off.
+     * "*" watches every channel the bot is in.
+     */
     routerChannels?: string[];
     /** Destination projects (projectId / name / channelId). Required; empty = off. */
     destinations?: { projectId: string; name: string; channelId: string }[];
