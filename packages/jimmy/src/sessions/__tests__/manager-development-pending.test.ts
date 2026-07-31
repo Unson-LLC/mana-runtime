@@ -62,7 +62,9 @@ function connector(extra: Partial<Connector> = {}): Connector {
     name: "slack",
     start: vi.fn(), stop: vi.fn(), onMessage: vi.fn(),
     replyMessage: vi.fn().mockResolvedValue(undefined),
+    editMessage: vi.fn().mockResolvedValue(undefined),
     reconstructTarget: vi.fn(() => ({ channel: "C1", thread: "T1" })),
+    getCapabilities: vi.fn(() => ({ threading: true, messageEdits: true, reactions: true, attachments: true })),
     ...extra,
   } as unknown as Connector;
 }
