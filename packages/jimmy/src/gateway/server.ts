@@ -40,6 +40,7 @@ import { scanOrg } from "./org.js";
 import { resolveSlackRuntimeConfig, resolveSlackInstanceRuntimeConfig } from "../shared/slack-runtime-config.js";
 import { resolvePlacement } from "../shared/placement-profile.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
+import { getPlacementBudgetStatus } from "./budgets.js";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -82,6 +83,7 @@ const MIME_TYPES: Record<string, string> = {
 export function buildSlackConnectorContext(
   cfg: JinnConfig,
   goalInjectionEnabled: boolean,
+  sessionManager?: SessionManager,
 ): SlackConnectorContext {
   return {
     portalName: cfg.portal?.portalName,
@@ -90,6 +92,10 @@ export function buildSlackConnectorContext(
     goalInjectionEnabled,
     developmentRunnerEnabled: cfg.developmentRunner?.enabled === true,
     developmentRunnerAllowedChannels: cfg.developmentRunner?.allowedSlackChannels,
+    resumeDevelopmentDecision: sessionManager
+      ? (storyId, answers, connector, target) =>
+          sessionManager.resumeDevelopmentDecision(storyId, answers, connector, target)
+      : undefined,
   };
 }
 
@@ -126,6 +132,20 @@ export function resolveRouteOptions(
   const opts: RouteOptions = { criticalRouting };
   if (resolution.status === "matched") {
     const placement = resolution.placement!;
+    // Monthly placement budget: an exceeded placement fails closed at the same
+    // gate as the kill switch, so no connector path can spend past the cap.
+    if (placement.monthlyBudgetUsd !== undefined) {
+      const budget = getPlacementBudgetStatus(placement.id, placement.monthlyBudgetUsd);
+      if (budget.status === "paused") {
+        emitSecurityEvent({
+          event: "placement_resolution", reason: "placement_budget_exceeded", placementId: placement.id,
+          connector: msg.connector, channelId: msg.channel, actorId: msg.user,
+          configRevision: placementConfigRevision(cfg.placements),
+        });
+        logger.warn(`Placement ${placement.id} blocked: monthly budget exceeded ($${budget.spend.toFixed(2)} / $${budget.limit})`);
+        return undefined;
+      }
+    }
     opts.placement = placement;
     opts.model = placement.agent?.defaultModel;
     const employeeName = placement.agent?.employee;
@@ -394,6 +414,7 @@ export async function startGateway(
             (slackConfig.employee
               ? employeeRegistry.get(slackConfig.employee)?.engine
               : cfg.engines.default) === "claude",
+            sessionManager,
           ),
         );
         slack.onMessage((msg) => {
@@ -550,6 +571,7 @@ export async function startGateway(
               buildSlackConnectorContext(
                 config,
                 (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
+                sessionManager,
               ),
             );
             slack.onMessage((msg) => {
@@ -675,6 +697,7 @@ export async function startGateway(
                 buildSlackConnectorContext(
                   freshConfig,
                   (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
+                  sessionManager,
                 ),
               );
               slack.onMessage((msg) => {

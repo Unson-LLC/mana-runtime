@@ -64,6 +64,23 @@ function PlacementRow({ entry }: { entry: PlacementLedgerEntry }) {
       <td className="px-[var(--space-3)] py-[var(--space-2)] align-top text-right tabular-nums">
         <div className="font-[var(--weight-semibold)] text-[var(--text-primary)]">{formatCost(entry.monthlyCost)}</div>
         <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">{entry.monthlySessions} sessions</div>
+        {entry.monthlyBudgetUsd !== null ? (
+          <div
+            className="text-[length:var(--text-caption1)]"
+            style={{
+              color:
+                (entry.budgetPercent ?? 0) >= 100
+                  ? "var(--system-red)"
+                  : (entry.budgetPercent ?? 0) >= 80
+                    ? "var(--system-orange)"
+                    : "var(--text-tertiary)",
+            }}
+          >
+            上限 {formatCost(entry.monthlyBudgetUsd)} ({entry.budgetPercent}%)
+          </div>
+        ) : (
+          <div className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">上限なし</div>
+        )}
       </td>
       <td className="px-[var(--space-3)] py-[var(--space-2)] align-top text-[length:var(--text-caption1)] text-[var(--text-tertiary)] whitespace-nowrap">
         {formatLastActivity(entry.lastActivity)}
