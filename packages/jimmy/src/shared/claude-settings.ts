@@ -5,10 +5,14 @@ export interface SessionSettingsOpts {
   sessionId: string;
   relayScript: string;
   appendSystemPrompt?: string;
+  /** When set (placement sessions), register this script as a PreToolUse hook
+   *  with matcher "Bash" — the deterministic shell-write guard for
+   *  placement-protected paths (see assets/placement-guard.mjs). */
+  placementGuardScript?: string;
 }
 
 interface HookCommand { type: "command"; command: string; }
-interface HookMatcher { hooks: HookCommand[]; }
+interface HookMatcher { matcher?: string; hooks: HookCommand[]; }
 
 /** POSIX single-quote a string so a path with spaces or shell metacharacters in
  *  JINN_HOME (e.g. "/Users/My User/.ryoko") can't break or inject into the hook
@@ -37,11 +41,33 @@ export function buildSessionSettings(opts: SessionSettingsOpts): ClaudeSettings 
       SessionStart: [cmd()],
       Stop: [cmd()],
       StopFailure: [cmd()],
-      PreToolUse: [cmd()],
+      // Guard first: any deny wins across PreToolUse hooks, and the guard's
+      // decision must not depend on relay delivery.
+      PreToolUse: [
+        ...(opts.placementGuardScript ? [placementGuardMatcher(opts.placementGuardScript)] : []),
+        cmd(),
+      ],
       PostToolUse: [cmd()],
     },
     ...(opts.appendSystemPrompt ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
   };
+}
+
+function placementGuardMatcher(guardScript: string): HookMatcher {
+  return { matcher: "Bash", hooks: [{ type: "command", command: `node ${shellQuote(guardScript)}` }] };
+}
+
+/** Guard-only settings for headless (`claude -p`) placement runs, which use no
+ *  hook relay. Written idempotently: content depends only on the script path. */
+export function writePlacementGuardSettings(dir: string, guardScript: string): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, "placement-guard-settings.json");
+  const content = JSON.stringify({ hooks: { PreToolUse: [placementGuardMatcher(guardScript)] } }, null, 2);
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, content, { mode: 0o600 });
+  fs.renameSync(tmp, filePath);
+  fs.chmodSync(filePath, 0o600);
+  return filePath;
 }
 
 export function sessionSettingsPath(dir: string, sessionId: string): string {

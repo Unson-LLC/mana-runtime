@@ -35,13 +35,19 @@ export interface PlacementEngineBoundary {
   strictMcpConfig: boolean;
   enableChrome: false | undefined;
   disallowedTools: string[] | undefined;
+  placementBashGuard: boolean;
 }
 
 // JINN_HOME files shared by EVERY placement. A single channel's untrusted input
 // (prompt injection included) must never rewrite persona, skills, or memory —
 // that would persist instructions across the placement authority boundary even
 // after an authority rebind clears the transcript.
-const PLACEMENT_PROTECTED_FILES = [
+// The gateway.json/hook-relay/placement-guard/settings entries protect the
+// enforcement machinery itself: a session that could rewrite the guard script or
+// its hook wiring could disable the boundary for its own next tool call.
+// Exported for the sync test against assets/placement-guard.mjs, which embeds
+// the same lists (it runs standalone inside Claude's hook process).
+export const PLACEMENT_PROTECTED_FILES = [
   "config.yaml",
   "CLAUDE.md",
   "AGENTS.md",
@@ -49,8 +55,12 @@ const PLACEMENT_PROTECTED_FILES = [
   "IDENTITY.md",
   "MEMORY.md",
   "TOOLS.md",
+  "gateway.json",
+  "gateway.pid",
+  "hook-relay.mjs",
+  "placement-guard.mjs",
 ];
-const PLACEMENT_PROTECTED_DIRS = ["org", "cron", "skills", "memory", "knowledge", "docs"];
+export const PLACEMENT_PROTECTED_DIRS = ["org", "cron", "skills", "memory", "knowledge", "docs", "tmp/settings"];
 const PLACEMENT_WRITE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 
 /**
@@ -58,9 +68,10 @@ const PLACEMENT_WRITE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
  * Passed as --disallowedTools; Claude Code enforces deny rules in every
  * permission mode (including bypassPermissions), so this is a hard boundary,
  * not a prompt instruction. The `//` prefix marks an absolute path pattern.
- * Residual gap (documented in docs/architecture/08_security_design.md): Bash
- * remains available for Gateway API calls, so shell-level writes are not
- * covered by these rules.
+ * Shell-level writes via Bash are covered separately by the PreToolUse guard
+ * hook (assets/placement-guard.mjs), wired when `placementBashGuard` is set;
+ * residual gaps of that guard are documented in
+ * docs/architecture/08_security_design.md §2.1.
  */
 export function placementWriteDenyRules(home: string = JINN_HOME): string[] {
   const targets = [
@@ -143,6 +154,7 @@ export function placementEngineBoundary(
         ),
       ]
       : undefined,
+    placementBashGuard: Boolean(placement),
   };
 }
 

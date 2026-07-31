@@ -3,7 +3,8 @@
 **最終更新**: 2026-07-30
 **性格**: 10章と同じく「目標」を書く章。マナの人格（CLAUDE.md・SOUL.md・IDENTITY.md）、スキル（skills/）、記憶（memory/・knowledge/）という**振る舞いを永続的に変える資産**の管理方針を定める。
 
-> **更新（2026-07-30）**: §1の境界の穴は [PR #29](https://github.com/Unson-LLC/mana-runtime/pull/29) で closed — placementセッションは`--disallowedTools`のdenyルール（bypassPermissionsでも有効）で人格・スキル・記憶ファイルへのWrite/Edit不可となり、自己改変促し文言・Self-evolution節もplacement時は注入されない。残ギャップ: Bash経由のシェル書込はdenyルールの対象外（08章に記載）。§3の可視性フィルタ（読取側）は中間段階をStory `placement-read-filters` で実装済み（§3.3参照）。
+> **更新（2026-07-30）**: §1の境界の穴は [PR #29](https://github.com/Unson-LLC/mana-runtime/pull/29) で closed — placementセッションは`--disallowedTools`のdenyルール（bypassPermissionsでも有効）で人格・スキル・記憶ファイルへのWrite/Edit不可となり、自己改変促し文言・Self-evolution節もplacement時は注入されない。
+> **更新（2026-07-31）**: Bash経由のシェル書込も closed — PreToolUseガードhook（`assets/placement-guard.mjs`、`permissionDecision: deny`）で保護パスへの代表的シェル書込パターンを決定論的に拒否（残余は [08章§2.1](./08_security_design.md)）。§3の可視性フィルタ（読取側）も中間段階をStory `placement-read-filters` で実装済み（§3.3参照）。
 
 ## 1. 当初の問題（fact、PR #29前）
 
@@ -98,10 +99,10 @@
 |---|---|---|
 | 人格・スキルの正本 | pilot手編集（履歴なし、templateと乖離） | repo template正本 + deploy配布 |
 | 実行時の自己改変 | placementでは禁止済み（PR #29。非placementは許可のまま） | HITL提案 + PR着地への置換 |
-| placementからの書込 | denyルールで遮断済み（PR #29。**Bash経由は残ギャップ**） | シェル書込含む完全遮断 |
+| placementからの書込 | denyルール（PR #29）+ Bashガードhookで遮断済み（残余は08章§2.1） | OSレベル分離による完全遮断 |
 | 記憶の行き先 | すべてJINN_HOME共有ファイル | 3分類ルール（§2）: 運用記憶/業務事実/会話文脈 |
 | 記憶の読取権限 | placementローカル層（`memory/placements/`）実装済み: 自placement分のみ注入+他placementはdeny遮断（Story `placement-read-filters`） | 3層モデル（§3.1）: 脳=RACI / placementローカル=自placementのみ / 共通=全公開かつ機微禁止 |
 | スキルの可視性 | capabilities+scopeの導出フィルタ実装済み（マニフェスト注入。Story `placement-read-filters`。本文のファイル読取遮断は最終段階） | capabilities+scopeからの導出フィルタ（§3.2）+実行ホーム分離 |
 | 変更管理 | バックアップファイル慣行 | git履歴 + 台帳統合 |
 
-§1の境界の穴（placementセッションからの人格・記憶書込）はPR #29で遮断済み（冒頭の更新注記参照）。残るはBash経由のシェル書込と読取側フィルタ。[08_security_design.md](./08_security_design.md)の攻撃面（2.1 信頼できないSlack入力）の具体例として扱う。
+§1の境界の穴（placementセッションからの人格・記憶書込）はPR #29（Write系denyルール）とBashガードhook（冒頭の更新注記参照）で遮断済み。残るは読取側フィルタと、ガードの検査限界（[08_security_design.md](./08_security_design.md) §2.1に明記）。攻撃面としては08章2.1（信頼できないSlack入力）の具体例として扱う。

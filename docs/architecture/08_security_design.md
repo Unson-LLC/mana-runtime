@@ -24,7 +24,8 @@
 - 外部送信は `allowedDelivery` の宛先検査を通ったものだけ
 - ある権限で得た会話文脈を別権限へ持ち込まない（authority rebindでtranscriptクリア）
 - 全権クレデンシャルはgateway所有のツール層に置き、モデルからはツールしか見えない（[ADR-0003](../adr/0003-broad-credential-with-tool-layer-enforcement.md)）
-- **既知の未カバー領域**: placementセッションから全チャンネル共有のCLAUDE.md・skills/・memory/へ書込可能（インジェクションの永続化経路）。対策方針は [11_persona_skills_memory.md](./11_persona_skills_memory.md) §3 — 台帳実装より先に塞ぐ
+- 共有の人格・スキル・記憶（CLAUDE.md・skills/・memory/ 等）への書込は2層で遮断: Write/Edit/MultiEdit/NotebookEditは`--disallowedTools`のdenyルール（PR #29）、Bash経由のシェル書込はPreToolUseガードhook（`assets/placement-guard.mjs`、`permissionDecision: deny`）。両方ともbypassPermissions下でもCLI側で強制される決定論的境界であり、プロンプト指示ではない。ガード・relay・per-session settings・gateway.json自体も保護対象（強制機構の自己書換を防ぐ）
+- **Bashガードの残余（正直な限界）**: ガードはシェルの完全パーサではなく、代表的書込パターン（リダイレクト・tee・cp/mv/rm・sed -i・dd等、`~`/`$HOME`/相対パス/`cd`追跡込み）の検査。**変数間接参照やコマンド置換で組み立てたパス**（`P=$(...)；echo x > "$P"`）、**インタプリタのワンライナー書込**（`python -c 'open(...,"w")'`・`node -e`）、**symlink経由の別名パス**、未知の書込系コマンドは検出できない。完全化はOSレベル分離（別Unixユーザー/コンテナ、§2.2と同型）でしか達成できず、それまでこの残余は既知ギャップとして扱う
 
 ### 2.2 自己開発経路（コード実行権限）
 

@@ -21,6 +21,10 @@ export interface PlacementLedgerEntry {
   deliveryTargets: string[];
   monthlyCost: number;
   monthlySessions: number;
+  /** Monthly spend ceiling (USD); null means no placement cap. */
+  monthlyBudgetUsd: number | null;
+  /** Percent of the cap consumed this month; null when no cap is set. */
+  budgetPercent: number | null;
   lastActivity: string | null;
 }
 
@@ -62,6 +66,10 @@ export function buildPlacementLedger(placements: PlacementProfile[] | undefined)
       deliveryTargets: placementDeliveryTargets(placement).map((target) => `${target.connector}:${target.channel}`),
       monthlyCost: cost?.cost ?? 0,
       monthlySessions: cost?.sessions ?? 0,
+      monthlyBudgetUsd: placement.monthlyBudgetUsd ?? null,
+      budgetPercent: placement.monthlyBudgetUsd
+        ? Math.round(((cost?.cost ?? 0) / placement.monthlyBudgetUsd) * 100)
+        : null,
       lastActivity: cost?.lastActivity ?? null,
     } satisfies PlacementLedgerEntry;
   });

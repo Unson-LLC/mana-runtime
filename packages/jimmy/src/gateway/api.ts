@@ -39,6 +39,7 @@ import {
   FILES_DIR,
 } from "../shared/paths.js";
 import { logger } from "../shared/logger.js";
+import { listConfigHistory, recordConfigChange } from "../shared/config-history.js";
 import {
   BrainbaseTaskClient,
   BrainbaseTaskError,
@@ -778,7 +779,15 @@ export async function handleApiRequest(
     // kept outside the agent process whenever Placement mode is enabled.
     const gatewayPlacementId = authorizedPlacementGatewayRequest(context, req, method, pathname);
     const internalNotificationAuthorized = authorizedInternalNotificationRequest(req, method, pathname);
-    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthorized(req) && !gatewayPlacementId && !internalNotificationAuthorized) {
+    // Evaluated once and reused below both for the 403 gate and for the
+    // config-history change record ("was this write operator-authenticated?").
+    // false when placements are disabled: no operator credential is enforced
+    // (or even checked) in that mode, and the history should say so honestly.
+    const operatorAuthenticated =
+      Boolean(context.getConfig().placements?.length) &&
+      isOperatorProtectedRequest(method, pathname) &&
+      operatorAuthorized(req);
+    if (context.getConfig().placements?.length && isOperatorProtectedRequest(method, pathname) && !operatorAuthenticated && !gatewayPlacementId && !internalNotificationAuthorized) {
       return json(res, { error: "operator authorization required" }, 403);
     }
 
@@ -1361,7 +1370,7 @@ export async function handleApiRequest(
         delivery: body.delivery,
       };
       jobs.push(newJob);
-      saveJobs(jobs);
+      saveJobs(jobs, { source: "api/cron", operatorAuthenticated });
       reloadScheduler(jobs);
       return json(res, newJob, 201);
     }
@@ -1377,7 +1386,7 @@ export async function handleApiRequest(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = _parsed.body as any;
       jobs[idx] = { ...jobs[idx], ...body, id: params.id };
-      saveJobs(jobs);
+      saveJobs(jobs, { source: "api/cron", operatorAuthenticated });
       reloadScheduler(jobs);
       return json(res, jobs[idx]);
     }
@@ -1389,7 +1398,7 @@ export async function handleApiRequest(
       const idx = jobs.findIndex((j) => j.id === params!.id);
       if (idx === -1) return notFound(res);
       const removed = jobs.splice(idx, 1)[0];
-      saveJobs(jobs);
+      saveJobs(jobs, { source: "api/cron", operatorAuthenticated });
       reloadScheduler(jobs);
       return json(res, { deleted: removed.id, name: removed.name });
     }
@@ -1891,6 +1900,17 @@ Handle this as a priority request from a colleague.`;
       return json(res, sanitized);
     }
 
+    // GET /api/config-history — change-management audit trail for
+    // config.yaml / cron/jobs.json. Metadata only: timestamps, source route,
+    // snapshot filename, operator-auth flag. Snapshot CONTENTS are never
+    // served here (they are verbatim config copies; retrieval stays
+    // SSH-only). Operator-token-protected via the placement gate above,
+    // like every other GET /api/* route.
+    if (method === "GET" && pathname === "/api/config-history") {
+      const n = parseInt(url.searchParams.get("n") || "100", 10);
+      return json(res, { entries: listConfigHistory(Number.isFinite(n) ? n : 100) });
+    }
+
     // PUT /api/config
     if (method === "PUT" && pathname === "/api/config") {
       const _parsed = await readJsonBody(req, res);
@@ -1958,6 +1978,7 @@ Handle this as a priority request from a colleague.`;
         context.suppressNextConnectorReload?.();
       }
 
+      recordConfigChange(CONFIG_PATH, "api/config", { operatorAuthenticated });
       fs.writeFileSync(CONFIG_PATH, yamlStr);
       invalidateModelRegistry(); // models/engines may have changed — rebuild on next read
       logger.info("Config updated via API");
@@ -2292,6 +2313,7 @@ Handle this as a priority request from a colleague.`;
 
       // Write updated config
       const yamlStr = yaml.dump(updated, { lineWidth: -1 });
+      recordConfigChange(CONFIG_PATH, "api/onboarding", { operatorAuthenticated });
       fs.writeFileSync(CONFIG_PATH, yamlStr);
       logger.info(`Onboarding: portal name="${portalName}", operator="${operatorName}", language="${language}"`);
 
@@ -2362,6 +2384,7 @@ Handle this as a priority request from a colleague.`;
           sttCfg.enabled = true;
           sttCfg.model = model;
           if (!sttCfg.languages) sttCfg.languages = ["en"];
+          recordConfigChange(CONFIG_PATH, "api/stt/download", { operatorAuthenticated });
           fs.writeFileSync(CONFIG_PATH, yaml.dump(cfg, { lineWidth: -1 }));
         } catch (err) {
           logger.error(`Failed to update config after STT download: ${err}`);
@@ -2434,6 +2457,7 @@ Handle this as a priority request from a colleague.`;
         sttCfg.languages = langs;
         // Remove deprecated language field if present
         delete sttCfg.language;
+        recordConfigChange(CONFIG_PATH, "api/stt/config", { operatorAuthenticated });
         fs.writeFileSync(CONFIG_PATH, yaml.dump(cfg, { lineWidth: -1 }));
         return json(res, { status: "ok", languages: langs });
       } catch (err) {
@@ -2545,6 +2569,7 @@ Handle this as a priority request from a colleague.`;
         existing = yaml.load(fs.readFileSync(CONFIG_PATH, "utf-8")) as Record<string, unknown> || {};
       } catch { /* start fresh if unreadable */ }
       const merged = deepMerge(existing, { budgets: { employees: body } });
+      recordConfigChange(CONFIG_PATH, "api/budgets", { operatorAuthenticated });
       fs.writeFileSync(CONFIG_PATH, yaml.dump(merged));
       logger.info("Budget limits updated via API");
       return json(res, { status: "ok" });
