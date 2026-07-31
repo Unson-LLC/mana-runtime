@@ -114,6 +114,44 @@ readiness check. A Story resume requires its worktree to still exist under
 `worktreesRoot`; a missing worktree fails closed as `failed`, not as a fresh
 Story.
 
+## needs_input gate results and the Gate-resolution continue round
+
+When `vibepro pr ship --dry-run` finds unresolved gates (no `pr create` next
+command), the runner no longer returns a single truncated English sentence.
+It parses the `pr ship` report into a structured `gates` array —
+`[{severity: "critical" | "evidence", text}, ...]`, bounded to 30 entries of
+at most 500 characters each (`critical_gate` lines map to `"critical"`,
+`waiver_or_evidence` lines to `"evidence"`) — and attaches it to the
+`needs_input` result alongside `commits: {count, subjects}`: commits made in
+the Story worktree since the run's baseline HEAD, with `subjects` holding up
+to 5 newest-first commit messages (the runner's own `chore: record ...`
+bookkeeping commits are counted but excluded from `subjects`). `commits` is
+also attached to `pr_ready` results for the same "what actually happened"
+visibility. Both fields are validated fail-closed by the gateway
+(`packages/jimmy/src/sessions/development-runner.ts`) with the same bounds.
+
+The gateway renders this as a "成果報告＋次の一手" Block Kit card (see
+`packages/jimmy/src/connectors/slack/vibepro-gate-result.ts`) instead of the
+old plain-text dump: what was accomplished (commit count + subjects, when
+non-zero), the remaining gates grouped by severity with a bounded preview and
+a "📄 全Gate詳細" button for the full list, and a "🔁 続行してGateを解消させる"
+button. A `needs_input` result with no `gates` (for example an agent crash
+before `pr ship` ever ran) falls back to a short plain-text notice —
+needs_input is a dead end in that case, same as before this change.
+
+Pressing "続行してGateを解消させる" sends a third stdin shape,
+`{"storyId": "...", "continueGates": true}`, mutually exclusive with both
+`{"request": "..."}` and the `answers` resume shape. The runner reuses the
+existing worktree (same existence/containment check as the answers resume
+path) and re-runs the agent with a prompt that tells it to run
+`vibepro pr ship --dry-run` itself, read the remaining gates, and resolve them
+through evidence recording, review dispatch, or scope trims — gates that
+genuinely need a human waiver decision may be left unresolved. No Story-doc
+change is made before this run (unlike the answers resume path, there is no
+human answer to record), and the run then falls through to the same
+`pr ship --dry-run` readiness check as every other path — it may again land
+on `needs_input` with a shorter gate list, or reach `pr_ready`.
+
 The gateway also keeps an in-process busy flag, but the development user's
 lock directory is the authoritative cross-restart guard. The runner removes it
 only after its VibePro child has closed. If the host or runner is killed
@@ -195,7 +233,36 @@ mid-run kills the runner and strands the fail-closed lock (observed
 
 ### Release note
 
-The runner version advances to `2026-07-31.2`. It adds automatic stale-lock
+The runner version advances to `2026-07-31.4`. `needs_input` results caused
+by unresolved VibePro gates now carry a structured `gates` array
+(`{severity, text}`, bounded to 30 entries of 500 chars) instead of a single
+truncated sentence, and `needs_input`/`pr_ready` results carry a `commits`
+object (`{count, subjects}`, up to 5 newest-first non-bookkeeping subjects) so
+Slack can show what was actually accomplished. A new stdin shape
+`{"storyId", "continueGates": true}` continues a Story that stopped at
+`needs_input` by re-running the agent in the same worktree with an
+instruction to resolve the remaining gates itself, then falling through to
+the same `pr ship --dry-run` readiness check — see the "needs_input gate
+results and the Gate-resolution continue round" section above. The gateway
+renders the new fields as a Block Kit "成果報告＋次の一手" card with
+continue/details buttons instead of the old plain-text dump. Both new fields
+are optional and validated fail-closed by the gateway; the existing
+`{"request"}` and `{"storyId", "answers"}` stdin shapes and result fields are
+unchanged.
+
+The previous version `2026-07-31.3` added progress reporting. While the agent
+session runs, the runner writes `PROGRESS <json>` lines directly to its own
+stderr every 60 seconds — `{"phase":"agent","elapsedSec":N,"commits":N,"latest":"..."}`
+(the `latest` commit subject is only present once there is at least one
+commit) — plus a single `{"phase":"gate","elapsedSec":N,"commits":N}` line
+when `vibepro pr ship --dry-run` starts. The gateway parses these to refresh
+the Slack "typing" status with real elapsed time / commit count / latest
+commit subject instead of a static "開発中…" string; unparseable lines are
+ignored and progress reporting never affects the run itself (git failures
+fail silent). The stdin/stdout result contract is unchanged; only
+`runnerVersion` must advance in lockstep.
+
+The previous version `2026-07-31.2` added automatic stale-lock
 reclamation at startup (see the lock section above): a lock whose owner pid is
 provably dead and whose development user has no surviving processes is removed
 and re-acquired instead of failing the request. All uncertain cases keep the

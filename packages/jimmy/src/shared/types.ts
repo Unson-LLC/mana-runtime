@@ -160,6 +160,40 @@ export interface DevelopmentAnswer {
   answer: string;
 }
 
+/**
+ * One unresolved VibePro gate reported by `vibepro pr ship --dry-run` when a
+ * `/vibepro` Story stops with `needs_input`. `critical` maps to a
+ * `critical_gate` line, `evidence` to a `waiver_or_evidence` line.
+ */
+export interface DevelopmentGate {
+  severity: "critical" | "evidence";
+  text: string;
+}
+
+/**
+ * Commits made in the isolated Story worktree since the run's baseline HEAD,
+ * reported alongside `needs_input`/`pr_ready` results so Slack can show
+ * "here is what was actually done" instead of a bare status. `subjects` is
+ * newest-first and bounded to a handful of entries.
+ */
+export interface DevelopmentCommits {
+  count: number;
+  subjects: string[];
+}
+
+/**
+ * One progress snapshot the isolated VibePro development runner reports
+ * while a `/vibepro` request is in flight, parsed from a `PROGRESS <json>`
+ * line on the runner's stderr. Used to refresh the Slack "typing" status
+ * with real progress instead of a static "開発中…" string.
+ */
+export interface DevelopmentProgress {
+  phase: "agent" | "gate";
+  elapsedSec: number;
+  commits: number;
+  latest?: string;
+}
+
 export interface Connector {
   name: string;
   start(): Promise<void>;
@@ -185,6 +219,16 @@ export interface Connector {
   postDecisionQuestions?(
     target: Target,
     payload: { storyId: string; questions: DevelopmentQuestion[]; summary: string },
+  ): Promise<void>;
+  /**
+   * Posts a "成果報告＋次の一手" card for a `/vibepro needs_input` result
+   * whose VibePro gates are not yet resolved (e.g. a Slack Block Kit card
+   * with resume/detail buttons). Connectors that don't implement this leave
+   * it undefined; callers must fall back to a plain-text `replyMessage`.
+   */
+  postDevelopmentNeedsInput?(
+    target: Target,
+    payload: { storyId: string; summary: string; gates?: DevelopmentGate[]; commits?: DevelopmentCommits },
   ): Promise<void>;
 }
 

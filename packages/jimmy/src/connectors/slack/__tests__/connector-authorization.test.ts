@@ -275,6 +275,57 @@ describe("SlackConnector authorization", () => {
     });
   });
 
+  it("postDevelopmentNeedsInput posts a Block Kit gate card when the runner is enabled and gates are present", async () => {
+    const { connector } = await setup({ enabled: true, allowFrom: ["U_ALLOWED"] });
+
+    await connector.postDevelopmentNeedsInput(
+      { channel: "C_PILOT", thread: "THREAD_TS" },
+      {
+        storyId: "story-x",
+        summary: "gates remain",
+        gates: [{ severity: "critical", text: "missing threat model" }],
+        commits: { count: 1, subjects: ["feat: x"] },
+      },
+    );
+
+    expect(bolt.client.apiCall).toHaveBeenCalledWith("chat.postMessage", expect.objectContaining({
+      channel: "C_PILOT",
+      thread_ts: "THREAD_TS",
+      blocks: expect.any(Array),
+    }));
+  });
+
+  it("postDevelopmentNeedsInput falls back to plain text when there are no gates", async () => {
+    const { connector } = await setup({ enabled: true, allowFrom: ["U_ALLOWED"] });
+
+    await connector.postDevelopmentNeedsInput(
+      { channel: "C_PILOT", thread: "THREAD_TS" },
+      { storyId: "story-x", summary: "agent crashed before shipping" },
+    );
+
+    expect(bolt.client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C_PILOT",
+      thread_ts: "THREAD_TS",
+      text: expect.stringContaining("agent crashed before shipping"),
+    }));
+    expect(bolt.client.apiCall).not.toHaveBeenCalledWith("chat.postMessage", expect.objectContaining({ blocks: expect.anything() }));
+  });
+
+  it("postDevelopmentNeedsInput falls back to plain text when the development runner is disabled", async () => {
+    const { connector } = await setup({ enabled: false });
+
+    await connector.postDevelopmentNeedsInput(
+      { channel: "C_PILOT", thread: "THREAD_TS" },
+      { storyId: "story-x", summary: "gates remain", gates: [{ severity: "critical", text: "x" }] },
+    );
+
+    expect(bolt.client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C_PILOT",
+      thread_ts: "THREAD_TS",
+      text: expect.stringContaining("gates remain"),
+    }));
+  });
+
   it("drops an unauthorized follow-up before an engaged-thread exception", async () => {
     const { handler } = await setup();
 

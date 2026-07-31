@@ -40,6 +40,8 @@ import {
   formatDevelopmentResult,
   runDevelopmentRequest,
   type DevelopmentAnswer,
+  type DevelopmentContinueGatesRequest,
+  type DevelopmentProgress,
   type DevelopmentResult,
 } from "./development-runner.js";
 import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
@@ -140,6 +142,29 @@ function placementTransportMeta(meta: Session["transportMeta"]): Session["transp
   const clean = { ...((meta || {}) as Record<string, unknown>) };
   for (const key of ["engineOverride", "engineSessions", "claudeSyncSince"]) delete clean[key];
   return clean as Session["transportMeta"];
+}
+
+const MAX_TYPING_STATUS_CHARS = 120;
+
+/**
+ * Renders one `DevelopmentProgress` snapshot from the isolated `/vibepro`
+ * runner as the Slack "typing" status text. `latest` is the agent's own
+ * commit subject line, so it is re-sanitized here (newline-collapsed) even
+ * though the runner already bounds it — defense in depth against untrusted
+ * content ending up verbatim in a Slack status.
+ */
+function formatDevelopmentProgress(progress: DevelopmentProgress): string {
+  const minutes = Math.floor(progress.elapsedSec / 60);
+  let text: string;
+  if (progress.phase === "gate") {
+    text = `Gate検証中 ${minutes}分 / commit ${progress.commits}件`;
+  } else if (progress.commits > 0) {
+    const latest = (progress.latest ?? "").replace(/\s+/g, " ").trim();
+    text = latest ? `開発中 ${minutes}分 / commit ${progress.commits}件: ${latest}` : `開発中 ${minutes}分 / commit ${progress.commits}件`;
+  } else {
+    text = `開発中 ${minutes}分 — Storyを分析しています`;
+  }
+  return text.length > MAX_TYPING_STATUS_CHARS ? `${text.slice(0, MAX_TYPING_STATUS_CHARS - 1)}…` : text;
 }
 
 export class SessionManager {
@@ -1432,7 +1457,7 @@ export class SessionManager {
    */
   private runDevelopmentFlow(
     config: NonNullable<JinnConfig["developmentRunner"]>,
-    request: string | { storyId: string; answers: DevelopmentAnswer[] },
+    request: string | { storyId: string; answers: DevelopmentAnswer[] } | DevelopmentContinueGatesRequest,
     connector: Connector,
     target: Target,
   ): void {
@@ -1440,7 +1465,20 @@ export class SessionManager {
     if (connector.setTypingStatus && target.thread) {
       connector.setTypingStatus(target.channel, target.thread, "開発中…").catch(() => {});
     }
-    void runDevelopmentRequest(config, request)
+    // Refreshes the fixed "開発中…" banner with real progress (elapsed time,
+    // commit count, latest commit subject) once the isolated runner starts
+    // reporting it. Deduped against the last text sent so a no-op tick
+    // (e.g. two agent-phase snapshots in a row with the same commit count)
+    // doesn't trigger a redundant Slack API call.
+    let lastProgressText: string | null = null;
+    const onProgress = (progress: DevelopmentProgress) => {
+      if (!connector.setTypingStatus || !target.thread) return;
+      const text = formatDevelopmentProgress(progress);
+      if (text === lastProgressText) return;
+      lastProgressText = text;
+      connector.setTypingStatus(target.channel, target.thread, text).catch(() => {});
+    };
+    void runDevelopmentRequest(config, request, undefined, onProgress)
       .then((result) => this.deliverDevelopmentResult(result, connector, target))
       .catch((error) => {
         logger.error(`Development runner failed: ${error instanceof Error ? error.message : "unknown error"}`);
@@ -1463,6 +1501,15 @@ export class SessionManager {
       });
       return;
     }
+    if (result.status === "needs_input" && result.storyId && connector.postDevelopmentNeedsInput) {
+      await connector.postDevelopmentNeedsInput(target, {
+        storyId: result.storyId,
+        summary: result.summary,
+        gates: result.gates,
+        commits: result.commits,
+      });
+      return;
+    }
     await connector.replyMessage(target, formatDevelopmentResult(result));
   }
 
@@ -1477,6 +1524,22 @@ export class SessionManager {
     if (!config?.enabled) return false;
     if (this.developmentRunning) return false;
     this.runDevelopmentFlow(config, { storyId, answers }, connector, target);
+    return true;
+  }
+
+  /**
+   * Continues a Story that previously stopped with `needs_input` because
+   * VibePro gates were unresolved, after a human clicked the "続行してGateを
+   * 解消させる" button on the needs_input result card. Re-runs the agent in
+   * the same worktree and delivers the next result through the same
+   * `deliverDevelopmentResult` path (which may again be a needs_input gate
+   * card if some gates still require human judgment).
+   */
+  continueDevelopmentGates(storyId: string, connector: Connector, target: Target): boolean {
+    const config = this.config.developmentRunner;
+    if (!config?.enabled) return false;
+    if (this.developmentRunning) return false;
+    this.runDevelopmentFlow(config, { storyId, continueGates: true }, connector, target);
     return true;
   }
 

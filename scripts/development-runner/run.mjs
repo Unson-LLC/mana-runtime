@@ -10,7 +10,16 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-31.2";
+export const RUNNER_VERSION = "2026-07-31.4";
+
+// ─── Progress reporting (Slack typing status) ───
+// While the agent runs, the runner emits `PROGRESS <json>` lines directly to
+// its own stderr (not the child's) so the gateway can parse them in real
+// time and refresh the Slack "typing" status with actual progress instead of
+// a static "開発中…" string. Emission is fail-silent: a git failure here must
+// never abort the development run itself.
+const PROGRESS_INTERVAL_MS = 60_000;
+const MAX_PROGRESS_LATEST_CHARS = 200;
 
 // ─── Human-in-the-loop question/answer contract ───
 const QUESTIONS_RELATIVE_PATH = path.join(".openryoko", "questions.json");
@@ -23,6 +32,14 @@ const MAX_ANSWERS = 10;
 const MAX_ANSWER_CHARS = 2000;
 const STORY_ID_RE = /^story-[a-z0-9-]+$/;
 const QUESTION_ID_RE = /^[a-z0-9_-]{1,64}$/;
+
+// ─── Gate-resolution result contract (needs_input "成果報告＋次の一手") ───
+const MAX_GATES = 30;
+const MAX_GATE_TEXT_CHARS = 500;
+const MAX_COMMIT_SUBJECTS = 5;
+const MAX_COMMIT_SUBJECT_CHARS = 200;
+const MAX_COMMIT_COUNT = 10000;
+const CHORE_RECORD_COMMIT_RE = /^chore: record /;
 
 function defaultIsPidAlive(pid) {
   try {
@@ -294,12 +311,15 @@ function validateAnswer(raw) {
 
 /**
  * Parses and validates the single JSON object the runner reads from stdin.
- * Exactly one of the two shapes is accepted:
+ * Exactly one of three shapes is accepted:
  *   - `{"request": string}` — start a new Story.
  *   - `{"storyId": string, "answers": [{id, answer}, ...]}` — resume a Story
  *     that previously stopped with `needs_decision`.
- * Any other shape (unknown fields, both shapes present, wrong types) fails
- * closed with an error — this stdin payload is untrusted gateway input.
+ *   - `{"storyId": string, "continueGates": true}` — continue a Story that
+ *     previously stopped with `needs_input` because VibePro gates were
+ *     unresolved.
+ * Any other shape (unknown fields, more than one shape present, wrong types)
+ * fails closed with an error — this stdin payload is untrusted gateway input.
  */
 export async function readStdin() {
   let input = "";
@@ -311,7 +331,9 @@ export async function readStdin() {
   if (!isPlainObject(parsed)) throw new Error("unsupported request field");
   const keys = Object.keys(parsed);
   const hasRequest = keys.includes("request");
-  const hasResume = keys.includes("storyId") || keys.includes("answers");
+  const hasAnswers = keys.includes("answers");
+  const hasContinueGates = keys.includes("continueGates");
+  const hasResume = keys.includes("storyId") || hasAnswers || hasContinueGates;
 
   if (hasRequest && hasResume) throw new Error("request and storyId/answers are mutually exclusive");
 
@@ -321,6 +343,14 @@ export async function readStdin() {
       throw new Error("invalid request");
     }
     return { mode: "new", request: parsed.request.trim() };
+  }
+
+  if (hasContinueGates) {
+    if (hasAnswers) throw new Error("continueGates and answers are mutually exclusive");
+    if (keys.some((key) => key !== "storyId" && key !== "continueGates")) throw new Error("unsupported request field");
+    if (typeof parsed.storyId !== "string" || !STORY_ID_RE.test(parsed.storyId)) throw new Error("invalid storyId");
+    if (parsed.continueGates !== true) throw new Error("invalid continueGates");
+    return { mode: "continueGates", storyId: parsed.storyId };
   }
 
   if (keys.some((key) => key !== "storyId" && key !== "answers")) throw new Error("unsupported request field");
@@ -510,6 +540,32 @@ export function buildResumeAgentPrompt(storyId, baseBranch) {
   ].join("\n");
 }
 
+export function buildContinueGatesAgentPrompt(storyId, baseBranch) {
+  return [
+    "あなたはOpenRyokoの自己開発セッションです。隔離worktreeの中で、VibePro CLIを制御プレーンとして使いながら、前回Gate未解決で停止したStoryのGate解消ラウンドを実行してください。",
+    "",
+    "## 再開の経緯",
+    "",
+    `- Story ID は ${storyId}。このStoryは \`vibepro pr ship . --base ${baseBranch} --head codex/${storyId} --story-id ${storyId} --dry-run\` を実行した結果、Gateが未解決のまま停止した。`,
+    "- まず自分で上記の `vibepro pr ship ... --dry-run` を実行し、残っているGate（critical_gate / waiver_or_evidence）を確認せよ。",
+    "",
+    "## 進め方",
+    "",
+    "- 確認したGateを、evidence記録・レビューdispatch・スコープ混入の修正など、実際の作業で解消せよ。証跡の捏造は禁止。",
+    "- Gateの多くは `vibepro verify record` や `vibepro review record` などVibePro CLIの正規コマンドで解消する。",
+    "- 人間の判断が必要なGate（waiver判断など）は無理に通さず、残したままでよい。",
+    "- 変更は意図ごとに小さくコミットする。",
+    "",
+    "## 安全境界(違反禁止)",
+    "",
+    "- PR作成・merge・push・deploy・secretsの変更・runtime本体checkoutの変更は行わない。pr_ready 相当で停止する。",
+    "- このworktreeの外のファイルを変更しない。",
+    "- `vibepro pr create` / `git push` / `gh` は実行しない。",
+    "",
+    "完了したら、最後に到達状態(gateの残り、未解決事項)を簡潔に報告して終了する。",
+  ].join("\n");
+}
+
 export function buildAgentArgs(prompt) {
   return ["-p", "--dangerously-skip-permissions", prompt];
 }
@@ -532,13 +588,71 @@ export function extractBlockingGates(stdout) {
   return [...stdout.matchAll(/^- (?:critical_gate|waiver_or_evidence): (.+)$/gm)].map((m) => m[1]);
 }
 
-export function resultFromAgentRun(shipStdout, storyId) {
-  if (parsePrShipReadiness(shipStdout)) {
-    return { status: "pr_ready", storyId, summary: "VibePro gates are ready. PR creation requires a human action." };
+/**
+ * Structured version of `extractBlockingGates`: pairs each unresolved gate
+ * line with its severity (`critical` for `critical_gate`, `evidence` for
+ * `waiver_or_evidence`) and bounds the result to `MAX_GATES` entries of at
+ * most `MAX_GATE_TEXT_CHARS` each, so the Slack "残Gate" card never has to
+ * truncate mid-run and the gateway's fail-closed validator always accepts
+ * it. `totalCount` preserves the true count even when more gates were
+ * reported than fit in `gates`.
+ */
+export function extractGates(stdout) {
+  const matches = [...stdout.matchAll(/^- (critical_gate|waiver_or_evidence): (.+)$/gm)];
+  const all = matches.map((m) => ({
+    severity: m[1] === "critical_gate" ? "critical" : "evidence",
+    text: m[2].length > MAX_GATE_TEXT_CHARS ? m[2].slice(0, MAX_GATE_TEXT_CHARS) : m[2],
+  }));
+  return { gates: all.slice(0, MAX_GATES), totalCount: all.length };
+}
+
+/** True for the Story-doc/answers bookkeeping commits the runner itself makes. */
+export function isChoreRecordCommit(subject) {
+  return CHORE_RECORD_COMMIT_RE.test(subject);
+}
+
+/**
+ * Counts commits made in `worktree` since `baselineSha` and returns up to
+ * `MAX_COMMIT_SUBJECTS` of the newest non-bookkeeping subjects (the
+ * runner's own `chore: record ...` Story/answers commits are excluded from
+ * the visible list but still counted). Never throws — commit reporting is
+ * best-effort and must not affect the development run itself.
+ */
+export async function collectCommits(worktree, baselineSha) {
+  if (!baselineSha) return { count: 0, subjects: [] };
+  try {
+    const log = await runCommand("/usr/bin/git", ["log", "--format=%s", `${baselineSha}..HEAD`], { cwd: worktree });
+    const subjects = log.split("\n").filter((line) => line.length > 0);
+    const count = Math.min(subjects.length, MAX_COMMIT_COUNT);
+    const visible = subjects
+      .filter((subject) => !isChoreRecordCommit(subject))
+      .slice(0, MAX_COMMIT_SUBJECTS)
+      .map((subject) => (subject.length > MAX_COMMIT_SUBJECT_CHARS ? subject.slice(0, MAX_COMMIT_SUBJECT_CHARS) : subject));
+    return { count, subjects: visible };
+  } catch {
+    return { count: 0, subjects: [] };
   }
-  const gates = extractBlockingGates(shipStdout);
-  const detail = gates.length > 0 ? ` ${gates.length} gate(s) remain, e.g.: ${gates[0].slice(0, 200)}` : "";
-  return { status: "needs_input", storyId, summary: `VibePro gates are not resolved yet.${detail} Review the worktree before resuming.` };
+}
+
+export function resultFromAgentRun(shipStdout, storyId, commits) {
+  const commitsField = commits !== undefined ? { commits } : {};
+  if (parsePrShipReadiness(shipStdout)) {
+    return {
+      status: "pr_ready",
+      storyId,
+      summary: "VibePro gates are ready. PR creation requires a human action.",
+      ...commitsField,
+    };
+  }
+  const { gates, totalCount } = extractGates(shipStdout);
+  const detail = totalCount > 0 ? ` ${totalCount} gate(s) remain, e.g.: ${gates[0].text}` : "";
+  return {
+    status: "needs_input",
+    storyId,
+    summary: `VibePro gates are not resolved yet.${detail} Review the worktree before resuming.`,
+    ...(gates.length > 0 ? { gates } : {}),
+    ...commitsField,
+  };
 }
 
 export function resultFromQuestions(storyId, questions) {
@@ -601,21 +715,107 @@ async function resolveExistingWorktree(worktreesRoot, storyId) {
   return resolved;
 }
 
+/**
+ * Builds one `PROGRESS ` stderr line. `phase` is `"agent"` while the Claude
+ * Code agent session is running, or `"gate"` for the single line emitted
+ * when `vibepro pr ship --dry-run` starts. `latest` (the newest commit
+ * subject since the run's baseline HEAD) is only included when there is at
+ * least one commit — matching the human-readable "0 commits, still
+ * analyzing" vs. "N commits, latest: ..." distinction the gateway renders.
+ */
+export function buildProgressLine(phase, elapsedSec, commits, latest) {
+  const payload = { phase, elapsedSec, commits };
+  if (phase === "agent" && commits > 0 && typeof latest === "string" && latest.length > 0) {
+    payload.latest = latest.replace(/\s+/g, " ").trim().slice(0, MAX_PROGRESS_LATEST_CHARS);
+  }
+  return `PROGRESS ${JSON.stringify(payload)}`;
+}
+
+/** Reads the current HEAD sha of a worktree; used as the progress baseline. */
+async function getHeadSha(worktree) {
+  return (await runCommand("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: worktree })).trim();
+}
+
+/**
+ * Counts commits made since `baselineSha` and returns the newest commit's
+ * subject line. Never throws to the caller — progress reporting must not be
+ * able to affect the development run itself.
+ */
+async function readProgressSnapshot(worktree, baselineSha) {
+  try {
+    const log = await runCommand("/usr/bin/git", ["log", "--format=%s", `${baselineSha}..HEAD`], { cwd: worktree });
+    const subjects = log.split("\n").filter((line) => line.length > 0);
+    return { commits: subjects.length, latest: subjects[0] };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Starts a 60s-interval timer that emits `agent`-phase PROGRESS lines to
+ * this process's own stderr. Returns a stopper that must always be called
+ * (agent success, agent failure, or timeout) to clear the timer. Returns a
+ * no-op stopper when `baselineSha` could not be determined.
+ */
+function startAgentProgressReporting(worktree, baselineSha, startedAt) {
+  if (!baselineSha) return () => {};
+  const tick = async () => {
+    const snapshot = await readProgressSnapshot(worktree, baselineSha);
+    if (!snapshot) return;
+    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+    process.stderr.write(`${buildProgressLine("agent", elapsedSec, snapshot.commits, snapshot.latest)}\n`);
+  };
+  const timer = setInterval(() => { void tick(); }, PROGRESS_INTERVAL_MS);
+  return () => clearInterval(timer);
+}
+
+/** Emits the single `gate`-phase PROGRESS line when `pr ship` starts. */
+async function emitGateProgress(worktree, baselineSha, startedAt) {
+  if (!baselineSha) return;
+  const snapshot = await readProgressSnapshot(worktree, baselineSha);
+  if (!snapshot) return;
+  const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+  process.stderr.write(`${buildProgressLine("gate", elapsedSec, snapshot.commits, snapshot.latest)}\n`);
+}
+
 async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv, agentEnv, config) {
+  const startedAt = Date.now();
+  let baselineSha = null;
+  try {
+    baselineSha = await getHeadSha(worktree);
+  } catch {
+    // Fail silent: progress reporting is best-effort, never blocks the run.
+  }
+  const stopProgress = startAgentProgressReporting(worktree, baselineSha, startedAt);
+
   try {
     await runCommand(config.claudeBin, agentArgv, { cwd: worktree, timeoutMs: config.maxDurationMs, extraEnv: agentEnv });
   } catch (error) {
+    stopProgress();
     const reason = (error instanceof Error ? error.message : "unknown agent error").replace(/\s+/g, " ").slice(0, 200);
-    emit({ status: "needs_input", storyId, summary: `Development agent stopped (${reason}). Inspect the worktree before resuming.` });
+    const commits = await collectCommits(worktree, baselineSha);
+    emit({
+      status: "needs_input",
+      storyId,
+      summary: `Development agent stopped (${reason}). Inspect the worktree before resuming.`,
+      commits,
+    });
     return;
   }
+  stopProgress();
 
   let questions = null;
   try {
     questions = await readQuestionsFile(worktree);
   } catch (error) {
     const reason = (error instanceof Error ? error.message : "unknown validation error").replace(/\s+/g, " ").slice(0, 200);
-    emit({ status: "needs_input", storyId, summary: `The agent wrote an invalid questions document (${reason}). Inspect the worktree before resuming.` });
+    const commits = await collectCommits(worktree, baselineSha);
+    emit({
+      status: "needs_input",
+      storyId,
+      summary: `The agent wrote an invalid questions document (${reason}). Inspect the worktree before resuming.`,
+      commits,
+    });
     return;
   }
   if (questions) {
@@ -623,12 +823,15 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     return;
   }
 
+  await emitGateProgress(worktree, baselineSha, startedAt);
+
   const shipStdout = await runCommand(
     config.vibeproBin,
     buildPrShipArgs(storyId, branch, baseBranch),
     { cwd: worktree, timeoutMs: 300_000 },
   );
-  emit(resultFromAgentRun(shipStdout, storyId));
+  const commits = await collectCommits(worktree, baselineSha);
+  emit(resultFromAgentRun(shipStdout, storyId, commits));
 }
 
 async function runNewStory(request, config) {
@@ -701,6 +904,31 @@ async function resumeStory(storyId, answers, config) {
   );
 }
 
+/**
+ * Continues a Story that previously stopped with `needs_input` because
+ * VibePro gates were unresolved. Reuses the existing worktree (same
+ * existence/containment check as `resumeStory`) and re-runs the agent with a
+ * prompt instructing it to re-derive the remaining gates itself and resolve
+ * what it safely can. Unlike `resumeStory`, there is no human answer to
+ * record onto the Story doc, so no commit is made before the agent runs.
+ */
+async function continueGatesStory(storyId, config) {
+  const worktree = await resolveExistingWorktree(config.worktreesRoot, storyId);
+  const branch = `codex/${storyId}`;
+  const baseBranch = config.baseRef.replace(/^origin\//, "");
+
+  const agentEnv = config.agentEnvFile ? parseEnvFile(await readFile(config.agentEnvFile, "utf8")) : {};
+  await runAgentAndShip(
+    worktree,
+    storyId,
+    branch,
+    baseBranch,
+    buildAgentArgs(buildContinueGatesAgentPrompt(storyId, baseBranch)),
+    agentEnv,
+    config,
+  );
+}
+
 export async function main() {
 let releaseLock;
 try {
@@ -711,6 +939,8 @@ try {
 
   if (payload.mode === "new") {
     await runNewStory(payload.request, config);
+  } else if (payload.mode === "continueGates") {
+    await continueGatesStory(payload.storyId, config);
   } else {
     await resumeStory(payload.storyId, payload.answers, config);
   }

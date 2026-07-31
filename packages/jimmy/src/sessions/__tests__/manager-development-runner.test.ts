@@ -140,6 +140,8 @@ describe("SessionManager Human-in-the-Loop resume", () => {
     expect(runDevelopmentRequest).toHaveBeenCalledWith(
       expect.objectContaining({ enabled: true }),
       { storyId: "story-x", answers },
+      undefined,
+      expect.any(Function),
     );
     await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("pr_ready")));
   });
@@ -170,6 +172,96 @@ describe("SessionManager Human-in-the-Loop resume", () => {
 
     await manager.handleCommand(message("/develop change docs"), slack);
     await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("needs_decision")));
+  });
+});
+
+describe("SessionManager needs_input gate result delivery", () => {
+  const target = { channel: "C1", thread: "T1" };
+  const gates = [{ severity: "critical" as const, text: "missing threat model" }];
+  const commits = { count: 2, subjects: ["feat: a"] };
+
+  beforeEach(() => {
+    runDevelopmentRequest.mockReset();
+  });
+
+  it("posts a gate result card via postDevelopmentNeedsInput when the connector supports it", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({
+      status: "needs_input", storyId: "story-x", summary: "gates remain", gates, commits,
+    });
+    const postDevelopmentNeedsInput = vi.fn().mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector("slack", { postDevelopmentNeedsInput });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(postDevelopmentNeedsInput).toHaveBeenCalledWith(target, {
+      storyId: "story-x", summary: "gates remain", gates, commits,
+    }));
+    expect(slack.replyMessage).not.toHaveBeenCalledWith(target, expect.stringContaining("needs_input"));
+  });
+
+  it("falls back to plain text when the connector has no postDevelopmentNeedsInput support", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({
+      status: "needs_input", storyId: "story-x", summary: "gates remain", gates, commits,
+    });
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector();
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("needs_input")));
+  });
+
+  it("falls back to plain text for a needs_input result without a storyId", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({ status: "needs_input", summary: "agent crashed" });
+    const postDevelopmentNeedsInput = vi.fn().mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector("slack", { postDevelopmentNeedsInput });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("needs_input")));
+    expect(postDevelopmentNeedsInput).not.toHaveBeenCalled();
+  });
+});
+
+describe("SessionManager continueDevelopmentGates", () => {
+  const target = { channel: "C1", thread: "T1" };
+
+  beforeEach(() => {
+    runDevelopmentRequest.mockReset();
+  });
+
+  it("does not continue while the runner is disabled", () => {
+    const manager = new SessionManager(config(false), new Map(), ["slack"]);
+    const slack = connector();
+    expect(manager.continueDevelopmentGates("story-x", slack, target)).toBe(false);
+    expect(runDevelopmentRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not continue a second time while one development task is already running", async () => {
+    let resolve!: (value: unknown) => void;
+    runDevelopmentRequest.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector();
+
+    expect(manager.continueDevelopmentGates("story-x", slack, target)).toBe(true);
+    expect(manager.continueDevelopmentGates("story-x", slack, target)).toBe(false);
+    expect(runDevelopmentRequest).toHaveBeenCalledOnce();
+    resolve({ status: "failed", summary: "stopped" });
+    await vi.waitFor(() => expect(runDevelopmentRequest).toHaveBeenCalledOnce());
+  });
+
+  it("continues with the storyId/continueGates payload and delivers the result", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({ status: "pr_ready", storyId: "story-x", summary: "ready" });
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector();
+
+    expect(manager.continueDevelopmentGates("story-x", slack, target)).toBe(true);
+    expect(runDevelopmentRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+      { storyId: "story-x", continueGates: true },
+      undefined,
+      expect.any(Function),
+    );
+    await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("pr_ready")));
   });
 });
 
@@ -230,6 +322,72 @@ describe("SessionManager /develop threaded typing-status UX", () => {
     await manager.handleCommand(message("/develop change docs"), slack);
     await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000300", ""));
     expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000300", "開発中…");
+  });
+
+  it("refreshes the typing status with real progress: 0 commits", async () => {
+    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+    runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "agent", elapsedSec: 65, commits: 0 });
+      return { status: "pr_ready", storyId: "story-x", summary: "ready" };
+    });
+    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000400").mockResolvedValueOnce(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith(
+      "C1", "1700000000.000400", "開発中 1分 — Storyを分析しています",
+    ));
+  });
+
+  it("refreshes the typing status with real progress: N commits includes the latest subject", async () => {
+    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+    runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "agent", elapsedSec: 130, commits: 3, latest: "fix(slack): report progress" });
+      return { status: "pr_ready", storyId: "story-x", summary: "ready" };
+    });
+    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000500").mockResolvedValueOnce(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith(
+      "C1", "1700000000.000500", "開発中 2分 / commit 3件: fix(slack): report progress",
+    ));
+  });
+
+  it("refreshes the typing status with real progress: gate phase", async () => {
+    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+    runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "gate", elapsedSec: 240, commits: 5 });
+      return { status: "pr_ready", storyId: "story-x", summary: "ready" };
+    });
+    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000600").mockResolvedValueOnce(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith(
+      "C1", "1700000000.000600", "Gate検証中 4分 / commit 5件",
+    ));
+  });
+
+  it("skips a redundant setTypingStatus call when consecutive progress ticks render identical text", async () => {
+    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+    runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "agent", elapsedSec: 60, commits: 1, latest: "same subject" });
+      onProgress?.({ phase: "agent", elapsedSec: 65, commits: 1, latest: "same subject" });
+      return { status: "pr_ready", storyId: "story-x", summary: "ready" };
+    });
+    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000700").mockResolvedValueOnce(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000700", ""));
+
+    const progressCalls = setTypingStatus.mock.calls.filter((call) => call[2] === "開発中 1分 / commit 1件: same subject");
+    expect(progressCalls).toHaveLength(1);
   });
 
   it("sets the typing status on the resume path too", async () => {
