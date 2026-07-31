@@ -40,6 +40,7 @@ import {
   formatDevelopmentResult,
   runDevelopmentRequest,
   type DevelopmentAnswer,
+  type DevelopmentContinueGatesRequest,
   type DevelopmentProgress,
   type DevelopmentResult,
 } from "./development-runner.js";
@@ -1456,7 +1457,7 @@ export class SessionManager {
    */
   private runDevelopmentFlow(
     config: NonNullable<JinnConfig["developmentRunner"]>,
-    request: string | { storyId: string; answers: DevelopmentAnswer[] },
+    request: string | { storyId: string; answers: DevelopmentAnswer[] } | DevelopmentContinueGatesRequest,
     connector: Connector,
     target: Target,
   ): void {
@@ -1500,6 +1501,15 @@ export class SessionManager {
       });
       return;
     }
+    if (result.status === "needs_input" && result.storyId && connector.postDevelopmentNeedsInput) {
+      await connector.postDevelopmentNeedsInput(target, {
+        storyId: result.storyId,
+        summary: result.summary,
+        gates: result.gates,
+        commits: result.commits,
+      });
+      return;
+    }
     await connector.replyMessage(target, formatDevelopmentResult(result));
   }
 
@@ -1514,6 +1524,22 @@ export class SessionManager {
     if (!config?.enabled) return false;
     if (this.developmentRunning) return false;
     this.runDevelopmentFlow(config, { storyId, answers }, connector, target);
+    return true;
+  }
+
+  /**
+   * Continues a Story that previously stopped with `needs_input` because
+   * VibePro gates were unresolved, after a human clicked the "続行してGateを
+   * 解消させる" button on the needs_input result card. Re-runs the agent in
+   * the same worktree and delivers the next result through the same
+   * `deliverDevelopmentResult` path (which may again be a needs_input gate
+   * card if some gates still require human judgment).
+   */
+  continueDevelopmentGates(storyId: string, connector: Connector, target: Target): boolean {
+    const config = this.config.developmentRunner;
+    if (!config?.enabled) return false;
+    if (this.developmentRunning) return false;
+    this.runDevelopmentFlow(config, { storyId, continueGates: true }, connector, target);
     return true;
   }
 
