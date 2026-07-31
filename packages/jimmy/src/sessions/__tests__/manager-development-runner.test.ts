@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runDevelopmentRequest = vi.hoisted(() => vi.fn());
 vi.mock("../development-runner.js", async (importOriginal) => ({
@@ -43,12 +43,13 @@ function message(text: string): IncomingMessage {
   } as unknown as IncomingMessage;
 }
 
-function connector(name = "slack"): Connector {
+function connector(name = "slack", extra: Partial<Connector> = {}): Connector {
   return {
     name,
     start: vi.fn(), stop: vi.fn(), onMessage: vi.fn(),
     replyMessage: vi.fn().mockResolvedValue(undefined),
     reconstructTarget: vi.fn(() => ({ channel: "C1", thread: "T1" })),
+    ...extra,
   } as unknown as Connector;
 }
 
@@ -99,5 +100,75 @@ describe("SessionManager /develop boundary", () => {
     );
     resolve({ status: "failed", summary: "stopped" });
     await vi.waitFor(() => expect(runDevelopmentRequest).toHaveBeenCalledOnce());
+  });
+});
+
+describe("SessionManager Human-in-the-Loop resume", () => {
+  const target = { channel: "C1", thread: "T1" };
+  const answers = [{ id: "q1", answer: "option A" }];
+
+  beforeEach(() => {
+    runDevelopmentRequest.mockReset();
+  });
+
+  it("does not resume while the runner is disabled", () => {
+    const manager = new SessionManager(config(false), new Map(), ["slack"]);
+    const slack = connector();
+    expect(manager.resumeDevelopmentDecision("story-x", answers, slack, target)).toBe(false);
+    expect(runDevelopmentRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not resume a second time while one development task is already running", async () => {
+    let resolve!: (value: unknown) => void;
+    runDevelopmentRequest.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector();
+
+    expect(manager.resumeDevelopmentDecision("story-x", answers, slack, target)).toBe(true);
+    expect(manager.resumeDevelopmentDecision("story-x", answers, slack, target)).toBe(false);
+    expect(runDevelopmentRequest).toHaveBeenCalledOnce();
+    resolve({ status: "failed", summary: "stopped" });
+    await vi.waitFor(() => expect(runDevelopmentRequest).toHaveBeenCalledOnce());
+  });
+
+  it("resumes with the storyId/answers payload and posts the formatted result", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({ status: "pr_ready", storyId: "story-x", summary: "ready" });
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector();
+
+    expect(manager.resumeDevelopmentDecision("story-x", answers, slack, target)).toBe(true);
+    expect(runDevelopmentRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+      { storyId: "story-x", answers },
+    );
+    await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("pr_ready")));
+  });
+
+  it("posts a Block Kit question card via postDecisionQuestions when the connector supports it", async () => {
+    const questions = [{ id: "q1", question: "which approach?", options: [], allow_free_text: true }];
+    runDevelopmentRequest.mockResolvedValueOnce({
+      status: "needs_decision", storyId: "story-x", summary: "ambiguous", questions,
+    });
+    const postDecisionQuestions = vi.fn().mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector("slack", { postDecisionQuestions });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(postDecisionQuestions).toHaveBeenCalledWith(target, {
+      storyId: "story-x", questions, summary: "ambiguous",
+    }));
+    expect(slack.replyMessage).not.toHaveBeenCalledWith(target, expect.stringContaining("needs_decision"));
+  });
+
+  it("falls back to plain text when the connector has no postDecisionQuestions support", async () => {
+    const questions = [{ id: "q1", question: "which approach?", options: [], allow_free_text: true }];
+    runDevelopmentRequest.mockResolvedValueOnce({
+      status: "needs_decision", storyId: "story-x", summary: "ambiguous", questions,
+    });
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector();
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("needs_decision")));
   });
 });

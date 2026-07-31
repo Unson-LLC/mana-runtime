@@ -83,6 +83,7 @@ const MIME_TYPES: Record<string, string> = {
 export function buildSlackConnectorContext(
   cfg: JinnConfig,
   goalInjectionEnabled: boolean,
+  sessionManager?: SessionManager,
 ): SlackConnectorContext {
   return {
     portalName: cfg.portal?.portalName,
@@ -91,6 +92,10 @@ export function buildSlackConnectorContext(
     goalInjectionEnabled,
     developmentRunnerEnabled: cfg.developmentRunner?.enabled === true,
     developmentRunnerAllowedChannels: cfg.developmentRunner?.allowedSlackChannels,
+    resumeDevelopmentDecision: sessionManager
+      ? (storyId, answers, connector, target) =>
+          sessionManager.resumeDevelopmentDecision(storyId, answers, connector, target)
+      : undefined,
   };
 }
 
@@ -409,6 +414,7 @@ export async function startGateway(
             (slackConfig.employee
               ? employeeRegistry.get(slackConfig.employee)?.engine
               : cfg.engines.default) === "claude",
+            sessionManager,
           ),
         );
         slack.onMessage((msg) => {
@@ -565,6 +571,7 @@ export async function startGateway(
               buildSlackConnectorContext(
                 config,
                 (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
+                sessionManager,
               ),
             );
             slack.onMessage((msg) => {
@@ -690,6 +697,7 @@ export async function startGateway(
                 buildSlackConnectorContext(
                   freshConfig,
                   (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
+                  sessionManager,
                 ),
               );
               slack.onMessage((msg) => {
