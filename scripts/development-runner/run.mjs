@@ -10,7 +10,16 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-31.2";
+export const RUNNER_VERSION = "2026-07-31.3";
+
+// ─── Progress reporting (Slack typing status) ───
+// While the agent runs, the runner emits `PROGRESS <json>` lines directly to
+// its own stderr (not the child's) so the gateway can parse them in real
+// time and refresh the Slack "typing" status with actual progress instead of
+// a static "開発中…" string. Emission is fail-silent: a git failure here must
+// never abort the development run itself.
+const PROGRESS_INTERVAL_MS = 60_000;
+const MAX_PROGRESS_LATEST_CHARS = 200;
 
 // ─── Human-in-the-loop question/answer contract ───
 const QUESTIONS_RELATIVE_PATH = path.join(".openryoko", "questions.json");
@@ -601,14 +610,88 @@ async function resolveExistingWorktree(worktreesRoot, storyId) {
   return resolved;
 }
 
+/**
+ * Builds one `PROGRESS ` stderr line. `phase` is `"agent"` while the Claude
+ * Code agent session is running, or `"gate"` for the single line emitted
+ * when `vibepro pr ship --dry-run` starts. `latest` (the newest commit
+ * subject since the run's baseline HEAD) is only included when there is at
+ * least one commit — matching the human-readable "0 commits, still
+ * analyzing" vs. "N commits, latest: ..." distinction the gateway renders.
+ */
+export function buildProgressLine(phase, elapsedSec, commits, latest) {
+  const payload = { phase, elapsedSec, commits };
+  if (phase === "agent" && commits > 0 && typeof latest === "string" && latest.length > 0) {
+    payload.latest = latest.replace(/\s+/g, " ").trim().slice(0, MAX_PROGRESS_LATEST_CHARS);
+  }
+  return `PROGRESS ${JSON.stringify(payload)}`;
+}
+
+/** Reads the current HEAD sha of a worktree; used as the progress baseline. */
+async function getHeadSha(worktree) {
+  return (await runCommand("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: worktree })).trim();
+}
+
+/**
+ * Counts commits made since `baselineSha` and returns the newest commit's
+ * subject line. Never throws to the caller — progress reporting must not be
+ * able to affect the development run itself.
+ */
+async function readProgressSnapshot(worktree, baselineSha) {
+  try {
+    const log = await runCommand("/usr/bin/git", ["log", "--format=%s", `${baselineSha}..HEAD`], { cwd: worktree });
+    const subjects = log.split("\n").filter((line) => line.length > 0);
+    return { commits: subjects.length, latest: subjects[0] };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Starts a 60s-interval timer that emits `agent`-phase PROGRESS lines to
+ * this process's own stderr. Returns a stopper that must always be called
+ * (agent success, agent failure, or timeout) to clear the timer. Returns a
+ * no-op stopper when `baselineSha` could not be determined.
+ */
+function startAgentProgressReporting(worktree, baselineSha, startedAt) {
+  if (!baselineSha) return () => {};
+  const tick = async () => {
+    const snapshot = await readProgressSnapshot(worktree, baselineSha);
+    if (!snapshot) return;
+    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+    process.stderr.write(`${buildProgressLine("agent", elapsedSec, snapshot.commits, snapshot.latest)}\n`);
+  };
+  const timer = setInterval(() => { void tick(); }, PROGRESS_INTERVAL_MS);
+  return () => clearInterval(timer);
+}
+
+/** Emits the single `gate`-phase PROGRESS line when `pr ship` starts. */
+async function emitGateProgress(worktree, baselineSha, startedAt) {
+  if (!baselineSha) return;
+  const snapshot = await readProgressSnapshot(worktree, baselineSha);
+  if (!snapshot) return;
+  const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+  process.stderr.write(`${buildProgressLine("gate", elapsedSec, snapshot.commits, snapshot.latest)}\n`);
+}
+
 async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv, agentEnv, config) {
+  const startedAt = Date.now();
+  let baselineSha = null;
+  try {
+    baselineSha = await getHeadSha(worktree);
+  } catch {
+    // Fail silent: progress reporting is best-effort, never blocks the run.
+  }
+  const stopProgress = startAgentProgressReporting(worktree, baselineSha, startedAt);
+
   try {
     await runCommand(config.claudeBin, agentArgv, { cwd: worktree, timeoutMs: config.maxDurationMs, extraEnv: agentEnv });
   } catch (error) {
+    stopProgress();
     const reason = (error instanceof Error ? error.message : "unknown agent error").replace(/\s+/g, " ").slice(0, 200);
     emit({ status: "needs_input", storyId, summary: `Development agent stopped (${reason}). Inspect the worktree before resuming.` });
     return;
   }
+  stopProgress();
 
   let questions = null;
   try {
@@ -622,6 +705,8 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     emit(resultFromQuestions(storyId, questions));
     return;
   }
+
+  await emitGateProgress(worktree, baselineSha, startedAt);
 
   const shipStdout = await runCommand(
     config.vibeproBin,

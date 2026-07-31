@@ -195,7 +195,19 @@ mid-run kills the runner and strands the fail-closed lock (observed
 
 ### Release note
 
-The runner version advances to `2026-07-31.2`. It adds automatic stale-lock
+The runner version advances to `2026-07-31.3`. While the agent session runs,
+the runner now writes `PROGRESS <json>` lines directly to its own stderr every
+60 seconds — `{"phase":"agent","elapsedSec":N,"commits":N,"latest":"..."}`
+(the `latest` commit subject is only present once there is at least one
+commit) — plus a single `{"phase":"gate","elapsedSec":N,"commits":N}` line
+when `vibepro pr ship --dry-run` starts. The gateway parses these to refresh
+the Slack "typing" status with real elapsed time / commit count / latest
+commit subject instead of a static "開発中…" string; unparseable lines are
+ignored and progress reporting never affects the run itself (git failures
+fail silent). The stdin/stdout result contract is unchanged; only
+`runnerVersion` must advance in lockstep.
+
+The previous version `2026-07-31.2` added automatic stale-lock
 reclamation at startup (see the lock section above): a lock whose owner pid is
 provably dead and whose development user has no surviving processes is removed
 and re-acquired instead of failing the request. All uncertain cases keep the
