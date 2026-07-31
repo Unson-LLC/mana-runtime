@@ -10,7 +10,16 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-31.4";
+export const RUNNER_VERSION = "2026-07-31.5";
+
+// ─── Result spool (survives gateway restarts) ───
+// Every emitted result is also written to `resultsSpoolDir/<storyId>.json`
+// (when configured). If the gateway process that started this runner dies
+// mid-run (e.g. its cgroup was killed by a `systemctl restart`), the result
+// this runner produces still lands on disk and a later gateway sweep can
+// pick it up and deliver it to Slack. Spooling is pure redundancy: a spool
+// write failure must never fail or alter the run's stdout contract.
+const SPOOL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ─── Progress reporting (Slack typing status) ───
 // While the agent runs, the runner emits `PROGRESS <json>` lines directly to
@@ -182,6 +191,72 @@ export async function acquireDevelopmentLock(lockPath = LOCK_PATH, options = {})
 function emit(result, exitCode = 0) {
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exitCode = exitCode;
+}
+
+/**
+ * Adds spool-only bookkeeping fields to a result before it is written to
+ * disk. `finishedAt`/`runnerPid` are never part of the stdout contract (the
+ * gateway's `parseDevelopmentResult` would reject unknown fields) — they
+ * exist purely so a reconciler reading the spool later can tell when the run
+ * finished and which process produced it.
+ */
+export function buildSpoolPayload(result) {
+  return { ...result, finishedAt: new Date().toISOString(), runnerPid: process.pid };
+}
+
+/**
+ * Writes `result` to `<spoolDir>/<storyId>.json` as pure redundancy against
+ * a gateway restart that orphans this runner before its stdout reaches the
+ * parent pipe. Fail-silent by design: spooling must never be able to fail
+ * the run itself. No-ops when `spoolDir` is not configured or `result` has
+ * no `storyId` yet (an early, pre-Story failure has nothing a reconciler
+ * could match against, so there is nothing worth spooling).
+ */
+export async function writeResultSpool(spoolDir, result) {
+  if (!spoolDir || !result || typeof result.storyId !== "string") return;
+  try {
+    await mkdir(spoolDir, { recursive: true });
+    const target = path.join(spoolDir, `${result.storyId}.json`);
+    const tmp = `${target}.${process.pid}.tmp`;
+    await writeFile(tmp, `${JSON.stringify(buildSpoolPayload(result))}\n`, { mode: 0o644 });
+    await rename(tmp, target);
+  } catch (error) {
+    process.stderr.write(`spool write failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+  }
+}
+
+/**
+ * Deletes spool files older than `maxAgeMs` (default 7 days). Runs once at
+ * runner startup so a spool directory left unattended by a gateway that
+ * never reconciles (e.g. `resultsSpoolDir` disabled after being enabled
+ * briefly) doesn't grow without bound. Fail-silent: a missing directory, a
+ * permission error, or a single file's stat/rm failure must never affect the
+ * development run itself.
+ */
+export async function cleanOldSpools(spoolDir, maxAgeMs = SPOOL_MAX_AGE_MS, now = Date.now()) {
+  if (!spoolDir) return;
+  let entries;
+  try {
+    entries = await readdir(spoolDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const filePath = path.join(spoolDir, entry);
+    try {
+      const info = await stat(filePath);
+      if (now - info.mtimeMs > maxAgeMs) await rm(filePath, { force: true });
+    } catch {
+      // Best-effort: skip files we can't stat or remove.
+    }
+  }
+}
+
+/** Emits `result` to stdout and, best-effort, spools it. Never throws. */
+async function emitAndSpool(config, result, exitCode = 0) {
+  emit(result, exitCode);
+  await writeResultSpool(config?.resultsSpoolDir, result);
 }
 
 function isPlainObject(value) {
@@ -449,6 +524,9 @@ export function validateConfig(config) {
   }
   if (config.agentEnvFile !== undefined && (typeof config.agentEnvFile !== "string" || !path.isAbsolute(config.agentEnvFile))) {
     throw new Error("invalid agentEnvFile");
+  }
+  if (config.resultsSpoolDir !== undefined && (typeof config.resultsSpoolDir !== "string" || !path.isAbsolute(config.resultsSpoolDir))) {
+    throw new Error("invalid resultsSpoolDir");
   }
   if (typeof config.baseRef !== "string" || !/^origin\/[a-zA-Z0-9._/-]+$/.test(config.baseRef)) {
     throw new Error("invalid baseRef");
@@ -794,7 +872,7 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     stopProgress();
     const reason = (error instanceof Error ? error.message : "unknown agent error").replace(/\s+/g, " ").slice(0, 200);
     const commits = await collectCommits(worktree, baselineSha);
-    emit({
+    await emitAndSpool(config, {
       status: "needs_input",
       storyId,
       summary: `Development agent stopped (${reason}). Inspect the worktree before resuming.`,
@@ -810,7 +888,7 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
   } catch (error) {
     const reason = (error instanceof Error ? error.message : "unknown validation error").replace(/\s+/g, " ").slice(0, 200);
     const commits = await collectCommits(worktree, baselineSha);
-    emit({
+    await emitAndSpool(config, {
       status: "needs_input",
       storyId,
       summary: `The agent wrote an invalid questions document (${reason}). Inspect the worktree before resuming.`,
@@ -819,7 +897,7 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     return;
   }
   if (questions) {
-    emit(resultFromQuestions(storyId, questions));
+    await emitAndSpool(config, resultFromQuestions(storyId, questions));
     return;
   }
 
@@ -831,7 +909,7 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     { cwd: worktree, timeoutMs: 300_000 },
   );
   const commits = await collectCommits(worktree, baselineSha);
-  emit(resultFromAgentRun(shipStdout, storyId, commits));
+  await emitAndSpool(config, resultFromAgentRun(shipStdout, storyId, commits));
 }
 
 async function runNewStory(request, config) {
@@ -931,11 +1009,13 @@ async function continueGatesStory(storyId, config) {
 
 export async function main() {
 let releaseLock;
+let config;
 try {
   releaseLock = await acquireDevelopmentLock();
   const payload = await readStdin();
-  const config = JSON.parse(await readFile(CONFIG_PATH, "utf8"));
+  config = JSON.parse(await readFile(CONFIG_PATH, "utf8"));
   validateConfig(config);
+  await cleanOldSpools(config.resultsSpoolDir);
 
   if (payload.mode === "new") {
     await runNewStory(payload.request, config);
@@ -946,7 +1026,10 @@ try {
   }
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : "unknown runner error"}\n`);
-  emit({ status: "failed", summary: "The isolated development runner stopped safely. No PR or deployment was performed." }, 1);
+  // `failed` never carries a storyId, so writeResultSpool (inside
+  // emitAndSpool) no-ops here — there is nothing yet for a reconciler to
+  // match this failure against.
+  await emitAndSpool(config, { status: "failed", summary: "The isolated development runner stopped safely. No PR or deployment was performed." }, 1);
 } finally {
   if (releaseLock) await releaseLock();
 }

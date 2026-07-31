@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, parseProgressLine, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, acquireDevelopmentLock, assessLockStaleness, buildAgentArgs, buildAgentPrompt, buildContinueGatesAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildProgressLine, buildStoryAddArgs, buildStoryCommitArgs, collectCommits, ensureGitignoreEntry, extractBlockingGates, extractGates, isChoreRecordCommit, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, acquireDevelopmentLock, assessLockStaleness, buildAgentArgs, buildAgentPrompt, buildContinueGatesAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildProgressLine, buildSpoolPayload, buildStoryAddArgs, buildStoryCommitArgs, cleanOldSpools, collectCommits, ensureGitignoreEntry, extractBlockingGates, extractGates, isChoreRecordCommit, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument, writeResultSpool } from "../../../../../scripts/development-runner/run.mjs";
 
 const RUNNER_URL = pathToFileURL(path.resolve("../..", "scripts/development-runner/run.mjs")).href;
 
@@ -185,6 +185,9 @@ describe("development runner", () => {
     expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, claudeBin: "claude" })).toThrow("invalid claudeBin");
     expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, agentEnvFile: "relative.env" })).toThrow("invalid agentEnvFile");
     expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, agentEnvFile: "/home/ryoko-dev/.config/openryoko/agent-environment" })).not.toThrow();
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, resultsSpoolDir: "relative/results" })).toThrow("invalid resultsSpoolDir");
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, resultsSpoolDir: 42 })).toThrow("invalid resultsSpoolDir");
+    expect(() => validateConfig({ ...baseConfig, runnerVersion: RUNNER_VERSION, resultsSpoolDir: "/srv/openryoko-development/results" })).not.toThrow();
   });
   it("passes the request over stdin and strips the gateway environment", async () => {
     process.env.SLACK_BOT_TOKEN = "must-not-leak";
@@ -1035,5 +1038,113 @@ describe("PROGRESS stderr line for Slack typing status", () => {
   it("keeps latest omitted when commits is zero regardless of a stray latest value", () => {
     const line = buildProgressLine("agent", 5, 0, "stray value");
     expect(JSON.parse(line.slice("PROGRESS ".length))).toEqual({ phase: "agent", elapsedSec: 5, commits: 0 });
+  });
+});
+
+describe("result spool delivery (gateway-restart survival)", () => {
+  async function tmpSpoolDir(): Promise<string> {
+    return mkdtemp(path.join(tmpdir(), "openryoko-spool-test-"));
+  }
+
+  it("stamps finishedAt and runnerPid without mutating the source result", () => {
+    const result = { status: "pr_ready", storyId: "story-abc", summary: "ok" };
+    const payload = buildSpoolPayload(result);
+    expect(payload).toMatchObject({ status: "pr_ready", storyId: "story-abc", summary: "ok" });
+    expect(payload.runnerPid).toBe(process.pid);
+    expect(typeof payload.finishedAt).toBe("string");
+    expect(Number.isNaN(Date.parse(payload.finishedAt))).toBe(false);
+    expect((result as Record<string, unknown>).finishedAt).toBeUndefined();
+  });
+
+  it("writes the result atomically to <spoolDir>/<storyId>.json", async () => {
+    const dir = await tmpSpoolDir();
+    try {
+      await writeResultSpool(dir, { status: "needs_input", storyId: "story-gates", summary: "gates remain" });
+      const target = path.join(dir, "story-gates.json");
+      const parsed = JSON.parse(await readFile(target, "utf8"));
+      expect(parsed.status).toBe("needs_input");
+      expect(parsed.storyId).toBe("story-gates");
+      expect(typeof parsed.finishedAt).toBe("string");
+      expect(parsed.runnerPid).toBe(process.pid);
+      // No leftover temp file from the rename.
+      const entries = await import("node:fs/promises").then((fsp) => fsp.readdir(dir));
+      expect(entries).toEqual(["story-gates.json"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates the spool directory when it does not exist yet", async () => {
+    const parent = await tmpSpoolDir();
+    try {
+      const nested = path.join(parent, "nested", "results");
+      await writeResultSpool(nested, { status: "pr_ready", storyId: "story-nested", summary: "ok" });
+      const parsed = JSON.parse(await readFile(path.join(nested, "story-nested.json"), "utf8"));
+      expect(parsed.storyId).toBe("story-nested");
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("is a fail-silent no-op without a configured spool dir or without a storyId", async () => {
+    // No spoolDir configured at all.
+    await expect(writeResultSpool(undefined, { status: "pr_ready", storyId: "story-x", summary: "ok" })).resolves.toBeUndefined();
+
+    // An early failure has no storyId yet — nothing for a reconciler to match, so nothing is spooled.
+    const dir = await tmpSpoolDir();
+    try {
+      await writeResultSpool(dir, { status: "failed", summary: "boom" });
+      const entries = await import("node:fs/promises").then((fsp) => fsp.readdir(dir));
+      expect(entries).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("never throws when the spool path cannot be created", async () => {
+    const dir = await tmpSpoolDir();
+    const blocker = path.join(dir, "blocker");
+    await writeFile(blocker, "not a directory");
+    try {
+      await expect(
+        writeResultSpool(path.join(blocker, "results"), { status: "pr_ready", storyId: "story-blocked", summary: "ok" }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans spool files older than 7 days and keeps fresher ones", async () => {
+    const dir = await tmpSpoolDir();
+    try {
+      const oldFile = path.join(dir, "story-old.json");
+      const freshFile = path.join(dir, "story-fresh.json");
+      await writeFile(oldFile, "{}");
+      await writeFile(freshFile, "{}");
+      const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+      const { utimes, stat } = await import("node:fs/promises");
+      await utimes(oldFile, eightDaysAgo, eightDaysAgo);
+
+      await cleanOldSpools(dir);
+
+      await expect(stat(oldFile)).rejects.toThrow();
+      await expect(stat(freshFile)).resolves.toBeTruthy();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("cleanOldSpools tolerates a missing directory and non-JSON entries", async () => {
+    const dir = await tmpSpoolDir();
+    try {
+      await expect(cleanOldSpools(path.join(dir, "missing"))).resolves.toBeUndefined();
+      const noise = path.join(dir, "notes.txt");
+      await writeFile(noise, "noise");
+      await cleanOldSpools(dir);
+      const { stat } = await import("node:fs/promises");
+      await expect(stat(noise)).resolves.toBeTruthy();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
