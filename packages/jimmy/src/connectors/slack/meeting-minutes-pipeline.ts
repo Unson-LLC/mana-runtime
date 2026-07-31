@@ -82,6 +82,8 @@ export interface MinutesRun {
   fileName: string;
   sourceTextHash: string;
   status: MinutesRunStatus;
+  /** Wildcard-matched channel: expand in place, skip LLM routing. */
+  inPlace?: boolean;
   projectId?: string;
   routingReason?: string;
   destinationChannelId?: string;
@@ -106,6 +108,9 @@ const STATE_FILE = path.join(JINN_HOME, ".meeting-minutes-runs.json");
 const DEFAULT_MAX_FILE_BYTES = 1_048_576;
 const DEFAULT_TTL_DAYS = 14;
 const DAY_MS = 86_400_000;
+
+/** Pseudo project id for wildcard-matched in-place runs (never in config). */
+export const IN_PLACE_PROJECT_ID = "__in_place__";
 
 export const ACTION_MM_CHOOSE_DEST = "meeting_minutes_choose_destination";
 export const ACTION_MM_REROUTE = "meeting_minutes_reroute";
@@ -335,6 +340,9 @@ export class MeetingMinutesPipeline {
       return; // Slack redelivery
     }
 
+    // Explicit router channels route via LLM classification; channels matched
+    // only by the "*" wildcard expand the minutes in place instead.
+    const inPlace = this.watchAllChannels && !this.routerChannels.has(channel);
     const run: MinutesRun = {
       routerChannelId: channel,
       fileId,
@@ -342,6 +350,7 @@ export class MeetingMinutesPipeline {
       fileName: (file.name as string) ?? "transcript.txt",
       sourceTextHash: "",
       status: "received",
+      ...(inPlace ? { inPlace: true, destinationChannelId: channel } : {}),
       createdAt: now,
       updatedAt: now,
       expiresAt: now + this.ttlMs,
@@ -397,8 +406,8 @@ export class MeetingMinutesPipeline {
       run.sourceTextHash = hash;
     }
 
-    // Stage: routing (skipped when a destination is already fixed).
-    if (!run.projectId) {
+    // Stage: routing (skipped for in-place runs and when a destination is fixed).
+    if (!run.projectId && !run.inPlace) {
       const classify = this.deps.classifyImpl ?? classifyMinutesDestination;
       const routed = await classify(transcript.text, this.destinations, this.routingOptions);
       if (!routed) {
@@ -420,7 +429,13 @@ export class MeetingMinutesPipeline {
       logger.info(`[meeting-minutes] routed ${key} → ${run.projectId} (${routed.reason})`);
     }
 
-    const destination = this.destinations.find((d) => d.projectId === run.projectId);
+    const destination = run.inPlace
+      ? {
+          projectId: IN_PLACE_PROJECT_ID,
+          name: run.fileName.replace(/\.txt$/i, ""),
+          channelId: run.destinationChannelId ?? run.routerChannelId,
+        }
+      : this.destinations.find((d) => d.projectId === run.projectId);
     if (!destination) {
       await this.failRun(state, key, "route", `宛先プロジェクト ${run.projectId} がconfigにありません`);
       return;
@@ -499,7 +514,9 @@ export class MeetingMinutesPipeline {
       saveState(state);
     }
 
-    const summary = `✅ *${destination.name}* <#${destination.channelId}> へ議事録を展開しました\n${minutes.title}${run.routingReason ? `\n_振り分け根拠: ${run.routingReason}_` : ""}${handoffNote}`;
+    const summary = run.inPlace
+      ? `✅ このチャンネルへ議事録を展開しました\n${minutes.title}${handoffNote}`
+      : `✅ *${destination.name}* <#${destination.channelId}> へ議事録を展開しました\n${minutes.title}${run.routingReason ? `\n_振り分け根拠: ${run.routingReason}_` : ""}${handoffNote}`;
     await this.updateControl(state, key, {
       text: summary,
       blocks: this.rerouteBlocks(key, summary, destination.projectId),
@@ -819,7 +836,7 @@ export class MeetingMinutesPipeline {
     }
     const next = this.destinations.find((d) => d.projectId === value?.projectId);
     if (!next || next.projectId === run.projectId) return;
-    const previous = this.destinations.find((d) => d.projectId === run.projectId);
+    const previousChannelId = run.destinationChannelId;
 
     try {
       const parent = await this.client.apiCall("chat.postMessage", {
@@ -837,9 +854,9 @@ export class MeetingMinutesPipeline {
         });
       }
       // Annotate (not delete) the old parent — threads may already have replies.
-      if (previous && run.postedParentTs) {
+      if (previousChannelId && run.postedParentTs) {
         await this.client.apiCall("chat.update", {
-          channel: previous.channelId,
+          channel: previousChannelId,
           ts: run.postedParentTs,
           text: `⚠️ 振り分け誤りのため <#${next.channelId}> へ移動しました\n\n${run.minutes.overview}`,
         }).catch((err: unknown) => {
@@ -848,6 +865,7 @@ export class MeetingMinutesPipeline {
       }
       run.projectId = next.projectId;
       run.destinationChannelId = next.channelId;
+      run.inPlace = false;
       run.postedParentTs = newParentTs;
       run.routingReason = "operator振り直し";
       run.updatedAt = Date.now();
