@@ -1,0 +1,34 @@
+# Cgroup-escape sudoers rule for the isolated `/vibepro` development runner.
+#
+# Background: `systemctl restart openryoko` sends SIGKILL/SIGTERM to the
+# whole service cgroup (KillMode=mixed in openryoko.service). Because the
+# gateway starts the runner through `sudo -u ryoko-dev`, the runner used to
+# live in that same cgroup and got killed mid-run by a routine restart,
+# stranding the fail-closed development lock (observed 2026-07-31). This
+# rule instead lets the gateway hand the runner to `systemd-run --scope`,
+# which puts it in its own transient scope outside openryoko.service's
+# cgroup — a gateway restart no longer touches it.
+#
+# Deploy: copy this file to /etc/sudoers.d/openryoko-development-scope
+# (mode 0440, owned by root:root) and validate with `visudo -cf`. It
+# REPLACES the older `(ryoko-dev)` direct-invocation rule documented in
+# scripts/development-runner/README.md's "Gateway config" section — do not
+# keep both rules active for the same runner path.
+#
+# Design note (fixed argv, no wrapper needed): this command line is
+# intentionally 100% static — in particular it does NOT pass `--unit=...`.
+# `systemd-run` auto-generates a unique transient unit name when `--unit` is
+# omitted, so there is no per-invocation variable that would force either a
+# wildcard sudoers rule (which would let the gateway's `ryoko` user run
+# systemd-run with attacker-influenced arguments) or a root-owned wrapper
+# script. sudo's exact-string match on the full argv is safe as-is. Add a
+# wrapper script only if the invocation ever needs a genuinely per-run
+# argument (e.g. embedding the Story id into `--unit=` for operator
+# observability) — do not silently switch to a `*` wildcard to work around
+# that need.
+#
+# The gateway-side config that must match this exact command is documented
+# in scripts/development-runner/README.md under "Surviving gateway
+# restarts" — keep both in lockstep when editing either one.
+
+ryoko ALL=(root) NOPASSWD: /usr/bin/systemd-run --quiet --collect --scope --uid=ryoko-dev --gid=ryoko-dev --setenv=HOME=/home/ryoko-dev /usr/local/libexec/openryoko-development-runner
