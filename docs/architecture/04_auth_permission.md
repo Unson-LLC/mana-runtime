@@ -10,7 +10,7 @@ mana-runtimeの権限設計は一貫して **deny-by-default / fail-closed** で
 
 | | ソフト境界 | ハード境界 |
 |---|---|---|
-| 実装 | system promptへの注入（`projects` / `dataScopes`、[context.ts](../../packages/jimmy/src/sessions/context.ts)） | コードによる強制（MCP allowlist・route束縛・argv固定・スキーマ検証） |
+| 実装 | system promptへの注入（[context.ts](../../packages/jimmy/src/sessions/context.ts)）。**能力宣言は`capabilities`から自動生成**（MCPサーバー・gatewayTools・allowedDelivery、恒常denyツールの併記込み）。手書き`projects` / `dataScopes`は参照範囲の**補足**としてのみ注入 | コードによる強制（MCP allowlist・route束縛・argv固定・スキーマ検証） |
 | 守れる相手 | 素直なモデルの判断ミス | プロンプトインジェクション・モデルの誤動作を含むすべて |
 | 用途 | 行動指針・参照範囲の宣言・文脈の限定 | 能力そのものの付与/剥奪・秘密・外部送信 |
 
@@ -39,9 +39,11 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
     gatewayTools: [create_task, list_tasks, …]
     allowedDelivery:            # 外部送信先の制限（これ以外へ投稿不可）
       - {connector: slack, channel: C…}
-  dataScopes:                   # ソフト境界: 参照範囲の宣言
+  dataScopes:                   # ソフト境界: 参照範囲の補足（能力の正本ではない）
     graph: {mode: read-only, scopes: [org:unson]}
 ```
+
+**ソフト境界宣言の自動生成（2026-07-31, gap-analysis G3)**: system promptの「Placement policy」節に入る「利用できる能力」は`capabilities`から自動生成される — `capabilities.mcp`の各サーバー（`PLACEMENT_MCP_TOOL_DENY`で恒常denyされるツールは「except always-denied」を併記）・`gatewayTools`・配信可能先（`allowedDelivery`、未設定なら自チャンネル）。`dataScopes`は引き続き注入されるが、read-onlyモードやgraph scopesのような**参照範囲の補足**であり、能力を付与も剥奪もしないとプロンプト内で明示する。これにより「capabilitiesに足したがdataScopesに書き忘れてモデルが自主拒否」「能力の無いplacementに宣言だけ残る」という手書き同期の乖離事故（2026-07-31 freee接続障害）を構造的に防ぐ。
 
 ### 解決とfail-closed
 

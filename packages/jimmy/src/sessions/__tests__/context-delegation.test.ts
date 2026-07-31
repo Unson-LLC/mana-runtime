@@ -53,7 +53,7 @@ describe("delegation context", () => {
     expect(context).toContain("- Placement: pilot");
     expect(context).toContain("- Audience: operator");
     expect(context).toContain("- Projects: brainbase-mana");
-    expect(context).toContain('- Data scopes: {"graph":{"mode":"read-only"}}');
+    expect(context).toContain('- Data scopes (supplementary): {"graph":{"mode":"read-only"}}');
     expect(context).not.toContain("/api/org/cross-request");
     expect(context).not.toContain("Gateway API");
     expect(context).not.toContain("/api/config");
@@ -93,6 +93,77 @@ describe("delegation context", () => {
     });
     expect(legacyContext).toContain("You can read, write, and modify any of these files");
     expect(legacyContext).toContain("## Self-evolution");
+  });
+
+  it("derives the capability declaration from capabilities, not hand-written dataScopes", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-capability-derivation",
+      placement: {
+        id: "back-office",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+        capabilities: {
+          mcp: ["freee", "gateway"],
+          gatewayTools: ["create_task", "list_tasks"],
+          allowedDelivery: [{ connector: "slack", channel: "C999" }],
+        },
+        // dataScopes deliberately omits freee — the declaration must still
+        // advertise it (the 2026-07-31 self-refusal incident).
+        dataScopes: { graph: { mode: "read-only" } },
+      },
+    });
+
+    expect(context).toContain("- MCP servers: freee (available), gateway (available)");
+    expect(context).toContain("- Gateway tools: create_task, list_tasks");
+    expect(context).toContain("- Allowed delivery targets: slack:C999");
+    expect(context).toContain("Data scopes only add reference-scope notes");
+  });
+
+  it("declares no capabilities for a placement without any, falling back to its own channel for delivery", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-no-capabilities",
+      placement: {
+        id: "minimal",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+      },
+    });
+
+    expect(context).toContain("- MCP servers: none");
+    expect(context).toContain("- Gateway tools: none");
+    expect(context).toContain("- Allowed delivery targets: slack:C123");
+    expect(context).not.toContain("(available)");
+  });
+
+  it("annotates permanently denied MCP tools next to the server that carries them", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-deny-annotation",
+      placement: {
+        id: "pilot",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+        capabilities: { mcp: ["brainbase"] },
+      },
+    });
+
+    expect(context).toContain(
+      "- MCP servers: brainbase (available, except always-denied tools: search_personal_kg)",
+    );
   });
 
   it("never renders secret-like placement data in the system context", () => {
