@@ -14,6 +14,7 @@ import {
   listPendingDevelopmentRuns,
   recordPendingDevelopmentRun,
   removePendingDevelopmentRun,
+  recordDeliveryFailure,
 } from "../development-pending.js";
 
 const STATE_DIR = "/tmp/openryoko-development-pending-test";
@@ -97,5 +98,61 @@ describe("development-pending", () => {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
     fs.writeFileSync(STATE_FILE, "not json");
     expect(listPendingDevelopmentRuns()).toEqual([]);
+  });
+
+  it("persists connectorInstanceId alongside the backwards-compatible connectorName", () => {
+    const runId = recordPendingDevelopmentRun({
+      storyId: null,
+      requestDigest: "abcd1234",
+      connectorName: "slack",
+      connectorInstanceId: "slack-biz",
+      channel: "C1",
+      thread: "T1",
+      startedAt: "2026-07-31T00:00:00.000Z",
+      kind: "new",
+    });
+    const [run] = listPendingDevelopmentRuns();
+    expect(run.runId).toBe(runId);
+    expect(run.connectorName).toBe("slack");
+    expect(run.connectorInstanceId).toBe("slack-biz");
+  });
+
+  it("reads a legacy record with no connectorInstanceId/deliveryAttempts field without breaking", () => {
+    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify({
+      "legacy-run": {
+        runId: "legacy-run",
+        storyId: "story-legacy",
+        connectorName: "slack",
+        channel: "C1",
+        startedAt: "2026-07-31T00:00:00.000Z",
+        kind: "resume",
+      },
+    }));
+    const [run] = listPendingDevelopmentRuns();
+    expect(run.connectorInstanceId).toBeUndefined();
+    expect(run.deliveryAttempts).toBeUndefined();
+  });
+
+  describe("recordDeliveryFailure", () => {
+    it("increments deliveryAttempts from unset, persisting the new count", () => {
+      const runId = recordPendingDevelopmentRun({
+        storyId: "story-x",
+        connectorName: "slack",
+        channel: "C1",
+        startedAt: "2026-07-31T00:00:00.000Z",
+        kind: "resume",
+      });
+      expect(recordDeliveryFailure(runId)).toBe(1);
+      expect(recordDeliveryFailure(runId)).toBe(2);
+
+      const persisted = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+      expect(persisted[runId].deliveryAttempts).toBe(2);
+    });
+
+    it("returns null and does nothing for an unknown runId", () => {
+      expect(recordDeliveryFailure("does-not-exist")).toBeNull();
+      expect(listPendingDevelopmentRuns()).toEqual([]);
+    });
   });
 });

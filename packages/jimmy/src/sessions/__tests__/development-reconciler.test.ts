@@ -11,7 +11,7 @@ vi.mock("../../shared/logger.js", () => ({
 }));
 
 import { recordPendingDevelopmentRun, listPendingDevelopmentRuns } from "../development-pending.js";
-import { findSpoolFile, reconcilePendingDevelopmentRuns } from "../development-reconciler.js";
+import { findSpoolFile, reconcilePendingDevelopmentRuns, resolveTargetConnector } from "../development-reconciler.js";
 import type { Connector, JinnConfig, Target } from "../../shared/types.js";
 import type { DevelopmentResult } from "../development-runner.js";
 
@@ -30,11 +30,16 @@ function baseConfig(overrides: Partial<NonNullable<JinnConfig["developmentRunner
   } as unknown as JinnConfig;
 }
 
-function fakeConnector(name = "slack") {
+function fakeConnector(name = "slack", instanceId?: string) {
   return {
     name,
+    ...(instanceId ? { instanceId } : {}),
     replyMessage: vi.fn().mockResolvedValue(undefined),
   } as unknown as Connector & { replyMessage: ReturnType<typeof vi.fn> };
+}
+
+function readPersistedState(): Record<string, { deliveryAttempts?: number }> {
+  return JSON.parse(fs.readFileSync(path.join(STATE_DIR, "state", "development-pending.json"), "utf-8"));
 }
 
 function writeSpool(storyId: string, result: Record<string, unknown>, finishedAt = new Date().toISOString()) {
@@ -304,6 +309,244 @@ describe("development-reconciler", () => {
 
     expect(deliverResult).not.toHaveBeenCalled();
     expect(listPendingDevelopmentRuns()).toHaveLength(1);
+  });
+});
+
+describe("multi-instance connector resolution (e.g. two Slack workspaces)", () => {
+  beforeEach(() => {
+    fs.rmSync(STATE_DIR, { recursive: true, force: true });
+    fs.mkdirSync(SPOOL_DIR, { recursive: true });
+  });
+  afterEach(() => {
+    fs.rmSync(STATE_DIR, { recursive: true, force: true });
+  });
+
+  it("delivers to the exact instance by connectorInstanceId even though multiple connectors share the same name", async () => {
+    recordPendingDevelopmentRun({
+      storyId: "story-biz",
+      connectorName: "slack",
+      connectorInstanceId: "slack-biz",
+      channel: "C-biz",
+      startedAt: new Date().toISOString(),
+      kind: "resume",
+    });
+    writeSpool("story-biz", { status: "pr_ready", summary: "ready" });
+
+    // Both instances report name "slack" (real SlackConnector behavior) —
+    // only the registry key ("slack" vs "slack-biz") tells them apart.
+    const defaultInstance = fakeConnector("slack", "slack");
+    const bizInstance = fakeConnector("slack", "slack-biz");
+    const deliverResult = vi.fn().mockResolvedValue(undefined);
+    await reconcilePendingDevelopmentRuns(baseConfig(), {
+      connectorProvider: () => new Map([["slack", defaultInstance], ["slack-biz", bizInstance]]),
+      isInFlight: () => false,
+      deliverResult,
+    });
+
+    expect(deliverResult).toHaveBeenCalledTimes(1);
+    const [, deliveredConnector] = deliverResult.mock.calls[0] as [DevelopmentResult, Connector, Target];
+    expect(deliveredConnector).toBe(bizInstance);
+    expect(listPendingDevelopmentRuns()).toHaveLength(0);
+  });
+
+  it("holds the record when connectorInstanceId is set but that instance is no longer registered, instead of guessing by name", async () => {
+    recordPendingDevelopmentRun({
+      storyId: "story-biz-gone",
+      connectorName: "slack",
+      connectorInstanceId: "slack-biz",
+      channel: "C-biz",
+      startedAt: new Date().toISOString(),
+      kind: "resume",
+    });
+    writeSpool("story-biz-gone", { status: "pr_ready", summary: "ready" });
+
+    // Only the default "slack" instance is registered — "slack-biz" is gone.
+    // A name-based fallback would wrongly pick the default instance here.
+    const defaultInstance = fakeConnector("slack", "slack");
+    const deliverResult = vi.fn();
+    await reconcilePendingDevelopmentRuns(baseConfig(), {
+      connectorProvider: () => new Map([["slack", defaultInstance]]),
+      isInFlight: () => false,
+      deliverResult,
+    });
+
+    expect(deliverResult).not.toHaveBeenCalled();
+    expect(listPendingDevelopmentRuns()).toHaveLength(1);
+  });
+
+  it("holds a legacy record (no connectorInstanceId) when multiple registered connectors share its connectorName", async () => {
+    recordPendingDevelopmentRun({
+      storyId: "story-ambiguous",
+      connectorName: "slack",
+      channel: "C1",
+      startedAt: new Date().toISOString(),
+      kind: "resume",
+    });
+    writeSpool("story-ambiguous", { status: "pr_ready", summary: "ready" });
+
+    const defaultInstance = fakeConnector("slack", "slack");
+    const bizInstance = fakeConnector("slack", "slack-biz");
+    const deliverResult = vi.fn();
+    await reconcilePendingDevelopmentRuns(baseConfig(), {
+      connectorProvider: () => new Map([["slack", defaultInstance], ["slack-biz", bizInstance]]),
+      isInFlight: () => false,
+      deliverResult,
+    });
+
+    expect(deliverResult).not.toHaveBeenCalled();
+    expect(listPendingDevelopmentRuns()).toHaveLength(1);
+  });
+
+  describe("resolveTargetConnector (unit)", () => {
+    it("resolves strictly by connectorInstanceId, ignoring name-sharing connectors", () => {
+      const a = fakeConnector("slack", "slack");
+      const b = fakeConnector("slack", "slack-biz");
+      const map = new Map([["slack", a], ["slack-biz", b]]);
+      expect(resolveTargetConnector(map, {
+        runId: "r1", storyId: null, connectorName: "slack", connectorInstanceId: "slack-biz",
+        channel: "C1", startedAt: new Date().toISOString(), kind: "resume",
+      })).toBe(b);
+    });
+
+    it("returns undefined when connectorInstanceId is set but absent from the map", () => {
+      const map = new Map([["slack", fakeConnector("slack", "slack")]]);
+      expect(resolveTargetConnector(map, {
+        runId: "r1", storyId: null, connectorName: "slack", connectorInstanceId: "slack-biz",
+        channel: "C1", startedAt: new Date().toISOString(), kind: "resume",
+      })).toBeUndefined();
+    });
+
+    it("falls back to a unique name match when connectorInstanceId is absent", () => {
+      const only = fakeConnector("discord");
+      const map = new Map([["discord", only]]);
+      expect(resolveTargetConnector(map, {
+        runId: "r1", storyId: null, connectorName: "discord",
+        channel: "C1", startedAt: new Date().toISOString(), kind: "resume",
+      })).toBe(only);
+    });
+
+    it("returns undefined for an ambiguous or absent name match when connectorInstanceId is unset", () => {
+      const map = new Map([["slack", fakeConnector("slack")], ["slack-biz", fakeConnector("slack")]]);
+      expect(resolveTargetConnector(map, {
+        runId: "r1", storyId: null, connectorName: "slack",
+        channel: "C1", startedAt: new Date().toISOString(), kind: "resume",
+      })).toBeUndefined();
+      expect(resolveTargetConnector(new Map(), {
+        runId: "r1", storyId: null, connectorName: "slack",
+        channel: "C1", startedAt: new Date().toISOString(), kind: "resume",
+      })).toBeUndefined();
+    });
+  });
+});
+
+describe("delivery-failure retry accounting", () => {
+  beforeEach(() => {
+    fs.rmSync(STATE_DIR, { recursive: true, force: true });
+    fs.mkdirSync(SPOOL_DIR, { recursive: true });
+  });
+  afterEach(() => {
+    fs.rmSync(STATE_DIR, { recursive: true, force: true });
+  });
+
+  it("keeps the pending record and increments deliveryAttempts when result delivery throws", async () => {
+    const runId = recordPendingDevelopmentRun({
+      storyId: "story-flaky",
+      connectorName: "slack",
+      channel: "C1",
+      startedAt: new Date().toISOString(),
+      kind: "resume",
+    });
+    writeSpool("story-flaky", { status: "pr_ready", summary: "ready" });
+
+    const connector = fakeConnector();
+    const deliverResult = vi.fn().mockRejectedValue(new Error("Slack API error"));
+    await reconcilePendingDevelopmentRuns(baseConfig(), {
+      connectorProvider: () => new Map([["slack", connector]]),
+      isInFlight: () => false,
+      deliverResult,
+    });
+
+    expect(deliverResult).toHaveBeenCalledTimes(1);
+    expect(listPendingDevelopmentRuns()).toHaveLength(1);
+    expect(readPersistedState()[runId].deliveryAttempts).toBe(1);
+  });
+
+  it("gives up and removes the record once delivery has failed MAX_DELIVERY_ATTEMPTS (10) times", async () => {
+    const runId = recordPendingDevelopmentRun({
+      storyId: "story-doomed",
+      connectorName: "slack",
+      channel: "C1",
+      startedAt: new Date().toISOString(),
+      kind: "resume",
+    });
+    writeSpool("story-doomed", { status: "pr_ready", summary: "ready" });
+
+    const connector = fakeConnector();
+    const deliverResult = vi.fn().mockRejectedValue(new Error("Slack API error"));
+    const deps = {
+      connectorProvider: () => new Map([["slack", connector]]),
+      isInFlight: () => false,
+      deliverResult,
+    };
+
+    for (let attempt = 1; attempt <= 9; attempt += 1) {
+      await reconcilePendingDevelopmentRuns(baseConfig(), deps);
+      expect(listPendingDevelopmentRuns()).toHaveLength(1);
+      expect(readPersistedState()[runId].deliveryAttempts).toBe(attempt);
+    }
+
+    // The 10th failure crosses MAX_DELIVERY_ATTEMPTS and gives up.
+    await reconcilePendingDevelopmentRuns(baseConfig(), deps);
+    expect(listPendingDevelopmentRuns()).toHaveLength(0);
+  });
+
+  it("keeps the pending record and increments deliveryAttempts when the interruption notice post throws", async () => {
+    const longAgo = new Date(Date.now() - (90 * 60 * 1000 + 11 * 60 * 1000)).toISOString();
+    const runId = recordPendingDevelopmentRun({
+      storyId: "story-notice-flaky",
+      connectorName: "slack",
+      channel: "C1",
+      startedAt: longAgo,
+      kind: "resume",
+    });
+
+    const connector = fakeConnector();
+    connector.replyMessage.mockRejectedValue(new Error("channel_not_found"));
+    await reconcilePendingDevelopmentRuns(baseConfig(), {
+      connectorProvider: () => new Map([["slack", connector]]),
+      isInFlight: () => false,
+      deliverResult: vi.fn(),
+    });
+
+    expect(connector.replyMessage).toHaveBeenCalledTimes(1);
+    expect(listPendingDevelopmentRuns()).toHaveLength(1);
+    expect(readPersistedState()[runId].deliveryAttempts).toBe(1);
+  });
+
+  it("gives up on a timed-out run once the interruption notice has failed MAX_DELIVERY_ATTEMPTS (10) times", async () => {
+    const longAgo = new Date(Date.now() - (90 * 60 * 1000 + 11 * 60 * 1000)).toISOString();
+    recordPendingDevelopmentRun({
+      storyId: "story-notice-doomed",
+      connectorName: "slack",
+      channel: "C1",
+      startedAt: longAgo,
+      kind: "resume",
+    });
+
+    const connector = fakeConnector();
+    connector.replyMessage.mockRejectedValue(new Error("channel_not_found"));
+    const deps = {
+      connectorProvider: () => new Map([["slack", connector]]),
+      isInFlight: () => false,
+      deliverResult: vi.fn(),
+    };
+
+    for (let i = 0; i < 9; i += 1) {
+      await reconcilePendingDevelopmentRuns(baseConfig(), deps);
+      expect(listPendingDevelopmentRuns()).toHaveLength(1);
+    }
+    await reconcilePendingDevelopmentRuns(baseConfig(), deps);
+    expect(listPendingDevelopmentRuns()).toHaveLength(0);
   });
 });
 

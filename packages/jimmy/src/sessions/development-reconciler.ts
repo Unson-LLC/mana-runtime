@@ -21,18 +21,34 @@
  *    first because it doesn't depend on that invariant.
  *  - a match delivers the result through the same `deliverDevelopmentResult`
  *    path pipe delivery already uses (needs_decision/needs_input/pr_ready
- *    cards included), then removes the pending record.
+ *    cards included), then removes the pending record — but only once that
+ *    delivery actually succeeds (see `handleDeliveryFailure`).
  *  - no match and `startedAt` is older than `timeoutMs` (the gateway's own
  *    development-runner timeout, plus a fixed grace period) posts a plain
- *    "run was interrupted" notice and gives up on the pending record — the
- *    worktree itself is untouched, so a fresh `/vibepro` retry is safe.
+ *    "run was interrupted" notice — the worktree itself is untouched, so a
+ *    fresh `/vibepro` retry is safe once the record is eventually cleared.
+ *
+ * Every delivery (result post or interruption notice) is resolved to a
+ * connector via `resolveTargetConnector` — never a bare `connectorName`
+ * lookup, since that name is shared across every instance of a connector
+ * type (e.g. two Slack workspaces both report `name: "slack"`) and could
+ * misdeliver to the wrong one. A post that throws does NOT remove the
+ * pending record: `handleDeliveryFailure` increments `deliveryAttempts` and
+ * only gives up (removing the record, with a loud error log) once
+ * `MAX_DELIVERY_ATTEMPTS` is reached, so a transient API error doesn't
+ * silently burn the run's only chance at delivery.
  */
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import { logger } from "../shared/logger.js";
 import { parseDevelopmentResult, DEFAULT_DEVELOPMENT_TIMEOUT_MS, type DevelopmentResult } from "./development-runner.js";
-import { listPendingDevelopmentRuns, removePendingDevelopmentRun, type PendingDevelopmentRun } from "./development-pending.js";
+import {
+  listPendingDevelopmentRuns,
+  removePendingDevelopmentRun,
+  recordDeliveryFailure,
+  type PendingDevelopmentRun,
+} from "./development-pending.js";
 import type { Connector, JinnConfig, Target } from "../shared/types.js";
 
 /** Extra time beyond the configured runner timeout before an orphaned run
@@ -40,6 +56,12 @@ import type { Connector, JinnConfig, Target } from "../shared/types.js";
  * purpose: a false "interrupted" notice while the run is still legitimately
  * in flight is worse than a late one. */
 const TIMEOUT_GRACE_MS = 10 * 60 * 1000;
+
+/** After this many consecutive failed delivery attempts (result post or
+ * interruption notice), the reconciler gives up on a pending run rather than
+ * retrying it forever. Logged loudly since giving up means the request is
+ * genuinely lost from the user's point of view. */
+const MAX_DELIVERY_ATTEMPTS = 10;
 
 const STORY_ID_RE = /^story-[a-z0-9-]+$/;
 const INTERRUPTED_NOTICE =
@@ -110,6 +132,60 @@ export async function findSpoolFile(spoolDir: string, run: PendingDevelopmentRun
   return best?.file ?? null;
 }
 
+/**
+ * Resolves the connector a pending run's result/notice must be delivered
+ * through.
+ *
+ * The registry (`connectorProvider()`) is a `Map<string, Connector>` keyed by
+ * the *instance* id each connector was registered under in
+ * gateway/server.ts's `connectorMap` (e.g. "slack" for the default
+ * workspace, "slack-biz" for a named `connectors.instances[]` entry) — NOT
+ * by `Connector.name`, which multiple instances of the same connector type
+ * share (every SlackConnector reports `name: "slack"` regardless of which
+ * workspace it's bound to). Resolving by `name` alone can silently pick the
+ * wrong workspace's connector and misdeliver a result — e.g. a `needs_input`
+ * card meant for a client's private Slack workspace landing in an internal
+ * one instead.
+ *
+ * - `run.connectorInstanceId` set (current record format): strict lookup by
+ *   that exact key. No `name` fallback — if that instance isn't registered
+ *   right now (removed from config, gateway restarted with a different
+ *   instance set, etc.), the caller must hold the pending record rather than
+ *   guess at a same-`name` substitute.
+ * - `run.connectorInstanceId` absent (the record predates this field, or the
+ *   connector type doesn't support named instances): the only safe move is a
+ *   `name` match, and only when it is unambiguous. Zero or multiple
+ *   registered connectors sharing that `name` both fail closed (`undefined`)
+ *   rather than guessing.
+ */
+export function resolveTargetConnector(
+  connectorMap: Map<string, Connector>,
+  run: PendingDevelopmentRun,
+): Connector | undefined {
+  if (run.connectorInstanceId) {
+    return connectorMap.get(run.connectorInstanceId);
+  }
+  const candidates = Array.from(connectorMap.values()).filter((candidate) => candidate.name === run.connectorName);
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+/**
+ * Records a failed delivery attempt for `run` and, once the configured
+ * retry cap is reached, gives up on it (logs loudly and removes the
+ * pending record). Kept pending in every other case — the next sweep will
+ * retry. No-ops if the run was already removed by a racing sweep.
+ */
+function handleDeliveryFailure(run: PendingDevelopmentRun): void {
+  const attempts = recordDeliveryFailure(run.runId);
+  if (attempts === null) return;
+  if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+    logger.error(
+      `[development-reconciler] giving up on ${run.runId} after ${attempts} failed delivery attempts; the request is lost`,
+    );
+    removePendingDevelopmentRun(run.runId);
+  }
+}
+
 export interface ReconcileDeps {
   connectorProvider: () => Map<string, Connector>;
   /** True when `run.runId` is the run this process is currently awaiting a
@@ -141,7 +217,7 @@ export async function reconcilePendingDevelopmentRuns(
 
   for (const run of pending) {
     if (deps.isInFlight(run)) continue;
-    const connector = deps.connectorProvider().get(run.connectorName);
+    const connector = resolveTargetConnector(deps.connectorProvider(), run);
     const target: Target = { channel: run.channel, ...(run.thread ? { thread: run.thread } : {}) };
 
     let spoolFile: string | null;
@@ -165,7 +241,11 @@ export async function reconcilePendingDevelopmentRuns(
         continue;
       }
       if (!connector) {
-        logger.warn(`[development-reconciler] connector "${run.connectorName}" not found; keeping pending run ${run.runId}`);
+        // Fail-closed: no exact instance match (or an ambiguous legacy
+        // name match) means we don't actually know where this belongs.
+        // Keeping the record — never guessing — is what prevents a result
+        // meant for one Slack workspace from landing in another.
+        logger.warn(`[development-reconciler] no connector resolved for ${run.runId} (instanceId=${run.connectorInstanceId ?? "none"}, name=${run.connectorName}); keeping pending run`);
         continue;
       }
       try {
@@ -173,6 +253,7 @@ export async function reconcilePendingDevelopmentRuns(
         removePendingDevelopmentRun(run.runId);
       } catch (error) {
         logger.error(`[development-reconciler] failed to deliver result for ${run.runId}: ${error instanceof Error ? error.message : "unknown error"}`);
+        handleDeliveryFailure(run);
       }
       continue;
     }
@@ -183,12 +264,16 @@ export async function reconcilePendingDevelopmentRuns(
     if (connector) {
       try {
         await connector.replyMessage(target, INTERRUPTED_NOTICE);
+        // Only a successful post retires the record — a failed post below
+        // keeps it pending for the next sweep instead of silently losing
+        // the run's only remaining chance at a retry.
+        removePendingDevelopmentRun(run.runId);
       } catch (error) {
         logger.error(`[development-reconciler] failed to post interruption notice for ${run.runId}: ${error instanceof Error ? error.message : "unknown error"}`);
+        handleDeliveryFailure(run);
       }
     } else {
-      logger.warn(`[development-reconciler] connector "${run.connectorName}" not found for timed-out run ${run.runId}`);
+      logger.warn(`[development-reconciler] no connector resolved for timed-out run ${run.runId} (instanceId=${run.connectorInstanceId ?? "none"}, name=${run.connectorName}); keeping pending run`);
     }
-    removePendingDevelopmentRun(run.runId);
   }
 }

@@ -98,6 +98,22 @@ describe("SessionManager development-pending bookkeeping", () => {
     // Must match the same sha256(request.trim()).slice(0,8) the isolated
     // runner computes to embed in the Story id it generates.
     expect(recorded.requestDigest).toBe(createHash("sha256").update("change docs").digest("hex").slice(0, 8));
+    // No instanceId on this fixture connector, so the pending record must
+    // not fabricate one (falls back to connectorName-based reconciliation).
+    expect(recorded.connectorInstanceId).toBeUndefined();
+  });
+
+  it("records connectorInstanceId when the connector reports one, distinguishing it from connectorName (e.g. two Slack workspaces both named \"slack\")", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({ status: "pr_ready", storyId: "story-x", summary: "ready" });
+    const manager = new SessionManager(config(), new Map(), ["slack"]);
+    const slackBiz = connector({ instanceId: "slack-biz" });
+
+    await manager.handleCommand(message("/develop  change docs  "), slackBiz);
+    await vi.waitFor(() => expect(removePendingDevelopmentRun).toHaveBeenCalled());
+
+    const recorded = recordPendingDevelopmentRun.mock.calls[0][0];
+    expect(recorded.connectorName).toBe("slack");
+    expect(recorded.connectorInstanceId).toBe("slack-biz");
   });
 
   it("records a resume request with kind:resume and the known storyId", async () => {
