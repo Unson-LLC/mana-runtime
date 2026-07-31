@@ -6,6 +6,14 @@ vi.mock("../development-runner.js", async (importOriginal) => ({
   runDevelopmentRequest,
 }));
 
+// This file doesn't assert on pending-run bookkeeping (see
+// manager-development-pending.test.ts for that) — stub it out here so these
+// tests never touch the real JINN_HOME state file on disk.
+vi.mock("../development-pending.js", () => ({
+  recordPendingDevelopmentRun: vi.fn(() => "test-run-id"),
+  removePendingDevelopmentRun: vi.fn(),
+}));
+
 import { SessionManager } from "../manager.js";
 import type { Connector, IncomingMessage, JinnConfig } from "../../shared/types.js";
 

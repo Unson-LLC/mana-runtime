@@ -764,6 +764,15 @@ export interface DevelopmentRunnerConfig {
   timeoutMs?: number;
   /** Slack channel IDs allowed to start development. Empty or absent fails closed. */
   allowedSlackChannels?: string[];
+  /**
+   * Absolute path to the isolated runner's result spool directory (must
+   * match the runner-side root-owned config's `resultsSpoolDir`). When set,
+   * the gateway reconciles pending runs against this directory at startup
+   * and every 60s so an orphaned run (e.g. a gateway restart that killed
+   * the runner's cgroup) still gets its result and Slack card delivered.
+   * Absent disables the reconciler entirely (back-compat).
+   */
+  resultsSpoolDir?: string;
 }
 
 export interface PlacementDeliveryTarget {

@@ -179,7 +179,7 @@ remove only the exact lock path before retrying.
 `systemctl restart openryoko` kills the whole service cgroup. Because the
 gateway starts the runner through sudo inside its own cgroup, a restart
 mid-run kills the runner and strands the fail-closed lock (observed
-2026-07-31). Two defenses:
+2026-07-31). Three defenses, layered:
 
 1. **Deploy-time guard (required).** Before any gateway restart, run the
    preflight on the pilot host:
@@ -209,13 +209,29 @@ mid-run kills the runner and strands the fail-closed lock (observed
        - --gid=ryoko-dev
        - --setenv=HOME=/home/ryoko-dev
        - /usr/local/libexec/openryoko-development-runner
+     resultsSpoolDir: /srv/openryoko-development/results
    ```
 
-   with the matching exact sudoers rule (replacing the old `(ryoko-dev)` rule):
+   with the matching exact sudoers rule (replacing the old `(ryoko-dev)`
+   rule) shipped as `scripts/systemd/openryoko-development-scope.sudoers` —
+   deploy it to `/etc/sudoers.d/openryoko-development-scope` (`0440`,
+   `root:root`) and validate with `visudo -cf`:
 
    ```text
    ryoko ALL=(root) NOPASSWD: /usr/bin/systemd-run --quiet --collect --scope --uid=ryoko-dev --gid=ryoko-dev --setenv=HOME=/home/ryoko-dev /usr/local/libexec/openryoko-development-runner
    ```
+
+   This command line is intentionally 100% static — it does not pass
+   `--unit=...`. `systemd-run` auto-generates a unique transient unit name
+   when `--unit` is omitted, so there is no per-invocation variable that
+   would force either a wildcard sudoers rule (letting the gateway's `ryoko`
+   user run `systemd-run` with attacker-influenced arguments) or a
+   root-owned wrapper binary — sudo's exact-string match on the full argv is
+   safe as-is. Only introduce a wrapper script if the invocation ever needs
+   a genuinely per-run argument (e.g. embedding the Story id into `--unit=`
+   for operator observability); do not silently switch to a `*` wildcard to
+   work around that need. See the comment header in the `.sudoers` file for
+   the full rationale.
 
    `--scope` keeps stdin/stdout attached (the JSON contract is unchanged) and
    keeps the runner in the gateway child's process group, so the gateway's own
@@ -225,16 +241,52 @@ mid-run kills the runner and strands the fail-closed lock (observed
    while `enabled: false` first — `--uid` with `--scope` needs a reasonably
    recent systemd.
 
-   Note that with this escape a restart no longer aborts an in-flight run, but
-   the gateway that spawned it is gone, so the Slack result is lost; the guard
-   in step 1 remains the primary deploy procedure.
+   With this escape, a gateway restart no longer aborts an in-flight run —
+   but until `resultsSpoolDir` is configured (see below), the gateway that
+   spawned it is gone when it finishes, so the Slack result would still be
+   lost. Configure the result spool together with the cgroup escape, not
+   instead of it.
+
+3. **Result spool + reconciler (required for the escape to actually deliver
+   a result).** With `resultsSpoolDir` set on both the runner's root-owned
+   config (`/etc/openryoko-development-runner.json`) and the gateway's
+   `developmentRunner.resultsSpoolDir` (same absolute path, e.g.
+   `/srv/openryoko-development/results`, writable by `ryoko-dev`, readable
+   by the gateway's `ryoko` user), every result the runner emits is also
+   written to `<resultsSpoolDir>/<storyId>.json`. The gateway records a
+   pending-run marker before starting the runner
+   (`~/.ryoko/state/development-pending.json`) and, at startup and every 60s
+   thereafter, reconciles: any pending run whose spool file has appeared
+   gets its result delivered to Slack (the same `needs_decision`/
+   `needs_input`/`pr_ready` cards pipe delivery uses) and its pending record
+   removed; a pending run with no spool file and no live in-process owner,
+   older than the configured runner timeout plus a 10-minute grace period,
+   gets a plain "run was interrupted, the worktree is preserved, retry with
+   `/vibepro`" notice instead of silence forever. See
+   `packages/jimmy/src/sessions/development-pending.ts` and
+   `development-reconciler.ts`. `resultsSpoolDir` is optional on both sides
+   — omitting it disables spooling/reconciliation entirely (back-compat with
+   deployments that only use defense 1).
 
 ## Release and rollback
 
 ### Release note
 
-The runner version advances to `2026-07-31.4`. `needs_input` results caused
-by unresolved VibePro gates now carry a structured `gates` array
+The runner version advances to `2026-07-31.5`. Every emitted result is now
+also written to `resultsSpoolDir/<storyId>.json` (optional root-owned config
+field; spooling is skipped entirely when unset), stamped with a spool-only
+`finishedAt`/`runnerPid` (never part of the stdout contract). Spool writes
+are atomic (`.tmp` + rename) and fail-silent — a spool write failure can
+never fail or alter the development run itself. At startup the runner also
+deletes spool files older than 7 days. This is the runner half of the
+"Surviving gateway restarts" defense above; the gateway half
+(`developmentRunner.resultsSpoolDir` + the pending-run reconciler) is
+unversioned gateway code and does not require a `runnerVersion` bump on its
+own, but both sides must agree on the same absolute spool directory path to
+be useful together. The stdin/stdout result contract is otherwise unchanged.
+
+The previous version `2026-07-31.4` added structured gate results.
+`needs_input` results caused by unresolved VibePro gates carry a structured `gates` array
 (`{severity, text}`, bounded to 30 entries of 500 chars) instead of a single
 truncated sentence, and `needs_input`/`pr_ready` results carry a `commits`
 object (`{count, subjects}`, up to 5 newest-first non-bookkeeping subjects) so
