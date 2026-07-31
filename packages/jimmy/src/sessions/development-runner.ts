@@ -14,7 +14,8 @@ export type { DevelopmentQuestion, DevelopmentQuestionOption, DevelopmentAnswer,
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_REQUEST_CHARS = 8000;
-const DEFAULT_TIMEOUT_MS = 90 * 60 * 1000;
+export const DEFAULT_DEVELOPMENT_TIMEOUT_MS = 90 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = DEFAULT_DEVELOPMENT_TIMEOUT_MS;
 const PROGRESS_LINE_PREFIX = "PROGRESS ";
 const MAX_STDERR_PARSE_BYTES = 1 * 1024 * 1024;
 const MAX_PROGRESS_LATEST_CHARS = 300;

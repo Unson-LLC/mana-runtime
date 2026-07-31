@@ -997,6 +997,20 @@ export async function startGateway(
   // status:"running" with no live turn (see status-reconciler.ts).
   const stopStatusReconciler = startStatusReconciler({ engines, emit });
 
+  // Backstop for orphaned `/vibepro` development runs: a gateway restart
+  // that killed the isolated runner's cgroup (or simply lost the parent
+  // pipe) must not lose the Slack result forever. Runs once at startup and
+  // every 60s; no-ops when developmentRunner.resultsSpoolDir is unset (see
+  // development-reconciler.ts).
+  const runDevelopmentReconcileSweep = () => {
+    void sessionManager.reconcileDevelopmentPending().catch((err) => {
+      logger.warn(`[development-reconciler] sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+  runDevelopmentReconcileSweep();
+  const developmentReconcilerTimer = setInterval(runDevelopmentReconcileSweep, 60_000);
+  developmentReconcilerTimer.unref?.();
+
   // API context
   const apiContext: ApiContext = {
     config: currentConfig,
@@ -1376,6 +1390,7 @@ export async function startGateway(
     // Terminate live engine subprocesses after marking sessions. When interactive
     // is active, interactiveClaudeEngine.killAll() also kills its headless fallback
     // (the same claudeEngine), so call only one to avoid a redundant double-kill.
+    try { clearInterval(developmentReconcilerTimer); } catch { /* best effort */ }
     if (interactiveClaudeEngine) {
       interactiveClaudeEngine.killAll();
       claudeLifecycle?.dispose();

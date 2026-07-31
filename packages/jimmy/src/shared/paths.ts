@@ -64,6 +64,12 @@ export const TMP_DIR = path.join(JINN_HOME, "tmp");
 export const MODELS_DIR = path.join(JINN_HOME, "models");
 export const STT_MODELS_DIR = path.join(JINN_HOME, "models", "whisper");
 export const PID_FILE = path.join(JINN_HOME, "gateway.pid");
+/** Pending `/vibepro` development runs, keyed by an internally-generated
+ * runId. Written before the isolated runner starts and removed once its
+ * result has been delivered to Slack, so a gateway restart that orphans the
+ * runner (its own cgroup was killed, or the parent pipe simply died) can
+ * still be reconciled from the result spool on the next startup/sweep. */
+export const DEVELOPMENT_PENDING_FILE = path.join(JINN_HOME, "state", "development-pending.json");
 export const CLAUDE_SKILLS_DIR = path.join(JINN_HOME, ".claude", "skills");
 export const AGENTS_SKILLS_DIR = path.join(JINN_HOME, ".agents", "skills");
 export const TEMPLATE_DIR = path.join(__dirname, "..", "..", "..", "template");

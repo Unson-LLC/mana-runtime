@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import type {
   Connector,
   Employee,
@@ -44,6 +45,12 @@ import {
   type DevelopmentProgress,
   type DevelopmentResult,
 } from "./development-runner.js";
+import {
+  recordPendingDevelopmentRun,
+  removePendingDevelopmentRun,
+  type PendingDevelopmentRun,
+} from "./development-pending.js";
+import { reconcilePendingDevelopmentRuns } from "./development-reconciler.js";
 import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
@@ -175,6 +182,11 @@ export class SessionManager {
   private connectorProvider: () => Map<string, Connector> = () => new Map();
   private criticalDispatches = new Set<string>();
   private developmentRunning = false;
+  /** The pending-run record id (see development-pending.ts) for whichever
+   * development run this process is currently piping stdout from, if any.
+   * Excludes that run from the reconciler sweep so pipe delivery and the
+   * spool-based reconciler never race each other. */
+  private inFlightDevelopmentRunId: string | null = null;
 
   constructor(
     config: JinnConfig,
@@ -1465,6 +1477,41 @@ export class SessionManager {
     if (connector.setTypingStatus && target.thread) {
       connector.setTypingStatus(target.channel, target.thread, "開発中…").catch(() => {});
     }
+
+    // Record this run durably BEFORE spawning the runner: if the gateway
+    // process dies mid-run (its own cgroup killed, etc.), the reconciler
+    // needs this record to know a run was in flight and where to deliver
+    // the result once the isolated runner's result spool shows up.
+    const pendingRun: Omit<PendingDevelopmentRun, "runId"> = typeof request === "string"
+      ? {
+          storyId: null,
+          requestDigest: createHash("sha256").update(request.trim()).digest("hex").slice(0, 8),
+          connectorName: connector.name,
+          channel: target.channel,
+          ...(target.thread ? { thread: target.thread } : {}),
+          startedAt: new Date().toISOString(),
+          kind: "new",
+        }
+      : "continueGates" in request
+        ? {
+            storyId: request.storyId,
+            connectorName: connector.name,
+            channel: target.channel,
+            ...(target.thread ? { thread: target.thread } : {}),
+            startedAt: new Date().toISOString(),
+            kind: "continue",
+          }
+        : {
+            storyId: request.storyId,
+            connectorName: connector.name,
+            channel: target.channel,
+            ...(target.thread ? { thread: target.thread } : {}),
+            startedAt: new Date().toISOString(),
+            kind: "resume",
+          };
+    const runId = recordPendingDevelopmentRun(pendingRun);
+    this.inFlightDevelopmentRunId = runId;
+
     // Refreshes the fixed "開発中…" banner with real progress (elapsed time,
     // commit count, latest commit subject) once the isolated runner starts
     // reporting it. Deduped against the last text sent so a no-op tick
@@ -1485,11 +1532,36 @@ export class SessionManager {
         return connector.replyMessage(target, "Development task failed inside the isolated runner. No PR or deployment was performed.");
       })
       .finally(() => {
+        // A successful delivery already reached Slack via the pipe above (or
+        // the catch handler above posted the failure notice), so the pending
+        // record is no longer needed either way — remove it after, never
+        // before, delivery so a crash between "result received" and "record
+        // removed" degrades toward the reconciler re-delivering (safe,
+        // if occasionally duplicated) rather than losing the result.
+        removePendingDevelopmentRun(runId);
+        if (this.inFlightDevelopmentRunId === runId) this.inFlightDevelopmentRunId = null;
         this.developmentRunning = false;
         if (connector.setTypingStatus && target.thread) {
           connector.setTypingStatus(target.channel, target.thread, "").catch(() => {});
         }
       });
+  }
+
+  /**
+   * One reconciliation sweep: delivers results for pending development runs
+   * whose result already landed in the runner's spool, and posts an
+   * interruption notice for runs that have been pending far longer than the
+   * configured timeout with no spool and no in-flight owner. Called once at
+   * gateway startup and on a periodic interval (see server.ts). No-ops when
+   * `developmentRunner.resultsSpoolDir` is not configured.
+   */
+  async reconcileDevelopmentPending(): Promise<void> {
+    if (!this.config.developmentRunner) return;
+    await reconcilePendingDevelopmentRuns(this.config, {
+      connectorProvider: this.connectorProvider,
+      isInFlight: (run) => run.runId === this.inFlightDevelopmentRunId,
+      deliverResult: (result, connector, target) => this.deliverDevelopmentResult(result, connector, target),
+    });
   }
 
   private async deliverDevelopmentResult(result: DevelopmentResult, connector: Connector, target: Target): Promise<void> {
