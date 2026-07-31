@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, parseProgressLine, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, acquireDevelopmentLock, assessLockStaleness, buildAgentArgs, buildAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildProgressLine, buildStoryAddArgs, buildStoryCommitArgs, ensureGitignoreEntry, extractBlockingGates, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, acquireDevelopmentLock, assessLockStaleness, buildAgentArgs, buildAgentPrompt, buildContinueGatesAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildProgressLine, buildStoryAddArgs, buildStoryCommitArgs, collectCommits, ensureGitignoreEntry, extractBlockingGates, extractGates, isChoreRecordCommit, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
 
 const RUNNER_URL = pathToFileURL(path.resolve("../..", "scripts/development-runner/run.mjs")).href;
 
@@ -116,6 +116,51 @@ describe("development runner", () => {
     ].join("\n"))).toEqual(["Scope requires a split decision", "3 unresolved gate(s)"]);
   });
 
+  it("pairs each unresolved gate with its severity, bounded to 30 entries of 500 chars", () => {
+    const { gates, totalCount } = extractGates([
+      "- critical_gate: Scope requires a split decision",
+      "- other: noise",
+      "- waiver_or_evidence: 3 unresolved gate(s)",
+    ].join("\n"));
+    expect(gates).toEqual([
+      { severity: "critical", text: "Scope requires a split decision" },
+      { severity: "evidence", text: "3 unresolved gate(s)" },
+    ]);
+    expect(totalCount).toBe(2);
+
+    const many = Array.from({ length: 35 }, (_, i) => `- critical_gate: gate ${i}`).join("\n");
+    const manyResult = extractGates(many);
+    expect(manyResult.gates).toHaveLength(30);
+    expect(manyResult.totalCount).toBe(35);
+
+    const longText = "x".repeat(600);
+    const truncated = extractGates(`- critical_gate: ${longText}`);
+    expect(truncated.gates[0].text).toHaveLength(500);
+  });
+
+  it("attaches commits to resultFromAgentRun only when provided", () => {
+    const ready = "## Next Commands\n\n- vibepro pr create . --base main --head codex/story-x --story-id story-x\n";
+    expect(resultFromAgentRun(ready, "story-x")).toEqual({
+      status: "pr_ready",
+      storyId: "story-x",
+      summary: "VibePro gates are ready. PR creation requires a human action.",
+    });
+    expect(resultFromAgentRun(ready, "story-x", { count: 3, subjects: ["fix: x"] })).toEqual({
+      status: "pr_ready",
+      storyId: "story-x",
+      summary: "VibePro gates are ready. PR creation requires a human action.",
+      commits: { count: 3, subjects: ["fix: x"] },
+    });
+
+    const notReady = "- critical_gate: 必須設計図が不足: threat_model\n## Next Commands\n- vibepro pr prepare . --story-id story-x --base main\n";
+    const withCommits = resultFromAgentRun(notReady, "story-x", { count: 2, subjects: ["feat: y"] });
+    expect(withCommits.gates).toEqual([{ severity: "critical", text: "必須設計図が不足: threat_model" }]);
+    expect(withCommits.commits).toEqual({ count: 2, subjects: ["feat: y"] });
+
+    const noGatesFound = resultFromAgentRun("no matching lines at all\n## Next Commands\n- vibepro pr prepare . --story-id story-x --base main\n", "story-x");
+    expect(noGatesFound.gates).toBeUndefined();
+  });
+
   it("parses the agent environment file strictly", () => {
     expect(parseEnvFile('# key for the agent\nANTHROPIC_API_KEY="sk-test"\n\nCLAUDE_CODE_FLAG=1\n')).toEqual({
       ANTHROPIC_API_KEY: "sk-test",
@@ -162,6 +207,34 @@ describe("development runner", () => {
     expect(JSON.parse(stdin)).toEqual({ request: "READMEを改善する" });
     expect(options.env.SLACK_BOT_TOKEN).toBeUndefined();
     expect(options.env).toEqual(expect.objectContaining({ PATH: expect.any(String), LANG: expect.any(String) }));
+  });
+
+  it("passes a continueGates request over stdin", async () => {
+    let stdin = "";
+    const spawnFn = vi.fn((_bin, _args, _options) => {
+      const child = childReturning('{"status":"pr_ready","storyId":"story-safe-change","summary":"ready"}');
+      child.stdin.on("data", (chunk: Buffer) => { stdin += chunk.toString(); });
+      return child;
+    }) as any;
+
+    const result = await runDevelopmentRequest(
+      { enabled: true, bin: "/usr/bin/sudo" },
+      { storyId: "story-safe-change", continueGates: true },
+      spawnFn,
+    );
+
+    expect(result.status).toBe("pr_ready");
+    expect(JSON.parse(stdin)).toEqual({ storyId: "story-safe-change", continueGates: true });
+  });
+
+  it("rejects an invalid continueGates request before spawning", async () => {
+    const spawnFn = vi.fn() as any;
+    await expect(runDevelopmentRequest(
+      { enabled: true, bin: "/usr/bin/sudo" },
+      { storyId: "not-a-story", continueGates: true },
+      spawnFn,
+    )).rejects.toThrow("storyId is invalid");
+    expect(spawnFn).not.toHaveBeenCalled();
   });
 
   it("parses a well-formed PROGRESS stderr line", () => {
@@ -283,6 +356,63 @@ describe("development runner", () => {
       status: "failed",
       summary: "stopped",
     });
+  });
+
+  it("accepts gates and commits on needs_input/pr_ready and validates their shape", () => {
+    const withGates = parseDevelopmentResult(JSON.stringify({
+      status: "needs_input",
+      storyId: "story-x",
+      summary: "gates remain",
+      gates: [{ severity: "critical", text: "missing threat model" }, { severity: "evidence", text: "no waiver" }],
+      commits: { count: 2, subjects: ["feat: a", "fix: b"] },
+    }));
+    expect(withGates.gates).toEqual([
+      { severity: "critical", text: "missing threat model" },
+      { severity: "evidence", text: "no waiver" },
+    ]);
+    expect(withGates.commits).toEqual({ count: 2, subjects: ["feat: a", "fix: b"] });
+
+    const readyWithCommits = parseDevelopmentResult(JSON.stringify({
+      status: "pr_ready", storyId: "story-x", summary: "ready", commits: { count: 0, subjects: [] },
+    }));
+    expect(readyWithCommits.commits).toEqual({ count: 0, subjects: [] });
+  });
+
+  it("rejects gates/commits on statuses other than needs_input/pr_ready", () => {
+    expect(() => parseDevelopmentResult(JSON.stringify({
+      status: "failed", summary: "x", gates: [{ severity: "critical", text: "x" }],
+    }))).toThrow("gates for failed");
+    expect(() => parseDevelopmentResult(JSON.stringify({
+      status: "queued", storyId: "story-x", summary: "x", commits: { count: 0, subjects: [] },
+    }))).toThrow("commits for queued");
+  });
+
+  it("rejects a malformed gate entry", () => {
+    const base = { status: "needs_input", storyId: "story-x", summary: "x" };
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, gates: [] })))
+      .toThrow("invalid gates");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, gates: Array.from({ length: 31 }, () => ({ severity: "critical", text: "x" })) })))
+      .toThrow("invalid gates");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, gates: [{ severity: "unknown", text: "x" }] })))
+      .toThrow("invalid gate severity");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, gates: [{ severity: "critical", text: "x", extra: 1 }] })))
+      .toThrow("unsupported gate field");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, gates: [{ severity: "critical", text: "x".repeat(501) }] })))
+      .toThrow("invalid gate text");
+  });
+
+  it("rejects a malformed commits object", () => {
+    const base = { status: "pr_ready", storyId: "story-x", summary: "x" };
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, commits: { count: -1, subjects: [] } })))
+      .toThrow("invalid commits count");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, commits: { count: 10001, subjects: [] } })))
+      .toThrow("invalid commits count");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, commits: { count: 1, subjects: Array.from({ length: 6 }, () => "x") } })))
+      .toThrow("invalid commit subjects");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, commits: { count: 1, subjects: ["x".repeat(201)] } })))
+      .toThrow("invalid commit subject");
+    expect(() => parseDevelopmentResult(JSON.stringify({ ...base, commits: { count: 1, extra: true } })))
+      .toThrow("unsupported commits field");
   });
 
   it("waits for process close after timing out", async () => {
@@ -452,6 +582,56 @@ describe("development runner", () => {
       await waitForAcquired(restarted);
       restarted.stdin.end();
       expect(await waitForExit(restarted)).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("commit collection for the needs_input/pr_ready result contract", () => {
+  it("classifies the runner's own bookkeeping commits", () => {
+    expect(isChoreRecordCommit("chore: record story-x request")).toBe(true);
+    expect(isChoreRecordCommit("chore: record story-x human answers")).toBe(true);
+    expect(isChoreRecordCommit("feat: add a thing")).toBe(false);
+  });
+
+  it("returns a zeroed snapshot when there is no baseline sha", async () => {
+    expect(await collectCommits("/nonexistent", null)).toEqual({ count: 0, subjects: [] });
+  });
+
+  it("counts commits since the baseline and excludes chore bookkeeping commits from the visible list", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "openryoko-collect-commits-"));
+    try {
+      await runCommand("/usr/bin/git", ["init", "-q"], { cwd: directory });
+      await runCommand("/usr/bin/git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", "chore: record story-x request"], { cwd: directory });
+      const baseline = (await runCommand("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: directory })).trim();
+      await runCommand("/usr/bin/git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", "feat: implement thing"], { cwd: directory });
+      await runCommand("/usr/bin/git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", "fix: adjust thing"], { cwd: directory });
+      await runCommand("/usr/bin/git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", "chore: record story-x human answers"], { cwd: directory });
+
+      const result = await collectCommits(directory, baseline);
+      expect(result.count).toBe(3);
+      expect(result.subjects).toEqual(["fix: adjust thing", "feat: implement thing"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("caps visible subjects at 5 and truncates an oversized subject to 200 chars", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "openryoko-collect-commits-many-"));
+    try {
+      await runCommand("/usr/bin/git", ["init", "-q"], { cwd: directory });
+      await runCommand("/usr/bin/git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", "init"], { cwd: directory });
+      const baseline = (await runCommand("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: directory })).trim();
+      for (let i = 0; i < 6; i += 1) {
+        await runCommand("/usr/bin/git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", `feat: change ${i}`], { cwd: directory });
+      }
+      await runCommand("/usr/bin/git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-q", "-m", `feat: ${"x".repeat(250)}`], { cwd: directory });
+
+      const result = await collectCommits(directory, baseline);
+      expect(result.count).toBe(7);
+      expect(result.subjects).toHaveLength(5);
+      expect(result.subjects[0].length).toBeLessThanOrEqual(200);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -639,6 +819,38 @@ describe("Human-in-the-Loop stdin contract", () => {
     }));
     expect(result).toEqual({ ok: false, message: "duplicate answer id: q1" });
   });
+
+  it("accepts a continueGates payload", async () => {
+    const result = await callReadStdin(JSON.stringify({ storyId: "story-safe-change", continueGates: true }));
+    expect(result).toEqual({ ok: true, payload: { mode: "continueGates", storyId: "story-safe-change" } });
+  });
+
+  it("rejects continueGates alongside answers", async () => {
+    const result = await callReadStdin(JSON.stringify({
+      storyId: "story-x", continueGates: true, answers: [{ id: "q1", answer: "a" }],
+    }));
+    expect(result).toEqual({ ok: false, message: "continueGates and answers are mutually exclusive" });
+  });
+
+  it("rejects continueGates alongside request", async () => {
+    const result = await callReadStdin(JSON.stringify({ request: "x", storyId: "story-x", continueGates: true }));
+    expect(result).toEqual({ ok: false, message: "request and storyId/answers are mutually exclusive" });
+  });
+
+  it("rejects an unsupported field alongside continueGates", async () => {
+    const result = await callReadStdin(JSON.stringify({ storyId: "story-x", continueGates: true, extra: "y" }));
+    expect(result).toEqual({ ok: false, message: "unsupported request field" });
+  });
+
+  it("rejects continueGates set to a non-true value", async () => {
+    const result = await callReadStdin(JSON.stringify({ storyId: "story-x", continueGates: "yes" }));
+    expect(result).toEqual({ ok: false, message: "invalid continueGates" });
+  });
+
+  it("rejects an invalid storyId for continueGates", async () => {
+    const result = await callReadStdin(JSON.stringify({ storyId: "not-a-story", continueGates: true }));
+    expect(result).toEqual({ ok: false, message: "invalid storyId" });
+  });
 });
 
 describe("questions.json Human-in-the-Loop contract", () => {
@@ -779,6 +991,14 @@ describe(".gitignore and Story-doc helpers for the resume round-trip", () => {
     const prompt = buildAgentPrompt("story-safe-change", "何かを実装して", "main");
     expect(prompt).toContain(".openryoko/questions.json");
     expect(prompt).toContain("最大5問");
+  });
+
+  it("builds a continue-gates agent prompt that re-derives gates itself and keeps the safety boundary", () => {
+    const prompt = buildContinueGatesAgentPrompt("story-safe-change", "main");
+    expect(prompt).toContain("story-safe-change");
+    expect(prompt).toContain("vibepro pr ship . --base main --head codex/story-safe-change --story-id story-safe-change --dry-run");
+    expect(prompt).toContain("PR作成・merge・push・deploy・secretsの変更・runtime本体checkoutの変更は行わない");
+    expect(prompt).not.toContain(".openryoko/questions.json");
   });
 });
 

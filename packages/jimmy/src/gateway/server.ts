@@ -101,6 +101,10 @@ export function buildSlackConnectorContext(
       ? (storyId, answers, connector, target) =>
           sessionManager.resumeDevelopmentDecision(storyId, answers, connector, target)
       : undefined,
+    continueDevelopmentGates: sessionManager
+      ? (storyId, connector, target) =>
+          sessionManager.continueDevelopmentGates(storyId, connector, target)
+      : undefined,
   };
 }
 

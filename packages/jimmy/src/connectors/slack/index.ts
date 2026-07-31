@@ -4,6 +4,8 @@ import type {
   ConnectorCapabilities,
   ConnectorHealth,
   DevelopmentAnswer,
+  DevelopmentCommits,
+  DevelopmentGate,
   DevelopmentQuestion,
   IncomingMessage,
   ReplyContext,
@@ -30,6 +32,7 @@ import { TaskReminderNotifier } from "./task-reminder.js";
 import { MeetingTaskProposalNotifier } from "./meeting-task-proposal.js";
 import { MeetingMinutesPipeline } from "./meeting-minutes-pipeline.js";
 import { VibeproDecisionNotifier } from "./vibepro-decision.js";
+import { VibeproGateResultNotifier } from "./vibepro-gate-result.js";
 import { extractGoalCondition, shouldExtractGoal } from "./goal-extractor.js";
 import { startsWithSlashCommand } from "../../sessions/manager.js";
 import type { SlackTriageConfig } from "../../shared/types.js";
@@ -58,6 +61,18 @@ export interface SlackConnectorContext {
   resumeDevelopmentDecision?: (
     storyId: string,
     answers: DevelopmentAnswer[],
+    connector: Connector,
+    target: Target,
+  ) => boolean;
+  /**
+   * Continues a `/vibepro` Story that stopped with `needs_input` because
+   * VibePro gates were unresolved, after a human clicked "続行してGateを
+   * 解消させる" on the needs_input result card. Bound to
+   * `SessionManager.continueDevelopmentGates` in the gateway. Returns false
+   * when the runner is busy or disabled.
+   */
+  continueDevelopmentGates?: (
+    storyId: string,
     connector: Connector,
     target: Target,
   ) => boolean;
@@ -92,6 +107,7 @@ export class SlackConnector implements Connector {
   private readonly meetingTaskProposal: MeetingTaskProposalNotifier | null;
   private readonly meetingMinutesPipeline: MeetingMinutesPipeline | null;
   private readonly vibeproDecision: VibeproDecisionNotifier | null;
+  private readonly vibeproGateResult: VibeproGateResultNotifier | null;
   private static CHANNEL_CACHE_TTL_MS = 3600_000; // 1 hour
   private static USER_CACHE_TTL_MS = 3600_000; // 1 hour
 
@@ -200,6 +216,12 @@ export class SlackConnector implements Connector {
       ? new VibeproDecisionNotifier(this.app, allowFrom, {
           resumeDecision: (storyId, answers, target) =>
             context.resumeDevelopmentDecision?.(storyId, answers, this, target) ?? false,
+        })
+      : null;
+    this.vibeproGateResult = this.developmentRunnerEnabled
+      ? new VibeproGateResultNotifier(this.app, allowFrom, {
+          continueGates: (storyId, target) =>
+            context.continueDevelopmentGates?.(storyId, this, target) ?? false,
         })
       : null;
   }
@@ -860,6 +882,7 @@ export class SlackConnector implements Connector {
     this.meetingTaskProposal?.register();
     this.meetingMinutesPipeline?.register();
     this.vibeproDecision?.register();
+    this.vibeproGateResult?.register();
 
     await this.app.start();
     this.started = true;
@@ -1006,6 +1029,24 @@ export class SlackConnector implements Connector {
       return;
     }
     await this.vibeproDecision.postQuestions(target, payload.storyId, payload.questions, payload.summary);
+  }
+
+  /**
+   * Posts a `/vibepro needs_input` "成果報告＋次の一手" card (Block Kit with
+   * a continue/details button pair) when VibePro gates remain unresolved.
+   * Falls back to a short Japanese plain-text notice when the development
+   * runner isn't enabled for this connector instance, or when the result
+   * carries no gates (e.g. an agent error before `pr ship --dry-run` ran).
+   */
+  async postDevelopmentNeedsInput(
+    target: Target,
+    payload: { storyId: string; summary: string; gates?: DevelopmentGate[]; commits?: DevelopmentCommits },
+  ): Promise<void> {
+    if (!this.vibeproGateResult || !payload.gates || payload.gates.length === 0) {
+      await this.replyMessage(target, `⚠ 開発が中断しました: ${payload.summary}`);
+      return;
+    }
+    await this.vibeproGateResult.postResult(target, payload.storyId, payload.gates, payload.commits);
   }
 
   async addReaction(target: Target, emoji: string) {
