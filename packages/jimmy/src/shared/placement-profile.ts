@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import type { Engine, EngineResult, EngineRunOpts, IncomingMessage, PlacementDeliveryTarget, PlacementProfile } from "./types.js";
 import { JINN_HOME } from "./paths.js";
@@ -80,12 +81,79 @@ export function placementWriteDenyRules(home: string = JINN_HOME): string[] {
   return PLACEMENT_WRITE_TOOLS.flatMap((tool) => targets.map((t) => `${tool}(/${t})`));
 }
 
+const PLACEMENT_READ_TOOLS = ["Read", "Glob", "Grep"];
+
+/**
+ * Placement-local memory layer (docs/architecture/11_persona_skills_memory.md §3.1):
+ * memory/placements/<placementId>/ is visible only to that placement's sessions.
+ * Claude Code permissions cannot express "allow own, deny the rest", so the deny
+ * list enumerates every other placement — the union of configured placement ids
+ * and directories that exist on disk at session start. Residual gap (documented
+ * in the spec): a placement directory created while a session is already running
+ * is only denied from the next session on.
+ */
+export function placementMemoryReadDenyRules(
+  placementId: string,
+  configuredPlacementIds: string[],
+  home: string = JINN_HOME,
+): string[] {
+  const placementsDir = path.join(home, "memory", "placements");
+  const others = new Set(configuredPlacementIds);
+  try {
+    for (const entry of fs.readdirSync(placementsDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) others.add(entry.name);
+    }
+  } catch {
+    // memory/placements/ does not exist yet — configured ids still apply
+  }
+  others.delete(placementId);
+  return PLACEMENT_READ_TOOLS.flatMap((tool) =>
+    [...others].map((id) => `${tool}(/${path.join(placementsDir, id, "**")})`),
+  );
+}
+
+export interface SkillCapabilityRequirements {
+  requiredMcp: string[];
+  requiredTools: string[];
+  scope?: string;
+}
+
+/**
+ * Skill visibility derives from placement capabilities and scope
+ * (docs/architecture/11_persona_skills_memory.md §3.2). Skills never grant
+ * capability — the placement's capabilities stay the source of truth; this
+ * filter only hides skills the placement cannot execute or must not see.
+ */
+export function isSkillVisibleToPlacement(
+  skill: SkillCapabilityRequirements,
+  placement: Pick<PlacementProfile, "capabilities" | "projects">,
+): boolean {
+  const mcp = placement.capabilities?.mcp;
+  const allowedMcp = Array.isArray(mcp) ? mcp : [];
+  if (!skill.requiredMcp.every((name) => allowedMcp.includes(name))) return false;
+  const allowedTools = placement.capabilities?.gatewayTools ?? [];
+  if (!skill.requiredTools.every((name) => allowedTools.includes(name))) return false;
+  if (skill.scope && !(placement.projects ?? []).includes(skill.scope)) return false;
+  return true;
+}
+
 /** Keep every initial/retry caller on the same fail-closed engine boundary. */
-export function placementEngineBoundary(placement: PlacementProfile | undefined): PlacementEngineBoundary {
+export function placementEngineBoundary(
+  placement: PlacementProfile | undefined,
+  configuredPlacements?: PlacementProfile[],
+): PlacementEngineBoundary {
   return {
     strictMcpConfig: Boolean(placement),
     enableChrome: placement ? false : undefined,
-    disallowedTools: placement ? placementWriteDenyRules() : undefined,
+    disallowedTools: placement
+      ? [
+        ...placementWriteDenyRules(),
+        ...placementMemoryReadDenyRules(
+          placement.id,
+          (configuredPlacements ?? []).map((p) => p.id),
+        ),
+      ]
+      : undefined,
     placementBashGuard: Boolean(placement),
   };
 }
@@ -95,13 +163,14 @@ export async function runPlacementBoundEngine(
   engine: Engine,
   placement: PlacementProfile | undefined,
   opts: EngineRunOpts,
+  configuredPlacements?: PlacementProfile[],
 ): Promise<EngineResult> {
   if (placement && engine.name !== "claude" && engine.name !== "mock") {
     throw new Error(
       `Placement-scoped execution rejects engine without Placement boundary support: ${engine.name}`,
     );
   }
-  return engine.run({ ...opts, ...placementEngineBoundary(placement) });
+  return engine.run({ ...opts, ...placementEngineBoundary(placement, configuredPlacements) });
 }
 
 /** Check support before callers announce or persist an engine transition. */

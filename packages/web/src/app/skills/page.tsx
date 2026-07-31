@@ -23,6 +23,9 @@ interface Skill {
   name: string;
   description?: string;
   content?: string;
+  requiredMcp?: string[];
+  requiredTools?: string[];
+  scope?: string;
   [key: string]: unknown;
 }
 
@@ -131,34 +134,44 @@ export default function SkillsPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-[var(--space-4)]">
-            {skills.map((skill) => (
-              <Card
-                key={skill.name}
-                className="py-4 cursor-pointer transition-colors hover:border-[var(--accent)]"
-                onClick={() => openSkill(skill)}
-              >
-                <CardContent className="flex flex-col gap-3">
-                  <div
-                    className="w-10 h-10 rounded-[var(--radius-md,12px)] flex items-center justify-center text-[var(--system-yellow)]"
-                    style={{
-                      background:
-                        "color-mix(in srgb, var(--system-yellow) 12%, transparent)",
-                    }}
+          <div className="rounded-[var(--radius-md,12px)] border border-[var(--separator)] overflow-x-auto">
+            <table className="w-full text-[length:var(--text-footnote)]">
+              <thead>
+                <tr className="border-b border-[var(--separator)] text-left text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
+                  <th className="px-[var(--space-3)] py-[var(--space-2)] font-[var(--weight-medium)]">スキル</th>
+                  <th className="px-[var(--space-3)] py-[var(--space-2)] font-[var(--weight-medium)]">説明</th>
+                  <th className="px-[var(--space-3)] py-[var(--space-2)] font-[var(--weight-medium)]">scope</th>
+                  <th className="px-[var(--space-3)] py-[var(--space-2)] font-[var(--weight-medium)]">requiredMcp</th>
+                </tr>
+              </thead>
+              <tbody>
+                {skills.map((skill) => (
+                  <tr
+                    key={skill.name}
+                    className="border-b border-[var(--separator)] last:border-b-0 cursor-pointer transition-colors hover:bg-[color-mix(in_srgb,var(--accent)_6%,transparent)]"
+                    onClick={() => openSkill(skill)}
                   >
-                    <Zap size={20} />
-                  </div>
-                  <div>
-                    <p className="text-[length:var(--text-body)] font-[var(--weight-semibold)] text-[var(--text-primary)] mb-0.5">
-                      {skill.name}
-                    </p>
-                    <p className="text-[length:var(--text-caption1)] text-[var(--text-tertiary)] line-clamp-2">
+                    <td className="px-[var(--space-3)] py-[var(--space-2)] align-top">
+                      <span className="inline-flex items-center gap-[var(--space-2)] font-[var(--weight-semibold)] text-[var(--text-primary)]">
+                        <Zap size={14} className="text-[var(--system-yellow)] shrink-0" />
+                        {skill.name}
+                      </span>
+                    </td>
+                    <td className="px-[var(--space-3)] py-[var(--space-2)] align-top text-[var(--text-secondary)]">
                       {skill.description || "説明なし"}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    </td>
+                    <td className="px-[var(--space-3)] py-[var(--space-2)] align-top text-[var(--text-secondary)] whitespace-nowrap">
+                      {skill.scope || "global"}
+                    </td>
+                    <td className="px-[var(--space-3)] py-[var(--space-2)] align-top text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
+                      {skill.requiredMcp && skill.requiredMcp.length > 0
+                        ? skill.requiredMcp.join(", ")
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 

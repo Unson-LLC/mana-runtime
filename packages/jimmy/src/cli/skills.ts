@@ -65,6 +65,94 @@ export function removeFromManifest(name: string): boolean {
   return true;
 }
 
+// ── Frontmatter capability declaration (docs/specs/placement-read-filters.md) ──
+
+export interface SkillCapabilityMeta {
+  /** MCP server names this skill needs (placement capabilities.mcp vocabulary). */
+  requiredMcp: string[];
+  /** Gateway tool names this skill needs (placement capabilities.gatewayTools vocabulary). */
+  requiredTools: string[];
+  /** brainbase project name (same vocabulary as placement projects). Absent = global. */
+  scope?: string;
+}
+
+export interface SkillListing extends SkillCapabilityMeta {
+  name: string;
+  description: string;
+}
+
+function stripQuotes(value: string): string {
+  return value.replace(/^["']|["']$/g, "").trim();
+}
+
+/** Accepts inline arrays (`[a, b]`), YAML block lists, and bare single strings. */
+function parseFrontmatterStringArray(frontmatter: string, key: string): string[] {
+  const inline = frontmatter.match(new RegExp(`^${key}:[ \\t]*\\[([^\\]]*)\\][ \\t]*$`, "m"));
+  if (inline) {
+    return inline[1].split(",").map((item) => stripQuotes(item.trim())).filter(Boolean);
+  }
+  const block = frontmatter.match(new RegExp(`^${key}:[ \\t]*\\n((?:[ \\t]+-[ \\t]+[^\\n]+\\n?)+)`, "m"));
+  if (block) {
+    return block[1]
+      .split("\n")
+      .map((line) => stripQuotes(line.replace(/^[ \t]+-[ \t]+/, "").trim()))
+      .filter(Boolean);
+  }
+  const single = frontmatter.match(new RegExp(`^${key}:[ \\t]*(\\S[^\\n]*)$`, "m"));
+  if (single) {
+    const value = stripQuotes(single[1].trim());
+    return value ? [value] : [];
+  }
+  return [];
+}
+
+export function parseSkillFrontmatter(content: string): { description: string } & SkillCapabilityMeta {
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  const frontmatter = fmMatch ? fmMatch[1] : "";
+  const descMatch = frontmatter.match(/^description:[ \t]*(.+)$/m);
+  const scopeValues = parseFrontmatterStringArray(frontmatter, "scope");
+  return {
+    description: descMatch ? descMatch[1].trim() : "",
+    requiredMcp: parseFrontmatterStringArray(frontmatter, "requiredMcp"),
+    requiredTools: parseFrontmatterStringArray(frontmatter, "requiredTools"),
+    scope: scopeValues.length > 0 ? scopeValues[0] : undefined,
+  };
+}
+
+/** Fallback when frontmatter has no description: ## Trigger section, then first body line. */
+function fallbackDescription(content: string): string {
+  const triggerMatch = content.match(/##\s*Trigger\s*\n+([^\n#]+)/);
+  if (triggerMatch) return triggerMatch[1].trim();
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  const body = fmMatch ? content.slice(fmMatch[0].length) : content;
+  for (const line of body.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) return trimmed;
+  }
+  return "";
+}
+
+/** List installed skills with their capability declarations. */
+export function listSkills(dir: string = SKILLS_DIR): SkillListing[] {
+  if (!fs.existsSync(dir)) return [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory());
+  return entries.map((e) => {
+    const skillMd = path.join(dir, e.name, "SKILL.md");
+    let meta: { description: string } & SkillCapabilityMeta = {
+      description: "",
+      requiredMcp: [],
+      requiredTools: [],
+      scope: undefined,
+    };
+    if (fs.existsSync(skillMd)) {
+      const content = fs.readFileSync(skillMd, "utf-8");
+      meta = parseSkillFrontmatter(content);
+      if (!meta.description) meta.description = fallbackDescription(content);
+    }
+    return { name: e.name, ...meta };
+  });
+}
+
 // ── Snapshot helpers for detecting newly installed skills ─────────
 
 export function snapshotDirs(): Map<string, Set<string>> {

@@ -1836,44 +1836,11 @@ Handle this as a priority request from a colleague.`;
       }
     }
 
-    // GET /api/skills
+    // GET /api/skills — name/description plus capability declarations
+    // (requiredMcp/requiredTools/scope) from SKILL.md frontmatter.
     if (method === "GET" && pathname === "/api/skills") {
-      if (!fs.existsSync(SKILLS_DIR)) return json(res, []);
-      const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
-      const skills = entries.filter((e) => e.isDirectory()).map((e) => {
-        const skillMdPath = path.join(SKILLS_DIR, e.name, "SKILL.md");
-        let description = "";
-        if (fs.existsSync(skillMdPath)) {
-          const content = fs.readFileSync(skillMdPath, "utf-8");
-          // Extract description from YAML frontmatter, ## Trigger section, or first paragraph
-          const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-          if (frontmatterMatch) {
-            const descMatch = frontmatterMatch[1].match(/^description:\s*(.+)$/m);
-            if (descMatch) {
-              description = descMatch[1].trim();
-            }
-          }
-          if (!description) {
-            const triggerMatch = content.match(/##\s*Trigger\s*\n+([^\n#]+)/);
-            if (triggerMatch) {
-              description = triggerMatch[1].trim();
-            } else {
-              // Use first non-heading, non-empty, non-frontmatter line
-              const bodyContent = frontmatterMatch ? content.slice(frontmatterMatch[0].length) : content;
-              const lines = bodyContent.split("\n");
-              for (const line of lines) {
-                const trimmed = line.trim();
-                if (trimmed && !trimmed.startsWith("#")) {
-                  description = trimmed;
-                  break;
-                }
-              }
-            }
-          }
-        }
-        return { name: e.name, description };
-      });
-      return json(res, skills);
+      const { listSkills } = await import("../cli/skills.js");
+      return json(res, listSkills());
     }
 
     // GET /api/skills/:name
@@ -2970,7 +2937,7 @@ export async function runWebSession(
           logger.warn(`Failed to emit stream delta for session ${currentSession.id}: ${err instanceof Error ? err.message : err}`);
         }
       },
-    }).finally(() => {
+    }, config.placements).finally(() => {
       clearInterval(runHeartbeat);
     });
 
@@ -3067,7 +3034,7 @@ export async function runWebSession(
                 subAgent: delta.subAgent,
               });
             },
-          });
+          }, config.placements);
 
           if (fallbackResult.result) {
             insertMessage(currentSession.id, "assistant", fallbackResult.result);
@@ -3205,7 +3172,7 @@ export async function runWebSession(
                 subAgent: delta.subAgent,
               });
             },
-          });
+          }, config.placements);
 
           const retryInterrupted = retryResult.error?.startsWith("Interrupted");
           const retryRateLimit = !retryInterrupted ? detectRateLimit(retryResult) : { limited: false as const };

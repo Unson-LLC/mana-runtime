@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, placementEngineBoundary, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, placementEngineBoundary, placementMemoryReadDenyRules, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -100,9 +103,20 @@ describe("placementEngineBoundary", () => {
     expect(placementEngineBoundary(placement)).toEqual({
       strictMcpConfig: true,
       enableChrome: false,
-      disallowedTools: placementWriteDenyRules(),
+      disallowedTools: [
+        ...placementWriteDenyRules(),
+        ...placementMemoryReadDenyRules(placement.id, []),
+      ],
       placementBashGuard: true,
     });
+  });
+
+  it("includes memory read deny rules for every other configured placement", () => {
+    const other: PlacementProfile = { ...placement, id: "mana-other", channelId: "C2" };
+    const boundary = placementEngineBoundary(placement, [placement, other]);
+    for (const rule of placementMemoryReadDenyRules(placement.id, ["mana-other"])) {
+      expect(boundary.disallowedTools).toContain(rule);
+    }
   });
 
   it("preserves legacy engine behavior when no placement is bound", () => {
@@ -148,6 +162,101 @@ describe("placementWriteDenyRules", () => {
   );
 });
 
+describe("placementMemoryReadDenyRules", () => {
+  it("denies Read/Glob/Grep on every other configured placement's memory directory", () => {
+    const rules = placementMemoryReadDenyRules("mana-test", ["mana-test", "mana-other", "mana-third"], "/home/test/.ryoko");
+    for (const tool of ["Read", "Glob", "Grep"]) {
+      expect(rules).toContain(`${tool}(//home/test/.ryoko/memory/placements/mana-other/**)`);
+      expect(rules).toContain(`${tool}(//home/test/.ryoko/memory/placements/mana-third/**)`);
+    }
+  });
+
+  it("never denies the placement's own memory directory or the shared memory root", () => {
+    const rules = placementMemoryReadDenyRules("mana-test", ["mana-test", "mana-other"], "/home/test/.ryoko");
+    expect(rules.some((rule) => rule.includes("/memory/placements/mana-test/"))).toBe(false);
+    expect(rules.some((rule) => /\(\/\/home\/test\/\.ryoko\/memory\/\*\*\)/.test(rule))).toBe(false);
+  });
+
+  it("also denies placement directories that exist on disk but are absent from config", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ryoko-home-"));
+    try {
+      fs.mkdirSync(path.join(home, "memory", "placements", "mana-orphan"), { recursive: true });
+      fs.mkdirSync(path.join(home, "memory", "placements", "mana-test"), { recursive: true });
+      const rules = placementMemoryReadDenyRules("mana-test", [], home);
+      for (const tool of ["Read", "Glob", "Grep"]) {
+        expect(rules).toContain(`${tool}(/${home}/memory/placements/mana-orphan/**)`);
+      }
+      expect(rules.some((rule) => rule.includes("/memory/placements/mana-test/"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("returns no rules when nothing else is configured and no directory exists", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ryoko-home-"));
+    try {
+      expect(placementMemoryReadDenyRules("mana-test", ["mana-test"], home)).toEqual([]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("isSkillVisibleToPlacement", () => {
+  const capablePlacement = {
+    ...placement,
+    projects: ["salestailor"],
+    capabilities: { mcp: ["nocodb"], gatewayTools: ["create_task"] },
+  } satisfies PlacementProfile;
+
+  it("shows a skill whose required capabilities and scope all match the placement", () => {
+    expect(isSkillVisibleToPlacement(
+      { requiredMcp: ["nocodb"], requiredTools: ["create_task"], scope: "salestailor" },
+      capablePlacement,
+    )).toBe(true);
+  });
+
+  it("shows undeclared (global, no-requirement) skills to any placement", () => {
+    expect(isSkillVisibleToPlacement({ requiredMcp: [], requiredTools: [] }, placement)).toBe(true);
+  });
+
+  it("hides a skill whose required MCP server is outside the placement capabilities", () => {
+    expect(isSkillVisibleToPlacement(
+      { requiredMcp: ["nocodb", "brainbase"], requiredTools: [] },
+      capablePlacement,
+    )).toBe(false);
+  });
+
+  it("hides every MCP-requiring skill when capabilities.mcp is false or absent (deny by default)", () => {
+    expect(isSkillVisibleToPlacement(
+      { requiredMcp: ["nocodb"], requiredTools: [] },
+      { ...placement, capabilities: { mcp: false } },
+    )).toBe(false);
+    expect(isSkillVisibleToPlacement(
+      { requiredMcp: ["nocodb"], requiredTools: [] },
+      placement,
+    )).toBe(false);
+  });
+
+  it("hides a skill whose required gateway tool is not granted", () => {
+    expect(isSkillVisibleToPlacement(
+      { requiredMcp: [], requiredTools: ["send_message"] },
+      capablePlacement,
+    )).toBe(false);
+  });
+
+  it("hides a scoped skill from placements whose projects do not include the scope", () => {
+    expect(isSkillVisibleToPlacement(
+      { requiredMcp: [], requiredTools: [], scope: "zeims" },
+      capablePlacement,
+    )).toBe(false);
+    expect(isSkillVisibleToPlacement(
+      { requiredMcp: [], requiredTools: [], scope: "zeims" },
+      placement,
+    )).toBe(false);
+  });
+});
+
 describe("runPlacementBoundEngine", () => {
   it("applies the strict boundary at the shared initial/retry execution choke point", async () => {
     const run = vi.fn().mockResolvedValue({ result: "ok" });
@@ -156,7 +265,10 @@ describe("runPlacementBoundEngine", () => {
       prompt: "retry",
       strictMcpConfig: true,
       enableChrome: false,
-      disallowedTools: placementWriteDenyRules(),
+      disallowedTools: [
+        ...placementWriteDenyRules(),
+        ...placementMemoryReadDenyRules(placement.id, []),
+      ],
     }));
   });
 
