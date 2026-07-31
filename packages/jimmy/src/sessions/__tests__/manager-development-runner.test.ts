@@ -172,3 +172,76 @@ describe("SessionManager Human-in-the-Loop resume", () => {
     await vi.waitFor(() => expect(slack.replyMessage).toHaveBeenCalledWith(target, expect.stringContaining("needs_decision")));
   });
 });
+
+describe("SessionManager /develop threaded typing-status UX", () => {
+  // A real Slack slash command has no root channel message to thread under,
+  // so reconstructTarget() legitimately returns a target with no thread —
+  // this is the case that used to leave the whole flow unthreaded.
+  function rootlessConnector(extra: Partial<Connector> = {}): Connector {
+    return connector("slack", {
+      reconstructTarget: vi.fn(() => ({ channel: "C1" })),
+      ...extra,
+    });
+  }
+
+  beforeEach(() => {
+    runDevelopmentRequest.mockReset();
+  });
+
+  it("threads the result under the acceptance message when the command target has no thread", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({ status: "pr_ready", storyId: "story-x", summary: "ready" });
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.000100") // acceptance message ts
+      .mockResolvedValueOnce(undefined); // final result post
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledTimes(2));
+
+    const [finalTarget] = replyMessage.mock.calls[1];
+    expect(finalTarget).toMatchObject({ channel: "C1", thread: "1700000000.000100" });
+  });
+
+  it("sets the typing status when the flow starts and clears it after delivering a result", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({ status: "pr_ready", storyId: "story-x", summary: "ready" });
+    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000200").mockResolvedValueOnce(undefined);
+    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000200", ""));
+
+    expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000200", "開発中…");
+    const clearCallIndex = setTypingStatus.mock.calls.findIndex((call) => call[2] === "");
+    const startCallIndex = setTypingStatus.mock.calls.findIndex((call) => call[2] === "開発中…");
+    expect(startCallIndex).toBeGreaterThanOrEqual(0);
+    expect(clearCallIndex).toBeGreaterThan(startCallIndex);
+  });
+
+  it("clears the typing status even when the runner rejects", async () => {
+    runDevelopmentRequest.mockRejectedValueOnce(new Error("boom"));
+    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000300").mockResolvedValueOnce(undefined);
+    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000300", ""));
+    expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000300", "開発中…");
+  });
+
+  it("sets the typing status on the resume path too", async () => {
+    runDevelopmentRequest.mockResolvedValueOnce({ status: "pr_ready", storyId: "story-x", summary: "ready" });
+    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = connector("slack", { setTypingStatus });
+    const answers = [{ id: "q1", answer: "option A" }];
+    const resumeTarget = { channel: "C1", thread: "T1" };
+
+    expect(manager.resumeDevelopmentDecision("story-x", answers, slack, resumeTarget)).toBe(true);
+    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith("C1", "T1", ""));
+    expect(setTypingStatus).toHaveBeenCalledWith("C1", "T1", "開発中…");
+  });
+});

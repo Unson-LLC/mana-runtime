@@ -1383,8 +1383,16 @@ export class SessionManager {
         return true;
       }
 
-      await connector.replyMessage(target, "Development task accepted. VibePro will stop before PR creation or merge.");
-      this.runDevelopmentFlow(config, request, connector, target);
+      const acceptanceTs = await connector.replyMessage(
+        target,
+        "Development task accepted. VibePro will stop before PR creation or merge.",
+      );
+      // Slack slash commands carry no message ts of their own (there is no
+      // visible root message to thread under), so the acceptance reply's own
+      // ts becomes the thread anchor for every subsequent post in this flow —
+      // matching the same-thread experience mention conversations already get.
+      const devTarget: Target = target.thread ? target : { ...target, thread: acceptanceTs || target.thread };
+      this.runDevelopmentFlow(config, request, connector, devTarget);
       return true;
     }
 
@@ -1405,6 +1413,9 @@ export class SessionManager {
     target: Target,
   ): void {
     this.developmentRunning = true;
+    if (connector.setTypingStatus && target.thread) {
+      connector.setTypingStatus(target.channel, target.thread, "開発中…").catch(() => {});
+    }
     void runDevelopmentRequest(config, request)
       .then((result) => this.deliverDevelopmentResult(result, connector, target))
       .catch((error) => {
@@ -1413,6 +1424,9 @@ export class SessionManager {
       })
       .finally(() => {
         this.developmentRunning = false;
+        if (connector.setTypingStatus && target.thread) {
+          connector.setTypingStatus(target.channel, target.thread, "").catch(() => {});
+        }
       });
   }
 
