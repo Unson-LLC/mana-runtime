@@ -1398,9 +1398,22 @@ export class SessionManager {
         return true;
       }
 
+      // Slash-command input is never posted to the channel by Slack itself,
+      // so the acceptance message must quote the request or the thread has no
+      // record of what was asked.
+      const quotedRequest = request
+        .slice(0, 1000)
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n");
+      const requester = msg.userId ? `（依頼者: <@${msg.userId}>）` : "";
       const acceptanceTs = await connector.replyMessage(
         target,
-        "Development task accepted. VibePro will stop before PR creation or merge.",
+        [
+          `📥 開発依頼を受け付けました${requester}`,
+          quotedRequest,
+          "このスレッドで進捗と結果を報告します。VibeProはPR作成前で停止します。",
+        ].join("\n"),
       );
       // Slack slash commands carry no message ts of their own (there is no
       // visible root message to thread under), so the acceptance reply's own
