@@ -43,6 +43,9 @@ interface PendingDecision {
   summary: string;
   createdAt: number;
   expiresAt: number;
+  /** Set when the modal was submitted and the Story resumed — the card's
+   * button then reports "answered" instead of the misleading "expired". */
+  answeredAt?: number;
 }
 
 type PersistedState = Record<string, PendingDecision>;
@@ -319,6 +322,14 @@ export class VibeproDecisionNotifier {
       await this.notifyEphemeral(channelId, userId, "この質問セッションは期限切れです。/vibepro で再依頼してください。");
       return;
     }
+    if (pending.answeredAt) {
+      await this.notifyEphemeral(
+        channelId,
+        userId,
+        `この質問には回答済みで、Story ${storyId} は再開しています。追加・修正の依頼は /vibepro で新規に出してください。`,
+      );
+      return;
+    }
     await this.client.apiCall("views.open", {
       trigger_id: triggerId,
       view: buildAnswerModalView(pending),
@@ -344,6 +355,14 @@ export class VibeproDecisionNotifier {
     const answers = extractAnswersFromViewState(view?.state?.values ?? {});
     if (answers.length === 0) return;
 
+    // A stale modal (opened before an earlier submit landed) must not resume
+    // the Story a second time.
+    const preState = loadState();
+    if (preState[meta.storyId]?.answeredAt) {
+      await this.notifyEphemeral(meta.channel, userId, `この質問には回答済みで、Story ${meta.storyId} は再開しています。`);
+      return;
+    }
+
     const target: Target = { channel: meta.channel, thread: meta.thread };
     const started = this.resumeDecision(meta.storyId, answers, target);
     if (started) {
@@ -353,8 +372,10 @@ export class VibeproDecisionNotifier {
         text: `回答を受け付けました。Story ${meta.storyId} を再開します。`,
       });
       const state = loadState();
-      delete state[meta.storyId];
-      saveState(state);
+      if (state[meta.storyId]) {
+        state[meta.storyId].answeredAt = Date.now();
+        saveState(state);
+      }
     } else {
       await this.client.apiCall("chat.postMessage", {
         channel: meta.channel,

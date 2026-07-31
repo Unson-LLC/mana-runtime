@@ -179,7 +179,7 @@ describe("VibeproDecisionNotifier", () => {
     }));
   });
 
-  it("resumes the Story on a valid, authorized submission and clears the pending decision", async () => {
+  it("resumes the Story on a valid, authorized submission and marks the pending decision answered", async () => {
     const resumeDecision = vi.fn().mockReturnValue(true);
     const { notifier, apiCall } = makeNotifier({ resumeDecision });
     await notifier.postQuestions({ channel: "C1", thread: "T1" }, "story-x", QUESTIONS, "x");
@@ -208,8 +208,56 @@ describe("VibeproDecisionNotifier", () => {
     expect(apiCall).toHaveBeenCalledWith("chat.postMessage", expect.objectContaining({
       text: expect.stringContaining("受け付けました"),
     }));
-    expect(fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"))["story-x"] : undefined)
-      .toBeUndefined();
+    const stored = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"))["story-x"];
+    expect(stored.answeredAt).toEqual(expect.any(Number));
+  });
+
+  it("reports answered (not expired) when the card button is pressed after submit", async () => {
+    const { notifier, apiCall } = makeNotifier();
+    await notifier.postQuestions({ channel: "C1", thread: "T1" }, "story-x", QUESTIONS, "x");
+    await notifier.handleSubmit(
+      { user: { id: ALLOWED_USER } },
+      {
+        private_metadata: JSON.stringify({ storyId: "story-x", channel: "C1", thread: "T1" }),
+        state: {
+          values: {
+            "question:auth_strategy": { value: { selected_option: { value: "OAuth" } } },
+          },
+        },
+      },
+    );
+    apiCall.mockClear();
+
+    await notifier.handleOpenForm(
+      { user: { id: ALLOWED_USER }, channel: { id: "C1" }, trigger_id: "TRIGGER" },
+      { value: "story-x" },
+    );
+
+    expect(apiCall).not.toHaveBeenCalledWith("views.open", expect.anything());
+    expect(apiCall).toHaveBeenCalledWith("chat.postEphemeral", expect.objectContaining({
+      text: expect.stringContaining("回答済み"),
+    }));
+  });
+
+  it("ignores a duplicate submit from a stale modal after the Story already resumed", async () => {
+    const resumeDecision = vi.fn().mockReturnValue(true);
+    const { notifier } = makeNotifier({ resumeDecision });
+    await notifier.postQuestions({ channel: "C1", thread: "T1" }, "story-x", QUESTIONS, "x");
+    const submitBody = { user: { id: ALLOWED_USER } };
+    const submitView = {
+      private_metadata: JSON.stringify({ storyId: "story-x", channel: "C1", thread: "T1" }),
+      state: {
+        values: {
+          "question:auth_strategy": { value: { selected_option: { value: "OAuth" } } },
+        },
+      },
+    };
+    await notifier.handleSubmit(submitBody, submitView);
+    resumeDecision.mockClear();
+
+    await notifier.handleSubmit(submitBody, submitView);
+
+    expect(resumeDecision).not.toHaveBeenCalled();
   });
 
   it("tells the user development is busy when resumeDecision reports it could not start", async () => {
