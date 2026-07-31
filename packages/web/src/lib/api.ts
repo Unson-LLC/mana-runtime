@@ -140,7 +140,7 @@ export interface PlacementLedgerEntry {
   employee: string | null;
   defaultModel: string | null;
   budgetTracked: boolean;
-  mcp: false | string[];
+  mcp: false | { name: string; mode: "full" | "read-only"; rejected?: true }[];
   gatewayTools: string[];
   deliveryTargets: string[];
   monthlyCost: number;

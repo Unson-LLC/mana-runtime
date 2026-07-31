@@ -57,7 +57,20 @@ function PlacementRow({ entry }: { entry: PlacementLedgerEntry }) {
       </td>
       <td className="px-[var(--space-3)] py-[var(--space-2)] align-top text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
         <div>audience: {entry.audienceType} ({entry.allowedUserCount})</div>
-        <div>mcp: {entry.mcp === false ? "deny" : entry.mcp.join(", ") || "deny"}</div>
+        <div>
+          mcp:{" "}
+          {entry.mcp === false
+            ? "deny"
+            : entry.mcp
+              .map((server) =>
+                server.rejected
+                  ? `${server.name} (read-only指定・カタログ分類なし→拒否)`
+                  : server.mode === "read-only"
+                    ? `${server.name} (read-only)`
+                    : server.name,
+              )
+              .join(", ") || "deny"}
+        </div>
         <div>tools: {entry.gatewayTools.join(", ") || "—"}</div>
         <div>delivery: {entry.deliveryTargets.join(", ")}</div>
       </td>

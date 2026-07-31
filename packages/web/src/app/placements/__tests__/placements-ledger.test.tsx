@@ -8,7 +8,8 @@ const ledger: PlacementLedger = {
       id: "mana-ops", connector: "slack", workspaceId: "T1", channelId: "C1",
       owner: "U0KSATO", purpose: "brainbase運用のoperator対話", enabled: true,
       audienceType: "operator", allowedUserCount: 1, employee: "ryoko",
-      defaultModel: "sonnet", budgetTracked: true, mcp: ["brainbase"],
+      defaultModel: "sonnet", budgetTracked: true,
+      mcp: [{ name: "brainbase", mode: "full" }, { name: "freee", mode: "read-only" }],
       gatewayTools: ["send_message"], deliveryTargets: ["slack:C1"],
       monthlyCost: 2.5, monthlySessions: 3, monthlyBudgetUsd: 10, budgetPercent: 25,
       lastActivity: "2026-07-30T00:00:00.000Z",
@@ -58,6 +59,24 @@ describe("Placements ledger view", () => {
     expect(queryByText("placementsが未設定です（legacy単一配置モード）。")).toBeNull()
     expect(getByText(/placement未紐付けコスト（当月）: \$0\.50 \/ 1 sessions/)).toBeTruthy()
     expect(getByText(/removed \(\$1\.00\)/)).toBeTruthy()
+    // G2 read-only vocabulary: per-server mode is visible in the ledger row.
+    expect(getByText(/mcp: brainbase, freee \(read-only\)/)).toBeTruthy()
+  })
+
+  it("marks a fail-closed rejected read-only grant in the ledger row", async () => {
+    getPlacements.mockResolvedValue({
+      ...ledger,
+      placements: [
+        {
+          ...ledger.placements[0],
+          mcp: [{ name: "freee", mode: "read-only", rejected: true }],
+        },
+      ],
+    })
+    const { getByText } = render(<PlacementsPage />)
+
+    await waitFor(() => expect(getByText("mana-ops")).toBeTruthy())
+    expect(getByText(/freee \(read-only指定・カタログ分類なし→拒否\)/)).toBeTruthy()
   })
 
   it("renders an auto-provisioned placement row with owner and purpose (AUTOPROV-STORY-S-001)", async () => {
@@ -70,7 +89,7 @@ describe("Placements ledger view", () => {
           owner: "U42", purpose: "auto-provisioned (invited by U42)",
           audienceType: "channel-members", allowedUserCount: 0,
           employee: null, budgetTracked: false,
-          mcp: ["brainbase", "gateway"],
+          mcp: [{ name: "brainbase", mode: "full" }, { name: "gateway", mode: "full" }],
           gatewayTools: ["send_message", "create_task", "list_tasks", "update_task", "transition_task"],
           deliveryTargets: ["slack:C777"],
         },

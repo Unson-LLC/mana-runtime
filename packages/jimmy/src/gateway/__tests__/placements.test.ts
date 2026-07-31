@@ -44,7 +44,7 @@ describe('buildPlacementLedger', () => {
     expect(entry).toMatchObject({
       id: 'mana-test', owner: 'U1', purpose: 'operator dialogue', enabled: true,
       audienceType: 'operator', allowedUserCount: 2, employee: 'ryoko',
-      defaultModel: 'sonnet', budgetTracked: true, mcp: ['brainbase'],
+      defaultModel: 'sonnet', budgetTracked: true, mcp: [{ name: 'brainbase', mode: 'full' }],
       gatewayTools: ['send_message'], deliveryTargets: ['slack:C1'],
       monthlySessions: 1,
     })
@@ -66,6 +66,24 @@ describe('buildPlacementLedger', () => {
       budgetTracked: false, employee: null, mcp: false, gatewayTools: [],
       monthlyCost: 0, monthlySessions: 0, lastActivity: null,
     })
+  })
+
+  it('projects read-only and fail-closed rejected MCP grants with their modes (G2 ledger visibility)', () => {
+    const readOnly: PlacementProfile = {
+      ...basePlacement,
+      id: 'mana-accounting',
+      capabilities: { mcp: [{ name: 'freee', mode: 'read-only' }, { name: 'nocodb', mode: 'read-only' }, 'brainbase'] },
+    }
+    const catalog = {
+      custom: { freee: { command: 'npx', tools: { writeTools: ['freee_api_post'] } } },
+    }
+    const [entry] = buildPlacementLedger([readOnly], catalog).placements
+    expect(entry.mcp).toEqual([
+      { name: 'freee', mode: 'read-only' },
+      { name: 'brainbase', mode: 'full' },
+      // nocodb declared no tool classification → the ledger shows the rejection.
+      { name: 'nocodb', mode: 'read-only', rejected: true },
+    ])
   })
 
   it('redacts secret-like values in free-text ledger fields', () => {

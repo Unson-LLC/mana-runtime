@@ -65,7 +65,10 @@ connectors:
 #       escalationEmployee: critical-reviewer
 #     projects: [mana]
 #     capabilities:
-#       mcp: [gateway, brainbase]
+#       mcp:                       # 文字列=全ツール許可。read-only粒度はobject形式（G2）
+#         - gateway
+#         - brainbase
+#         - {name: freee, mode: read-only}   # カタログのwriteTools宣言が必要（下記mcp.custom.freee.tools）
 #       gatewayTools: [list_sessions, create_child_session]
 #       allowedDelivery:
 #         - connector: slack
@@ -94,6 +97,16 @@ mcp:
   #     args: ["-y", "@my/mcp-server"]
   #     env:
   #       API_KEY: ${MY_API_KEY}
+  #   freee:
+  #     enabled: true
+  #     command: npx
+  #     args: ["-y", "@knowledgelabo/freee-mcp"]
+  #     # カタログ側のツール分類（G6）: サーバー自身が書込ツールを宣言する。
+  #     # placementのcapabilities.mcpで {name: freee, mode: read-only} と書くと
+  #     # ここで宣言したwriteToolsが--disallowedToolsへ導出される（G2）。
+  #     # この宣言のないサーバーへのread-only指定はfail-closed拒否される。
+  #     tools:
+  #       writeTools: [freee_api_post, freee_api_put, freee_api_delete, freee_api_patch, freee_file_upload]
 
 # セッション上限（従業員ごとにYAMLで上書き可）
 sessions:

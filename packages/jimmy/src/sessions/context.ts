@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Employee, JinnConfig, PlacementProfile } from "../shared/types.js";
+import type { Employee, JinnConfig, McpGlobalConfig, PlacementProfile } from "../shared/types.js";
 import { JINN_HOME, ORG_DIR, CRON_JOBS, DOCS_DIR } from "../shared/paths.js";
 import { isOperatorSpeaker } from "../shared/operator-match.js";
 import { scanOrg } from "../gateway/org.js";
@@ -9,6 +9,7 @@ import {
   isSkillVisibleToPlacement,
   PLACEMENT_MCP_TOOL_DENY,
   placementDeliveryTargets,
+  resolvePlacementMcp,
   safePlacementDataScopes,
 } from "../shared/placement-profile.js";
 import { listSkills } from "../cli/skills.js";
@@ -156,7 +157,7 @@ export function buildContext(opts: {
         `- Placement: ${opts.placement.id}`,
         `- Audience: ${opts.placement.audience.type}`,
         `- Projects: ${(opts.placement.projects ?? []).join(", ") || "none"}`,
-        ...buildPlacementCapabilityLines(opts.placement),
+        ...buildPlacementCapabilityLines(opts.placement, opts.config?.mcp),
         `- Data scopes (supplementary): ${JSON.stringify(safePlacementDataScopes(opts.placement.dataScopes))}`,
         "The capability list above is the source of truth for what you may use — it is generated from this placement's configured capabilities. Data scopes only add reference-scope notes (e.g. read-only modes, graph scopes) on top of those capabilities; they never grant or revoke a capability, and a capability listed above is available even if data scopes do not mention it.",
         "Treat these as hard execution boundaries. Do not broaden them or send outside the allowed delivery targets.",
@@ -179,7 +180,7 @@ export function buildContext(opts: {
   // Placement sessions only see skills their capabilities can execute and
   // whose scope matches (11章§3.2 derived visibility). Non-placement
   // sessions keep the full listing.
-  const skillsCtx = buildSkillManifest(opts.placement);
+  const skillsCtx = buildSkillManifest(opts.placement, opts.config?.mcp);
   if (skillsCtx) {
     sections.push({
       tier: Tier.STANDARD,
@@ -658,7 +659,7 @@ function buildCronContext(): string | null {
  * a skill's visibility is derived, never independently managed, and skills
  * grant no capability. Without a placement, list every installed skill.
  */
-function buildSkillManifest(placement?: PlacementProfile): string | null {
+function buildSkillManifest(placement?: PlacementProfile, catalog?: McpGlobalConfig): string | null {
   let skills: ReturnType<typeof listSkills>;
   try {
     skills = listSkills();
@@ -666,7 +667,7 @@ function buildSkillManifest(placement?: PlacementProfile): string | null {
     return null;
   }
   if (placement) {
-    skills = skills.filter((skill) => isSkillVisibleToPlacement(skill, placement));
+    skills = skills.filter((skill) => isSkillVisibleToPlacement(skill, placement, catalog));
   }
   if (skills.length === 0) {
     return placement
@@ -696,17 +697,25 @@ function buildSkillManifest(placement?: PlacementProfile): string | null {
  * placement no longer had. Tools in PLACEMENT_MCP_TOOL_DENY are annotated so
  * the prompt never advertises what the hard boundary always blocks.
  */
-function buildPlacementCapabilityLines(placement: PlacementProfile): string[] {
-  const mcp = placement.capabilities?.mcp;
-  const mcpServers = Array.isArray(mcp) ? mcp : [];
-  const mcpEntries = mcpServers.map((name) => {
-    const deniedTools = PLACEMENT_MCP_TOOL_DENY
-      .filter((tool) => tool.startsWith(`mcp__${name}__`))
-      .map((tool) => tool.slice(`mcp__${name}__`.length));
-    return deniedTools.length > 0
-      ? `${name} (available, except always-denied tools: ${deniedTools.join(", ")})`
-      : `${name} (available)`;
-  });
+function buildPlacementCapabilityLines(placement: PlacementProfile, catalog?: McpGlobalConfig): string[] {
+  const { granted, rejected } = resolvePlacementMcp(placement, catalog);
+  const mcpEntries = [
+    ...granted.map(({ name, mode }) => {
+      const deniedTools = [
+        ...PLACEMENT_MCP_TOOL_DENY
+          .filter((tool) => tool.startsWith(`mcp__${name}__`))
+          .map((tool) => tool.slice(`mcp__${name}__`.length)),
+        ...(mode === "read-only" ? catalog?.custom?.[name]?.tools?.writeTools ?? [] : []),
+      ];
+      const modeLabel = mode === "read-only" ? "available, read-only" : "available";
+      return deniedTools.length > 0
+        ? `${name} (${modeLabel}, denied tools: ${deniedTools.join(", ")})`
+        : `${name} (${modeLabel})`;
+    }),
+    // A rejected grant (read-only requested but the catalog declares no tool
+    // classification) fails closed — say so, or the model would retry blindly.
+    ...rejected.map((name) => `${name} (unavailable: read-only requested but the MCP catalog declares no write-tool classification for it)`),
+  ];
   const gatewayTools = placement.capabilities?.gatewayTools ?? [];
   const delivery = placementDeliveryTargets(placement)
     .map((target) => `${target.connector}:${target.channel}`);

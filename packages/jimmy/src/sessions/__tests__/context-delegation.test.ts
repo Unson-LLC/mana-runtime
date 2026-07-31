@@ -108,7 +108,7 @@ describe("delegation context", () => {
         channelId: "C123",
         audience: { type: "operator", allowedUsers: ["U123"] },
         capabilities: {
-          mcp: ["freee", "gateway"],
+          mcp: [{ name: "freee", mode: "read-only" }, "gateway"],
           gatewayTools: ["create_task", "list_tasks"],
           allowedDelivery: [{ connector: "slack", channel: "C999" }],
         },
@@ -116,15 +116,55 @@ describe("delegation context", () => {
         // advertise it (the 2026-07-31 self-refusal incident).
         dataScopes: { graph: { mode: "read-only" } },
       },
+      config: {
+        gateway: { port: 7777, host: "127.0.0.1" },
+        engines: { default: "claude", claude: { bin: "claude", model: "sonnet" }, codex: { bin: "codex", model: "gpt" } },
+        logging: { file: false, stdout: false, level: "info" },
+        connectors: {},
+        mcp: {
+          custom: {
+            freee: {
+              command: "npx",
+              tools: { writeTools: ["freee_api_post", "freee_file_upload"] },
+            },
+          },
+        },
+      } as any,
     });
 
-    // PR #52 pinned the freee write surface in PLACEMENT_MCP_TOOL_DENY, so the
-    // generated declaration now carries the always-denied annotation.
-    expect(context).toContain("- MCP servers: freee (available, except always-denied tools:");
+    // The G2 read-only grant carries its catalog-derived write-tool denies in
+    // the generated declaration, so the model never attempts what the hard
+    // boundary blocks.
+    expect(context).toContain(
+      "- MCP servers: freee (available, read-only, denied tools: freee_api_post, freee_file_upload)",
+    );
     expect(context).toContain("gateway (available)");
     expect(context).toContain("- Gateway tools: create_task, list_tasks");
     expect(context).toContain("- Allowed delivery targets: slack:C999");
     expect(context).toContain("Data scopes only add reference-scope notes");
+  });
+
+  it("declares a fail-closed rejected read-only server as unavailable instead of advertising it", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      sessionId: "placement-rejected-readonly",
+      placement: {
+        id: "back-office",
+        connector: "slack",
+        workspaceId: "T1",
+        channelId: "C123",
+        audience: { type: "operator", allowedUsers: ["U123"] },
+        // read-only requested, but no catalog tool classification exists.
+        capabilities: { mcp: [{ name: "freee", mode: "read-only" }] },
+      },
+    });
+
+    expect(context).toContain(
+      "freee (unavailable: read-only requested but the MCP catalog declares no write-tool classification for it)",
+    );
+    expect(context).not.toContain("freee (available");
   });
 
   it("declares no capabilities for a placement without any, falling back to its own channel for delivery", () => {
@@ -165,7 +205,7 @@ describe("delegation context", () => {
     });
 
     expect(context).toContain(
-      "- MCP servers: brainbase (available, except always-denied tools: search_personal_kg)",
+      "- MCP servers: brainbase (available, denied tools: search_personal_kg)",
     );
   });
 

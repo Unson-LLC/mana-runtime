@@ -447,7 +447,22 @@ export interface McpGlobalConfig {
     enabled: boolean;
   };
   /** Custom MCP servers defined by the user */
-  custom?: Record<string, (McpServerStdioConfig | McpServerUrlConfig) & { enabled?: boolean }>;
+  custom?: Record<string, (McpServerStdioConfig | McpServerUrlConfig) & {
+    enabled?: boolean;
+    /**
+     * Catalog-side tool classification (gap G6) — the asset declares its own
+     * nature, same shape of ownership as skill frontmatter (requiredMcp/scope).
+     * A server without this declaration has no read/write classification, so a
+     * placement cannot request `mode: read-only` for it (fail-closed rejection).
+     */
+    tools?: McpToolClassification;
+  }>;
+}
+
+/** Read/write classification a custom MCP server declares about itself. */
+export interface McpToolClassification {
+  /** Bare tool names (without the `mcp__<server>__` prefix) that mutate state. */
+  writeTools?: string[];
 }
 
 export interface WebConnectorConfig {}
@@ -780,6 +795,19 @@ export interface PlacementDeliveryTarget {
   channel: string;
 }
 
+/** Granularity modes for a placement MCP grant. */
+export type PlacementMcpMode = "full" | "read-only";
+
+/** Object form of a `capabilities.mcp` entry (gap G2 read-only vocabulary). */
+export interface PlacementMcpGrant {
+  name: string;
+  /** Absent means "full" (whole server, same as the plain-string form). */
+  mode?: PlacementMcpMode;
+}
+
+/** One `capabilities.mcp` entry: plain server name, or a grant with a mode. */
+export type PlacementMcpEntry = string | PlacementMcpGrant;
+
 /** Logical trust boundary for one connector/channel placement. */
 export interface PlacementProfile {
   id: string;
@@ -817,7 +845,15 @@ export interface PlacementProfile {
   monthlyBudgetUsd?: number;
   projects?: string[];
   capabilities?: {
-    mcp?: false | string[];
+    /**
+     * MCP servers granted to this placement. A plain string grants the whole
+     * server (every tool). The object form adds the read-only vocabulary
+     * (gap G2): `{ name, mode: "read-only" }` grants the server but derives
+     * the catalog-declared writeTools into --disallowedTools. A read-only
+     * grant for a server whose catalog entry declares no tool classification
+     * is rejected fail-closed (the server becomes unusable entirely).
+     */
+    mcp?: false | PlacementMcpEntry[];
     gatewayTools?: string[];
     allowedDelivery?: PlacementDeliveryTarget[];
   };

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Engine, EngineResult, EngineRunOpts, IncomingMessage, PlacementDeliveryTarget, PlacementProfile } from "./types.js";
+import type { Engine, EngineResult, EngineRunOpts, IncomingMessage, McpGlobalConfig, PlacementDeliveryTarget, PlacementMcpMode, PlacementProfile } from "./types.js";
 import { JINN_HOME } from "./paths.js";
 
 export interface PlacementResolution {
@@ -96,39 +96,125 @@ const PLACEMENT_READ_TOOLS = ["Read", "Glob", "Grep"];
  * every permission mode, including bypassPermissions).
  */
 export const PLACEMENT_MCP_TOOL_DENY = [
+  // The operator's personal KG is a sensitivity default (gap G7), not a
+  // granularity vocabulary — it stays pinned in code regardless of what any
+  // catalog or placement declares. (The former freee write-tool entries moved
+  // to the catalog's `tools.writeTools` declaration + a placement-side
+  // `mode: "read-only"` grant — gap G2+G6.)
   "mcp__brainbase__search_personal_kg",
-  // freee write surface stays denied in every placement — capability-derived
-  // allows grant the whole freee server (read tools included), and read-only
-  // granularity has no vocabulary yet (gap G2). Until `capabilities.mcp` can
-  // express read-only, the write tools are pinned here so `freee` in a
-  // placement's capabilities can never mutate books. Deny always beats allow.
-  "mcp__freee__freee_api_post",
-  "mcp__freee__freee_api_put",
-  "mcp__freee__freee_api_delete",
-  "mcp__freee__freee_api_patch",
-  "mcp__freee__freee_file_upload",
 ];
+
+/** A normalized, validated `capabilities.mcp` grant. */
+export interface ResolvedPlacementMcpGrant {
+  name: string;
+  mode: PlacementMcpMode;
+}
+
+/**
+ * Outcome of resolving a placement's `capabilities.mcp` against the MCP
+ * catalog. `granted` entries are usable; `rejected` names failed closed —
+ * a read-only grant for a server whose catalog entry declares no tool
+ * classification (or a malformed entry) grants nothing at all rather than
+ * silently degrading to full access (ADR-0001 deny by default).
+ */
+export interface PlacementMcpResolution {
+  granted: ResolvedPlacementMcpGrant[];
+  rejected: string[];
+}
+
+/** Catalog-declared write tools for a server; undefined = no classification. */
+function catalogWriteTools(catalog: McpGlobalConfig | undefined, server: string): string[] | undefined {
+  return catalog?.custom?.[server]?.tools?.writeTools;
+}
+
+/**
+ * Resolve `capabilities.mcp` entries (string or `{name, mode}`) against the
+ * catalog's tool classification (gap G2+G6). Plain strings and `mode: "full"`
+ * grants pass through unchanged (backward compatible). `mode: "read-only"`
+ * requires the catalog to declare `tools.writeTools` for that server — the
+ * asset declares its own nature, same pattern as skill frontmatter — otherwise
+ * the grant is rejected fail-closed. Unknown modes and malformed entries are
+ * rejected the same way, never widened to full access.
+ */
+export function resolvePlacementMcp(
+  placement: Pick<PlacementProfile, "capabilities">,
+  catalog?: McpGlobalConfig,
+): PlacementMcpResolution {
+  const mcp = placement.capabilities?.mcp;
+  const entries = Array.isArray(mcp) ? mcp : [];
+  const granted: ResolvedPlacementMcpGrant[] = [];
+  const rejected: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry === "string") {
+      granted.push({ name: entry, mode: "full" });
+      continue;
+    }
+    const name = typeof entry?.name === "string" ? entry.name : undefined;
+    if (!name) continue;
+    const mode = entry.mode ?? "full";
+    if (mode === "full") {
+      granted.push({ name, mode });
+    } else if (mode === "read-only" && catalogWriteTools(catalog, name) !== undefined) {
+      granted.push({ name, mode });
+    } else {
+      rejected.push(name);
+    }
+  }
+  return { granted, rejected };
+}
+
+/**
+ * Server names usable by this placement, in the `false | string[]` shape the
+ * MCP resolver consumes. Rejected (fail-closed) grants are excluded, so a
+ * server that cannot honor its requested read-only mode is never spawned.
+ */
+export function placementMcpServerNames(
+  placement: Pick<PlacementProfile, "capabilities">,
+  catalog?: McpGlobalConfig,
+): false | string[] {
+  if (!Array.isArray(placement.capabilities?.mcp)) return false;
+  return resolvePlacementMcp(placement, catalog).granted.map((grant) => grant.name);
+}
 
 /**
  * Tool allow rules derived from the placement's capabilities — the single
  * source of tool permission for placement sessions (gap G1; ADR-0004: no
- * second permission registry). `capabilities.mcp` server names become
+ * second permission registry). Granted `capabilities.mcp` servers become
  * whole-server allows (`mcp__<server>__*` — Claude Code allow rules accept a
  * tool-name glob after a literal server prefix); `capabilities.gatewayTools`
  * become individual `mcp__gateway__<tool>` allows so the gateway server is
  * never wholesale-allowed beyond its granted tool list. `mcp: false`/absent
- * derives nothing (deny by default). PLACEMENT_MCP_TOOL_DENY entries stay in
- * --disallowedTools and win over any allow derived here.
+ * derives nothing (deny by default), and fail-closed rejected grants derive
+ * nothing either. PLACEMENT_MCP_TOOL_DENY entries and read-only write-tool
+ * denies stay in --disallowedTools and win over any allow derived here.
  */
 export function placementAllowedTools(
   placement: Pick<PlacementProfile, "capabilities">,
+  catalog?: McpGlobalConfig,
 ): string[] {
-  const mcp = placement.capabilities?.mcp;
-  const servers = Array.isArray(mcp) ? mcp : [];
+  const { granted } = resolvePlacementMcp(placement, catalog);
   return [
-    ...servers.filter((name) => name !== "gateway").map((name) => `mcp__${name}__*`),
+    ...granted.filter((grant) => grant.name !== "gateway").map((grant) => `mcp__${grant.name}__*`),
     ...(placement.capabilities?.gatewayTools ?? []).map((tool) => `mcp__gateway__${tool}`),
   ];
+}
+
+/**
+ * Deny rules derived from read-only grants (gap G2): the catalog's declared
+ * writeTools become `mcp__<server>__<tool>` entries for --disallowedTools.
+ * Deny always beats allow in every Claude Code permission mode (including
+ * bypassPermissions), so a read-only server's whole-server allow can never
+ * reach its write surface.
+ */
+export function placementReadOnlyDenyRules(
+  placement: Pick<PlacementProfile, "capabilities">,
+  catalog?: McpGlobalConfig,
+): string[] {
+  return resolvePlacementMcp(placement, catalog).granted
+    .filter((grant) => grant.mode === "read-only")
+    .flatMap((grant) =>
+      (catalogWriteTools(catalog, grant.name) ?? []).map((tool) => `mcp__${grant.name}__${tool}`),
+    );
 }
 
 /**
@@ -175,9 +261,9 @@ export interface SkillCapabilityRequirements {
 export function isSkillVisibleToPlacement(
   skill: SkillCapabilityRequirements,
   placement: Pick<PlacementProfile, "capabilities" | "projects">,
+  catalog?: McpGlobalConfig,
 ): boolean {
-  const mcp = placement.capabilities?.mcp;
-  const allowedMcp = Array.isArray(mcp) ? mcp : [];
+  const allowedMcp = resolvePlacementMcp(placement, catalog).granted.map((grant) => grant.name);
   if (!skill.requiredMcp.every((name) => allowedMcp.includes(name))) return false;
   const allowedTools = placement.capabilities?.gatewayTools ?? [];
   if (!skill.requiredTools.every((name) => allowedTools.includes(name))) return false;
@@ -191,11 +277,12 @@ export function isSkillVisibleToPlacement(
 export function placementEngineBoundary(
   placement: PlacementProfile | undefined,
   configuredPlacements?: PlacementProfile[],
+  mcpCatalog?: McpGlobalConfig,
 ): PlacementEngineBoundary {
   return {
     strictMcpConfig: Boolean(placement),
     enableChrome: placement ? false : undefined,
-    allowedTools: placement ? placementAllowedTools(placement) : undefined,
+    allowedTools: placement ? placementAllowedTools(placement, mcpCatalog) : undefined,
     disallowedTools: placement
       ? [
         ...placementWriteDenyRules(),
@@ -204,6 +291,7 @@ export function placementEngineBoundary(
           (configuredPlacements ?? []).map((p) => p.id),
         ),
         ...PLACEMENT_MCP_TOOL_DENY,
+        ...placementReadOnlyDenyRules(placement, mcpCatalog),
       ]
       : undefined,
     placementBashGuard: Boolean(placement),
@@ -216,13 +304,14 @@ export async function runPlacementBoundEngine(
   placement: PlacementProfile | undefined,
   opts: EngineRunOpts,
   configuredPlacements?: PlacementProfile[],
+  mcpCatalog?: McpGlobalConfig,
 ): Promise<EngineResult> {
   if (placement && engine.name !== "claude" && engine.name !== "mock") {
     throw new Error(
       `Placement-scoped execution rejects engine without Placement boundary support: ${engine.name}`,
     );
   }
-  return engine.run({ ...opts, ...placementEngineBoundary(placement, configuredPlacements) });
+  return engine.run({ ...opts, ...placementEngineBoundary(placement, configuredPlacements, mcpCatalog) });
 }
 
 /** Check support before callers announce or persist an engine transition. */

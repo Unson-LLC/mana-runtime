@@ -35,7 +35,11 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
     escalationEmployee: critical-reviewer
   projects: [unson]             # ソフト境界: 担当範囲の宣言
   capabilities:                 # ハード境界: 明示したものだけ許可
-    mcp: [brainbase, nocodb, gateway]
+    mcp:                        # 文字列=全ツール許可、object形式=粒度指定（G2）
+      - brainbase
+      - nocodb
+      - gateway
+      - {name: freee, mode: read-only}   # カタログ宣言のwriteToolsをdenyへ導出
     gatewayTools: [create_task, list_tasks, …]
     allowedDelivery:            # 外部送信先の制限（これ以外へ投稿不可）
       - {connector: slack, channel: C…}
@@ -43,7 +47,7 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
     graph: {mode: read-only, scopes: [org:unson]}
 ```
 
-**ソフト境界宣言の自動生成（2026-07-31, gap-analysis G3)**: system promptの「Placement policy」節に入る「利用できる能力」は`capabilities`から自動生成される — `capabilities.mcp`の各サーバー（`PLACEMENT_MCP_TOOL_DENY`で恒常denyされるツールは「except always-denied」を併記）・`gatewayTools`・配信可能先（`allowedDelivery`、未設定なら自チャンネル）。`dataScopes`は引き続き注入されるが、read-onlyモードやgraph scopesのような**参照範囲の補足**であり、能力を付与も剥奪もしないとプロンプト内で明示する。これにより「capabilitiesに足したがdataScopesに書き忘れてモデルが自主拒否」「能力の無いplacementに宣言だけ残る」という手書き同期の乖離事故（2026-07-31 freee接続障害）を構造的に防ぐ。
+**ソフト境界宣言の自動生成（2026-07-31, gap-analysis G3)**: system promptの「Placement policy」節に入る「利用できる能力」は`capabilities`から自動生成される — `capabilities.mcp`の各サーバー（`PLACEMENT_MCP_TOOL_DENY`の恒常denyとread-onlyモードのwriteTools denyは「denied tools」として併記、fail-closed拒否されたread-only指定は利用不能と明示）・`gatewayTools`・配信可能先（`allowedDelivery`、未設定なら自チャンネル）。`dataScopes`は引き続き注入されるが、read-onlyモードやgraph scopesのような**参照範囲の補足**であり、能力を付与も剥奪もしないとプロンプト内で明示する。これにより「capabilitiesに足したがdataScopesに書き忘れてモデルが自主拒否」「能力の無いplacementに宣言だけ残る」という手書き同期の乖離事故（2026-07-31 freee接続障害）を構造的に防ぐ。
 
 ### 解決とfail-closed
 
@@ -69,7 +73,8 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
 
 1. **コード内route束縛** — タスク系routeはplacement文脈に束縛
 2. **placement `gatewayTools`** — gateway MCPが明示リストだけを公開・実行
-3. **capabilities由来の`--allowedTools`**（2026-07-31、gap G1+G4解消） — placementセッションのallowルールは `capabilities` から**spawnごとに導出**される（[placement-profile.ts](../../packages/jimmy/src/shared/placement-profile.ts) `placementAllowedTools`）: `capabilities.mcp` の各サーバー → `mcp__<server>__*`（サーバー全体許可）、`capabilities.gatewayTools` → `mcp__gateway__<tool>`（個別許可）。グローバル設定 `engines.claude.interactiveAllowedTools` は**非placementセッション専用**となり、placementはこれに依存しない（能力の正本はcapabilitiesただ1箇所）。導出はrun毎の純関数なのでconfig hot-reloadが次spawnから反映され、gateway再起動は不要。warm PTYへはspawn境界鍵（allow+deny+Bashガード）の変化でcold-respawnして反映する。恒常deny（`PLACEMENT_MCP_TOOL_DENY`）は `--disallowedTools` としてallowに常に勝つ — freee書込系5ツール（`freee_api_post/put/delete/patch`・`freee_file_upload`）はここで全placement遮断（G2のread-only語彙導入までの暫定read-only）
+3. **capabilities由来の`--allowedTools`**（2026-07-31、gap G1+G4解消） — placementセッションのallowルールは `capabilities` から**spawnごとに導出**される（[placement-profile.ts](../../packages/jimmy/src/shared/placement-profile.ts) `placementAllowedTools`）: `capabilities.mcp` の各サーバー → `mcp__<server>__*`（サーバー全体許可）、`capabilities.gatewayTools` → `mcp__gateway__<tool>`（個別許可）。グローバル設定 `engines.claude.interactiveAllowedTools` は**非placementセッション専用**となり、placementはこれに依存しない（能力の正本はcapabilitiesただ1箇所）。導出はrun毎の純関数なのでconfig hot-reloadが次spawnから反映され、gateway再起動は不要。warm PTYへはspawn境界鍵（allow+deny+Bashガード）の変化でcold-respawnして反映する。恒常deny（`PLACEMENT_MCP_TOOL_DENY`）は `--disallowedTools` としてallowに常に勝つ。
+   **read-only語彙とカタログツール分類（2026-07-31、gap G2+G6解消）**: `capabilities.mcp` のエントリは文字列（サーバー全ツール許可）に加えて `{name: <server>, mode: read-only}` を書ける。read-only指定されたサーバーは、カタログ（`mcp.custom.<name>.tools.writeTools` — スキルfrontmatterと同型の「資産側の自己宣言」）が分類した書込ツールが `mcp__<server>__<tool>` として `--disallowedTools` へ導出され、deny precedenceで全permission modeで拒否される（`placementReadOnlyDenyRules`）。カタログにツール分類宣言のないサーバーへのread-only指定は**fail-closed拒否**: そのサーバーはallowedToolsにもMCP設定にも含まれず、full許可へ静かに広がることはない（ADR-0001）。freee書込系5ツールの`PLACEMENT_MCP_TOOL_DENY`固定列挙（暫定）はこの語彙で置換済み — 恒常denyに残るのは機微の既定である個人KG遮断のみ（G7）
 
 ### エンジン境界
 
