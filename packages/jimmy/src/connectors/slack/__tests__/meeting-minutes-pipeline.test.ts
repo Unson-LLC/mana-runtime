@@ -158,6 +158,14 @@ describe("detection gates", () => {
     expect(fetchTranscript).not.toHaveBeenCalled();
   });
 
+  it('watches every channel when routerChannels contains "*"', async () => {
+    const { pipeline, fetchTranscript } = makePipeline({
+      config: { routerChannels: ["*"] },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent({ channel: "C_ANYWHERE" }));
+    expect(fetchTranscript).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores non-file_share messages and non-.txt files", async () => {
     const { pipeline, fetchTranscript } = makePipeline();
     await pipeline.maybeHandleFileMessage(fileEvent({ subtype: undefined }));

@@ -45,7 +45,10 @@ import {
 export interface MeetingMinutesPipelineConfig {
   /** Master switch — defaults to false when the block is absent. */
   enabled?: boolean;
-  /** Router channel IDs to watch for .txt uploads. Required; empty = off. */
+  /**
+   * Router channel IDs to watch for .txt uploads. Required; empty = off.
+   * "*" watches every channel the bot is in.
+   */
   routerChannels?: string[];
   /** Destination projects. Required; empty = off. */
   destinations?: MinutesDestination[];
@@ -200,6 +203,7 @@ export class MeetingMinutesPipeline {
   private readonly client: SlackClientLike;
   private readonly enabled: boolean;
   private readonly routerChannels: Set<string>;
+  private readonly watchAllChannels: boolean;
   private readonly destinations: MinutesDestination[];
   private readonly operators: ApproverResolver;
   private readonly operatorsEmpty: boolean;
@@ -221,6 +225,7 @@ export class MeetingMinutesPipeline {
     this.client = app.client as unknown as SlackClientLike;
     this.enabled = config.enabled === true;
     this.routerChannels = new Set((config.routerChannels ?? []).filter(Boolean));
+    this.watchAllChannels = this.routerChannels.has("*");
     this.destinations = (config.destinations ?? []).filter(
       (d) => d && d.projectId && d.name && d.channelId,
     );
@@ -299,7 +304,8 @@ export class MeetingMinutesPipeline {
     if (!this.active) return;
     const channel = event.channel as string | undefined;
     const ts = event.ts as string | undefined;
-    if (!channel || !ts || !this.routerChannels.has(channel)) return;
+    if (!channel || !ts) return;
+    if (!this.watchAllChannels && !this.routerChannels.has(channel)) return;
     if (event.subtype !== "file_share") return;
     const files = Array.isArray(event.files) ? (event.files as Record<string, unknown>[]) : [];
     const txtFiles = files.filter((f) =>
