@@ -93,7 +93,7 @@ export function setCronJobEnabled(idOrName: string, enabled: boolean): CronJob |
   const index = jobs.findIndex((job) => matchesJob(job, idOrName));
   if (index === -1) return undefined;
   jobs[index] = { ...jobs[index], enabled };
-  saveJobs(jobs);
+  saveJobs(jobs, { source: "cron/scheduler" });
   reloadScheduler(jobs);
   return jobs[index];
 }
