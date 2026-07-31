@@ -731,8 +731,13 @@ export interface PlacementProfile {
    */
   enabled?: boolean;
   audience: {
-    type: "operator" | "executive" | "project-team" | "client";
-    allowedUsers: string[];
+    type: "operator" | "executive" | "project-team" | "client" | "channel-members";
+    /**
+     * Static allowlist for the legacy audience types. "channel-members"
+     * delegates membership to the connector (Slack conversations.members) and
+     * ignores this list; static types without a list fail closed (deny all).
+     */
+    allowedUsers?: string[];
   };
   agent?: {
     employee?: string;
@@ -752,6 +757,21 @@ export interface PlacementProfile {
     allowedDelivery?: PlacementDeliveryTarget[];
   };
   dataScopes?: Record<string, unknown>;
+}
+
+/**
+ * Template overrides for invite-driven placement auto-provisioning
+ * (config.yaml `placementDefaults`). The standard profile lives in code
+ * (shared/placement-autoprovision.ts); each field here replaces the
+ * corresponding standard value wholesale when set.
+ */
+export interface PlacementDefaultsConfig {
+  /** Kill switch for invite-driven auto-provisioning. Absent means enabled (in placement mode). */
+  autoProvision?: boolean;
+  agent?: PlacementProfile["agent"];
+  capabilities?: PlacementProfile["capabilities"];
+  dataScopes?: Record<string, unknown>;
+  monthlyBudgetUsd?: number;
 }
 
 export interface JinnConfig {
@@ -804,6 +824,8 @@ export interface JinnConfig {
   developmentRunner?: DevelopmentRunnerConfig;
   /** Connector/channel-specific policy. When present, unmatched input fails closed. */
   placements?: PlacementProfile[];
+  /** Invite-driven auto-provisioning template overrides. See PlacementDefaultsConfig. */
+  placementDefaults?: PlacementDefaultsConfig;
   mcp?: McpGlobalConfig;
   sessions?: {
     maxDurationMinutes?: number;

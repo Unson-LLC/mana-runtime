@@ -1,6 +1,6 @@
 # 認証・権限設計
 
-**最終更新**: 2026-07-30
+**最終更新**: 2026-07-31
 
 mana-runtimeの権限設計は一貫して **deny-by-default / fail-closed** である。未定義の能力は拒否され、解決不能な状態（placement不一致・config不正・親セッション不在）は権限昇格ではなく拒否に倒す。
 
@@ -28,8 +28,8 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
   workspaceId: T…
   channelId: C…
   audience:                     # 誰の発話に応じるか
-    type: operator
-    allowedUsers: [U…]
+    type: operator              # 静的allowlist型（operator/executive/project-team/client）
+    allowedUsers: [U…]          # または type: channel-members（下記）— allowedUsers不要
   agent:                        # 担当employee・モデル・重要レビュー担当の上書き
     defaultModel: sonnet
     escalationEmployee: critical-reviewer
@@ -49,6 +49,19 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
 - connector・workspace・channel・userが**一意に**一致するplacementだけにルーティング。未登録・曖昧一致・許可外ユーザー・`enabled: false` は実行前に拒否
 - `capabilities` 未設定のplacementは**全MCP拒否**で動く（データ参照なしの一般論回答になる。これは仕様。2026-07-30の事業運営チャンネル初期不良の原因）
 - 拒否はすべて `security_event`（`mcp_denied` 等）として構造化ログに残る
+- **`audience.type: channel-members`**（2026-07-31）: 静的allowedUsersの代わりに、発話者がそのSlackチャンネルのメンバーかを `conversations.members`（TTLキャッシュ付き）で判定する。メンバー管理をSlack自身のアクセス制御へ委任する（[ADR-0004](../adr/0004-no-second-permission-system.md)の適用）。API失敗・判定不能・membership照会を持たないコネクタはすべて拒否（fail-closed）
+- **個人KGの恒常遮断**: 全placementセッションの `--disallowedTools` に `mcp__brainbase__search_personal_kg` が常に含まれる（[placement-profile.ts](../../packages/jimmy/src/shared/placement-profile.ts) `PLACEMENT_MCP_TOOL_DENY`）。brainbase MCPを許可するチャンネルでも佐藤個人のKGはどのチャンネルにも出さない
+
+### 招待による自動プロビジョニング（2026-07-31）
+
+「招待できる人は権限判断を済ませている」を信頼境界として、bot自身への `member_joined_channel` でそのチャンネルのplacementを標準プロファイルで自動生成する（[placement-autoprovision.ts](../../packages/jimmy/src/shared/placement-autoprovision.ts)）:
+
+- **標準プロファイル**: audience channel-members / owner=招待者 / purpose=`auto-provisioned (invited by <user>)` / sonnet + critical-reviewer / mcp [brainbase, gateway] / gatewayTools task系5種 / allowedDelivery省略（自チャンネルのみ） / dataScopes graph read-only / monthlyBudgetUsd 10。config.yamlの `placementDefaults` でフィールド単位に上書き可、`placementDefaults.autoProvision: false` で停止
+- **書込経路**: 必ずconfig-historyスナップショット（source: `auto-provision`）→ 一時ファイル+アトミック置換。失敗時はconfig無変更で従来どおり全拒否（fail-closed）
+- **ガード**: `placements:` キー未構成のインスタンスでは発動しない（初placement追加で他チャンネルが全拒否へ切り替わる事故防止）。既存placement（`enabled: false` 含む）のチャンネルでは何もしない（再招待で無効化を蘇生させない）
+- **挨拶**: 生成成功時に1回だけ、標準プロファイルで動く旨・owner・できること3行・昇格経路（owner→operator）をチャンネルへ投稿
+- **退出**: `channel_left` / `group_left` で該当placementを `enabled: false` へ（削除しない=監査痕跡維持）
+- **昇格はスコープ外**: nocodb・他チャンネル配信・cron・budget増額は従来どおりconfig手編集（HITL型化後に接続予定）
 
 ### 3層ゲート（ツール実行の多重防御）
 

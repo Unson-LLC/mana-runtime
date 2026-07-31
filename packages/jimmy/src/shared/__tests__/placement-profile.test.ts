@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, placementEngineBoundary, placementMemoryReadDenyRules, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -67,6 +67,64 @@ describe("resolvePlacement", () => {
     const unsafe = { ...placement, ...override } as PlacementProfile;
     expect(resolvePlacement([unsafe], message())).toEqual({ status: "denied", reason: "invalid_config" });
   });
+
+  it("fails closed for a static audience without an allowedUsers list", () => {
+    const listless = { ...placement, audience: { type: "project-team" } } as PlacementProfile;
+    expect(resolvePlacement([listless], message()))
+      .toEqual({ status: "denied", reason: "unauthorized_user" });
+  });
+});
+
+describe("resolvePlacement channel-members audience", () => {
+  const channelMembers: PlacementProfile = {
+    ...placement,
+    audience: { type: "channel-members" },
+  };
+
+  it("matches a channel-members placement when the speaker membership is member", () => {
+    expect(resolvePlacement([channelMembers], message({ user: "Uanyone" }), { channelMembership: "member" }))
+      .toMatchObject({ status: "matched", placement: channelMembers });
+  });
+
+  it.each([
+    ["non-member", { channelMembership: "non-member" as const }],
+    ["unknown", { channelMembership: "unknown" as const }],
+    ["unstated", undefined],
+  ])("denies channel-members placements when membership is non-member, unknown, or unstated (fail-closed) [%s]", (_label, opts) => {
+    expect(resolvePlacement([channelMembers], message(), opts))
+      .toEqual({ status: "denied", reason: "unauthorized_user", placementId: "mana-test" });
+  });
+
+  it("ignores the static allowlist path for channel-members audiences", () => {
+    // Even a user that would fail the static list resolves purely by membership.
+    const withStaleList = {
+      ...channelMembers,
+      audience: { type: "channel-members", allowedUsers: [] },
+    } as PlacementProfile;
+    expect(resolvePlacement([withStaleList], message({ user: "U9" }), { channelMembership: "member" }).status)
+      .toBe("matched");
+  });
+
+  it("still honors the kill switch before membership", () => {
+    expect(resolvePlacement([{ ...channelMembers, enabled: false }], message(), { channelMembership: "member" }))
+      .toEqual({ status: "denied", reason: "disabled", placementId: "mana-test" });
+  });
+});
+
+describe("placementNeedsChannelMembership", () => {
+  const channelMembers: PlacementProfile = { ...placement, audience: { type: "channel-members" } };
+
+  it("requests a membership lookup only for a unique channel-members match", () => {
+    expect(placementNeedsChannelMembership([channelMembers], message())).toBe(true);
+    expect(placementNeedsChannelMembership([placement], message())).toBe(false);
+    expect(placementNeedsChannelMembership([channelMembers], message({ channel: "C2" }))).toBe(false);
+    expect(placementNeedsChannelMembership(undefined, message())).toBe(false);
+    expect(placementNeedsChannelMembership([], message())).toBe(false);
+  });
+
+  it("skips the lookup for ambiguous matches (they deny regardless)", () => {
+    expect(placementNeedsChannelMembership([channelMembers, { ...channelMembers, id: "dup" }], message())).toBe(false);
+  });
 });
 
 describe("findEnabledPlacement", () => {
@@ -106,9 +164,23 @@ describe("placementEngineBoundary", () => {
       disallowedTools: [
         ...placementWriteDenyRules(),
         ...placementMemoryReadDenyRules(placement.id, []),
+        ...PLACEMENT_MCP_TOOL_DENY,
       ],
       placementBashGuard: true,
     });
+  });
+
+  it("adds the personal KG tool deny to every placement session's disallowedTools", () => {
+    const brainbaseAllowed: PlacementProfile = {
+      ...placement,
+      capabilities: { mcp: ["brainbase", "gateway"] },
+    };
+    for (const bound of [placement, brainbaseAllowed]) {
+      expect(placementEngineBoundary(bound).disallowedTools)
+        .toContain("mcp__brainbase__search_personal_kg");
+    }
+    // Legacy (non-placement) sessions keep their unrestricted behavior.
+    expect(placementEngineBoundary(undefined).disallowedTools).toBeUndefined();
   });
 
   it("includes memory read deny rules for every other configured placement", () => {
@@ -268,6 +340,7 @@ describe("runPlacementBoundEngine", () => {
       disallowedTools: [
         ...placementWriteDenyRules(),
         ...placementMemoryReadDenyRules(placement.id, []),
+        ...PLACEMENT_MCP_TOOL_DENY,
       ],
     }));
   });

@@ -38,7 +38,12 @@ import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
 import { scanOrg } from "./org.js";
 import { resolveSlackRuntimeConfig, resolveSlackInstanceRuntimeConfig } from "../shared/slack-runtime-config.js";
-import { resolvePlacement } from "../shared/placement-profile.js";
+import { placementNeedsChannelMembership, resolvePlacement, type ChannelMembership } from "../shared/placement-profile.js";
+import {
+  autoProvisionPlacement,
+  buildAutoProvisionGreeting,
+  disablePlacementOnLeave,
+} from "../shared/placement-autoprovision.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 import { getPlacementBudgetStatus } from "./budgets.js";
 
@@ -119,8 +124,9 @@ export function resolveRouteOptions(
   employees: Map<string, Employee>,
   fallbackEmployee?: string,
   criticalRouting?: RouteOptions["criticalRouting"],
+  channelMembership?: ChannelMembership,
 ): RouteOptions | undefined {
-  const resolution = resolvePlacement(cfg.placements, msg);
+  const resolution = resolvePlacement(cfg.placements, msg, { channelMembership });
   if (resolution.status === "denied") {
     const reason = resolution.reason === "unauthorized_user" ? "unauthorized_actor"
       : resolution.reason === "invalid_config" ? "placement_missing_after_config_change"
@@ -362,6 +368,31 @@ export async function startGateway(
   let employeeRegistry = scanOrg();
   logger.info(`Loaded ${employeeRegistry.size} employee(s) from org directory`);
 
+  // Mutable config reference for hot-reload. Declared BEFORE the connectors
+  // start so routing closures can read the LIVE config: placements written at
+  // runtime (invite-driven auto-provisioning, external config edits) must
+  // gate the very next message, not wait for a connector restart.
+  let currentConfig = config;
+  // Tracks the config version that was last successfully applied to connectors.
+  // The watcher diffs against THIS (not currentConfig) so that a failed reload
+  // does not poison the next chokidar event into thinking "nothing changed".
+  let lastConnectorReloadConfig = config;
+
+  /**
+   * Re-read config.yaml after a runtime write (auto-provision / disable on
+   * leave) so routing and new sessions see it immediately. The file watcher
+   * fires for the same write and also updates apiContext.config; this exists
+   * to close the gap between the write and that (debounced) event.
+   */
+  function refreshRoutingConfig(): void {
+    try {
+      currentConfig = loadConfig();
+      sessionManager.setConfig(currentConfig);
+    } catch (err) {
+      logger.error(`config refresh after runtime write failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   // Start connectors
   const connectors: Connector[] = [];
   const connectorMap = new Map<string, Connector>();
@@ -414,18 +445,62 @@ export async function startGateway(
           {
             ...slackConfig,
           },
-          buildSlackConnectorContext(
-            cfg,
-            (slackConfig.employee
-              ? employeeRegistry.get(slackConfig.employee)?.engine
-              : cfg.engines.default) === "claude",
-            sessionManager,
-          ),
+          {
+            ...buildSlackConnectorContext(
+              cfg,
+              (slackConfig.employee
+                ? employeeRegistry.get(slackConfig.employee)?.engine
+                : cfg.engines.default) === "claude",
+              sessionManager,
+            ),
+            // Invite-driven auto-provisioning. The module re-reads config.yaml
+            // from disk (single source of truth) and fails closed on every
+            // error; only a real creation returns a greeting to post.
+            onBotJoinedChannel: (info) => {
+              if (!info.workspaceId) {
+                logger.warn(`auto-provision skipped for ${info.channelId}: no workspace id on join event`);
+                return undefined;
+              }
+              const result = autoProvisionPlacement({
+                connector: "slack",
+                workspaceId: info.workspaceId,
+                channelId: info.channelId,
+                inviterUserId: info.inviterUserId,
+              });
+              if (result.outcome !== "created") {
+                logger.info(`auto-provision skipped (${result.outcome}) for slack:${info.channelId}`);
+                return undefined;
+              }
+              // Make the new placement routable NOW — the chokidar reload for
+              // the same write also lands, but the first channel message can
+              // arrive before it does.
+              refreshRoutingConfig();
+              return buildAutoProvisionGreeting(result.placement);
+            },
+            onBotLeftChannel: (info) => {
+              if (!info.workspaceId) return;
+              const result = disablePlacementOnLeave({
+                connector: "slack",
+                workspaceId: info.workspaceId,
+                channelId: info.channelId,
+              });
+              if (result.outcome === "disabled") refreshRoutingConfig();
+              logger.info(`placement disable on leave: ${result.outcome} for slack:${info.channelId}`);
+            },
+          },
         );
         slack.onMessage((msg) => {
-          const routeOpts = resolveRouteOptions(cfg, msg, employeeRegistry, cfg.connectors.slack?.employee, cfg.connectors.slack?.criticalRouting);
-          if (!routeOpts) return;
-          sessionManager.route(msg, slack, routeOpts).catch((err) => {
+          void (async () => {
+            // Read the LIVE config so placements written after connector
+            // start (auto-provision, external edits) gate this message.
+            const cfgNow = currentConfig;
+            const membership = placementNeedsChannelMembership(cfgNow.placements, msg)
+              ? await slack.getChannelMembership(msg.channel, msg.user)
+              : undefined;
+            const routeOpts = resolveRouteOptions(cfgNow, msg, employeeRegistry, cfgNow.connectors.slack?.employee, cfgNow.connectors.slack?.criticalRouting, membership);
+            if (!routeOpts) return;
+            await sessionManager.route(msg, slack, routeOpts);
+          })().catch((err) => {
             logger.error(`Slack route error: ${err instanceof Error ? err.message : err}`);
           });
         });
@@ -863,13 +938,6 @@ export async function startGateway(
   const cronJobs = loadJobs();
   startScheduler(cronJobs, sessionManager, config, connectorMap);
   logger.info(`Loaded ${cronJobs.length} cron job(s)`);
-
-  // Mutable config reference for hot-reload
-  let currentConfig = config;
-  // Tracks the config version that was last successfully applied to connectors.
-  // The watcher diffs against THIS (not currentConfig) so that a failed reload
-  // does not poison the next chokidar event into thinking "nothing changed".
-  let lastConnectorReloadConfig = config;
 
   // Single-flight gate for connector reloads: any caller that arrives while
   // one is in flight is coalesced (no duplicate clients), and any reload
