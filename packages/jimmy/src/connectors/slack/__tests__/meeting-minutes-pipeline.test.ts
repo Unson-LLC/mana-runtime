@@ -166,6 +166,32 @@ describe("detection gates", () => {
     expect(fetchTranscript).toHaveBeenCalledTimes(1);
   });
 
+  it("expands in place without routing for wildcard-matched channels", async () => {
+    const { pipeline, apiCall, classify, handoff } = makePipeline({
+      config: { routerChannels: ["*", ROUTER] },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent({ channel: "C_ANYWHERE" }));
+
+    expect(classify).not.toHaveBeenCalled();
+    const posts = postedMessages(apiCall);
+    const parent = posts.find((p) => p.channel === "C_ANYWHERE" && !p.thread_ts);
+    expect(parent?.text).toContain("概要です");
+    expect(posts.some((p) => p.channel === "C_ST")).toBe(false);
+    const control = posts.find((p) => String(p.text).includes("このチャンネルへ議事録を展開しました"));
+    expect(control).toBeTruthy();
+    expect(handoff).toHaveBeenCalledWith("C_ANYWHERE", expect.any(String), MINUTES.body, expect.any(Number));
+  });
+
+  it("still routes via LLM for explicit router channels even with wildcard", async () => {
+    const { pipeline, apiCall, classify } = makePipeline({
+      config: { routerChannels: ["*", ROUTER] },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent());
+    expect(classify).toHaveBeenCalledTimes(1);
+    const parent = postedMessages(apiCall).find((p) => p.channel === "C_ST" && !p.thread_ts);
+    expect(parent?.text).toContain("概要です");
+  });
+
   it("ignores non-file_share messages and non-.txt files", async () => {
     const { pipeline, fetchTranscript } = makePipeline();
     await pipeline.maybeHandleFileMessage(fileEvent({ subtype: undefined }));
