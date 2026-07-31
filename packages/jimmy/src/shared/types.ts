@@ -51,6 +51,15 @@ export interface EngineRunOpts {
    */
   disallowedTools?: string[];
   /**
+   * Per-spawn tool allow rules passed as --allowedTools, derived from the
+   * placement's capabilities (placementEngineBoundary). When set — always for a
+   * placement session, even as an empty list — it REPLACES the engine's global
+   * interactiveAllowedTools for that spawn, so a placement never inherits the
+   * global list. Undefined (non-placement) keeps the global list in charge.
+   * Deny rules always win over these (Claude Code evaluates deny → ask → allow).
+   */
+  allowedTools?: string[];
+  /**
    * Register the placement Bash write guard (assets/placement-guard.mjs) as a
    * PreToolUse hook via --settings. Complements `disallowedTools`, which cannot
    * inspect paths inside shell commands: Bash deny rules are prefix-matched on

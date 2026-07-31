@@ -12,6 +12,8 @@ import {
   applyInteractiveDuration,
   buildInteractiveArgs,
   isNativeClaudeCommand,
+  placementBoundaryKey,
+  resolveSpawnAllowedTools,
 } from "../claude-interactive.js";
 
 describe("interactive Claude duration", () => {
@@ -127,6 +129,47 @@ describe("interactive Claude permission mode", () => {
     expect(args).toContain("dontAsk");
     expect(args).toContain("--allowedTools");
     expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+});
+
+describe("per-spawn allowed tools resolution", () => {
+  const globalList = ["mcp__freee__freee_api_get", "mcp__brainbase__search"];
+
+  it("a placement's derived allow list replaces the global interactiveAllowedTools for that spawn", () => {
+    expect(resolveSpawnAllowedTools(["mcp__freee__*", "mcp__gateway__create_task"], globalList))
+      .toEqual(["mcp__freee__*", "mcp__gateway__create_task"]);
+  });
+
+  it("a placement with an empty derived list grants nothing extra (no global fallback)", () => {
+    expect(resolveSpawnAllowedTools([], globalList)).toEqual([]);
+  });
+
+  it("non-placement spawns keep the global interactiveAllowedTools unchanged", () => {
+    expect(resolveSpawnAllowedTools(undefined, globalList)).toBe(globalList);
+  });
+});
+
+describe("placement spawn boundary key", () => {
+  it("changes the spawn boundary key when the allowedTools change (forces cold respawn)", () => {
+    const before = placementBoundaryKey({ allowedTools: ["mcp__brainbase__*"], disallowedTools: ["x"], placementBashGuard: true });
+    const after = placementBoundaryKey({ allowedTools: ["mcp__brainbase__*", "mcp__freee__*"], disallowedTools: ["x"], placementBashGuard: true });
+    expect(after).not.toBe(before);
+  });
+
+  it("keeps the boundary key stable for identical allow/deny inputs", () => {
+    const a = placementBoundaryKey({ allowedTools: ["mcp__freee__*"], disallowedTools: ["deny"], placementBashGuard: true });
+    const b = placementBoundaryKey({ allowedTools: ["mcp__freee__*"], disallowedTools: ["deny"], placementBashGuard: true });
+    expect(a).toBe(b);
+  });
+
+  it("distinguishes an empty placement allow list from the global (non-placement) default", () => {
+    expect(placementBoundaryKey({ allowedTools: [] })).not.toBe(placementBoundaryKey({}));
+  });
+
+  it("still cold-respawns on deny-rule or bash-guard changes as before", () => {
+    const base = placementBoundaryKey({ disallowedTools: ["a"] });
+    expect(placementBoundaryKey({ disallowedTools: ["a", "b"] })).not.toBe(base);
+    expect(placementBoundaryKey({ disallowedTools: ["a"], placementBashGuard: true })).not.toBe(base);
   });
 });
 

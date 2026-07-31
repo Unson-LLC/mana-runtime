@@ -35,6 +35,10 @@ export interface PlacementEngineBoundary {
   strictMcpConfig: boolean;
   enableChrome: false | undefined;
   disallowedTools: string[] | undefined;
+  /** Capability-derived allow rules (placementAllowedTools). Always an array
+   *  for a placement (empty = nothing beyond boundary defaults, never the
+   *  global list); undefined for legacy sessions. */
+  allowedTools: string[] | undefined;
   placementBashGuard: boolean;
 }
 
@@ -91,7 +95,41 @@ const PLACEMENT_READ_TOOLS = ["Read", "Glob", "Grep"];
  * --disallowedTools mechanism as placementWriteDenyRules (hard boundary in
  * every permission mode, including bypassPermissions).
  */
-export const PLACEMENT_MCP_TOOL_DENY = ["mcp__brainbase__search_personal_kg"];
+export const PLACEMENT_MCP_TOOL_DENY = [
+  "mcp__brainbase__search_personal_kg",
+  // freee write surface stays denied in every placement — capability-derived
+  // allows grant the whole freee server (read tools included), and read-only
+  // granularity has no vocabulary yet (gap G2). Until `capabilities.mcp` can
+  // express read-only, the write tools are pinned here so `freee` in a
+  // placement's capabilities can never mutate books. Deny always beats allow.
+  "mcp__freee__freee_api_post",
+  "mcp__freee__freee_api_put",
+  "mcp__freee__freee_api_delete",
+  "mcp__freee__freee_api_patch",
+  "mcp__freee__freee_file_upload",
+];
+
+/**
+ * Tool allow rules derived from the placement's capabilities — the single
+ * source of tool permission for placement sessions (gap G1; ADR-0004: no
+ * second permission registry). `capabilities.mcp` server names become
+ * whole-server allows (`mcp__<server>__*` — Claude Code allow rules accept a
+ * tool-name glob after a literal server prefix); `capabilities.gatewayTools`
+ * become individual `mcp__gateway__<tool>` allows so the gateway server is
+ * never wholesale-allowed beyond its granted tool list. `mcp: false`/absent
+ * derives nothing (deny by default). PLACEMENT_MCP_TOOL_DENY entries stay in
+ * --disallowedTools and win over any allow derived here.
+ */
+export function placementAllowedTools(
+  placement: Pick<PlacementProfile, "capabilities">,
+): string[] {
+  const mcp = placement.capabilities?.mcp;
+  const servers = Array.isArray(mcp) ? mcp : [];
+  return [
+    ...servers.filter((name) => name !== "gateway").map((name) => `mcp__${name}__*`),
+    ...(placement.capabilities?.gatewayTools ?? []).map((tool) => `mcp__gateway__${tool}`),
+  ];
+}
 
 /**
  * Placement-local memory layer (docs/architecture/11_persona_skills_memory.md §3.1):
@@ -147,7 +185,9 @@ export function isSkillVisibleToPlacement(
   return true;
 }
 
-/** Keep every initial/retry caller on the same fail-closed engine boundary. */
+/** Keep every initial/retry caller on the same fail-closed engine boundary.
+ *  Pure derivation from the placement passed in per run — no boot-time state,
+ *  so a config hot-reload takes effect at the next spawn (gap G4). */
 export function placementEngineBoundary(
   placement: PlacementProfile | undefined,
   configuredPlacements?: PlacementProfile[],
@@ -155,6 +195,7 @@ export function placementEngineBoundary(
   return {
     strictMcpConfig: Boolean(placement),
     enableChrome: placement ? false : undefined,
+    allowedTools: placement ? placementAllowedTools(placement) : undefined,
     disallowedTools: placement
       ? [
         ...placementWriteDenyRules(),
