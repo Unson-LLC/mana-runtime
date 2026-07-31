@@ -151,27 +151,54 @@ function placementTransportMeta(meta: Session["transportMeta"]): Session["transp
   return clean as Session["transportMeta"];
 }
 
-const MAX_TYPING_STATUS_CHARS = 120;
+const MAX_PROGRESS_MESSAGE_CHARS = 200;
 
 /**
  * Renders one `DevelopmentProgress` snapshot from the isolated `/vibepro`
- * runner as the Slack "typing" status text. `latest` is the agent's own
- * commit subject line, so it is re-sanitized here (newline-collapsed) even
- * though the runner already bounds it — defense in depth against untrusted
- * content ending up verbatim in a Slack status.
+ * runner as the text for an editable, in-thread progress message. Real-world
+ * testing showed Slack's assistant status API (`setTypingStatus`) does not
+ * reliably surface custom status text — Slack substitutes a generic phrase
+ * of its own — so real progress is now shown via a message posted once and
+ * then rewritten in place (`editMessage`/`chat.update`) as new snapshots
+ * arrive. `latest` is the agent's own commit subject line, so it is
+ * re-sanitized here (newline-collapsed) even though the runner already
+ * bounds it — defense in depth against untrusted content ending up verbatim
+ * in a Slack message.
  */
-function formatDevelopmentProgress(progress: DevelopmentProgress): string {
+function formatDevelopmentProgressMessage(progress: DevelopmentProgress): string {
   const minutes = Math.floor(progress.elapsedSec / 60);
   let text: string;
   if (progress.phase === "gate") {
-    text = `Gate検証中 ${minutes}分 / commit ${progress.commits}件`;
+    text = `🔍 Gate検証中 ${minutes}分 / commit ${progress.commits}件`;
   } else if (progress.commits > 0) {
     const latest = (progress.latest ?? "").replace(/\s+/g, " ").trim();
-    text = latest ? `開発中 ${minutes}分 / commit ${progress.commits}件: ${latest}` : `開発中 ${minutes}分 / commit ${progress.commits}件`;
+    text = latest
+      ? `🔨 開発中 ${minutes}分 / commit ${progress.commits}件 — 最新: ${latest}`
+      : `🔨 開発中 ${minutes}分 / commit ${progress.commits}件`;
   } else {
-    text = `開発中 ${minutes}分 — Storyを分析しています`;
+    text = `🔨 開発中 ${minutes}分 — Storyを分析しています`;
   }
-  return text.length > MAX_TYPING_STATUS_CHARS ? `${text.slice(0, MAX_TYPING_STATUS_CHARS - 1)}…` : text;
+  return text.length > MAX_PROGRESS_MESSAGE_CHARS ? `${text.slice(0, MAX_PROGRESS_MESSAGE_CHARS - 1)}…` : text;
+}
+
+/**
+ * Renders the final rewrite of the in-thread progress message once the run
+ * completes (success or failure) — the last thing the user sees in place of
+ * the "開発中…" text before the result card/message arrives right after.
+ */
+function formatDevelopmentProgressFinal(elapsedMinutes: number, commitCount?: number): string {
+  return typeof commitCount === "number"
+    ? `⏱ 実行 ${elapsedMinutes}分 / commit ${commitCount}件`
+    : `⏱ 実行 ${elapsedMinutes}分`;
+}
+
+/** Slack (and any future connector) reports `message_not_found` in the API
+ * error when the tracked progress message was deleted out from under us
+ * (e.g. a user cleared the thread). Treated as a one-time repost trigger
+ * rather than a hard failure. */
+function isMessageNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /message_not_found/i.test(message);
 }
 
 export class SessionManager {
@@ -1474,6 +1501,12 @@ export class SessionManager {
     target: Target,
   ): void {
     this.developmentRunning = true;
+    // The animated "typing" indicator itself is still useful (it's the only
+    // signal Slack shows immediately, before the first progress snapshot
+    // arrives), but varying its text no longer serves a purpose — Slack
+    // overrides custom status text with a generic phrase of its own — so
+    // this is now a single fixed set at the start and a clear at the end,
+    // not a per-progress-tick call.
     if (connector.setTypingStatus && target.thread) {
       connector.setTypingStatus(target.channel, target.thread, "開発中…").catch(() => {});
     }
@@ -1512,23 +1545,94 @@ export class SessionManager {
     const runId = recordPendingDevelopmentRun(pendingRun);
     this.inFlightDevelopmentRunId = runId;
 
-    // Refreshes the fixed "開発中…" banner with real progress (elapsed time,
-    // commit count, latest commit subject) once the isolated runner starts
-    // reporting it. Deduped against the last text sent so a no-op tick
-    // (e.g. two agent-phase snapshots in a row with the same commit count)
-    // doesn't trigger a redundant Slack API call.
+    // Real progress (elapsed time, commit count, latest commit subject) is
+    // shown via a message posted into the thread on the first snapshot and
+    // then rewritten in place (`editMessage`) on every subsequent snapshot,
+    // instead of the typing-status text Slack was found to ignore. Only
+    // attempted when the connector actually supports rewriting a message
+    // (Slack does; connectors without `messageEdits` just skip this and the
+    // fixed "開発中…" typing indicator from above is all the user sees).
+    const runStartedAt = Date.now();
+    const supportsProgressMessage = connector.getCapabilities().messageEdits === true;
+    let progressMessageTs: string | undefined;
     let lastProgressText: string | null = null;
+    // Latest commit count seen from a progress snapshot, used as a fallback
+    // for the final "⏱ 実行" rewrite when the delivered `DevelopmentResult`
+    // itself carries no `commits` (e.g. a mid-run failure never reaches the
+    // point where the runner reports commits on its result).
+    let lastProgressCommits: number | undefined;
+    // Serializes posts/edits so two progress ticks firing in the same
+    // microtask (or a tick racing the final rewrite) can't both see "no
+    // message posted yet" and post two separate messages, or land out of
+    // order relative to each other.
+    let progressChain: Promise<void> = Promise.resolve();
+
+    const postOrUpdateProgressMessage = async (text: string): Promise<void> => {
+      if (!target.thread) return;
+      if (!progressMessageTs) {
+        try {
+          const ts = await connector.replyMessage(target, text);
+          if (ts) progressMessageTs = ts;
+        } catch (error) {
+          logger.warn(`Failed to post development progress message: ${error instanceof Error ? error.message : error}`);
+        }
+        return;
+      }
+      try {
+        await connector.editMessage({ ...target, messageTs: progressMessageTs }, text);
+      } catch (error) {
+        if (!isMessageNotFoundError(error)) {
+          logger.warn(`Failed to update development progress message: ${error instanceof Error ? error.message : error}`);
+          return;
+        }
+        // The tracked message is gone (e.g. deleted from the thread) — repost
+        // once and track the new ts so later ticks resume editing in place.
+        logger.warn(`Development progress message ${progressMessageTs} not found; reposting`);
+        progressMessageTs = undefined;
+        try {
+          const ts = await connector.replyMessage(target, text);
+          if (ts) progressMessageTs = ts;
+        } catch (repostError) {
+          logger.warn(`Failed to repost development progress message: ${repostError instanceof Error ? repostError.message : repostError}`);
+        }
+      }
+    };
+
+    // Deduped against the last text sent so a no-op tick (e.g. two
+    // agent-phase snapshots in a row with the same commit count) doesn't
+    // trigger a redundant Slack API call.
     const onProgress = (progress: DevelopmentProgress) => {
-      if (!connector.setTypingStatus || !target.thread) return;
-      const text = formatDevelopmentProgress(progress);
+      if (!supportsProgressMessage || !target.thread) return;
+      lastProgressCommits = progress.commits;
+      const text = formatDevelopmentProgressMessage(progress);
       if (text === lastProgressText) return;
       lastProgressText = text;
-      connector.setTypingStatus(target.channel, target.thread, text).catch(() => {});
+      progressChain = progressChain.then(() => postOrUpdateProgressMessage(text));
     };
+
+    // Rewrites the progress message one last time into its final "⏱ 実行"
+    // form before the result card/message is delivered right after — a
+    // no-op when no progress message was ever posted (e.g. the run finished
+    // before the first snapshot, or the connector doesn't support edits).
+    // Awaits any in-flight progress tick first so the last thing shown isn't
+    // clobbered by a stale snapshot landing after it. Falls back to the last
+    // progress snapshot's commit count when the result itself has none.
+    const finalizeProgressMessage = async (commitCount?: number): Promise<void> => {
+      await progressChain;
+      if (!progressMessageTs) return;
+      const resolvedCommitCount = commitCount ?? (lastProgressCommits && lastProgressCommits > 0 ? lastProgressCommits : undefined);
+      const minutes = Math.max(0, Math.floor((Date.now() - runStartedAt) / 60000));
+      await postOrUpdateProgressMessage(formatDevelopmentProgressFinal(minutes, resolvedCommitCount));
+    };
+
     void runDevelopmentRequest(config, request, undefined, onProgress)
-      .then((result) => this.deliverDevelopmentResult(result, connector, target))
-      .catch((error) => {
+      .then(async (result) => {
+        await finalizeProgressMessage(result.commits?.count);
+        return this.deliverDevelopmentResult(result, connector, target);
+      })
+      .catch(async (error) => {
         logger.error(`Development runner failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        await finalizeProgressMessage(undefined);
         return connector.replyMessage(target, "Development task failed inside the isolated runner. No PR or deployment was performed.");
       })
       .finally(() => {

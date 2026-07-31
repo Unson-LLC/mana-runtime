@@ -56,7 +56,9 @@ function connector(name = "slack", extra: Partial<Connector> = {}): Connector {
     name,
     start: vi.fn(), stop: vi.fn(), onMessage: vi.fn(),
     replyMessage: vi.fn().mockResolvedValue(undefined),
+    editMessage: vi.fn().mockResolvedValue(undefined),
     reconstructTarget: vi.fn(() => ({ channel: "C1", thread: "T1" })),
+    getCapabilities: vi.fn(() => ({ threading: true, messageEdits: true, reactions: true, attachments: true })),
     ...extra,
   } as unknown as Connector;
 }
@@ -273,7 +275,7 @@ describe("SessionManager continueDevelopmentGates", () => {
   });
 });
 
-describe("SessionManager /develop threaded typing-status UX", () => {
+describe("SessionManager /develop threaded progress-message UX", () => {
   // A real Slack slash command has no root channel message to thread under,
   // so reconstructTarget() legitimately returns a target with no thread —
   // this is the case that used to leave the whole flow unthreaded.
@@ -332,70 +334,176 @@ describe("SessionManager /develop threaded typing-status UX", () => {
     expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000300", "開発中…");
   });
 
-  it("refreshes the typing status with real progress: 0 commits", async () => {
-    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+  it("posts a new in-thread progress message on the first progress event: 0 commits", async () => {
     runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
       onProgress?.({ phase: "agent", elapsedSec: 65, commits: 0 });
       return { status: "pr_ready", storyId: "story-x", summary: "ready" };
     });
-    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000400").mockResolvedValueOnce(undefined);
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.000400") // acceptance message ts
+      .mockResolvedValueOnce("1700000000.000401") // progress message ts
+      .mockResolvedValueOnce(undefined); // final result post
+    const editMessage = vi.fn().mockResolvedValue(undefined);
     const manager = new SessionManager(config(true), new Map(), ["slack"]);
-    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+    const slack = rootlessConnector({ replyMessage, editMessage });
 
     await manager.handleCommand(message("/develop change docs"), slack);
-    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith(
-      "C1", "1700000000.000400", "開発中 1分 — Storyを分析しています",
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000400" },
+      "🔨 開発中 1分 — Storyを分析しています",
+    ));
+    // Final rewrite happens via editMessage on the tracked progress message, not a new post.
+    await vi.waitFor(() => expect(editMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000400", messageTs: "1700000000.000401" },
+      "⏱ 実行 0分",
     ));
   });
 
-  it("refreshes the typing status with real progress: N commits includes the latest subject", async () => {
-    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+  it("edits the tracked progress message in place on later ticks: N commits includes the latest subject", async () => {
     runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "agent", elapsedSec: 60, commits: 0 });
       onProgress?.({ phase: "agent", elapsedSec: 130, commits: 3, latest: "fix(slack): report progress" });
-      return { status: "pr_ready", storyId: "story-x", summary: "ready" };
+      return { status: "pr_ready", storyId: "story-x", summary: "ready", commits: { count: 3, subjects: ["fix(slack): report progress"] } };
     });
-    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000500").mockResolvedValueOnce(undefined);
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.000500") // acceptance message ts
+      .mockResolvedValueOnce("1700000000.000501") // progress message ts (first tick)
+      .mockResolvedValueOnce(undefined); // final result post
+    const editMessage = vi.fn().mockResolvedValue(undefined);
     const manager = new SessionManager(config(true), new Map(), ["slack"]);
-    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+    const slack = rootlessConnector({ replyMessage, editMessage });
 
     await manager.handleCommand(message("/develop change docs"), slack);
-    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith(
-      "C1", "1700000000.000500", "開発中 2分 / commit 3件: fix(slack): report progress",
+    await vi.waitFor(() => expect(editMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000500", messageTs: "1700000000.000501" },
+      "🔨 開発中 2分 / commit 3件 — 最新: fix(slack): report progress",
     ));
+    await vi.waitFor(() => expect(editMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000500", messageTs: "1700000000.000501" },
+      "⏱ 実行 0分 / commit 3件",
+    ));
+    // Only one message was ever posted for progress — everything after the first tick is an edit.
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledTimes(3));
   });
 
-  it("refreshes the typing status with real progress: gate phase", async () => {
-    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+  it("renders the gate phase in the progress message", async () => {
     runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
       onProgress?.({ phase: "gate", elapsedSec: 240, commits: 5 });
       return { status: "pr_ready", storyId: "story-x", summary: "ready" };
     });
-    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000600").mockResolvedValueOnce(undefined);
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.000600")
+      .mockResolvedValueOnce("1700000000.000601")
+      .mockResolvedValueOnce(undefined);
+    const editMessage = vi.fn().mockResolvedValue(undefined);
     const manager = new SessionManager(config(true), new Map(), ["slack"]);
-    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+    const slack = rootlessConnector({ replyMessage, editMessage });
 
     await manager.handleCommand(message("/develop change docs"), slack);
-    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith(
-      "C1", "1700000000.000600", "Gate検証中 4分 / commit 5件",
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000600" },
+      "🔍 Gate検証中 4分 / commit 5件",
     ));
   });
 
-  it("skips a redundant setTypingStatus call when consecutive progress ticks render identical text", async () => {
-    const setTypingStatus = vi.fn().mockResolvedValue(undefined);
+  it("skips a redundant edit when consecutive progress ticks render identical text", async () => {
     runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
       onProgress?.({ phase: "agent", elapsedSec: 60, commits: 1, latest: "same subject" });
       onProgress?.({ phase: "agent", elapsedSec: 65, commits: 1, latest: "same subject" });
       return { status: "pr_ready", storyId: "story-x", summary: "ready" };
     });
-    const replyMessage = vi.fn().mockResolvedValueOnce("1700000000.000700").mockResolvedValueOnce(undefined);
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.000700")
+      .mockResolvedValueOnce("1700000000.000701")
+      .mockResolvedValueOnce(undefined);
+    const editMessage = vi.fn().mockResolvedValue(undefined);
     const manager = new SessionManager(config(true), new Map(), ["slack"]);
-    const slack = rootlessConnector({ replyMessage, setTypingStatus });
+    const slack = rootlessConnector({ replyMessage, editMessage });
 
     await manager.handleCommand(message("/develop change docs"), slack);
-    await vi.waitFor(() => expect(setTypingStatus).toHaveBeenCalledWith("C1", "1700000000.000700", ""));
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledTimes(3));
 
-    const progressCalls = setTypingStatus.mock.calls.filter((call) => call[2] === "開発中 1分 / commit 1件: same subject");
-    expect(progressCalls).toHaveLength(1);
+    // Only the final "⏱ 実行" rewrite should have hit editMessage — the second,
+    // identical-text tick must not have triggered a redundant chat.update.
+    const progressEditCalls = editMessage.mock.calls.filter((call) => call[1] === "🔨 開発中 1分 / commit 1件 — 最新: same subject");
+    expect(progressEditCalls).toHaveLength(0);
+    expect(editMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries on the next tick when an edit fails, and swallows the error", async () => {
+    runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "agent", elapsedSec: 60, commits: 1, latest: "first" });
+      onProgress?.({ phase: "agent", elapsedSec: 120, commits: 2, latest: "second" });
+      return { status: "pr_ready", storyId: "story-x", summary: "ready" };
+    });
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.000800")
+      .mockResolvedValueOnce("1700000000.000801")
+      .mockResolvedValueOnce(undefined);
+    const editMessage = vi.fn()
+      .mockRejectedValueOnce(new Error("network blip"))
+      .mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, editMessage });
+
+    await expect(manager.handleCommand(message("/develop change docs"), slack)).resolves.not.toThrow();
+    await vi.waitFor(() => expect(editMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000800", messageTs: "1700000000.000801" },
+      "🔨 開発中 2分 / commit 2件 — 最新: second",
+    ));
+    // Same message ts kept across the failed edit — no repost for a plain error.
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledTimes(3));
+  });
+
+  it("reposts once and switches ts when the tracked progress message was deleted (message_not_found)", async () => {
+    runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "agent", elapsedSec: 60, commits: 1, latest: "first" });
+      onProgress?.({ phase: "agent", elapsedSec: 120, commits: 2, latest: "second" });
+      return {
+        status: "pr_ready", storyId: "story-x", summary: "ready",
+        commits: { count: 2, subjects: ["second", "first"] },
+      };
+    });
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.000900") // acceptance
+      .mockResolvedValueOnce("1700000000.000901") // first progress post
+      .mockResolvedValueOnce("1700000000.000902") // repost after message_not_found
+      .mockResolvedValueOnce(undefined); // final result post
+    const editMessage = vi.fn()
+      .mockRejectedValueOnce(new Error("slack_webapi_platform_error: message_not_found"))
+      .mockResolvedValue(undefined);
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, editMessage });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000900" },
+      "🔨 開発中 2分 / commit 2件 — 最新: second",
+    ));
+    // The subsequent final rewrite edits the NEW ts, not the deleted one.
+    await vi.waitFor(() => expect(editMessage).toHaveBeenCalledWith(
+      { channel: "C1", thread: "1700000000.000900", messageTs: "1700000000.000902" },
+      "⏱ 実行 0分 / commit 2件",
+    ));
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledTimes(4));
+  });
+
+  it("does not post or edit a progress message when the connector lacks messageEdits support", async () => {
+    runDevelopmentRequest.mockImplementationOnce(async (_config: unknown, _request: unknown, _spawnFn: unknown, onProgress?: (p: any) => void) => {
+      onProgress?.({ phase: "agent", elapsedSec: 60, commits: 1, latest: "first" });
+      return { status: "pr_ready", storyId: "story-x", summary: "ready" };
+    });
+    const replyMessage = vi.fn()
+      .mockResolvedValueOnce("1700000000.001000")
+      .mockResolvedValueOnce(undefined);
+    const editMessage = vi.fn().mockResolvedValue(undefined);
+    const getCapabilities = vi.fn(() => ({ threading: true, messageEdits: false, reactions: true, attachments: true }));
+    const manager = new SessionManager(config(true), new Map(), ["slack"]);
+    const slack = rootlessConnector({ replyMessage, editMessage, getCapabilities });
+
+    await manager.handleCommand(message("/develop change docs"), slack);
+    await vi.waitFor(() => expect(replyMessage).toHaveBeenCalledTimes(2)); // acceptance + final result, no progress post
+    expect(editMessage).not.toHaveBeenCalled();
   });
 
   it("sets the typing status on the resume path too", async () => {
