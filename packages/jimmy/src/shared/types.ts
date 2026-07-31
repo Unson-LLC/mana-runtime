@@ -160,6 +160,19 @@ export interface DevelopmentAnswer {
   answer: string;
 }
 
+/**
+ * One progress snapshot the isolated VibePro development runner reports
+ * while a `/vibepro` request is in flight, parsed from a `PROGRESS <json>`
+ * line on the runner's stderr. Used to refresh the Slack "typing" status
+ * with real progress instead of a static "開発中…" string.
+ */
+export interface DevelopmentProgress {
+  phase: "agent" | "gate";
+  elapsedSec: number;
+  commits: number;
+  latest?: string;
+}
+
 export interface Connector {
   name: string;
   start(): Promise<void>;

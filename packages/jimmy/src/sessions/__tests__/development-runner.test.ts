@@ -6,10 +6,10 @@ import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
+import { parseDevelopmentResult, parseProgressLine, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, acquireDevelopmentLock, assessLockStaleness, buildAgentArgs, buildAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildStoryAddArgs, buildStoryCommitArgs, ensureGitignoreEntry, extractBlockingGates, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, acquireDevelopmentLock, assessLockStaleness, buildAgentArgs, buildAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildProgressLine, buildStoryAddArgs, buildStoryCommitArgs, ensureGitignoreEntry, extractBlockingGates, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
 
 const RUNNER_URL = pathToFileURL(path.resolve("../..", "scripts/development-runner/run.mjs")).href;
 
@@ -162,6 +162,92 @@ describe("development runner", () => {
     expect(JSON.parse(stdin)).toEqual({ request: "READMEを改善する" });
     expect(options.env.SLACK_BOT_TOKEN).toBeUndefined();
     expect(options.env).toEqual(expect.objectContaining({ PATH: expect.any(String), LANG: expect.any(String) }));
+  });
+
+  it("parses a well-formed PROGRESS stderr line", () => {
+    expect(parseProgressLine('PROGRESS {"phase":"agent","elapsedSec":1440,"commits":3,"latest":"fix: x"}')).toEqual({
+      phase: "agent", elapsedSec: 1440, commits: 3, latest: "fix: x",
+    });
+    expect(parseProgressLine('PROGRESS {"phase":"gate","elapsedSec":900,"commits":5}')).toEqual({
+      phase: "gate", elapsedSec: 900, commits: 5,
+    });
+  });
+
+  it("ignores lines that are not PROGRESS-prefixed, malformed JSON, or schema-invalid", () => {
+    expect(parseProgressLine("some other stderr diagnostic line")).toBeNull();
+    expect(parseProgressLine("PROGRESS not json")).toBeNull();
+    expect(parseProgressLine('PROGRESS {"phase":"agent","elapsedSec":1,"commits":1,"extra":"x"}')).toBeNull();
+    expect(parseProgressLine('PROGRESS {"phase":"unknown","elapsedSec":1,"commits":1}')).toBeNull();
+    expect(parseProgressLine('PROGRESS {"phase":"agent","elapsedSec":-1,"commits":1}')).toBeNull();
+    expect(parseProgressLine('PROGRESS {"phase":"agent","elapsedSec":1.5,"commits":1}')).toBeNull();
+    expect(parseProgressLine('PROGRESS {"phase":"agent","elapsedSec":1,"commits":1001}')).toBeNull();
+    expect(parseProgressLine('PROGRESS {"phase":"agent","elapsedSec":1,"commits":-1}')).toBeNull();
+    expect(parseProgressLine(`PROGRESS {"phase":"agent","elapsedSec":1,"commits":1,"latest":"${"x".repeat(301)}"}`)).toBeNull();
+    expect(parseProgressLine('PROGRESS []')).toBeNull();
+    expect(parseProgressLine('PROGRESS null')).toBeNull();
+  });
+
+  /** Like childReturning, but lets the caller write stderr before stdout/close. */
+  function childReturningAfterStderr(stdout: string, stderrLines: string[], code = 0) {
+    const child = new EventEmitter() as any;
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = vi.fn();
+    queueMicrotask(() => {
+      for (const line of stderrLines) child.stderr.write(line);
+      child.stderr.end();
+      child.stdout.end(stdout);
+      child.emit("close", code);
+    });
+    return child;
+  }
+
+  it("streams PROGRESS lines from the runner's stderr into onProgress in real time", async () => {
+    const seen: unknown[] = [];
+    const spawnFn = vi.fn(() => childReturningAfterStderr(
+      '{"status":"pr_ready","storyId":"story-safe-change","summary":"ready"}',
+      [
+        'PROGRESS {"phase":"agent","elapsedSec":60,"commits":0}\n',
+        "just a diagnostic line, not progress\n",
+        'PROGRESS {"phase":"agent","elapsedSec":120,"commits":2,"latest":"fix: y"}\n',
+      ],
+    )) as any;
+
+    const result = await runDevelopmentRequest(
+      { enabled: true, bin: "/usr/bin/sudo" },
+      "READMEを改善する",
+      spawnFn,
+      (progress) => seen.push(progress),
+    );
+
+    expect(result.status).toBe("pr_ready");
+    expect(seen).toEqual([
+      { phase: "agent", elapsedSec: 60, commits: 0 },
+      { phase: "agent", elapsedSec: 120, commits: 2, latest: "fix: y" },
+    ]);
+  });
+
+  it("ignores an oversized stderr stream instead of failing the run", async () => {
+    const seen: unknown[] = [];
+    const spawnFn = vi.fn(() => childReturningAfterStderr(
+      '{"status":"pr_ready","storyId":"story-safe-change","summary":"ready"}',
+      [
+        // Exceed the 1MB stderr parse cap before any valid PROGRESS line arrives.
+        `${"x".repeat(2 * 1024 * 1024)}\n`,
+        'PROGRESS {"phase":"agent","elapsedSec":60,"commits":1}\n',
+      ],
+    )) as any;
+
+    const result = await runDevelopmentRequest(
+      { enabled: true, bin: "/usr/bin/sudo" },
+      "READMEを改善する",
+      spawnFn,
+      (progress) => seen.push(progress),
+    );
+
+    expect(result.status).toBe("pr_ready");
+    expect(seen).toEqual([]);
   });
 
   it("rejects arbitrary URLs and extra output fields", () => {
@@ -693,5 +779,41 @@ describe(".gitignore and Story-doc helpers for the resume round-trip", () => {
     const prompt = buildAgentPrompt("story-safe-change", "何かを実装して", "main");
     expect(prompt).toContain(".openryoko/questions.json");
     expect(prompt).toContain("最大5問");
+  });
+});
+
+describe("PROGRESS stderr line for Slack typing status", () => {
+  it("omits latest for the agent phase when there are zero commits", () => {
+    const line = buildProgressLine("agent", 1440, 0, undefined);
+    expect(line.startsWith("PROGRESS ")).toBe(true);
+    expect(JSON.parse(line.slice("PROGRESS ".length))).toEqual({ phase: "agent", elapsedSec: 1440, commits: 0 });
+  });
+
+  it("includes latest for the agent phase once there is at least one commit", () => {
+    const line = buildProgressLine("agent", 1440, 3, "fix(slack): show real progress");
+    expect(JSON.parse(line.slice("PROGRESS ".length))).toEqual({
+      phase: "agent",
+      elapsedSec: 1440,
+      commits: 3,
+      latest: "fix(slack): show real progress",
+    });
+  });
+
+  it("collapses newlines and cuts latest to 200 chars", () => {
+    const messy = `first line\nsecond line\t\t${"x".repeat(250)}`;
+    const parsed = JSON.parse(buildProgressLine("agent", 10, 1, messy).slice("PROGRESS ".length));
+    expect(parsed.latest).not.toContain("\n");
+    expect(parsed.latest.length).toBeLessThanOrEqual(200);
+    expect(parsed.latest).toBe(messy.replace(/\s+/g, " ").trim().slice(0, 200));
+  });
+
+  it("never includes latest for the gate phase, even when one is passed", () => {
+    const line = buildProgressLine("gate", 900, 5, "should not appear");
+    expect(JSON.parse(line.slice("PROGRESS ".length))).toEqual({ phase: "gate", elapsedSec: 900, commits: 5 });
+  });
+
+  it("keeps latest omitted when commits is zero regardless of a stray latest value", () => {
+    const line = buildProgressLine("agent", 5, 0, "stray value");
+    expect(JSON.parse(line.slice("PROGRESS ".length))).toEqual({ phase: "agent", elapsedSec: 5, commits: 0 });
   });
 });

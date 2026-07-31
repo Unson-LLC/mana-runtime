@@ -5,13 +5,18 @@ import type {
   DevelopmentQuestion,
   DevelopmentQuestionOption,
   DevelopmentAnswer,
+  DevelopmentProgress,
 } from "../shared/types.js";
 
-export type { DevelopmentQuestion, DevelopmentQuestionOption, DevelopmentAnswer } from "../shared/types.js";
+export type { DevelopmentQuestion, DevelopmentQuestionOption, DevelopmentAnswer, DevelopmentProgress } from "../shared/types.js";
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_REQUEST_CHARS = 8000;
 const DEFAULT_TIMEOUT_MS = 90 * 60 * 1000;
+const PROGRESS_LINE_PREFIX = "PROGRESS ";
+const MAX_STDERR_PARSE_BYTES = 1 * 1024 * 1024;
+const MAX_PROGRESS_LATEST_CHARS = 300;
+const PROGRESS_PHASES = new Set(["agent", "gate"]);
 const ALLOWED_RESULT_KEYS = new Set(["status", "storyId", "prUrl", "summary", "questions"]);
 const ALLOWED_STATUSES = new Set(["queued", "pr_ready", "needs_input", "needs_decision", "failed"]);
 const PR_URL_RE = /^https:\/\/github\.com\/Unson-LLC\/brainbase-mana\/pull\/\d+$/;
@@ -67,6 +72,77 @@ function validateConfig(config: DevelopmentRunnerConfig): void {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Parses one line of the runner's stderr as a `PROGRESS <json>` progress
+ * snapshot. Returns `null` for anything that doesn't match the schema
+ * exactly (missing prefix, malformed JSON, unsupported field, out-of-range
+ * value, unknown phase) — malformed progress lines are silently ignored,
+ * never treated as a runner failure.
+ */
+export function parseProgressLine(line: string): DevelopmentProgress | null {
+  if (!line.startsWith(PROGRESS_LINE_PREFIX)) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(line.slice(PROGRESS_LINE_PREFIX.length));
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(value)) return null;
+  const allowedKeys = new Set(["phase", "elapsedSec", "commits", "latest"]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return null;
+  if (typeof value.phase !== "string" || !PROGRESS_PHASES.has(value.phase)) return null;
+  if (!Number.isInteger(value.elapsedSec) || (value.elapsedSec as number) < 0) return null;
+  if (!Number.isInteger(value.commits) || (value.commits as number) < 0 || (value.commits as number) > 1000) return null;
+  if (
+    value.latest !== undefined &&
+    (typeof value.latest !== "string" || value.latest.length === 0 || value.latest.length > MAX_PROGRESS_LATEST_CHARS)
+  ) {
+    return null;
+  }
+  return {
+    phase: value.phase as DevelopmentProgress["phase"],
+    elapsedSec: value.elapsedSec as number,
+    commits: value.commits as number,
+    ...(typeof value.latest === "string" ? { latest: value.latest } : {}),
+  };
+}
+
+/**
+ * Wires a child's stderr into the `PROGRESS` line parser, draining stderr
+ * either way (the runner also writes plain diagnostic text there, which is
+ * still discarded). Bounded by `MAX_STDERR_PARSE_BYTES` total: once stderr
+ * exceeds that, parsing stops silently but the process keeps running — a
+ * runaway or malicious stderr stream must not be able to affect the run.
+ */
+function attachProgressParsing(
+  stderr: NodeJS.ReadableStream,
+  onProgress?: (progress: DevelopmentProgress) => void,
+): void {
+  let buffer = "";
+  let consumedBytes = 0;
+  let truncated = false;
+  stderr.on("data", (chunk: Buffer) => {
+    if (truncated) return;
+    consumedBytes += chunk.length;
+    if (consumedBytes > MAX_STDERR_PARSE_BYTES) {
+      truncated = true;
+      buffer = "";
+      return;
+    }
+    buffer += chunk.toString("utf8");
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      if (onProgress) {
+        const progress = parseProgressLine(line);
+        if (progress) onProgress(progress);
+      }
+      newlineIndex = buffer.indexOf("\n");
+    }
+  });
 }
 
 function assertBoundedString(value: unknown, min: number, max: number, label: string): asserts value is string {
@@ -201,6 +277,7 @@ export async function runDevelopmentRequest(
   config: DevelopmentRunnerConfig,
   request: string | DevelopmentResumeRequest,
   spawnFn: SpawnFn = spawn,
+  onProgress?: (progress: DevelopmentProgress) => void,
 ): Promise<DevelopmentResult> {
   validateConfig(config);
   const stdinPayload: string = typeof request === "string"
@@ -273,7 +350,7 @@ export async function runDevelopmentRequest(
       }
       stdout += chunk.toString("utf8");
     });
-    child.stderr.resume();
+    attachProgressParsing(child.stderr, onProgress);
     child.on("error", (error) => finish(() => reject(error)));
     child.on("close", (code) => {
       closedCode = code;
