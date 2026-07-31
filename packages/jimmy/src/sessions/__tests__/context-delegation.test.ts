@@ -118,7 +118,10 @@ describe("delegation context", () => {
       },
     });
 
-    expect(context).toContain("- MCP servers: freee (available), gateway (available)");
+    // PR #52 pinned the freee write surface in PLACEMENT_MCP_TOOL_DENY, so the
+    // generated declaration now carries the always-denied annotation.
+    expect(context).toContain("- MCP servers: freee (available, except always-denied tools:");
+    expect(context).toContain("gateway (available)");
     expect(context).toContain("- Gateway tools: create_task, list_tasks");
     expect(context).toContain("- Allowed delivery targets: slack:C999");
     expect(context).toContain("Data scopes only add reference-scope notes");
