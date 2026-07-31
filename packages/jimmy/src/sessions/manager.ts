@@ -1394,11 +1394,7 @@ export class SessionManager {
       const requester = msg.userId ? `（依頼者: <@${msg.userId}>）` : "";
       const acceptanceTs = await connector.replyMessage(
         target,
-        [
-          `📥 開発依頼を受け付けました${requester}`,
-          quotedRequest,
-          "このスレッドで進捗と結果を報告します。VibeProはPR作成前で停止します。",
-        ].join("\n"),
+        [`📥 開発依頼を受け付けました${requester}`, quotedRequest].join("\n"),
       );
       // Slack slash commands carry no message ts of their own (there is no
       // visible root message to thread under), so the acceptance reply's own
