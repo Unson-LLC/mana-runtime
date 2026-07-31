@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseDevelopmentResult, runDevelopmentRequest } from "../development-runner.js";
 // The production runner is intentionally plain ESM so it can be installed as a standalone script.
 // @ts-expect-error no TypeScript declaration is shipped for the standalone runner.
-import { RUNNER_VERSION, buildAgentArgs, buildAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildStoryAddArgs, buildStoryCommitArgs, ensureGitignoreEntry, extractBlockingGates, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
+import { RUNNER_VERSION, acquireDevelopmentLock, assessLockStaleness, buildAgentArgs, buildAgentPrompt, buildResumeAgentPrompt, buildAnswersAddArgs, buildAnswersCommitArgs, buildHumanAnswersSection, buildPrShipArgs, buildStoryAddArgs, buildStoryCommitArgs, ensureGitignoreEntry, extractBlockingGates, parseEnvFile, parsePrShipReadiness, readQuestionsFile, readStdin, resultFromAgentRun, resultFromQuestions, runCommand, validateConfig, validateQuestionsDocument } from "../../../../../scripts/development-runner/run.mjs";
 
 const RUNNER_URL = pathToFileURL(path.resolve("../..", "scripts/development-runner/run.mjs")).href;
 
@@ -354,10 +354,10 @@ describe("development runner", () => {
       await waitForAcquired(first);
 
       const contender = start();
-      expect(await collectExit(contender)).toEqual({
-        code: 23,
-        stderr: "another development task is already running",
-      });
+      const contenderExit = await collectExit(contender);
+      expect(contenderExit.code).toBe(23);
+      expect(contenderExit.stderr).toContain("another development task is already running");
+      expect(contenderExit.stderr).toContain("is still alive");
 
       first.stdin.end();
       expect(await waitForExit(first)).toBe(0);
@@ -366,6 +366,131 @@ describe("development runner", () => {
       await waitForAcquired(restarted);
       restarted.stdin.end();
       expect(await waitForExit(restarted)).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("stale development lock reclamation", () => {
+  const DEAD_PID = 99999999;
+
+  async function makeStaleLock(ownerContent: string | null = `${DEAD_PID}\n`) {
+    const directory = await mkdtemp(path.join(tmpdir(), "openryoko-stale-lock-"));
+    const lockPath = path.join(directory, "runner.lock");
+    await mkdir(lockPath);
+    if (ownerContent !== null) await writeFile(path.join(lockPath, "owner"), ownerContent);
+    return { directory, lockPath };
+  }
+
+  it("reclaims a lock whose owner is dead with no surviving development-user process", async () => {
+    const { directory, lockPath } = await makeStaleLock();
+    try {
+      const release = await acquireDevelopmentLock(lockPath, {
+        isPidAlive: () => false,
+        listLiveUserPids: async () => [process.pid],
+      });
+      expect((await readFile(path.join(lockPath, "owner"), "utf8")).trim()).toBe(String(process.pid));
+      await release();
+      await expect(readFile(path.join(lockPath, "owner"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed while the lock owner is alive", async () => {
+    const { directory, lockPath } = await makeStaleLock();
+    try {
+      await expect(acquireDevelopmentLock(lockPath, {
+        isPidAlive: () => true,
+        listLiveUserPids: async () => [process.pid],
+      })).rejects.toThrow(`another development task is already running (lock owner process ${DEAD_PID} is still alive)`);
+      expect((await readFile(path.join(lockPath, "owner"), "utf8")).trim()).toBe(String(DEAD_PID));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the owner file is missing", async () => {
+    const { directory, lockPath } = await makeStaleLock(null);
+    try {
+      await expect(acquireDevelopmentLock(lockPath, {
+        isPidAlive: () => false,
+        listLiveUserPids: async () => [],
+      })).rejects.toThrow("lock owner file is missing or unreadable");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the owner pid is malformed", async () => {
+    const { directory, lockPath } = await makeStaleLock("not-a-pid\n");
+    try {
+      await expect(acquireDevelopmentLock(lockPath, {
+        isPidAlive: () => false,
+        listLiveUserPids: async () => [],
+      })).rejects.toThrow("lock owner pid is malformed");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when other development-user processes survive the dead owner", async () => {
+    const { directory, lockPath } = await makeStaleLock();
+    try {
+      await expect(acquireDevelopmentLock(lockPath, {
+        isPidAlive: () => false,
+        listLiveUserPids: async () => [process.pid, 4242],
+      })).rejects.toThrow("1 process(es) still run as the development user");
+      expect((await readFile(path.join(lockPath, "owner"), "utf8")).trim()).toBe(String(DEAD_PID));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when live processes cannot be enumerated", async () => {
+    const { directory, lockPath } = await makeStaleLock();
+    try {
+      await expect(acquireDevelopmentLock(lockPath, {
+        isPidAlive: () => false,
+        listLiveUserPids: async () => { throw new Error("no /proc"); },
+      })).rejects.toThrow("cannot enumerate live processes for the development user");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a lock that turns fresh between assessment and removal", async () => {
+    const { directory, lockPath } = await makeStaleLock();
+    try {
+      // First assessment sees a dead owner; the re-assessment after the
+      // atomic quarantine rename sees it alive (as if the pid was recycled or
+      // the lock replaced). The lock must be given back untouched.
+      const isPidAlive = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+      await expect(acquireDevelopmentLock(lockPath, {
+        isPidAlive,
+        listLiveUserPids: async () => [process.pid],
+      })).rejects.toThrow("another development task is already running");
+      expect((await readFile(path.join(lockPath, "owner"), "utf8")).trim()).toBe(String(DEAD_PID));
+      await expect(readFile(path.join(`${lockPath}.reclaim-${process.pid}`, "owner"), "utf8"))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("assesses staleness without mutating the lock", async () => {
+    const { directory, lockPath } = await makeStaleLock();
+    try {
+      const verdict = await assessLockStaleness(lockPath, {
+        isPidAlive: () => false,
+        listLiveUserPids: async () => [process.pid],
+      });
+      expect(verdict).toEqual({
+        stale: true,
+        reason: `lock owner process ${DEAD_PID} is dead and no other development-user process survives`,
+      });
+      expect((await readFile(path.join(lockPath, "owner"), "utf8")).trim()).toBe(String(DEAD_PID));
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -10,7 +10,7 @@ const CONFIG_PATH = "/etc/openryoko-development-runner.json";
 const MAX_REQUEST_CHARS = 8000;
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const LOCK_PATH = "/home/ryoko-dev/.openryoko-development-runner.lock";
-export const RUNNER_VERSION = "2026-07-31.1";
+export const RUNNER_VERSION = "2026-07-31.2";
 
 // ─── Human-in-the-loop question/answer contract ───
 const QUESTIONS_RELATIVE_PATH = path.join(".openryoko", "questions.json");
@@ -24,16 +24,134 @@ const MAX_ANSWER_CHARS = 2000;
 const STORY_ID_RE = /^story-[a-z0-9-]+$/;
 const QUESTION_ID_RE = /^[a-z0-9_-]{1,64}$/;
 
-export async function acquireDevelopmentLock(lockPath = LOCK_PATH) {
-  let directoryCreated = false;
+function defaultIsPidAlive(pid) {
   try {
-    await mkdir(lockPath);
-    directoryCreated = true;
-    await writeFile(path.join(lockPath, "owner"), `${process.pid}\n`, { flag: "wx" });
+    process.kill(pid, 0);
+    return true;
   } catch (error) {
-    if (directoryCreated) await rm(lockPath, { recursive: true, force: true });
-    if (error?.code === "EEXIST") throw new Error("another development task is already running");
-    throw error;
+    // Anything but a definitive ESRCH (EPERM, etc.) counts as alive: reclaim
+    // must only ever trigger on proof of death, never on uncertainty.
+    return error?.code !== "ESRCH";
+  }
+}
+
+async function defaultListLiveUserPids(uid) {
+  // Linux /proc scan. On hosts without /proc this throws and the caller
+  // fails closed (no automatic reclaim) — production runners are Linux-only.
+  const entries = await readdir("/proc");
+  const pids = [];
+  for (const entry of entries) {
+    if (!/^[0-9]+$/.test(entry)) continue;
+    try {
+      const info = await stat(`/proc/${entry}`);
+      if (info.uid === uid) pids.push(Number(entry));
+    } catch {
+      // The process exited between readdir and stat.
+    }
+  }
+  return pids;
+}
+
+/**
+ * Decides whether an existing lock directory is provably stale. Returns
+ * `{stale, reason}` and never mutates the lock. Stale requires ALL of:
+ *   - the owner file exists and parses to a positive pid,
+ *   - that pid is definitively dead (ESRCH; EPERM counts as alive),
+ *   - no other live process runs as the development user (so a dead runner
+ *     whose detached VibePro/agent children survived is NOT reclaimed).
+ * A pid recycled by an unrelated process looks alive, which keeps the lock —
+ * the safe direction (manual operator cleanup) rather than a double run.
+ */
+export async function assessLockStaleness(lockPath, options = {}) {
+  const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
+  const listLiveUserPids = options.listLiveUserPids ?? defaultListLiveUserPids;
+  const currentPid = options.currentPid ?? process.pid;
+
+  let ownerRaw;
+  try {
+    ownerRaw = await readFile(path.join(lockPath, "owner"), "utf8");
+  } catch {
+    return { stale: false, reason: "lock owner file is missing or unreadable" };
+  }
+  const ownerPid = Number.parseInt(ownerRaw.trim(), 10);
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0) {
+    return { stale: false, reason: "lock owner pid is malformed" };
+  }
+  if (ownerPid === currentPid || isPidAlive(ownerPid)) {
+    return { stale: false, reason: `lock owner process ${ownerPid} is still alive` };
+  }
+  let livePids;
+  try {
+    livePids = await listLiveUserPids(options.uid ?? process.getuid());
+  } catch {
+    return { stale: false, reason: "cannot enumerate live processes for the development user" };
+  }
+  const survivors = livePids.filter((pid) => pid !== currentPid && pid !== ownerPid);
+  if (survivors.length > 0) {
+    return {
+      stale: false,
+      reason: `lock owner process ${ownerPid} is dead but ${survivors.length} process(es) still run as the development user`,
+    };
+  }
+  return { stale: true, reason: `lock owner process ${ownerPid} is dead and no other development-user process survives` };
+}
+
+/**
+ * Removes a provably stale lock. The removal is guarded against the
+ * assess-then-remove race: the directory is first claimed with an atomic
+ * rename, then re-assessed in quarantine. If a fresh lock replaced the stale
+ * one in between, the rename grabbed the fresh lock — it is renamed back
+ * untouched and the caller fails closed.
+ */
+async function reclaimStaleLock(lockPath, options = {}) {
+  const first = await assessLockStaleness(lockPath, options);
+  if (!first.stale) return first;
+  const quarantine = `${lockPath}.reclaim-${options.currentPid ?? process.pid}`;
+  try {
+    await rename(lockPath, quarantine);
+  } catch {
+    return { stale: false, reason: "lock changed while assessing staleness" };
+  }
+  const second = await assessLockStaleness(quarantine, options);
+  if (!second.stale) {
+    try {
+      await rename(quarantine, lockPath);
+      return { stale: false, reason: second.reason };
+    } catch {
+      return {
+        stale: false,
+        reason: `${second.reason}; a fresh lock was quarantined at ${quarantine} and could not be restored — operator attention required`,
+      };
+    }
+  }
+  await rm(quarantine, { recursive: true, force: true });
+  return second;
+}
+
+export async function acquireDevelopmentLock(lockPath = LOCK_PATH, options = {}) {
+  const tryAcquire = async () => {
+    let directoryCreated = false;
+    try {
+      await mkdir(lockPath);
+      directoryCreated = true;
+      await writeFile(path.join(lockPath, "owner"), `${process.pid}\n`, { flag: "wx" });
+      return true;
+    } catch (error) {
+      if (directoryCreated) await rm(lockPath, { recursive: true, force: true });
+      if (error?.code === "EEXIST") return false;
+      throw error;
+    }
+  };
+
+  if (!(await tryAcquire())) {
+    const verdict = await reclaimStaleLock(lockPath, options);
+    if (!verdict.stale) {
+      throw new Error(`another development task is already running (${verdict.reason})`);
+    }
+    process.stderr.write(`reclaimed stale development lock: ${verdict.reason}\n`);
+    if (!(await tryAcquire())) {
+      throw new Error("another development task is already running (lost the acquisition race after reclaim)");
+    }
   }
 
   let released = false;
