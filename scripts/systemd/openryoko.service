@@ -53,6 +53,14 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 # ---- シャットダウン ----
+# 注意: KillMode=mixed は停止/再起動時に service cgroup 全体へ SIGKILL を送る。
+# gateway が sudo 経由で起動した development runner
+# (/usr/local/libexec/openryoko-development-runner) も同じ cgroup にいるため
+# 巻き込まれ、fail-closed lock が残って後続の /vibepro が即失敗する。
+# 再起動前に必ず scripts/development-runner/guard-restart.sh で実行中 run が
+# 無いことを確認すること。恒久的に巻き込みを避けるには runner を
+# systemd-run --scope で cgroup 外に起動する構成にする
+# （scripts/development-runner/README.md の "Surviving gateway restarts" 参照）。
 KillMode=mixed
 TimeoutStopSec=10
 

@@ -117,15 +117,92 @@ Story.
 The gateway also keeps an in-process busy flag, but the development user's
 lock directory is the authoritative cross-restart guard. The runner removes it
 only after its VibePro child has closed. If the host or runner is killed
-uncleanly, the lock intentionally fails closed. An operator must first verify
-that no runner or VibePro process remains, then remove only the exact lock path
-before retrying.
+uncleanly, the lock fails closed, and the next runner start reclaims it
+automatically only when staleness is provable. All of the following must hold:
+
+- the lock's `owner` file exists and parses to a positive pid;
+- that pid is definitively dead (`ESRCH`; `EPERM` counts as alive);
+- no other live process runs as the development user (a `/proc` scan), so a
+  dead runner whose detached agent/VibePro children survived is never
+  reclaimed over.
+
+Any uncertainty — unreadable owner file, live or permission-denied pid,
+surviving development-user process, `/proc` unavailable — keeps the lock and
+the request fails closed with the reason on stderr. Removal itself is raced
+safely: the directory is claimed with an atomic rename and re-assessed in
+quarantine, so a fresh lock created concurrently is renamed back untouched
+instead of being deleted. Pid reuse degrades in the safe direction: a recycled
+owner pid looks alive, the lock stays, and the operator falls back to the
+manual procedure — verify that no runner or VibePro process remains, then
+remove only the exact lock path before retrying.
+
+## Surviving gateway restarts
+
+`systemctl restart openryoko` kills the whole service cgroup. Because the
+gateway starts the runner through sudo inside its own cgroup, a restart
+mid-run kills the runner and strands the fail-closed lock (observed
+2026-07-31). Two defenses:
+
+1. **Deploy-time guard (required).** Before any gateway restart, run the
+   preflight on the pilot host:
+
+   ```bash
+   sudo ./guard-restart.sh --wait 5400
+   ```
+
+   It exits 0 only when no development run is active (no lock, or a provably
+   stale lock that the runner will reclaim). While a run is active it waits up
+   to `--wait` seconds, then exits 1 — do not restart in that case.
+
+2. **Cgroup escape (recommended, config-only).** Start the runner in its own
+   transient scope so gateway restarts cannot touch it. No gateway code
+   change; swap the gateway config invocation:
+
+   ```yaml
+   developmentRunner:
+     bin: /usr/bin/sudo
+     args:
+       - -n
+       - /usr/bin/systemd-run
+       - --quiet
+       - --collect
+       - --scope
+       - --uid=ryoko-dev
+       - --gid=ryoko-dev
+       - --setenv=HOME=/home/ryoko-dev
+       - /usr/local/libexec/openryoko-development-runner
+   ```
+
+   with the matching exact sudoers rule (replacing the old `(ryoko-dev)` rule):
+
+   ```text
+   ryoko ALL=(root) NOPASSWD: /usr/bin/systemd-run --quiet --collect --scope --uid=ryoko-dev --gid=ryoko-dev --setenv=HOME=/home/ryoko-dev /usr/local/libexec/openryoko-development-runner
+   ```
+
+   `--scope` keeps stdin/stdout attached (the JSON contract is unchanged) and
+   keeps the runner in the gateway child's process group, so the gateway's own
+   timeout kill (`process.kill(-pid)`) still works; only the systemd cgroup
+   membership changes. `--setenv=HOME=` is required because systemd-run does
+   not switch HOME with `--uid`. Validate on the host with a docs-only request
+   while `enabled: false` first — `--uid` with `--scope` needs a reasonably
+   recent systemd.
+
+   Note that with this escape a restart no longer aborts an in-flight run, but
+   the gateway that spawned it is gone, so the Slack result is lost; the guard
+   in step 1 remains the primary deploy procedure.
 
 ## Release and rollback
 
 ### Release note
 
-The runner version advances to `2026-07-31.1`. It adds the Human-in-the-Loop
+The runner version advances to `2026-07-31.2`. It adds automatic stale-lock
+reclamation at startup (see the lock section above): a lock whose owner pid is
+provably dead and whose development user has no surviving processes is removed
+and re-acquired instead of failing the request. All uncertain cases keep the
+previous fail-closed behavior. The stdin/stdout contract and config shape are
+unchanged; only `runnerVersion` must advance in lockstep.
+
+The previous version `2026-07-31.1` added the Human-in-the-Loop
 question/answer round-trip described above: a new `needs_decision` result
 status, the `.openryoko/questions.json` contract, and a resume stdin shape
 (`{"storyId", "answers"}`) alongside the existing `{"request"}` shape. The
@@ -138,8 +215,9 @@ chain) with a Claude Code agent session that drives the VibePro CLI directly.
 This change requires an operator rollout after merge; merging the PR does not
 update the pilot host. Deploy the merged `run.mjs` to the root-owned installed
 runner and update `runnerVersion` in the root-owned config to the same embedded
-version. Restart `openryoko`, then verify all of the following before sending a
-Slack development request:
+version. Run `sudo ./guard-restart.sh --wait 5400` and proceed only when it
+exits 0, then restart `openryoko` and verify all of the following before
+sending a Slack development request:
 
 - `systemctl is-active openryoko` reports `active`;
 - the installed runner reports the expected `RUNNER_VERSION`;
