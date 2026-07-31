@@ -5,6 +5,8 @@ import { isDeadSessionError } from "../shared/rateLimit.js";
 import { resolveBin, formatSpawnError } from "../shared/resolveBin.js";
 import { buildChildEnv } from "../shared/childEnv.js";
 import { placementSafeCliFlags } from "../shared/placement-profile.js";
+import { writePlacementGuardSettings } from "../shared/claude-settings.js";
+import { CLAUDE_SETTINGS_DIR, PLACEMENT_GUARD_SCRIPT } from "../shared/paths.js";
 
 interface LiveProcess {
   proc: ChildProcess;
@@ -228,6 +230,13 @@ export class ClaudeEngine implements InterruptibleEngine {
     // Placement-protected shared files (persona/skills/memory), not a prompt hint.
     if (opts.disallowedTools?.length) {
       trailingArgs.push("--disallowedTools", ...opts.disallowedTools);
+    }
+    // Placement Bash write boundary: --disallowedTools cannot inspect paths
+    // inside shell commands, so shell writes to protected paths are blocked by
+    // a PreToolUse guard hook registered via --settings (headless -p honors
+    // hooks from --settings). Local only — placement rejects sshHost upstream.
+    if (opts.placementBashGuard && !opts.sshHost) {
+      trailingArgs.push("--settings", writePlacementGuardSettings(CLAUDE_SETTINGS_DIR, PLACEMENT_GUARD_SCRIPT));
     }
     const cliFlags = placementSafeCliFlags(opts.cliFlags, opts.strictMcpConfig);
     if (cliFlags?.length) trailingArgs.push(...cliFlags);

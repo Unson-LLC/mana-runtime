@@ -79,6 +79,9 @@ export const CLAUDE_SETTINGS_DIR = path.join(JINN_HOME, "tmp", "settings");
 /** The hook-relay script copied next to JINN_HOME at boot; PTY-spawned Claude
  *  invokes it from its hook config to POST turn events back to the gateway. */
 export const HOOK_RELAY_SCRIPT = path.join(JINN_HOME, "hook-relay.mjs");
+/** The placement Bash write guard copied next to JINN_HOME at boot; registered
+ *  as a PreToolUse hook (matcher "Bash") for placement-scoped sessions only. */
+export const PLACEMENT_GUARD_SCRIPT = path.join(JINN_HOME, "placement-guard.mjs");
 
 /**
  * Global instances registry — always at ~/.ryoko/instances.json regardless

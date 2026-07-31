@@ -50,6 +50,14 @@ export interface EngineRunOpts {
    * bypassPermissions — this is the hard boundary for Placement-protected paths.
    */
   disallowedTools?: string[];
+  /**
+   * Register the placement Bash write guard (assets/placement-guard.mjs) as a
+   * PreToolUse hook via --settings. Complements `disallowedTools`, which cannot
+   * inspect paths inside shell commands: Bash deny rules are prefix-matched on
+   * the command string only. The hook's permissionDecision:"deny" is enforced
+   * by Claude Code in every permission mode, including bypassPermissions.
+   */
+  placementBashGuard?: boolean;
   /** Path to MCP config JSON file (passed as --mcp-config to Claude Code) */
   mcpConfigPath?: string;
   onStream?: (delta: StreamDelta) => void;

@@ -4,7 +4,7 @@ import path from "node:path";
 import * as pty from "node-pty";
 import type { InterruptibleEngine, EngineRunOpts, EngineResult, EngineRateLimitInfo, StreamDelta } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
-import { JINN_HOME, CLAUDE_SETTINGS_DIR, HOOK_RELAY_SCRIPT } from "../shared/paths.js";
+import { JINN_HOME, CLAUDE_SETTINGS_DIR, HOOK_RELAY_SCRIPT, PLACEMENT_GUARD_SCRIPT } from "../shared/paths.js";
 import { writeSessionSettings } from "../shared/claude-settings.js";
 import { awaitFreshClaudeCredentials } from "../shared/claude-oauth-gate.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
@@ -285,6 +285,13 @@ export function sseEventToDeltas(e: SseDataEvent): StreamDelta[] {
     default:
       return [];
   }
+}
+
+/** Spawn-bound Placement boundary fingerprint (deny rules + Bash guard hook).
+ *  Compared against the warm PTY's spawn params: any difference forces a cold
+ *  respawn so the boundary actually applies to the new turn. */
+function placementDenyKey(opts: Pick<EngineRunOpts, "disallowedTools" | "placementBashGuard">): string {
+  return [opts.placementBashGuard ? "bash-guard" : "", ...(opts.disallowedTools ?? [])].join("\n");
 }
 
 const STOP_FAILURE_GRACE_MS = 20_000;
@@ -597,6 +604,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       sessionId: jinnSessionId,
       relayScript: HOOK_RELAY_SCRIPT,
       appendSystemPrompt: opts.systemPrompt,
+      placementGuardScript: opts.placementBashGuard ? PLACEMENT_GUARD_SCRIPT : undefined,
     });
 
     let warm = this.lifecycle.getWarm(jinnSessionId);
@@ -607,10 +615,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (warm) {
       const prev = this.spawnParams.get(jinnSessionId);
       const norm = (v?: string) => (!v || v === "default" ? "" : v);
-      // Deny rules (--disallowedTools) also bind at spawn. A warm PTY spawned
-      // without the requested Placement write boundary must never serve a turn
-      // that requires it — cold-respawn so the boundary actually applies.
-      const denyKey = (opts.disallowedTools ?? []).join("\n");
+      // Deny rules (--disallowedTools) and the Bash guard hook also bind at
+      // spawn. A warm PTY spawned without the requested Placement write boundary
+      // must never serve a turn that requires it — cold-respawn so the boundary
+      // actually applies.
+      const denyKey = placementDenyKey(opts);
       if (prev && (norm(opts.model) !== norm(prev.model) || norm(opts.effortLevel) !== norm(prev.effortLevel) || denyKey !== (prev.denyKey ?? ""))) {
         logger.info(`InteractiveClaudeEngine: spawn params changed for ${jinnSessionId} (model ${prev.model ?? "default"}→${opts.model ?? "default"}, effort ${prev.effortLevel ?? "default"}→${opts.effortLevel ?? "default"}, denyRules ${prev.denyKey ? "set" : "none"}→${denyKey ? "set" : "none"}) — cold respawn`);
         this.lifecycle.releaseSession(jinnSessionId);
@@ -1028,7 +1037,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cwd: opts.cwd || JINN_HOME,
       env,
     });
-    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, denyKey: (opts.disallowedTools ?? []).join("\n") });
+    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, denyKey: placementDenyKey(opts) });
     return this.wireProcToStream(jinnSessionId, proc, port ? proxy : undefined);
   }
 
