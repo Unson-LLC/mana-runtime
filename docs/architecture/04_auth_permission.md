@@ -69,7 +69,7 @@ Slackチャンネル1つにつき設定1枠（`~/.ryoko/config.yaml` の `placem
 
 1. **コード内route束縛** — タスク系routeはplacement文脈に束縛
 2. **placement `gatewayTools`** — gateway MCPが明示リストだけを公開・実行
-3. **`interactiveAllowedTools`** — Claude PTY起動時の`--allowedTools`
+3. **capabilities由来の`--allowedTools`**（2026-07-31、gap G1+G4解消） — placementセッションのallowルールは `capabilities` から**spawnごとに導出**される（[placement-profile.ts](../../packages/jimmy/src/shared/placement-profile.ts) `placementAllowedTools`）: `capabilities.mcp` の各サーバー → `mcp__<server>__*`（サーバー全体許可）、`capabilities.gatewayTools` → `mcp__gateway__<tool>`（個別許可）。グローバル設定 `engines.claude.interactiveAllowedTools` は**非placementセッション専用**となり、placementはこれに依存しない（能力の正本はcapabilitiesただ1箇所）。導出はrun毎の純関数なのでconfig hot-reloadが次spawnから反映され、gateway再起動は不要。warm PTYへはspawn境界鍵（allow+deny+Bashガード）の変化でcold-respawnして反映する。恒常deny（`PLACEMENT_MCP_TOOL_DENY`）は `--disallowedTools` としてallowに常に勝つ — freee書込系5ツール（`freee_api_post/put/delete/patch`・`freee_file_upload`）はここで全placement遮断（G2のread-only語彙導入までの暫定read-only）
 
 ### エンジン境界
 

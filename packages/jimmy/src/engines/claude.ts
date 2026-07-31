@@ -231,6 +231,13 @@ export class ClaudeEngine implements InterruptibleEngine {
     if (opts.disallowedTools?.length) {
       trailingArgs.push("--disallowedTools", ...opts.disallowedTools);
     }
+    // Placement capability-derived allow rules. Headless runs under
+    // --dangerously-skip-permissions, where allows change nothing — passed
+    // anyway so the placement boundary is uniform across engines and survives
+    // a future permission-mode change here. Deny rules above always win.
+    if (opts.allowedTools?.length) {
+      trailingArgs.push("--allowedTools", ...opts.allowedTools);
+    }
     // Placement Bash write boundary: --disallowedTools cannot inspect paths
     // inside shell commands, so shell writes to protected paths are blocked by
     // a PreToolUse guard hook registered via --settings (headless -p honors

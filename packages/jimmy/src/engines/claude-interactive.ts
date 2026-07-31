@@ -287,11 +287,31 @@ export function sseEventToDeltas(e: SseDataEvent): StreamDelta[] {
   }
 }
 
-/** Spawn-bound Placement boundary fingerprint (deny rules + Bash guard hook).
- *  Compared against the warm PTY's spawn params: any difference forces a cold
- *  respawn so the boundary actually applies to the new turn. */
-function placementDenyKey(opts: Pick<EngineRunOpts, "disallowedTools" | "placementBashGuard">): string {
-  return [opts.placementBashGuard ? "bash-guard" : "", ...(opts.disallowedTools ?? [])].join("\n");
+/** Spawn-bound Placement boundary fingerprint (allow rules + deny rules +
+ *  Bash guard hook). Compared against the warm PTY's spawn params: any
+ *  difference forces a cold respawn so the boundary actually applies to the
+ *  new turn — this is how a config hot-reload of placement capabilities
+ *  reaches a session with a warm PTY. Exported for unit tests. */
+export function placementBoundaryKey(
+  opts: Pick<EngineRunOpts, "allowedTools" | "disallowedTools" | "placementBashGuard">,
+): string {
+  return [
+    opts.placementBashGuard ? "bash-guard" : "",
+    // "*" sentinel distinguishes "no per-run list" (global) from an empty list.
+    opts.allowedTools ? opts.allowedTools.join(",") : "*",
+    ...(opts.disallowedTools ?? []),
+  ].join("\n");
+}
+
+/** Per-spawn tool allow list: a placement's derived list REPLACES the global
+ *  interactiveAllowedTools (never merged — the global list must not leak into
+ *  placement sessions, and an empty derived list grants nothing extra);
+ *  non-placement spawns keep the global list. Exported for unit tests. */
+export function resolveSpawnAllowedTools(
+  perRun: string[] | undefined,
+  globalAllowedTools: string[],
+): string[] {
+  return perRun ?? globalAllowedTools;
 }
 
 const STOP_FAILURE_GRACE_MS = 20_000;
@@ -552,11 +572,11 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  warm PTY was reaped — otherwise spawn() falls back to 120×40 and the TUI
    *  text body is locked in at the wrong width. */
   private lastGeom = new Map<string, { cols: number; rows: number }>();
-  /** Model/effort/deny-rules the live PTY was spawned with, per session. These
+  /** Model/effort/boundary the live PTY was spawned with, per session. These
    *  flags apply only at spawn, so a mid-chat switch must cold-respawn rather than
    *  reuse the warm PTY (which would keep running the old model — or, worse for
-   *  `denyKey`, keep running WITHOUT the Placement write boundary). */
-  private spawnParams = new Map<string, { model?: string; effortLevel?: string; denyKey?: string }>();
+   *  `boundaryKey`, keep running WITHOUT the Placement tool boundary). */
+  private spawnParams = new Map<string, { model?: string; effortLevel?: string; boundaryKey?: string }>();
   /** PTY handles already torn down by handlePtyDeath(). A socket `error` (EIO) and
    *  the proc's `onExit` can both fire for the same PTY (in either order, or only
    *  one of them), and run()'s warm-reuse guard may also report it dead — so death
@@ -615,13 +635,16 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     if (warm) {
       const prev = this.spawnParams.get(jinnSessionId);
       const norm = (v?: string) => (!v || v === "default" ? "" : v);
-      // Deny rules (--disallowedTools) and the Bash guard hook also bind at
-      // spawn. A warm PTY spawned without the requested Placement write boundary
-      // must never serve a turn that requires it — cold-respawn so the boundary
-      // actually applies.
-      const denyKey = placementDenyKey(opts);
-      if (prev && (norm(opts.model) !== norm(prev.model) || norm(opts.effortLevel) !== norm(prev.effortLevel) || denyKey !== (prev.denyKey ?? ""))) {
-        logger.info(`InteractiveClaudeEngine: spawn params changed for ${jinnSessionId} (model ${prev.model ?? "default"}→${opts.model ?? "default"}, effort ${prev.effortLevel ?? "default"}→${opts.effortLevel ?? "default"}, denyRules ${prev.denyKey ? "set" : "none"}→${denyKey ? "set" : "none"}) — cold respawn`);
+      // Allow rules (--allowedTools), deny rules (--disallowedTools) and the
+      // Bash guard hook also bind at spawn. A warm PTY spawned without the
+      // requested Placement tool boundary must never serve a turn that requires
+      // it — cold-respawn so the boundary actually applies.
+      const boundaryKey = placementBoundaryKey(opts);
+      // A PTY adopted before this key existed (or by an older build) has no
+      // recorded key — treat it as the unbounded default so plain non-placement
+      // turns don't churn through pointless cold respawns.
+      if (prev && (norm(opts.model) !== norm(prev.model) || norm(opts.effortLevel) !== norm(prev.effortLevel) || boundaryKey !== (prev.boundaryKey ?? placementBoundaryKey({})))) {
+        logger.info(`InteractiveClaudeEngine: spawn params changed for ${jinnSessionId} (model ${prev.model ?? "default"}→${opts.model ?? "default"}, effort ${prev.effortLevel ?? "default"}→${opts.effortLevel ?? "default"}, toolBoundary ${prev.boundaryKey === boundaryKey ? "same" : "changed"}) — cold respawn`);
         this.lifecycle.releaseSession(jinnSessionId);
         warm = undefined;
       }
@@ -1019,7 +1042,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cliFlags: opts.cliFlags,
       attachments: opts.attachments,
       permissionMode: this.permissionMode,
-      allowedTools: this.allowedTools,
+      allowedTools: resolveSpawnAllowedTools(opts.allowedTools, this.allowedTools),
       disallowedTools: opts.disallowedTools,
     });
     // Serialize the spawn herd across the shared-OAuth near-expiry window so only
@@ -1037,7 +1060,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cwd: opts.cwd || JINN_HOME,
       env,
     });
-    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, denyKey: placementDenyKey(opts) });
+    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, boundaryKey: placementBoundaryKey(opts) });
     return this.wireProcToStream(jinnSessionId, proc, port ? proxy : undefined);
   }
 
@@ -1098,7 +1121,9 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
           env,
         });
         const handle = this.wireProcToStream(jinnSessionId, proc, port ? proxy : undefined);
-        this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: undefined });
+        // Idle PTYs spawn with the unbounded (global-list) boundary; record that
+        // key so a first placement turn cold-respawns while plain turns reuse.
+        this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: undefined, boundaryKey: placementBoundaryKey({}) });
         this.lifecycle.adopt(jinnSessionId, handle);
       } catch (err) {
         logger.warn(`ensureIdleSpawn failed for session ${jinnSessionId}: ${err instanceof Error ? err.message : String(err)}`);

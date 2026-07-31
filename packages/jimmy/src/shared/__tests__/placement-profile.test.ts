@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementAllowedTools, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -156,11 +156,52 @@ describe("isPlacementEmployeeAllowed", () => {
   });
 });
 
+describe("placementAllowedTools", () => {
+  it("derives a whole-server allow rule for every capabilities.mcp server except gateway", () => {
+    const allows = placementAllowedTools({
+      capabilities: { mcp: ["brainbase", "nocodb", "gateway"] },
+    });
+    expect(allows).toContain("mcp__brainbase__*");
+    expect(allows).toContain("mcp__nocodb__*");
+    expect(allows).not.toContain("mcp__gateway__*");
+  });
+
+  it("derives per-tool gateway allow rules from capabilities.gatewayTools", () => {
+    expect(placementAllowedTools({
+      capabilities: { mcp: ["gateway"], gatewayTools: ["create_task", "send_message"] },
+    })).toEqual(["mcp__gateway__create_task", "mcp__gateway__send_message"]);
+  });
+
+  it("derives no allow rules when capabilities.mcp is false or absent (deny by default)", () => {
+    expect(placementAllowedTools({ capabilities: { mcp: false } })).toEqual([]);
+    expect(placementAllowedTools({})).toEqual([]);
+  });
+
+  it("derives the freee server allow from capabilities.mcp alone without any global registration (ALLOWTOOLS-STORY-S-001)", () => {
+    // mana-accounting/mana-backoffice shape: freee granted via capabilities only.
+    const accounting: PlacementProfile = {
+      ...placement,
+      id: "mana-accounting",
+      capabilities: { mcp: ["brainbase", "gateway", "freee"], gatewayTools: ["create_task"] },
+    };
+    const boundary = placementEngineBoundary(accounting);
+    expect(boundary.allowedTools).toContain("mcp__freee__*");
+    // The write surface stays denied in the same spawn (read-only until G2).
+    for (const tool of [
+      "mcp__freee__freee_api_post", "mcp__freee__freee_api_put", "mcp__freee__freee_api_delete",
+      "mcp__freee__freee_api_patch", "mcp__freee__freee_file_upload",
+    ]) {
+      expect(boundary.disallowedTools).toContain(tool);
+    }
+  });
+});
+
 describe("placementEngineBoundary", () => {
   it("enforces strict MCP and disables Chrome for every placement execution", () => {
     expect(placementEngineBoundary(placement)).toEqual({
       strictMcpConfig: true,
       enableChrome: false,
+      allowedTools: [],
       disallowedTools: [
         ...placementWriteDenyRules(),
         ...placementMemoryReadDenyRules(placement.id, []),
@@ -168,6 +209,51 @@ describe("placementEngineBoundary", () => {
       ],
       placementBashGuard: true,
     });
+  });
+
+  it("passes derived allowedTools through the engine boundary on every placement run", () => {
+    const capable: PlacementProfile = {
+      ...placement,
+      capabilities: { mcp: ["brainbase"], gatewayTools: ["create_task"] },
+    };
+    expect(placementEngineBoundary(capable).allowedTools)
+      .toEqual(["mcp__brainbase__*", "mcp__gateway__create_task"]);
+  });
+
+  it("leaves allowedTools undefined for non-placement runs (global interactiveAllowedTools stays in charge)", () => {
+    expect(placementEngineBoundary(undefined).allowedTools).toBeUndefined();
+  });
+
+  it("keeps every constant deny in disallowedTools even when its server is wholesale-allowed (deny beats allow)", () => {
+    const wholesale: PlacementProfile = {
+      ...placement,
+      capabilities: { mcp: ["brainbase", "freee"] },
+    };
+    const boundary = placementEngineBoundary(wholesale);
+    expect(boundary.allowedTools).toContain("mcp__brainbase__*");
+    expect(boundary.allowedTools).toContain("mcp__freee__*");
+    for (const denied of PLACEMENT_MCP_TOOL_DENY) {
+      expect(boundary.disallowedTools).toContain(denied);
+    }
+  });
+
+  it("denies freee write tools in every placement session (read-only until G2)", () => {
+    for (const tool of [
+      "mcp__freee__freee_api_post", "mcp__freee__freee_api_put", "mcp__freee__freee_api_delete",
+      "mcp__freee__freee_api_patch", "mcp__freee__freee_file_upload",
+    ]) {
+      expect(PLACEMENT_MCP_TOOL_DENY).toContain(tool);
+      expect(placementEngineBoundary(placement).disallowedTools).toContain(tool);
+    }
+  });
+
+  it("re-derives the boundary from the live placement on every run so config changes bind at the next spawn", () => {
+    // Same placement id, capabilities changed by a config hot-reload: the next
+    // derivation must reflect the new capabilities with no boot-time residue.
+    const before: PlacementProfile = { ...placement, capabilities: { mcp: ["brainbase"] } };
+    const after: PlacementProfile = { ...placement, capabilities: { mcp: ["brainbase", "freee"] } };
+    expect(placementEngineBoundary(before).allowedTools).toEqual(["mcp__brainbase__*"]);
+    expect(placementEngineBoundary(after).allowedTools).toEqual(["mcp__brainbase__*", "mcp__freee__*"]);
   });
 
   it("adds the personal KG tool deny to every placement session's disallowedTools", () => {
@@ -195,6 +281,7 @@ describe("placementEngineBoundary", () => {
     expect(placementEngineBoundary(undefined)).toEqual({
       strictMcpConfig: false,
       enableChrome: undefined,
+      allowedTools: undefined,
       disallowedTools: undefined,
       placementBashGuard: false,
     });
