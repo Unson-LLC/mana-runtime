@@ -77,6 +77,7 @@ export interface SlackConnectorContext {
   }) => Promise<string | undefined | void> | string | undefined | void;
   /** Fired when the bot leaves / is removed from a channel (placement disable). */
   onBotLeftChannel?: (info: { channelId: string; workspaceId: string | null }) => void;
+  /**
    * Continues a `/vibepro` Story that stopped with `needs_input` because
    * VibePro gates were unresolved, after a human clicked "続行してGateを
    * 解消させる" on the needs_input result card. Bound to
@@ -88,7 +89,6 @@ export interface SlackConnectorContext {
     connector: Connector,
     target: Target,
   ) => boolean;
-
 }
 
 export class SlackConnector implements Connector {
