@@ -84,10 +84,8 @@ Slack（窓口=マナ1体）
 | 廃止フロー | [placement-lifecycle.md](../operations/placement-lifecycle.md)（削除ではなく`enabled: false`で監査痕跡を残す） | ✅ |
 | 監査ログ | security_event（capability系はplacementId・configRevision付き。control_plane系は2026-07-30から`target`=アクセス先を含む） | ✅ |
 | 参照データ範囲 | dataScopes | ⚠️ ソフト境界のみ（宣言であり強制ではない） |
-| **変更管理** | 運用文書 [pilot-config-change-management.md](../operations/pilot-config-change-management.md) はあるが、**コード支援なし**。`PUT /api/config` はスナップショット無しで書き換わる。`cron/jobs.json`（時間トリガー定義）も履歴なし | ⚠️ 残ギャップ |
-| **budget連動** | budgetは依然employee単位。`agent.employee`未設定placementは台帳ビューで警告表示されるが、上限は効かない | ⚠️ 残ギャップ |
-
-**残作業**: (1) config.yaml / cron/jobs.json のgit管理化とAPI変更時スナップショット、(2) placement単位のbudget上限。
+| 変更管理 | ランタイムが `config.yaml` / `cron/jobs.json` を書き換える全経路で書込み前スナップショットを `~/.ryoko/config-history/`（0700/0600・直近100件ローテーション）へ自動保存。`index.jsonl` + 構造化ログ `config_change` に いつ・経路・operator認証の有無 を記録。`GET /api/config-history`（メタデータのみ・operator token保護）で一覧。運用手順は [pilot-config-change-management.md](../operations/pilot-config-change-management.md) | ✅ |
+| budget連動 | placement単位の月次上限 `monthlyBudgetUsd`（2026-07-31実装）。超過時は`resolveRouteOptions`でkill switchと同じゲートをfail-closed（security_event reason=`placement_budget_exceeded`）、80%到達で月1回チャンネル警告（budget_events dedup）、消化額は短TTLキャッシュでホットパスのDB直撃を回避。台帳ビューに上限・消化率を表示。employee単位budgetは従来どおり併用 | ✅ |
 
 ## 7. まとめ — どの柱がどこを埋めるか
 
@@ -98,6 +96,6 @@ Slack（窓口=マナ1体）
 | §3 受ける（権限写像） | 柱2 | 未実装（brainbase共同設計待ち） |
 | §4 HITL | 柱3 | 2系統の個別実装あり（register-first補償型=タスク承認 / ブロッキング型=議事録宛先選択）。汎用プリミティブ化は未。`ApproverResolver`は両者でDI共有済み |
 | §5 ルーティング層 | 柱1 | 単一宛先のみ実装（critical-routing: 決定論分類器+子セッション委譲+fail-closed）。複数宛先への動的ディスパッチは未 |
-| §6 台帳 | 柱5 | 主要項目は実装済み（PR #30）。残: 変更管理のコード支援・placement単位budget |
+| §6 台帳 | 柱5 | 実装完了（PR #30 + placement単位budget上限 + 変更管理コード支援、2026-07-31） |
 
 脳そのもの（3層の定義・グラフ/オントロジーの設計・candidate-storeからの昇格運用）はbrainbase側の設計文書が正本であり、本章はその**接続契約の受け口・送り口**だけを規定する。brainbase側の設計が変わったら本章のインターフェース記述を追従させる。

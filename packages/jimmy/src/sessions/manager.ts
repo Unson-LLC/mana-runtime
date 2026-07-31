@@ -33,10 +33,15 @@ import { getClaudeExpectedResetAt, isLikelyNearClaudeUsageLimit, recordClaudeRat
 import { isOperatorSpeaker } from "../shared/operator-match.js";
 import { loadJobs } from "../cron/jobs.js";
 import { setCronJobEnabled, triggerCronJob } from "../cron/scheduler.js";
-import { checkBudget } from "../gateway/budgets.js";
+import { checkBudget, getPlacementBudgetStatus, shouldNotifyPlacementBudgetWarning } from "../gateway/budgets.js";
 import { resolveMcpServers, writeMcpConfigFile, cleanupMcpConfigFile } from "../mcp/resolver.js";
 import { buildCriticalReviewPrompt, classifyCriticalTask } from "./critical-routing.js";
-import { formatDevelopmentResult, runDevelopmentRequest } from "./development-runner.js";
+import {
+  formatDevelopmentResult,
+  runDevelopmentRequest,
+  type DevelopmentAnswer,
+  type DevelopmentResult,
+} from "./development-runner.js";
 import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
@@ -679,6 +684,21 @@ export class SessionManager {
             }
             return;
           }
+        }
+      }
+
+      // Placement budget warning — 80% notifies once per month; the hard stop
+      // at 100% happens fail-closed in resolveRouteOptions before routing.
+      if (placement?.monthlyBudgetUsd !== undefined) {
+        const placementBudget = getPlacementBudgetStatus(placement.id, placement.monthlyBudgetUsd);
+        if (
+          placementBudget.status === 'warning' &&
+          shouldNotifyPlacementBudgetWarning(placement.id, placementBudget.spend, placementBudget.limit)
+        ) {
+          await connector.replyMessage(
+            target,
+            `⚠️ Placement "${placement.id}" has used ${placementBudget.percent}% of its monthly budget ($${placementBudget.spend.toFixed(2)} / $${placementBudget.limit}). It will be blocked at 100%.`,
+          ).catch(() => {});
         }
       }
 
@@ -1378,21 +1398,63 @@ export class SessionManager {
         return true;
       }
 
-      this.developmentRunning = true;
       await connector.replyMessage(target, "Development task accepted. VibePro will stop before PR creation or merge.");
-      void runDevelopmentRequest(config, request)
-        .then((result) => connector.replyMessage(target, formatDevelopmentResult(result)))
-        .catch((error) => {
-          logger.error(`Development runner failed: ${error instanceof Error ? error.message : "unknown error"}`);
-          return connector.replyMessage(target, "Development task failed inside the isolated runner. No PR or deployment was performed.");
-        })
-        .finally(() => {
-          this.developmentRunning = false;
-        });
+      this.runDevelopmentFlow(config, request, connector, target);
       return true;
     }
 
     return false;
+  }
+
+  /**
+   * Runs one development-runner invocation (new Story or resume) and
+   * delivers the result to Slack. Shared by the native `/vibepro` command
+   * and `resumeDevelopmentDecision` (the Human-in-the-Loop answer submit
+   * path) so both go through the same single-flight lock and result
+   * formatting/posting logic.
+   */
+  private runDevelopmentFlow(
+    config: NonNullable<JinnConfig["developmentRunner"]>,
+    request: string | { storyId: string; answers: DevelopmentAnswer[] },
+    connector: Connector,
+    target: Target,
+  ): void {
+    this.developmentRunning = true;
+    void runDevelopmentRequest(config, request)
+      .then((result) => this.deliverDevelopmentResult(result, connector, target))
+      .catch((error) => {
+        logger.error(`Development runner failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        return connector.replyMessage(target, "Development task failed inside the isolated runner. No PR or deployment was performed.");
+      })
+      .finally(() => {
+        this.developmentRunning = false;
+      });
+  }
+
+  private async deliverDevelopmentResult(result: DevelopmentResult, connector: Connector, target: Target): Promise<void> {
+    if (result.status === "needs_decision" && result.storyId && result.questions && connector.postDecisionQuestions) {
+      await connector.postDecisionQuestions(target, {
+        storyId: result.storyId,
+        questions: result.questions,
+        summary: result.summary,
+      });
+      return;
+    }
+    await connector.replyMessage(target, formatDevelopmentResult(result));
+  }
+
+  /**
+   * Resume a Story that previously stopped with `needs_decision`, after a
+   * human answered the Slack question card/modal. This is the one allowed
+   * round-trip of the Human-in-the-Loop loop — the resumed agent session is
+   * instructed not to ask again.
+   */
+  resumeDevelopmentDecision(storyId: string, answers: DevelopmentAnswer[], connector: Connector, target: Target): boolean {
+    const config = this.config.developmentRunner;
+    if (!config?.enabled) return false;
+    if (this.developmentRunning) return false;
+    this.runDevelopmentFlow(config, { storyId, answers }, connector, target);
+    return true;
   }
 
   resetSession(sessionKey: string): void {
