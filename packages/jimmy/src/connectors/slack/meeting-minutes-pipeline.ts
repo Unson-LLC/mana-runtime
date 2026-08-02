@@ -47,11 +47,13 @@ export interface MeetingMinutesPipelineConfig {
   enabled?: boolean;
   /**
    * Router channel IDs to watch for .txt uploads. Required; empty = off.
-   * "*" watches every channel the bot is in.
+   * Wildcards are rejected; every router must be explicitly allowlisted.
    */
   routerChannels?: string[];
   /** Destination projects. Required; empty = off. */
   destinations?: MinutesDestination[];
+  /** Explicitly approved copy targets in other Slack workspaces. Never sent to the LLM. */
+  shareDestinations?: MinutesShareDestination[];
   /** Slack user IDs allowed to reroute/retry. Falls back to allowFrom. */
   operatorUserIds?: string[];
   /** Max transcript file size in bytes. Default 1 MiB. */
@@ -82,20 +84,41 @@ export interface MinutesRun {
   fileName: string;
   sourceTextHash: string;
   status: MinutesRunStatus;
-  /** Wildcard-matched channel: expand in place, skip LLM routing. */
+  /** Legacy state compatibility only; wildcard routing is no longer accepted. */
   inPlace?: boolean;
   projectId?: string;
+  /** LLM proposal only; it is never delivery authority. */
+  suggestedProjectId?: string;
   routingReason?: string;
+  /** Slack-signed source-workspace operator who made the delivery decision. */
+  destinationApprovedBy?: string;
+  destinationApprovedAt?: number;
   destinationChannelId?: string;
   /** Parent (overview) message ts in the destination channel. */
   postedParentTs?: string;
+  /** Child message timestamps, retained so a later reroute can scrub stale content. */
+  postedThreadTs?: string[];
+  /** Durable progress for a reroute whose Slack side effects span several API calls. */
+  reroute?: MinutesRerouteRecord;
   /** Our control message ts in the router thread (chat.update target). */
   controlTs?: string;
   /** Persisted so reroute can repost without regenerating. */
   minutes?: GeneratedMinutes;
+  shares?: Record<string, MinutesShareRecord>;
   createdAt: number;
   updatedAt: number;
   expiresAt: number;
+}
+
+export interface MinutesRerouteRecord {
+  projectId: string;
+  destinationChannelId: string;
+  status: "scrubbing" | "posting" | "completed" | "failed";
+  scrubbedMessageTs: string[];
+  postedParentTs?: string;
+  postedThreadTs: string[];
+  updatedAt: number;
+  error?: string;
 }
 
 interface PipelineState {
@@ -115,6 +138,43 @@ export const IN_PLACE_PROJECT_ID = "__in_place__";
 export const ACTION_MM_CHOOSE_DEST = "meeting_minutes_choose_destination";
 export const ACTION_MM_REROUTE = "meeting_minutes_reroute";
 export const ACTION_MM_RETRY = "meeting_minutes_retry";
+export const ACTION_MM_SHARE = "meeting_minutes_share";
+
+export interface MinutesShareDestination {
+  /** Opaque, stable key used in Block actions; all target fields are re-read from config. */
+  shareId: string;
+  projectId: string;
+  name: string;
+  connectorInstanceId: string;
+  workspaceId: string;
+  channelId: string;
+}
+
+export interface MinutesShareRecord {
+  status: "posting" | "posted" | "failed";
+  connectorInstanceId: string;
+  workspaceId: string;
+  channelId: string;
+  approvedBy: string;
+  approvedAt: number;
+  updatedAt: number;
+  postedParentTs?: string;
+  postedThreadTs?: string[];
+  error?: string;
+}
+
+export interface MeetingMinutesShareProgress {
+  parentTs: string;
+  threadTs: string[];
+}
+
+export interface MeetingMinutesShareRequest {
+  sourceConnectorInstanceId: string;
+  destination: MinutesShareDestination;
+  minutes: GeneratedMinutes;
+  /** Persist target side effects after every successful Slack post; throwing halts delivery. */
+  onProgress: (progress: MeetingMinutesShareProgress) => void;
+}
 
 /** Stage order for monotonic transitions. */
 const STATUS_RANK: Record<string, number> = {
@@ -143,11 +203,13 @@ function loadState(): PipelineState {
   return { runs: {}, lastMinutesByChannel: {} };
 }
 
-function saveState(state: PipelineState): void {
+function saveState(state: PipelineState): boolean {
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    return true;
   } catch (err) {
     logger.warn(`[meeting-minutes] failed to persist state: ${err}`);
+    return false;
   }
 }
 
@@ -182,7 +244,7 @@ function jstDateStr(now: number): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date(now));
 }
 
-interface SlackClientLike {
+export interface SlackClientLike {
   apiCall(method: string, payload: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
@@ -201,6 +263,9 @@ export interface MeetingMinutesPipelineDeps {
   approverResolver?: ApproverResolver;
   /** Register-first task flow to hand posted minutes to. */
   taskProposalNotifier?: Pick<MeetingTaskProposalNotifier, "processMinutesText"> | null;
+  sourceConnectorInstanceId?: string;
+  /** Narrow gateway that resolves the live target connector and posts with its client. */
+  shareMinutes?: (request: MeetingMinutesShareRequest) => Promise<{ parentTs: string }>;
 }
 
 export class MeetingMinutesPipeline {
@@ -210,6 +275,8 @@ export class MeetingMinutesPipeline {
   private readonly routerChannels: Set<string>;
   private readonly watchAllChannels: boolean;
   private readonly destinations: MinutesDestination[];
+  private readonly shareDestinations: MinutesShareDestination[];
+  private readonly invalidWildcardConfig: boolean;
   private readonly operators: ApproverResolver;
   private readonly operatorsEmpty: boolean;
   private readonly maxFileBytes: number;
@@ -217,6 +284,7 @@ export class MeetingMinutesPipeline {
   private readonly routingOptions: MinutesLlmOptions;
   private readonly generationOptions: MinutesLlmOptions;
   private readonly deps: MeetingMinutesPipelineDeps;
+  private readonly shareLocks = new Set<string>();
   private readonly bootTimeMs = Date.now();
   private active = false;
 
@@ -229,10 +297,22 @@ export class MeetingMinutesPipeline {
     this.app = app;
     this.client = app.client as unknown as SlackClientLike;
     this.enabled = config.enabled === true;
-    this.routerChannels = new Set((config.routerChannels ?? []).filter(Boolean));
-    this.watchAllChannels = this.routerChannels.has("*");
+    const configuredRouters = (config.routerChannels ?? []).map((value) => value.trim()).filter(Boolean);
+    this.invalidWildcardConfig = configuredRouters.includes("*");
+    this.routerChannels = new Set(configuredRouters.filter((value) => value !== "*"));
+    this.watchAllChannels = false;
     this.destinations = (config.destinations ?? []).filter(
       (d) => d && d.projectId && d.name && d.channelId,
+    );
+    this.shareDestinations = (config.shareDestinations ?? []).filter(
+      (d) =>
+        d &&
+        d.shareId &&
+        d.projectId &&
+        d.name &&
+        d.connectorInstanceId &&
+        d.workspaceId &&
+        d.channelId,
     );
     const operatorIds = (
       config.operatorUserIds?.length ? config.operatorUserIds : fallbackOperators
@@ -251,6 +331,10 @@ export class MeetingMinutesPipeline {
   register(): void {
     if (!this.enabled) {
       logger.info("[meeting-minutes] disabled by config");
+      return;
+    }
+    if (this.invalidWildcardConfig) {
+      logger.warn('[meeting-minutes] invalid routerChannels: "*" is forbidden — feature not started');
       return;
     }
     if (this.routerChannels.size === 0) {
@@ -294,6 +378,7 @@ export class MeetingMinutesPipeline {
     this.app.action(ACTION_MM_CHOOSE_DEST, wrap((body, action) => this.handleChooseDestination(body, action)));
     this.app.action(ACTION_MM_REROUTE, wrap((body, action) => this.handleReroute(body, action)));
     this.app.action(ACTION_MM_RETRY, wrap((body, action) => this.handleRetry(body, action)));
+    this.app.action(ACTION_MM_SHARE, wrap((body, action) => this.handleShareMinutes(body, action)));
   }
 
   stop(): void {
@@ -407,26 +492,34 @@ export class MeetingMinutesPipeline {
     }
 
     // Stage: routing (skipped for in-place runs and when a destination is fixed).
-    if (!run.projectId && !run.inPlace) {
+    if (
+      (!run.projectId || !run.destinationApprovedBy || !run.destinationApprovedAt) &&
+      !run.inPlace
+    ) {
       const classify = this.deps.classifyImpl ?? classifyMinutesDestination;
-      const routed = await classify(transcript.text, this.destinations, this.routingOptions);
-      if (!routed) {
-        advanceStatus(run, "awaiting_destination");
-        run.updatedAt = now;
-        saveState(state);
-        await this.updateControl(state, key, {
-          text: "❓ どのプロジェクトの会議か判定できませんでした。宛先を選んでください。",
-          blocks: this.destinationSelectBlocks(key, "❓ どのプロジェクトの会議か判定できませんでした。宛先を選んでください。"),
-        });
-        return; // resumes via handleChooseDestination
+      const legacyProposal = run.projectId
+        ? this.destinations.find((destination) => destination.projectId === run.projectId)
+        : undefined;
+      const routed = legacyProposal
+        ? { destination: legacyProposal, reason: "旧stateの未確認宛先" }
+        : await classify(transcript.text, this.destinations, this.routingOptions);
+      advanceStatus(run, "awaiting_destination");
+      run.projectId = undefined;
+      run.destinationChannelId = undefined;
+      if (routed) {
+        run.suggestedProjectId = routed.destination.projectId;
+        run.routingReason = routed.reason;
       }
-      run.projectId = routed.destination.projectId;
-      run.destinationChannelId = routed.destination.channelId;
-      run.routingReason = routed.reason;
-      advanceStatus(run, "routed");
       run.updatedAt = now;
       saveState(state);
-      logger.info(`[meeting-minutes] routed ${key} → ${run.projectId} (${routed.reason})`);
+      const proposal = routed
+        ? `候補は *${routed.destination.name}* です。投稿前に宛先を確認してください。${routed.reason ? `\n_推定根拠: ${routed.reason}_` : ""}`
+        : "❓ どのプロジェクトの会議か判定できませんでした。宛先を選んでください。";
+      await this.updateControl(state, key, {
+        text: proposal,
+        blocks: this.destinationSelectBlocks(key, proposal),
+      });
+      return; // resumes only after an authorized operator selection
     }
 
     const destination = run.inPlace
@@ -458,19 +551,32 @@ export class MeetingMinutesPipeline {
     // Stage: post (parent = overview, thread = 2900-char body chunks).
     if ((STATUS_RANK[run.status] ?? -1) < STATUS_RANK.posted) {
       try {
-        const parent = await this.client.apiCall("chat.postMessage", {
-          channel: destination.channelId,
-          text: minutes.overview,
-          unfurl_links: false,
-        });
-        run.postedParentTs = (parent.ts as string) ?? "";
-        for (const chunk of splitForSlack(minutes.body)) {
-          await this.client.apiCall("chat.postMessage", {
+        if (!run.postedParentTs) {
+          const parent = await this.client.apiCall("chat.postMessage", {
+            channel: destination.channelId,
+            text: minutes.overview,
+            unfurl_links: false,
+          });
+          if (typeof parent.ts !== "string" || !parent.ts) {
+            throw new Error("parent post returned no timestamp");
+          }
+          run.postedParentTs = parent.ts;
+          run.postedThreadTs = [];
+          saveState(state);
+        }
+        const chunks = splitForSlack(minutes.body);
+        for (const chunk of chunks.slice(run.postedThreadTs?.length ?? 0)) {
+          const child = await this.client.apiCall("chat.postMessage", {
             channel: destination.channelId,
             thread_ts: run.postedParentTs,
             text: chunk,
             unfurl_links: false,
           });
+          const childTs = child.ts as string | undefined;
+          if (!childTs) throw new Error("thread post returned no timestamp");
+          run.postedThreadTs ??= [];
+          run.postedThreadTs.push(childTs);
+          saveState(state);
         }
       } catch (err) {
         await this.failRun(state, key, "post", `投稿に失敗しました（${destination.name}）: ${err}`);
@@ -519,7 +625,7 @@ export class MeetingMinutesPipeline {
       : `✅ *${destination.name}* <#${destination.channelId}> へ議事録を展開しました\n${minutes.title}${run.routingReason ? `\n_振り分け根拠: ${run.routingReason}_` : ""}${handoffNote}`;
     await this.updateControl(state, key, {
       text: summary,
-      blocks: this.rerouteBlocks(key, summary, destination.projectId),
+      blocks: this.successBlocks(key, summary, destination.projectId),
     });
   }
 
@@ -748,11 +854,45 @@ export class MeetingMinutesPipeline {
     return blocks;
   }
 
+  private successBlocks(key: string, text: string, currentProjectId: string): unknown[] {
+    const blocks = this.rerouteBlocks(key, text, currentProjectId);
+    const options = this.shareDestinations
+      .filter((destination) => destination.projectId === currentProjectId)
+      .slice(0, 100)
+      .map((destination) => ({
+        text: { type: "plain_text", text: destination.name.slice(0, 75) },
+        value: JSON.stringify({ key, shareId: destination.shareId }),
+      }));
+    if (options.length > 0) {
+      blocks.push({
+        type: "actions",
+        elements: [
+          {
+            type: "static_select",
+            action_id: ACTION_MM_SHARE,
+            placeholder: { type: "plain_text", text: "他のワークスペースに共有" },
+            options,
+            confirm: {
+              title: { type: "plain_text", text: "議事録を共有" },
+              text: {
+                type: "plain_text",
+                text: "選択先へ生成済み議事録だけを共有します。元のtranscriptは共有しません。",
+              },
+              confirm: { type: "plain_text", text: "共有する" },
+              deny: { type: "plain_text", text: "やめる" },
+            },
+          },
+        ],
+      });
+    }
+    return blocks;
+  }
+
   // -------------------------------------------------------------------------
   // Actions
   // -------------------------------------------------------------------------
 
-  private parseSelectedValue(action: any): { key: string; projectId?: string } | null {
+  private parseSelectedValue(action: any): { key: string; projectId?: string; shareId?: string } | null {
     const raw = action?.selected_option?.value ?? action?.value;
     try {
       const parsed = JSON.parse(raw ?? "");
@@ -794,6 +934,11 @@ export class MeetingMinutesPipeline {
       await this.notifyEphemeral(body, "この実行は期限切れです。transcriptを再アップロードしてください。");
       return null;
     }
+    if (!channelId || channelId !== run.routerChannelId) {
+      logger.warn(`[meeting-minutes] action channel mismatch for ${value.key}`);
+      await this.notifyEphemeral(body, "この操作元が議事録の実行チャンネルと一致しません。");
+      return null;
+    }
     return { state, key: value.key, run };
   }
 
@@ -812,6 +957,8 @@ export class MeetingMinutesPipeline {
     run.projectId = destination.projectId;
     run.destinationChannelId = destination.channelId;
     run.routingReason = "operator選択";
+    run.destinationApprovedBy = body.user.id;
+    run.destinationApprovedAt = Date.now();
     advanceStatus(run, "routed");
     run.updatedAt = Date.now();
     saveState(state);
@@ -837,37 +984,89 @@ export class MeetingMinutesPipeline {
     const next = this.destinations.find((d) => d.projectId === value?.projectId);
     if (!next || next.projectId === run.projectId) return;
     const previousChannelId = run.destinationChannelId;
+    if (run.reroute && run.reroute.status !== "completed") {
+      await this.notifyEphemeral(
+        body,
+        "前回の振り直し結果が未確定です。重複投稿を避けるため自動再実行しません。",
+      );
+      return;
+    }
+
+    run.reroute = {
+      projectId: next.projectId,
+      destinationChannelId: next.channelId,
+      status: "scrubbing",
+      scrubbedMessageTs: [],
+      postedThreadTs: [],
+      updatedAt: Date.now(),
+    };
+    saveState(state);
 
     try {
+      // Remove the generated content from the wrong destination before
+      // reposting. Keep a small audit marker instead of leaking the old text.
+      if (previousChannelId && run.postedParentTs) {
+        await this.client.apiCall("chat.update", {
+          channel: previousChannelId,
+          ts: run.postedParentTs,
+          text: `⚠️ 振り分け誤りのため <#${next.channelId}> へ移動しました`,
+          blocks: [],
+        });
+        run.reroute.scrubbedMessageTs.push(run.postedParentTs);
+        run.reroute.updatedAt = Date.now();
+        saveState(state);
+        for (const threadTs of run.postedThreadTs ?? []) {
+          await this.client.apiCall("chat.update", {
+            channel: previousChannelId,
+            ts: threadTs,
+            text: "（振り分け誤りのため議事録本文を移動しました）",
+            blocks: [],
+          });
+          run.reroute.scrubbedMessageTs.push(threadTs);
+          run.reroute.updatedAt = Date.now();
+          saveState(state);
+        }
+      }
+      run.reroute.status = "posting";
+      run.reroute.updatedAt = Date.now();
+      saveState(state);
       const parent = await this.client.apiCall("chat.postMessage", {
         channel: next.channelId,
         text: run.minutes.overview,
         unfurl_links: false,
       });
-      const newParentTs = (parent.ts as string) ?? "";
+      if (typeof parent.ts !== "string" || !parent.ts) {
+        throw new Error("reroute parent post returned no timestamp");
+      }
+      const newParentTs = parent.ts;
+      run.reroute.postedParentTs = newParentTs;
+      run.reroute.updatedAt = Date.now();
+      saveState(state);
+      const newThreadTs: string[] = [];
       for (const chunk of splitForSlack(run.minutes.body)) {
-        await this.client.apiCall("chat.postMessage", {
+        const child = await this.client.apiCall("chat.postMessage", {
           channel: next.channelId,
           thread_ts: newParentTs,
           text: chunk,
           unfurl_links: false,
         });
-      }
-      // Annotate (not delete) the old parent — threads may already have replies.
-      if (previousChannelId && run.postedParentTs) {
-        await this.client.apiCall("chat.update", {
-          channel: previousChannelId,
-          ts: run.postedParentTs,
-          text: `⚠️ 振り分け誤りのため <#${next.channelId}> へ移動しました\n\n${run.minutes.overview}`,
-        }).catch((err: unknown) => {
-          logger.warn(`[meeting-minutes] old parent annotation failed: ${err}`);
-        });
+        if (typeof child.ts !== "string" || !child.ts) {
+          throw new Error("reroute thread post returned no timestamp");
+        }
+        newThreadTs.push(child.ts);
+        run.reroute.postedThreadTs.push(child.ts);
+        run.reroute.updatedAt = Date.now();
+        saveState(state);
       }
       run.projectId = next.projectId;
       run.destinationChannelId = next.channelId;
       run.inPlace = false;
       run.postedParentTs = newParentTs;
+      run.postedThreadTs = newThreadTs;
       run.routingReason = "operator振り直し";
+      run.destinationApprovedBy = body.user.id;
+      run.destinationApprovedAt = Date.now();
+      run.reroute.status = "completed";
       run.updatedAt = Date.now();
       state.lastMinutesByChannel[next.channelId] = {
         title: run.minutes.title,
@@ -878,11 +1077,135 @@ export class MeetingMinutesPipeline {
       const summary = `✅ *${next.name}* <#${next.channelId}> へ振り直しました\n${run.minutes.title}\n_登録済みタスクはタスク登録メッセージの取り消し/編集から操作してください_`;
       await this.updateControl(state, key, {
         text: summary,
-        blocks: this.rerouteBlocks(key, summary, next.projectId),
+        blocks: this.successBlocks(key, summary, next.projectId),
       });
     } catch (err) {
+      run.reroute = {
+        ...(run.reroute ?? {
+          projectId: next.projectId,
+          destinationChannelId: next.channelId,
+          scrubbedMessageTs: [],
+          postedThreadTs: [],
+        }),
+        status: "failed",
+        error: String(err).slice(0, 300),
+        updatedAt: Date.now(),
+      };
+      saveState(state);
       logger.warn(`[meeting-minutes] reroute failed: ${err}`);
-      await this.notifyEphemeral(body, `振り直しに失敗しました: ${err}`);
+      await this.notifyEphemeral(
+        body,
+        `振り直しに失敗しました。旧・新投稿が一部残っている可能性があるため自動再実行しません: ${err}`,
+      );
+    }
+  }
+
+  /** Explicitly copy generated minutes to a configured destination in another workspace. */
+  async handleShareMinutes(body: any, action: any): Promise<void> {
+    const value = this.parseSelectedValue(action);
+    // The state file is a whole-run snapshot. Lock the run, not the destination,
+    // so simultaneous shares to different targets cannot overwrite each other.
+    const lockKey = value?.key ?? null;
+    if (lockKey && this.shareLocks.has(lockKey)) {
+      await this.notifyEphemeral(body, "この共有先への処理はすでに進行中です。");
+      return;
+    }
+    if (lockKey) this.shareLocks.add(lockKey);
+    try {
+      const loaded = await this.loadAuthorizedRun(body, value);
+      if (!loaded) return;
+      const { state, key, run } = loaded;
+      if ((STATUS_RANK[run.status] ?? -1) < STATUS_RANK.posted || !run.minutes) {
+        await this.notifyEphemeral(body, "議事録の通常投稿が完了するまで共有できません。");
+        return;
+      }
+      const destination = this.shareDestinations.find(
+        (candidate) =>
+          candidate.shareId === value?.shareId && candidate.projectId === run.projectId,
+      );
+      if (!destination) {
+        await this.notifyEphemeral(body, "共有先が現在の設定と一致しません。共有を中止しました。");
+        return;
+      }
+      const existing = run.shares?.[destination.shareId];
+      if (existing) {
+        await this.notifyEphemeral(
+          body,
+          existing.status === "posted"
+            ? "この共有先への議事録共有は完了済みです。"
+            : "前回の共有状態を確認できないため再送しません。運用担当者が確認してください。",
+        );
+        return;
+      }
+      const share = this.deps.shareMinutes;
+      const sourceConnectorInstanceId = this.deps.sourceConnectorInstanceId;
+      if (!share || !sourceConnectorInstanceId) {
+        await this.notifyEphemeral(body, "共有用connectorが未接続です。投稿は行いませんでした。");
+        return;
+      }
+      const now = Date.now();
+      run.shares ??= {};
+      run.shares[destination.shareId] = {
+        status: "posting",
+        connectorInstanceId: destination.connectorInstanceId,
+        workspaceId: destination.workspaceId,
+        channelId: destination.channelId,
+        approvedBy: body.user.id,
+        approvedAt: now,
+        updatedAt: now,
+      };
+      if (!saveState(state)) {
+        await this.notifyEphemeral(body, "共有承認を永続化できなかったため投稿しませんでした。");
+        return;
+      }
+      try {
+        const result = await share({
+          sourceConnectorInstanceId,
+          destination,
+          minutes: run.minutes,
+          onProgress: ({ parentTs, threadTs }) => {
+            const progressState = loadState();
+            const progressShare = progressState.runs[key]?.shares?.[destination.shareId];
+            if (!progressShare || progressShare.status !== "posting") {
+              throw new Error("share authority state is unavailable");
+            }
+            progressShare.postedParentTs = parentTs;
+            progressShare.postedThreadTs = [...threadTs];
+            progressShare.updatedAt = Date.now();
+            if (!saveState(progressState)) throw new Error("share progress could not be persisted");
+          },
+        });
+        const fresh = loadState();
+        const freshRun = fresh.runs[key];
+        if (!freshRun?.shares?.[destination.shareId]) return;
+        freshRun.shares[destination.shareId] = {
+          ...freshRun.shares[destination.shareId],
+          status: "posted",
+          postedParentTs: result.parentTs,
+          updatedAt: Date.now(),
+        };
+        saveState(fresh);
+        await this.postControl(run.routerChannelId, run.sourceTs, undefined, {
+          text: `✅ ${destination.name} へ議事録を共有しました。`,
+        });
+      } catch (err) {
+        const fresh = loadState();
+        const freshRun = fresh.runs[key];
+        if (freshRun?.shares?.[destination.shareId]) {
+          freshRun.shares[destination.shareId] = {
+            ...freshRun.shares[destination.shareId],
+            status: "failed",
+            error: String(err).slice(0, 300),
+            updatedAt: Date.now(),
+          };
+          saveState(fresh);
+        }
+        await this.postControl(run.routerChannelId, run.sourceTs, undefined, {
+          text: `⚠️ ${destination.name} への共有に失敗しました。重複防止のため自動再送はしません。`,
+        });
+      }
+    } finally {
+      if (lockKey) this.shareLocks.delete(lockKey);
     }
   }
 

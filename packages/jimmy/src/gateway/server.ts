@@ -113,6 +113,21 @@ export function buildSlackConnectorContext(
   };
 }
 
+export function createMeetingMinutesShareGateway(
+  connectorMap: Map<string, Connector>,
+): NonNullable<SlackConnectorContext["shareMeetingMinutes"]> {
+  return async (request) => {
+    if (request.sourceConnectorInstanceId === request.destination.connectorInstanceId) {
+      throw new Error("cross-workspace share requires a different target connector");
+    }
+    const target = connectorMap.get(request.destination.connectorInstanceId);
+    if (!(target instanceof SlackConnector)) {
+      throw new Error(`target Slack connector not found: ${request.destination.connectorInstanceId}`);
+    }
+    return target.postSharedMeetingMinutes(request);
+  };
+}
+
 /**
  * Single routing gate for EVERY connector message. When `placements` are
  * configured this is fail-closed: a message that does not resolve to a unique,
@@ -402,6 +417,7 @@ export async function startGateway(
   const connectorMap = new Map<string, Connector>();
   /** IDs of connectors created from config.connectors.instances[] (vs legacy top-level connectors) */
   const instanceConnectorIds = new Set<string>();
+  const shareMeetingMinutes = createMeetingMinutesShareGateway(connectorMap);
 
   // ---- Top-level connector start/stop helpers (closure over employeeRegistry, connectors, etc.) ----
   // These are defined here so they can be reused by both initial startup AND
@@ -457,6 +473,7 @@ export async function startGateway(
                 : cfg.engines.default) === "claude",
               sessionManager,
             ),
+            shareMeetingMinutes,
             // Invite-driven auto-provisioning. The module re-reads config.yaml
             // from disk (single source of truth) and fails closed on every
             // error; only a real creation returns a greeting to post.
@@ -652,11 +669,14 @@ export async function startGateway(
             const slackConfig = resolveSlackInstanceRuntimeConfig({ ...typeConfig, id } as any);
             const slack = new SlackConnector(
               slackConfig,
-              buildSlackConnectorContext(
-                config,
-                (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
-                sessionManager,
-              ),
+              {
+                ...buildSlackConnectorContext(
+                  config,
+                  (employee ? employeeRegistry.get(employee)?.engine : config.engines.default) === "claude",
+                  sessionManager,
+                ),
+                shareMeetingMinutes,
+              },
             );
             slack.onMessage((msg) => {
               const routeOpts = resolveRouteOptions(config, msg, employeeRegistry, employee);
@@ -778,11 +798,14 @@ export async function startGateway(
               // `config`) so renamed portals show up after a hot-reload.
               const slack = new SlackConnector(
                 slackConfig,
-                buildSlackConnectorContext(
-                  freshConfig,
-                  (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
-                  sessionManager,
-                ),
+                {
+                  ...buildSlackConnectorContext(
+                    freshConfig,
+                    (employee ? employeeRegistry.get(employee)?.engine : freshConfig.engines.default) === "claude",
+                    sessionManager,
+                  ),
+                  shareMeetingMinutes,
+                },
               );
               slack.onMessage((msg) => {
                 const routeOpts = resolveRouteOptions(freshConfig, msg, employeeRegistry, employee);

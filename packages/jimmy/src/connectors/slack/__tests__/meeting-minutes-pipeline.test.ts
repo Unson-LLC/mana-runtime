@@ -67,6 +67,9 @@ function makePipeline(overrides: {
   classify?: ReturnType<typeof vi.fn>;
   generate?: ReturnType<typeof vi.fn>;
   handoff?: ReturnType<typeof vi.fn> | null;
+  share?: ReturnType<typeof vi.fn>;
+  /** Test-only convenience: emulate the operator selecting the LLM suggestion. */
+  autoConfirm?: boolean;
 } = {}) {
   const { app, apiCall } = makeApp();
   const fetchTranscript =
@@ -94,9 +97,33 @@ function makePipeline(overrides: {
       graphClient: makeGraphClient(),
       taskClientFactory: () => makeTaskClient(),
       taskProposalNotifier: handoff ? { processMinutesText: handoff as any } : null,
+      sourceConnectorInstanceId: "slack",
+      shareMinutes: overrides.share as any,
     },
   );
   pipeline.register();
+  if (overrides.autoConfirm !== false) {
+    const maybeHandleFileMessage = pipeline.maybeHandleFileMessage.bind(pipeline);
+    pipeline.maybeHandleFileMessage = async (message: any) => {
+      await maybeHandleFileMessage(message);
+      if (!fs.existsSync(STATE_FILE)) return;
+      const state = readState();
+      const entry = Object.entries(state.runs).find(
+        ([, run]) => run.status === "awaiting_destination" && run.suggestedProjectId,
+      );
+      if (entry) {
+        const [key, run] = entry;
+        await pipeline.handleChooseDestination(
+          { user: { id: OPERATOR }, channel: { id: message.channel } },
+          {
+            selected_option: {
+              value: JSON.stringify({ key, projectId: run.suggestedProjectId }),
+            },
+          },
+        );
+      }
+    };
+  }
   return { pipeline, apiCall, fetchTranscript, classify, generate, handoff };
 }
 
@@ -158,38 +185,12 @@ describe("detection gates", () => {
     expect(fetchTranscript).not.toHaveBeenCalled();
   });
 
-  it('watches every channel when routerChannels contains "*"', async () => {
+  it('fails closed when routerChannels contains "*"', async () => {
     const { pipeline, fetchTranscript } = makePipeline({
-      config: { routerChannels: ["*"] },
-    });
-    await pipeline.maybeHandleFileMessage(fileEvent({ channel: "C_ANYWHERE" }));
-    expect(fetchTranscript).toHaveBeenCalledTimes(1);
-  });
-
-  it("expands in place without routing for wildcard-matched channels", async () => {
-    const { pipeline, apiCall, classify, handoff } = makePipeline({
-      config: { routerChannels: ["*", ROUTER] },
-    });
-    await pipeline.maybeHandleFileMessage(fileEvent({ channel: "C_ANYWHERE" }));
-
-    expect(classify).not.toHaveBeenCalled();
-    const posts = postedMessages(apiCall);
-    const parent = posts.find((p) => p.channel === "C_ANYWHERE" && !p.thread_ts);
-    expect(parent?.text).toContain("概要です");
-    expect(posts.some((p) => p.channel === "C_ST")).toBe(false);
-    const control = posts.find((p) => String(p.text).includes("このチャンネルへ議事録を展開しました"));
-    expect(control).toBeTruthy();
-    expect(handoff).toHaveBeenCalledWith("C_ANYWHERE", expect.any(String), MINUTES.body, expect.any(Number));
-  });
-
-  it("still routes via LLM for explicit router channels even with wildcard", async () => {
-    const { pipeline, apiCall, classify } = makePipeline({
       config: { routerChannels: ["*", ROUTER] },
     });
     await pipeline.maybeHandleFileMessage(fileEvent());
-    expect(classify).toHaveBeenCalledTimes(1);
-    const parent = postedMessages(apiCall).find((p) => p.channel === "C_ST" && !p.thread_ts);
-    expect(parent?.text).toContain("概要です");
+    expect(fetchTranscript).not.toHaveBeenCalled();
   });
 
   it("ignores non-file_share messages and non-.txt files", async () => {
@@ -212,8 +213,9 @@ describe("detection gates", () => {
     const { pipeline, fetchTranscript } = makePipeline();
     const event = fileEvent();
     await pipeline.maybeHandleFileMessage(event);
+    const callsAfterFirstDelivery = fetchTranscript.mock.calls.length;
     await pipeline.maybeHandleFileMessage(event);
-    expect(fetchTranscript).toHaveBeenCalledTimes(1);
+    expect(fetchTranscript).toHaveBeenCalledTimes(callsAfterFirstDelivery);
   });
 
   it("skips re-uploads of the same transcript by hash", async () => {
@@ -273,12 +275,38 @@ describe("happy path", () => {
     await pipeline.maybeHandleFileMessage(fileEvent());
     const run = Object.values(readState().runs)[0];
     expect(run.status).toBe("posted");
-    const control = postedMessages(apiCall).find((p) => p.channel === ROUTER);
+    const control = postedMessages(apiCall, "chat.update")
+      .filter((p) => p.channel === ROUTER)
+      .at(-1);
     expect(control?.text).toContain("タスク自動登録は未接続");
   });
 });
 
 describe("routing fallback", () => {
+  it("requires operator confirmation by default", async () => {
+    const { pipeline, apiCall, generate } = makePipeline({
+      autoConfirm: false,
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    expect(Object.values(readState().runs)[0].status).toBe("awaiting_destination");
+    expect(generate).not.toHaveBeenCalled();
+    expect(postedMessages(apiCall).some((p) => p.channel === "C_ST")).toBe(false);
+  });
+
+  it("treats an LLM match as a proposal until an operator confirms it", async () => {
+    const { pipeline, apiCall, generate } = makePipeline({
+      autoConfirm: false,
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    const run = Object.values(readState().runs)[0];
+    expect(run.status).toBe("awaiting_destination");
+    expect(run.suggestedProjectId).toBe("proj_salestailor");
+    expect(generate).not.toHaveBeenCalled();
+    expect(postedMessages(apiCall).some((p) => p.channel === "C_ST")).toBe(false);
+  });
+
   it("posts a destination select instead of auto-posting when unroutable", async () => {
     const classify = vi.fn().mockResolvedValue(null);
     const { pipeline, apiCall, generate } = makePipeline({ classify });
@@ -306,7 +334,45 @@ describe("routing fallback", () => {
     const run = Object.values(readState().runs)[0];
     expect(run.projectId).toBe("proj_baao");
     expect(run.status).toBe("tasks_dispatched");
+    expect(run.destinationApprovedBy).toBe(OPERATOR);
+    expect(run.destinationApprovedAt).toEqual(expect.any(Number));
     expect(postedMessages(apiCall).some((p) => p.channel === "C_BAAO")).toBe(true);
+  });
+
+  it("uses the operator choice instead of the LLM proposal", async () => {
+    const { pipeline, apiCall, generate } = makePipeline({
+      autoConfirm: false,
+    });
+    const event = fileEvent();
+    await pipeline.maybeHandleFileMessage(event);
+    const key = runKey(ROUTER, "F001", event.ts as string);
+
+    await pipeline.handleChooseDestination(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_baao" }) } },
+    );
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(postedMessages(apiCall).some((p) => p.channel === "C_ST")).toBe(false);
+    expect(postedMessages(apiCall).some((p) => p.channel === "C_BAAO")).toBe(true);
+    expect(readState().runs[key].routingReason).toBe("operator選択");
+  });
+
+  it("rejects an action replayed from a different source channel", async () => {
+    const classify = vi.fn().mockResolvedValue(null);
+    const { pipeline, apiCall, generate } = makePipeline({ classify });
+    const event = fileEvent();
+    await pipeline.maybeHandleFileMessage(event);
+    const key = runKey(ROUTER, "F001", event.ts as string);
+    apiCall.mockClear();
+
+    await pipeline.handleChooseDestination(
+      { user: { id: OPERATOR }, channel: { id: "C_OTHER_ROUTER" } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_baao" }) } },
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(postedMessages(apiCall).some((p) => p.channel === "C_BAAO")).toBe(false);
   });
 
   it("rejects unauthorized users", async () => {
@@ -328,6 +394,19 @@ describe("routing fallback", () => {
 });
 
 describe("failures and retry", () => {
+  it("does not post thread content when the parent timestamp is missing", async () => {
+    const { pipeline, apiCall } = makePipeline();
+    apiCall.mockImplementation(async (method: string, payload: any) => {
+      if (method === "chat.postMessage" && payload.channel === "C_ST") return { ok: true };
+      return { ok: true, ts: "5000.000001" };
+    });
+
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    const run = Object.values(readState().runs)[0];
+    expect(run.status).toBe("failed:post");
+    expect(postedMessages(apiCall).filter((p) => p.channel === "C_ST")).toHaveLength(1);
+  });
   it("marks failed:download and retries from the failed stage", async () => {
     const fetchTranscript = vi
       .fn()
@@ -343,6 +422,10 @@ describe("failures and retry", () => {
       { user: { id: OPERATOR }, channel: { id: ROUTER } },
       { value: JSON.stringify({ key }) },
     );
+    await pipeline.handleChooseDestination(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_salestailor" }) } },
+    );
     expect(readState().runs[key].status).toBe("tasks_dispatched");
   });
 
@@ -353,7 +436,9 @@ describe("failures and retry", () => {
     expect(generate).toHaveBeenCalledTimes(2);
     const run = Object.values(readState().runs)[0];
     expect(run.status).toBe("failed:generate");
-    const control = postedMessages(apiCall).find((p) => p.channel === ROUTER);
+    const control = postedMessages(apiCall, "chat.update")
+      .filter((p) => p.channel === ROUTER)
+      .at(-1);
     expect(JSON.stringify(control?.blocks)).toContain("meeting_minutes_retry");
   });
 
@@ -367,7 +452,11 @@ describe("failures and retry", () => {
     });
     const pipeline = new MeetingMinutesPipeline(
       app,
-      { enabled: true, routerChannels: [ROUTER], destinations: DESTINATIONS },
+      {
+        enabled: true,
+        routerChannels: [ROUTER],
+        destinations: DESTINATIONS,
+      },
       [OPERATOR],
       {
         fetchTranscript: vi.fn().mockResolvedValue({ text: TRANSCRIPT, fileName: "m.txt" }) as any,
@@ -379,7 +468,13 @@ describe("failures and retry", () => {
       },
     );
     pipeline.register();
-    await pipeline.maybeHandleFileMessage(fileEvent());
+    const event = fileEvent();
+    await pipeline.maybeHandleFileMessage(event);
+    const key = runKey(ROUTER, "F001", event.ts as string);
+    await pipeline.handleChooseDestination(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_salestailor" }) } },
+    );
     const run = Object.values(readState().runs)[0];
     expect(run.status).toBe("failed:post");
     expect(run.minutes?.body).toBe(MINUTES.body);
@@ -396,7 +491,7 @@ describe("reroute", () => {
     return { ...built, key };
   }
 
-  it("reposts to the new destination, annotates the old parent, keeps tasks untouched", async () => {
+  it("reposts to the new destination, scrubs the old post, keeps tasks untouched", async () => {
     const { pipeline, apiCall, handoff, key } = await postedRun();
     (handoff as ReturnType<typeof vi.fn>).mockClear();
 
@@ -410,6 +505,8 @@ describe("reroute", () => {
     const updates = postedMessages(apiCall, "chat.update");
     const annotation = updates.find((p) => p.channel === "C_ST");
     expect(annotation?.text).toContain("移動しました");
+    expect(JSON.stringify(updates.filter((p) => p.channel === "C_ST"))).not.toContain(MINUTES.overview);
+    expect(JSON.stringify(updates.filter((p) => p.channel === "C_ST"))).not.toContain(MINUTES.body);
     // The task handoff must NOT re-run (idempotency keys are bound to the old posting).
     expect(handoff).not.toHaveBeenCalled();
 
@@ -448,5 +545,172 @@ describe("reroute", () => {
     const ephemeral = apiCall.mock.calls.filter(([m]) => m === "chat.postEphemeral");
     expect(ephemeral.length).toBe(1);
     expect(postedMessages(apiCall).some((p) => p.channel === "C_BAAO")).toBe(false);
+  });
+
+  it("persists partial reroute progress and refuses an automatic duplicate retry", async () => {
+    const { pipeline, apiCall, key } = await postedRun();
+    let oldUpdates = 0;
+    apiCall.mockImplementation(async (method: string, payload: any) => {
+      if (method === "chat.update" && payload.channel === "C_ST" && ++oldUpdates === 2) {
+        throw new Error("scrub failed");
+      }
+      return { ok: true, ts: "7000.000001" };
+    });
+    const body = { user: { id: OPERATOR }, channel: { id: ROUTER } };
+    const action = {
+      selected_option: { value: JSON.stringify({ key, projectId: "proj_baao" }) },
+    };
+
+    await pipeline.handleReroute(body, action);
+    expect(readState().runs[key].reroute).toMatchObject({
+      status: "failed",
+      scrubbedMessageTs: [expect.any(String)],
+    });
+    const callsAfterFailure = apiCall.mock.calls.length;
+    await pipeline.handleReroute(body, action);
+    expect(apiCall.mock.calls.slice(callsAfterFailure).some(([m]) => m === "chat.update")).toBe(false);
+    expect(apiCall.mock.calls.slice(callsAfterFailure).some(([m]) => m === "chat.postMessage")).toBe(false);
+  });
+});
+
+describe("explicit cross-workspace share", () => {
+  const SHARE_DESTINATION = {
+    shareId: "baao-business",
+    projectId: "proj_baao",
+    name: "事業運営 / BAAO",
+    connectorInstanceId: "slack-biz",
+    workspaceId: "T_BIZ",
+    channelId: "C_BIZ_BAAO",
+  };
+
+  async function shareableRun(
+    share: ReturnType<typeof vi.fn>,
+    shareDestinations = [SHARE_DESTINATION],
+  ) {
+    const built = makePipeline({
+      share,
+      classify: vi.fn().mockResolvedValue({ destination: DESTINATIONS[1], reason: "BAAO" }),
+      config: { shareDestinations },
+    });
+    const event = fileEvent();
+    await built.pipeline.maybeHandleFileMessage(event);
+    return { ...built, key: runKey(ROUTER, "F001", event.ts as string) };
+  }
+
+  it("never invokes the target gateway without an explicit operator action", async () => {
+    const share = vi.fn().mockResolvedValue({ parentTs: "9000.1" });
+    await shareableRun(share);
+    expect(share).not.toHaveBeenCalled();
+  });
+
+  it("shares generated minutes through the exact target connector after approval", async () => {
+    const share = vi.fn().mockResolvedValue({ parentTs: "9000.1" });
+    const { pipeline, key } = await shareableRun(share);
+
+    await pipeline.handleShareMinutes(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, shareId: SHARE_DESTINATION.shareId }) } },
+    );
+
+    expect(share).toHaveBeenCalledWith(expect.objectContaining({
+      sourceConnectorInstanceId: "slack",
+      destination: SHARE_DESTINATION,
+      minutes: MINUTES,
+      onProgress: expect.any(Function),
+    }));
+    expect(JSON.stringify(share.mock.calls)).not.toContain(TRANSCRIPT);
+    expect(readState().runs[key].shares?.[SHARE_DESTINATION.shareId]).toMatchObject({
+      status: "posted",
+      postedParentTs: "9000.1",
+      approvedBy: OPERATOR,
+    });
+  });
+
+  it("fails closed for an unknown destination and dedupes a completed share", async () => {
+    const share = vi.fn().mockResolvedValue({ parentTs: "9000.1" });
+    const { pipeline, key } = await shareableRun(share);
+    const body = { user: { id: OPERATOR }, channel: { id: ROUTER } };
+
+    await pipeline.handleShareMinutes(body, {
+      selected_option: { value: JSON.stringify({ key, shareId: "tampered" }) },
+    });
+    expect(share).not.toHaveBeenCalled();
+
+    const action = {
+      selected_option: { value: JSON.stringify({ key, shareId: SHARE_DESTINATION.shareId }) },
+    };
+    await pipeline.handleShareMinutes(body, action);
+    await pipeline.handleShareMinutes(body, action);
+    expect(share).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes simultaneous approvals so the target is called once", async () => {
+    let release!: (value: { parentTs: string }) => void;
+    const share = vi.fn().mockImplementation(
+      () => new Promise<{ parentTs: string }>((resolve) => { release = resolve; }),
+    );
+    const { pipeline, key } = await shareableRun(share);
+    const body = { user: { id: OPERATOR }, channel: { id: ROUTER } };
+    const action = {
+      selected_option: { value: JSON.stringify({ key, shareId: SHARE_DESTINATION.shareId }) },
+    };
+
+    const first = pipeline.handleShareMinutes(body, action);
+    await vi.waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+    await pipeline.handleShareMinutes(body, action);
+    release({ parentTs: "9000.1" });
+    await first;
+
+    expect(share).toHaveBeenCalledTimes(1);
+  });
+
+  it("locks the whole run when two different share targets are clicked together", async () => {
+    const secondDestination = {
+      ...SHARE_DESTINATION,
+      shareId: "baao-second",
+      name: "事業運営 / BAAO backup",
+      channelId: "C_BIZ_BAAO_2",
+    };
+    let release!: (value: { parentTs: string }) => void;
+    const share = vi.fn().mockImplementation(
+      () => new Promise<{ parentTs: string }>((resolve) => { release = resolve; }),
+    );
+    const { pipeline, key } = await shareableRun(share, [SHARE_DESTINATION, secondDestination]);
+    const body = { user: { id: OPERATOR }, channel: { id: ROUTER } };
+    const action = (shareId: string) => ({
+      selected_option: { value: JSON.stringify({ key, shareId }) },
+    });
+
+    const first = pipeline.handleShareMinutes(body, action(SHARE_DESTINATION.shareId));
+    await vi.waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+    await pipeline.handleShareMinutes(body, action(secondDestination.shareId));
+    release({ parentTs: "9000.1" });
+    await first;
+
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(readState().runs[key].shares?.[secondDestination.shareId]).toBeUndefined();
+  });
+
+  it("retains target timestamps when a shared body fails partway", async () => {
+    const share = vi.fn().mockImplementation(async (request: any) => {
+      request.onProgress({ parentTs: "9000.1", threadTs: ["9000.2"] });
+      throw new Error("second chunk failed");
+    });
+    const { pipeline, key } = await shareableRun(share);
+
+    await pipeline.handleShareMinutes(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      {
+        selected_option: {
+          value: JSON.stringify({ key, shareId: SHARE_DESTINATION.shareId }),
+        },
+      },
+    );
+
+    expect(readState().runs[key].shares?.[SHARE_DESTINATION.shareId]).toMatchObject({
+      status: "failed",
+      postedParentTs: "9000.1",
+      postedThreadTs: ["9000.2"],
+    });
   });
 });

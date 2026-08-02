@@ -632,11 +632,20 @@ export interface SlackConnectorConfig {
     enabled?: boolean;
     /**
      * Router channel IDs to watch for .txt uploads. Required; empty = off.
-     * "*" watches every channel the bot is in.
+     * Wildcards are forbidden; every router must be explicitly allowlisted.
      */
     routerChannels?: string[];
     /** Destination projects (projectId / name / channelId). Required; empty = off. */
     destinations?: { projectId: string; name: string; channelId: string }[];
+    /** Explicitly approved cross-workspace copy targets. Never used by the LLM router. */
+    shareDestinations?: {
+      shareId: string;
+      projectId: string;
+      name: string;
+      connectorInstanceId: string;
+      workspaceId: string;
+      channelId: string;
+    }[];
     /** User IDs allowed to reroute/retry. Defaults to allowFrom. */
     operatorUserIds?: string[];
     /** Max transcript file size in bytes. Default 1 MiB. */
