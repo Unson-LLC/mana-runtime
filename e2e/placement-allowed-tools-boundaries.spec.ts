@@ -38,8 +38,11 @@ test.describe('Placement allowed-tools boundaries', () => {
     expect(output, 'vibepro: ac:3 deny precedence — サーバー全体許可でも恒常denyはdisallowedToolsに残る').toContain(
       'keeps every constant deny in disallowedTools even when its server is wholesale-allowed (deny beats allow)',
     )
-    expect(output, 'vibepro: ac:4 freee write deny — 書込系5ツールが全placementでdenyされる').toContain(
-      'denies freee write tools in every placement session (read-only until G2)',
+    // The interim ac:4 pinning was replaced by the G2 read-only vocabulary
+    // (Story mcp-readonly-vocabulary): the same deny set is now derived from
+    // the catalog's writeTools declaration + a read-only grant.
+    expect(output, 'vibepro: ac:4 freee write deny — 書込系5ツールがカタログ宣言+read-only指定から同一denyとして導出される').toContain(
+      'replaces the interim freee pinning: catalog writeTools + read-only grant derive the identical deny set (MCPRO-STORY-S-001)',
     )
     expect(output, 'vibepro: ac:6 global independence — placement導出リストがグローバルリストを置換する').toContain(
       "a placement's derived allow list replaces the global interactiveAllowedTools for that spawn",

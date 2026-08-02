@@ -1,5 +1,5 @@
-import type { PlacementProfile } from '../shared/types.js';
-import { placementDeliveryTargets, safePlacementDataScopes } from '../shared/placement-profile.js';
+import type { McpGlobalConfig, PlacementProfile } from '../shared/types.js';
+import { placementDeliveryTargets, resolvePlacementMcp, safePlacementDataScopes } from '../shared/placement-profile.js';
 import { getCostsByPlacement, UNPLACED_COST_KEY, type PlacementCostRow } from './costs.js';
 
 export interface PlacementLedgerEntry {
@@ -16,7 +16,12 @@ export interface PlacementLedgerEntry {
   defaultModel: string | null;
   /** False when agent.employee is unset — the placement escapes employee budgets. */
   budgetTracked: boolean;
-  mcp: false | string[];
+  /**
+   * Granted MCP servers with their granularity mode, plus grants rejected
+   * fail-closed (read-only requested without a catalog tool classification) —
+   * the ledger must show enforcement outcome, not just configured intent.
+   */
+  mcp: false | { name: string; mode: 'full' | 'read-only'; rejected?: true }[];
   gatewayTools: string[];
   deliveryTargets: string[];
   monthlyCost: number;
@@ -40,7 +45,10 @@ export interface PlacementLedger {
  * Agent ledger projection: a fixed field allowlist (never the raw profile) with
  * value-level redaction on free-text fields, joined with monthly placement costs.
  */
-export function buildPlacementLedger(placements: PlacementProfile[] | undefined): PlacementLedger {
+export function buildPlacementLedger(
+  placements: PlacementProfile[] | undefined,
+  mcpCatalog?: McpGlobalConfig,
+): PlacementLedger {
   const costRows = getCostsByPlacement('month');
   const costsById = new Map(costRows.map((row) => [row.placementId, row]));
   const configured = placements ?? [];
@@ -61,7 +69,15 @@ export function buildPlacementLedger(placements: PlacementProfile[] | undefined)
       employee: placement.agent?.employee ?? null,
       defaultModel: placement.agent?.defaultModel ?? null,
       budgetTracked: Boolean(placement.agent?.employee),
-      mcp: placement.capabilities?.mcp ?? false,
+      mcp: Array.isArray(placement.capabilities?.mcp)
+        ? (() => {
+          const { granted, rejected } = resolvePlacementMcp(placement, mcpCatalog);
+          return [
+            ...granted,
+            ...rejected.map((name) => ({ name, mode: 'read-only' as const, rejected: true as const })),
+          ];
+        })()
+        : false,
       gatewayTools: placement.capabilities?.gatewayTools ?? [],
       deliveryTargets: placementDeliveryTargets(placement).map((target) => `${target.connector}:${target.channel}`),
       monthlyCost: cost?.cost ?? 0,

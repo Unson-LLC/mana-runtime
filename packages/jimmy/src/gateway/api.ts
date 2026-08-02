@@ -65,7 +65,7 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, placementDeliveryTargets, placementMcpServerNames, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
@@ -820,7 +820,7 @@ export async function handleApiRequest(
     // GET /api/placements — agent ledger view (operator-protected like other GET APIs)
     if (method === "GET" && pathname === "/api/placements") {
       const { buildPlacementLedger } = await import("./placements.js");
-      return json(res, buildPlacementLedger(context.getConfig().placements));
+      return json(res, buildPlacementLedger(context.getConfig().placements, context.getConfig().mcp));
     }
 
     // GET /api/instances
@@ -2841,7 +2841,7 @@ export async function runWebSession(
       configRevision: placementConfigRevision(config.placements),
       allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
       allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
-    }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
+    }, placement ? placementMcpServerNames(placement, config.mcp) : undefined);
     // A Placement must always receive an explicit config, including an empty
     // one, so --strict-mcp-config can exclude user/global MCPs.
     if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
@@ -2937,7 +2937,7 @@ export async function runWebSession(
           logger.warn(`Failed to emit stream delta for session ${currentSession.id}: ${err instanceof Error ? err.message : err}`);
         }
       },
-    }, config.placements).finally(() => {
+    }, config.placements, config.mcp).finally(() => {
       clearInterval(runHeartbeat);
     });
 
@@ -3034,7 +3034,7 @@ export async function runWebSession(
                 subAgent: delta.subAgent,
               });
             },
-          }, config.placements);
+          }, config.placements, config.mcp);
 
           if (fallbackResult.result) {
             insertMessage(currentSession.id, "assistant", fallbackResult.result);
@@ -3172,7 +3172,7 @@ export async function runWebSession(
                 subAgent: delta.subAgent,
               });
             },
-          }, config.placements);
+          }, config.placements, config.mcp);
 
           const retryInterrupted = retryResult.error?.startsWith("Interrupted");
           const retryRateLimit = !retryInterrupted ? detectRateLimit(retryResult) : { limited: false as const };

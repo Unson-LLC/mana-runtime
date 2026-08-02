@@ -51,7 +51,7 @@ import {
   type PendingDevelopmentRun,
 } from "./development-pending.js";
 import { reconcilePendingDevelopmentRuns } from "./development-reconciler.js";
-import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
+import { placementDeliveryTargets, placementMcpServerNames, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
@@ -661,7 +661,7 @@ export class SessionManager {
           configRevision: placementConfigRevision(this.config.placements),
           allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
           allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
-        }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
+        }, placement ? placementMcpServerNames(placement, this.config.mcp) : undefined);
         // A Placement must always receive an explicit config, including an
         // empty one, so --strict-mcp-config can exclude user/global MCPs.
         if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
@@ -800,7 +800,7 @@ export class SessionManager {
         attachments: attachments.length > 0 ? attachments : undefined,
         sessionId: session.id,
         keepWarmPty: false,
-      }, this.config.placements);
+      }, this.config.placements, this.config.mcp);
 
       let wasInterrupted = result.error?.startsWith("Interrupted");
 
@@ -873,7 +873,7 @@ export class SessionManager {
           attachments: attachments.length > 0 ? attachments : undefined,
           sessionId: session.id,
           keepWarmPty: false,
-        }, this.config.placements);
+        }, this.config.placements, this.config.mcp);
 
         // Re-evaluate the flags against the retry result. If the retry also
         // comes back dead, something deeper is wrong — log and fall through to
@@ -929,7 +929,7 @@ export class SessionManager {
             mcpConfigPath,
             sessionId: session.id,
             keepWarmPty: false,
-          }, this.config.placements);
+          }, this.config.placements, this.config.mcp);
           wasInterrupted = result.error?.startsWith("Interrupted");
           if (wasInterrupted || !isTransientServerError(result)) break;
         }
@@ -1018,7 +1018,7 @@ export class SessionManager {
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
               keepWarmPty: false,
-            }, this.config.placements);
+            }, this.config.placements, this.config.mcp);
 
             const fallbackText = fallbackResult.result?.trim()
               ? fallbackResult.result
@@ -1163,7 +1163,7 @@ export class SessionManager {
               attachments: attachments.length > 0 ? attachments : undefined,
               sessionId: session.id,
               keepWarmPty: false,
-            }, this.config.placements);
+            }, this.config.placements, this.config.mcp);
 
             const retryInterrupted = retryResult.error?.startsWith("Interrupted");
             const retryRateLimit = !retryInterrupted ? detectRateLimit(retryResult) : { limited: false as const };

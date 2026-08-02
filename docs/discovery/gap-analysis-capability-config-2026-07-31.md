@@ -32,12 +32,12 @@
 
 | # | ギャップ | 現状 | あるべき姿 | 実現性 |
 |---|---|---|---|---|
-| G1 | **ツール許可がグローバルかつboot束縛** | ~~`interactiveAllowedTools`は全placement共通・エンジンconstructor固定~~ **解消（2026-07-31, Story placement-allowed-tools）**: placementのcapabilitiesから`placementAllowedTools`がspawnごとに導出し、EngineRunOpts.allowedToolsで渡す。グローバルリストは非placement専用に後退 | placementのcapabilitiesから**セッションごとに導出**し、spawn引数で渡す | **済**: 導出は`mcp__<server>__*`（サーバー全体）+`mcp__gateway__<tool>`（個別）。freee書込系5ツールは`PLACEMENT_MCP_TOOL_DENY`で全placement遮断（G2までの暫定） |
-| G2 | **read/write粒度の語彙がない** | freeeのread限定は「グローバルallowlistにreadツールだけ手で列挙」で表現（8ツール名の手書き） | `capabilities.mcp`を `freee: read-only` 形式に拡張し、ツール選別を導出 | 中: MCPごとのread/writeツール分類（G6のカタログメタデータ）が前提 |
+| G1 | **ツール許可がグローバルかつboot束縛** | ~~`interactiveAllowedTools`は全placement共通・エンジンconstructor固定~~ **解消（2026-07-31, Story placement-allowed-tools）**: placementのcapabilitiesから`placementAllowedTools`がspawnごとに導出し、EngineRunOpts.allowedToolsで渡す。グローバルリストは非placement専用に後退 | placementのcapabilitiesから**セッションごとに導出**し、spawn引数で渡す | **済**: 導出は`mcp__<server>__*`（サーバー全体）+`mcp__gateway__<tool>`（個別）。freee書込系5ツールの暫定`PLACEMENT_MCP_TOOL_DENY`遮断はG2のread-only語彙で置換済み |
+| G2 | **read/write粒度の語彙がない** | ~~freeeのread限定は書込5ツールの`PLACEMENT_MCP_TOOL_DENY`固定列挙（暫定）~~ **解消（2026-07-31, Story mcp-readonly-vocabulary）**: `capabilities.mcp`のエントリを`{name: freee, mode: read-only}`形式で書け、カタログのwriteToolsが--disallowedToolsへ導出される。分類宣言のないサーバーへのread-only指定はfail-closed拒否 | `capabilities.mcp`を read-only 形式に拡張し、ツール選別を導出 | **済**: 恒常denyに残るのは個人KG（G7の機微既定）のみ。台帳・能力宣言にもmodeが出る |
 | G3 | **dataScopes宣言が手書きで乖離する** | capabilitiesにfreeeを足してもdataScopesに書き忘れるとモデルが自主拒否。逆に能力の無いplacementに宣言だけ残る事故も実発生（mana-dev-biz巻き込み） | プロンプトに注入するソフト境界宣言を**capabilitiesから自動生成**（手書きdataScopesは補足追記のみ） | **対応済（2026-07-31）**: context.tsの`buildPlacementCapabilityLines`がcapabilities.mcp（恒常deny併記）・gatewayTools・allowedDeliveryから宣言を生成。dataScopesは「supplementary」として序列を明示 |
 | G4 | **hot-reloadがエンジンに届かない** | ~~エンジンのallowedToolsはboot時のまま~~ **解消（2026-07-31, G1と同時）**: 境界導出はrun毎の純関数となり、config hot-reloadが次spawnから反映。warm PTYはspawn境界鍵（allow+deny+Bashガード）の変化でcold-respawn | G1でspawn時にconfigを参照する構造になれば自然解消 | **済**（G1に包含） |
 | G5 | **gatewayツールのroute対応表がハードコード** | TOOLS配列とapi.tsの対応表を手で同期（A-5） | TOOLS配列にroute定義（method/path）を同居させ、対応表を生成 | 高: 機械的な移動 |
-| G6 | **MCPカタログにツールメタデータがない** | どのツールがread/writeかはコードや運用者の頭の中 | `mcp.custom.<name>.tools`にread/write分類（スキルfrontmatterと同型の宣言） | 中: 分類の初期整備が必要（freee/brainbase/nocodbの3つから） |
+| G6 | **MCPカタログにツールメタデータがない** | ~~どのツールがread/writeかはコードや運用者の頭の中~~ **解消（2026-07-31, G2と同時）**: `mcp.custom.<name>.tools.writeTools`にbareツール名で書込分類を宣言できる（スキルfrontmatterと同型の資産側自己宣言） | `mcp.custom.<name>.tools`にread/write分類 | **済**（語彙・導出）。分類の初期整備はfreeeのみ — brainbase/nocodbは必要になった時に宣言を足す |
 | G7 | **恒常denyの置き場** | `search_personal_kg`恒常denyはPR #47の`PLACEMENT_MCP_TOOL_DENY`定数（コード） | 現状維持でよい（機微の既定はコード固定が正しい）。G2のread-only導出はこの機構の上に載せる | — |
 
 ## 埋める順序の提案
@@ -45,7 +45,7 @@
 1. **PR #47をマージ**（前提基盤: `placementDefaults`・`PLACEMENT_MCP_TOOL_DENY`・channel-members audience）
 2. ~~**G1+G4**: per-placementツール許可の導出とspawn時バインド~~ **完了（2026-07-31, Story placement-allowed-tools）** — 再起動不要化と「3箇所目の登録」の廃止。今回の障害の直接原因を消す最小単位
 3. **G3**: ソフト境界宣言の自動生成 — 「4箇所目」の廃止
-4. **G2+G6**: read-only語彙とカタログメタデータ — freeeの手書き8ツール列挙を置換
+4. ~~**G2+G6**: read-only語彙とカタログメタデータ~~ **完了（2026-07-31, Story mcp-readonly-vocabulary）** — freeeの手書きツール列挙を置換
 5. **G5**: route対応表の生成化（独立・任意タイミング）
 
 2〜4が完了すると、MCP追加は「①カタログ登録 ②capabilities.mcpに1語（+粒度）」の**2箇所・再起動不要**になり、目標UXに到達する。

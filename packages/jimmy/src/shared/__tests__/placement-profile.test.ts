@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementAllowedTools, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
-import type { PlacementProfile } from "../types.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementAllowedTools, placementEngineBoundary, placementMcpServerNames, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementReadOnlyDenyRules, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, resolvePlacementMcp, runPlacementBoundEngine } from "../placement-profile.js";
+import type { McpGlobalConfig, PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
   id: "mana-test",
@@ -178,21 +178,120 @@ describe("placementAllowedTools", () => {
   });
 
   it("derives the freee server allow from capabilities.mcp alone without any global registration (ALLOWTOOLS-STORY-S-001)", () => {
-    // mana-accounting/mana-backoffice shape: freee granted via capabilities only.
+    // mana-accounting/mana-backoffice shape: freee granted read-only via the
+    // G2 vocabulary, write tools classified by the catalog (G6).
     const accounting: PlacementProfile = {
       ...placement,
       id: "mana-accounting",
-      capabilities: { mcp: ["brainbase", "gateway", "freee"], gatewayTools: ["create_task"] },
+      capabilities: {
+        mcp: ["brainbase", "gateway", { name: "freee", mode: "read-only" }],
+        gatewayTools: ["create_task"],
+      },
     };
-    const boundary = placementEngineBoundary(accounting);
+    const boundary = placementEngineBoundary(accounting, undefined, FREEE_CATALOG);
     expect(boundary.allowedTools).toContain("mcp__freee__*");
-    // The write surface stays denied in the same spawn (read-only until G2).
-    for (const tool of [
-      "mcp__freee__freee_api_post", "mcp__freee__freee_api_put", "mcp__freee__freee_api_delete",
-      "mcp__freee__freee_api_patch", "mcp__freee__freee_file_upload",
-    ]) {
+    // The write surface stays denied in the same spawn (derived, not pinned).
+    for (const tool of FREEE_WRITE_TOOL_RULES) {
       expect(boundary.disallowedTools).toContain(tool);
     }
+  });
+});
+
+// Catalog shape a pilot config declares for freee (G6 tool classification).
+const FREEE_CATALOG: McpGlobalConfig = {
+  custom: {
+    freee: {
+      command: "npx",
+      tools: {
+        writeTools: [
+          "freee_api_post", "freee_api_put", "freee_api_delete",
+          "freee_api_patch", "freee_file_upload",
+        ],
+      },
+    },
+  },
+};
+
+// The exact deny set the interim PLACEMENT_MCP_TOOL_DENY pinning produced.
+const FREEE_WRITE_TOOL_RULES = [
+  "mcp__freee__freee_api_post", "mcp__freee__freee_api_put", "mcp__freee__freee_api_delete",
+  "mcp__freee__freee_api_patch", "mcp__freee__freee_file_upload",
+];
+
+describe("resolvePlacementMcp (G2 read-only vocabulary + G6 catalog classification)", () => {
+  it("treats plain-string entries as full grants (backward compatibility)", () => {
+    expect(resolvePlacementMcp({ capabilities: { mcp: ["brainbase", "gateway"] } })).toEqual({
+      granted: [{ name: "brainbase", mode: "full" }, { name: "gateway", mode: "full" }],
+      rejected: [],
+    });
+  });
+
+  it("grants read-only mode when the catalog declares a tool classification", () => {
+    expect(resolvePlacementMcp(
+      { capabilities: { mcp: [{ name: "freee", mode: "read-only" }] } },
+      FREEE_CATALOG,
+    )).toEqual({ granted: [{ name: "freee", mode: "read-only" }], rejected: [] });
+  });
+
+  it("rejects a read-only grant fail-closed when the catalog declares no tool classification (MCPRO-STORY-S-002)", () => {
+    expect(resolvePlacementMcp(
+      { capabilities: { mcp: [{ name: "nocodb", mode: "read-only" }] } },
+      FREEE_CATALOG,
+    )).toEqual({ granted: [], rejected: ["nocodb"] });
+    // No catalog at all: same fail-closed outcome, never widened to full.
+    expect(resolvePlacementMcp(
+      { capabilities: { mcp: [{ name: "freee", mode: "read-only" }] } },
+    )).toEqual({ granted: [], rejected: ["freee"] });
+  });
+
+  it("rejects unknown modes and malformed entries instead of widening to full access", () => {
+    expect(resolvePlacementMcp({
+      capabilities: { mcp: [{ name: "freee", mode: "write-only" as never }] },
+    }, FREEE_CATALOG)).toEqual({ granted: [], rejected: ["freee"] });
+    expect(resolvePlacementMcp({
+      capabilities: { mcp: [{ mode: "read-only" } as never] },
+    }, FREEE_CATALOG)).toEqual({ granted: [], rejected: [] });
+  });
+
+  it("accepts an explicit full mode in the object form", () => {
+    expect(resolvePlacementMcp(
+      { capabilities: { mcp: [{ name: "freee", mode: "full" }] } },
+    )).toEqual({ granted: [{ name: "freee", mode: "full" }], rejected: [] });
+  });
+});
+
+describe("placementMcpServerNames", () => {
+  it("returns false when capabilities.mcp is false or absent (deny by default)", () => {
+    expect(placementMcpServerNames({ capabilities: { mcp: false } })).toBe(false);
+    expect(placementMcpServerNames({})).toBe(false);
+  });
+
+  it("excludes fail-closed rejected servers so they are never spawned", () => {
+    expect(placementMcpServerNames({
+      capabilities: { mcp: ["brainbase", { name: "freee", mode: "read-only" }] },
+    })).toEqual(["brainbase"]);
+    expect(placementMcpServerNames({
+      capabilities: { mcp: ["brainbase", { name: "freee", mode: "read-only" }] },
+    }, FREEE_CATALOG)).toEqual(["brainbase", "freee"]);
+  });
+});
+
+describe("placementReadOnlyDenyRules", () => {
+  it("derives catalog writeTools of read-only grants into mcp__<server>__<tool> deny rules", () => {
+    expect(placementReadOnlyDenyRules(
+      { capabilities: { mcp: [{ name: "freee", mode: "read-only" }] } },
+      FREEE_CATALOG,
+    )).toEqual(FREEE_WRITE_TOOL_RULES);
+  });
+
+  it("derives nothing for full grants and for rejected read-only grants", () => {
+    expect(placementReadOnlyDenyRules(
+      { capabilities: { mcp: ["freee"] } },
+      FREEE_CATALOG,
+    )).toEqual([]);
+    expect(placementReadOnlyDenyRules(
+      { capabilities: { mcp: [{ name: "freee", mode: "read-only" }] } },
+    )).toEqual([]);
   });
 });
 
@@ -237,14 +336,35 @@ describe("placementEngineBoundary", () => {
     }
   });
 
-  it("denies freee write tools in every placement session (read-only until G2)", () => {
-    for (const tool of [
-      "mcp__freee__freee_api_post", "mcp__freee__freee_api_put", "mcp__freee__freee_api_delete",
-      "mcp__freee__freee_api_patch", "mcp__freee__freee_file_upload",
-    ]) {
-      expect(PLACEMENT_MCP_TOOL_DENY).toContain(tool);
-      expect(placementEngineBoundary(placement).disallowedTools).toContain(tool);
+  it("replaces the interim freee pinning: catalog writeTools + read-only grant derive the identical deny set (MCPRO-STORY-S-001)", () => {
+    // The interim entries are gone from the constant — read-only is now a
+    // vocabulary, not a hard-coded list…
+    for (const tool of FREEE_WRITE_TOOL_RULES) {
+      expect(PLACEMENT_MCP_TOOL_DENY).not.toContain(tool);
     }
+    // …and the personal-KG sensitivity default (G7) survives the replacement.
+    expect(PLACEMENT_MCP_TOOL_DENY).toContain("mcp__brainbase__search_personal_kg");
+    // The catalog declaration + read-only grant reproduce the exact same
+    // spawn-time deny set the pinned constant used to produce.
+    const readOnly: PlacementProfile = {
+      ...placement,
+      capabilities: { mcp: [{ name: "freee", mode: "read-only" }] },
+    };
+    const boundary = placementEngineBoundary(readOnly, undefined, FREEE_CATALOG);
+    expect(boundary.allowedTools).toContain("mcp__freee__*");
+    for (const tool of FREEE_WRITE_TOOL_RULES) {
+      expect(boundary.disallowedTools).toContain(tool);
+    }
+  });
+
+  it("fail-closes a read-only grant without catalog classification at the engine boundary (MCPRO-STORY-S-002)", () => {
+    const unclassified: PlacementProfile = {
+      ...placement,
+      capabilities: { mcp: [{ name: "freee", mode: "read-only" }] },
+    };
+    const boundary = placementEngineBoundary(unclassified);
+    expect(boundary.allowedTools).not.toContain("mcp__freee__*");
+    expect(boundary.allowedTools).toEqual([]);
   });
 
   it("re-derives the boundary from the live placement on every run so config changes bind at the next spawn", () => {
