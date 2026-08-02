@@ -3,9 +3,8 @@
 ## Decision
 
 transcript(.txt)がSlackのrouterチャンネル（本番: `9940-meeting-router` C08SYTDR7R8）へ
-アップロードされたら、**デフォルトで振り分け先プロジェクトを決定し、議事録を生成して
-プロジェクトチャンネルへ展開する**（register-first: 人間の仕事は確認と、間違い時の
-ワンタップ振り直しだけ）。展開後は既存の `MeetingTaskProposalNotifier`（柱4、
+アップロードされたら、LLMは振り分け先プロジェクトを**候補として提示**し、operatorが
+確定した後だけ議事録を生成してプロジェクトチャンネルへ展開する。展開後は既存の `MeetingTaskProposalNotifier`（柱4、
 `story-meeting-task-proposal.md`）へ直接ハンドオフし、タスク自動登録まで一気通貫にする。
 
 3系統の統合方針（operator承認 2026-07-30）:
@@ -27,16 +26,16 @@ manaからの主な設計変更:
 | mana現行 | 本設計 | 理由 |
 |---|---|---|
 | 全チャンネルの.txtで発火（フィルタなし） | routerチャンネルallowlistのみ（fail closed） | 誤発火と二重動作の排除 |
-| プロジェクトは毎回ユーザーが全件からボタン選択 | LLM分類でデフォルト振り分け→間違いはワンタップ振り直し | register-first思想。channel→project対応4系統の矛盾も、config正本1系統へ収斂 |
+| プロジェクトは毎回ユーザーが全件からボタン選択 | LLM分類は候補提示のみ→operatorが宛先確定 | LLMの過信による誤配送を投稿前に止め、config正本1系統へ収斂 |
 | 固有名詞辞書が2箇所に不整合ハードコード、Graph不達で辞書消失 | Graph SSOT（person/project/brand aliases）から動的生成。生成失敗時も辞書なしで続行（fail-open）だがwarnを出す | 辞書の正本はGraph。構造バグ（辞書とコンテキストの融着）を分離 |
 | `summarizeText`×2 + `generateMeetingMinutes`×2 の重複LLM呼び出し | 生成は1回、結果を投稿・タスク抽出へ共有 | コストとレイテンシ |
 | 状態はLambdaプロセス内Map + action.value 1900字 + Slack再DLの3重補償 | `${JINN_HOME}` 配下のstateファイル（単調遷移） | gateway再起動に耐える単一の正 |
 | タスク承認UIは独自実装（NocoDB行き） | 既存 `MeetingTaskProposalNotifier` へ直接ハンドオフ（正本=Canonical Task） | 実装1本化。register-first動線は稼働実績あり |
 
-スコープ外（v1）: GitHubへのtranscript/minutesコミット（議事録はSlack、タスクは
+スコープ外: GitHubへのtranscript/minutesコミット（議事録はSlack、タスクは
 正本ストアに残る。必要になったら別story）、カレンダー会議同定、決定事項抽出
-（Graph decisions書き込み）、フォローアップメッセージ起草、クロスワークスペース投稿
-（v1の振り分け先はunson WSのチャンネルのみ）。
+（Graph decisions書き込み）、フォローアップメッセージ起草。クロスワークスペース共有は
+通常ルーティングと分離し、通常投稿後のoperatorによる明示承認時だけ実行する。
 
 ## DAG構成（Eve設計の写像）
 
@@ -48,13 +47,13 @@ flowchart TD
   G --> DL["transcript取得 (files.info or url_private DL)"]
   DL --> CTX["① コンテキスト準備（決定論・fail-open）\nGraph: person/project/brand aliases→固有名詞辞書\n進行中タスク(listTasks) / 前回議事録(state)"]
   CTX --> RT["② 振り分け分類 (invokeOneShot 小モデル)\ntranscript冒頭 + destination候補一覧 → projectId"]
-  RT -->|確定| GEN["③ 議事録生成 (invokeOneShot 大モデル, stdin渡し)\nMeeting Minutes Quality Contract準拠"]
-  RT -->|判定不能| ASK["router スレッドに宛先select提示（fail-safe）"]
+  RT --> ASK["router スレッドに候補+宛先select提示（常に投稿前確認）"]
   ASK -->|operator選択| GEN
   GEN --> POST["④ プロジェクトチャンネルへ展開\n親=要約 / スレッド=本文2900字分割"]
   POST --> HAND["⑤ タスク動線ハンドオフ\nMeetingTaskProposalNotifier.processMinutesText()"]
   POST --> CTRL["routerスレッドに結果+振り直しselect"]
-  CTRL -->|振り直し| REROUTE["誤投稿先の親メッセージへ移動注記 → 新宛先に再展開 → タスクは手動確認を案内"]
+  CTRL -->|振り直し| REROUTE["誤投稿先の親/本文をscrub → 新宛先に再展開 → タスクは手動確認を案内"]
+  CTRL -->|明示共有| SHARE["shareDestinationsを再照合 → target connector認証/所属確認 → 別workspaceへ生成済み議事録だけを共有"]
 ```
 
 各段は state の `status` を単調に進める:
@@ -101,10 +100,15 @@ flowchart TD
   （Release手順に明記）。コード側の防御として、transcriptアップロード者が
   botの場合も処理は続行するが、routerチャンネルに他のfile処理botが残っていないか
   はデプロイ前チェックリストで確認する。
+- **発火allowlist**: `routerChannels` の `"*"` は設定エラーとして機能全体を停止する。
 - **振り分け**: LLM分類の出力は `destinations` のprojectId enumに限定して
-  バリデートする（listにないIDは「判定不能」扱い）。判定不能時は自動投稿せず
-  routerスレッドで宛先selectを出す（**誤ったチャンネルへの自動投稿のほうが
-  未投稿より害が大きい**ため、ここだけはfail-safe側に倒す）。
+  バリデートする（listにないIDは「判定不能」扱い）。候補内IDでも配送権限にはせず、
+  routerスレッドでoperatorが明示確定するまで生成・投稿しない。
+- **別workspace共有**: `shareDestinations` はLLM候補・通常宛先・reroute候補に混ぜない。
+  action payloadはrun keyとshareIdだけとし、現在のconfigから
+  `connectorInstanceId + workspaceId + channelId` を再解決する。target connector不在、
+  `auth.test`のworkspace不一致、bot非所属、archive済みはすべて投稿前にfail closed。
+  source connectorへのtoken/client fallbackは禁止し、生transcriptとタスク提案は共有しない。
 - **操作権限**: 振り直しselect・宛先selectの操作は `operatorUserIds`
   （未設定時は connector の `allowFrom` にフォールバック。どちらも空なら機能停止）
   のユーザーのみ。認可外はephemeralで拒否。`meeting-task-proposal` の
@@ -126,8 +130,9 @@ flowchart TD
 - 実行state: `${JINN_HOME}/.meeting-minutes-runs.json`
   - key: `router:<channelId>:<fileId>:<ts>`
   - value: `{ routerChannelId, fileId, sourceTs, fileName, sourceTextHash,
-    status, projectId?, routingReason?, destinationChannelId?, postedParentTs?,
-    controlTs?, minutes?{title,overview,body}, createdAt, updatedAt, expiresAt }`
+    status, projectId?, suggestedProjectId?, routingReason?, destinationChannelId?,
+    postedParentTs?, postedThreadTs?, shares?, controlTs?,
+    minutes?{title,overview,body}, createdAt, updatedAt, expiresAt }`
   - 生成済み議事録（title/overview/body）はTTL内stateに保持する。振り直しを
     再生成なしで決定論的に行うため（本文はSlackに公開済みの内容であり機密性は
     transcriptと異なる）
@@ -180,8 +185,8 @@ Slack投稿レイアウトはmanaの契約を維持する: **親メッセージ=
 ## Failure modes
 
 - transcript DL失敗: `failed:download`。routerスレッドへ再試行ボタン付き通知。
-- 振り分けLLM失敗・タイムアウト・enum外出力: 自動投稿せずrouterスレッドに
-  宛先select（fail-safe。上記Trust boundaries）。
+- 振り分け結果（成功・失敗を問わない）: 自動投稿せずrouterスレッドに候補と
+  宛先selectを提示。operator確定後にだけ続行する。
 - 議事録生成失敗（検証NG含む）: 1回自動再生成→ `failed:generate`。routerスレッドに
   再試行ボタン。**transcriptは失われない**（Slack上のファイルが正本のまま）。
 - 投稿失敗（宛先チャンネル未参加等）: `failed:post`。routerスレッドへ
@@ -194,7 +199,7 @@ Slack投稿レイアウトはmanaの契約を維持する: **親メッセージ=
   （ts変化）ため再処理できる。自動レジューム はv1ではしない（要再アップロード。
   routerスレッドの失敗通知が案内する）。
 - 振り直しの競合: 振り直しselect操作時にstateが `posted` 以降でなければ
-  ephemeralで拒否。振り直しは「旧親メッセージに移動注記をchat.update →
+  ephemeralで拒否。振り直しは「旧親と保存済みthread投稿を内容なしの移動表示へchat.update →
   新宛先へ再展開 → state更新」の順（削除はしない — 破壊的操作を避け、
   スレッドで既に会話が始まっていても壊さない）。旧宛先で登録済みのタスクは
   自動では触らず、「タスクは既存の取り消しUIから操作してください」と案内する
@@ -215,6 +220,13 @@ meetingMinutesPipeline:
     - projectId: proj_test
       name: manaテスト
       channelId: C0A2L9FEKEJ
+  shareDestinations:
+    - shareId: proj-test-business
+      projectId: proj_test
+      name: 事業運営 / manaテスト
+      connectorInstanceId: slack-biz
+      workspaceId: T_TARGET_WORKSPACE
+      channelId: C_TARGET_TEST
   # operatorUserIds: 省略時は allowFrom（佐藤）にフォールバック
   # generation: { model: claude-sonnet-4-6, timeoutMs: 300000 }
 ```
