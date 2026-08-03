@@ -116,7 +116,15 @@ function DesktopHeader() {
   )
 }
 
-export function PageLayout({ children, mobileHeaderActions }: { children: React.ReactNode; mobileHeaderActions?: React.ReactNode }) {
+export function PageLayout({
+  children,
+  mobileHeaderActions,
+  suppressOnboarding = false,
+}: {
+  children: React.ReactNode
+  mobileHeaderActions?: React.ReactNode
+  suppressOnboarding?: boolean
+}) {
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
       <Sidebar />
@@ -130,7 +138,7 @@ export function PageLayout({ children, mobileHeaderActions }: { children: React.
       </main>
       <ToastContainer />
       <LiveStreamWidget />
-      <OnboardingWizard />
+      {!suppressOnboarding && <OnboardingWizard />}
     </div>
   )
 }
