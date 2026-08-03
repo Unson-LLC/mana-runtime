@@ -135,7 +135,7 @@ export function SettingsTopologyViewPage({ view }: { view: SettingsTopologyView 
     (!selection.channel || route.channelId === selection.channel)) : undefined
 
   return (
-    <PageLayout>
+    <PageLayout suppressOnboarding>
       <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
         <header className="border-b border-border px-4 py-4 sm:px-6">
           <div className="flex items-start justify-between gap-3">
