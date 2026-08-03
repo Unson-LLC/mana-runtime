@@ -1,0 +1,127 @@
+{
+  "schema_version": "0.1.0",
+  "tool": "vibepro",
+  "workspace": ".vibepro",
+  "output": {
+    "language": "ja"
+  },
+  "execution": {
+    "managed_worktree": "preferred"
+  },
+  "flow_design": {
+    "runtime_probes": [
+      {
+        "id": "topology-desktop",
+        "title": "Mana configuration topology on desktop",
+        "path": "/settings/topology",
+        "mutates": false,
+        "steps": [
+          {
+            "action": "screenshot",
+            "name": "topology-desktop"
+          }
+        ]
+      },
+      {
+        "id": "meeting-minutes-mobile",
+        "title": "Meeting minutes route selection on mobile",
+        "path": "/settings/meeting-minutes?workspace=T-CLIENT&project=client-a&channel=C-CLIENT",
+        "mutates": false,
+        "steps": [
+          {
+            "action": "screenshot",
+            "name": "meeting-minutes-mobile"
+          }
+        ]
+      }
+    ]
+  },
+  "budgets": {
+    "pr_artifact_bytes": 16384,
+    "delivery_efficiency": {
+      "max_elapsed_ms": 2700000,
+      "max_observed_work_ms": 900000,
+      "max_active_wait_ms": 1200000,
+      "max_tool_wait_ms": 1200000,
+      "max_total_tokens": null,
+      "max_fresh_input_tokens": 8000000,
+      "max_cost_usd": null,
+      "max_subagent_count": 6,
+      "max_agent_consumption_ms": 1800000,
+      "max_repair_batches": 3,
+      "max_expensive_verification_count": 1,
+      "max_review_dispatches_by_role": {
+        "architecture": 1,
+        "implementation": 1,
+        "runtime": 1,
+        "security": 1
+      },
+      "require_known_attribution": false
+    }
+  },
+  "brainbase": {
+    "stories": [
+      {
+        "story_id": "story-vibepro-diagnosis-commercialization-roadmap",
+        "title": "M1: VibePro 診断→商用化ロードマップ",
+        "ssot": "NocoDB",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
+      },
+      {
+        "story_id": "story-product-auth-account-access",
+        "title": "認証とアカウント利用開始を成立させる",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "quarter",
+        "view": "business",
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "category": "product",
+        "derived_by": "vibepro-story-derive"
+      },
+      {
+        "story_id": "story-quality-test-ci-readiness",
+        "title": "テストとCIを開発ゲートとして整える",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "month",
+        "view": "dev",
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "category": "quality",
+        "derived_by": "vibepro-story-derive"
+      },
+      {
+        "story_id": "story-docs-story-ssot-recovery",
+        "title": "要求とStoryの正本を復元する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "month",
+        "view": "dev",
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "category": "docs",
+        "derived_by": "vibepro-story-derive"
+      },
+      {
+        "story_id": "story-mana-configuration-visibility",
+        "title": "Mana設定をWebで可視化しSlackから安全に到達できる",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "month",
+        "view": "business",
+        "period": null,
+        "started_at": null,
+        "due_at": null
+      }
+    ],
+    "current_story_id": "story-mana-configuration-visibility"
+  }
+}

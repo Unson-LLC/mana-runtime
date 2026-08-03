@@ -7,6 +7,10 @@ export default defineConfig({
     baseURL: 'http://localhost:7779',
     headless: true,
   },
-  // Don't auto-start a web server — tests assume gateway is running separately
-  // We'll add webServer config only if needed
+  webServer: {
+    command: 'pnpm --filter @openryoko/web dev --hostname 127.0.0.1 --port 7779',
+    url: 'http://localhost:7779/settings/topology',
+    reuseExistingServer: false,
+    timeout: 120_000,
+  },
 })

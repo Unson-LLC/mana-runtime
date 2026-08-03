@@ -21,6 +21,9 @@ const bolt = vi.hoisted(() => {
 });
 
 vi.mock("@slack/bolt", () => ({
+  SocketModeReceiver: class MockSocketModeReceiver {
+    client = { on() {} };
+  },
   App: class MockSlackApp {
     client = bolt.client;
     message() {}
@@ -30,6 +33,7 @@ vi.mock("@slack/bolt", () => ({
     }
     action() {}
     view() {}
+    error() {}
     start = vi.fn(async () => {});
     stop = vi.fn(async () => {});
   },

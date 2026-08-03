@@ -216,6 +216,28 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     expect(alternateSend.status).toBe(403);
   });
 
+  it("rejects valid placement and internal notification credentials at the topology boundary", async () => {
+    const placementCredential = await gatewayGet(
+      "/api/settings/topology",
+      "send_to_session",
+    );
+    expect(placementCredential.status).toBe(403);
+    const placementBody = await placementCredential.text();
+    expect(placementBody).toBe('{"error":"operator authorization required"}');
+    expect(placementBody).not.toMatch(/topology|placement-http|pilot|x-jinn-session-token/);
+
+    const internalNotificationCredential = await fetch(`${baseUrl}/api/settings/topology`, {
+      headers: {
+        [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(SYSTEM_NOTIFICATION_SESSION_ID),
+        [CURRENT_SESSION_HEADER]: SYSTEM_NOTIFICATION_SESSION_ID,
+      },
+    });
+    expect(internalNotificationCredential.status).toBe(403);
+    const notificationBody = await internalNotificationCredential.text();
+    expect(notificationBody).toBe('{"error":"operator authorization required"}');
+    expect(notificationBody).not.toMatch(/topology|system:notifications|x-jinn-session-token/);
+  });
+
   it("confines connector notifications to a distinct service principal", async () => {
     sendMessage.mockClear();
     const connectorToken = getSessionDelegationToken(SYSTEM_CONNECTOR_NOTIFICATION_SESSION_ID);

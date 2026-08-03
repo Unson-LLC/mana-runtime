@@ -544,6 +544,13 @@ export interface SlackConnectorConfig {
   botTokenEnv?: string;
   allowFrom?: string | string[];
   ignoreOldMessagesOnBoot?: boolean;
+  /** Read-only Mana settings entry shown in Slack App Home and exact DM shortcuts. */
+  settingsHome?: {
+    /** Disabled by default. The settings entry also requires a non-empty allowFrom list. */
+    enabled?: boolean;
+    /** Fixed public HTTPS origin for the Mana Web UI (localhost is accepted for development). */
+    webBaseUrl?: string;
+  };
   /** Deterministic per-scope response gate (DM / group DM / channel). */
   respondTo?: SlackRespondToConfig;
   /** Air-reading triage: decide per-message whether to reply/react/stay silent */

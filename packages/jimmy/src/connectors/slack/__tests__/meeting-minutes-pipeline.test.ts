@@ -20,6 +20,7 @@ import {
 } from "../meeting-minutes-pipeline.js";
 import type { GraphEntityClient } from "../../../shared/brainbase-graph.js";
 import type { BrainbaseTaskClient } from "../../../shared/brainbase-tasks.js";
+import { logger } from "../../../shared/logger.js";
 
 const STATE_DIR = "/tmp/openryoko-meeting-minutes-test";
 const STATE_FILE = path.join(STATE_DIR, ".meeting-minutes-runs.json");
@@ -68,6 +69,8 @@ function makePipeline(overrides: {
   generate?: ReturnType<typeof vi.fn>;
   handoff?: ReturnType<typeof vi.fn> | null;
   share?: ReturnType<typeof vi.fn>;
+  settingsWebBaseUrl?: string;
+  workspaceId?: string;
   /** Test-only convenience: emulate the operator selecting the LLM suggestion. */
   autoConfirm?: boolean;
 } = {}) {
@@ -99,6 +102,8 @@ function makePipeline(overrides: {
       taskProposalNotifier: handoff ? { processMinutesText: handoff as any } : null,
       sourceConnectorInstanceId: "slack",
       shareMinutes: overrides.share as any,
+      settingsWebBaseUrl: overrides.settingsWebBaseUrl,
+      getWorkspaceId: () => overrides.workspaceId,
     },
   );
   pipeline.register();
@@ -394,6 +399,26 @@ describe("routing fallback", () => {
 });
 
 describe("failures and retry", () => {
+  it("never writes raw exception secrets to application logs", async () => {
+    const secret = "xoxb-must-not-appear-in-logs";
+    const generate = vi.fn().mockRejectedValue(new Error(`provider rejected ${secret}`));
+    const { pipeline, apiCall } = makePipeline({ generate });
+
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    const logText = [logger.info, logger.warn, logger.error, logger.debug]
+      .flatMap((method) => vi.mocked(method).mock.calls)
+      .flat()
+      .map(String)
+      .join("\n");
+    expect(logText).not.toContain(secret);
+    expect(JSON.stringify(apiCall.mock.calls)).not.toContain(secret);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("code=generation_attempt_failed"),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("code=run_failed"));
+  });
+
   it("does not post thread content when the parent timestamp is missing", async () => {
     const { pipeline, apiCall } = makePipeline();
     apiCall.mockImplementation(async (method: string, payload: any) => {
@@ -431,7 +456,11 @@ describe("failures and retry", () => {
 
   it("regenerates once on contract violations, then fails loud", async () => {
     const generate = vi.fn().mockResolvedValue({ error: { reason: "body too short" } });
-    const { pipeline, apiCall } = makePipeline({ generate });
+    const { pipeline, apiCall } = makePipeline({
+      generate,
+      settingsWebBaseUrl: "https://mana.example.com",
+      workspaceId: "T_SOURCE",
+    });
     await pipeline.maybeHandleFileMessage(fileEvent());
     expect(generate).toHaveBeenCalledTimes(2);
     const run = Object.values(readState().runs)[0];
@@ -440,6 +469,17 @@ describe("failures and retry", () => {
       .filter((p) => p.channel === ROUTER)
       .at(-1);
     expect(JSON.stringify(control?.blocks)).toContain("meeting_minutes_retry");
+    expect(control?.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "actions",
+        elements: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.objectContaining({ text: "構成を確認" }),
+            url: "https://mana.example.com/settings/meeting-minutes?workspace=T_SOURCE&project=proj_salestailor&channel=C_ST",
+          }),
+        ]),
+      }),
+    ]));
   });
 
   it("marks failed:post when the destination post fails, minutes survive for retry", async () => {
@@ -482,8 +522,8 @@ describe("failures and retry", () => {
 });
 
 describe("reroute", () => {
-  async function postedRun() {
-    const built = makePipeline();
+  async function postedRun(overrides: Parameters<typeof makePipeline>[0] = {}) {
+    const built = makePipeline(overrides);
     const event = fileEvent();
     await built.pipeline.maybeHandleFileMessage(event);
     const key = runKey(ROUTER, "F001", event.ts as string);
@@ -530,6 +570,28 @@ describe("reroute", () => {
     expect(postedMessages(apiCall).length).toBe(0);
   });
 
+  it("adds a safe configuration link for unauthorized and channel-mismatch actions", async () => {
+    const { pipeline, apiCall, key } = await postedRun({
+      settingsWebBaseUrl: "https://mana.example.com?token=must-not-leak",
+      workspaceId: "T_PRIMARY",
+    });
+
+    await pipeline.handleReroute(
+      { user: { id: "U_INTRUDER" }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_baao" }) } },
+    );
+    await pipeline.handleReroute(
+      { user: { id: OPERATOR }, channel: { id: "C_WRONG" } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_baao" }) } },
+    );
+
+    const notices = postedMessages(apiCall, "chat.postEphemeral");
+    expect(notices).toHaveLength(2);
+    expect(notices[0].text).toContain("https://mana.example.com/settings/meeting-minutes?workspace=T_PRIMARY&channel=C_ROUTER");
+    expect(notices[1].text).toContain("workspace=T_PRIMARY&project=proj_salestailor&channel=C_ROUTER");
+    expect(notices.map((notice) => notice.text).join("\n")).not.toContain("must-not-leak");
+  });
+
   it("refuses reroute before the run is posted", async () => {
     const classify = vi.fn().mockResolvedValue(null);
     const { pipeline, apiCall } = makePipeline({ classify });
@@ -548,7 +610,10 @@ describe("reroute", () => {
   });
 
   it("persists partial reroute progress and refuses an automatic duplicate retry", async () => {
-    const { pipeline, apiCall, key } = await postedRun();
+    const { pipeline, apiCall, key } = await postedRun({
+      settingsWebBaseUrl: "https://mana.example.com",
+      workspaceId: "T_PRIMARY",
+    });
     let oldUpdates = 0;
     apiCall.mockImplementation(async (method: string, payload: any) => {
       if (method === "chat.update" && payload.channel === "C_ST" && ++oldUpdates === 2) {
@@ -570,6 +635,10 @@ describe("reroute", () => {
     await pipeline.handleReroute(body, action);
     expect(apiCall.mock.calls.slice(callsAfterFailure).some(([m]) => m === "chat.update")).toBe(false);
     expect(apiCall.mock.calls.slice(callsAfterFailure).some(([m]) => m === "chat.postMessage")).toBe(false);
+    const failureNotice = postedMessages(apiCall, "chat.postEphemeral")
+      .find((notice) => notice.text.includes("振り直しに失敗"));
+    expect(failureNotice?.text).toContain("workspace=T_PRIMARY&project=proj_baao&channel=C_BAAO");
+    expect(failureNotice?.text).not.toContain("scrub failed");
   });
 });
 
@@ -591,6 +660,8 @@ describe("explicit cross-workspace share", () => {
       share,
       classify: vi.fn().mockResolvedValue({ destination: DESTINATIONS[1], reason: "BAAO" }),
       config: { shareDestinations },
+      settingsWebBaseUrl: "https://mana.example.com?token=must-not-leak",
+      workspaceId: "T_PRIMARY",
     });
     const event = fileEvent();
     await built.pipeline.maybeHandleFileMessage(event);
@@ -628,13 +699,16 @@ describe("explicit cross-workspace share", () => {
 
   it("fails closed for an unknown destination and dedupes a completed share", async () => {
     const share = vi.fn().mockResolvedValue({ parentTs: "9000.1" });
-    const { pipeline, key } = await shareableRun(share);
+    const { pipeline, apiCall, key } = await shareableRun(share);
     const body = { user: { id: OPERATOR }, channel: { id: ROUTER } };
 
     await pipeline.handleShareMinutes(body, {
       selected_option: { value: JSON.stringify({ key, shareId: "tampered" }) },
     });
     expect(share).not.toHaveBeenCalled();
+    const rejected = postedMessages(apiCall, "chat.postEphemeral").at(-1);
+    expect(rejected?.text).toContain("workspace=T_PRIMARY&project=proj_baao&channel=C_BAAO");
+    expect(rejected?.text).not.toContain("must-not-leak");
 
     const action = {
       selected_option: { value: JSON.stringify({ key, shareId: SHARE_DESTINATION.shareId }) },
@@ -696,7 +770,7 @@ describe("explicit cross-workspace share", () => {
       request.onProgress({ parentTs: "9000.1", threadTs: ["9000.2"] });
       throw new Error("second chunk failed");
     });
-    const { pipeline, key } = await shareableRun(share);
+    const { pipeline, apiCall, key } = await shareableRun(share);
 
     await pipeline.handleShareMinutes(
       { user: { id: OPERATOR }, channel: { id: ROUTER } },
@@ -712,5 +786,8 @@ describe("explicit cross-workspace share", () => {
       postedParentTs: "9000.1",
       postedThreadTs: ["9000.2"],
     });
+    const failure = postedMessages(apiCall).at(-1);
+    expect(failure?.text).toContain("workspace=T_BIZ&project=proj_baao&channel=C_BIZ_BAAO");
+    expect(failure?.text).not.toContain("second chunk failed");
   });
 });

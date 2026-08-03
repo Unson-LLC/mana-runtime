@@ -75,6 +75,7 @@ import {
 } from "../sessions/delegation-auth.js";
 import { constantTimeEqual, OPERATOR_TOKEN_HEADER, verifyOperatorToken } from "./operator-auth.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
+import { buildSettingsTopology, type SlackRuntimeSnapshot } from "./settings-topology.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -90,8 +91,12 @@ export interface ApiContext {
   sessionManager: SessionManager;
   startTime: number;
   getConfig: () => JinnConfig;
+  /** Last connector configuration that completed reload without errors. */
+  getSettingsTopologyConfig?: () => JinnConfig;
   emit: (event: string, payload: unknown) => void;
   connectors: Map<string, import("../shared/types.js").Connector>;
+  /** Test/embedding seam; production reads the redacted config-history index. */
+  settingsTopologyHistory?: () => import("../shared/config-history.js").ConfigHistoryEntry[];
   reloadConnectorInstances?: () => Promise<{ started: string[]; stopped: string[]; errors: string[] }>;
   /**
    * Reload BOTH top-level (slack/discord/telegram/whatsapp) and instance-based
@@ -772,6 +777,34 @@ export async function handleApiRequest(
         }
       }
       return json(res, { ok: result.status === 200 }, result.status);
+    }
+
+    // This read model is deliberately stricter than legacy GET APIs: it always
+    // requires the out-of-process operator credential, even when placements are
+    // absent. Placement/session and internal notification credentials never
+    // authorize configuration discovery.
+    if (pathname === "/api/settings/topology") {
+      if (!operatorAuthorized(req)) {
+        return json(res, { error: "operator authorization required" }, 403);
+      }
+      if (method !== "GET") {
+        return json(res, { error: "method not allowed" }, 405);
+      }
+      try {
+        const runtimeSnapshots = new Map<string, SlackRuntimeSnapshot>();
+        for (const [instanceId, connector] of context.connectors) {
+          const snapshot = (connector as unknown as { getSettingsTopologySnapshot?: () => SlackRuntimeSnapshot }).getSettingsTopologySnapshot?.();
+          if (snapshot) runtimeSnapshots.set(instanceId, snapshot);
+        }
+        return json(res, buildSettingsTopology({
+          config: context.getSettingsTopologyConfig?.() ?? context.getConfig(),
+          runtimeSnapshots,
+          liveConnectorInstanceIds: new Set(runtimeSnapshots.keys()),
+          history: context.settingsTopologyHistory?.() ?? listConfigHistory(),
+        }));
+      } catch {
+        return json(res, { error: "configuration topology unavailable" }, 500);
+      }
     }
 
     // Loopback is not an authorization boundary: Placement agents can execute

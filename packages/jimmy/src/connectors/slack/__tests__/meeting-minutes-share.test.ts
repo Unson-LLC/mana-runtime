@@ -12,6 +12,9 @@ const bolt = vi.hoisted(() => {
 });
 
 vi.mock("@slack/bolt", () => ({
+  SocketModeReceiver: class MockSocketModeReceiver {
+    client = { on() {} };
+  },
   App: class MockSlackApp {
     client = bolt.client;
     message() {}
@@ -19,6 +22,7 @@ vi.mock("@slack/bolt", () => ({
     event() {}
     action() {}
     view() {}
+    error() {}
     start = vi.fn(async () => {});
     stop = vi.fn(async () => {});
   },
@@ -81,6 +85,21 @@ describe("SlackConnector.postSharedMeetingMinutes", () => {
     expect(JSON.stringify(bolt.apiCall.mock.calls)).not.toContain("RAW_TRANSCRIPT_SENTINEL");
   });
 
+  it("rejects a destination for a different connector before calling Slack", async () => {
+    const target = await connector();
+
+    await expect(
+      target.postSharedMeetingMinutes({
+        ...REQUEST,
+        destination: {
+          ...REQUEST.destination,
+          connectorInstanceId: "slack-other",
+        },
+      }),
+    ).rejects.toThrow("target connector identity mismatch");
+    expect(bolt.apiCall).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["workspace mismatch", "auth.test", { ok: true, team_id: "T_OTHER" }],
     ["auth rejected", "auth.test", { ok: false, team_id: "T_BIZ" }],
@@ -94,6 +113,12 @@ describe("SlackConnector.postSharedMeetingMinutes", () => {
       "conversations.info",
       { channel: { id: "C_BIZ_BAAO", is_member: true, is_archived: true } },
     ],
+    [
+      "channel identity mismatch",
+      "conversations.info",
+      { channel: { id: "C_OTHER", is_member: true, is_archived: false } },
+    ],
+    ["missing channel", "conversations.info", {}],
   ])("fails closed for %s", async (_label, failingMethod, response) => {
     const target = await connector();
     bolt.apiCall.mockImplementation(async (method: string) => {

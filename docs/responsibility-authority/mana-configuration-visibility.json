@@ -1,0 +1,49 @@
+{
+  "schema_version": "0.1.0",
+  "responsibilities": [
+    {
+      "id": "mana.configuration_visibility.authorization_boundary",
+      "primary_authority": {
+        "kind": "domain_contract",
+        "ref": "docs/contracts/mana-configuration-visibility-authorization.json#MANA-SETTINGS-AUTH-001"
+      },
+      "supporting_authority": [
+        "docs/adr/0005-read-only-configuration-topology.md",
+        "docs/architecture/story-mana-configuration-visibility.md",
+        "docs/specs/story-mana-configuration-visibility.md"
+      ],
+      "owned_surfaces": {
+        "paths": [
+          "packages/jimmy/src/shared/types.ts",
+          "packages/jimmy/src/shared/settings-url.ts",
+          "packages/web/src/app/settings/**",
+          "packages/web/src/components/page-layout.tsx",
+          "packages/web/src/components/operator-access-controls.tsx",
+          "packages/web/src/components/sidebar.tsx",
+          "packages/web/src/components/settings-topology-view.tsx",
+          "packages/web/src/lib/api.ts",
+          "packages/web/src/lib/nav.ts",
+          "packages/web/src/lib/slack-manifest.ts"
+        ],
+        "symbols": [
+          "operatorAuthorized",
+          "buildSettingsUrl",
+          "SettingsTopologyView"
+        ],
+        "risk_surfaces": [
+          "auth_boundary",
+          "frontend_interaction"
+        ]
+      },
+      "required_evidence": [
+        "auth_denied",
+        "negative_path",
+        "focused_test",
+        "integration_runtime_path",
+        "current_head_verification",
+        "settings_topology_authorization_regression"
+      ],
+      "unknown_policy": "block_or_review"
+    }
+  ]
+}

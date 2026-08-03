@@ -10,6 +10,13 @@ describe("buildSlackManifest", () => {
     )
     expect(manifest.oauth_config.scopes.bot).toContain("commands")
     expect(manifest.settings.socket_mode_enabled).toBe(true)
+    expect(manifest.features.app_home).toMatchObject({
+      home_tab_enabled: true,
+      messages_tab_enabled: true,
+      messages_tab_read_only_enabled: false,
+    })
+    expect(manifest.settings.event_subscriptions.bot_events).toContain("app_home_opened")
+    expect(JSON.stringify(manifest)).not.toContain("/ryoko-develop")
     expect(JSON.stringify(manifest)).not.toContain("request_url")
   })
 })
