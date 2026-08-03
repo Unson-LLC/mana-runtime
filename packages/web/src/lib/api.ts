@@ -1,5 +1,11 @@
 import { operatorToken } from "./operator-auth";
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message)
+  }
+}
+
 export interface TranscriptContentBlock {
   type: 'text' | 'tool_use' | 'tool_result' | 'thinking'
   text?: string
@@ -80,8 +86,56 @@ async function extractErrorMessage(res: Response): Promise<string> {
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { headers: operatorHeaders() });
-  if (!res.ok) throw new Error(await extractErrorMessage(res));
+  if (!res.ok) throw new ApiError(await extractErrorMessage(res), res.status);
   return res.json();
+}
+
+export interface SettingsTopology {
+  schemaVersion: 1
+  observedAt: string
+  connectors: Array<{
+    instanceId: string
+    employee: string | null
+    workspaceId: string | null
+    workspaceName: string | null
+    health: "healthy" | "degraded" | "stopped" | "unknown"
+    healthCode: "slack_runtime_unavailable" | null
+    healthObservedAt: string | null
+    checkedAt: string | null
+    allowlistedOperatorCount: number
+    settingsEntryEnabled: boolean
+    respondTo: { im: string; mpim: string; channel: string }
+    routerChannels: string[]
+    routerChannelDetails: Array<{
+      channelId: string
+      channelName: string | null
+      verification: { status: "verified" | "error" | "unconfirmed"; code: string; checkedAt: string | null }
+    }>
+  }>
+  routes: Array<{
+    id: string
+    kind: "primary" | "share"
+    sourceConnectorInstanceId: string
+    sourceWorkspaceId: string | null
+    sourceWorkspaceName: string | null
+    routerChannels: string[]
+    routerChannelDetails: Array<{
+      channelId: string
+      channelName: string | null
+      verification: { status: "verified" | "error" | "unconfirmed"; code: string; checkedAt: string | null }
+    }>
+    destinationConnectorInstanceId: string
+    workspaceId: string | null
+    workspaceName: string | null
+    projectId: string
+    projectName: string
+    channelId: string
+    channelName: string | null
+    verification: { status: "verified" | "error" | "unconfirmed"; code: string; checkedAt: string | null }
+  }>
+  warnings: Array<{ code: string; severity: "warning" | "error"; targetId: string; message: string }>
+  history: Array<{ ts: string; source: string; file: string; operatorAuthenticated?: boolean }>
+  summary: { connectorCount: number; routeCount: number; warningCount: number }
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
@@ -158,6 +212,7 @@ export interface PlacementLedger {
 
 export const api = {
   getStatus: () => get<Record<string, unknown>>("/api/status"),
+  getSettingsTopology: () => get<SettingsTopology>("/api/settings/topology"),
   getPlacements: () => get<PlacementLedger>("/api/placements"),
   getInstances: () => get<Array<{ name: string; port: number; running: boolean; current: boolean }>>("/api/instances"),
   getSlackChannels: () => get<{ ok: boolean; channels?: Array<{ id: string; name: string; isPrivate: boolean }>; error?: string }>("/api/connectors/slack/channels"),

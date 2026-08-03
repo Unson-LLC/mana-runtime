@@ -13,7 +13,7 @@ import { ToastContainer } from "./notifications/toast-container"
 import { BreadcrumbBar } from "./breadcrumb-bar"
 import { useBreadcrumbs } from "@/context/breadcrumb-context"
 import { Menu, X } from "lucide-react"
-import { NAV_ITEMS } from "@/lib/nav"
+import { NAV_ITEMS, isNavItemActive } from "@/lib/nav"
 import { cn } from "@/lib/utils"
 
 function MobileHeader({ actions }: { actions?: React.ReactNode }) {
@@ -62,7 +62,7 @@ function MobileHeader({ actions }: { actions?: React.ReactNode }) {
             </div>
             <div className="flex flex-1 flex-col gap-1 p-2">
               {NAV_ITEMS.map((item) => {
-                const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
+                const isActive = isNavItemActive(pathname, item.href)
                 const Icon = item.icon
                 return (
                   <Link

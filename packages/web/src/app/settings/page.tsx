@@ -14,6 +14,7 @@ import {
   storeOperatorToken,
 } from "@/lib/operator-auth"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
+import { OperatorAccessControls } from "@/components/operator-access-controls"
 import {
   CLAUDE_MODELS,
   OPENAI_MODELS,
@@ -216,40 +217,6 @@ function SettingsInput({
       placeholder={placeholder}
       className="apple-input w-full bg-[var(--bg-secondary)] border border-[var(--separator)] rounded-[var(--radius-sm)] px-[10px] py-[6px] text-[length:var(--text-footnote)] text-[var(--text-primary)]"
     />
-  )
-}
-
-export function OperatorAccessControls({
-  token,
-  onTokenChange,
-  onRetry,
-}: {
-  token: string
-  onTokenChange: (value: string) => void
-  onRetry: () => void
-}) {
-  return (
-    <Section title="Operator access">
-      <FieldRow label="Operator Token" htmlFor="operator-token">
-        <div className="flex w-full gap-2">
-          <SettingsInput
-            id="operator-token"
-            type="password"
-            value={token}
-            onChange={onTokenChange}
-            placeholder="Required when placements are enabled"
-          />
-          <button
-            type="button"
-            onClick={onRetry}
-            aria-label="Save token and retry operator authentication"
-            className="rounded-md border border-[var(--border-primary)] px-3 text-sm"
-          >
-            Save & Retry
-          </button>
-        </div>
-      </FieldRow>
-    </Section>
   )
 }
 

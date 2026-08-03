@@ -5,6 +5,7 @@ import { SlackConnector } from "../../connectors/slack/index.js";
 import {
   buildSlackConnectorContext,
   createMeetingMinutesShareGateway,
+  refreshSettingsTopologyProbesForConfig,
 } from "../server.js";
 
 describe("buildSlackConnectorContext", () => {
@@ -73,11 +74,91 @@ describe("createMeetingMinutesShareGateway", () => {
   it("never falls back for missing, non-Slack, or same-instance targets", async () => {
     const gateway = createMeetingMinutesShareGateway(new Map<string, Connector>());
     await expect(gateway(request)).rejects.toThrow("not found");
+
+    const nonSlackGateway = createMeetingMinutesShareGateway(
+      new Map<string, Connector>([["slack-biz", {} as Connector]]),
+    );
+    await expect(nonSlackGateway(request)).rejects.toThrow("not found");
+
     await expect(
       gateway({
         ...request,
         sourceConnectorInstanceId: "slack-biz",
       }),
     ).rejects.toThrow("different target connector");
+  });
+});
+
+describe("refreshSettingsTopologyProbesForConfig", () => {
+  it("removes a deleted channel observation on the same path used by config reload", async () => {
+    const observed = new Set<string>();
+    const probeConnector = {
+      invalidateSettingsTopologyProbe: () => observed.clear(),
+      refreshSettingsTopologyProbe: async (targets: Array<{ channelId: string }>) => {
+        for (const target of targets) observed.add(target.channelId);
+      },
+    } as unknown as Connector;
+    const connectors = new Map<string, Connector>([["slack-source", probeConnector]]);
+    const configWithOldChannel = {
+      engines: { default: "claude" },
+      connectors: { instances: [{
+        id: "slack-source", type: "slack", employee: "mana",
+        meetingMinutesPipeline: { enabled: true, routerChannels: ["C_OLD"] },
+      }] },
+    } as unknown as JinnConfig;
+    const configAfterReload = {
+      engines: { default: "claude" },
+      connectors: { instances: [{
+        id: "slack-source", type: "slack", employee: "mana",
+        meetingMinutesPipeline: { enabled: true, routerChannels: ["C_NEW"] },
+      }] },
+    } as unknown as JinnConfig;
+
+    await refreshSettingsTopologyProbesForConfig(connectors, configWithOldChannel);
+    expect(observed).toEqual(new Set(["C_OLD"]));
+
+    await refreshSettingsTopologyProbesForConfig(connectors, configAfterReload);
+    expect(observed).toEqual(new Set(["C_NEW"]));
+    expect(observed.has("C_OLD")).toBe(false);
+  });
+
+  it("clears the remembered probe plan when reload removes every channel", async () => {
+    const observed = new Set<string>();
+    let rememberedTargets: Array<{ channelId: string }> = [];
+    const probeConnector = {
+      invalidateSettingsTopologyProbe: () => observed.clear(),
+      refreshSettingsTopologyProbe: async (targets: Array<{ channelId: string }>) => {
+        rememberedTargets = targets.map((target) => ({ ...target }));
+        observed.clear();
+        for (const target of targets) observed.add(target.channelId);
+      },
+      simulateReconnect: () => {
+        for (const target of rememberedTargets) observed.add(target.channelId);
+      },
+    } as unknown as Connector & { simulateReconnect: () => void };
+    const connectors = new Map<string, Connector>([["slack-source", probeConnector]]);
+    const configWithOldChannel = {
+      engines: { default: "claude" },
+      connectors: { instances: [{
+        id: "slack-source", type: "slack", employee: "mana",
+        meetingMinutesPipeline: { enabled: true, routerChannels: ["C_OLD"] },
+      }] },
+    } as unknown as JinnConfig;
+    const configAfterReload = {
+      engines: { default: "claude" },
+      connectors: { instances: [{
+        id: "slack-source", type: "slack", employee: "mana",
+        meetingMinutesPipeline: { enabled: true, routerChannels: [] },
+      }] },
+    } as unknown as JinnConfig;
+
+    await refreshSettingsTopologyProbesForConfig(connectors, configWithOldChannel);
+    expect(observed).toEqual(new Set(["C_OLD"]));
+
+    await refreshSettingsTopologyProbesForConfig(connectors, configAfterReload);
+    expect(observed).toEqual(new Set());
+
+    probeConnector.simulateReconnect();
+    expect(observed).toEqual(new Set());
   });
 });

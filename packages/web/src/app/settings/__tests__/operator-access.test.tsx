@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
-import { OperatorAccessControls } from "../page"
+import { OperatorAccessControls } from "@/components/operator-access-controls"
 
 describe("OperatorAccessControls", () => {
   it("keeps typing local and exposes an explicit save-and-retry action", () => {

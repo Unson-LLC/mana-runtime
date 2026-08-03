@@ -1,0 +1,39 @@
+{
+  "schema_version": "0.1.0",
+  "domain": "mana-configuration-visibility",
+  "clauses": [
+    {
+      "id": "MANA-SETTINGS-AUTH-001",
+      "statement": "Mana configuration topology is read-only and may be disclosed only after operator authentication; Slack entry URLs contain no credential, unauthorized requests disclose no topology or selected target, and no settings surface may mutate configuration.",
+      "applies_to": {
+        "responsibility": "mana.configuration_visibility.authorization_boundary",
+        "paths": [
+          "packages/jimmy/src/shared/settings-url.ts",
+          "packages/web/src/app/settings/**",
+          "packages/web/src/components/settings-topology-view.tsx",
+          "packages/web/src/lib/api.ts",
+          "packages/web/src/lib/nav.ts",
+          "packages/web/src/lib/slack-manifest.ts"
+        ],
+        "symbols": [
+          "operatorAuthorized",
+          "buildSettingsUrl",
+          "SettingsTopologyView"
+        ],
+        "risk_surfaces": [
+          "auth_boundary",
+          "frontend_interaction"
+        ]
+      },
+      "forbidden_patterns": [
+        "return topology before operator authentication",
+        "include credentials or URL userinfo in a Slack or Web deep link",
+        "retain topology after authentication rejection",
+        "mutate configuration from the read-only settings views"
+      ],
+      "evidence_requirements": [
+        "settings_topology_authorization_regression"
+      ]
+    }
+  ]
+}

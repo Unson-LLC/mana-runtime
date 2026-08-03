@@ -1,0 +1,280 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-mana-configuration-visibility",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "MCV-001",
+      "type": "contract",
+      "statement": "GET /api/settings/topology unconditionally requires the operator credential even when no placements are configured; placement delegation tokens, internal notification credentials, and missing credentials are rejected before projection. It returns only the versioned redacted topology schema and exposes no token, secret, password, credential, environment variable name, or raw configuration fragment.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-01,AC-09,AC-10" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-mana-configuration-visibility.md" }]
+      }
+    },
+    {
+      "id": "MCV-002",
+      "type": "invariant",
+      "statement": "Declared configuration, runtime observations, and verification outcomes remain distinguishable; unavailable external observations are unconfirmed with a stable reason and are never represented as healthy, empty, or zero.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-07,AC-08" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-mana-configuration-visibility.md" }]
+      }
+    },
+    {
+      "id": "MCV-003",
+      "type": "scenario",
+      "statement": "Primary meeting-minute delivery and cross-workspace sharing are returned as distinct route kinds while preserving the source connector, router channel, project, destination connector, workspace, channel, and configured name.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-06,AC-07" }],
+        "code_refs": [{ "file": "packages/jimmy/src/shared/types.ts", "anchor": "meetingMinutesPipeline" }]
+      }
+    },
+    {
+      "id": "MCV-004",
+      "type": "scenario",
+      "statement": "An allowlisted Slack user opening App Home sees a safe status summary and a settings button when a valid web URL is configured; when !this.allowedUsers?.has(command.user_id), the settings command is ignored and the non-allowlisted user receives no topology details.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-02" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "start" }]
+      }
+    },
+    {
+      "id": "MCV-005",
+      "type": "invariant",
+      "statement": "The Slack settings button contains a fixed HTTPS settings URL and never carries an operator token, Slack token, transition credential, or other secret; Web authentication is enforced independently.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-01,AC-02,AC-09" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-mana-configuration-visibility.md" }]
+      }
+    },
+    {
+      "id": "MCV-006",
+      "type": "scenario",
+      "statement": "In a one-to-one DM, an allowlisted user's exact trimmed command 設定, mana設定, ルーティング, or 接続状態 returns only the settings shortcut after old-message replay suppression and before the respondTo gate; an old event triggers no post, handler, session, or LLM, and all other DM text continues to obey respondTo.im.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-03" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "evaluateRespondPolicy" }]
+      }
+    },
+    {
+      "id": "MCV-007",
+      "type": "contract",
+      "statement": "The Web application exposes topology, Slack connectors, meeting-minute routes, permissions, and history routes, all backed by the read-only topology GET and with loading, empty, error, retry, mobile, keyboard, and screen-reader states. History uses only allowlisted ts, source, file, and operatorAuthenticated metadata and never calls the legacy config-history endpoint.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-04,AC-10,AC-13" }],
+        "code_refs": [{ "file": "packages/web/src/lib/nav.ts", "anchor": "NAV_ITEMS" }]
+      }
+    },
+    {
+      "id": "MCV-008",
+      "type": "scenario",
+      "statement": "workspace, project, and channel query parameters select a matching connector or route without broadening returned data; unknown identifiers show a not-found-in-current-topology notice and preserve the normal view.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-05" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-mana-configuration-visibility.md" }]
+      }
+    },
+    {
+      "id": "MCV-009",
+      "type": "contract",
+      "statement": "settingsHome is disabled by default and accepts an enabled flag and webBaseUrl per Slack connector instance; invalid or absent URLs, including URLs whose parsed username or password is non-empty, produce an unconfigured status and no Slack button, deep link, or credential-bearing Web origin.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-16" }],
+        "code_refs": [{ "file": "packages/jimmy/src/shared/types.ts", "anchor": "SlackConnectorConfig" }]
+      }
+    },
+    {
+      "id": "MCV-010",
+      "type": "contract",
+      "statement": "A gateway topology coordinator traverses top-level and named connector live config, assigns router and primary probes to the declaring connector and shareDestinations probes to the connectorInstanceId-resolved target connector, and refreshes after all connectors start, connector restart, or config reload while invalidating stale cache. Asynchronous probes cache channel name, bot membership, archived state, channel-metadata-read permission, and checkedAt; HTTP projection performs no Slack call. Outcomes include target_connector_missing, channel_ready_by_static_checks, bot_not_member, channel_archived, permission_denied, channel_not_found, workspace_mismatch, or slack_probe_failed; the ready state does not claim a successful post.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-07,AC-08" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "start" }]
+      }
+    },
+    {
+      "id": "MCV-011",
+      "type": "scenario",
+      "statement": "Meeting-minute failRun, reroute catch, authorized-run rejection, share precondition rejection, and share catch producers attach a safely encoded settings deep link containing only known workspace, project, and channel identifiers; no configured URL yields safe text without a link.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-05,AC-11,AC-12" }],
+        "code_refs": [{ "file": "packages/jimmy/src/connectors/slack/meeting-minutes-pipeline.ts", "anchor": "failRun" }]
+      }
+    },
+    {
+      "id": "MCV-012",
+      "type": "contract",
+      "statement": "The generated and docs/operations/slack/mana-pilot-business-operations.app-manifest.json manifests enable App Home and app_home_opened while retaining existing Socket Mode, messages and assistant surfaces, scopes, events, and /vibepro; /ryoko-develop is not added by this story. Existing editable /settings and read-only /settings/topology remain reachable with exactly one active sidebar item on desktop and mobile.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-02,AC-04,AC-11,AC-13" }],
+        "code_refs": [
+          { "file": "packages/web/src/lib/slack-manifest.ts", "anchor": "buildSlackManifest" },
+          { "file": "packages/web/src/components/sidebar.tsx", "anchor": "Sidebar" }
+        ]
+      }
+    },
+    {
+      "id": "MCV-013",
+      "type": "scenario",
+      "statement": "A Slack deep link without a stored valid operator credential shows a password-type prompt on the same read-only route. Saving through the existing localStorage token mechanism retries the current path and allowlisted query; a rejected credential returns and retains no topology data, and the token never enters the URL or logs.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-01,AC-01a,AC-05" }],
+        "architecture_refs": [{ "file": "docs/adr/0005-read-only-configuration-topology.md" }]
+      }
+    },
+    {
+      "id": "MCV-014",
+      "type": "scenario",
+      "statement": "Automated and HEAD-bound evidence covers all four entry paths: Slack App Home, exact DM, Web sidebar, and a real meeting-minute error notification; App Home or error reaches selected route detail within two user operations.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-11,AC-12" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-mana-configuration-visibility.md" }]
+      }
+    },
+    {
+      "id": "MCV-015",
+      "type": "contract",
+      "statement": "HEAD-bound verification includes a secret scan of API, Slack, Web, and logs plus 320px responsive layout, keyboard operation, and screen-reader labels for status and navigation.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-09,AC-13" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-mana-configuration-visibility.md" }]
+      }
+    },
+    {
+      "id": "MCV-016",
+      "type": "scenario",
+      "statement": "A share destination declared on a top-level source connector is probed only through its named target connector; a missing target yields target_connector_missing without source fallback, a reload removes stale observations for deleted channels, and GET /api/settings/topology performs zero Slack API calls.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-14" }],
+        "code_refs": [{ "file": "packages/jimmy/src/gateway/server.ts", "anchor": "buildSlackConnectorContext" }]
+      }
+    },
+    {
+      "id": "MCV-017",
+      "type": "contract",
+      "statement": "Topology and history are unavailable to missing, placement-delegated, or internal-notification credentials regardless of placement count; only the operator credential is accepted, and legacy API placement behavior remains unchanged.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-01,AC-15" }],
+        "code_refs": [{ "file": "packages/jimmy/src/gateway/api.ts", "anchor": "operatorAuthorized" }]
+      }
+    },
+    {
+      "id": "MCV-018",
+      "type": "contract",
+      "statement": "Topology history contains only ts, source, file, and operatorAuthenticated; snapshot filename, snapshot body, raw config, and secrets are absent from the schema and the history Web route uses this response exclusively.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ref": "AC-15" }],
+        "code_refs": [{ "file": "packages/jimmy/src/shared/config-history.ts", "anchor": "ConfigHistoryEntry" }]
+      }
+    },
+    {
+      "id": "MCV-019",
+      "type": "invariant",
+      "statement": "Adding the topology route does not change the pre-existing Slack event authorization, session delegation, derived-session validation, or Gateway session-tool dispatch branches that share the edited connector and API files.",
+      "inherited_behaviors": [
+        {
+          "condition": "!userId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/connectors/slack/index.ts"]
+        },
+        {
+          "condition": "!this.settingsHomeEnabled || !userId || !this.allowedUsers?.has(userId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/connectors/slack/index.ts"]
+        },
+        {
+          "condition": "this.allowedUsers && !this.allowedUsers.has((event as any",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/connectors/slack/index.ts"]
+        },
+        {
+          "condition": "channelType === \"im\" && this.settingsHomeEnabled && this.allowedUsers?.has(slackUserId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/connectors/slack/index.ts"]
+        },
+        {
+          "condition": "pathname === \"/api/sessions\" || matchRoute(\"/api/sessions/:id/children\", pathname",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "!session || !verifySessionDelegationToken(session.id, sessionDelegationToken(req",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "employeeName === parentSession.employee",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "!parentSessionId",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "!parentSession",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "tool === \"list_sessions\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "tool === \"get_session\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "tool === \"send_to_session\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/gateway/api.ts"]
+        },
+        {
+          "condition": "session.status === \"waiting\"",
+          "classification": "unchanged",
+          "files": ["packages/jimmy/src/sessions/manager.ts"]
+        }
+      ],
+      "origin": {
+        "story_refs": [{ "kind": "policy", "ref": "Out of scope and regression boundary" }],
+        "code_refs": [
+          { "file": "packages/jimmy/src/connectors/slack/index.ts", "anchor": "start" },
+          { "file": "packages/jimmy/src/gateway/api.ts", "anchor": "handleApi" },
+          { "file": "packages/jimmy/src/sessions/manager.ts", "anchor": "route" }
+        ]
+      }
+    },
+    {
+      "id": "MCV-020",
+      "type": "invariant",
+      "statement": "The settings page retains its pre-existing cancellation guard so an obsolete asynchronous navigation or authorization result cannot update state after cleanup.",
+      "inherited_behaviors": [
+        {
+          "condition": "!cancelled",
+          "classification": "unchanged",
+          "files": ["packages/web/src/app/settings/page.tsx"]
+        }
+      ],
+      "origin": {
+        "story_refs": [{ "kind": "policy", "ref": "Out of scope and regression boundary" }],
+        "code_refs": [{ "file": "packages/web/src/app/settings/page.tsx", "anchor": "cancelled" }]
+      }
+    }
+  ],
+  "diagrams": [
+    {
+      "kind": "flow",
+      "title": "Safe settings entry flow",
+      "mermaid": "flowchart LR\n  Slack[Slack App Home or exact DM] --> Link[Secret-free HTTPS URL]\n  Link --> Auth[Web operator authentication]\n  Auth --> API[Redacted topology GET]\n  API --> Views[Read-only settings views]"
+    },
+    {
+      "kind": "threat_model",
+      "title": "Topology projection trust boundaries",
+      "mermaid": "flowchart LR\n  Config[Secret-bearing config] --> Projector[Explicit allowlist projector]\n  Runtime[Safe connector snapshot] --> Projector\n  Projector --> Guard{Operator authenticated}\n  Guard -- no --> Deny[Deny without topology]\n  Guard -- yes --> Browser[Redacted JSON]"
+    }
+  ]
+}

@@ -12,7 +12,7 @@ import {
 import { useTheme } from "@/app/providers"
 import { useSettings } from "@/app/settings-provider"
 import { THEMES } from "@/lib/themes"
-import { NAV_ITEMS } from "@/lib/nav"
+import { NAV_ITEMS, isNavItemActive } from "@/lib/nav"
 import type { ThemeId } from "@/lib/themes"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
@@ -85,8 +85,7 @@ export function Sidebar() {
 
       <nav className="flex flex-1 flex-col gap-0.5 px-2">
         {NAV_ITEMS.map((item) => {
-          const isActive =
-            item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
+          const isActive = isNavItemActive(pathname, item.href)
           const Icon = item.icon
 
           return (

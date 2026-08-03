@@ -4,7 +4,7 @@ export function buildSlackManifest(botName?: string | null): string {
     {
       display_information: { name },
       features: {
-        app_home: { messages_tab_enabled: true, messages_tab_read_only_enabled: false },
+        app_home: { home_tab_enabled: true, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
         bot_user: { display_name: name, always_online: true },
         assistant_view: {
           assistant_description: `${name} — your AI assistant`,
@@ -35,7 +35,7 @@ export function buildSlackManifest(botName?: string | null): string {
       settings: {
         event_subscriptions: {
           bot_events: [
-            "app_mention", "assistant_thread_context_changed", "assistant_thread_started",
+            "app_home_opened", "app_mention", "assistant_thread_context_changed", "assistant_thread_started",
             "message.channels", "message.groups", "message.im", "message.mpim", "reaction_added",
           ],
         },

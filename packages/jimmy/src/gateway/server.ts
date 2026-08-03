@@ -46,6 +46,36 @@ import {
 } from "../shared/placement-autoprovision.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 import { getPlacementBudgetStatus } from "./budgets.js";
+import { buildSlackTopologyProbePlan } from "./settings-topology.js";
+
+type SettingsTopologyProbeConnector = {
+  invalidateSettingsTopologyProbe?: () => void;
+  refreshSettingsTopologyProbe?: (targets: Array<{ channelId: string; workspaceId?: string }>) => Promise<void>;
+};
+
+/**
+ * Apply the probe portion of a connector config reload. Invalidation happens
+ * before the new plan is dispatched, so channels removed by the fresh config
+ * cannot survive in the observable topology while asynchronous probes run.
+ */
+export async function refreshSettingsTopologyProbesForConfig(
+  connectorMap: ReadonlyMap<string, Connector>,
+  config: JinnConfig,
+): Promise<PromiseSettledResult<void>[]> {
+  const targetsByInstance = new Map(
+    buildSlackTopologyProbePlan(config).map(({ instanceId, targets }) => [instanceId, targets] as const),
+  );
+  for (const connector of connectorMap.values()) {
+    (connector as SettingsTopologyProbeConnector).invalidateSettingsTopologyProbe?.();
+  }
+  return Promise.allSettled(Array.from(connectorMap, async ([instanceId, connector]) => {
+    const probeConnector = connector as Connector & SettingsTopologyProbeConnector;
+    if (!probeConnector.refreshSettingsTopologyProbe) return;
+    // Empty is a real plan: it clears the connector's remembered targets so a
+    // later Socket Mode reconnect cannot revive channels deleted by reload.
+    await probeConnector.refreshSettingsTopologyProbe(targetsByInstance.get(instanceId) ?? []);
+  }));
+}
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -632,6 +662,22 @@ export async function startGateway(
     return { started, errors };
   }
 
+  function invalidateSettingsTopologyProbes(): void {
+    for (const connector of connectorMap.values()) {
+      (connector as SettingsTopologyProbeConnector).invalidateSettingsTopologyProbe?.();
+    }
+  }
+
+  function refreshSettingsTopologyProbes(cfg: JinnConfig): void {
+    // Invalidate every old cache before constructing or dispatching the new
+    // plan. Removed channels therefore disappear immediately on reload.
+    void refreshSettingsTopologyProbesForConfig(connectorMap, cfg).then((results) => {
+      if (results.some((result) => result.status === "rejected")) {
+        logger.warn("One or more settings topology probes failed; routes remain unconfirmed");
+      }
+    });
+  }
+
   // Initial top-level connector startup
   await startTopLevelConnectorsFromConfig(config);
 
@@ -729,6 +775,8 @@ export async function startGateway(
       }
     }
   }
+
+  refreshSettingsTopologyProbes(config);
 
   sessionManager.setConnectorProvider(() => connectorMap);
 
@@ -875,11 +923,14 @@ export async function startGateway(
     const fresh = preloadedConfig ?? loadConfig();
     const stopRes = await stopInstanceConnectors();
     const startRes = await startConfiguredInstances(fresh);
-    return {
+    const result = {
       started: startRes.started,
       stopped: stopRes.stopped,
       errors: [...stopRes.errors, ...startRes.errors],
     };
+    if (result.errors.length === 0) refreshSettingsTopologyProbes(fresh);
+    else invalidateSettingsTopologyProbes();
+    return result;
   }
 
   /**
@@ -930,6 +981,11 @@ export async function startGateway(
     // in the API failure path) would diff fresh-vs-fresh and skip the retry.
     if (result.errors.length === 0) {
       lastConnectorReloadConfig = fresh;
+      refreshSettingsTopologyProbes(fresh);
+    } else {
+      // Never project a newly declared route as verified when connector reload
+      // left an older live connector in place.
+      invalidateSettingsTopologyProbes();
     }
     return result;
   }
@@ -1040,6 +1096,7 @@ export async function startGateway(
     sessionManager,
     startTime,
     getConfig: () => currentConfig,
+    getSettingsTopologyConfig: () => lastConnectorReloadConfig,
     emit,
     connectors: connectorMap,
     reloadConnectorInstances,

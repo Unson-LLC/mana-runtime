@@ -1,4 +1,4 @@
-import { App } from "@slack/bolt";
+import { App, SocketModeReceiver } from "@slack/bolt";
 import type {
   Connector,
   ConnectorCapabilities,
@@ -43,6 +43,14 @@ import { startsWithSlashCommand } from "../../sessions/manager.js";
 import type { SlackTriageConfig } from "../../shared/types.js";
 import { TMP_DIR } from "../../shared/paths.js";
 import { logger } from "../../shared/logger.js";
+import type { SlackChannelProbeSnapshot, SlackRuntimeSnapshot } from "../../gateway/settings-topology.js";
+import {
+  buildSettingsAppHomeBlocks,
+  buildSettingsDmBlocks,
+  buildSettingsTopologyUrl,
+} from "./settings-deep-link.js";
+
+const SETTINGS_DM_COMMANDS = new Set(["設定", "mana設定", "ルーティング", "接続状態"]);
 
 export interface SlackConnectorContext {
   /** Display name of the Jinn instance (used as botName in triage) */
@@ -110,14 +118,24 @@ export class SlackConnector implements Connector {
   private app: App;
   private handler: ((msg: IncomingMessage) => void) | null = null;
   private readonly allowedUsers: Set<string> | null;
+  private readonly settingsHomeEnabled: boolean;
+  private readonly settingsWebUrl: string | null;
   private readonly ignoreOldMessagesOnBoot: boolean;
   private readonly bootTimeMs = Date.now();
   private started = false;
+  private stopping = false;
   private lastError: string | null = null;
+  private healthObservedAt: string | null = null;
   private channelNameCache = new Map<string, { name?: string; isExtShared: boolean; cachedAt: number }>();
   private channelMembersCache = new Map<string, { members: Set<string>; cachedAt: number }>();
   private userInfoCache = new Map<string, { info: SpeakerInfo; cachedAt: number }>();
   private botUserId: string | null = null;
+  private workspaceId: string | null = null;
+  private workspaceName: string | null = null;
+  private topologyCheckedAt: string | null = null;
+  private topologyChannels: Record<string, SlackChannelProbeSnapshot> = {};
+  private topologyProbeGeneration = 0;
+  private topologyProbeTargets: Array<{ channelId: string; workspaceId?: string }> = [];
   private typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
   private readonly triageConfig: SlackTriageConfig | undefined;
   private readonly respondTo: SlackRespondToConfig | undefined;
@@ -206,11 +224,12 @@ export class SlackConnector implements Connector {
 
   constructor(config: SlackConnectorConfig, context: SlackConnectorContext = {}) {
     this.instanceId = config.id || "slack";
+    const receiver = new SocketModeReceiver({ appToken: config.appToken });
     this.app = new App({
       token: config.botToken,
-      appToken: config.appToken,
-      socketMode: true,
+      receiver,
     });
+    this.bindRuntimeHealthSignals(receiver.client);
     this.ignoreOldMessagesOnBoot = config.ignoreOldMessagesOnBoot !== false;
     const allowFrom = Array.isArray(config.allowFrom)
       ? config.allowFrom
@@ -218,6 +237,8 @@ export class SlackConnector implements Connector {
         ? config.allowFrom.split(",").map((value) => value.trim()).filter(Boolean)
         : [];
     this.allowedUsers = allowFrom.length > 0 ? new Set(allowFrom) : null;
+    this.settingsHomeEnabled = config.settingsHome?.enabled === true;
+    this.settingsWebUrl = buildSettingsTopologyUrl(config.settingsHome?.webBaseUrl);
     this.triageConfig = config.triage;
     this.respondTo = config.respondTo;
     this.goalExtractionConfig = config.goalExtraction;
@@ -250,6 +271,8 @@ export class SlackConnector implements Connector {
           taskProposalNotifier: this.meetingTaskProposal,
           sourceConnectorInstanceId: this.instanceId,
           shareMinutes: this.shareMeetingMinutes,
+          settingsWebBaseUrl: config.settingsHome?.webBaseUrl,
+          getWorkspaceId: () => this.workspaceId,
         })
       : null;
     this.vibeproDecision = this.developmentRunnerEnabled
@@ -264,6 +287,47 @@ export class SlackConnector implements Connector {
             context.continueDevelopmentGates?.(storyId, this, target) ?? false,
         })
       : null;
+  }
+
+  /**
+   * Bolt does not project Socket Mode liveness into ConnectorHealth for us.
+   * Bind the receiver's public EventEmitter contract so a dropped connection
+   * immediately invalidates previously verified topology evidence. Keep the
+   * stored and logged detail stable/redacted. Runtime errors can contain token
+   * material, so raw/formatted error values must not cross the log boundary.
+   */
+  private bindRuntimeHealthSignals(socketClient: {
+    on: (event: string, handler: (...args: any[]) => void) => unknown;
+  }): void {
+    const markUnavailable = (signal: string) => {
+      if (this.stopping) return;
+      this.lastError = "slack_runtime_unavailable";
+      this.healthObservedAt = new Date().toISOString();
+      this.invalidateSettingsTopologyProbe();
+      logger.warn(`[slack] runtime ${signal} code=slack_runtime_unavailable connector=${this.instanceId}`);
+    };
+    const markConnected = () => {
+      if (this.stopping) return;
+      this.lastError = null;
+      this.healthObservedAt = new Date().toISOString();
+      const targets = this.topologyProbeTargets.map((target) => ({ ...target }));
+      if (targets.length > 0) {
+        void this.refreshSettingsTopologyProbe(targets).catch(() => {
+          // refreshSettingsTopologyProbe classifies each target fail-closed.
+        });
+      }
+    };
+
+    socketClient.on("error", () => markUnavailable("error"));
+    socketClient.on("reconnecting", () => markUnavailable("reconnecting"));
+    socketClient.on("disconnected", () => markUnavailable("disconnected"));
+    socketClient.on("connected", markConnected);
+
+    this.app.error(async () => {
+      // A Bolt handler error does not imply that Socket Mode is disconnected.
+      // Keep transport health intact and emit only a stable, redacted signal.
+      logger.warn(`[slack] runtime handler_error code=slack_handler_failed connector=${this.instanceId}`);
+    });
   }
 
   /**
@@ -552,6 +616,19 @@ export class SlackConnector implements Connector {
       });
     }
 
+    this.app.event("app_home_opened", async ({ event }) => {
+      const userId = (event as any).user as string | undefined;
+      // Configuration discovery is fail-closed even though ordinary Slack
+      // messages preserve their legacy open semantics when allowFrom is absent.
+      if (!this.settingsHomeEnabled || !userId || !this.allowedUsers?.has(userId)) return;
+      const blocks = buildSettingsAppHomeBlocks({
+        webBaseUrl: this.settingsWebUrl ?? undefined,
+        running: this.started && !this.lastError,
+        instanceId: this.instanceId,
+      });
+      await this.app.client.views.publish({ user_id: userId, view: { type: "home", blocks } });
+    });
+
     this.app.message(async ({ event, context }) => {
       logger.info(`[slack] Received message event: user=${(event as any).user} channel=${(event as any).channel} channel_type=${(event as any).channel_type ?? "-"} thread_ts=${(event as any).thread_ts ?? "-"} subtype=${(event as any).subtype ?? "-"} text="${((event as any).text || "").slice(0, 50)}"`);
       // Skip bot's own messages
@@ -562,10 +639,6 @@ export class SlackConnector implements Connector {
       // Skip ghost events from URL unfurls (user=undefined, text="")
       if (!(event as any).user) {
         logger.debug(`[slack] Skipping event with no user (likely URL unfurl)`);
-        return;
-      }
-      if (!this.handler) {
-        logger.info(`[slack] No handler registered, dropping message`);
         return;
       }
       if (this.ignoreOldMessagesOnBoot && isOldSlackMessage((event as any).ts, this.bootTimeMs)) {
@@ -582,6 +655,22 @@ export class SlackConnector implements Connector {
       const channelType = ((event as any).channel_type as string) || "channel";
       const threadTs = (event as any).thread_ts as string | undefined;
       const wasMentioned = !!this.botUserId && rawText.includes(`<@${this.botUserId}>`);
+
+      if (
+        channelType === "im" &&
+        this.settingsHomeEnabled &&
+        this.allowedUsers?.has(slackUserId) &&
+        SETTINGS_DM_COMMANDS.has(rawText.trim())
+      ) {
+        const blocks = buildSettingsDmBlocks(this.settingsWebUrl ?? undefined);
+        await this.app.client.chat.postMessage({ channel: (event as any).channel, text: "Mana設定", blocks });
+        return;
+      }
+
+      if (!this.handler) {
+        logger.info(`[slack] No handler registered, dropping message`);
+        return;
+      }
 
       const triageEnabled = this.triageConfig?.enabled === true;
       const conversationKey = {
@@ -828,9 +917,12 @@ export class SlackConnector implements Connector {
     try {
       const authResult = await this.app.client.auth.test();
       this.botUserId = authResult.user_id ?? null;
+      this.workspaceId = authResult.team_id ?? null;
+      this.workspaceName = typeof authResult.team === "string" ? authResult.team : null;
+      this.topologyCheckedAt = new Date().toISOString();
       logger.info(`[slack] Bot user ID: ${this.botUserId}`);
-    } catch (err) {
-      logger.warn(`[slack] Failed to get bot user ID: ${err}`);
+    } catch {
+      logger.warn(`[slack] runtime auth_test_failed code=slack_auth_test_failed connector=${this.instanceId}`);
     }
     // Fail closed: without our own user ID, mention detection is impossible,
     // so mention-gated scopes will drop everything (except engaged threads).
@@ -1007,6 +1099,7 @@ export class SlackConnector implements Connector {
   }
 
   async stop() {
+    this.stopping = true;
     this.agentsCanvas?.stop();
     this.taskCanvas?.stop();
     this.taskReminder?.stop();
@@ -1016,8 +1109,12 @@ export class SlackConnector implements Connector {
       clearInterval(interval);
     }
     this.typingIntervals.clear();
-    await this.app.stop();
-    this.started = false;
+    try {
+      await this.app.stop();
+    } finally {
+      this.started = false;
+      this.stopping = false;
+    }
     logger.info("Slack connector stopped");
   }
 
@@ -1084,6 +1181,89 @@ export class SlackConnector implements Connector {
       request.onProgress({ parentTs, threadTs });
     }
     return { parentTs };
+  }
+
+  invalidateSettingsTopologyProbe(): void {
+    this.topologyProbeGeneration += 1;
+    this.topologyChannels = {};
+    this.topologyCheckedAt = null;
+  }
+
+  /**
+   * Refresh the bounded, redacted channel snapshot outside HTTP request paths.
+   * A failed refresh replaces the prior success for that channel so stale
+   * health can never masquerade as current verification.
+   */
+  async refreshSettingsTopologyProbe(
+    targets: Array<{ channelId: string; workspaceId?: string }>,
+  ): Promise<void> {
+    this.topologyProbeTargets = targets.map((target) => ({ ...target }));
+    const generation = ++this.topologyProbeGeneration;
+    const next: Record<string, SlackChannelProbeSnapshot> = {};
+    for (const target of targets) {
+      const checkedAt = new Date().toISOString();
+      if (target.workspaceId && !this.workspaceId) {
+        next[target.channelId] = { channelId: target.channelId, checkedAt, status: "unconfirmed", code: "workspace_identity_unavailable" };
+        continue;
+      }
+      if (target.workspaceId && this.workspaceId && target.workspaceId !== this.workspaceId) {
+        next[target.channelId] = { channelId: target.channelId, checkedAt, status: "error", code: "workspace_mismatch" };
+        continue;
+      }
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const response = await Promise.race([
+          this.app.client.conversations.info({ channel: target.channelId }),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("slack topology probe timed out")), 5_000);
+            timeout.unref?.();
+          }),
+        ]);
+        const channel = response.channel as any;
+        if (!channel) {
+          next[target.channelId] = { channelId: target.channelId, checkedAt, status: "error", code: "channel_not_found" };
+        } else if (channel.is_archived === true) {
+          next[target.channelId] = { channelId: target.channelId, name: channel.name, checkedAt, status: "error", code: "channel_archived" };
+        } else if (channel.is_member !== true) {
+          next[target.channelId] = { channelId: target.channelId, name: channel.name, checkedAt, status: "error", code: "bot_not_member" };
+        } else {
+          next[target.channelId] = { channelId: target.channelId, name: channel.name, checkedAt, status: "verified", code: "channel_ready_by_static_checks" };
+        }
+      } catch (err) {
+        const code = (err as any)?.data?.error;
+        const classified = code === "missing_scope" || code === "not_allowed_token_type"
+          ? "permission_denied"
+          : code === "channel_not_found" || code === "invalid_channel"
+            ? "channel_not_found"
+            : "slack_probe_failed";
+        next[target.channelId] = {
+          channelId: target.channelId,
+          checkedAt,
+          status: classified === "slack_probe_failed" ? "unconfirmed" : "error",
+          code: classified,
+        };
+        logger.warn(`[slack] topology probe ${classified} for connector=${this.instanceId}`);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }
+    if (generation === this.topologyProbeGeneration) {
+      this.topologyChannels = next;
+      this.topologyCheckedAt = new Date().toISOString();
+    }
+  }
+
+  getSettingsTopologySnapshot(): SlackRuntimeSnapshot {
+    return {
+      instanceId: this.instanceId,
+      health: this.lastError ? "degraded" : this.started ? "healthy" : "stopped",
+      ...(this.lastError ? { healthCode: "slack_runtime_unavailable" as const } : {}),
+      ...(this.healthObservedAt ? { healthObservedAt: this.healthObservedAt } : {}),
+      ...(this.workspaceId ? { workspaceId: this.workspaceId } : {}),
+      ...(this.workspaceName ? { workspaceName: this.workspaceName } : {}),
+      ...(this.topologyCheckedAt ? { checkedAt: this.topologyCheckedAt } : {}),
+      channels: { ...this.topologyChannels },
+    };
   }
 
   getCapabilities(): ConnectorCapabilities {

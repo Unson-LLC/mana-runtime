@@ -41,6 +41,11 @@ import {
   type ApproverResolver,
   type MeetingTaskProposalNotifier,
 } from "./meeting-task-proposal.js";
+import {
+  buildMeetingMinutesFailureControl,
+  buildSettingsDeepLink,
+  type SettingsDeepLinkTarget,
+} from "./settings-deep-link.js";
 
 export interface MeetingMinutesPipelineConfig {
   /** Master switch — defaults to false when the block is absent. */
@@ -207,8 +212,8 @@ function saveState(state: PipelineState): boolean {
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
     return true;
-  } catch (err) {
-    logger.warn(`[meeting-minutes] failed to persist state: ${err}`);
+  } catch {
+    logger.warn("[meeting-minutes] code=state_persist_failed");
     return false;
   }
 }
@@ -266,6 +271,10 @@ export interface MeetingMinutesPipelineDeps {
   sourceConnectorInstanceId?: string;
   /** Narrow gateway that resolves the live target connector and posts with its client. */
   shareMinutes?: (request: MeetingMinutesShareRequest) => Promise<{ parentTs: string }>;
+  /** Fixed operator Web origin. Credentials and error text are never added to it. */
+  settingsWebBaseUrl?: string;
+  /** Runtime workspace identity discovered by auth.test after construction. */
+  getWorkspaceId?: () => string | null | undefined;
 }
 
 export class MeetingMinutesPipeline {
@@ -364,15 +373,15 @@ export class MeetingMinutesPipeline {
     this.app.message(async ({ event }) => {
       try {
         await this.maybeHandleFileMessage(event as unknown as Record<string, unknown>);
-      } catch (err) {
-        logger.warn(`[meeting-minutes] message handling failed: ${err}`);
+      } catch {
+        logger.warn("[meeting-minutes] code=message_handler_failed");
       }
     });
 
     const wrap = (fn: (body: any, action: any) => Promise<void>) => async ({ ack, body, action }: any) => {
       await ack();
-      await fn(body, action).catch((err) => {
-        logger.warn(`[meeting-minutes] action handling failed: ${err}`);
+      await fn(body, action).catch(() => {
+        logger.warn("[meeting-minutes] code=action_handler_failed");
       });
     };
     this.app.action(ACTION_MM_CHOOSE_DEST, wrap((body, action) => this.handleChooseDestination(body, action)));
@@ -538,7 +547,7 @@ export class MeetingMinutesPipeline {
     if (!run.minutes) {
       const generated = await this.generateWithRetry(transcript.text, destination, state, now);
       if ("error" in generated) {
-        await this.failRun(state, key, "generate", `議事録生成に失敗しました: ${generated.error.reason}`);
+        await this.failRun(state, key, "generate", "議事録生成に失敗しました");
         return;
       }
       run.minutes = generated.minutes;
@@ -578,8 +587,8 @@ export class MeetingMinutesPipeline {
           run.postedThreadTs.push(childTs);
           saveState(state);
         }
-      } catch (err) {
-        await this.failRun(state, key, "post", `投稿に失敗しました（${destination.name}）: ${err}`);
+      } catch {
+        await this.failRun(state, key, "post", "議事録の投稿に失敗しました");
         return;
       }
       advanceStatus(run, "posted");
@@ -609,8 +618,8 @@ export class MeetingMinutesPipeline {
           } else {
             handoffNote = "\n⚠️ タスク自動登録は無効のためスキップしました。";
           }
-        } catch (err) {
-          logger.warn(`[meeting-minutes] task handoff failed for ${key}: ${err}`);
+        } catch {
+          logger.warn(`[meeting-minutes] code=task_handoff_failed run=${key}`);
           handoffNote = "\n⚠️ タスク自動登録に失敗しました（議事録の展開は成功）。";
         }
       } else {
@@ -641,12 +650,10 @@ export class MeetingMinutesPipeline {
       try {
         const result = await generate(transcript, ctx, this.generationOptions);
         if ("minutes" in result) return result;
-        logger.warn(
-          `[meeting-minutes] generation attempt ${attempt} violated the contract: ${result.error.reason}`,
-        );
+        logger.warn(`[meeting-minutes] code=generation_contract_invalid attempt=${attempt}`);
         if (attempt === 2) return result;
       } catch (err) {
-        logger.warn(`[meeting-minutes] generation attempt ${attempt} failed: ${err}`);
+        logger.warn(`[meeting-minutes] code=generation_attempt_failed attempt=${attempt}`);
         if (attempt === 2) return { error: { reason: String(err) } };
       }
     }
@@ -674,8 +681,8 @@ export class MeetingMinutesPipeline {
         client.listTasks({ status: "in_progress", limit: 20 }),
       ]);
       openTasks = [...inProgress.items, ...pending.items].map((t) => t.title).slice(0, 20);
-    } catch (err) {
-      logger.warn(`[meeting-minutes] open-task context unavailable: ${err}`);
+    } catch {
+      logger.warn("[meeting-minutes] code=open_task_context_unavailable");
     }
 
     const projectNeedle = destination.name.toLowerCase();
@@ -715,8 +722,8 @@ export class MeetingMinutesPipeline {
       }
       const text = await res.text();
       return { text, fileName: (file?.name as string) ?? "transcript.txt" };
-    } catch (err) {
-      logger.warn(`[meeting-minutes] transcript fetch failed: ${err}`);
+    } catch {
+      logger.warn("[meeting-minutes] code=transcript_fetch_failed");
       return null;
     }
   }
@@ -749,8 +756,8 @@ export class MeetingMinutesPipeline {
         unfurl_links: false,
       });
       return result.ts as string | undefined;
-    } catch (err) {
-      logger.warn(`[meeting-minutes] control message failed: ${err}`);
+    } catch {
+      logger.warn("[meeting-minutes] code=control_message_failed");
       return controlTs;
     }
   }
@@ -775,24 +782,25 @@ export class MeetingMinutesPipeline {
     advanceStatus(run, `failed:${stage}`);
     run.updatedAt = Date.now();
     saveState(state);
-    logger.warn(`[meeting-minutes] ${key} failed at ${stage}: ${message}`);
-    await this.updateControl(state, key, {
-      text: `⚠️ ${message}`,
-      blocks: [
-        { type: "section", text: { type: "mrkdwn", text: `⚠️ ${message}` } },
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              style: "primary",
-              text: { type: "plain_text", text: "再試行" },
-              action_id: ACTION_MM_RETRY,
-              value: JSON.stringify({ key }),
-            },
-          ],
-        },
-      ],
+    logger.warn(`[meeting-minutes] code=run_failed stage=${stage} run=${key}`);
+    await this.updateControl(state, key, buildMeetingMinutesFailureControl({
+      key,
+      message,
+      settingsWebBaseUrl: this.deps.settingsWebBaseUrl,
+      retryActionId: ACTION_MM_RETRY,
+      target: {
+        workspaceId: this.deps.getWorkspaceId?.() ?? undefined,
+        projectId: run.projectId,
+        channelId: run.destinationChannelId ?? run.routerChannelId,
+      },
+    }));
+  }
+
+  private settingsLink(target: SettingsDeepLinkTarget): string | null {
+    return buildSettingsDeepLink(this.deps.settingsWebBaseUrl, {
+      workspaceId: target.workspaceId ?? this.deps.getWorkspaceId?.() ?? undefined,
+      projectId: target.projectId,
+      channelId: target.channelId,
     });
   }
 
@@ -903,14 +911,23 @@ export class MeetingMinutesPipeline {
     return null;
   }
 
-  private async notifyEphemeral(body: any, message: string): Promise<void> {
+  private async notifyEphemeral(
+    body: any,
+    message: string,
+    target?: SettingsDeepLinkTarget,
+  ): Promise<void> {
     const channel = body?.channel?.id ?? body?.container?.channel_id;
     const user = body?.user?.id;
     if (!channel || !user) return;
     try {
-      await this.client.apiCall("chat.postEphemeral", { channel, user, text: message });
-    } catch (err) {
-      logger.warn(`[meeting-minutes] ephemeral notice failed: ${err}`);
+      const settingsUrl = target ? this.settingsLink(target) : null;
+      await this.client.apiCall("chat.postEphemeral", {
+        channel,
+        user,
+        text: settingsUrl ? `${message}\n構成を確認: ${settingsUrl}` : message,
+      });
+    } catch {
+      logger.warn("[meeting-minutes] code=ephemeral_notice_failed");
     }
   }
 
@@ -923,7 +940,7 @@ export class MeetingMinutesPipeline {
     if (!value || !userId) return null;
     if (!(await this.operators.canApprove(userId, channelId ?? ""))) {
       logger.warn(`[meeting-minutes] unauthorized action from ${userId}`);
-      await this.notifyEphemeral(body, "この操作の権限がありません。");
+      await this.notifyEphemeral(body, "この操作の権限がありません。", { channelId });
       return null;
     }
     const state = loadState();
@@ -931,12 +948,15 @@ export class MeetingMinutesPipeline {
     const run = state.runs[value.key];
     if (!run) {
       saveState(state);
-      await this.notifyEphemeral(body, "この実行は期限切れです。transcriptを再アップロードしてください。");
+      await this.notifyEphemeral(body, "この実行は期限切れです。transcriptを再アップロードしてください。", { channelId });
       return null;
     }
     if (!channelId || channelId !== run.routerChannelId) {
       logger.warn(`[meeting-minutes] action channel mismatch for ${value.key}`);
-      await this.notifyEphemeral(body, "この操作元が議事録の実行チャンネルと一致しません。");
+      await this.notifyEphemeral(body, "この操作元が議事録の実行チャンネルと一致しません。", {
+        projectId: run.projectId,
+        channelId: run.routerChannelId,
+      });
       return null;
     }
     return { state, key: value.key, run };
@@ -1092,10 +1112,11 @@ export class MeetingMinutesPipeline {
         updatedAt: Date.now(),
       };
       saveState(state);
-      logger.warn(`[meeting-minutes] reroute failed: ${err}`);
+      logger.warn(`[meeting-minutes] code=reroute_failed run=${key}`);
       await this.notifyEphemeral(
         body,
-        `振り直しに失敗しました。旧・新投稿が一部残っている可能性があるため自動再実行しません: ${err}`,
+        "振り直しに失敗しました。旧・新投稿が一部残っている可能性があるため自動再実行しません。",
+        { projectId: next.projectId, channelId: next.channelId },
       );
     }
   }
@@ -1124,7 +1145,10 @@ export class MeetingMinutesPipeline {
           candidate.shareId === value?.shareId && candidate.projectId === run.projectId,
       );
       if (!destination) {
-        await this.notifyEphemeral(body, "共有先が現在の設定と一致しません。共有を中止しました。");
+        await this.notifyEphemeral(body, "共有先が現在の設定と一致しません。共有を中止しました。", {
+          projectId: run.projectId,
+          channelId: run.destinationChannelId ?? run.routerChannelId,
+        });
         return;
       }
       const existing = run.shares?.[destination.shareId];
@@ -1140,7 +1164,11 @@ export class MeetingMinutesPipeline {
       const share = this.deps.shareMinutes;
       const sourceConnectorInstanceId = this.deps.sourceConnectorInstanceId;
       if (!share || !sourceConnectorInstanceId) {
-        await this.notifyEphemeral(body, "共有用connectorが未接続です。投稿は行いませんでした。");
+        await this.notifyEphemeral(body, "共有用connectorが未接続です。投稿は行いませんでした。", {
+          workspaceId: destination.workspaceId,
+          projectId: destination.projectId,
+          channelId: destination.channelId,
+        });
         return;
       }
       const now = Date.now();
@@ -1201,7 +1229,7 @@ export class MeetingMinutesPipeline {
           saveState(fresh);
         }
         await this.postControl(run.routerChannelId, run.sourceTs, undefined, {
-          text: `⚠️ ${destination.name} への共有に失敗しました。重複防止のため自動再送はしません。`,
+          text: `⚠️ ${destination.name} への共有に失敗しました。重複防止のため自動再送はしません。${this.settingsLink({ workspaceId: destination.workspaceId, projectId: destination.projectId, channelId: destination.channelId }) ? `\n構成を確認: ${this.settingsLink({ workspaceId: destination.workspaceId, projectId: destination.projectId, channelId: destination.channelId })}` : ""}`,
         });
       }
     } finally {
