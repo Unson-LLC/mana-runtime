@@ -1,4 +1,4 @@
-import { App, SocketModeReceiver } from "@slack/bolt";
+import * as SlackBoltNamespace from "@slack/bolt";
 import type {
   Connector,
   ConnectorCapabilities,
@@ -49,6 +49,17 @@ import {
   buildSettingsDmBlocks,
   buildSettingsTopologyUrl,
 } from "./settings-deep-link.js";
+
+// @slack/bolt is CommonJS. Node's ESM named-export detection does not expose
+// SocketModeReceiver in production, even though TypeScript and Vitest accept a
+// named import. Prefer the CommonJS default object at runtime while retaining
+// the namespace fallback used by ESM test doubles.
+const SlackBolt = (
+  "default" in SlackBoltNamespace && SlackBoltNamespace.default
+    ? SlackBoltNamespace.default
+    : SlackBoltNamespace
+) as typeof import("@slack/bolt");
+const { App, SocketModeReceiver } = SlackBolt;
 
 const SETTINGS_DM_COMMANDS = new Set(["設定", "mana設定", "ルーティング", "接続状態"]);
 
@@ -115,7 +126,7 @@ export class SlackConnector implements Connector {
   // development-reconciler in particular — don't misdeliver to whichever
   // Slack connector happens to be registered under the shared "slack" name.
   instanceId: string;
-  private app: App;
+  private app: InstanceType<typeof App>;
   private handler: ((msg: IncomingMessage) => void) | null = null;
   private readonly allowedUsers: Set<string> | null;
   private readonly settingsHomeEnabled: boolean;
