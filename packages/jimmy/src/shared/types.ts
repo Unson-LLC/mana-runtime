@@ -851,6 +851,13 @@ export interface PlacementProfile {
     gatewayTools?: string[];
     allowedDelivery?: PlacementDeliveryTarget[];
   };
+  /** Optional placement-specific checkout used as the session working directory. */
+  workspace?: {
+    /** Absolute, non-symlinked directory path on the gateway host. */
+    path: string;
+    /** Placement sessions may inspect the checkout but cannot mutate or execute it. */
+    access: "read-only";
+  };
   dataScopes?: Record<string, unknown>;
 }
 

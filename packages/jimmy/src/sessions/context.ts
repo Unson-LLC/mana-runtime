@@ -156,6 +156,12 @@ export function buildContext(opts: {
         `- Placement: ${opts.placement.id}`,
         `- Audience: ${opts.placement.audience.type}`,
         `- Projects: ${(opts.placement.projects ?? []).join(", ") || "none"}`,
+        ...(opts.placement.workspace
+          ? [
+            `- Workspace: ${opts.placement.workspace.path} (${opts.placement.workspace.access})`,
+            "The placement workspace is reference material only. You may use Read, Glob, and Grep to inspect it; writing, editing, shell execution, and repository updates are blocked.",
+          ]
+          : []),
         ...buildPlacementCapabilityLines(opts.placement),
         `- Data scopes (supplementary): ${JSON.stringify(safePlacementDataScopes(opts.placement.dataScopes))}`,
         "The capability list above is the source of truth for what you may use — it is generated from this placement's configured capabilities. Data scopes only add reference-scope notes (e.g. read-only modes, graph scopes) on top of those capabilities; they never grant or revoke a capability, and a capability listed above is available even if data scopes do not mention it.",

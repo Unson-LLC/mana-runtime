@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementAllowedTools, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementSafeCliFlags, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementAllowedTools, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementSafeCliFlags, placementWorkingDirectory, placementWorkspaceDenyRules, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -285,6 +285,54 @@ describe("placementEngineBoundary", () => {
       disallowedTools: undefined,
       placementBashGuard: false,
     });
+  });
+});
+
+describe("placement read-only workspace", () => {
+  it("uses an existing absolute checkout as the working directory", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "placement-workspace-"));
+    try {
+      const scoped = { ...placement, workspace: { path: root, access: "read-only" as const } };
+      expect(placementWorkingDirectory(scoped)).toBe(fs.realpathSync(root));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for missing, relative, or symlinked workspace paths", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "placement-workspace-"));
+    const alias = `${root}-alias`;
+    fs.symlinkSync(root, alias);
+    try {
+      expect(() => placementWorkingDirectory({ workspace: { path: "relative", access: "read-only" } }))
+        .toThrow("must be absolute");
+      expect(() => placementWorkingDirectory({ workspace: { path: path.join(root, "missing"), access: "read-only" } }))
+        .toThrow();
+      expect(() => placementWorkingDirectory({ workspace: { path: alias, access: "read-only" } }))
+        .toThrow("must not be a symlink");
+    } finally {
+      fs.unlinkSync(alias);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies every write tool and Bash while preserving read tools", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "placement-workspace-"));
+    try {
+      const scoped: PlacementProfile = {
+        ...placement,
+        workspace: { path: root, access: "read-only" },
+      };
+      const rules = placementWorkspaceDenyRules(scoped);
+      expect(rules).toContain("Bash");
+      const resolved = fs.realpathSync(root);
+      expect(rules).toContain(`Write(/${path.join(resolved, "**")})`);
+      expect(rules).toContain(`Edit(/${path.join(resolved, "**")})`);
+      expect(rules).not.toContain("Read");
+      expect(placementEngineBoundary(scoped).disallowedTools).toEqual(expect.arrayContaining(rules));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

@@ -68,6 +68,51 @@ export const PLACEMENT_PROTECTED_DIRS = ["org", "cron", "skills", "memory", "kno
 const PLACEMENT_WRITE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 
 /**
+ * Resolve a placement-specific checkout for use as the engine cwd. The path is
+ * deliberately strict: relative paths and symlink aliases could make the hard
+ * deny rules describe a different tree from the one the engine actually sees.
+ */
+export function placementWorkingDirectory(
+  placement: Pick<PlacementProfile, "workspace"> | undefined,
+  fallback: string = JINN_HOME,
+): string {
+  const workspace = placement?.workspace;
+  if (!workspace) return fallback;
+  if (workspace.access !== "read-only") {
+    throw new Error(`Unsupported placement workspace access: ${String(workspace.access)}`);
+  }
+  if (!path.isAbsolute(workspace.path)) {
+    throw new Error("Placement workspace path must be absolute");
+  }
+  const configured = path.normalize(workspace.path);
+  if (fs.lstatSync(configured).isSymbolicLink()) {
+    throw new Error(`Placement workspace path must not be a symlink: ${configured}`);
+  }
+  const resolved = fs.realpathSync(configured);
+  if (!fs.statSync(resolved).isDirectory()) {
+    throw new Error(`Placement workspace path is not a directory: ${resolved}`);
+  }
+  return resolved;
+}
+
+/** Hard tool boundary for a placement-specific read-only checkout. */
+export function placementWorkspaceDenyRules(
+  placement: Pick<PlacementProfile, "workspace">,
+): string[] {
+  if (!placement.workspace) return [];
+  const root = placementWorkingDirectory(placement);
+  return [
+    ...PLACEMENT_WRITE_TOOLS.flatMap((tool) => [
+      `${tool}(/${root})`,
+      `${tool}(/${path.join(root, "**")})`,
+    ]),
+    // Shell commands cannot be constrained to one tree reliably. A read-only
+    // workspace therefore disables Bash for the whole placement session.
+    "Bash",
+  ];
+}
+
+/**
  * Permission deny rules for shared-state writes in a Placement session.
  * Passed as --disallowedTools; Claude Code enforces deny rules in every
  * permission mode (including bypassPermissions), so this is a hard boundary,
@@ -199,6 +244,7 @@ export function placementEngineBoundary(
     disallowedTools: placement
       ? [
         ...placementWriteDenyRules(),
+        ...placementWorkspaceDenyRules(placement),
         ...placementMemoryReadDenyRules(
           placement.id,
           (configuredPlacements ?? []).map((p) => p.id),

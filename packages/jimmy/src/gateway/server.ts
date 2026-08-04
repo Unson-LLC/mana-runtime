@@ -38,7 +38,7 @@ import { loadJobs } from "../cron/jobs.js";
 import { startScheduler, reloadScheduler, stopScheduler } from "../cron/scheduler.js";
 import { scanOrg } from "./org.js";
 import { resolveSlackRuntimeConfig, resolveSlackInstanceRuntimeConfig } from "../shared/slack-runtime-config.js";
-import { placementNeedsChannelMembership, resolvePlacement, type ChannelMembership } from "../shared/placement-profile.js";
+import { placementNeedsChannelMembership, placementWorkingDirectory, resolvePlacement, type ChannelMembership } from "../shared/placement-profile.js";
 import {
   autoProvisionPlacement,
   buildAutoProvisionGreeting,
@@ -369,8 +369,12 @@ export async function startGateway(
     // dialog — which has no Stop hook, so the turn would hang forever.
     try {
       seedTrust(path.join(os.homedir(), ".claude.json"), JINN_HOME);
+      for (const placement of config.placements ?? []) {
+        if (!placement.workspace) continue;
+        seedTrust(path.join(os.homedir(), ".claude.json"), placementWorkingDirectory(placement));
+      }
     } catch (err) {
-      logger.warn(`seedTrust failed for ${JINN_HOME}: ${err instanceof Error ? err.message : err}`);
+      logger.warn(`seedTrust failed: ${err instanceof Error ? err.message : err}`);
     }
     logger.info("Interactive Claude (PTY) engine enabled — Claude work turns run via PTY (Max-subsidized cc_entrypoint=cli)");
   }
