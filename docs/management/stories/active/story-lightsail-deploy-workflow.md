@@ -2,6 +2,22 @@
 story_id: story-lightsail-deploy-workflow
 title: 共同開発者がGitHub ActionsからMana Runtimeを安全にLightsailへデプロイできる
 status: active
+pr_scope_strategy: atomic_single_pr
+pr_scope_reason: "本Storyは、GitHub workflow、restricted SSH principal、server-side main再検証、isolated build、guarded activation、automatic rollback、検証fixture、権限正本、運用runbookを一つのデプロイ契約として出荷する。workflowだけを先行するとサーバー側の制限とrollbackを欠き、runtimeだけを先行すると承認・監査可能な入口を欠くため、同一HEADで初めて安全条件が成立する。"
+pr_scope_review_facets:
+  - repo-control
+  - requirements-ssot
+  - runtime-behavior
+  - e2e-gate
+  - misc-follow-up
+pr_scope_dependency_boundaries:
+  - "repo-control -> runtime-behavior"
+  - "repo-control -> e2e-gate"
+  - "requirements-ssot -> runtime-behavior"
+  - "runtime-behavior -> e2e-gate"
+  - "misc-follow-up -> requirements-ssot"
+  - "misc-follow-up -> runtime-behavior"
+  - "misc-follow-up -> e2e-gate"
 ---
 
 # 共同開発者がGitHub ActionsからMana Runtimeを安全にLightsailへデプロイできる
@@ -25,8 +41,8 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 ## Acceptance Criteria
 
 - AC-01: GitHub Actionsの手動workflowで、空欄なら現在の`main`、指定時は`origin/main`に含まれる完全SHAだけを対象にできる。
-- AC-02: workflowはGitHub `production` Environmentを使用し、required reviewerによる承認前にSSH接続しない。
-- AC-03: Lightsailの専用SSH principalはforced commandにより`deploy FULL_COMMIT_SHA`以外を実行できない。
+- AC-02: workflowはGitHub `production` Environmentを使用し、Environment gateを通過するjob内でのみSSH接続する。required reviewerの実設定と承認停止はマージ後R-01で確認する。
+- AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA`以外を許さない設定を生成する。実機への導入状態はマージ後R-02で確認する。
 - AC-04: サーバー側でも対象SHAが`origin/main`に含まれることを再検証し、GitHub側だけの検証を信頼しない。
 - AC-05: buildは稼働中releaseと別のworktreeで行い、成功後だけactive symlinkを切り替える。
 - AC-06: restart前にdevelopment runner guardを待ち、実行中のVibePro開発runnerをkillしない。
