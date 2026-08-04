@@ -65,7 +65,9 @@ sequenceDiagram
 - host key checkingを無効化しない。
 - workflow log、GitHub summary、server outputへ鍵、token、environment file内容を出さない。
 
-## Threat model diagram
+## Diagrams
+
+### threat_model
 
 ```mermaid
 flowchart LR
