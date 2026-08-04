@@ -65,6 +65,24 @@ sequenceDiagram
 - host key checkingを無効化しない。
 - workflow log、GitHub summary、server outputへ鍵、token、environment file内容を出さない。
 
+## Threat model diagram
+
+```mermaid
+flowchart LR
+  C[GitHub collaborator] -->|workflow dispatch| E[production Environment]
+  E -->|required reviewer approval| A[GitHub Actions]
+  A -->|full SHA and pinned host key| F[restricted SSH forced command]
+  F -->|one validated argv| D[root deploy script]
+  D -->|main ancestry verified| R[single-use release]
+  X[Arbitrary command or malformed SHA] -->|reject| F
+  Y[Main-external commit] -->|reject| D
+  Z[Activation failure] -->|restore previous pointer| P[known-good release]
+  A -. no access .-> S[runtime secrets]
+  C -. no shell .-> D
+```
+
+Trust boundaryはGitHub `production` Environment、restricted SSH principal、root deploy scriptの3段階である。各段階は前段の判断を信頼せず、SHA形式・main包含・実行commandを再検証する。
+
 ## Verification
 
 - `pnpm test:e2e:deploy`はGitHub UIやLightsail実機のE2Eではなく、Playwrightをrunnerとして使うheadless contract replayである。production journeyの証跡はStoryのR-01〜R-03へ分離する。
