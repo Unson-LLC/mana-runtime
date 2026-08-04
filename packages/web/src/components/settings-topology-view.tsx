@@ -125,6 +125,14 @@ export function SettingsTopologyViewPage({ view }: { view: SettingsTopologyView 
       .finally(() => setLoading(false))
   }, [])
 
+  const requestReauthentication = useCallback(() => {
+    storeOperatorToken("")
+    setData(null)
+    setError(null)
+    setLoading(false)
+    setAuthRequired(true)
+  }, [])
+
   useEffect(() => refresh(), [refresh])
 
   const selection = useMemo(() => ({ workspace: query.get("workspace"), project: query.get("project"), channel: query.get("channel") }), [query])
@@ -154,7 +162,13 @@ export function SettingsTopologyViewPage({ view }: { view: SettingsTopologyView 
           {authRequired ? <OperatorPrompt onSaved={refresh} /> : loading ? (
             <div role="status" className="text-sm text-muted-foreground">構成情報を読み込んでいます…</div>
           ) : error ? (
-            <div role="alert" className="rounded-lg border border-[var(--system-red)] p-4"><p>{error}</p><button type="button" onClick={refresh} className="mt-3 underline">再試行</button></div>
+            <div role="alert" className="rounded-lg border border-[var(--system-red)] p-4">
+              <p>{error}</p>
+              <div className="mt-3 flex flex-wrap gap-4">
+                <button type="button" onClick={refresh} className="underline">再試行</button>
+                <button type="button" onClick={requestReauthentication} className="underline">Operator Tokenを再入力</button>
+              </div>
+            </div>
           ) : !data ? null : (
             <div className="mx-auto max-w-7xl">
               {hasSelection && !matchingRoute && <div role="status" className="mb-4 rounded-lg border border-[var(--system-orange)] p-3 text-sm">指定された対象は現在の構成に見つかりません。全体表示に戻しています。</div>}
