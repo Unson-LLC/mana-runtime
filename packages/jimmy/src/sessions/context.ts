@@ -51,7 +51,7 @@ interface Section {
  * This is what makes Jinn "smart" — the engine sees all of this context
  * before responding to the user.
  */
-export function buildContext(opts: {
+export interface BuildContextOptions {
   source: string;
   channel: string;
   thread?: string;
@@ -80,7 +80,11 @@ export function buildContext(opts: {
   speakerTz?: string;
   hierarchy?: import("../shared/types.js").OrgHierarchy;
   placement?: PlacementProfile;
-}): string {
+  /** Canonical common persona, freshly rendered for this turn. */
+  runtimeInstructions?: string;
+}
+
+export function buildContext(opts: BuildContextOptions): string {
   const maxChars = opts.config?.context?.maxChars ?? DEFAULT_MAX_CONTEXT_CHARS;
   const sections: Section[] = [];
 
@@ -103,6 +107,15 @@ export function buildContext(opts: {
     operatorName,
     opts.config?.portal?.operatorAliases,
   );
+
+  if (opts.runtimeInstructions) {
+    sections.push({
+      tier: Tier.ESSENTIAL,
+      marker: "# Authoritative runtime instructions",
+      content: opts.runtimeInstructions,
+      summary: "", // authoritative and never trimmed
+    });
+  }
 
   // ── ESSENTIAL: Identity ─────────────────────────────────────
   if (opts.employee) {
@@ -454,12 +467,12 @@ ${portalName} is a personal AI assistant and gateway daemon. You are proactive, 
 ## Core principles
 - **Be proactive**: Don't just answer questions — suggest next steps, flag issues, offer to do related tasks.
 - **Be concise**: Respect the user's time. Lead with the answer, not the reasoning.
-- **Be capable**: You have access to the filesystem, can run commands, call APIs, send messages via connectors, and manage the system.
+- **Be capable**: Use only the tools and capabilities explicitly available for this turn. Never imply access that the effective capability policy does not grant.
 - **Be honest**: If you don't know something or can't do something, say so clearly.
 - **Remember context**: You're part of a persistent system. Sessions can be resumed. Build on previous work.
 ${languageInstruction}
 ## Your home directory
-Your working directory is \`~/.jinn\` (${JINN_HOME}). This contains:
+Your runtime home is \`~/.ryoko\` (${JINN_HOME}). This contains:
 - \`config.yaml\` — your configuration (engines, connectors, logging)
 - \`org/\` — employee definitions (YAML files defining AI workers)
 - \`skills/\` — reusable skill prompts
@@ -468,12 +481,12 @@ Your working directory is \`~/.jinn\` (${JINN_HOME}). This contains:
 - \`cron/\` — scheduled job definitions and run history
 - \`sessions/\` — session database
 - \`logs/\` — gateway logs
-- \`CLAUDE.md\` — user-defined instructions (always follow these)
+- \`CLAUDE.md\` — generated projection of the repository-owned canonical template; never edit it directly
 - \`AGENTS.md\` — agent/employee documentation
 
 ${placementBound
     ? "In this placement session these files are read-only reference material. Self-modification (persona, skills, memory, knowledge, org, cron, config) is not available here — see the Placement policy section."
-    : "You can read, write, and modify any of these files to configure yourself, create new employees, add skills, etc."}`;
+    : "Read or change runtime files only when the user's request and the effective capability policy authorize it. CLAUDE.md remains read-only because it is generated from the repository SSOT."}`;
 }
 
 function buildSessionContext(opts: {
@@ -911,8 +924,8 @@ function buildEvolutionContext(portalName: string, config?: JinnConfig): string 
     lines.push(`- Update \`~/.jinn/knowledge/user-profile.md\` with business/identity info`);
     lines.push(`- Update \`~/.jinn/knowledge/preferences.md\` with style/communication preferences`);
     lines.push(`- Update \`~/.jinn/knowledge/projects.md\` with project details`);
-    lines.push(`- If the user gives you persistent feedback (e.g. "always do X", "never do Y"), update \`~/.jinn/CLAUDE.md\``);
-    lines.push(`\nDo this silently — don't announce every file update. Just evolve.`);
+    lines.push(`- If the user gives you persistent feedback (e.g. "always do X", "never do Y"), update \`~/.jinn/knowledge/preferences.md\`; never edit the generated \`~/.ryoko/CLAUDE.md\``);
+    lines.push(`\nOnly write when the user has authorized persistence and the current capability policy permits it. Mention material persistent changes briefly.`);
     if (canvasHintApplies) {
       lines.push(
         `\n### Available feature the user hasn't enabled: Agents View Canvas`,

@@ -27,6 +27,7 @@ import {
   readPortalName,
   buildTemplateReplacements,
 } from "../shared/templateReplacements.js";
+import { syncRuntimeClaudeProjection } from "../persona/runtime-persona-repository.js";
 
 const GREEN = "\x1b[32m";
 const YELLOW = "\x1b[33m";
@@ -253,14 +254,6 @@ logging:
   level: info
 `;
 
-function defaultClaudeMd(portalName: string) {
-  return `# ${portalName} AI Gateway
-
-This is the ${portalName} home directory (~/.jinn).
-${portalName} orchestrates Claude Code and Codex as AI engines.
-`;
-}
-
 function defaultAgentsMd(portalName: string) {
   return `# ${portalName} Agents
 
@@ -355,7 +348,6 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
 
   // Copy or create config files
   const templateConfig = path.join(TEMPLATE_DIR, "config.yaml");
-  const templateClaude = path.join(TEMPLATE_DIR, "CLAUDE.md");
   const templateAgents = path.join(TEMPLATE_DIR, "AGENTS.md");
 
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -385,14 +377,8 @@ export async function runSetup(opts?: { force?: boolean }): Promise<void> {
   const templateReplacements = buildTemplateReplacements(portalName);
 
   const claudeMdPath = path.join(JINN_HOME, "CLAUDE.md");
-  if (!fs.existsSync(claudeMdPath)) {
-    let source = fs.existsSync(templateClaude)
-      ? fs.readFileSync(templateClaude, "utf-8")
-      : defaultClaudeMd(portalName);
-    source = applyTemplateReplacements(source, templateReplacements);
-    ensureFile(claudeMdPath, source);
-    created.push(claudeMdPath);
-  }
+  const claudeProjection = syncRuntimeClaudeProjection({ portalName });
+  if (claudeProjection.changed) created.push(claudeMdPath);
 
   const agentsMdPath = path.join(JINN_HOME, "AGENTS.md");
   if (!fs.existsSync(agentsMdPath)) {

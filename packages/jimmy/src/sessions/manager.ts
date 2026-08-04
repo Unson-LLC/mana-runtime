@@ -22,6 +22,7 @@ import {
   updateSession,
 } from "./registry.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "./callbacks.js";
+import type { TurnPromptProvider } from "./turn-prompt-provider.js";
 import { buildContext } from "./context.js";
 import { normalizeDelivery, normalizeTurns, deliverPublic, type DeliveryContext } from "./reply-disposition.js";
 import { SessionQueue } from "./queue.js";
@@ -205,6 +206,7 @@ export class SessionManager {
   private config: JinnConfig;
   private engines: Map<string, Engine>;
   private connectorNames: string[];
+  private turnPromptProvider: TurnPromptProvider;
   private queue = new SessionQueue();
   private connectorProvider: () => Map<string, Connector> = () => new Map();
   private criticalDispatches = new Set<string>();
@@ -219,10 +221,15 @@ export class SessionManager {
     config: JinnConfig,
     engines: Map<string, Engine>,
     connectorNames: string[] = [],
+    // Tests and embedded callers created before the composition-root provider
+    // existed retain the dynamic context builder. The gateway always supplies
+    // the canonical provider from server.ts.
+    turnPromptProvider: TurnPromptProvider = buildContext,
   ) {
     this.config = config;
     this.engines = engines;
     this.connectorNames = connectorNames;
+    this.turnPromptProvider = turnPromptProvider;
   }
 
   setConnectorProvider(provider: () => Map<string, Connector>): void {
@@ -625,7 +632,7 @@ export class SessionManager {
 
     try {
       const meta = msg.transportMeta ?? {};
-      const systemPrompt = buildContext({
+      const systemPrompt = this.turnPromptProvider({
         source: session.source,
         channel: msg.channel,
         thread: msg.thread,

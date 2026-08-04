@@ -149,6 +149,37 @@ describe("InteractiveClaudeEngine — PTY socket error / EIO (issue #18)", () =>
     hookCb!({ hook_event_name: "Stop", last_assistant_message: "ok" });
   };
 
+  it("cold-respawns a warm PTY when authoritative instructions change", async () => {
+    const first = engine.run({
+      sessionId: "instruction-refresh",
+      prompt: "first",
+      systemPrompt: "persona-v1",
+      cwd: "/tmp",
+    } as any);
+    await flush();
+    const firstPty = ptys[0];
+    completeTurn("instruction-cli-1");
+    await first;
+    expect(lifecycle.getWarm("instruction-refresh")).toBeDefined();
+
+    let secondResult: any;
+    void engine.run({
+      sessionId: "instruction-refresh",
+      prompt: "second",
+      systemPrompt: "persona-v2",
+      resumeSessionId: "instruction-cli-1",
+      cwd: "/tmp",
+    } as any).then((value) => { secondResult = value; });
+    await flush();
+
+    expect(firstPty._killCalled).toBe(true);
+    expect(ptys[1]).toBeDefined();
+    expect(ptys[1]).not.toBe(firstPty);
+    completeTurn("instruction-cli-1");
+    await flush();
+    expect(secondResult.result).toBe("ok");
+  });
+
   it("an EIO with no onExit still interrupts the active turn AND evicts the warm handle", async () => {
     const p = engine.run({ sessionId: "s3", prompt: "x", cwd: "/tmp" } as any);
     await flush();

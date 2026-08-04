@@ -47,6 +47,9 @@ import {
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 import { getPlacementBudgetStatus } from "./budgets.js";
 import { buildSlackTopologyProbePlan } from "./settings-topology.js";
+import { syncRuntimeClaudeProjection } from "../persona/runtime-persona-repository.js";
+import { createRuntimeInstructionProvider } from "../sessions/runtime-instructions.js";
+import { createTurnPromptProvider } from "../sessions/turn-prompt-provider.js";
 
 type SettingsTopologyProbeConnector = {
   invalidateSettingsTopologyProbe?: () => void;
@@ -302,6 +305,16 @@ export async function startGateway(
   const gatewayName = config.portal?.portalName || "Ryoko";
   logger.info(`Starting ${gatewayName} gateway (boot ${bootId}, pid ${process.pid})...`);
 
+  // CLAUDE.md in the runtime home is a generated projection, never an
+  // independently-authored source. Fail startup if the canonical template is
+  // unavailable or the projection cannot be verified.
+  const runtimeProjection = syncRuntimeClaudeProjection({ portalName: gatewayName });
+  logger.info(
+    `Runtime CLAUDE.md ${runtimeProjection.changed ? "synchronized" : "verified"} (sha256 ${runtimeProjection.sha256.slice(0, 12)})`,
+  );
+  const runtimeInstructionProvider = createRuntimeInstructionProvider();
+  const turnPromptProvider = createTurnPromptProvider(runtimeInstructionProvider);
+
   // Initialize database and recover any sessions stuck from a previous run
   initDb();
   ensureFilesDir();
@@ -406,7 +419,12 @@ export async function startGateway(
   }
 
   // Session manager
-  const sessionManager = new SessionManager(config, engines, connectorNames);
+  const sessionManager = new SessionManager(
+    config,
+    engines,
+    connectorNames,
+    turnPromptProvider,
+  );
 
   // Orphan hooks = engine activity AFTER a turn settled (background sub-agents /
   // tasks still running in the PTY). Any orphan event keeps the PTY alive; a
@@ -1109,6 +1127,8 @@ export async function startGateway(
     clearSuppressNextConnectorReload,
     hookRegistry,
     hookSecret: useInteractiveClaude ? hookSecret : undefined,
+    runtimeInstructionProvider,
+    turnPromptProvider,
   };
 
   // NOTE: replaying pending web queue items is deferred until AFTER the server is

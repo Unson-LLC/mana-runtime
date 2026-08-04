@@ -2,6 +2,32 @@ import { describe, expect, it } from "vitest";
 import { buildContext } from "../context.js";
 
 describe("delegation context", () => {
+  it("injects the canonical runtime instructions ahead of dynamic session context", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+      runtimeInstructions: "# Authoritative runtime instructions\ncommon-persona-canary",
+    });
+
+    expect(context).toContain("common-persona-canary");
+    expect(context.indexOf("common-persona-canary")).toBeLessThan(
+      context.indexOf("## Current session"),
+    );
+  });
+
+  it("does not grant broad runtime-home or generated CLAUDE.md write authority", () => {
+    const context = buildContext({
+      source: "slack",
+      channel: "C123",
+      user: "U123",
+    });
+
+    expect(context).toContain("generated projection");
+    expect(context).not.toContain("user-defined instructions (always follow these)");
+    expect(context).not.toContain("You can read, write, and modify any of these files");
+  });
+
   it("embeds the exact current session ID in child creation commands", () => {
     const context = buildContext({
       source: "slack",
@@ -91,7 +117,8 @@ describe("delegation context", () => {
       user: "U123",
       sessionId: "legacy-session",
     });
-    expect(legacyContext).toContain("You can read, write, and modify any of these files");
+    expect(legacyContext).toContain("effective capability policy authorize it");
+    expect(legacyContext).not.toContain("You can read, write, and modify any of these files");
     expect(legacyContext).toContain("## Self-evolution");
   });
 

@@ -76,6 +76,8 @@ import {
 import { constantTimeEqual, OPERATOR_TOKEN_HEADER, verifyOperatorToken } from "./operator-auth.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 import { buildSettingsTopology, type SlackRuntimeSnapshot } from "./settings-topology.js";
+import type { RuntimeInstructionProvider } from "../sessions/runtime-instructions.js";
+import type { TurnPromptProvider } from "../sessions/turn-prompt-provider.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
@@ -95,6 +97,10 @@ export interface ApiContext {
   getSettingsTopologyConfig?: () => JinnConfig;
   emit: (event: string, payload: unknown) => void;
   connectors: Map<string, import("../shared/types.js").Connector>;
+  /** Composition-root supplied canonical persona loader. */
+  runtimeInstructionProvider?: RuntimeInstructionProvider;
+  /** Shared prompt composition path used by connector and web turns. */
+  turnPromptProvider?: TurnPromptProvider;
   /** Test/embedding seam; production reads the redacted config-history index. */
   settingsTopologyHistory?: () => import("../shared/config-history.js").ConfigHistoryEntry[];
   reloadConnectorInstances?: () => Promise<{ started: string[]; stopped: string[]; errors: string[] }>;
@@ -2355,22 +2361,9 @@ Handle this as a priority request from a colleague.`;
         ? `\n\n## Language\nAlways respond in ${language}. All communication with the user must be in ${language}.`
         : "";
 
-      // Update CLAUDE.md with personalized COO name and language
-      const claudeMdPath = path.join(JINN_HOME, "CLAUDE.md");
-      if (fs.existsSync(claudeMdPath)) {
-        let claudeMd = fs.readFileSync(claudeMdPath, "utf-8");
-        // Replace the identity line in CLAUDE.md
-        claudeMd = claudeMd.replace(
-          /^You are \w+, the COO of the user's AI organization\.$/m,
-          `You are ${effectiveName}, the COO of the user's AI organization.`,
-        );
-        // Remove existing language section if present, then add new one if needed
-        claudeMd = claudeMd.replace(/\n\n## Language\nAlways respond in .+\. All communication with the user must be in .+\./m, "");
-        if (languageSection) {
-          claudeMd = claudeMd.trimEnd() + languageSection + "\n";
-        }
-        fs.writeFileSync(claudeMdPath, claudeMd);
-      }
+      // Re-render the generated runtime projection from the canonical template.
+      // The HTTP handler never edits CLAUDE.md directly.
+      context.runtimeInstructionProvider?.({ portalName: effectiveName });
 
       // Update AGENTS.md with personalized name and language
       const agentsMdPath = path.join(JINN_HOME, "AGENTS.md");
@@ -2887,8 +2880,8 @@ export async function runWebSession(
   const orgHierarchy = resolveOrgHierarchy(scanOrgForHierarchy());
 
   try {
-
-    const systemPrompt = buildContext({
+    const buildTurnPrompt = context.turnPromptProvider ?? buildContext;
+    const systemPrompt = buildTurnPrompt({
       source: "web",
       channel: currentSession.sourceRef,
       user: "web-user",
