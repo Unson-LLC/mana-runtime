@@ -42,7 +42,7 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 
 - AC-01: GitHub Actionsの手動workflowで、空欄なら現在の`main`、指定時は`origin/main`に含まれる完全SHAだけを対象にできる。
 - AC-02: workflowはGitHub `production` Environmentを使用し、Environment gateを通過するjob内でのみSSH接続する。required reviewerの実設定と承認停止はマージ後R-01で確認する。
-- AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256`以外を許さない設定を生成し、installed deployerのdigestが対象commit上の実装と一致しなければbuild前に拒否する。実機への導入状態はマージ後R-02で確認する。
+- AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256`以外を許さない設定を生成し、installed deployerのdigestがworkflow commit上の実装と一致しなければbuild前に拒否する。アプリのtarget SHAとは独立させる。実機への導入状態はマージ後R-02で確認する。
 - AC-04: サーバー側でも対象SHAが`origin/main`に含まれることを再検証し、GitHub側だけの検証を信頼しない。
 - AC-05: buildは稼働中releaseと別のworktreeで行い、成功後だけactive symlinkを切り替える。
 - AC-06: restart前にdevelopment runner guardを待ち、実行中のVibePro開発runnerをkillしない。
@@ -68,13 +68,13 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 
 ## Merge-time setup and operator action
 
-- Setup administratorは、merge後の対象SHAからrestricted deploy keyとLightsail principalを一度導入し、GitHub `production` Environmentのrequired reviewer、`LIGHTSAIL_DEPLOY_SSH_KEY`、`LIGHTSAIL_DEPLOY_HOST`、`LIGHTSAIL_DEPLOY_KNOWN_HOSTS`を設定する。deploy script変更時は同じ対象SHAからinstallerを再実行する。
+- Setup administratorは、merge後のcontrol-plane SHAからrestricted deploy keyとLightsail principalを一度導入し、GitHub `production` Environmentのrequired reviewer、`LIGHTSAIL_DEPLOY_SSH_KEY`、`LIGHTSAIL_DEPLOY_HOST`、`LIGHTSAIL_DEPLOY_KNOWN_HOSTS`を設定する。deploy script変更時はworkflowが使うcontrol-plane SHAからinstallerを再実行する。
 - 梅田さんを含むdeploy operatorにはrepositoryの`Write`権限だけを付与し、Actions → `Deploy Mana Runtime to Lightsail` → `Run workflow`から起動してもらう。SSH private key、root、Lightsail loginは共有しない。
 - merge直後の初回設定とR-01〜R-03は必要な利用者操作であり、PR本文で「なし」と表現しない。
 
 ## Compatibility
 
-既存のMana Runtime起動経路とruntime secret配置は変更しない。deploy control planeのscriptを更新した場合、または異なるdeploy script版の過去SHAへrollbackする場合は、repositoryとLightsail上のdigestを一致させるため、setup administratorが対象SHAからinstallerを再実行する。再installは既存release pointerを変更しない。
+既存のMana Runtime起動経路とruntime secret配置は変更しない。deploy control planeを更新した場合は、repositoryとLightsail上のdigestを一致させるため、setup administratorがworkflowのcontrol-plane SHAからinstallerを再実行する。アプリのrollback対象SHAから古いinstallerは実行せず、再installは既存release pointerを変更しない。
 
 ## User Action
 

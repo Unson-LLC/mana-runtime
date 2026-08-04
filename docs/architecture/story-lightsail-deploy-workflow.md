@@ -37,7 +37,7 @@ flowchart LR
 - Root deploy script: `/usr/local/sbin/openryoko-pilot-deploy`
 - Forced command: `/usr/local/sbin/openryoko-deploy-command`
 
-初回installerは`current`を現行source cloneへ向け、wrapperをatomicに更新し、systemdの`ExecStart`をstable wrapperへ固定する。serviceはrestartしないため、導入だけでは稼働commitを変えない。次回の承認済みdeployでSHA releaseへ切り替わる。Actionsは対象commit上のdeploy script 2本のdigestを送信し、forced-command wrapperとroot deploy scriptがinstalled copyのdigestを二重検証する。deploy script変更時は対象SHAからinstallerを再実行するまでfail closedになり、repository testとinstalled control planeのversion skewを成功扱いしない。deploy成功前にはMainPIDのcommand lineが`current`配下のentrypointを実行していることも確認し、SHA・digest・MainPID・resolved entrypointをworkflow summaryへ伝播する。
+初回installerは`current`を現行source cloneへ向け、wrapperをatomicに更新し、systemdの`ExecStart`をstable wrapperへ固定する。serviceはrestartしないため、導入だけでは稼働commitを変えない。次回の承認済みdeployでSHA releaseへ切り替わる。Actionsはworkflow commit上のdeploy script 2本のdigestを送信し、forced-command wrapperとroot deploy scriptがinstalled copyのdigestを二重検証する。アプリのtarget SHAとcontrol-plane SHAを分離するため、古いアプリSHAへのrollbackでも古いinstallerは実行しない。deploy script変更時はworkflow commitからinstallerを再実行するまでfail closedになる。deploy成功前にはMainPIDのcommand lineが`current`配下のentrypointを実行していることも確認し、target SHA・control-plane SHA/digest・MainPID・resolved entrypointをworkflow summaryへ伝播する。
 
 ## Trust and secrets
 
@@ -47,7 +47,7 @@ Environment secretはdeploy SSH private keyだけとする。hostとpinned known
 
 restartまたはactive check失敗時は、deploy scriptが直前のresolved symlinkへ戻し、serviceをrestartする。明示的なrollbackもGitHub workflowから直前SHAを再指定する。同じSHAでも既存成果物は再利用せず、single-use worktreeで再buildしてからactivateする。
 
-対象rollback SHAのdeploy script digestがinstalled control planeと異なる場合、workflowはbuild前にfail closedする。setup administratorが対象rollback SHAからcontrol planeを再installし、既存release pointerが変わっていないことを確認してからworkflowを再実行する。この管理者境界を挟まず、deploy operatorだけでversionを跨ぐrollbackはできない。
+rollback対象はアプリSHAだけであり、control planeはworkflow commitの版を維持する。installed digestがworkflow commitと異なる場合はbuild前にfail closedし、setup administratorがworkflow commitからcontrol planeを再installして既存release pointer不変を確認する。これによりcontrol plane導入前のアプリSHAにも、古いinstallerを実行せずrollbackできる。
 
 ## Consequences
 

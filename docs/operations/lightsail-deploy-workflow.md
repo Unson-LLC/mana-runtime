@@ -29,7 +29,7 @@ sudo systemctl show --property ExecStart --value openryoko.service
 
 初回installerは`/home/ryoko/current`が存在しない場合だけ現行source cloneへpointする。再installでは既存のrelease pointerを変更しないため、control plane更新だけで稼働commitは変わらない。statusまたはservice確認が失敗した場合は、`/home/ryoko/bin/ryoko.pre-release-pointer`を戻してから原因を調査する。
 
-installerが表示した`Control-plane digest`をsetup記録へ残す。deploy script 2本を変更したcommitを出す場合は、同じ対象SHAのisolated worktreeからinstallerを再実行してからworkflowを起動する。workflowは対象SHAのdigestとinstalled digestが違えばbuild前に停止する。
+installerが表示した`Control-plane digest`をsetup記録へ残す。deploy script 2本を変更したcommitを出す場合は、その変更を含むmainのcontrol-plane commitからinstallerを再実行してからworkflowを起動する。workflowはworkflow自身のcommitにあるscript digestとinstalled digestが違えばbuild前に停止する。アプリのdeploy対象SHAとは独立している。
 
 ### 3. Configure GitHub Environment
 
@@ -88,17 +88,17 @@ sudo -u openryoko-deploy env SSH_ORIGINAL_COMMAND='uname -a' /usr/local/sbin/ope
 sudo -u openryoko-deploy env SSH_ORIGINAL_COMMAND='deploy deadbeef' /usr/local/sbin/openryoko-deploy-command
 ```
 
-shadowのpassword fieldは`!`または`*`で始まるlock状態であること、最後の2 commandはどちらもexit 64で拒否されることを確認する。実機のcontrol-plane digestはinstaller出力とworkflow summaryで照合し、値が違う場合は対象SHAのinstallerを再実行する。これらが揃わない限りR-02は未確認とする。
+shadowのpassword fieldは`!`または`*`で始まるlock状態であること、最後の2 commandはどちらもexit 64で拒否されることを確認する。実機のcontrol-plane digestはinstaller出力とworkflow summaryで照合し、値が違う場合はsummaryのcontrol-plane commitからinstallerを再実行する。これらが揃わない限りR-02は未確認とする。
 
 ログを共有するときはtoken、message本文、環境変数値、raw errorを含めない。各Storyのrelease gateに従いSlack/Webの利用結果を別途確認する。
 
 ## Rollback
 
-直前のknown-good SHAを同じworkflowへ指定する。対象SHAのdeploy script digestがworkflow summaryに記録された現在のinstalled control-plane digestと同じなら、そのまま実行できる。異なる場合は、setup administratorが上記one-time setupと同じisolated worktree手順で対象known-good SHAからinstallerを再実行し、release pointerが変わっていないことと新しいdigestを確認してからworkflowを実行する。digest不一致を無視または回避してはならない。
+直前のknown-good SHAを同じworkflowへ指定する。workflowは現在のmainにあるcontrol planeを使って任意のmain到達可能なアプリSHAをdeployするため、rollback対象SHAから古いinstallerを実行しない。control-plane digestが実機と違う場合だけ、setup administratorがworkflow summaryのcontrol-plane commitからinstallerを再実行し、release pointer不変とdigest一致を確認してworkflowを再実行する。
 
-通常のrollbackでも、対象SHAから新しいsingle-use releaseをbuildし、検証後にcurrent symlinkを切り替えてrestartする。既存releaseは再利用しない。rollback後に新しい版へ戻す場合は、その版のmerged SHAからcontrol planeを再installしてからdeployする。
+通常のrollbackでも、対象SHAから新しいsingle-use releaseをbuildし、検証後にcurrent symlinkを切り替えてrestartする。既存releaseは再利用しない。アプリSHAの切替だけではcontrol planeを入れ替えない。
 
-Rollback ownerはrelease ownerとする。ただしversion-skew時のcontrol-plane再installはsetup administratorが担当する。release ownerが対応できない場合はmana-runtime maintainerが引き継ぎ、開始前に対象known-good SHA、deploy script digest、installed digest、直前の成功runを照合する。
+Rollback ownerはrelease ownerとする。control-plane digest不一致時の再installはsetup administratorが担当する。release ownerが対応できない場合はmana-runtime maintainerが引き継ぎ、開始前に対象known-good SHA、workflowのcontrol-plane commit/digest、installed digest、直前の成功runを照合する。
 
 workflowが利用不能でserviceも停止している緊急時だけ、管理者がpilot上で対象SHAに一致する既存release directoryを特定し、その実体とentrypointを確認してから切り替える。release名は`<full-sha>-<UTC timestamp>-<pid>`であり、SHAだけのdirectoryは存在しない。
 

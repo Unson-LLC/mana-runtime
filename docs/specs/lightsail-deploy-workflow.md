@@ -40,7 +40,7 @@ sequenceDiagram
 ```
 
 1. GitHub Environment承認後にActionsが対象SHAを確定する。
-2. 対象SHA上のdeploy script 2本からcontrol-plane digestを計算し、pinned known_hostsと専用秘密鍵で`openryoko-deploy`へ接続して`deploy <sha> <digest>`だけを送る。
+2. workflow commit上のdeploy script 2本からcontrol-plane digestを計算し、pinned known_hostsと専用秘密鍵で`openryoko-deploy`へ接続して`deploy <target-sha> <digest>`だけを送る。target SHAとcontrol-plane SHAは独立させる。
 3. forced-command wrapperが入力を完全一致で検証し、installed script 2本のdigestが一致した場合だけroot deploy scriptへSHAとdigestを別々のargvとして渡す。root deploy scriptもbuild前にdigestを再検証する。
 4. root deploy scriptがlockを取得し、pilot上のcanonical cloneで`origin/main`をfetchする。
 5. `$HOME/releases/openryoko/<sha>-<run-id>`へsingle-use detached worktreeを作り、frozen installとbuildを実行する。既存成果物は再利用しない。
@@ -64,8 +64,8 @@ sequenceDiagram
 - Actions dependencyはfull commit SHAでpinする。
 - host key checkingを無効化しない。
 - workflow log、GitHub summary、server outputへ鍵、token、environment file内容を出さない。
-- deploy scriptを変更したcommitは、setup administratorがその対象SHAからinstallerを再実行するまでfail closedとする。旧installed control planeで新しいrepository testだけが通る状態を成功扱いしない。
-- deploy scriptの版を跨ぐrollbackでは、setup administratorがrollback対象のknown-good SHAからcontrol planeを再installし、installerが既存の`/home/ryoko/current`を変更していないことを確認してからworkflowを実行する。deploy operatorだけでcontrol-plane版を跨いではならない。
+- deploy scriptを変更したworkflow commitは、setup administratorがそのcontrol-plane SHAからinstallerを再実行するまでfail closedとする。旧installed control planeで新しいrepository testだけが通る状態を成功扱いしない。
+- アプリのrollback対象SHAから古いinstallerを実行しない。workflow commitの現行control planeでmain上のknown-good SHAをbuild/activateし、control-plane digest不一致時だけsetup administratorがworkflow commitから再installする。
 
 ## Diagrams
 

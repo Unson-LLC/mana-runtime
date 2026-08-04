@@ -23,7 +23,7 @@ bash -n "$account_library"
 grep -Fq 'repositoryの`Write`権限が必要' "$runbook"
 grep -Fq 'Environment secretの値を閲覧する権限やLightsail shell accessは不要' "$runbook"
 grep -Fq 'mana-runtime repository administratorへ`Write`権限を依頼する' "$runbook"
-grep -Fq 'version-skew時のcontrol-plane再installはsetup administratorが担当する' "$runbook"
+grep -Fq 'rollback対象SHAから古いinstallerを実行しない' "$runbook"
 echo "operator access guidance fixture passed"
 
 if SSH_ORIGINAL_COMMAND="uname -a" bash "$deploy_dir/openryoko-deploy-command" >/dev/null 2>&1; then
@@ -59,12 +59,23 @@ if grep -Fq '/usr/sbin/nologin' "$deploy_dir/install-pilot-deployer.sh"; then
   echo "installer configures a shell that prevents sshd forced-command execution" >&2
   exit 1
 fi
-grep -Fq 'if [[ ! -e "$runtime_home/current" && ! -L "$runtime_home/current" ]]' \
-  "$deploy_dir/install-pilot-deployer.sh" \
-  || { echo "installer reinstall can overwrite the active release pointer" >&2; exit 1; }
+account_fixture_root="$(mktemp -d)"
+pointer_fixture="$account_fixture_root/pointer"
+mkdir -p "$pointer_fixture/runtime" "$pointer_fixture/source" "$pointer_fixture/release"
+source "$account_library"
+seed_release_pointer_if_missing "$pointer_fixture/runtime" "$pointer_fixture/source"
+[[ "$(readlink "$pointer_fixture/runtime/current")" == "$pointer_fixture/source" ]] \
+  || { echo "installer did not seed a missing current pointer" >&2; exit 1; }
+ln -sfn "$pointer_fixture/release" "$pointer_fixture/runtime/current"
+seed_release_pointer_if_missing "$pointer_fixture/runtime" "$pointer_fixture/source"
+[[ "$(readlink "$pointer_fixture/runtime/current")" == "$pointer_fixture/release" ]] \
+  || { echo "installer reinstall overwrote the active release pointer" >&2; exit 1; }
+ln -sfn "$pointer_fixture/missing-release" "$pointer_fixture/runtime/current"
+seed_release_pointer_if_missing "$pointer_fixture/runtime" "$pointer_fixture/source"
+[[ "$(readlink "$pointer_fixture/runtime/current")" == "$pointer_fixture/missing-release" ]] \
+  || { echo "installer reinstall overwrote a dangling recovery pointer" >&2; exit 1; }
 echo "sshd account-shell forced-command fixture passed"
 
-account_fixture_root="$(mktemp -d)"
 account_fixture_bin="$account_fixture_root/bin"
 mkdir -p "$account_fixture_bin"
 cat > "$account_fixture_bin/id" <<'STUB'

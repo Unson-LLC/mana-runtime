@@ -12,6 +12,11 @@
       "title": "Release activation state",
       "entities": ["release", "active"],
       "mermaid": "stateDiagram-v2\n  [*] --> Requested\n  Requested --> Rejected: invalid or non-main SHA\n  Requested --> Built: isolated build passes\n  Built --> Guarded: runner guard passes\n  Guarded --> Active: restart and runtime checks pass\n  Guarded --> RolledBack: activation check fails\n  Active --> ActiveWithWarning: metadata prune fails"
+    },
+    {
+      "kind": "threat_model",
+      "title": "Deployment trust boundaries",
+      "mermaid": "flowchart LR\n  C[GitHub collaborator] -->|workflow dispatch| E[production Environment]\n  E -->|required reviewer approval| A[GitHub Actions]\n  A -->|full SHA and pinned host key| F[restricted SSH forced command]\n  F -->|validated SHA and digest argv| D[root deploy script]\n  D -->|main ancestry verified| R[single-use release]\n  X[Arbitrary command or malformed SHA] -->|reject| F\n  Y[Main-external commit] -->|reject| D\n  Z[Activation failure] -->|restore previous pointer| P[known-good release]\n  A -. no access .-> S[runtime secrets]\n  C -. no shell .-> D"
     }
   ],
   "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
@@ -140,11 +145,11 @@
     {
       "id": "LDW-012",
       "type": "invariant",
-      "statement": "Reinstalling the control plane preserves an existing active release pointer and seeds it from the source clone only on first installation; a rollback across control-plane versions requires the setup administrator to reinstall from the known-good target SHA before the deploy operator runs the workflow.",
+      "statement": "Reinstalling the control plane preserves an existing active release pointer and seeds it from the source clone only on first installation; application rollback uses the current workflow control plane independently of the target application SHA and never runs an installer from the rollback target.",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }],
-        "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Rollback across control-plane versions" }],
-        "code_refs": [{ "file": "scripts/deploy/install-pilot-deployer.sh", "anchor": "if [[ ! -e \"$runtime_home/current\"" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Rollback" }],
+        "code_refs": [{ "file": "scripts/deploy/lib/deploy-account.sh", "anchor": "seed_release_pointer_if_missing" }],
         "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "installer preserves existing current pointer" }]
       }
     }

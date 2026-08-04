@@ -50,17 +50,16 @@ jobs:
           install -m 600 /dev/null "$HOME/.ssh/known_hosts"
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
 
-      - name: Bind deploy control plane to target commit
+      - name: Bind deploy control plane to workflow commit
         id: control_plane
-        env:
-          TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          deploy_script_hash="$(git show "$TARGET_SHA:scripts/deploy/openryoko-pilot-deploy" | sha256sum | cut -d' ' -f1)"
-          command_script_hash="$(git show "$TARGET_SHA:scripts/deploy/openryoko-deploy-command" | sha256sum | cut -d' ' -f1)"
+          deploy_script_hash="$(sha256sum scripts/deploy/openryoko-pilot-deploy | cut -d' ' -f1)"
+          command_script_hash="$(sha256sum scripts/deploy/openryoko-deploy-command | cut -d' ' -f1)"
           digest="$(printf '%s\n%s\n' "$deploy_script_hash" "$command_script_hash" | sha256sum | cut -d' ' -f1)"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Deploy through forced command
         id: deploy
@@ -99,6 +98,7 @@ jobs:
         env:
           TARGET_SHA: ${{ steps.target.outputs.sha }}
           CONTROL_PLANE_DIGEST: ${{ steps.control_plane.outputs.digest }}
+          CONTROL_PLANE_SHA: ${{ steps.control_plane.outputs.sha }}
           MAIN_PID: ${{ steps.deploy.outputs.main_pid }}
           ENTRYPOINT: ${{ steps.deploy.outputs.entrypoint }}
         shell: bash
@@ -106,6 +106,7 @@ jobs:
           {
             echo "### Mana Runtime deployment"
             echo "- Commit: \`$TARGET_SHA\`"
+            echo "- Control-plane commit: \`$CONTROL_PLANE_SHA\`"
             echo "- Control-plane digest: \`$CONTROL_PLANE_DIGEST\`"
             echo "- MainPID: \`$MAIN_PID\`"
             echo "- Entrypoint: \`$ENTRYPOINT\`"

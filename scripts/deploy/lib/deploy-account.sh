@@ -24,3 +24,15 @@ ensure_deploy_account() {
   [[ "$password_field" == \!* || "$password_field" == \** ]] \
     || { echo "password is not locked for $deploy_user" >&2; return 1; }
 }
+
+seed_release_pointer_if_missing() {
+  local runtime_home="$1"
+  local source_repo="$2"
+  local current_link="$runtime_home/current"
+
+  if [[ ! -e "$current_link" && ! -L "$current_link" ]]; then
+    local next_link="${current_link}.next.$$"
+    ln -s "$source_repo" "$next_link"
+    mv -f "$next_link" "$current_link"
+  fi
+}

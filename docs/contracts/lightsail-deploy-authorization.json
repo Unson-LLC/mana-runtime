@@ -4,7 +4,7 @@
   "clauses": [
     {
       "id": "LIGHTSAIL-DEPLOY-AUTH-001",
-      "statement": "GitHub Actions may request deployment only for a full commit SHA contained in origin/main, and the Lightsail principal may execute only the restricted deploy command when that SHA and its control-plane digest match the installed deployer.",
+      "statement": "GitHub Actions may request deployment only for a full application commit SHA contained in origin/main, and the Lightsail principal may execute only the restricted deploy command when the workflow commit control-plane digest matches the installed deployer.",
       "applies_to": {
         "responsibility": "mana_runtime.lightsail_deployment.authorization_boundary",
         "paths": [
@@ -24,7 +24,7 @@
         "deploy a commit not contained in origin/main",
         "accept a short or malformed commit SHA",
         "execute an arbitrary SSH command",
-        "run an installed deploy control plane whose digest differs from the target commit",
+        "run an installed deploy control plane whose digest differs from the workflow commit",
         "bypass the production Environment approval boundary",
         "treat systemd active as proof of Slack or Web outcome"
       ],
