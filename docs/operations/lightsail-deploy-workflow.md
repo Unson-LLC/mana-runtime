@@ -45,6 +45,16 @@ private keyはGitHub Environment secretへ保存後、作業端末から安全�
 3. production reviewerが対象SHAとPR/CIを確認して承認する。
 4. workflow summaryのSHAとsuccessを確認する。
 
+## Release note and operator ownership
+
+- Release owner: `production` Environmentで実行を承認したreviewer
+- Deploy operator: workflowを起動したGitHub user
+- Support owner: mana-runtime maintainers。失敗時はworkflow run URL、対象SHA、systemd状態を添えて連絡する
+- Release note: 対象PR、from/to SHA、workflow run URL、承認者、実行者、systemd確認結果をdeployment recordへ残す
+- Observability evidence: workflow summary、`readlink -f /home/ryoko/current`、`systemctl is-active`、MainPIDのcommand line、機能別runbookの結果を分けて記録する
+
+このPRのmergeはreleaseではない。GitHub EnvironmentとLightsailのone-time setupが完了し、R-01〜R-03の本番証拠が揃うまで運用移行は未完了とする。
+
 ## Server-side verification
 
 ```bash
@@ -60,6 +70,8 @@ sudo journalctl -u openryoko.service --since '10 minutes ago' --no-pager
 ## Rollback
 
 直前のknown-good SHAを同じworkflowへ指定する。通常のrollbackでも、そのSHAから新しいsingle-use releaseをbuildし、検証後にcurrent symlinkを切り替えてrestartする。既存releaseは再利用しない。
+
+Rollback ownerはrelease ownerとする。release ownerが対応できない場合はmana-runtime maintainerが引き継ぎ、開始前に対象known-good SHAと直前の成功runを照合する。
 
 workflowが利用不能でserviceも停止している緊急時だけ、管理者がpilot上で対象SHAに一致する既存release directoryを特定し、その実体とentrypointを確認してから切り替える。release名は`<full-sha>-<UTC timestamp>-<pid>`であり、SHAだけのdirectoryは存在しない。
 

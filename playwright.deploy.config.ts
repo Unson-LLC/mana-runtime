@@ -5,5 +5,8 @@ export default defineConfig({
   testMatch: 'story-lightsail-deploy-workflow-*.spec.ts',
   timeout: 60_000,
   workers: 1,
-  reporter: 'line',
+  reporter: [
+    ['line'],
+    ['json', { outputFile: 'test-results/deploy-playwright.json' }],
+  ],
 })

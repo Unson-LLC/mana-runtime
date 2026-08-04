@@ -1,0 +1,39 @@
+{
+  "schema_version": "0.1.0",
+  "domain": "mana-runtime-lightsail-deployment",
+  "clauses": [
+    {
+      "id": "LIGHTSAIL-DEPLOY-AUTH-001",
+      "statement": "GitHub Actions may request deployment only for a full commit SHA contained in origin/main, and the Lightsail principal may execute only the restricted deploy command for that SHA.",
+      "applies_to": {
+        "responsibility": "mana_runtime.lightsail_deployment.authorization_boundary",
+        "paths": [
+          ".github/workflows/deploy-lightsail.yml",
+          "scripts/deploy/**",
+          "playwright.deploy.config.ts",
+          "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts"
+        ],
+        "symbols": [],
+        "risk_surfaces": [
+          "auth_permission",
+          "external_side_effect",
+          "core_workflow_state"
+        ]
+      },
+      "forbidden_patterns": [
+        "deploy a commit not contained in origin/main",
+        "accept a short or malformed commit SHA",
+        "execute an arbitrary SSH command",
+        "bypass the production Environment approval boundary",
+        "treat systemd active as proof of Slack or Web outcome"
+      ],
+      "evidence_requirements": [
+        "auth_denied",
+        "real_byte_replay",
+        "deployment_version_stamp",
+        "workflow_state_regression",
+        "current_head_verification"
+      ]
+    }
+  ]
+}
