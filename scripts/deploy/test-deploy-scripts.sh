@@ -149,6 +149,24 @@ if ruby "$workflow_checker" "$workflow_fixture_root/leaked-deploy-key.yml" >/dev
   echo "workflow checker accepted deploy-key output" >&2
   exit 1
 fi
+cp "$workflow" "$workflow_fixture_root/raw-input-sha.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub(%q{TARGET_SHA: ${{ steps.target.outputs.sha }}}, %q{TARGET_SHA: ${{ inputs.commit_sha }}}); File.write(p, s)' "$workflow_fixture_root/raw-input-sha.yml"
+if ruby "$workflow_checker" "$workflow_fixture_root/raw-input-sha.yml" >/dev/null 2>&1; then
+  echo "workflow checker accepted an unvalidated input SHA for deployment" >&2
+  exit 1
+fi
+cp "$workflow" "$workflow_fixture_root/unrestricted-principal.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub(%q{openryoko-deploy@"$DEPLOY_HOST"}, %q{ubuntu@"$DEPLOY_HOST"}); File.write(p, s)' "$workflow_fixture_root/unrestricted-principal.yml"
+if ruby "$workflow_checker" "$workflow_fixture_root/unrestricted-principal.yml" >/dev/null 2>&1; then
+  echo "workflow checker accepted an unrestricted SSH principal" >&2
+  exit 1
+fi
+cp "$workflow" "$workflow_fixture_root/non-deploy-payload.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub(%q{"deploy $TARGET_SHA"}, %q{"status"}); File.write(p, s)' "$workflow_fixture_root/non-deploy-payload.yml"
+if ruby "$workflow_checker" "$workflow_fixture_root/non-deploy-payload.yml" >/dev/null 2>&1; then
+  echo "workflow checker accepted a non-deploy forced-command payload" >&2
+  exit 1
+fi
 
 rollback_root="$(mktemp -d)"
 trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "$resolver_root" "$render_root" "$account_fixture_root" "${build_fixture_root:-}" "${failure_root:-}"' EXIT

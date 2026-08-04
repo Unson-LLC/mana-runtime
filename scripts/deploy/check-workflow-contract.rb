@@ -37,6 +37,9 @@ raise "commit_sha must feed the resolver" unless resolve_step.dig("env", "REQUES
 
 ssh_step = deploy.fetch("steps").find { |step| step["name"] == "Deploy through forced command" }
 ssh_run = ssh_step&.fetch("run", "")
+raise "deploy must use the resolver output SHA" unless ssh_step&.dig("env", "TARGET_SHA") == "${{ steps.target.outputs.sha }}"
+raise "deploy must use the restricted SSH principal" unless ssh_run.include?('openryoko-deploy@"$DEPLOY_HOST"')
+raise "forced command payload must be exactly deploy plus the validated SHA" unless ssh_run.lines.map(&:strip).include?('"deploy $TARGET_SHA"')
 raise "strict host key checking is required" unless ssh_run.match?(/StrictHostKeyChecking=yes(?:\s|\\|\z)/)
 raise "host key checking must not be weakened" if ssh_run.match?(/StrictHostKeyChecking=(?:no|accept-new)/)
 
