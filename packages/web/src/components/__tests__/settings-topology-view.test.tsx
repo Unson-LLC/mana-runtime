@@ -131,16 +131,29 @@ describe("SettingsTopologyViewPage", () => {
   it("shows a retryable error and recovers without retaining stale data", async () => {
     mocks.token = "operator-token"
     mocks.getSettingsTopology.mockRejectedValueOnce(new Error("network unavailable"))
-    render(<SettingsTopologyViewPage view="topology" />)
+    window.history.replaceState({}, "", "/settings/meeting-minutes?workspace=T-A&project=project-a&channel=C-A")
+    render(<SettingsTopologyViewPage view="minutes" />)
 
     const alert = await screen.findByRole("alert")
     expect(alert.textContent).toContain("構成情報を取得できませんでした")
     expect(alert.textContent).not.toContain("network unavailable")
     expect(screen.queryByRole("heading", { name: /^Project A/ })).toBeNull()
+    expect(screen.getByRole("button", { name: "再試行" })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Operator Tokenを再入力" }))
+    expect(mocks.storeOperatorToken).toHaveBeenCalledWith("")
+    expect(await screen.findByRole("heading", { name: "Operator認証が必要です" })).toBeTruthy()
+    expect(screen.queryByRole("alert")).toBeNull()
+    expect(mocks.getSettingsTopology).toHaveBeenCalledTimes(1)
 
     mocks.getSettingsTopology.mockResolvedValueOnce(topology)
-    fireEvent.click(screen.getByRole("button", { name: "再試行" }))
-    expect(await screen.findByRole("heading", { name: /^Project A/ })).toBeTruthy()
+    fireEvent.change(screen.getByLabelText("Operator Token"), { target: { value: "replacement-token" } })
+    fireEvent.click(screen.getByRole("button", { name: "Tokenを保存して再取得" }))
+    const heading = await screen.findByRole("heading", { name: /^Project A/ })
+    expect(mocks.storeOperatorToken.mock.calls).toEqual([[""], ["replacement-token"]])
+    expect(mocks.getSettingsTopology).toHaveBeenCalledTimes(2)
+    expect(window.location.pathname + window.location.search).toBe("/settings/meeting-minutes?workspace=T-A&project=project-a&channel=C-A")
+    expect(heading.closest("article")?.className).toContain("border-[var(--accent)]")
   })
 
   it("fails closed before a credential-shaped API value can reach the DOM", async () => {
