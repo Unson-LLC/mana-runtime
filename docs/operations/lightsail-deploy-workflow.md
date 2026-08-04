@@ -38,6 +38,16 @@ host keyはpilot上の`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`と、�
 
 private keyはGitHub Environment secretへ保存後、作業端末から安全に削除する。削除前にGitHub登録とserver側public keyの一致を確認する。
 
+## Access prerequisites
+
+役割ごとの権限を分離する。
+
+- Deploy operator（梅田さんを含む）: repositoryの`Write`権限が必要。Actionsからmanual workflowを起動できるが、Environment secretの値を閲覧する権限やLightsail shell accessは不要
+- Production reviewer: `production` Environmentの承認者。対象SHA、PR、CIを確認し、deployの実行可否を決める
+- Setup administrator: repository Environment、secret/variables、restricted deploy key、Lightsail側deploy principalを初期設定する。通常deployのたびに関与しない
+
+Actionsに`Deploy Mana Runtime to Lightsail`または`Run workflow`が表示されない場合は、default branchが`main`であることと自分のrepository roleを確認し、mana-runtime repository administratorへ`Write`権限を依頼する。secret値やLightsail loginをdeploy operatorへ共有して解決しない。
+
 ## Deploy
 
 1. GitHubのActions → `Deploy Mana Runtime to Lightsail` → `Run workflow`を開く。

@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 deploy_dir="$repo_root/scripts/deploy"
 workflow="$repo_root/.github/workflows/deploy-lightsail.yml"
+runbook="$repo_root/docs/operations/lightsail-deploy-workflow.md"
 workflow_checker="$deploy_dir/check-workflow-contract.rb"
 resolver="$deploy_dir/resolve-deploy-ref"
 renderer="$deploy_dir/render-pilot-deploy-config"
@@ -18,6 +19,11 @@ for script in \
   bash -n "$script"
 done
 bash -n "$account_library"
+
+grep -Fq 'repositoryの`Write`権限が必要' "$runbook"
+grep -Fq 'Environment secretの値を閲覧する権限やLightsail shell accessは不要' "$runbook"
+grep -Fq 'mana-runtime repository administratorへ`Write`権限を依頼する' "$runbook"
+echo "operator access guidance fixture passed"
 
 if SSH_ORIGINAL_COMMAND="uname -a" bash "$deploy_dir/openryoko-deploy-command" >/dev/null 2>&1; then
   echo "forced command accepted an arbitrary SSH command" >&2
