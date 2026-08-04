@@ -95,7 +95,7 @@ VibeProの要件ゲートが既存分岐を新しい要件と誤認しないよ�
 - AC-01: 固定HTTPS URLをsecretやcredentialなしで生成でき、operator認証後のread-only画面がredactedされた現在の実効設定を取得・表示する契約を、現在のHEADに紐付いたAPI・browser E2Eで証明する。
 - AC-01a: Slackのdeep linkからoperator credential未設定または拒否状態で遷移した場合は同じread-only画面上にcredential promptを表示し、有効なcredential保存後に現在のpathと安全なquery selectionのまま再取得する。拒否時は設定dataを返さない。
 - AC-02: Slack App Homeに状態概要と「Mana設定を開く」ボタンがあり、Webの構成マップへ遷移できる。
-- AC-03: Botへの明示的な設定DMコマンドは設定リンクを返す一方、その他の一般DMには応答せず `respondTo.im: never` の意味を維持する。
+- AC-03: Botへの明示的な設定DMコマンドは、Slackが `thread_ts` を付与した場合は同じスレッド内に設定リンクを返す一方、その他の一般DMには応答せず `respondTo.im: never` の意味を維持する。
 - AC-04: Webサイドバーの「設定」から「構成マップ」へ到達できる。
 - AC-05: 配送エラーや権限エラーに含まれるリンクから、対象workspace・project・channelを選択した詳細表示へ到達できる。
 - AC-06: 構成マップ上で通常配送とクロスワークスペース共有を異なるedgeとして識別できる。
@@ -113,7 +113,7 @@ VibeProの要件ゲートが既存分岐を新しい要件と誤認しないよ�
 ## Explicit scenarios
 
 - S-001: Given an allowlisted operator on Slack App Home, when 「Mana設定を開く」を押す, then authenticated Web topology opens without exposing secrets.
-- S-002: Given general IM responses are disabled, when an operator sends `ルーティング`, then only the settings shortcut is returned and ordinary conversation remains disabled.
+- S-002: Given general IM responses are disabled, when an operator sends `ルーティング` in a Slack assistant thread, then only the settings shortcut is returned in that same thread and ordinary conversation remains disabled.
 - S-003: Given a meeting delivery error for a known workspace and project, when the operator opens its link, then the matching route is selected and the failed node explains its status.
 - S-004: Given a cross-workspace share destination, when topology is rendered, then the source route and share route are visually distinct and both endpoints are named.
 - S-005: Given Slack API or runtime inspection fails, when status is rendered, then it is shown as `未確認` with reason and timestamp rather than healthy, empty, or zero.

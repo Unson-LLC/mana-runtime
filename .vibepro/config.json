@@ -57,6 +57,13 @@
         "security": 1
       },
       "require_known_attribution": false
+    },
+    "delivery_efficiency_by_story": {
+      "story-mana-configuration-visibility": {
+        "max_subagent_count": 57,
+        "max_agent_consumption_ms": 15500000,
+        "amendment_reason": "The user explicitly instructed continuation on 2026-08-04. Fifty-six historical review lifecycles exhausted the prior approved Story-local limit after a production Slack check exposed one current-HEAD DM thread-placement defect. Reserve exactly one final gate_evidence lifecycle for the focused repair at f5daf2d; permit no replacement loop, unrelated review role, gate waiver, or global budget expansion."
+      }
     }
   },
   "brainbase": {
