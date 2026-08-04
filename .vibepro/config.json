@@ -60,9 +60,9 @@
     },
     "delivery_efficiency_by_story": {
       "story-lightsail-deploy-workflow": {
-        "max_subagent_count": 26,
-        "max_agent_consumption_ms": 7800000,
-        "amendment_reason": "The user explicitly approved expansion to 26 review slots for this Story. The override is Story-local and only permits the independent staged reviews required to reach a reviewable Lightsail deployment PR; it does not waive findings, verification, production approval, merge, or deployment gates."
+        "max_subagent_count": 34,
+        "max_agent_consumption_ms": 10200000,
+        "amendment_reason": "After approving 26 review slots, the user explicitly instructed the review budget to be expanded and work to continue. The additional eight Story-local slots are limited to the stale planning, checkpoint, and final roles already enumerated by the current Gate DAG. They do not permit replacement loops, unrelated roles, gate waivers, merge, or deployment."
       },
       "story-mana-configuration-visibility": {
         "max_subagent_count": 57,
