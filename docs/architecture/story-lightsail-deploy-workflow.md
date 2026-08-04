@@ -8,8 +8,9 @@ Story: `story-lightsail-deploy-workflow`
 
 ```mermaid
 flowchart LR
-  D["GitHub collaborator\nRun workflow"] --> E["production Environment\nrequired reviewer"]
-  E --> W["GitHub Actions\nmain SHA validation"]
+  D["GitHub collaborator\nRun workflow"] --> P["Prepare job\nfix target SHA and digest"]
+  P --> E["production Environment\nreview exact outputs"]
+  E --> W["Deploy job\nconsume immutable outputs"]
   W --> S["restricted SSH\nforced command"]
   S --> V["server validation\norigin/main only"]
   V --> B["isolated release\ninstall and build"]
@@ -21,6 +22,7 @@ flowchart LR
 ## Why this boundary
 
 - GitHubは既存collaborator identity、workflow run、Environment approvalを監査できる。
+- Environment承認前に対象SHAとcontrol-plane digestを固定してsummaryへ表示し、承認後のjobはmainを再解決しない。
 - SSH keyはmachine accessの入口だが、forced commandと`restrict`によりdeploy SHA以外のauthorityを与えない。
 - workflowとserverの二重検証により、workflow変更や入力ミスだけでmain外commitを反映できない。
 - separate release buildとatomic symlinkにより、build中の稼働コードを変更しない。

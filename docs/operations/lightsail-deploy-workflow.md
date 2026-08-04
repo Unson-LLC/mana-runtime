@@ -59,7 +59,7 @@ Actionsに`Deploy Mana Runtime to Lightsail`または`Run workflow`が表示さ�
 
 1. GitHubのActions → `Deploy Mana Runtime to Lightsail` → `Run workflow`を開く。
 2. 通常は`commit_sha`を空欄にして現在のmainを選ぶ。rollbackや再deploy時だけfull SHAを指定する。
-3. production reviewerが対象SHAとPR/CIを確認して承認する。
+3. `Prepare deployment target` job summaryに表示された対象SHA、control-plane SHA/digest、対応するPR/CIを確認してからproduction reviewerが承認する。承認後のdeploy jobはこの固定済みjob outputだけを使い、mainを再取得しない。
 4. workflow summaryのSHAとsuccessを確認する。
 5. workflow summaryのcontrol-plane digest、MainPID、Entrypointが空でなく、対象SHAのreleaseを指すことを確認する。
 
@@ -88,7 +88,7 @@ sudo -u openryoko-deploy env SSH_ORIGINAL_COMMAND='uname -a' /usr/local/sbin/ope
 sudo -u openryoko-deploy env SSH_ORIGINAL_COMMAND='deploy deadbeef' /usr/local/sbin/openryoko-deploy-command
 ```
 
-shadowのpassword fieldは`!`または`*`で始まるlock状態であること、最後の2 commandはどちらもexit 64で拒否されることを確認する。実機のcontrol-plane digestはinstaller出力とworkflow summaryで照合し、値が違う場合はsummaryのcontrol-plane commitからinstallerを再実行する。これらが揃わない限りR-02は未確認とする。
+shadowのpassword fieldは`!`または`*`で始まるlock状態であること、最後の2 commandはどちらもexit 64で拒否されることを確認する。実機のcontrol-plane digestはinstaller出力とworkflow summaryで照合し、値が違う場合は失敗後も残る`Prepare deployment target` job summaryのcontrol-plane commitからinstallerを再実行する。これらが揃わない限りR-02は未確認とする。
 
 ログを共有するときはtoken、message本文、環境変数値、raw errorを含めない。各Storyのrelease gateに従いSlack/Webの利用結果を別途確認する。
 

@@ -16,11 +16,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy reviewed commit
+  prepare:
+    name: Prepare deployment target
     runs-on: ubuntu-latest
-    timeout-minutes: 110
-    environment: production
+    timeout-minutes: 10
+    outputs:
+      target_sha: ${{ steps.target.outputs.sha }}
+      control_plane_sha: ${{ steps.control_plane.outputs.sha }}
+      control_plane_digest: ${{ steps.control_plane.outputs.digest }}
     steps:
       - name: Checkout main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -35,6 +38,39 @@ jobs:
         shell: bash
         run: scripts/deploy/resolve-deploy-ref "$REQUESTED_SHA"
 
+      - name: Bind deploy control plane to workflow commit
+        id: control_plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploy_script_hash="$(sha256sum scripts/deploy/openryoko-pilot-deploy | cut -d' ' -f1)"
+          command_script_hash="$(sha256sum scripts/deploy/openryoko-deploy-command | cut -d' ' -f1)"
+          digest="$(printf '%s\n%s\n' "$deploy_script_hash" "$command_script_hash" | sha256sum | cut -d' ' -f1)"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Record approval target
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          CONTROL_PLANE_SHA: ${{ steps.control_plane.outputs.sha }}
+          CONTROL_PLANE_DIGEST: ${{ steps.control_plane.outputs.digest }}
+        shell: bash
+        run: |
+          {
+            echo "### Deployment target awaiting production approval"
+            echo "- Commit: \`$TARGET_SHA\`"
+            echo "- Control-plane commit: \`$CONTROL_PLANE_SHA\`"
+            echo "- Control-plane digest: \`$CONTROL_PLANE_DIGEST\`"
+            echo "- Approval boundary: the deploy job consumes these immutable job outputs"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy approved target
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    environment: production
+    steps:
       - name: Configure restricted SSH client
         env:
           DEPLOY_KEY: ${{ secrets.LIGHTSAIL_DEPLOY_SSH_KEY }}
@@ -50,23 +86,12 @@ jobs:
           install -m 600 /dev/null "$HOME/.ssh/known_hosts"
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
 
-      - name: Bind deploy control plane to workflow commit
-        id: control_plane
-        shell: bash
-        run: |
-          set -euo pipefail
-          deploy_script_hash="$(sha256sum scripts/deploy/openryoko-pilot-deploy | cut -d' ' -f1)"
-          command_script_hash="$(sha256sum scripts/deploy/openryoko-deploy-command | cut -d' ' -f1)"
-          digest="$(printf '%s\n%s\n' "$deploy_script_hash" "$command_script_hash" | sha256sum | cut -d' ' -f1)"
-          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Deploy through forced command
         id: deploy
         env:
           DEPLOY_HOST: ${{ vars.LIGHTSAIL_DEPLOY_HOST }}
-          TARGET_SHA: ${{ steps.target.outputs.sha }}
-          CONTROL_PLANE_DIGEST: ${{ steps.control_plane.outputs.digest }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          CONTROL_PLANE_DIGEST: ${{ needs.prepare.outputs.control_plane_digest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -96,9 +121,9 @@ jobs:
 
       - name: Record deployment summary
         env:
-          TARGET_SHA: ${{ steps.target.outputs.sha }}
-          CONTROL_PLANE_DIGEST: ${{ steps.control_plane.outputs.digest }}
-          CONTROL_PLANE_SHA: ${{ steps.control_plane.outputs.sha }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          CONTROL_PLANE_DIGEST: ${{ needs.prepare.outputs.control_plane_digest }}
+          CONTROL_PLANE_SHA: ${{ needs.prepare.outputs.control_plane_sha }}
           MAIN_PID: ${{ steps.deploy.outputs.main_pid }}
           ENTRYPOINT: ${{ steps.deploy.outputs.entrypoint }}
         shell: bash

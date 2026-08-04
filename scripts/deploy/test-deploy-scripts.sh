@@ -205,9 +205,15 @@ if ruby "$workflow_checker" "$workflow_fixture_root/leaked-deploy-key.yml" >/dev
   exit 1
 fi
 cp "$workflow" "$workflow_fixture_root/raw-input-sha.yml"
-ruby -e 'p=ARGV.fetch(0); s=File.read(p).gsub(%q{TARGET_SHA: ${{ steps.target.outputs.sha }}}, %q{TARGET_SHA: ${{ inputs.commit_sha }}}); File.write(p, s)' "$workflow_fixture_root/raw-input-sha.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).gsub(%q{TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}}, %q{TARGET_SHA: ${{ inputs.commit_sha }}}); File.write(p, s)' "$workflow_fixture_root/raw-input-sha.yml"
 if ruby "$workflow_checker" "$workflow_fixture_root/raw-input-sha.yml" >/dev/null 2>&1; then
   echo "workflow checker accepted an unvalidated input SHA for deployment" >&2
+  exit 1
+fi
+cp "$workflow" "$workflow_fixture_root/late-checkout.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub(%q{      - name: Configure restricted SSH client}, %q{      - name: Late checkout\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n      - name: Configure restricted SSH client}); File.write(p, s)' "$workflow_fixture_root/late-checkout.yml"
+if ruby "$workflow_checker" "$workflow_fixture_root/late-checkout.yml" >/dev/null 2>&1; then
+  echo "workflow checker accepted a moving checkout after production approval" >&2
   exit 1
 fi
 cp "$workflow" "$workflow_fixture_root/unrestricted-principal.yml"

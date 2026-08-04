@@ -5,7 +5,7 @@
     {
       "kind": "flow",
       "title": "Approved deployment flow",
-      "mermaid": "flowchart LR\n  U[GitHub collaborator] --> E[production Environment approval]\n  E --> A[GitHub Actions main SHA validation]\n  A --> S[restricted SSH forced command]\n  S --> H[server main SHA validation and build]\n  H --> G[development runner guard]\n  G --> R[atomic activation and runtime checks]"
+      "mermaid": "flowchart LR\n  U[GitHub collaborator] --> P[Prepare exact SHA and digest]\n  P --> E[production Environment approval]\n  E --> A[Deploy immutable outputs]\n  A --> S[restricted SSH forced command]\n  S --> H[server main SHA validation and build]\n  H --> G[development runner guard]\n  G --> R[atomic activation and runtime checks]"
     },
     {
       "kind": "state",
@@ -16,7 +16,7 @@
     {
       "kind": "threat_model",
       "title": "Deployment trust boundaries",
-      "mermaid": "flowchart LR\n  C[GitHub collaborator] -->|workflow dispatch| E[production Environment]\n  E -->|required reviewer approval| A[GitHub Actions]\n  A -->|full SHA and pinned host key| F[restricted SSH forced command]\n  F -->|validated SHA and digest argv| D[root deploy script]\n  D -->|main ancestry verified| R[single-use release]\n  X[Arbitrary command or malformed SHA] -->|reject| F\n  Y[Main-external commit] -->|reject| D\n  Z[Activation failure] -->|restore previous pointer| P[known-good release]\n  A -. no access .-> S[runtime secrets]\n  C -. no shell .-> D"
+      "mermaid": "flowchart LR\n  C[GitHub collaborator] -->|workflow dispatch| P[Prepare immutable SHA and digest]\n  P -->|exact outputs| E[production Environment]\n  E -->|required reviewer approval| A[Deploy job]\n  A -->|full SHA and pinned host key| F[restricted SSH forced command]\n  F -->|validated SHA and digest argv| D[root deploy script]\n  D -->|main ancestry verified| R[single-use release]\n  X[Arbitrary command or malformed SHA] -->|reject| F\n  Y[Main-external commit] -->|reject| D\n  Z[Activation failure] -->|restore previous pointer| K[known-good release]\n  P -. no secrets .-> S[runtime secrets]\n  C -. no shell .-> D"
     }
   ],
   "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
@@ -35,7 +35,7 @@
     {
       "id": "LDW-002",
       "type": "invariant",
-      "statement": "The deployment job uses the production GitHub Environment, read-only repository permissions, non-cancelling concurrency, pinned host keys, and a commit-pinned checkout action.",
+      "statement": "A secretless prepare job resolves and displays immutable target and control-plane outputs before approval; the production Environment deployment job depends only on those outputs, performs no checkout or target resolution after approval, and uses read-only repository permissions, non-cancelling concurrency, pinned host keys, and a commit-pinned checkout action in prepare.",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "index": 1 }],
         "architecture_refs": [{ "file": "docs/adr/0006-restricted-github-actions-lightsail-deploy.md", "section": "Decision" }],

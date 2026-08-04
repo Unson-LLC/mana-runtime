@@ -10,6 +10,7 @@ Mana RuntimeのpilotはLightsail上の単一systemd serviceとして稼働し、
 
 - 人が開始する正規入口はGitHub Actionsの`workflow_dispatch`とする。
 - GitHub `production` Environmentのrequired reviewerを本番承認境界とする。
+- Environmentを持たないprepare jobで対象SHAとcontrol-plane SHA/digestを固定・表示し、承認後のdeploy jobはそのjob outputだけを使ってmainを再解決しない。
 - 対象は`origin/main`に到達可能な完全40桁SHAだけとし、workflowとLightsailの双方で検証する。
 - Actions用SSH keyは専用`openryoko-deploy` userへ割り当て、`restrict`付きforced commandで`deploy <target-sha> <control-plane-digest>`以外を拒否する。workflow commit上のdeploy scriptとinstalled copyのdigestが一致しない場合はbuild前に停止し、アプリのtarget SHAとは独立させる。
 - root-owned deploy scriptだけがisolated releaseのbuild、guarded restart、atomic symlink切替、自動rollbackを行う。
@@ -17,7 +18,7 @@ Mana RuntimeのpilotはLightsail上の単一systemd serviceとして稼働し、
 
 ## Why
 
-GitHub collaborator identity、Environment approval、workflow run、target SHAを一つの監査経路へまとめながら、共同開発者へ汎用server authorityを渡さずに済む。workflowとserverの二重検証は入力またはworkflow変更だけでmain外commitが反映されることを防ぐ。別releaseでのbuildとatomic切替により、build失敗は稼働中releaseへ影響せず、restart失敗時は直前releaseへ戻せる。
+GitHub collaborator identity、Environment approval、workflow run、target SHAを一つの監査経路へまとめながら、共同開発者へ汎用server authorityを渡さずに済む。承認前にimmutable job outputを固定するため、承認待ち中にmainが進んでもreviewerが確認していないcommitへ対象が移らない。workflowとserverの二重検証は入力またはworkflow変更だけでmain外commitが反映されることを防ぐ。別releaseでのbuildとatomic切替により、build失敗は稼働中releaseへ影響せず、restart失敗時は直前releaseへ戻せる。
 
 ## Alternatives
 

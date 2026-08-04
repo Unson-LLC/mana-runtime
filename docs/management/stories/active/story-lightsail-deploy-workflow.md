@@ -41,7 +41,7 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 ## Acceptance Criteria
 
 - AC-01: GitHub Actionsの手動workflowで、空欄なら現在の`main`、指定時は`origin/main`に含まれる完全SHAだけを対象にできる。
-- AC-02: workflowはGitHub `production` Environmentを使用し、Environment gateを通過するjob内でのみSSH接続する。required reviewerの実設定と承認停止はマージ後R-01で確認する。
+- AC-02: secretを持たないprepare jobが対象SHAとcontrol-plane SHA/digestを承認前に固定・表示し、GitHub `production` Environment gateを通過するdeploy jobはその固定値だけを使ってSSH接続する。required reviewerの実設定、表示値を確認できる承認停止、承認待ち中にmainが進んでも対象が変わらないことはマージ後R-01で確認する。
 - AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256`以外を許さない設定を生成し、installed deployerのdigestがworkflow commit上の実装と一致しなければbuild前に拒否する。アプリのtarget SHAとは独立させる。実機への導入状態はマージ後R-02で確認する。
 - AC-04: サーバー側でも対象SHAが`origin/main`に含まれることを再検証し、GitHub側だけの検証を信頼しない。
 - AC-05: buildは稼働中releaseと別のworktreeで行い、成功後だけactive symlinkを切り替える。
@@ -62,7 +62,7 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 ## Completion evidence
 
 - workflow、server script、forced-command wrapper、installerが同じPRでreviewされる。
-- shell syntax、arbitrary command/short SHA拒否、workflow contract、rollbackのテストが現在HEADでpassする。
+- shell syntax、arbitrary command/short SHA拒否、承認前のimmutable output固定と承認後checkout禁止を含むworkflow contract、rollbackのテストが現在HEADでpassする。
 - GitHub `production` Environment、required reviewers、Environment secret/variablesの設定手順がある。
 - Lightsailへの導入とrollback drillの手順がある。
 
@@ -88,7 +88,7 @@ merge後、setup administratorはGitHub `production` Environmentのrequired revi
 
 ## Release completion gate
 
-- R-01: merge後、production Environmentのrequired reviewerが梅田さんの手動workflowを承認できる。
+- R-01: merge後、production Environmentのrequired reviewerが`Prepare deployment target` summaryの対象SHA・control-plane SHA/digestを確認して梅田さんの手動workflowを承認でき、承認待ち中にmainが進んでもdeploy対象が表示済みSHAから変わらない。
 - R-02: workflow summaryの対象SHA・control-plane digest・MainPID・entrypointがLightsail実機と一致する。加えてdeploy accountのpassword lock、`authorized_keys`の`restrict`付きforced command、`visudo`を通る限定sudoers、arbitrary command/short SHA拒否をsetup administratorが確認する。
 - R-03: 対象変更の機能別runbookで本番利用結果を確認する。
 - R-01〜R-03が未確認なら、workflow実装やPR mergeだけでは運用移行完了としない。

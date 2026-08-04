@@ -25,6 +25,7 @@
         "accept a short or malformed commit SHA",
         "execute an arbitrary SSH command",
         "run an installed deploy control plane whose digest differs from the workflow commit",
+        "resolve or checkout a moving deployment target after production approval",
         "bypass the production Environment approval boundary",
         "treat systemd active as proof of Slack or Web outcome"
       ],

@@ -28,8 +28,9 @@ sequenceDiagram
   participant A as GitHub Actions
   participant S as Restricted SSH
   participant H as Lightsail deploy script
-  U->>E: Request main commit deployment
-  E->>A: Reviewer approval
+  U->>A: Resolve main commit and control-plane digest
+  A->>E: Exact immutable outputs awaiting review
+  E->>A: Reviewer approval for displayed outputs
   A->>S: deploy FULL_SHA CONTROL_PLANE_SHA256
   S->>H: Validated SHA and digest arguments
   H->>H: Fetch, verify, build, guard
@@ -39,8 +40,8 @@ sequenceDiagram
   end
 ```
 
-1. GitHub Environment承認後にActionsが対象SHAを確定する。
-2. workflow commit上のdeploy script 2本からcontrol-plane digestを計算し、pinned known_hostsと専用秘密鍵で`openryoko-deploy`へ接続して`deploy <target-sha> <digest>`だけを送る。target SHAとcontrol-plane SHAは独立させる。
+1. secretを持たないprepare jobが対象SHAを確定し、workflow commit上のdeploy script 2本からcontrol-plane digestを計算して、対象SHA・control-plane SHA/digestをjob outputとsummaryへ固定する。
+2. production reviewerがprepare summaryの固定値とPR/CIを確認して承認する。承認後のdeploy jobはmainをcheckout・再解決せず、prepare job outputとpinned known_hosts、専用秘密鍵だけを使って`openryoko-deploy`へ`deploy <target-sha> <digest>`を送る。target SHAとcontrol-plane SHAは独立させる。
 3. forced-command wrapperが入力を完全一致で検証し、installed script 2本のdigestが一致した場合だけroot deploy scriptへSHAとdigestを別々のargvとして渡す。root deploy scriptもbuild前にdigestを再検証する。
 4. root deploy scriptがlockを取得し、pilot上のcanonical cloneで`origin/main`をfetchする。
 5. `$HOME/releases/openryoko/<sha>-<run-id>`へsingle-use detached worktreeを作り、frozen installとbuildを実行する。既存成果物は再利用しない。
@@ -61,6 +62,7 @@ sequenceDiagram
 - `authorized_keys`は`restrict`とroot-owned forced commandを使う。
 - sshdがforced commandを`-c`で起動できるようdeploy userのshellは`/bin/bash`とする。新規・既存accountのpasswordをinstallerが明示的にlockしてshadow上のlock状態も検証し、Actions鍵は`restrict,command="..."`へ固定してinteractive commandを許可しない。
 - workflowは`permissions: contents: read`のみを要求する。
+- prepare jobはEnvironmentやsecretへアクセスせず、deploy jobは承認前に固定されたjob outputだけを消費する。承認待ちの間にmainが進んでも対象SHAを変更しない。
 - Actions dependencyはfull commit SHAでpinする。
 - host key checkingを無効化しない。
 - workflow log、GitHub summary、server outputへ鍵、token、environment file内容を出さない。
@@ -93,7 +95,7 @@ Trust boundaryはGitHub `production` Environment、restricted SSH principal、ro
 - `bash -n`で3本のserver-side scriptを検証する。
 - forced commandがarbitrary commandとshort SHAを拒否する。
 - valid-form SHAとcontrol-plane digestが別々のargvとしてdeploy scriptへ渡り、digest欠落・不一致をbuild前に拒否することを確認する。
-- GitHub workflow YAMLをparseし、`workflow_dispatch`、`environment: production`、read-only permissions、non-cancelling concurrency、strict host key checkingを確認する。
+- GitHub workflow YAMLをparseし、`workflow_dispatch`、prepare jobのEnvironment非使用、固定job output、deploy jobの`environment: production`とprepare依存、承認後checkout禁止、read-only permissions、non-cancelling concurrency、strict host key checkingを確認する。
 - activation失敗fixtureで直前release pointerへのrollbackと元のfailure status保持を確認する。
 - main外commit、lock競合、build失敗、guard timeout、systemd active-check失敗、entrypoint不一致、MainPID command不一致をcaller経路へ注入し、active pointerがknown-good releaseから変わらないことを確認する。
 - build失敗時に未完成releaseが削除され、service restartが呼ばれないことを確認する。
