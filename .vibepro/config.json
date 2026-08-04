@@ -61,6 +61,7 @@
     "delivery_efficiency_by_story": {
       "story-lightsail-deploy-workflow": {
         "max_subagent_count": 26,
+        "max_agent_consumption_ms": 7800000,
         "amendment_reason": "The user explicitly approved expansion to 26 review slots for this Story. The override is Story-local and only permits the independent staged reviews required to reach a reviewable Lightsail deployment PR; it does not waive findings, verification, production approval, merge, or deployment gates."
       },
       "story-mana-configuration-visibility": {
