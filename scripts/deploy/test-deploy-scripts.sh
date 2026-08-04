@@ -97,6 +97,9 @@ git -C "$working_repo" config user.name fixture
 printf 'main\n' > "$working_repo/state.txt"
 git -C "$working_repo" add state.txt
 git -C "$working_repo" commit -qm main
+ancestor_sha="$(git -C "$working_repo" rev-parse HEAD)"
+printf 'current\n' >> "$working_repo/state.txt"
+git -C "$working_repo" commit -qam current
 main_sha="$(git -C "$working_repo" rev-parse HEAD)"
 git -C "$working_repo" branch -M main
 git -C "$working_repo" remote add origin "$remote_repo"
@@ -106,18 +109,28 @@ resolver_output="$resolver_root/github-output"
 grep -Fqx "sha=$main_sha" "$resolver_output" \
   || { echo "resolver did not emit origin/main" >&2; exit 1; }
 (cd "$working_repo" && "$resolver" "$main_sha") >/dev/null
-if (cd "$working_repo" && "$resolver" "${main_sha:0:12}") >/dev/null 2>&1; then
+resolver_ancestor_output="$resolver_root/github-output-ancestor"
+(cd "$working_repo" && GITHUB_OUTPUT="$resolver_ancestor_output" "$resolver" "$ancestor_sha") >/dev/null
+grep -Fqx "sha=$ancestor_sha" "$resolver_ancestor_output" \
+  || { echo "resolver did not emit a past origin/main ancestor" >&2; exit 1; }
+short_sha_error="$resolver_root/short-sha-error"
+if (cd "$working_repo" && "$resolver" "${main_sha:0:12}") >/dev/null 2>"$short_sha_error"; then
   echo "resolver accepted a short SHA" >&2
   exit 1
 fi
+grep -Fqx 'commit_sha must be a full 40-character Git SHA.' "$short_sha_error" \
+  || { echo "resolver did not emit the operator-facing full-SHA error" >&2; exit 1; }
 git -C "$working_repo" checkout -qb side
 printf 'side\n' >> "$working_repo/state.txt"
 git -C "$working_repo" commit -qam side
 side_sha="$(git -C "$working_repo" rev-parse HEAD)"
-if (cd "$working_repo" && "$resolver" "$side_sha") >/dev/null 2>&1; then
+side_sha_error="$resolver_root/side-sha-error"
+if (cd "$working_repo" && "$resolver" "$side_sha") >/dev/null 2>"$side_sha_error"; then
   echo "resolver accepted a commit outside origin/main" >&2
   exit 1
 fi
+grep -Fqx 'The requested commit is not reachable from origin/main.' "$side_sha_error" \
+  || { echo "resolver did not emit the operator-facing ancestry error" >&2; exit 1; }
 echo "commit resolution fixtures passed"
 
 render_root="$(mktemp -d)"
