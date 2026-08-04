@@ -21,6 +21,15 @@ raise "production environment is required" unless deploy["environment"] == "prod
 checkout = deploy.fetch("steps").find { |step| step["uses"].to_s.start_with?("actions/checkout@") }
 raise "checkout action must be commit pinned" unless checkout && checkout["uses"].match?(/\Aactions\/checkout@[0-9a-f]{40}\z/)
 
+ssh_config_step = deploy.fetch("steps").find { |step| step["name"] == "Configure restricted SSH client" }
+ssh_config_run = ssh_config_step&.fetch("run", "")
+deploy_key_lines = ssh_config_run.lines.filter { |line| line.include?("DEPLOY_KEY") }.map(&:strip)
+allowed_deploy_key_lines = [
+  'test -n "$DEPLOY_KEY"',
+  'printf \'%s\\n\' "$DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"'
+]
+raise "deploy secret must only be validated and written to the private key file" unless deploy_key_lines == allowed_deploy_key_lines
+
 resolve_step = deploy.fetch("steps").find { |step| step["name"] == "Resolve and validate commit" }
 raise "commit resolution step is required" unless resolve_step
 raise "commit resolution must use the tested helper" unless resolve_step.fetch("run", "").include?("scripts/deploy/resolve-deploy-ref")

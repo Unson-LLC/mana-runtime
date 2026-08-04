@@ -143,6 +143,12 @@ if ruby "$workflow_checker" "$workflow_fixture_root/disabled-host-check.yml" >/d
   echo "workflow checker accepted disabled host key checking" >&2
   exit 1
 fi
+cp "$workflow" "$workflow_fixture_root/leaked-deploy-key.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p); needle=%q{          test -n "$DEPLOY_KEY"}; s=s.sub(needle, needle + "\n" + %q{          echo "$DEPLOY_KEY"}); File.write(p, s)' "$workflow_fixture_root/leaked-deploy-key.yml"
+if ruby "$workflow_checker" "$workflow_fixture_root/leaked-deploy-key.yml" >/dev/null 2>&1; then
+  echo "workflow checker accepted deploy-key output" >&2
+  exit 1
+fi
 
 rollback_root="$(mktemp -d)"
 trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "$resolver_root" "$render_root" "$account_fixture_root" "${build_fixture_root:-}" "${failure_root:-}"' EXIT
@@ -168,9 +174,10 @@ echo "Jimmy build failure propagation fixture passed"
 
 mkdir -p "$rollback_root/previous" "$rollback_root/failed"
 ln -s "$rollback_root/failed" "$rollback_root/current"
+: > "$rollback_root/systemctl.log"
 set +e
 (
-  systemctl() { return 0; }
+  systemctl() { printf '%s\n' "$*" >> "$rollback_root/systemctl.log"; }
   mv() { command rm -f "$3"; command mv "$2" "$3"; }
   export OPENRYOKO_DEPLOY_SOURCE_ONLY=1
   # shellcheck source=openryoko-pilot-deploy
@@ -183,6 +190,8 @@ set -e
   || { echo "rollback did not preserve the activation failure status" >&2; exit 1; }
 [[ "$(readlink "$rollback_root/current")" == "$rollback_root/previous" ]] \
   || { echo "rollback did not restore the previous release pointer" >&2; exit 1; }
+[[ "$(grep -Fxc 'restart test.service' "$rollback_root/systemctl.log")" -eq 1 ]] \
+  || { echo "rollback did not restart the restored service exactly once" >&2; exit 1; }
 grep -Fq 'rollback 1' "$deploy_dir/openryoko-pilot-deploy" \
   || { echo "activation consistency failures do not explicitly rollback" >&2; exit 1; }
 
@@ -287,6 +296,16 @@ GUARD
     }
 }
 
+assert_rollback_restart() {
+  local mode="$1"
+  [[ "$(grep -Fxc 'restart openryoko.service' "$failure_root/systemctl.log")" -eq 2 ]] \
+    || {
+      cat "$failure_root/systemctl.log" >&2
+      echo "activation failure did not restart both attempted and restored releases: $mode" >&2
+      exit 1
+    }
+}
+
 run_failure_case main-reject 0
 run_failure_case lock-conflict 0
 run_failure_case build-fail 0
@@ -295,9 +314,14 @@ run_failure_case build-fail 0
 [[ ! -s "$failure_root/systemctl.log" ]] \
   || { echo "build failure restarted the service" >&2; exit 1; }
 run_failure_case guard-timeout 1
+[[ ! -s "$failure_root/systemctl.log" ]] \
+  || { echo "guard timeout restarted the service" >&2; exit 1; }
 run_failure_case active-fail 0
+assert_rollback_restart active-fail
 run_failure_case entrypoint-mismatch 0
+assert_rollback_restart entrypoint-mismatch
 OPENRYOKO_TEST_PROCESS_COMMAND_OVERRIDE="$failure_root/other/jimmy.js" run_failure_case mainpid-mismatch 0
+assert_rollback_restart mainpid-mismatch
 
 rm -rf "$failure_root/releases"/*
 rm -f "$failure_root/current"
