@@ -23,6 +23,7 @@ bash -n "$account_library"
 grep -Fq 'repositoryの`Write`権限が必要' "$runbook"
 grep -Fq 'Environment secretの値を閲覧する権限やLightsail shell accessは不要' "$runbook"
 grep -Fq 'mana-runtime repository administratorへ`Write`権限を依頼する' "$runbook"
+grep -Fq 'version-skew時のcontrol-plane再installはsetup administratorが担当する' "$runbook"
 echo "operator access guidance fixture passed"
 
 if SSH_ORIGINAL_COMMAND="uname -a" bash "$deploy_dir/openryoko-deploy-command" >/dev/null 2>&1; then
@@ -58,6 +59,9 @@ if grep -Fq '/usr/sbin/nologin' "$deploy_dir/install-pilot-deployer.sh"; then
   echo "installer configures a shell that prevents sshd forced-command execution" >&2
   exit 1
 fi
+grep -Fq 'if [[ ! -e "$runtime_home/current" && ! -L "$runtime_home/current" ]]' \
+  "$deploy_dir/install-pilot-deployer.sh" \
+  || { echo "installer reinstall can overwrite the active release pointer" >&2; exit 1; }
 echo "sshd account-shell forced-command fixture passed"
 
 account_fixture_root="$(mktemp -d)"

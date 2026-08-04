@@ -72,9 +72,13 @@ chown root:root "$dropin_tmp"
 mv -f "$dropin_tmp" "$dropin_dir/10-release-pointer.conf"
 systemctl daemon-reload
 
-# Move the runtime entrypoint to a release pointer without changing the active code.
-ln -sfn "$source_repo" "$runtime_home/current.next"
-mv -Tf "$runtime_home/current.next" "$runtime_home/current"
+# Seed the release pointer only during the first installation. Reinstalling the
+# control plane for a version-skewed deploy or rollback must not change the
+# release that is currently serving traffic.
+if [[ ! -e "$runtime_home/current" && ! -L "$runtime_home/current" ]]; then
+  ln -s "$source_repo" "$runtime_home/current.next"
+  mv -Tf "$runtime_home/current.next" "$runtime_home/current"
+fi
 if [[ -f "$wrapper" && ! -f "${wrapper}.pre-release-pointer" ]]; then
   cp -a "$wrapper" "${wrapper}.pre-release-pointer"
 fi

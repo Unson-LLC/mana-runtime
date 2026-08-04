@@ -74,7 +74,7 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 
 ## Compatibility
 
-既存のMana Runtime起動経路とruntime secret配置は変更しない。deploy control planeのscriptを更新した場合は、repositoryとLightsail上のdigestを一致させるため、setup administratorがmerged SHAからinstallerを再実行する。
+既存のMana Runtime起動経路とruntime secret配置は変更しない。deploy control planeのscriptを更新した場合、または異なるdeploy script版の過去SHAへrollbackする場合は、repositoryとLightsail上のdigestを一致させるため、setup administratorが対象SHAからinstallerを再実行する。再installは既存release pointerを変更しない。
 
 ## User Action
 

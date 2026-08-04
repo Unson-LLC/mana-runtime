@@ -27,7 +27,7 @@ sudo systemctl is-active openryoko.service
 sudo systemctl show --property ExecStart --value openryoko.service
 ```
 
-installerは現行checkoutを`/home/ryoko/current`へpointするため、この時点ではコードreleaseを変更しない。statusまたはservice確認が失敗した場合は、`/home/ryoko/bin/ryoko.pre-release-pointer`を戻してから原因を調査する。
+初回installerは`/home/ryoko/current`が存在しない場合だけ現行source cloneへpointする。再installでは既存のrelease pointerを変更しないため、control plane更新だけで稼働commitは変わらない。statusまたはservice確認が失敗した場合は、`/home/ryoko/bin/ryoko.pre-release-pointer`を戻してから原因を調査する。
 
 installerが表示した`Control-plane digest`をsetup記録へ残す。deploy script 2本を変更したcommitを出す場合は、同じ対象SHAのisolated worktreeからinstallerを再実行してからworkflowを起動する。workflowは対象SHAのdigestとinstalled digestが違えばbuild前に停止する。
 
@@ -94,9 +94,11 @@ shadowのpassword fieldは`!`または`*`で始まるlock状態であること�
 
 ## Rollback
 
-直前のknown-good SHAを同じworkflowへ指定する。通常のrollbackでも、そのSHAから新しいsingle-use releaseをbuildし、検証後にcurrent symlinkを切り替えてrestartする。既存releaseは再利用しない。
+直前のknown-good SHAを同じworkflowへ指定する。対象SHAのdeploy script digestがworkflow summaryに記録された現在のinstalled control-plane digestと同じなら、そのまま実行できる。異なる場合は、setup administratorが上記one-time setupと同じisolated worktree手順で対象known-good SHAからinstallerを再実行し、release pointerが変わっていないことと新しいdigestを確認してからworkflowを実行する。digest不一致を無視または回避してはならない。
 
-Rollback ownerはrelease ownerとする。release ownerが対応できない場合はmana-runtime maintainerが引き継ぎ、開始前に対象known-good SHAと直前の成功runを照合する。
+通常のrollbackでも、対象SHAから新しいsingle-use releaseをbuildし、検証後にcurrent symlinkを切り替えてrestartする。既存releaseは再利用しない。rollback後に新しい版へ戻す場合は、その版のmerged SHAからcontrol planeを再installしてからdeployする。
+
+Rollback ownerはrelease ownerとする。ただしversion-skew時のcontrol-plane再installはsetup administratorが担当する。release ownerが対応できない場合はmana-runtime maintainerが引き継ぎ、開始前に対象known-good SHA、deploy script digest、installed digest、直前の成功runを照合する。
 
 workflowが利用不能でserviceも停止している緊急時だけ、管理者がpilot上で対象SHAに一致する既存release directoryを特定し、その実体とentrypointを確認してから切り替える。release名は`<full-sha>-<UTC timestamp>-<pid>`であり、SHAだけのdirectoryは存在しない。
 

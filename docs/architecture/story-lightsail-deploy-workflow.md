@@ -47,6 +47,8 @@ Environment secretはdeploy SSH private keyだけとする。hostとpinned known
 
 restartまたはactive check失敗時は、deploy scriptが直前のresolved symlinkへ戻し、serviceをrestartする。明示的なrollbackもGitHub workflowから直前SHAを再指定する。同じSHAでも既存成果物は再利用せず、single-use worktreeで再buildしてからactivateする。
 
+対象rollback SHAのdeploy script digestがinstalled control planeと異なる場合、workflowはbuild前にfail closedする。setup administratorが対象rollback SHAからcontrol planeを再installし、既存release pointerが変わっていないことを確認してからworkflowを再実行する。この管理者境界を挟まず、deploy operatorだけでversionを跨ぐrollbackはできない。
+
 ## Consequences
 
 - 共同開発者はGitHub UIだけでデプロイを依頼できる。
