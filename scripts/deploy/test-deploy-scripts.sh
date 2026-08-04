@@ -176,7 +176,13 @@ grep -Fqx 'restrict,command="/usr/local/sbin/openryoko-deploy-command" ssh-ed255
 grep -Fqx 'openryoko-deploy ALL=(root) NOPASSWD: /usr/local/sbin/openryoko-pilot-deploy *' "$render_root/rendered/openryoko-pilot-deploy.sudoers"
 grep -Fqx 'ExecStart=/home/ryoko/bin/ryoko start' "$render_root/rendered/10-release-pointer.conf"
 grep -Fq '/home/ryoko/current/packages/jimmy/dist/bin/jimmy.js' "$render_root/rendered/ryoko"
-[[ "$(stat -f '%Lp' "$render_root/rendered/authorized_keys" 2>/dev/null || stat -c '%a' "$render_root/rendered/authorized_keys")" == "600" ]]
+if stat -c '%a' "$render_root/rendered/authorized_keys" >/dev/null 2>&1; then
+  authorized_keys_mode="$(stat -c '%a' "$render_root/rendered/authorized_keys")"
+else
+  authorized_keys_mode="$(stat -f '%Lp' "$render_root/rendered/authorized_keys")"
+fi
+[[ "$authorized_keys_mode" == "600" ]] \
+  || { echo "authorized_keys mode is not 600: $authorized_keys_mode" >&2; exit 1; }
 echo "installer artifact fixtures passed"
 
 grep -Fq 'Control-plane digest:' "$deploy_dir/install-pilot-deployer.sh"
