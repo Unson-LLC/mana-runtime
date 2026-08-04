@@ -72,6 +72,14 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 - 梅田さんを含むdeploy operatorにはrepositoryの`Write`権限だけを付与し、Actions → `Deploy Mana Runtime to Lightsail` → `Run workflow`から起動してもらう。SSH private key、root、Lightsail loginは共有しない。
 - merge直後の初回設定とR-01〜R-03は必要な利用者操作であり、PR本文で「なし」と表現しない。
 
+## Compatibility
+
+既存のMana Runtime起動経路とruntime secret配置は変更しない。deploy control planeのscriptを更新した場合は、repositoryとLightsail上のdigestを一致させるため、setup administratorがmerged SHAからinstallerを再実行する。
+
+## User Action
+
+merge後、setup administratorはGitHub `production` Environmentのrequired reviewer、`LIGHTSAIL_DEPLOY_SSH_KEY`、`LIGHTSAIL_DEPLOY_HOST`、`LIGHTSAIL_DEPLOY_KNOWN_HOSTS`を設定し、merged SHAからrestricted deployerをinstallしてR-01〜R-03を確認する。梅田さんにはrepositoryの`Write`権限とworkflow dispatchだけを付与し、SSH private key、root、Lightsail loginは共有しない。
+
 ### Evidence boundary
 
 - PR前の`test:e2e:deploy`は、Playwright runnerからworkflow YAML、入力配線、summary、commit resolver、forced command、installer生成物、rollback fixtureを再生するheadless contract testである。
