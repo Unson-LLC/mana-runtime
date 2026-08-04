@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+requested_sha="${1:-}"
+
+git fetch --no-tags origin main
+target="${requested_sha:-$(git rev-parse origin/main)}"
+
+if [[ ! "$target" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "commit_sha must be a full 40-character Git SHA." >&2
+  exit 1
+fi
+
+target="$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')"
+git cat-file -e "${target}^{commit}"
+git merge-base --is-ancestor "$target" origin/main || {
+  echo "The requested commit is not reachable from origin/main." >&2
+  exit 1
+}
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  echo "sha=$target" >> "$GITHUB_OUTPUT"
+fi
+echo "Deploy target: $target"

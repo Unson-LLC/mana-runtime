@@ -17,7 +17,7 @@
     "template/"
   ],
   "scripts": {
-    "build": "tsc && rm -rf dist/web && cp -r ../web/out dist/web 2>/dev/null || true && rm -rf dist/assets && cp -r assets dist/assets 2>/dev/null || true",
+    "build": "tsc && (rm -rf dist/web && cp -r ../web/out dist/web 2>/dev/null || true) && (rm -rf dist/assets && cp -r assets dist/assets 2>/dev/null || true)",
     "dev": "tsc && (tsc --watch &) && node --watch-path=dist dist/bin/jimmy.js start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

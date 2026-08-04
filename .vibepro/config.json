@@ -59,6 +59,11 @@
       "require_known_attribution": false
     },
     "delivery_efficiency_by_story": {
+      "story-lightsail-deploy-workflow": {
+        "max_subagent_count": 62,
+        "max_agent_consumption_ms": 18600000,
+        "amendment_reason": "The user explicitly instructed implementation to continue. Eight final Story-local lifecycle slots are reserved only to map the four already-completed independent current-HEAD reviews onto VibePro's required stage roles. They do not permit new design exploration, replacement loops, unrelated roles, gate waivers, merge, or deployment."
+      },
       "story-mana-configuration-visibility": {
         "max_subagent_count": 57,
         "max_agent_consumption_ms": 15500000,
@@ -127,8 +132,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-lightsail-deploy-workflow",
+        "title": "共同開発者がGitHub ActionsからMana Runtimeを安全にLightsailへデプロイできる",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "month",
+        "view": "dev",
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-mana-configuration-visibility"
+    "current_story_id": "story-lightsail-deploy-workflow"
   }
 }

@@ -1,0 +1,94 @@
+---
+story_id: story-lightsail-deploy-workflow
+title: 共同開発者がGitHub ActionsからMana Runtimeを安全にLightsailへデプロイできる
+status: active
+pr_scope_strategy: atomic_single_pr
+pr_scope_reason: "本Storyは、GitHub workflow、restricted SSH principal、server-side main再検証、isolated build、guarded activation、automatic rollback、検証fixture、権限正本、運用runbookを一つのデプロイ契約として出荷する。workflowだけを先行するとサーバー側の制限とrollbackを欠き、runtimeだけを先行すると承認・監査可能な入口を欠くため、同一HEADで初めて安全条件が成立する。"
+pr_scope_review_facets:
+  - repo-control
+  - requirements-ssot
+  - runtime-behavior
+  - e2e-gate
+  - misc-follow-up
+pr_scope_dependency_boundaries:
+  - "repo-control -> runtime-behavior"
+  - "repo-control -> e2e-gate"
+  - "requirements-ssot -> runtime-behavior"
+  - "runtime-behavior -> e2e-gate"
+  - "misc-follow-up -> requirements-ssot"
+  - "misc-follow-up -> runtime-behavior"
+  - "misc-follow-up -> e2e-gate"
+---
+
+# 共同開発者がGitHub ActionsからMana Runtimeを安全にLightsailへデプロイできる
+
+## Story metadata
+
+- Story ID: `story-lightsail-deploy-workflow`
+- Status: `active`
+- Source: mana-runtimeのデプロイを梅田さんも実施できるようにしたい、という運用要求
+- View: `dev`
+- Horizon: `month`
+- Architecture: [Architecture](../../../architecture/story-lightsail-deploy-workflow.md)
+- Spec: [Spec](../../../specs/lightsail-deploy-workflow.md)
+
+## Story
+
+Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限を共有せず、GitHub上で対象commit、実行者、承認、結果を確認できる経路からLightsailへデプロイしたい。
+
+これにより、特定の運用者だけが知る手順を減らしつつ、main以外のコード、任意コマンド、secret閲覧をデプロイ権限へ含めずに済む。
+
+## Acceptance Criteria
+
+- AC-01: GitHub Actionsの手動workflowで、空欄なら現在の`main`、指定時は`origin/main`に含まれる完全SHAだけを対象にできる。
+- AC-02: secretを持たないprepare jobが対象SHAとcontrol-plane SHA/digestを承認前に固定・表示し、GitHub `production` Environment gateを通過するdeploy jobはその固定値だけを使ってSSH接続する。required reviewerの実設定、表示値を確認できる承認停止、承認待ち中にmainが進んでも対象が変わらないことはマージ後R-01で確認する。
+- AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256`以外を許さない設定を生成し、installed deployerのdigestがworkflow commit上の実装と一致しなければbuild前に拒否する。アプリのtarget SHAとは独立させる。実機への導入状態はマージ後R-02で確認する。
+- AC-04: サーバー側でも対象SHAが`origin/main`に含まれることを再検証し、GitHub側だけの検証を信頼しない。
+- AC-05: buildは稼働中releaseと別のworktreeで行い、成功後だけactive symlinkを切り替える。
+- AC-06: restart前にdevelopment runner guardを待ち、実行中のVibePro開発runnerをkillしない。
+- AC-07: serviceがactiveにならなければ、直前releaseへsymlinkを戻してrestartする。
+- AC-08: SSH秘密鍵、host key、runtime secretをrepository、workflow log、引数へ含めない。
+- AC-09: workflowの成功はsystemd activeとMainPIDがrelease pointer経由のentrypointを実行する確認までとし、Slack/Webでの利用結果をrelease完了と誤認しない。
+- AC-10: shell syntax、forced-commandの拒否条件、workflow security contract、activation失敗時rollbackを自動テストできる。
+
+## Non-goals
+
+- 梅田さんまたは共同開発者への汎用SSH、`ubuntu`、`ryoko`、root shellの付与
+- PRの自動merge、mainへの自動deploy
+- GitHub Actionsからのruntime secret閲覧・更新
+- database migrationの自動実行
+- systemd active以外の機能別release verificationの自動完了扱い
+
+## Completion evidence
+
+- workflow、server script、forced-command wrapper、installerが同じPRでreviewされる。
+- shell syntax、arbitrary command/short SHA拒否、承認前のimmutable output固定と承認後checkout禁止を含むworkflow contract、rollbackのテストが現在HEADでpassする。
+- GitHub `production` Environment、required reviewers、Environment secret/variablesの設定手順がある。
+- Lightsailへの導入とrollback drillの手順がある。
+
+## Merge-time setup and operator action
+
+- Setup administratorは、merge後のcontrol-plane SHAからrestricted deploy keyとLightsail principalを一度導入し、GitHub `production` Environmentのrequired reviewer、`LIGHTSAIL_DEPLOY_SSH_KEY`、`LIGHTSAIL_DEPLOY_HOST`、`LIGHTSAIL_DEPLOY_KNOWN_HOSTS`を設定する。deploy script変更時はworkflowが使うcontrol-plane SHAからinstallerを再実行する。
+- 梅田さんを含むdeploy operatorにはrepositoryの`Write`権限だけを付与し、Actions → `Deploy Mana Runtime to Lightsail` → `Run workflow`から起動してもらう。SSH private key、root、Lightsail loginは共有しない。
+- merge直後の初回設定とR-01〜R-03は必要な利用者操作であり、PR本文で「なし」と表現しない。
+
+## Compatibility
+
+既存のMana Runtime起動経路とruntime secret配置は変更しない。deploy control planeを更新した場合は、repositoryとLightsail上のdigestを一致させるため、setup administratorがworkflowのcontrol-plane SHAからinstallerを再実行する。アプリのrollback対象SHAから古いinstallerは実行せず、再installは既存release pointerを変更しない。
+
+## User Action
+
+merge後、setup administratorはGitHub `production` Environmentのrequired reviewer、`LIGHTSAIL_DEPLOY_SSH_KEY`、`LIGHTSAIL_DEPLOY_HOST`、`LIGHTSAIL_DEPLOY_KNOWN_HOSTS`を設定し、merged SHAからrestricted deployerをinstallしてR-01〜R-03を確認する。梅田さんにはrepositoryの`Write`権限とworkflow dispatchだけを付与し、SSH private key、root、Lightsail loginは共有しない。
+
+### Evidence boundary
+
+- PR前の`test:e2e:deploy`は、Playwright runnerからworkflow YAML、入力配線、summary、commit resolver、forced command、installer生成物、rollback fixtureを再生するheadless contract testである。
+- このテストはGitHubの`workflow_dispatch`画面、Environment承認待ち、Actions job遷移、SSH接続、Lightsail実機、Slack/Webの利用結果を観測しないため、それらのE2E成功証跡として扱わない。
+- GitHub／Lightsailのproduction journeyは、マージ後にR-01〜R-03を実行して初めて完了とする。
+
+## Release completion gate
+
+- R-01: merge後、production Environmentのrequired reviewerが`Prepare deployment target` summaryの対象SHA・control-plane SHA/digestを確認して梅田さんの手動workflowを承認でき、承認待ち中にmainが進んでもdeploy対象が表示済みSHAから変わらない。
+- R-02: workflow summaryの対象SHA・control-plane digest・MainPID・entrypointがLightsail実機と一致する。加えてdeploy accountのpassword lock、`authorized_keys`の`restrict`付きforced command、`visudo`を通る限定sudoers、arbitrary command/short SHA拒否をsetup administratorが確認する。
+- R-03: 対象変更の機能別runbookで本番利用結果を確認する。
+- R-01〜R-03が未確認なら、workflow実装やPR mergeだけでは運用移行完了としない。

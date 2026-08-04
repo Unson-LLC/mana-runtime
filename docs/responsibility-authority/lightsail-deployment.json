@@ -1,0 +1,41 @@
+{
+  "schema_version": "0.1.0",
+  "responsibilities": [
+    {
+      "id": "mana_runtime.lightsail_deployment.authorization_boundary",
+      "primary_authority": {
+        "kind": "domain_contract",
+        "ref": "docs/contracts/lightsail-deploy-authorization.json#LIGHTSAIL-DEPLOY-AUTH-001"
+      },
+      "supporting_authority": [
+        "docs/adr/0006-restricted-github-actions-lightsail-deploy.md",
+        "docs/architecture/story-lightsail-deploy-workflow.md",
+        "docs/specs/lightsail-deploy-workflow.md",
+        "docs/operations/lightsail-deploy-workflow.md"
+      ],
+      "owned_surfaces": {
+        "paths": [
+          ".github/workflows/deploy-lightsail.yml",
+          ".github/workflows/ci.yml",
+          "scripts/deploy/**",
+          "playwright.deploy.config.ts",
+          "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts"
+        ],
+        "symbols": [],
+        "risk_surfaces": [
+          "auth_permission",
+          "external_side_effect",
+          "core_workflow_state"
+        ]
+      },
+      "required_evidence": [
+        "auth_denied",
+        "real_byte_replay",
+        "deployment_version_stamp",
+        "workflow_state_regression",
+        "current_head_verification"
+      ],
+      "unknown_policy": "block_or_review"
+    }
+  ]
+}
