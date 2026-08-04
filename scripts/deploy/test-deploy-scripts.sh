@@ -5,11 +5,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 deploy_dir="$repo_root/scripts/deploy"
 workflow="$repo_root/.github/workflows/deploy-lightsail.yml"
 workflow_checker="$deploy_dir/check-workflow-contract.rb"
+resolver="$deploy_dir/resolve-deploy-ref"
+renderer="$deploy_dir/render-pilot-deploy-config"
 
 for script in \
   "$deploy_dir/openryoko-pilot-deploy" \
   "$deploy_dir/openryoko-deploy-command" \
-  "$deploy_dir/install-pilot-deployer.sh"; do
+  "$deploy_dir/install-pilot-deployer.sh" \
+  "$resolver" \
+  "$renderer"; do
   bash -n "$script"
 done
 
@@ -29,6 +33,50 @@ output="$(SSH_ORIGINAL_COMMAND="deploy $valid_sha" bash -x "$deploy_dir/openryok
   || { echo "forced command did not preserve the validated SHA as one argv" >&2; exit 1; }
 
 ruby "$workflow_checker" "$workflow" >/dev/null
+echo "deploy workflow semantic contract passed"
+
+resolver_root="$(mktemp -d)"
+remote_repo="$resolver_root/origin.git"
+working_repo="$resolver_root/work"
+git init --bare -q "$remote_repo"
+git init -q "$working_repo"
+git -C "$working_repo" config user.email fixture@example.invalid
+git -C "$working_repo" config user.name fixture
+printf 'main\n' > "$working_repo/state.txt"
+git -C "$working_repo" add state.txt
+git -C "$working_repo" commit -qm main
+main_sha="$(git -C "$working_repo" rev-parse HEAD)"
+git -C "$working_repo" branch -M main
+git -C "$working_repo" remote add origin "$remote_repo"
+git -C "$working_repo" push -q -u origin main
+resolver_output="$resolver_root/github-output"
+(cd "$working_repo" && GITHUB_OUTPUT="$resolver_output" "$resolver" "") >/dev/null
+grep -Fqx "sha=$main_sha" "$resolver_output" \
+  || { echo "resolver did not emit origin/main" >&2; exit 1; }
+(cd "$working_repo" && "$resolver" "$main_sha") >/dev/null
+if (cd "$working_repo" && "$resolver" "${main_sha:0:12}") >/dev/null 2>&1; then
+  echo "resolver accepted a short SHA" >&2
+  exit 1
+fi
+git -C "$working_repo" checkout -qb side
+printf 'side\n' >> "$working_repo/state.txt"
+git -C "$working_repo" commit -qam side
+side_sha="$(git -C "$working_repo" rev-parse HEAD)"
+if (cd "$working_repo" && "$resolver" "$side_sha") >/dev/null 2>&1; then
+  echo "resolver accepted a commit outside origin/main" >&2
+  exit 1
+fi
+echo "commit resolution fixtures passed"
+
+render_root="$(mktemp -d)"
+printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureKey deploy-test' > "$render_root/key.pub"
+"$renderer" --authorized-key-file "$render_root/key.pub" --output-dir "$render_root/rendered"
+grep -Fqx 'restrict,command="/usr/local/sbin/openryoko-deploy-command" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureKey deploy-test' "$render_root/rendered/authorized_keys"
+grep -Fqx 'openryoko-deploy ALL=(root) NOPASSWD: /usr/local/sbin/openryoko-pilot-deploy *' "$render_root/rendered/openryoko-pilot-deploy.sudoers"
+grep -Fqx 'ExecStart=/home/ryoko/bin/ryoko start' "$render_root/rendered/10-release-pointer.conf"
+grep -Fq '/home/ryoko/current/packages/jimmy/dist/bin/jimmy.js' "$render_root/rendered/ryoko"
+[[ "$(stat -f '%Lp' "$render_root/rendered/authorized_keys" 2>/dev/null || stat -c '%a' "$render_root/rendered/authorized_keys")" == "600" ]]
+echo "installer artifact fixtures passed"
 
 workflow_fixture_root="$(mktemp -d)"
 cp "$workflow" "$workflow_fixture_root/expanded-permissions.yml"
@@ -45,7 +93,7 @@ if ruby "$workflow_checker" "$workflow_fixture_root/disabled-host-check.yml" >/d
 fi
 
 rollback_root="$(mktemp -d)"
-trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "${failure_root:-}"' EXIT
+trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "$resolver_root" "$render_root" "${failure_root:-}"' EXIT
 mkdir -p "$rollback_root/previous" "$rollback_root/failed"
 ln -s "$rollback_root/failed" "$rollback_root/current"
 set +e

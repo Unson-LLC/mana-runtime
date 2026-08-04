@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "usage: $0 --authorized-key-file PATH --output-dir PATH" >&2
+}
+
+key_file=""
+output_dir=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --authorized-key-file) key_file="${2:-}"; shift 2 ;;
+    --output-dir) output_dir="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage; exit 2 ;;
+  esac
+done
+
+[[ -n "$key_file" && -f "$key_file" && -n "$output_dir" ]] || { usage; exit 2; }
+public_key="$(tr -d '\r\n' < "$key_file")"
+[[ "$public_key" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh.com)[[:space:]][A-Za-z0-9+/=]+([[:space:]].*)?$ ]] \
+  || { echo "authorized key must be an Ed25519 public key" >&2; exit 1; }
+
+install -d -m 0700 "$output_dir"
+printf '%s\n' "restrict,command=\"/usr/local/sbin/openryoko-deploy-command\" $public_key" > "$output_dir/authorized_keys"
+printf '%s\n' "openryoko-deploy ALL=(root) NOPASSWD: /usr/local/sbin/openryoko-pilot-deploy *" > "$output_dir/openryoko-pilot-deploy.sudoers"
+cat > "$output_dir/10-release-pointer.conf" <<'UNIT'
+[Service]
+ExecStart=
+ExecStart=/home/ryoko/bin/ryoko start
+UNIT
+cat > "$output_dir/ryoko" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /home/ryoko/.nvm/versions/node/v22.23.1/bin/node /home/ryoko/current/packages/jimmy/dist/bin/jimmy.js "$@"
+WRAPPER
+chmod 0600 "$output_dir/authorized_keys"
+chmod 0440 "$output_dir/openryoko-pilot-deploy.sudoers"
+chmod 0644 "$output_dir/10-release-pointer.conf"
+chmod 0755 "$output_dir/ryoko"
