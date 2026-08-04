@@ -10,7 +10,7 @@ import type { JinnConfig, Connector, Employee, IncomingMessage } from "../shared
 import { loadConfig } from "../shared/config.js";
 import { invalidateModelRegistry } from "../shared/models.js";
 import { configureLogger, logger } from "../shared/logger.js";
-import { initDb, recoverStaleSessions, recoverStaleQueueItems, getInterruptedSessions, listSessions, updateSession, getSession } from "../sessions/registry.js";
+import { initDb, recoverStaleSessions, recoverStaleQueueItems, getInterruptedSessions, listSessions, updateSession, getSession, getSharedConversationContext } from "../sessions/registry.js";
 import { SessionManager, type RouteOptions } from "../sessions/manager.js";
 import { ClaudeEngine } from "../engines/claude.js";
 import { CodexEngine } from "../engines/codex.js";
@@ -50,6 +50,10 @@ import { buildSlackTopologyProbePlan } from "./settings-topology.js";
 import { syncRuntimeClaudeProjection } from "../persona/runtime-persona-repository.js";
 import { createRuntimeInstructionProvider } from "../sessions/runtime-instructions.js";
 import { createTurnPromptProvider } from "../sessions/turn-prompt-provider.js";
+import { TurnPreparationService } from "../sessions/turn-preparation-service.js";
+import { BrainbaseContextClient } from "../shared/brainbase-graph.js";
+import { createStaticPersonResolver, LearningCandidateService, SqliteLearningOutboxRepository } from "../learning/candidate-outbox.js";
+import { createBrainbaseCandidateSubmitter } from "../learning/brainbase-candidate-store.js";
 
 type SettingsTopologyProbeConnector = {
   invalidateSettingsTopologyProbe?: () => void;
@@ -314,9 +318,32 @@ export async function startGateway(
   );
   const runtimeInstructionProvider = createRuntimeInstructionProvider();
   const turnPromptProvider = createTurnPromptProvider(runtimeInstructionProvider);
+  const turnPreparationService = new TurnPreparationService({
+    promptProvider: turnPromptProvider,
+    graphClient: new BrainbaseContextClient(),
+    sharedConversationProvider: getSharedConversationContext,
+  });
+  const learningCandidateService = new LearningCandidateService({
+    repository: new SqliteLearningOutboxRepository(),
+    resolveActorPersonId: createStaticPersonResolver(process.env.BRAINBASE_SLACK_PERSON_MAP_JSON),
+    submit: createBrainbaseCandidateSubmitter({
+      baseUrl: process.env.BRAINBASE_CANDIDATE_STORE_BASE_URL
+        ?? process.env.BRAINBASE_GRAPH_API_BASE_URL
+        ?? process.env.BRAINBASE_TASK_API_BASE_URL,
+      hmacSecret: process.env.BRAINBASE_CANDIDATE_STORE_HMAC_SECRET,
+      source: process.env.BRAINBASE_CANDIDATE_STORE_SOURCE,
+    }),
+  });
 
   // Initialize database and recover any sessions stuck from a previous run
   initDb();
+  void learningCandidateService.flush().then(({ submitted, pending }) => {
+    if (submitted > 0 || pending > 0) {
+      logger.info(`[learning] startup outbox drain submitted=${submitted} pending=${pending}`);
+    }
+  }).catch((error) => {
+    logger.warn(`[learning] startup outbox drain failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   ensureFilesDir();
   const recovered = recoverStaleSessions();
   if (recovered > 0) {
@@ -424,6 +451,7 @@ export async function startGateway(
     engines,
     connectorNames,
     turnPromptProvider,
+    { turnPreparationService, learningCandidateService },
   );
 
   // Orphan hooks = engine activity AFTER a turn settled (background sub-agents /
@@ -1129,6 +1157,8 @@ export async function startGateway(
     hookSecret: useInteractiveClaude ? hookSecret : undefined,
     runtimeInstructionProvider,
     turnPromptProvider,
+    turnPreparationService,
+    learningCandidateService,
   };
 
   // NOTE: replaying pending web queue items is deferred until AFTER the server is

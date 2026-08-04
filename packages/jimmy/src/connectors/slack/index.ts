@@ -740,27 +740,11 @@ export class SlackConnector implements Connector {
         }
       }
 
-      const sessionKey = deriveSessionKey(event as any);
+      const sessionKey = deriveSessionKey(event as any, {
+        connectorInstanceId: this.instanceId,
+        workspaceId: context.teamId || "unknown",
+      });
       const replyContext = buildReplyContext(event as any);
-
-      // Fetch parent message for thread replies so the session has full context
-      let parentContext = "";
-      if (threadTs && threadTs !== (event as any).ts) {
-        try {
-          const parentResult = await this.app.client.conversations.replies({
-            channel: (event as any).channel,
-            ts: threadTs,
-            limit: 1,
-            inclusive: true,
-          });
-          const parentMsg = parentResult.messages?.[0];
-          if (parentMsg?.text) {
-            parentContext = `[Thread context — parent message: "${parentMsg.text}"]\n\n`;
-          }
-        } catch (err) {
-          logger.debug(`Failed to fetch parent message: ${err}`);
-        }
-      }
 
       // Download attachments if present
       const attachments = [];
@@ -793,12 +777,25 @@ export class SlackConnector implements Connector {
       // DM is never "external"; otherwise trust the Slack Connect flag.
       const channelExternal = channelType !== "im" && channelInfo.isExtShared;
 
-      // Slash commands (/new, /status, …) are control directives the session
-      // manager parses by exact string match. Wrapping them in the
-      // "[Thread context — …]" preamble below silently breaks that parsing,
-      // so a command typed inside a Slack thread would never be intercepted.
-      // Commands don't need conversation context anyway — pass them verbatim.
-      const text = startsWithSlashCommand(rawText) ? rawText : parentContext + rawText;
+      // A thread can first reach us on a reply, so its root may never have been
+      // persisted by Mana. Hydrate that root once into the user turn. Broader
+      // cross-thread context still comes from the scoped turn-preparation service.
+      let parentContext = "";
+      if (threadTs && threadTs !== (event as any).ts) {
+        try {
+          const parent = await this.app.client.conversations.replies({
+            channel: (event as any).channel,
+            ts: threadTs,
+            inclusive: true,
+            limit: 1,
+          });
+          const parentText = parent.messages?.[0]?.text?.trim();
+          if (parentText) parentContext = `[Slack thread root]\n${parentText}\n\n`;
+        } catch (err) {
+          logger.warn(`[slack] Failed to hydrate thread root: ${this.formatSlackError(err)}`);
+        }
+      }
+      const text = startsWithSlashCommand(rawText) ? rawText : `${parentContext}${rawText}`;
 
       const msg: IncomingMessage = {
         connector: this.name,

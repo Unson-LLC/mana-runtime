@@ -77,4 +77,24 @@ describe("resolveMcpServers", () => {
     expect(events).toContainEqual(expect.objectContaining({ reason: "mcp_denied", sessionId: "S2", target: "fetch" }));
     warn.mockRestore();
   });
+
+  it("reports the effective MCP state without exposing secret values", () => {
+    const previous = process.env.TEST_MISSING_SEARCH_KEY;
+    delete process.env.TEST_MISSING_SEARCH_KEY;
+    const config = {
+      gateway: { enabled: true },
+      browser: { enabled: false },
+      search: { enabled: true, apiKey: "${TEST_MISSING_SEARCH_KEY}" },
+      custom: { disabled_one: { command: "node", enabled: false } },
+    } satisfies JinnConfig["mcp"];
+
+    const resolved = resolveMcpServers(config, undefined, { sessionId: "S3" }, ["gateway", "search", "ghost"]);
+    expect(resolved.effectiveCapabilities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "gateway", status: "available" }),
+      expect.objectContaining({ name: "search", status: "unavailable", reasonCode: "credential_missing" }),
+      expect.objectContaining({ name: "ghost", status: "unavailable", reasonCode: "mcp_not_configured" }),
+    ]));
+    expect(JSON.stringify(resolved.effectiveCapabilities)).not.toContain("TEST_MISSING_SEARCH_KEY");
+    if (previous !== undefined) process.env.TEST_MISSING_SEARCH_KEY = previous;
+  });
 });

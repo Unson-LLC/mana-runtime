@@ -1,6 +1,6 @@
 # 会社の脳との接続（境界と目標アーキテクチャ）
 
-**最終更新**: 2026-07-30
+**最終更新**: 2026-08-04
 **性格**: 01〜09が「現在地」を書くのに対し、この章は**目標**を書く。根拠は2026-07-29の2会議（ユニバーサルアーツ・グローウィン）で言語化された思想と [roadmap.md](../management/roadmap.md) の柱1〜3・5。
 
 **責務境界（この章の前提）**: 「会社の脳」——SSOT（事実）・グラフ（関係性）・オントロジー（意味・判断基準）の3層——の設計・定義・育成方針は**brainbaseの領域**であり、その正本はbrainbase側に置く（mana-runtimeでは定義しない）。この章が定義するのは、**実行系であるmana-runtimeが脳とどう接続するか**（読む・学習候補を送る・権限写像を受ける）のインターフェースだけである。ランタイムに脳を複製しない（[02_data_design.md](./02_data_design.md)の原則）。
@@ -9,7 +9,12 @@
 
 **目標**: マナは応答・判断の**前に**脳を読みに行く。固有名詞・RACI・過去の意思決定・そのチャンネルの業務文脈をGraph SSOTから取得してから動く。
 
-**現在地とのギャップ**: 現在はplacementの`capabilities.mcp`でbrainbase MCPを許可し、モデルが必要と判断した時に読む「任意参照」。毎ターンの前提として文脈を注入する経路（roadmap柱1「チャンネル文脈の注入強化」・柱2「実行時Graph参照」）は未実装。[context.ts](../../packages/jimmy/src/sessions/context.ts)のplacement文脈注入がその挿入点。
+**現在地**: [TurnPreparationService](../../packages/jimmy/src/sessions/turn-preparation-service.ts) がconnector/cron/webの各ターンで、engine実行前に次の2系統を並列取得してsystem promptへ注入する。
+
+- Brainbase Graph: そのターンのproject・channel・発話をscopeにした直接取得。成功内容をランタイムへ恒久キャッシュせず、取得失敗は「事実なし」ではなく`未確認`として注入する
+- 共有チャンネル文脈: SQLiteへ永続化済みの別engine sessionの直近発話。ただし`connector + workspace + channel + placement`が一致するものだけを使い、workspace不明時はfail closedする
+
+engine transcript自体はスレッド単位のまま分離する。横断共有するのは上記の業務文脈だけで、人格やengine sessionをチャンネル単位に複製・統合しない。取得結果と実効ツール状態は`turn_context_snapshots`へ記録され、`/status`とSession APIから確認できる。
 
 ## 2. 送る — 学習候補の検出と提案（mana→brainbase）
 
@@ -17,17 +22,15 @@
 
 ```
 チャンネルの会話・作業ログ（mana-runtime側）
-  → 学習候補の検出（夜間バッチ）
-  → 振り分け:
-      機微・判断が必要 → 人間にSlackで確認（HITL、§4）
-      自明な学び       → 候補として自動送信
+  → 成功した会話ターンをreview-required候補としてdurable outboxへ記録
+  → HMAC署名付きでcandidate-store raw-ledgerへ送信（失敗時はpendingのまま再試行）
   ── ここから先はbrainbaseの領域 ──
   → candidate-store → 昇格判断（人間承認） → Graph SSOT正本化
 ```
 
-原則（接続契約として守るもの）: 候補はGraph真理へ直接書き込まず**candidate-store経由**で渡す。昇格の判断・承認フロー・オントロジー化はbrainbase側の設計に従う。機微データ（財務・人事）は候補の段階で明示的にフラグする。
+原則（接続契約として守るもの）: 候補はGraph真理へ直接書き込まず**candidate-store経由**で渡す。すべて`requires_review=true`、turn/messageの証拠URI・SHA-256・idempotency key付きであり、mana-runtimeは自動昇格しない。Candidate Storeへ渡すraw-ledger envelopeは`retention_policy=envelope_only`で、outboxには会話本文全体ではなく最大8,000文字のbounded snippet・hash・message参照だけを保持する。昇格の判断・承認フロー・オントロジー化はbrainbase側の設計に従う。
 
-**現在地とのギャップ**: 検出・送信は未実装（roadmap柱2「昇格フック」）。現在の学習は佐藤の手動運用に依存している。
+**現在地**: [LearningCandidateService](../../packages/jimmy/src/learning/candidate-outbox.ts) と [Brainbase candidate submitter](../../packages/jimmy/src/learning/brainbase-candidate-store.ts) を実装済み。成功ターンはSQLite outboxへ冪等記録され、claim/CAS・指数backoff・startup drainで`/api/candidate-store/raw-ledger`へ送る。送信元の既定値は`mana_slack`。`BRAINBASE_CANDIDATE_STORE_BASE_URL`（または既存Brainbase API base URL）、`BRAINBASE_CANDIDATE_STORE_HMAC_SECRET`、およびSlack外部IDからBrainbase canonical person IDへの写像`BRAINBASE_SLACK_PERSON_MAP_JSON`（例: `{"T_WORKSPACE:U123":"per_..."}`）が必要で、未設定・未解決なら成功扱いせずpendingに保つ。現段階のextractorは成功ターンを境界付きraw evidence候補へ変換するところまでで、意味単位の分類と機微区分は残課題。承認・Graph昇格はBrainbase Candidate Store側の責務である。
 
 ## 3. 受ける — 権限写像（brainbase→mana）
 
@@ -91,8 +94,8 @@ Slack（窓口=マナ1体）
 
 | 本章の節 | roadmapの柱 | 状態 |
 |---|---|---|
-| §1 読む（実行時参照） | 柱1（文脈注入）・柱2（実行時Graph参照） | 未実装 |
-| §2 送る（学習候補） | 柱2（昇格フック） | 未実装・最難所 |
+| §1 読む（実行時参照） | 柱1（文脈注入）・柱2（実行時Graph参照） | ランタイム実装済み。production反映・実Graph E2Eは別途確認 |
+| §2 送る（学習候補） | 柱2（昇格フック） | durable outbox + HMAC送信を実装。意味分類・機微区分・brainbase承認/昇格は残 |
 | §3 受ける（権限写像） | 柱2 | 未実装（brainbase共同設計待ち） |
 | §4 HITL | 柱3 | 2系統の個別実装あり（register-first補償型=タスク承認 / ブロッキング型=議事録宛先選択）。汎用プリミティブ化は未。`ApproverResolver`は両者でDI共有済み |
 | §5 ルーティング層 | 柱1 | 単一宛先のみ実装（critical-routing: 決定論分類器+子セッション委譲+fail-closed）。複数宛先への動的ディスパッチは未 |

@@ -3,6 +3,13 @@ import { describe, it, expect } from "vitest";
 import { deriveSessionKey, buildReplyContext, isOldSlackMessage } from "../threads.js";
 
 describe("deriveSessionKey", () => {
+  it("scopes the same Slack channel and thread by connector instance and workspace", () => {
+    const event = { channel: "C1", user: "U1", ts: "2.0", thread_ts: "1.0", channel_type: "channel" };
+    expect(deriveSessionKey(event, { connectorInstanceId: "slack-a", workspaceId: "T1" }))
+      .toBe("slack:slack-a:T1:C1:1.0");
+    expect(deriveSessionKey(event, { connectorInstanceId: "slack-b", workspaceId: "T2" }))
+      .toBe("slack:slack-b:T2:C1:1.0");
+  });
   it("keys a non-threaded DM message to one long-lived session per user", () => {
     expect(
       deriveSessionKey({ channel: "D1", user: "U1", ts: "100.0", channel_type: "im" }),

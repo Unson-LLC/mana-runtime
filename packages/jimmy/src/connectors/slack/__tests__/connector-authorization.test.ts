@@ -37,7 +37,7 @@ const bolt = vi.hoisted(() => {
     conversations: {
       info: vi.fn(async () => ({ channel: { name: "pilot", is_ext_shared: false } })),
       history: vi.fn(async () => ({ messages: [{ text: "approve this" }] })),
-      replies: vi.fn(async () => ({ messages: [] })),
+      replies: vi.fn(async (): Promise<{ messages: Array<{ text: string }> }> => ({ messages: [] })),
     },
     users: {
       info: vi.fn(async ({ user }: { user: string }) => ({
@@ -666,6 +666,9 @@ describe("SlackConnector authorization", () => {
 
   it("allows the authorized user to continue an engaged thread without a mention", async () => {
     const { handler } = await setup();
+    bolt.client.conversations.replies.mockResolvedValueOnce({
+      messages: [{ text: "the original request" }],
+    });
 
     await bolt.state.messageHandler?.({
       event: {
@@ -681,6 +684,7 @@ describe("SlackConnector authorization", () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      text: "[Slack thread root]\nthe original request\n\ncontinue",
       transportMeta: expect.objectContaining({ team: "T_WORKSPACE" }),
     }));
   });

@@ -9,6 +9,19 @@ import { emitSecurityEvent } from "../shared/security-events.js";
 
 export interface ResolvedMcpConfig {
   mcpServers: Record<string, McpServerConfig>;
+  effectiveCapabilities: EffectiveMcpCapability[];
+}
+
+export interface EffectiveMcpCapability {
+  kind: "mcp";
+  name: string;
+  status: "available" | "unavailable";
+  reasonCode?: "credential_missing" | "mcp_not_configured" | "mcp_denied";
+}
+
+interface AvailableMcpServers {
+  servers: Record<string, McpServerConfig>;
+  unavailable: Map<string, NonNullable<EffectiveMcpCapability["reasonCode"]>>;
 }
 
 export interface McpSessionContext {
@@ -34,14 +47,20 @@ export function resolveMcpServers(
 ): ResolvedMcpConfig {
   const servers: Record<string, McpServerConfig> = {};
 
-  if (!globalMcp) return { mcpServers: servers };
+  const employeeMcp = placementMcp === undefined ? employee?.mcp : placementMcp;
+  if (!globalMcp) {
+    return {
+      mcpServers: servers,
+      effectiveCapabilities: Array.isArray(employeeMcp)
+        ? employeeMcp.map((name) => unavailableCapability(name, "mcp_not_configured"))
+        : [],
+    };
+  }
 
   // Build the full set of available MCP servers from global config
-  const available = buildAvailableServers(globalMcp, sessionContext);
+  const { servers: available, unavailable } = buildAvailableServers(globalMcp, sessionContext);
 
   // Determine which servers this employee gets
-  const employeeMcp = placementMcp === undefined ? employee?.mcp : placementMcp;
-
   if (employeeMcp === false) {
     // Employee explicitly opted out of all MCP servers
     for (const name of Object.keys(available)) {
@@ -49,7 +68,10 @@ export function resolveMcpServers(
         connector: sessionContext?.connector, channelId: sessionContext?.channel, placementId: sessionContext?.placementId,
         configRevision: sessionContext?.configRevision, capability: "mcp", target: name });
     }
-    return { mcpServers: {} };
+    return {
+      mcpServers: {},
+      effectiveCapabilities: Object.keys(available).map((name) => unavailableCapability(name, "mcp_denied")),
+    };
   }
 
   if (Array.isArray(employeeMcp)) {
@@ -76,14 +98,30 @@ export function resolveMcpServers(
     Object.assign(servers, available);
   }
 
-  return { mcpServers: servers };
+  const effectiveNames = Array.isArray(employeeMcp)
+    ? employeeMcp
+    : [...new Set([...Object.keys(available), ...unavailable.keys()])];
+  const effectiveCapabilities = effectiveNames.map((name): EffectiveMcpCapability => {
+    if (servers[name]) return { kind: "mcp", name, status: "available" };
+    return unavailableCapability(name, unavailable.get(name) ?? "mcp_not_configured");
+  });
+
+  return { mcpServers: servers, effectiveCapabilities };
+}
+
+function unavailableCapability(
+  name: string,
+  reasonCode: NonNullable<EffectiveMcpCapability["reasonCode"]>,
+): EffectiveMcpCapability {
+  return { kind: "mcp", name, status: "unavailable", reasonCode };
 }
 
 /**
  * Build the map of all available (enabled) MCP servers from global config.
  */
-function buildAvailableServers(config: McpGlobalConfig, sessionContext?: McpSessionContext): Record<string, McpServerConfig> {
+function buildAvailableServers(config: McpGlobalConfig, sessionContext?: McpSessionContext): AvailableMcpServers {
   const servers: Record<string, McpServerConfig> = {};
+  const unavailable = new Map<string, NonNullable<EffectiveMcpCapability["reasonCode"]>>();
 
   // Browser automation via Playwright
   if (config.browser?.enabled !== false) {
@@ -111,6 +149,7 @@ function buildAvailableServers(config: McpGlobalConfig, sessionContext?: McpSess
         env: { BRAVE_API_KEY: apiKey },
       };
     } else {
+      unavailable.set("search", "credential_missing");
       logger.warn("MCP search enabled but no API key configured (set mcp.search.apiKey or BRAVE_API_KEY env var)");
     }
   }
@@ -174,21 +213,36 @@ function buildAvailableServers(config: McpGlobalConfig, sessionContext?: McpSess
       // URL-based MCP server (HTTP/SSE transport)
       // Claude Code requires "type": "sse" for URL-based servers
       if ("url" in rest && (rest as McpServerUrlConfig).url) {
-        servers[name] = { type: "sse", ...rest } as McpServerConfig;
+        const urlConfig = rest as McpServerUrlConfig;
+        const url = resolveEnvVar(urlConfig.url);
+        const headers = resolveEnvironmentRecord(urlConfig.headers);
+        if ((!url && isEnvReference(urlConfig.url)) || headers.credentialMissing) {
+          unavailable.set(name, "credential_missing");
+          continue;
+        }
+        servers[name] = {
+          type: "sse",
+          ...urlConfig,
+          url: url ?? urlConfig.url,
+          ...(headers.values ? { headers: headers.values } : {}),
+        };
         continue;
       }
 
       // Stdio-based MCP server — resolve env vars
       if ("env" in rest && rest.env) {
-        for (const [key, value] of Object.entries(rest.env)) {
-          rest.env[key] = resolveEnvVar(value) || value;
+        const env = resolveEnvironmentRecord(rest.env);
+        if (env.credentialMissing) {
+          unavailable.set(name, "credential_missing");
+          continue;
         }
+        rest.env = env.values;
       }
       servers[name] = rest as McpServerConfig;
     }
   }
 
-  return servers;
+  return { servers, unavailable };
 }
 
 /**
@@ -200,7 +254,7 @@ export function writeMcpConfigFile(config: ResolvedMcpConfig, sessionId: string)
   fs.mkdirSync(tmpDir, { recursive: true });
   fs.chmodSync(tmpDir, 0o700);
   const filePath = path.join(tmpDir, `${sessionId}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { mode: 0o600 });
+  fs.writeFileSync(filePath, JSON.stringify({ mcpServers: config.mcpServers }, null, 2), { mode: 0o600 });
   fs.chmodSync(filePath, 0o600);
   return filePath;
 }
@@ -232,4 +286,22 @@ function resolveEnvVar(value: string | undefined): string | undefined {
     return process.env[value.slice(1)] || undefined;
   }
   return value;
+}
+
+function isEnvReference(value: string): boolean {
+  return /^\$\{.+\}$/.test(value) || /^\$[^$]/.test(value);
+}
+
+function resolveEnvironmentRecord(values: Record<string, string> | undefined): {
+  values?: Record<string, string>;
+  credentialMissing: boolean;
+} {
+  if (!values) return { credentialMissing: false };
+  const resolvedValues: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    const resolved = resolveEnvVar(value);
+    if (!resolved && isEnvReference(value)) return { credentialMissing: true };
+    resolvedValues[key] = resolved ?? value;
+  }
+  return { values: resolvedValues, credentialMissing: false };
 }
