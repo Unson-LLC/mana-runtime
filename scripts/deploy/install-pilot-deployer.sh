@@ -32,6 +32,8 @@ readonly source_repo="$runtime_home/src/OpenRyoko"
 readonly deploy_user="openryoko-deploy"
 readonly service="openryoko.service"
 readonly wrapper="$runtime_home/bin/ryoko"
+# shellcheck source=lib/deploy-account.sh
+source "$script_dir/lib/deploy-account.sh"
 
 [[ -f "$source_repo/packages/jimmy/dist/bin/jimmy.js" ]] \
   || { echo "current runtime entrypoint is missing" >&2; exit 1; }
@@ -42,14 +44,11 @@ rendered_config="$(mktemp -d)"
 trap 'rm -rf "$rendered_config" "${dropin_tmp:-}" "${wrapper_tmp:-}"' EXIT
 "$script_dir/render-pilot-deploy-config" --authorized-key-file "$key_file" --output-dir "$rendered_config"
 
-[[ -x /bin/bash ]] || { echo "/bin/bash is required for sshd forced-command execution" >&2; exit 1; }
 # sshd invokes authorized_keys forced commands through the account shell with
-# `-c`. Keep the password locked and the key restricted below, but use a shell
-# that can actually dispatch the forced command. usermod also repairs installs
-# made by an earlier version that selected nologin.
-id "$deploy_user" >/dev/null 2>&1 \
-  || useradd --system --create-home --home-dir "/home/$deploy_user" --shell /bin/bash "$deploy_user"
-usermod --shell /bin/bash "$deploy_user"
+# `-c`. Keep the password explicitly locked and the key restricted below, but
+# use a shell that can actually dispatch the forced command. This also repairs
+# earlier installs that selected nologin or left an existing password usable.
+ensure_deploy_account "$deploy_user" "/home/$deploy_user" /bin/bash
 install -o root -g root -m 0755 "$script_dir/openryoko-pilot-deploy" /usr/local/sbin/openryoko-pilot-deploy
 install -o root -g root -m 0755 "$script_dir/openryoko-deploy-command" /usr/local/sbin/openryoko-deploy-command
 install -o root -g root -m 0755 "$source_repo/scripts/development-runner/guard-restart.sh" /usr/local/libexec/openryoko-guard-restart

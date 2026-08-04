@@ -7,6 +7,7 @@ workflow="$repo_root/.github/workflows/deploy-lightsail.yml"
 workflow_checker="$deploy_dir/check-workflow-contract.rb"
 resolver="$deploy_dir/resolve-deploy-ref"
 renderer="$deploy_dir/render-pilot-deploy-config"
+account_library="$deploy_dir/lib/deploy-account.sh"
 
 for script in \
   "$deploy_dir/openryoko-pilot-deploy" \
@@ -16,6 +17,7 @@ for script in \
   "$renderer"; do
   bash -n "$script"
 done
+bash -n "$account_library"
 
 if SSH_ORIGINAL_COMMAND="uname -a" bash "$deploy_dir/openryoko-deploy-command" >/dev/null 2>&1; then
   echo "forced command accepted an arbitrary SSH command" >&2
@@ -31,13 +33,56 @@ valid_sha="0123456789abcdef0123456789abcdef01234567"
 output="$(SSH_ORIGINAL_COMMAND="deploy $valid_sha" /bin/bash -c 'bash -x "$1"' _ "$deploy_dir/openryoko-deploy-command" 2>&1 || true)"
 [[ "$output" == *"/usr/local/sbin/openryoko-pilot-deploy $valid_sha"* ]] \
   || { echo "forced command did not preserve the validated SHA as one argv" >&2; exit 1; }
-grep -Fq 'useradd --system --create-home --home-dir "/home/$deploy_user" --shell /bin/bash' "$deploy_dir/install-pilot-deployer.sh"
-grep -Fq 'usermod --shell /bin/bash "$deploy_user"' "$deploy_dir/install-pilot-deployer.sh"
 if grep -Fq '/usr/sbin/nologin' "$deploy_dir/install-pilot-deployer.sh"; then
   echo "installer configures a shell that prevents sshd forced-command execution" >&2
   exit 1
 fi
 echo "sshd account-shell forced-command fixture passed"
+
+account_fixture_root="$(mktemp -d)"
+account_fixture_bin="$account_fixture_root/bin"
+mkdir -p "$account_fixture_bin"
+cat > "$account_fixture_bin/id" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+cat > "$account_fixture_bin/useradd" <<'STUB'
+#!/usr/bin/env bash
+echo "useradd must not run for an existing account" >&2
+exit 97
+STUB
+cat > "$account_fixture_bin/usermod" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$ACCOUNT_FIXTURE_ROOT/usermod.args"
+STUB
+cat > "$account_fixture_bin/getent" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' 'openryoko-deploy:!locked:20000:0:99999:7:::'
+STUB
+chmod +x "$account_fixture_bin"/*
+(
+  export ACCOUNT_FIXTURE_ROOT="$account_fixture_root"
+  PATH="$account_fixture_bin:/bin:/usr/bin"
+  # shellcheck source=lib/deploy-account.sh
+  source "$account_library"
+  ensure_deploy_account openryoko-deploy /home/openryoko-deploy /bin/bash
+)
+grep -Fqx -- '--shell /bin/bash --lock openryoko-deploy' "$account_fixture_root/usermod.args"
+
+cat > "$account_fixture_bin/getent" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' 'openryoko-deploy:$6$unexpected-password:20000:0:99999:7:::'
+STUB
+if (
+  export ACCOUNT_FIXTURE_ROOT="$account_fixture_root"
+  PATH="$account_fixture_bin:/bin:/usr/bin"
+  source "$account_library"
+  ensure_deploy_account openryoko-deploy /home/openryoko-deploy /bin/bash
+) >/dev/null 2>&1; then
+  echo "account helper accepted an unlocked password field" >&2
+  exit 1
+fi
+echo "existing deploy-account lock fixture passed"
 
 ruby "$workflow_checker" "$workflow" >/dev/null
 echo "deploy workflow semantic contract passed"
@@ -100,7 +145,7 @@ if ruby "$workflow_checker" "$workflow_fixture_root/disabled-host-check.yml" >/d
 fi
 
 rollback_root="$(mktemp -d)"
-trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "$resolver_root" "$render_root" "${failure_root:-}"' EXIT
+trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "$resolver_root" "$render_root" "$account_fixture_root" "${failure_root:-}"' EXIT
 mkdir -p "$rollback_root/previous" "$rollback_root/failed"
 ln -s "$rollback_root/failed" "$rollback_root/current"
 set +e

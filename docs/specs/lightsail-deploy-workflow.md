@@ -59,7 +59,7 @@ sequenceDiagram
 ## Security contract
 
 - `authorized_keys`は`restrict`とroot-owned forced commandを使う。
-- sshdがforced commandを`-c`で起動できるようdeploy userのshellは`/bin/bash`とする。passwordはlockedのままにし、Actions鍵は`restrict,command="..."`へ固定してinteractive commandを許可しない。
+- sshdがforced commandを`-c`で起動できるようdeploy userのshellは`/bin/bash`とする。新規・既存accountのpasswordをinstallerが明示的にlockしてshadow上のlock状態も検証し、Actions鍵は`restrict,command="..."`へ固定してinteractive commandを許可しない。
 - workflowは`permissions: contents: read`のみを要求する。
 - Actions dependencyはfull commit SHAでpinする。
 - host key checkingを無効化しない。
