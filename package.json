@@ -12,6 +12,7 @@
     "typecheck": "turbo typecheck",
     "test": "turbo run test",
     "test:integration:deploy": "scripts/deploy/test-deploy-scripts.sh",
+    "test:e2e:deploy": "scripts/deploy/deploy-workflow.e2e.sh",
     "test:integration": "pnpm --filter openryoko test:integration",
     "test:e2e": "node -e \"console.log(JSON.stringify({ node_arch: process.arch, node_version: process.version }))\" && playwright test",
     "clean": "rm -rf .turbo node_modules/.cache && turbo clean",
