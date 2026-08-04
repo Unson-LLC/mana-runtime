@@ -2,12 +2,31 @@
 # ForcedCommand entrypoint. Never pass arbitrary SSH commands to a shell.
 set -euo pipefail
 
-readonly requested="${SSH_ORIGINAL_COMMAND:-}"
-readonly deploy_pattern='^deploy ([0-9a-fA-F]{40})$'
-if [[ "$requested" =~ $deploy_pattern ]]; then
-  target_sha="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
-  exec sudo -n /usr/local/sbin/openryoko-pilot-deploy "$target_sha"
+control_plane_digest() {
+  local deploy_script="$1"
+  local command_script="$2"
+  {
+    sha256sum "$deploy_script" | cut -d' ' -f1
+    sha256sum "$command_script" | cut -d' ' -f1
+  } | sha256sum | cut -d' ' -f1
+}
+
+if [[ "${OPENRYOKO_DEPLOY_SOURCE_ONLY:-0}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
 fi
 
-echo "Only 'deploy FULL_COMMIT_SHA' is allowed." >&2
+readonly requested="${SSH_ORIGINAL_COMMAND:-}"
+readonly deploy_pattern='^deploy ([0-9a-fA-F]{40}) ([0-9a-f]{64})$'
+if [[ "$requested" =~ $deploy_pattern ]]; then
+  target_sha="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
+  expected_digest="${BASH_REMATCH[2]}"
+  actual_digest="$(control_plane_digest \
+    /usr/local/sbin/openryoko-pilot-deploy \
+    /usr/local/sbin/openryoko-deploy-command)"
+  [[ "$actual_digest" == "$expected_digest" ]] \
+    || { echo "Installed deploy control plane does not match the requested commit; reinstall it first." >&2; exit 65; }
+  exec sudo -n /usr/local/sbin/openryoko-pilot-deploy "$target_sha" "$expected_digest"
+fi
+
+echo "Only 'deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256' is allowed." >&2
 exit 64

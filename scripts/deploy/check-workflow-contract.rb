@@ -38,14 +38,18 @@ raise "commit_sha must feed the resolver" unless resolve_step.dig("env", "REQUES
 ssh_step = deploy.fetch("steps").find { |step| step["name"] == "Deploy through forced command" }
 ssh_run = ssh_step&.fetch("run", "")
 raise "deploy must use the resolver output SHA" unless ssh_step&.dig("env", "TARGET_SHA") == "${{ steps.target.outputs.sha }}"
+raise "deploy must bind the installed control plane to the target commit" unless ssh_step&.dig("env", "CONTROL_PLANE_DIGEST") == "${{ steps.control_plane.outputs.digest }}"
 raise "deploy must use the restricted SSH principal" unless ssh_run.include?('openryoko-deploy@"$DEPLOY_HOST"')
-raise "forced command payload must be exactly deploy plus the validated SHA" unless ssh_run.lines.map(&:strip).include?('"deploy $TARGET_SHA"')
+raise "forced command payload must include the validated SHA and control-plane digest" unless ssh_run.include?('"deploy $TARGET_SHA $CONTROL_PLANE_DIGEST"')
 raise "strict host key checking is required" unless ssh_run.match?(/StrictHostKeyChecking=yes(?:\s|\\|\z)/)
 raise "host key checking must not be weakened" if ssh_run.match?(/StrictHostKeyChecking=(?:no|accept-new)/)
 
 summary_step = deploy.fetch("steps").find { |step| step["name"] == "Record deployment summary" }
 summary_run = summary_step&.fetch("run", "")
 raise "summary must report the server-side result" unless summary_run.include?("server-side build, guarded restart, and systemd active check passed")
+raise "summary must report control-plane binding" unless summary_run.include?("Control-plane digest")
+raise "summary must report MainPID evidence" unless summary_run.include?("MainPID")
+raise "summary must report entrypoint evidence" unless summary_run.include?("Entrypoint")
 raise "summary must preserve the user-outcome disclaimer" unless summary_run.include?("Slack/Web user outcome still requires the release verification")
 
 puts "deploy workflow semantic contract passed"

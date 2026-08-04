@@ -23,7 +23,7 @@
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "index": 0 }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Decision" }],
-        "code_refs": [{ "file": ".github/workflows/deploy-lightsail.yml", "anchor": "git merge-base --is-ancestor" }],
+        "code_refs": [{ "file": "scripts/deploy/resolve-deploy-ref", "anchor": "merge-base --is-ancestor" }],
         "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "workflow input and main membership contract" }]
       }
     },
@@ -41,7 +41,7 @@
     {
       "id": "LDW-003",
       "type": "contract",
-      "statement": "The dedicated SSH principal accepts only deploy followed by one full hexadecimal SHA and passes that SHA as one argument to the root-owned deploy script.",
+      "statement": "The dedicated SSH principal accepts only deploy followed by one full hexadecimal SHA and one control-plane SHA-256 digest, rejects an installed-script digest mismatch before build, and passes the SHA and digest as separate arguments to the root-owned deploy script.",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Trust and secrets" }],
@@ -107,7 +107,7 @@
     {
       "id": "LDW-009",
       "type": "contract",
-      "statement": "A successful workflow reports server-side build, guarded restart, systemd active evidence, and MainPID release-pointer evidence without claiming Slack or Web release outcome completion.",
+      "statement": "A successful workflow reports server-side build, guarded restart, systemd active evidence, control-plane digest, MainPID, and resolved release entrypoint without claiming Slack or Web release outcome completion.",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Consequences" }],

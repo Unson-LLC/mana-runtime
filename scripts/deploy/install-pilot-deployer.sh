@@ -89,4 +89,9 @@ exec_start="$(systemctl show --property ExecStart --value "$service")"
 rm -rf "$rendered_config"
 trap - EXIT
 
+control_plane_digest="$({
+  sha256sum /usr/local/sbin/openryoko-pilot-deploy | cut -d' ' -f1
+  sha256sum /usr/local/sbin/openryoko-deploy-command | cut -d' ' -f1
+} | sha256sum | cut -d' ' -f1)"
 echo "Restricted deploy principal installed. Verify with: sudo -u ryoko $wrapper status"
+echo "Control-plane digest: $control_plane_digest"

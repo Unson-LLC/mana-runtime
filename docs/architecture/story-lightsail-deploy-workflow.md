@@ -37,7 +37,7 @@ flowchart LR
 - Root deploy script: `/usr/local/sbin/openryoko-pilot-deploy`
 - Forced command: `/usr/local/sbin/openryoko-deploy-command`
 
-初回installerは`current`を現行source cloneへ向け、wrapperをatomicに更新し、systemdの`ExecStart`をstable wrapperへ固定する。serviceはrestartしないため、導入だけでは稼働commitを変えない。次回の承認済みdeployでSHA releaseへ切り替わる。deploy成功前にはMainPIDのcommand lineが`current`配下のentrypointを実行していることも確認する。
+初回installerは`current`を現行source cloneへ向け、wrapperをatomicに更新し、systemdの`ExecStart`をstable wrapperへ固定する。serviceはrestartしないため、導入だけでは稼働commitを変えない。次回の承認済みdeployでSHA releaseへ切り替わる。Actionsは対象commit上のdeploy script 2本のdigestを送信し、forced-command wrapperとroot deploy scriptがinstalled copyのdigestを二重検証する。deploy script変更時は対象SHAからinstallerを再実行するまでfail closedになり、repository testとinstalled control planeのversion skewを成功扱いしない。deploy成功前にはMainPIDのcommand lineが`current`配下のentrypointを実行していることも確認し、SHA・digest・MainPID・resolved entrypointをworkflow summaryへ伝播する。
 
 ## Trust and secrets
 

@@ -50,14 +50,30 @@ jobs:
           install -m 600 /dev/null "$HOME/.ssh/known_hosts"
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
 
-      - name: Deploy through forced command
+      - name: Bind deploy control plane to target commit
+        id: control_plane
         env:
-          DEPLOY_HOST: ${{ vars.LIGHTSAIL_DEPLOY_HOST }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
+          deploy_script_hash="$(git show "$TARGET_SHA:scripts/deploy/openryoko-pilot-deploy" | sha256sum | cut -d' ' -f1)"
+          command_script_hash="$(git show "$TARGET_SHA:scripts/deploy/openryoko-deploy-command" | sha256sum | cut -d' ' -f1)"
+          digest="$(printf '%s\n%s\n' "$deploy_script_hash" "$command_script_hash" | sha256sum | cut -d' ' -f1)"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy through forced command
+        id: deploy
+        env:
+          DEPLOY_HOST: ${{ vars.LIGHTSAIL_DEPLOY_HOST }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          CONTROL_PLANE_DIGEST: ${{ steps.control_plane.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
           test -n "$DEPLOY_HOST"
+          test -n "$CONTROL_PLANE_DIGEST"
+          deploy_output="$RUNNER_TEMP/openryoko-deploy-output"
           ssh \
             -i "$HOME/.ssh/id_ed25519" \
             -o BatchMode=yes \
@@ -65,16 +81,34 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=15 \
             openryoko-deploy@"$DEPLOY_HOST" \
-            "deploy $TARGET_SHA"
+            "deploy $TARGET_SHA $CONTROL_PLANE_DIGEST" | tee "$deploy_output"
+          active_commit="$(sed -n 's/^openryoko deploy: active commit //p' "$deploy_output")"
+          server_digest="$(sed -n 's/^openryoko deploy: control plane digest //p' "$deploy_output")"
+          main_pid="$(sed -n 's/^openryoko deploy: main pid //p' "$deploy_output")"
+          entrypoint="$(sed -n 's/^openryoko deploy: entrypoint //p' "$deploy_output")"
+          test "$active_commit" = "$TARGET_SHA"
+          test "$server_digest" = "$CONTROL_PLANE_DIGEST"
+          [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]
+          test -n "$entrypoint"
+          {
+            printf 'main_pid=%s\n' "$main_pid"
+            printf 'entrypoint=%s\n' "$entrypoint"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Record deployment summary
         env:
           TARGET_SHA: ${{ steps.target.outputs.sha }}
+          CONTROL_PLANE_DIGEST: ${{ steps.control_plane.outputs.digest }}
+          MAIN_PID: ${{ steps.deploy.outputs.main_pid }}
+          ENTRYPOINT: ${{ steps.deploy.outputs.entrypoint }}
         shell: bash
         run: |
           {
             echo "### Mana Runtime deployment"
             echo "- Commit: \`$TARGET_SHA\`"
+            echo "- Control-plane digest: \`$CONTROL_PLANE_DIGEST\`"
+            echo "- MainPID: \`$MAIN_PID\`"
+            echo "- Entrypoint: \`$ENTRYPOINT\`"
             echo "- Environment: \`production\`"
             echo "- Result: server-side build, guarded restart, and systemd active check passed"
             echo "- Note: Slack/Web user outcome still requires the release verification in the Story"

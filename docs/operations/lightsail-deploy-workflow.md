@@ -12,10 +12,15 @@ ssh-keygen -t ed25519 -C openryoko-github-actions -f ./openryoko-github-actions
 
 ### 2. Install the restricted principal on Lightsail
 
-現在のreview済みrepositoryをpilotへ反映した後、public keyだけをpilotへ置き、rootでinstallerを実行する。
+merge済みの対象SHAをpilotのisolated worktreeへ取得した後、public keyだけをpilotへ置き、そのworktreeのinstallerをrootで実行する。`TARGET_SHA`はGitHubのmerge commit full SHAへ置き換える。
 
 ```bash
-sudo /home/ryoko/src/OpenRyoko/scripts/deploy/install-pilot-deployer.sh \
+TARGET_SHA=FULL_MERGED_COMMIT_SHA
+sudo -u ryoko git -C /home/ryoko/src/OpenRyoko fetch --no-tags origin main
+sudo -u ryoko git -C /home/ryoko/src/OpenRyoko merge-base --is-ancestor "$TARGET_SHA" origin/main
+setup_dir="/home/ryoko/deploy-setup-$TARGET_SHA"
+sudo -u ryoko git -C /home/ryoko/src/OpenRyoko worktree add --detach "$setup_dir" "$TARGET_SHA"
+sudo "$setup_dir/scripts/deploy/install-pilot-deployer.sh" \
   --authorized-key-file /path/to/openryoko-github-actions.pub
 sudo -u ryoko /home/ryoko/bin/ryoko status
 sudo systemctl is-active openryoko.service
@@ -23,6 +28,8 @@ sudo systemctl show --property ExecStart --value openryoko.service
 ```
 
 installerは現行checkoutを`/home/ryoko/current`へpointするため、この時点ではコードreleaseを変更しない。statusまたはservice確認が失敗した場合は、`/home/ryoko/bin/ryoko.pre-release-pointer`を戻してから原因を調査する。
+
+installerが表示した`Control-plane digest`をsetup記録へ残す。deploy script 2本を変更したcommitを出す場合は、同じ対象SHAのisolated worktreeからinstallerを再実行してからworkflowを起動する。workflowは対象SHAのdigestとinstalled digestが違えばbuild前に停止する。
 
 ### 3. Configure GitHub Environment
 
@@ -54,6 +61,7 @@ Actionsに`Deploy Mana Runtime to Lightsail`または`Run workflow`が表示さ�
 2. 通常は`commit_sha`を空欄にして現在のmainを選ぶ。rollbackや再deploy時だけfull SHAを指定する。
 3. production reviewerが対象SHAとPR/CIを確認して承認する。
 4. workflow summaryのSHAとsuccessを確認する。
+5. workflow summaryのcontrol-plane digest、MainPID、Entrypointが空でなく、対象SHAのreleaseを指すことを確認する。
 
 ## Release note and operator ownership
 
@@ -73,7 +81,14 @@ sudo systemctl is-active openryoko.service
 main_pid="$(sudo systemctl show --property MainPID --value openryoko.service)"
 sudo tr '\0' ' ' < "/proc/$main_pid/cmdline"
 sudo journalctl -u openryoko.service --since '10 minutes ago' --no-pager
+sudo getent shadow openryoko-deploy | cut -d: -f2
+sudo grep -F 'restrict,command="/usr/local/sbin/openryoko-deploy-command"' /home/openryoko-deploy/.ssh/authorized_keys
+sudo visudo -cf /etc/sudoers.d/openryoko-pilot-deploy
+sudo -u openryoko-deploy env SSH_ORIGINAL_COMMAND='uname -a' /usr/local/sbin/openryoko-deploy-command
+sudo -u openryoko-deploy env SSH_ORIGINAL_COMMAND='deploy deadbeef' /usr/local/sbin/openryoko-deploy-command
 ```
+
+shadowのpassword fieldは`!`または`*`で始まるlock状態であること、最後の2 commandはどちらもexit 64で拒否されることを確認する。実機のcontrol-plane digestはinstaller出力とworkflow summaryで照合し、値が違う場合は対象SHAのinstallerを再実行する。これらが揃わない限りR-02は未確認とする。
 
 ログを共有するときはtoken、message本文、環境変数値、raw errorを含めない。各Storyのrelease gateに従いSlack/Webの利用結果を別途確認する。
 

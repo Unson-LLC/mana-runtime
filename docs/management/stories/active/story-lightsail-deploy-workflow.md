@@ -42,7 +42,7 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 
 - AC-01: GitHub Actionsの手動workflowで、空欄なら現在の`main`、指定時は`origin/main`に含まれる完全SHAだけを対象にできる。
 - AC-02: workflowはGitHub `production` Environmentを使用し、Environment gateを通過するjob内でのみSSH接続する。required reviewerの実設定と承認停止はマージ後R-01で確認する。
-- AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA`以外を許さない設定を生成する。実機への導入状態はマージ後R-02で確認する。
+- AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256`以外を許さない設定を生成し、installed deployerのdigestが対象commit上の実装と一致しなければbuild前に拒否する。実機への導入状態はマージ後R-02で確認する。
 - AC-04: サーバー側でも対象SHAが`origin/main`に含まれることを再検証し、GitHub側だけの検証を信頼しない。
 - AC-05: buildは稼働中releaseと別のworktreeで行い、成功後だけactive symlinkを切り替える。
 - AC-06: restart前にdevelopment runner guardを待ち、実行中のVibePro開発runnerをkillしない。
@@ -66,6 +66,12 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 - GitHub `production` Environment、required reviewers、Environment secret/variablesの設定手順がある。
 - Lightsailへの導入とrollback drillの手順がある。
 
+## Merge-time setup and operator action
+
+- Setup administratorは、merge後の対象SHAからrestricted deploy keyとLightsail principalを一度導入し、GitHub `production` Environmentのrequired reviewer、`LIGHTSAIL_DEPLOY_SSH_KEY`、`LIGHTSAIL_DEPLOY_HOST`、`LIGHTSAIL_DEPLOY_KNOWN_HOSTS`を設定する。deploy script変更時は同じ対象SHAからinstallerを再実行する。
+- 梅田さんを含むdeploy operatorにはrepositoryの`Write`権限だけを付与し、Actions → `Deploy Mana Runtime to Lightsail` → `Run workflow`から起動してもらう。SSH private key、root、Lightsail loginは共有しない。
+- merge直後の初回設定とR-01〜R-03は必要な利用者操作であり、PR本文で「なし」と表現しない。
+
 ### Evidence boundary
 
 - PR前の`test:e2e:deploy`は、Playwright runnerからworkflow YAML、入力配線、summary、commit resolver、forced command、installer生成物、rollback fixtureを再生するheadless contract testである。
@@ -75,6 +81,6 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 ## Release completion gate
 
 - R-01: merge後、production Environmentのrequired reviewerが梅田さんの手動workflowを承認できる。
-- R-02: workflow logに対象SHAが記録され、Lightsailの`/home/ryoko/current`とsystemd稼働releaseが一致する。
+- R-02: workflow summaryの対象SHA・control-plane digest・MainPID・entrypointがLightsail実機と一致する。加えてdeploy accountのpassword lock、`authorized_keys`の`restrict`付きforced command、`visudo`を通る限定sudoers、arbitrary command/short SHA拒否をsetup administratorが確認する。
 - R-03: 対象変更の機能別runbookで本番利用結果を確認する。
 - R-01〜R-03が未確認なら、workflow実装やPR mergeだけでは運用移行完了としない。

@@ -13,6 +13,8 @@ if [[ "$DEPLOY_TESTING" == "1" ]]; then
   readonly RESTART_GUARD="${OPENRYOKO_TEST_RESTART_GUARD:?}"
   readonly LOCK_FILE="${OPENRYOKO_TEST_LOCK_FILE:?}"
   readonly PNPM_BIN="${OPENRYOKO_TEST_PNPM_BIN:?}"
+  readonly DEPLOY_SCRIPT_PATH="${OPENRYOKO_TEST_DEPLOY_SCRIPT_PATH:?}"
+  readonly DEPLOY_COMMAND_PATH="${OPENRYOKO_TEST_DEPLOY_COMMAND_PATH:?}"
   readonly ACTIVE_CHECK_ATTEMPTS="${OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS:-1}"
 else
   readonly RUNTIME_USER="ryoko"
@@ -24,6 +26,8 @@ else
   readonly RESTART_GUARD="/usr/local/libexec/openryoko-guard-restart"
   readonly LOCK_FILE="/run/lock/openryoko-pilot-deploy.lock"
   readonly PNPM_BIN="$RUNTIME_HOME/.nvm/versions/node/v22.23.1/bin/pnpm"
+  readonly DEPLOY_SCRIPT_PATH="/usr/local/sbin/openryoko-pilot-deploy"
+  readonly DEPLOY_COMMAND_PATH="/usr/local/sbin/openryoko-deploy-command"
   readonly ACTIVE_CHECK_ATTEMPTS=30
 fi
 readonly RELEASE_KEEP_COUNT=3
@@ -31,6 +35,13 @@ readonly RELEASE_KEEP_COUNT=3
 die() {
   echo "openryoko deploy: $*" >&2
   exit 1
+}
+
+control_plane_digest() {
+  {
+    sha256sum "$DEPLOY_SCRIPT_PATH" | cut -d' ' -f1
+    sha256sum "$DEPLOY_COMMAND_PATH" | cut -d' ' -f1
+  } | sha256sum | cut -d' ' -f1
 }
 
 run_as_runtime() {
@@ -64,9 +75,14 @@ if [[ "${OPENRYOKO_DEPLOY_SOURCE_ONLY:-0}" == "1" ]]; then
   return 0 2>/dev/null || exit 0
 fi
 
-[[ $# -eq 1 ]] || die "usage: openryoko-pilot-deploy FULL_COMMIT_SHA"
+[[ $# -eq 2 ]] || die "usage: openryoko-pilot-deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256"
 target_sha="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+expected_control_plane_digest="$2"
 [[ "$target_sha" =~ ^[0-9a-f]{40}$ ]] || die "commit must be a full 40-character lowercase hexadecimal SHA"
+[[ "$expected_control_plane_digest" =~ ^[0-9a-f]{64}$ ]] || die "control-plane digest must be a lowercase SHA-256"
+actual_control_plane_digest="$(control_plane_digest)"
+[[ "$actual_control_plane_digest" == "$expected_control_plane_digest" ]] \
+  || die "installed deploy control plane does not match the requested commit"
 [[ $EUID -eq 0 || "$DEPLOY_TESTING" == "1" ]] || die "must run as root"
 [[ -x "$PNPM_BIN" ]] || die "pnpm not found at the pinned pilot path"
 [[ -x "$RESTART_GUARD" ]] || die "restart guard is not installed"
@@ -149,6 +165,9 @@ fi
 trap - ERR
 
 echo "openryoko deploy: active commit $target_sha"
+echo "openryoko deploy: control plane digest $actual_control_plane_digest"
+echo "openryoko deploy: main pid $main_pid"
+echo "openryoko deploy: entrypoint $active_entrypoint"
 
 # Keep the active and immediately previous releases even when pruning old worktrees.
 kept=0

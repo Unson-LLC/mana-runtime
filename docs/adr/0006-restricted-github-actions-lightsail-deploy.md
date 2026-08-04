@@ -11,7 +11,7 @@ Mana RuntimeのpilotはLightsail上の単一systemd serviceとして稼働し、
 - 人が開始する正規入口はGitHub Actionsの`workflow_dispatch`とする。
 - GitHub `production` Environmentのrequired reviewerを本番承認境界とする。
 - 対象は`origin/main`に到達可能な完全40桁SHAだけとし、workflowとLightsailの双方で検証する。
-- Actions用SSH keyは専用`openryoko-deploy` userへ割り当て、`restrict`付きforced commandで`deploy <sha>`以外を拒否する。
+- Actions用SSH keyは専用`openryoko-deploy` userへ割り当て、`restrict`付きforced commandで`deploy <sha> <control-plane-digest>`以外を拒否する。対象commit上のdeploy scriptとinstalled copyのdigestが一致しない場合はbuild前に停止する。
 - root-owned deploy scriptだけがisolated releaseのbuild、guarded restart、atomic symlink切替、自動rollbackを行う。
 - service activeに加えてMainPIDがrelease pointer経由のentrypointを実行していることを確認する。ただしprocess-level evidenceに限定し、各Storyの本番利用結果は別のrelease gateで確認する。
 

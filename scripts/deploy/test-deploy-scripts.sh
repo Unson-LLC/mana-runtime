@@ -36,9 +36,24 @@ if SSH_ORIGINAL_COMMAND="deploy deadbeef" bash "$deploy_dir/openryoko-deploy-com
 fi
 
 valid_sha="0123456789abcdef0123456789abcdef01234567"
-output="$(SSH_ORIGINAL_COMMAND="deploy $valid_sha" /bin/bash -c 'bash -x "$1"' _ "$deploy_dir/openryoko-deploy-command" 2>&1 || true)"
-[[ "$output" == *"/usr/local/sbin/openryoko-pilot-deploy $valid_sha"* ]] \
-  || { echo "forced command did not preserve the validated SHA as one argv" >&2; exit 1; }
+valid_digest="89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+if SSH_ORIGINAL_COMMAND="deploy $valid_sha" bash "$deploy_dir/openryoko-deploy-command" >/dev/null 2>&1; then
+  echo "forced command accepted a deploy request without a control-plane digest" >&2
+  exit 1
+fi
+source_output="$(OPENRYOKO_DEPLOY_SOURCE_ONLY=1 bash -c 'source "$1"; control_plane_digest "$2" "$3"' _ \
+  "$deploy_dir/openryoko-deploy-command" \
+  "$deploy_dir/openryoko-pilot-deploy" \
+  "$deploy_dir/openryoko-deploy-command")"
+expected_source_output="$({
+  sha256sum "$deploy_dir/openryoko-pilot-deploy" | cut -d' ' -f1
+  sha256sum "$deploy_dir/openryoko-deploy-command" | cut -d' ' -f1
+} | sha256sum | cut -d' ' -f1)"
+[[ "$source_output" == "$expected_source_output" ]] \
+  || { echo "control-plane digest is not deterministic" >&2; exit 1; }
+grep -Fq 'exec sudo -n /usr/local/sbin/openryoko-pilot-deploy "$target_sha" "$expected_digest"' \
+  "$deploy_dir/openryoko-deploy-command" \
+  || { echo "forced command does not preserve the validated SHA and digest as separate argv" >&2; exit 1; }
 if grep -Fq '/usr/sbin/nologin' "$deploy_dir/install-pilot-deployer.sh"; then
   echo "installer configures a shell that prevents sshd forced-command execution" >&2
   exit 1
@@ -149,6 +164,12 @@ grep -Fq '/home/ryoko/current/packages/jimmy/dist/bin/jimmy.js' "$render_root/re
 [[ "$(stat -f '%Lp' "$render_root/rendered/authorized_keys" 2>/dev/null || stat -c '%a' "$render_root/rendered/authorized_keys")" == "600" ]]
 echo "installer artifact fixtures passed"
 
+grep -Fq 'Control-plane digest:' "$deploy_dir/install-pilot-deployer.sh"
+grep -Fq 'openryoko deploy: control plane digest' "$deploy_dir/openryoko-pilot-deploy"
+grep -Fq 'openryoko deploy: main pid' "$deploy_dir/openryoko-pilot-deploy"
+grep -Fq 'openryoko deploy: entrypoint' "$deploy_dir/openryoko-pilot-deploy"
+echo "deployment evidence output fixtures passed"
+
 workflow_fixture_root="$(mktemp -d)"
 cp "$workflow" "$workflow_fixture_root/expanded-permissions.yml"
 ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub("  contents: read", "  contents: read\n  issues: write"); File.write(p, s)' "$workflow_fixture_root/expanded-permissions.yml"
@@ -169,7 +190,7 @@ if ruby "$workflow_checker" "$workflow_fixture_root/leaked-deploy-key.yml" >/dev
   exit 1
 fi
 cp "$workflow" "$workflow_fixture_root/raw-input-sha.yml"
-ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub(%q{TARGET_SHA: ${{ steps.target.outputs.sha }}}, %q{TARGET_SHA: ${{ inputs.commit_sha }}}); File.write(p, s)' "$workflow_fixture_root/raw-input-sha.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).gsub(%q{TARGET_SHA: ${{ steps.target.outputs.sha }}}, %q{TARGET_SHA: ${{ inputs.commit_sha }}}); File.write(p, s)' "$workflow_fixture_root/raw-input-sha.yml"
 if ruby "$workflow_checker" "$workflow_fixture_root/raw-input-sha.yml" >/dev/null 2>&1; then
   echo "workflow checker accepted an unvalidated input SHA for deployment" >&2
   exit 1
@@ -181,7 +202,7 @@ if ruby "$workflow_checker" "$workflow_fixture_root/unrestricted-principal.yml" 
   exit 1
 fi
 cp "$workflow" "$workflow_fixture_root/non-deploy-payload.yml"
-ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub(%q{"deploy $TARGET_SHA"}, %q{"status"}); File.write(p, s)' "$workflow_fixture_root/non-deploy-payload.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub(%q{"deploy $TARGET_SHA $CONTROL_PLANE_DIGEST"}, %q{"status"}); File.write(p, s)' "$workflow_fixture_root/non-deploy-payload.yml"
 if ruby "$workflow_checker" "$workflow_fixture_root/non-deploy-payload.yml" >/dev/null 2>&1; then
   echo "workflow checker accepted a non-deploy forced-command payload" >&2
   exit 1
@@ -291,10 +312,12 @@ chmod +x "$fixture_bin/stub-command"
 for command_name in git flock install mv systemctl realpath sleep; do
   ln -s stub-command "$fixture_bin/$command_name"
 done
+fixture_path="$fixture_bin:$(dirname "$(command -v sha256sum)"):/bin:/usr/bin"
 
 run_failure_case() {
   local mode="$1"
   local guard_status="$2"
+  local requested_digest="${3:-$expected_source_output}"
   rm -rf "$failure_root/releases"/*
   rm -f "$failure_root/current"
   ln -s "$failure_root/previous" "$failure_root/current"
@@ -305,7 +328,7 @@ exit $guard_status
 GUARD
   chmod +x "$failure_root/guard"
   set +e
-  PATH="$fixture_bin:/bin:/usr/bin" \
+  PATH="$fixture_path" \
   FIXTURE_MODE="$mode" \
   FIXTURE_ROOT="$failure_root" \
   FIXTURE_SHA="$failure_sha" \
@@ -318,9 +341,11 @@ GUARD
   OPENRYOKO_TEST_RESTART_GUARD="$failure_root/guard" \
   OPENRYOKO_TEST_LOCK_FILE="$failure_root/deploy.lock" \
   OPENRYOKO_TEST_PNPM_BIN="$failure_root/pnpm" \
+  OPENRYOKO_TEST_DEPLOY_SCRIPT_PATH="$deploy_dir/openryoko-pilot-deploy" \
+  OPENRYOKO_TEST_DEPLOY_COMMAND_PATH="$deploy_dir/openryoko-deploy-command" \
   OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS=1 \
   OPENRYOKO_TEST_PROCESS_COMMAND="${OPENRYOKO_TEST_PROCESS_COMMAND_OVERRIDE:-$failure_root/current/packages/jimmy/dist/bin/jimmy.js}" \
-    bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" >"$failure_root/deploy-$mode.log" 2>&1
+    bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" "$requested_digest" >"$failure_root/deploy-$mode.log" 2>&1
   local status=$?
   set -e
   [[ $status -ne 0 ]] || { echo "failure fixture unexpectedly passed: $mode" >&2; exit 1; }
@@ -343,6 +368,9 @@ assert_rollback_restart() {
     }
 }
 
+run_failure_case control-plane-mismatch 0 "$(printf '0%.0s' {1..64})"
+[[ ! -s "$failure_root/systemctl.log" ]] \
+  || { echo "control-plane mismatch restarted the service" >&2; exit 1; }
 run_failure_case main-reject 0
 run_failure_case lock-conflict 0
 run_failure_case build-fail 0
@@ -369,7 +397,7 @@ cat > "$failure_root/guard" <<'GUARD'
 exit 0
 GUARD
 chmod +x "$failure_root/guard"
-PATH="$fixture_bin:/bin:/usr/bin" \
+PATH="$fixture_path" \
 FIXTURE_MODE=prune-fail \
 FIXTURE_ROOT="$failure_root" \
 FIXTURE_SHA="$failure_sha" \
@@ -382,9 +410,11 @@ OPENRYOKO_TEST_CURRENT_LINK="$failure_root/current" \
 OPENRYOKO_TEST_RESTART_GUARD="$failure_root/guard" \
 OPENRYOKO_TEST_LOCK_FILE="$failure_root/deploy.lock" \
 OPENRYOKO_TEST_PNPM_BIN="$failure_root/pnpm" \
+OPENRYOKO_TEST_DEPLOY_SCRIPT_PATH="$deploy_dir/openryoko-pilot-deploy" \
+OPENRYOKO_TEST_DEPLOY_COMMAND_PATH="$deploy_dir/openryoko-deploy-command" \
 OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS=1 \
 OPENRYOKO_TEST_PROCESS_COMMAND="$failure_root/current/packages/jimmy/dist/bin/jimmy.js" \
-  bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" >"$failure_root/deploy-prune-fail.log" 2>&1 \
+  bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" "$expected_source_output" >"$failure_root/deploy-prune-fail.log" 2>&1 \
   || {
     cat "$failure_root/deploy-prune-fail.log" >&2
     echo "post-activation prune failure reversed deploy success" >&2
