@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+deploy_dir="$repo_root/scripts/deploy"
+workflow="$repo_root/.github/workflows/deploy-lightsail.yml"
+workflow_checker="$deploy_dir/check-workflow-contract.rb"
+
+for script in \
+  "$deploy_dir/openryoko-pilot-deploy" \
+  "$deploy_dir/openryoko-deploy-command" \
+  "$deploy_dir/install-pilot-deployer.sh"; do
+  bash -n "$script"
+done
+
+if SSH_ORIGINAL_COMMAND="uname -a" bash "$deploy_dir/openryoko-deploy-command" >/dev/null 2>&1; then
+  echo "forced command accepted an arbitrary SSH command" >&2
+  exit 1
+fi
+
+if SSH_ORIGINAL_COMMAND="deploy deadbeef" bash "$deploy_dir/openryoko-deploy-command" >/dev/null 2>&1; then
+  echo "forced command accepted a short SHA" >&2
+  exit 1
+fi
+
+valid_sha="0123456789abcdef0123456789abcdef01234567"
+output="$(SSH_ORIGINAL_COMMAND="deploy $valid_sha" bash -x "$deploy_dir/openryoko-deploy-command" 2>&1 || true)"
+[[ "$output" == *"/usr/local/sbin/openryoko-pilot-deploy $valid_sha"* ]] \
+  || { echo "forced command did not preserve the validated SHA as one argv" >&2; exit 1; }
+
+ruby "$workflow_checker" "$workflow" >/dev/null
+
+workflow_fixture_root="$(mktemp -d)"
+cp "$workflow" "$workflow_fixture_root/expanded-permissions.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub("  contents: read", "  contents: read\n  issues: write"); File.write(p, s)' "$workflow_fixture_root/expanded-permissions.yml"
+if ruby "$workflow_checker" "$workflow_fixture_root/expanded-permissions.yml" >/dev/null 2>&1; then
+  echo "workflow checker accepted expanded repository permissions" >&2
+  exit 1
+fi
+cp "$workflow" "$workflow_fixture_root/disabled-host-check.yml"
+ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub("StrictHostKeyChecking=yes", "StrictHostKeyChecking=no # StrictHostKeyChecking=yes"); File.write(p, s)' "$workflow_fixture_root/disabled-host-check.yml"
+if ruby "$workflow_checker" "$workflow_fixture_root/disabled-host-check.yml" >/dev/null 2>&1; then
+  echo "workflow checker accepted disabled host key checking" >&2
+  exit 1
+fi
+
+rollback_root="$(mktemp -d)"
+trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "${failure_root:-}"' EXIT
+mkdir -p "$rollback_root/previous" "$rollback_root/failed"
+ln -s "$rollback_root/failed" "$rollback_root/current"
+set +e
+(
+  systemctl() { return 0; }
+  mv() { command rm -f "$3"; command mv "$2" "$3"; }
+  export OPENRYOKO_DEPLOY_SOURCE_ONLY=1
+  # shellcheck source=openryoko-pilot-deploy
+  source "$deploy_dir/openryoko-pilot-deploy"
+  rollback_activation 23 "$rollback_root/current" "$rollback_root/previous" test.service
+)
+rollback_status=$?
+set -e
+[[ $rollback_status -eq 23 ]] \
+  || { echo "rollback did not preserve the activation failure status" >&2; exit 1; }
+[[ "$(readlink "$rollback_root/current")" == "$rollback_root/previous" ]] \
+  || { echo "rollback did not restore the previous release pointer" >&2; exit 1; }
+grep -Fq 'rollback 1' "$deploy_dir/openryoko-pilot-deploy" \
+  || { echo "activation consistency failures do not explicitly rollback" >&2; exit 1; }
+
+failure_root="$(mktemp -d)"
+failure_sha="89abcdef0123456789abcdef0123456789abcdef"
+fixture_bin="$failure_root/bin"
+mkdir -p "$fixture_bin" "$failure_root/source/.git" "$failure_root/releases" "$failure_root/previous"
+cat > "$failure_root/pnpm" <<'PNPM'
+#!/usr/bin/env bash
+set -euo pipefail
+release_dir=""
+if [[ "${1:-}" == "--dir" ]]; then release_dir="$2"; shift 2; fi
+if [[ "${1:-}" == "build" ]]; then
+  [[ "${FIXTURE_MODE:-}" != "build-fail" ]] || exit 42
+  mkdir -p "$release_dir/packages/jimmy/dist/bin"
+  : > "$release_dir/packages/jimmy/dist/bin/jimmy.js"
+fi
+PNPM
+chmod +x "$failure_root/pnpm"
+cat > "$fixture_bin/stub-command" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+name="$(basename "$0")"
+case "$name" in
+  git)
+    if [[ " $* " == *" merge-base "* && "${FIXTURE_MODE:-}" == "main-reject" ]]; then exit 1; fi
+    if [[ " $* " == *" worktree add "* ]]; then mkdir -p "${@: -2:1}"; fi
+    if [[ " $* " == *" worktree remove "* ]]; then rm -rf "${@: -1}"; fi
+    if [[ " $* " == *" rev-parse HEAD "* ]]; then printf '%s\n' "$FIXTURE_SHA"; fi
+    if [[ " $* " == *" worktree prune "* && "${FIXTURE_MODE:-}" == "prune-fail" ]]; then exit 1; fi
+    ;;
+  flock)
+    [[ "${FIXTURE_MODE:-}" != "lock-conflict" ]] || exit 1
+    ;;
+  install)
+    mkdir -p "${@: -1}"
+    ;;
+  mv)
+    destination="${@: -1}"
+    source="${@: -2:1}"
+    rm -f "$destination"
+    /bin/mv "$source" "$destination"
+    ;;
+  systemctl)
+    printf '%s\n' "$*" >> "$FIXTURE_SYSTEMCTL_LOG"
+    if [[ "${1:-}" == "is-active" && "${FIXTURE_MODE:-}" == "active-fail" ]]; then exit 1; fi
+    if [[ "${1:-}" == "show" ]]; then printf '123\n'; fi
+    ;;
+  realpath)
+    if [[ "${FIXTURE_MODE:-}" == "entrypoint-mismatch" && "${1:-}" == *"/current/packages/jimmy/dist/bin/jimmy.js" ]]; then
+      printf '%s\n' "$FIXTURE_ROOT/mismatched/jimmy.js"
+    else
+      /bin/realpath "$@"
+    fi
+    ;;
+  sleep) ;;
+esac
+STUB
+chmod +x "$fixture_bin/stub-command"
+for command_name in git flock install mv systemctl realpath sleep; do
+  ln -s stub-command "$fixture_bin/$command_name"
+done
+
+run_failure_case() {
+  local mode="$1"
+  local guard_status="$2"
+  rm -rf "$failure_root/releases"/*
+  rm -f "$failure_root/current"
+  ln -s "$failure_root/previous" "$failure_root/current"
+  : > "$failure_root/systemctl.log"
+  cat > "$failure_root/guard" <<GUARD
+#!/usr/bin/env bash
+exit $guard_status
+GUARD
+  chmod +x "$failure_root/guard"
+  set +e
+  PATH="$fixture_bin:/bin:/usr/bin" \
+  FIXTURE_MODE="$mode" \
+  FIXTURE_ROOT="$failure_root" \
+  FIXTURE_SHA="$failure_sha" \
+  FIXTURE_SYSTEMCTL_LOG="$failure_root/systemctl.log" \
+  OPENRYOKO_DEPLOY_TESTING=1 \
+  OPENRYOKO_TEST_RUNTIME_HOME="$failure_root" \
+  OPENRYOKO_TEST_SOURCE_REPO="$failure_root/source" \
+  OPENRYOKO_TEST_RELEASES_DIR="$failure_root/releases" \
+  OPENRYOKO_TEST_CURRENT_LINK="$failure_root/current" \
+  OPENRYOKO_TEST_RESTART_GUARD="$failure_root/guard" \
+  OPENRYOKO_TEST_LOCK_FILE="$failure_root/deploy.lock" \
+  OPENRYOKO_TEST_PNPM_BIN="$failure_root/pnpm" \
+  OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS=1 \
+  OPENRYOKO_TEST_PROCESS_COMMAND="${OPENRYOKO_TEST_PROCESS_COMMAND_OVERRIDE:-$failure_root/current/packages/jimmy/dist/bin/jimmy.js}" \
+    bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" >"$failure_root/deploy-$mode.log" 2>&1
+  local status=$?
+  set -e
+  [[ $status -ne 0 ]] || { echo "failure fixture unexpectedly passed: $mode" >&2; exit 1; }
+  [[ "$(realpath "$failure_root/current")" == "$(realpath "$failure_root/previous")" ]] \
+    || {
+      cat "$failure_root/deploy-$mode.log" >&2
+      cat "$failure_root/systemctl.log" >&2
+      echo "failure fixture changed the active pointer: $mode" >&2
+      exit 1
+    }
+}
+
+run_failure_case main-reject 0
+run_failure_case lock-conflict 0
+run_failure_case build-fail 0
+[[ -z "$(find "$failure_root/releases" -mindepth 1 -maxdepth 1 -print -quit)" ]] \
+  || { echo "build failure left an incomplete release" >&2; exit 1; }
+[[ ! -s "$failure_root/systemctl.log" ]] \
+  || { echo "build failure restarted the service" >&2; exit 1; }
+run_failure_case guard-timeout 1
+run_failure_case active-fail 0
+run_failure_case entrypoint-mismatch 0
+OPENRYOKO_TEST_PROCESS_COMMAND_OVERRIDE="$failure_root/other/jimmy.js" run_failure_case mainpid-mismatch 0
+
+rm -rf "$failure_root/releases"/*
+rm -f "$failure_root/current"
+ln -s "$failure_root/previous" "$failure_root/current"
+: > "$failure_root/systemctl.log"
+cat > "$failure_root/guard" <<'GUARD'
+#!/usr/bin/env bash
+exit 0
+GUARD
+chmod +x "$failure_root/guard"
+PATH="$fixture_bin:/bin:/usr/bin" \
+FIXTURE_MODE=prune-fail \
+FIXTURE_ROOT="$failure_root" \
+FIXTURE_SHA="$failure_sha" \
+FIXTURE_SYSTEMCTL_LOG="$failure_root/systemctl.log" \
+OPENRYOKO_DEPLOY_TESTING=1 \
+OPENRYOKO_TEST_RUNTIME_HOME="$failure_root" \
+OPENRYOKO_TEST_SOURCE_REPO="$failure_root/source" \
+OPENRYOKO_TEST_RELEASES_DIR="$failure_root/releases" \
+OPENRYOKO_TEST_CURRENT_LINK="$failure_root/current" \
+OPENRYOKO_TEST_RESTART_GUARD="$failure_root/guard" \
+OPENRYOKO_TEST_LOCK_FILE="$failure_root/deploy.lock" \
+OPENRYOKO_TEST_PNPM_BIN="$failure_root/pnpm" \
+OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS=1 \
+OPENRYOKO_TEST_PROCESS_COMMAND="$failure_root/current/packages/jimmy/dist/bin/jimmy.js" \
+  bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" >"$failure_root/deploy-prune-fail.log" 2>&1 \
+  || {
+    cat "$failure_root/deploy-prune-fail.log" >&2
+    echo "post-activation prune failure reversed deploy success" >&2
+    exit 1
+  }
+grep -Fq 'warning: worktree metadata pruning failed after successful activation' "$failure_root/deploy-prune-fail.log" \
+  || {
+    cat "$failure_root/deploy-prune-fail.log" >&2
+    echo "post-activation prune failure did not emit a warning" >&2
+    exit 1
+  }
+
+echo "deploy script, workflow contract, and rollback validation passed"

@@ -14,3 +14,4 @@ dist/
 .vibepro/*
 !.vibepro/config.json
 .worktrees/vibepro/
+.vibepro-store/

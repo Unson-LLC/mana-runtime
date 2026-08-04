@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# One-time, root-only installer for the restricted GitHub Actions deploy principal.
+set -euo pipefail
+
+usage() {
+  echo "usage: sudo $0 --authorized-key-file PATH" >&2
+}
+
+key_file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --authorized-key-file)
+      key_file="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+[[ $EUID -eq 0 ]] || { echo "installer must run as root" >&2; exit 1; }
+[[ -n "$key_file" && -f "$key_file" ]] || { usage; exit 2; }
+readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly runtime_home="/home/ryoko"
+readonly source_repo="$runtime_home/src/OpenRyoko"
+readonly deploy_user="openryoko-deploy"
+readonly service="openryoko.service"
+readonly wrapper="$runtime_home/bin/ryoko"
+
+public_key="$(tr -d '\r\n' < "$key_file")"
+[[ "$public_key" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh.com)[[:space:]][A-Za-z0-9+/=]+([[:space:]].*)?$ ]] \
+  || { echo "authorized key must be an Ed25519 public key" >&2; exit 1; }
+[[ -f "$source_repo/packages/jimmy/dist/bin/jimmy.js" ]] \
+  || { echo "current runtime entrypoint is missing" >&2; exit 1; }
+systemctl cat "$service" >/dev/null \
+  || { echo "$service is not installed" >&2; exit 1; }
+
+id "$deploy_user" >/dev/null 2>&1 || useradd --system --create-home --home-dir "/home/$deploy_user" --shell /usr/sbin/nologin "$deploy_user"
+install -o root -g root -m 0755 "$script_dir/openryoko-pilot-deploy" /usr/local/sbin/openryoko-pilot-deploy
+install -o root -g root -m 0755 "$script_dir/openryoko-deploy-command" /usr/local/sbin/openryoko-deploy-command
+install -o root -g root -m 0755 "$source_repo/scripts/development-runner/guard-restart.sh" /usr/local/libexec/openryoko-guard-restart
+
+deploy_home="/home/$deploy_user"
+install -d -o "$deploy_user" -g "$deploy_user" -m 0700 "$deploy_home/.ssh"
+authorized_line="restrict,command=\"/usr/local/sbin/openryoko-deploy-command\" $public_key"
+printf '%s\n' "$authorized_line" > "$deploy_home/.ssh/authorized_keys"
+chown "$deploy_user:$deploy_user" "$deploy_home/.ssh/authorized_keys"
+chmod 0600 "$deploy_home/.ssh/authorized_keys"
+
+sudoers_file="/etc/sudoers.d/openryoko-pilot-deploy"
+printf '%s\n' "$deploy_user ALL=(root) NOPASSWD: /usr/local/sbin/openryoko-pilot-deploy *" > "$sudoers_file"
+chmod 0440 "$sudoers_file"
+visudo -cf "$sudoers_file"
+
+# Pin systemd to the stable release-pointer wrapper. The drop-in is installed
+# without restarting the service; activation remains an explicit guarded step.
+dropin_dir="/etc/systemd/system/${service}.d"
+install -d -o root -g root -m 0755 "$dropin_dir"
+dropin_tmp="$(mktemp "$dropin_dir/10-release-pointer.conf.tmp.XXXXXX")"
+trap 'rm -f "$dropin_tmp" "${wrapper_tmp:-}"' EXIT
+cat > "$dropin_tmp" <<UNIT
+[Service]
+ExecStart=
+ExecStart=$wrapper start
+UNIT
+chown root:root "$dropin_tmp"
+chmod 0644 "$dropin_tmp"
+mv -f "$dropin_tmp" "$dropin_dir/10-release-pointer.conf"
+systemctl daemon-reload
+
+# Move the runtime entrypoint to a release pointer without changing the active code.
+ln -sfn "$source_repo" "$runtime_home/current.next"
+mv -Tf "$runtime_home/current.next" "$runtime_home/current"
+if [[ -f "$wrapper" && ! -f "${wrapper}.pre-release-pointer" ]]; then
+  cp -a "$wrapper" "${wrapper}.pre-release-pointer"
+fi
+wrapper_tmp="$(mktemp "${wrapper}.tmp.XXXXXX")"
+cat > "$wrapper_tmp" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /home/ryoko/.nvm/versions/node/v22.23.1/bin/node /home/ryoko/current/packages/jimmy/dist/bin/jimmy.js "$@"
+WRAPPER
+chown ryoko:ryoko "$wrapper_tmp"
+chmod 0755 "$wrapper_tmp"
+mv -f "$wrapper_tmp" "$wrapper"
+
+exec_start="$(systemctl show --property ExecStart --value "$service")"
+[[ "$exec_start" == *"$wrapper start"* ]] \
+  || { echo "$service does not use the release-pointer wrapper" >&2; exit 1; }
+trap - EXIT
+
+echo "Restricted deploy principal installed. Verify with: sudo -u ryoko $wrapper status"

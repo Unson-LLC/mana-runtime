@@ -6,6 +6,12 @@ on:
     branches: [main]
 
 jobs:
+  deploy-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm test:integration:deploy
+
   typecheck:
     runs-on: ubuntu-latest
     steps:

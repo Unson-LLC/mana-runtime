@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# ForcedCommand entrypoint. Never pass arbitrary SSH commands to a shell.
+set -euo pipefail
+
+readonly requested="${SSH_ORIGINAL_COMMAND:-}"
+readonly deploy_pattern='^deploy ([0-9a-fA-F]{40})$'
+if [[ "$requested" =~ $deploy_pattern ]]; then
+  target_sha="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
+  exec sudo -n /usr/local/sbin/openryoko-pilot-deploy "$target_sha"
+fi
+
+echo "Only 'deploy FULL_COMMIT_SHA' is allowed." >&2
+exit 64
