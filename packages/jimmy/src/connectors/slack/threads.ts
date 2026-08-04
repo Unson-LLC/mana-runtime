@@ -8,24 +8,32 @@ export interface SlackMessageEventLike {
   channel_type?: string;
 }
 
-export function deriveSessionKey(event: SlackMessageEventLike): string {
+export interface SlackSessionScope {
+  connectorInstanceId: string;
+  workspaceId: string;
+}
+
+export function deriveSessionKey(event: SlackMessageEventLike, scope?: SlackSessionScope): string {
+  const prefix = scope
+    ? `slack:${scope.connectorInstanceId}:${scope.workspaceId}`
+    : "slack";
   if (event.channel_type === "im") {
     // A threaded DM message gets its own per-thread session, so opening a
     // new thread starts a fresh conversation — same as channels. The
     // non-threaded DM timeline stays one long-lived session per user.
     if (event.thread_ts && event.thread_ts !== event.ts) {
-      return `slack:dm:${event.user || "unknown"}:${event.thread_ts}`;
+      return `${prefix}:dm:${event.user || "unknown"}:${event.thread_ts}`;
     }
-    return `slack:dm:${event.user || "unknown"}`;
+    return `${prefix}:dm:${event.user || "unknown"}`;
   }
 
   // Thread reply — use thread_ts (which is the root message's ts)
   if (event.thread_ts && event.thread_ts !== event.ts) {
-    return `slack:${event.channel}:${event.thread_ts}`;
+    return `${prefix}:${event.channel}:${event.thread_ts}`;
   }
 
   // Root channel message — use ts so thread replies will match
-  return `slack:${event.channel}:${event.ts}`;
+  return `${prefix}:${event.channel}:${event.ts}`;
 }
 
 export function buildReplyContext(event: SlackMessageEventLike): ReplyContext {

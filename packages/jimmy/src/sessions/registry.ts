@@ -5,6 +5,11 @@ import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { SESSIONS_DB } from '../shared/paths.js';
 import type { JsonObject, ReplyContext, Session } from '../shared/types.js';
+import type {
+  EffectiveCapability,
+  SharedConversationSnapshot,
+  TurnContextStatus,
+} from './turn-context.js';
 
 let db: Database.Database;
 
@@ -125,6 +130,46 @@ export function initDb(): Database.Database {
       ON queue_items (session_key, status, position);
   `);
   db.exec(CREATE_FILES_TABLE);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS turn_context_snapshots (
+      session_id TEXT PRIMARY KEY,
+      graph_status TEXT NOT NULL,
+      graph_reason_code TEXT,
+      shared_status TEXT NOT NULL,
+      shared_reason_code TEXT,
+      effective_capabilities TEXT NOT NULL,
+      observed_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS learning_candidate_outbox (
+      idempotency_key TEXT PRIMARY KEY,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      requires_review INTEGER NOT NULL DEFAULT 1,
+      candidate_ids TEXT,
+      last_error TEXT,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at TEXT,
+      claimed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_candidate_status
+      ON learning_candidate_outbox (status, created_at);
+  `);
+  const learningColumns = new Set(
+    (db.prepare("PRAGMA table_info(learning_candidate_outbox)").all() as Array<{ name: string }>)
+      .map((column) => column.name),
+  );
+  if (!learningColumns.has("attempt_count")) {
+    db.exec("ALTER TABLE learning_candidate_outbox ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!learningColumns.has("next_retry_at")) {
+    db.exec("ALTER TABLE learning_candidate_outbox ADD COLUMN next_retry_at TEXT");
+  }
+  if (!learningColumns.has("claimed_at")) {
+    db.exec("ALTER TABLE learning_candidate_outbox ADD COLUMN claimed_at TEXT");
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS goals (
@@ -532,15 +577,133 @@ export interface SessionMessage {
   timestamp: number;
 }
 
-export function insertMessage(sessionId: string, role: string, content: string): void {
+export function insertMessage(sessionId: string, role: string, content: string): string {
   const db = initDb();
   const id = uuidv4();
   db.prepare('INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)').run(id, sessionId, role, content, Date.now());
+  return id;
 }
 
 export function getMessages(sessionId: string): SessionMessage[] {
   const db = initDb();
   return db.prepare('SELECT id, role, content, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp ASC').all(sessionId) as SessionMessage[];
+}
+
+export interface SharedConversationQuery {
+  connector: string;
+  workspaceId?: string;
+  channelId: string;
+  placementId?: string;
+  excludeSessionId?: string;
+  limit?: number;
+}
+
+/**
+ * Pure tenant-boundary predicate for shared channel context. Keeping this
+ * separate from SQLite access makes the fail-closed scope rules directly
+ * testable.
+ */
+export function selectSharedConversationSessions(
+  query: SharedConversationQuery,
+  sessions: Session[],
+): Session[] {
+  if (!query.workspaceId) return [];
+  return sessions.filter((session) => {
+    if (session.id === query.excludeSessionId) return false;
+    if (session.connector !== query.connector && session.source !== query.connector) return false;
+    const meta = (session.transportMeta ?? {}) as Record<string, unknown>;
+    const storedChannel = session.replyContext?.channel ?? meta.channelId;
+    if (storedChannel !== query.channelId) return false;
+    const workspace = meta.team ?? meta.workspaceId ?? meta.workspace;
+    if (workspace !== query.workspaceId) return false;
+    if ((meta.placementId ?? undefined) !== query.placementId) return false;
+    return true;
+  });
+}
+
+/**
+ * Reads persisted messages from other engine sessions in the same connector,
+ * workspace and channel. A missing workspace fails closed so identical channel
+ * IDs from different Slack installations can never be mixed.
+ */
+export function getSharedConversationContext(query: SharedConversationQuery): SharedConversationSnapshot {
+  const observedAt = new Date().toISOString();
+  if (!query.workspaceId) {
+    return { status: 'unavailable', messages: [], reasonCode: 'workspace_unknown', observedAt };
+  }
+
+  const limit = Math.max(1, Math.min(query.limit ?? 12, 50));
+  const matchingSessions = selectSharedConversationSessions(
+    query,
+    listSessions({ source: query.connector }),
+  );
+
+  const messages = matchingSessions
+    .flatMap((session) => getMessages(session.id).map((message) => ({
+      ...message,
+      sessionId: session.id,
+      content: message.content.slice(0, 1200),
+    })))
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-limit);
+
+  return messages.length > 0
+    ? { status: 'available', messages, observedAt }
+    : { status: 'empty', messages: [], observedAt };
+}
+
+export interface StoredTurnContextSnapshot extends TurnContextStatus {
+  effectiveCapabilities: EffectiveCapability[];
+}
+
+export function recordTurnContextSnapshot(
+  sessionId: string,
+  status: TurnContextStatus,
+  effectiveCapabilities: EffectiveCapability[],
+): void {
+  const database = initDb();
+  database.prepare(`
+    INSERT INTO turn_context_snapshots (
+      session_id, graph_status, graph_reason_code, shared_status,
+      shared_reason_code, effective_capabilities, observed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      graph_status = excluded.graph_status,
+      graph_reason_code = excluded.graph_reason_code,
+      shared_status = excluded.shared_status,
+      shared_reason_code = excluded.shared_reason_code,
+      effective_capabilities = excluded.effective_capabilities,
+      observed_at = excluded.observed_at
+  `).run(
+    sessionId,
+    status.graph,
+    status.graphReasonCode ?? null,
+    status.sharedConversation,
+    status.sharedConversationReasonCode ?? null,
+    JSON.stringify(effectiveCapabilities),
+    status.observedAt,
+  );
+}
+
+export function getTurnContextSnapshot(sessionId: string): StoredTurnContextSnapshot | undefined {
+  const row = initDb().prepare(
+    'SELECT * FROM turn_context_snapshots WHERE session_id = ?',
+  ).get(sessionId) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  let effectiveCapabilities: EffectiveCapability[] = [];
+  try {
+    effectiveCapabilities = JSON.parse(String(row.effective_capabilities)) as EffectiveCapability[];
+  } catch {
+    effectiveCapabilities = [];
+  }
+  return {
+    graph: row.graph_status as TurnContextStatus['graph'],
+    sharedConversation: row.shared_status as TurnContextStatus['sharedConversation'],
+    graphReasonCode: (row.graph_reason_code as string | null) ?? undefined,
+    sharedConversationReasonCode: (row.shared_reason_code as string | null) ?? undefined,
+    observedAt: String(row.observed_at),
+    effectiveCapabilities,
+  };
 }
 
 export interface QueueItem {

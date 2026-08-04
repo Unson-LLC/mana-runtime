@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import * as pty from "node-pty";
@@ -15,6 +16,10 @@ import { neutralizeForPaste } from "../shared/skill-commands.js";
 import { placementSafeCliFlags } from "../shared/placement-profile.js";
 
 export type { PtyControlEvent } from "./pty-view-engine.js";
+
+export function instructionPromptKey(systemPrompt?: string): string {
+  return createHash("sha256").update(systemPrompt ?? "").digest("hex");
+}
 
 interface InteractiveArgsOpts {
   prompt: string;
@@ -576,7 +581,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  flags apply only at spawn, so a mid-chat switch must cold-respawn rather than
    *  reuse the warm PTY (which would keep running the old model — or, worse for
    *  `boundaryKey`, keep running WITHOUT the Placement tool boundary). */
-  private spawnParams = new Map<string, { model?: string; effortLevel?: string; boundaryKey?: string }>();
+  private spawnParams = new Map<string, { model?: string; effortLevel?: string; boundaryKey?: string; instructionKey?: string }>();
   /** PTY handles already torn down by handlePtyDeath(). A socket `error` (EIO) and
    *  the proc's `onExit` can both fire for the same PTY (in either order, or only
    *  one of them), and run()'s warm-reuse guard may also report it dead — so death
@@ -640,11 +645,12 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       // requested Placement tool boundary must never serve a turn that requires
       // it — cold-respawn so the boundary actually applies.
       const boundaryKey = placementBoundaryKey(opts);
+      const instructionKey = instructionPromptKey(opts.systemPrompt);
       // A PTY adopted before this key existed (or by an older build) has no
       // recorded key — treat it as the unbounded default so plain non-placement
       // turns don't churn through pointless cold respawns.
-      if (prev && (norm(opts.model) !== norm(prev.model) || norm(opts.effortLevel) !== norm(prev.effortLevel) || boundaryKey !== (prev.boundaryKey ?? placementBoundaryKey({})))) {
-        logger.info(`InteractiveClaudeEngine: spawn params changed for ${jinnSessionId} (model ${prev.model ?? "default"}→${opts.model ?? "default"}, effort ${prev.effortLevel ?? "default"}→${opts.effortLevel ?? "default"}, toolBoundary ${prev.boundaryKey === boundaryKey ? "same" : "changed"}) — cold respawn`);
+      if (prev && (norm(opts.model) !== norm(prev.model) || norm(opts.effortLevel) !== norm(prev.effortLevel) || boundaryKey !== (prev.boundaryKey ?? placementBoundaryKey({})) || instructionKey !== (prev.instructionKey ?? instructionPromptKey()))) {
+        logger.info(`InteractiveClaudeEngine: spawn params changed for ${jinnSessionId} (model ${prev.model ?? "default"}→${opts.model ?? "default"}, effort ${prev.effortLevel ?? "default"}→${opts.effortLevel ?? "default"}, toolBoundary ${prev.boundaryKey === boundaryKey ? "same" : "changed"}, instructions ${prev.instructionKey === instructionKey ? "same" : "changed"}) — cold respawn`);
         this.lifecycle.releaseSession(jinnSessionId);
         warm = undefined;
       }
@@ -1060,7 +1066,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cwd: opts.cwd || JINN_HOME,
       env,
     });
-    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, boundaryKey: placementBoundaryKey(opts) });
+    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, boundaryKey: placementBoundaryKey(opts), instructionKey: instructionPromptKey(opts.systemPrompt) });
     return this.wireProcToStream(jinnSessionId, proc, port ? proxy : undefined);
   }
 
@@ -1123,7 +1129,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
         const handle = this.wireProcToStream(jinnSessionId, proc, port ? proxy : undefined);
         // Idle PTYs spawn with the unbounded (global-list) boundary; record that
         // key so a first placement turn cold-respawns while plain turns reuse.
-        this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: undefined, boundaryKey: placementBoundaryKey({}) });
+        this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: undefined, boundaryKey: placementBoundaryKey({}), instructionKey: instructionPromptKey() });
         this.lifecycle.adopt(jinnSessionId, handle);
       } catch (err) {
         logger.warn(`ensureIdleSpawn failed for session ${jinnSessionId}: ${err instanceof Error ? err.message : String(err)}`);

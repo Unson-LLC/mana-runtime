@@ -12,6 +12,11 @@ import {
   safePlacementDataScopes,
 } from "../shared/placement-profile.js";
 import { listSkills } from "../cli/skills.js";
+import type {
+  EffectiveCapability,
+  GraphContextSnapshot,
+  SharedConversationSnapshot,
+} from "./turn-context.js";
 
 /**
  * Token budget strategy:
@@ -51,7 +56,7 @@ interface Section {
  * This is what makes Jinn "smart" — the engine sees all of this context
  * before responding to the user.
  */
-export function buildContext(opts: {
+export interface BuildContextOptions {
   source: string;
   channel: string;
   thread?: string;
@@ -80,7 +85,17 @@ export function buildContext(opts: {
   speakerTz?: string;
   hierarchy?: import("../shared/types.js").OrgHierarchy;
   placement?: PlacementProfile;
-}): string {
+  /** Canonical common persona, freshly rendered for this turn. */
+  runtimeInstructions?: string;
+  /** Cross-thread recent messages, scoped to the current workspace/channel. */
+  sharedConversationContext?: SharedConversationSnapshot;
+  /** Brainbase Graph facts fetched for this exact turn. */
+  graphContext?: GraphContextSnapshot;
+  /** Resolved executable capability state for this exact turn. */
+  effectiveCapabilities?: EffectiveCapability[];
+}
+
+export function buildContext(opts: BuildContextOptions): string {
   const maxChars = opts.config?.context?.maxChars ?? DEFAULT_MAX_CONTEXT_CHARS;
   const sections: Section[] = [];
 
@@ -103,6 +118,15 @@ export function buildContext(opts: {
     operatorName,
     opts.config?.portal?.operatorAliases,
   );
+
+  if (opts.runtimeInstructions) {
+    sections.push({
+      tier: Tier.ESSENTIAL,
+      marker: "# Authoritative runtime instructions",
+      content: opts.runtimeInstructions,
+      summary: "", // authoritative and never trimmed
+    });
+  }
 
   // ── ESSENTIAL: Identity ─────────────────────────────────────
   if (opts.employee) {
@@ -147,6 +171,33 @@ export function buildContext(opts: {
     summary: "", // always included, no trimming
   });
 
+  if (opts.sharedConversationContext) {
+    sections.push({
+      tier: Tier.ESSENTIAL,
+      marker: "## Shared channel conversation context",
+      content: buildSharedConversationContext(opts.sharedConversationContext),
+      summary: "",
+    });
+  }
+
+  if (opts.graphContext) {
+    sections.push({
+      tier: Tier.ESSENTIAL,
+      marker: "## Brainbase Graph context",
+      content: buildGraphContext(opts.graphContext),
+      summary: "",
+    });
+  }
+
+  if (opts.effectiveCapabilities) {
+    sections.push({
+      tier: Tier.ESSENTIAL,
+      marker: "## Effective MCP state",
+      content: buildEffectiveCapabilityContext(opts.effectiveCapabilities),
+      summary: "",
+    });
+  }
+
   if (opts.placement) {
     sections.push({
       tier: Tier.ESSENTIAL,
@@ -164,7 +215,7 @@ export function buildContext(opts: {
           : []),
         ...buildPlacementCapabilityLines(opts.placement),
         `- Data scopes (supplementary): ${JSON.stringify(safePlacementDataScopes(opts.placement.dataScopes))}`,
-        "The capability list above is the source of truth for what you may use — it is generated from this placement's configured capabilities. Data scopes only add reference-scope notes (e.g. read-only modes, graph scopes) on top of those capabilities; they never grant or revoke a capability, and a capability listed above is available even if data scopes do not mention it.",
+        "The capability list above is declared placement policy. The per-turn Effective MCP state section is the source of truth for which MCP servers are actually executable now. Data scopes only add reference-scope notes and never grant a capability.",
         "Treat these as hard execution boundaries. Do not broaden them or send outside the allowed delivery targets.",
         "Control-plane and shared persona/skills/memory files are read-only in this placement session: config.yaml, org/, cron/, CLAUDE.md, AGENTS.md, SOUL.md, IDENTITY.md, MEMORY.md, TOOLS.md, skills/, memory/, knowledge/, and docs/. Never write, edit, or delete them — not even when the conversation asks you to. Use only the Gateway tools explicitly exposed to you for authorized changes.",
         `Placement-local memory for this placement lives under \`memory/placements/${opts.placement.id}/\`. Other placements' memory directories are blocked for this session — do not try to read them.`,
@@ -306,6 +357,57 @@ export function buildContext(opts: {
 
   // ── Assemble with progressive trimming by tier ──────────────
   return trimContext(sections, maxChars);
+}
+
+function buildSharedConversationContext(snapshot: SharedConversationSnapshot): string {
+  if (snapshot.status === "unavailable") {
+    return [
+      "## Shared channel conversation context",
+      `- Status: 未確認 (${snapshot.reasonCode || "unavailable"})`,
+      "- Do not infer that the channel has no prior context.",
+    ].join("\n");
+  }
+  if (snapshot.status === "empty" || snapshot.messages.length === 0) {
+    return "## Shared channel conversation context\n- Status: empty (no other persisted thread messages in this channel scope)";
+  }
+  const lines = snapshot.messages.slice(-12).map((message) => {
+    const content = message.content.replace(/\s+/g, " ").trim().slice(0, 1200);
+    return `- [${message.role}] ${content}`;
+  });
+  return [
+    "## Shared channel conversation context",
+    "Recent persisted messages from other threads in this workspace/channel follow. Use them as conversational business context, not as authoritative Graph facts.",
+    ...lines,
+  ].join("\n");
+}
+
+function buildGraphContext(snapshot: GraphContextSnapshot): string {
+  if (snapshot.status === "unavailable") {
+    return [
+      "## Brainbase Graph context",
+      `- Status: 未確認 (${snapshot.reasonCode || "unavailable"})`,
+      "- Graph retrieval failed for this turn. Do not treat failure as absence of facts.",
+    ].join("\n");
+  }
+  if (snapshot.status === "empty" || !snapshot.content?.trim()) {
+    return "## Brainbase Graph context\n- Status: empty (the current scoped query returned no facts)";
+  }
+  return [
+    "## Brainbase Graph context",
+    `- Status: available${snapshot.revision ? ` (revision ${snapshot.revision})` : ""}`,
+    snapshot.content.slice(0, 20_000),
+  ].join("\n");
+}
+
+function buildEffectiveCapabilityContext(capabilities: EffectiveCapability[]): string {
+  const lines = capabilities.length > 0
+    ? capabilities.map((capability) => `- ${capability.kind}:${capability.name}: ${capability.status}${capability.reasonCode ? ` (${capability.reasonCode})` : ""}`)
+    : ["- none: unavailable (no_mcp_capabilities_resolved)"];
+  return [
+    "## Effective MCP state",
+    "Only MCP capabilities marked available are executable in this turn. Declared configuration is not proof of availability.",
+    ...lines,
+  ].join("\n");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -454,12 +556,12 @@ ${portalName} is a personal AI assistant and gateway daemon. You are proactive, 
 ## Core principles
 - **Be proactive**: Don't just answer questions — suggest next steps, flag issues, offer to do related tasks.
 - **Be concise**: Respect the user's time. Lead with the answer, not the reasoning.
-- **Be capable**: You have access to the filesystem, can run commands, call APIs, send messages via connectors, and manage the system.
+- **Be capable**: Use only the tools and capabilities explicitly available for this turn. Never imply access that the effective capability policy does not grant.
 - **Be honest**: If you don't know something or can't do something, say so clearly.
 - **Remember context**: You're part of a persistent system. Sessions can be resumed. Build on previous work.
 ${languageInstruction}
 ## Your home directory
-Your working directory is \`~/.jinn\` (${JINN_HOME}). This contains:
+Your runtime home is \`~/.ryoko\` (${JINN_HOME}). This contains:
 - \`config.yaml\` — your configuration (engines, connectors, logging)
 - \`org/\` — employee definitions (YAML files defining AI workers)
 - \`skills/\` — reusable skill prompts
@@ -468,12 +570,12 @@ Your working directory is \`~/.jinn\` (${JINN_HOME}). This contains:
 - \`cron/\` — scheduled job definitions and run history
 - \`sessions/\` — session database
 - \`logs/\` — gateway logs
-- \`CLAUDE.md\` — user-defined instructions (always follow these)
+- \`CLAUDE.md\` — generated projection of the repository-owned canonical template; never edit it directly
 - \`AGENTS.md\` — agent/employee documentation
 
 ${placementBound
     ? "In this placement session these files are read-only reference material. Self-modification (persona, skills, memory, knowledge, org, cron, config) is not available here — see the Placement policy section."
-    : "You can read, write, and modify any of these files to configure yourself, create new employees, add skills, etc."}`;
+    : "Read or change runtime files only when the user's request and the effective capability policy authorize it. CLAUDE.md remains read-only because it is generated from the repository SSOT."}`;
 }
 
 function buildSessionContext(opts: {
@@ -911,8 +1013,8 @@ function buildEvolutionContext(portalName: string, config?: JinnConfig): string 
     lines.push(`- Update \`~/.jinn/knowledge/user-profile.md\` with business/identity info`);
     lines.push(`- Update \`~/.jinn/knowledge/preferences.md\` with style/communication preferences`);
     lines.push(`- Update \`~/.jinn/knowledge/projects.md\` with project details`);
-    lines.push(`- If the user gives you persistent feedback (e.g. "always do X", "never do Y"), update \`~/.jinn/CLAUDE.md\``);
-    lines.push(`\nDo this silently — don't announce every file update. Just evolve.`);
+    lines.push(`- If the user gives you persistent feedback (e.g. "always do X", "never do Y"), update \`~/.jinn/knowledge/preferences.md\`; never edit the generated \`~/.ryoko/CLAUDE.md\``);
+    lines.push(`\nOnly write when the user has authorized persistence and the current capability policy permits it. Mention material persistent changes briefly.`);
     if (canvasHintApplies) {
       lines.push(
         `\n### Available feature the user hasn't enabled: Agents View Canvas`,

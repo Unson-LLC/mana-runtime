@@ -18,10 +18,16 @@ import {
   getSession,
   getSessionBySessionKey,
   getMessages,
+  getTurnContextSnapshot,
   insertMessage,
+  recordTurnContextSnapshot,
   updateSession,
 } from "./registry.js";
 import { notifyParentSession, notifyRateLimited, notifyRateLimitResumed, notifyDiscordChannel } from "./callbacks.js";
+import type { TurnPromptProvider } from "./turn-prompt-provider.js";
+import type { TurnPreparationService } from "./turn-preparation-service.js";
+import type { EffectiveCapability } from "./turn-context.js";
+import type { LearningCandidateService } from "../learning/candidate-outbox.js";
 import { buildContext } from "./context.js";
 import { normalizeDelivery, normalizeTurns, deliverPublic, type DeliveryContext } from "./reply-disposition.js";
 import { SessionQueue } from "./queue.js";
@@ -205,6 +211,9 @@ export class SessionManager {
   private config: JinnConfig;
   private engines: Map<string, Engine>;
   private connectorNames: string[];
+  private turnPromptProvider: TurnPromptProvider;
+  private turnPreparationService?: TurnPreparationService;
+  private learningCandidateService?: LearningCandidateService;
   private queue = new SessionQueue();
   private connectorProvider: () => Map<string, Connector> = () => new Map();
   private criticalDispatches = new Set<string>();
@@ -219,10 +228,21 @@ export class SessionManager {
     config: JinnConfig,
     engines: Map<string, Engine>,
     connectorNames: string[] = [],
+    // Tests and embedded callers created before the composition-root provider
+    // existed retain the dynamic context builder. The gateway always supplies
+    // the canonical provider from server.ts.
+    turnPromptProvider: TurnPromptProvider = buildContext,
+    services: {
+      turnPreparationService?: TurnPreparationService;
+      learningCandidateService?: LearningCandidateService;
+    } = {},
   ) {
     this.config = config;
     this.engines = engines;
     this.connectorNames = connectorNames;
+    this.turnPromptProvider = turnPromptProvider;
+    this.turnPreparationService = services.turnPreparationService;
+    this.learningCandidateService = services.learningCandidateService;
   }
 
   setConnectorProvider(provider: () => Map<string, Connector>): void {
@@ -590,7 +610,7 @@ export class SessionManager {
       return;
     }
 
-    insertMessage(session.id, "user", msg.text);
+    const userMessageId = insertMessage(session.id, "user", msg.text);
 
     const capabilities = connector.getCapabilities();
     const decorateMessages = session.source !== "cron";
@@ -625,7 +645,33 @@ export class SessionManager {
 
     try {
       const meta = msg.transportMeta ?? {};
-      const systemPrompt = buildContext({
+      const captureLearningTurn = (assistantMessageId: string, assistantContent: string): void => {
+        if (!this.learningCandidateService) return;
+        this.learningCandidateService.capture({
+          sessionId: session.id,
+          userMessageId,
+          assistantMessageId,
+          userContent: msg.text,
+          assistantContent,
+          workspace: typeof meta.team === "string"
+            ? meta.team
+            : typeof meta.workspaceId === "string"
+              ? meta.workspaceId
+              : typeof meta.workspace === "string"
+                ? meta.workspace
+                : "unknown",
+          channelId: msg.channel,
+          actorExternalId: typeof meta.speakerSlackId === "string"
+            ? meta.speakerSlackId
+            : (msg.userId || msg.user || "unknown"),
+          actorPersonId: typeof meta.actorPersonId === "string" ? meta.actorPersonId : undefined,
+          projectCode: placement?.projects?.[0],
+        });
+        void this.learningCandidateService.flush().catch((error) => {
+          logger.warn(`[learning] candidate flush failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      };
+      const promptOptions = {
         source: session.source,
         channel: msg.channel,
         thread: msg.thread,
@@ -644,13 +690,14 @@ export class SessionManager {
         speakerIsBot: (meta.speakerIsBot as boolean | null) ?? undefined,
         speakerTz: (meta.speakerTz as string) || undefined,
         hierarchy,
-      });
+      };
 
       const engineConfig = session.engine === "codex"
         ? this.config.engines.codex
         : session.engine === "gemini"
           ? this.config.engines.gemini ?? this.config.engines.claude
           : this.config.engines.claude;
+      let effectiveCapabilities: EffectiveCapability[] = [];
       if (session.engine === "claude") {
         const mcpConfig = resolveMcpServers(this.config.mcp, employee, {
           sessionId: session.id,
@@ -662,11 +709,39 @@ export class SessionManager {
           allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
           allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
         }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
+        effectiveCapabilities = mcpConfig.effectiveCapabilities;
         // A Placement must always receive an explicit config, including an
         // empty one, so --strict-mcp-config can exclude user/global MCPs.
         if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
           mcpConfigPath = writeMcpConfigFile(mcpConfig, session.id);
         }
+      }
+
+      const preparedTurn = this.turnPreparationService
+        ? await this.turnPreparationService.prepare({
+            promptOptions,
+            workspaceId: typeof meta.team === "string"
+              ? meta.team
+              : typeof meta.workspaceId === "string"
+                ? meta.workspaceId
+                : typeof meta.workspace === "string"
+                  ? meta.workspace
+                  : undefined,
+            sessionId: session.id,
+            project: placement?.projects?.[0],
+            effectiveCapabilities,
+          })
+        : undefined;
+      const systemPrompt = preparedTurn?.systemPrompt ?? this.turnPromptProvider({
+        ...promptOptions,
+        effectiveCapabilities,
+      });
+      if (preparedTurn) {
+        recordTurnContextSnapshot(
+          session.id,
+          preparedTurn.contextStatus,
+          preparedTurn.effectiveCapabilities,
+        );
       }
 
       // Placement browser access is supplied by its allowlisted MCP server.
@@ -1025,7 +1100,10 @@ export class SessionManager {
               ? fallbackResult.result
               : fallbackResult.error || "(No response from engine)";
 
-            insertMessage(session.id, "assistant", fallbackText);
+            const assistantMessageId = insertMessage(session.id, "assistant", fallbackText);
+            if (!fallbackResult.error && fallbackResult.result?.trim()) {
+              captureLearningTurn(assistantMessageId, fallbackResult.result);
+            }
             if (fallbackResult.cost || fallbackResult.numTurns) {
               accumulateSessionCost(session.id, fallbackResult.cost ?? 0, fallbackResult.numTurns ?? 1);
             }
@@ -1201,7 +1279,10 @@ export class SessionManager {
               ? retryResult.result
               : retryResult.error || "(No response from engine)";
 
-            insertMessage(session.id, "assistant", retryText);
+            const assistantMessageId = insertMessage(session.id, "assistant", retryText);
+            if (!retryInterrupted && !retryResult.error && retryResult.result?.trim()) {
+              captureLearningTurn(assistantMessageId, retryResult.result);
+            }
             if (retryResult.cost || retryResult.numTurns) {
               accumulateSessionCost(session.id, retryResult.cost ?? 0, retryResult.numTurns ?? 1);
             }
@@ -1266,7 +1347,10 @@ export class SessionManager {
         ? result.result
         : result.error || "(No response from engine)";
 
-      insertMessage(session.id, "assistant", responseText);
+      const assistantMessageId = insertMessage(session.id, "assistant", responseText);
+      if (!wasInterrupted && !result.error && result.result?.trim()) {
+        captureLearningTurn(assistantMessageId, result.result);
+      }
       if (result.cost || result.numTurns) {
         accumulateSessionCost(session.id, result.cost ?? 0, result.numTurns ?? 1);
       }
@@ -1381,6 +1465,7 @@ export class SessionManager {
 
       const queueDepth = this.queue.getPendingCount(session.sessionKey);
       const transportState = this.queue.getTransportState(session.sessionKey, session.status);
+      const contextState = getTurnContextSnapshot(session.id);
       const info = [
         `Session: ${session.id}`,
         `Engine: ${session.engine}`,
@@ -1390,6 +1475,15 @@ export class SessionManager {
         `Queue depth: ${queueDepth}`,
         `Created: ${session.createdAt}`,
         `Last activity: ${session.lastActivity}`,
+        contextState
+          ? `Graph context: ${contextState.graph}${contextState.graphReasonCode ? ` (${contextState.graphReasonCode})` : ""}`
+          : "Graph context: unconfirmed (no_turn_snapshot)",
+        contextState
+          ? `Shared channel context: ${contextState.sharedConversation}${contextState.sharedConversationReasonCode ? ` (${contextState.sharedConversationReasonCode})` : ""}`
+          : "Shared channel context: unconfirmed (no_turn_snapshot)",
+        contextState
+          ? `MCP tools: ${contextState.effectiveCapabilities.map((item) => `${item.name}=${item.status}${item.reasonCode ? `(${item.reasonCode})` : ""}`).join(", ") || "none"}`
+          : "MCP tools: unconfirmed (no_turn_snapshot)",
         session.lastError ? `Last error: ${session.lastError}` : null,
       ].filter(Boolean).join("\n");
 

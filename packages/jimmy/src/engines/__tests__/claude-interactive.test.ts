@@ -12,9 +12,17 @@ import {
   applyInteractiveDuration,
   buildInteractiveArgs,
   isNativeClaudeCommand,
+  instructionPromptKey,
   placementBoundaryKey,
   resolveSpawnAllowedTools,
 } from "../claude-interactive.js";
+
+describe("interactive Claude runtime instructions", () => {
+  it("changes the spawn identity when the system prompt changes", () => {
+    expect(instructionPromptKey("persona-v1")).not.toBe(instructionPromptKey("persona-v2"));
+    expect(instructionPromptKey("persona-v1")).toBe(instructionPromptKey("persona-v1"));
+  });
+});
 
 describe("interactive Claude duration", () => {
   it("fills a missing Stop-hook duration from the measured turn boundary", () => {

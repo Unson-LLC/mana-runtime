@@ -1,12 +1,14 @@
 # 人格・スキル・記憶の管理（目標アーキテクチャ）
 
-**最終更新**: 2026-07-30
+**最終更新**: 2026-08-04
 **性格**: 10章と同じく「目標」を書く章。マナの人格（CLAUDE.md・SOUL.md・IDENTITY.md）、スキル（skills/）、記憶（memory/・knowledge/）という**振る舞いを永続的に変える資産**の管理方針を定める。
 
 > **更新（2026-07-30）**: §1の境界の穴は [PR #29](https://github.com/Unson-LLC/mana-runtime/pull/29) で closed — placementセッションは`--disallowedTools`のdenyルール（bypassPermissionsでも有効）で人格・スキル・記憶ファイルへのWrite/Edit不可となり、自己改変促し文言・Self-evolution節もplacement時は注入されない。
 > **更新（2026-07-31）**: Bash経由のシェル書込も closed — PreToolUseガードhook（`assets/placement-guard.mjs`、`permissionDecision: deny`）で保護パスへの代表的シェル書込パターンを決定論的に拒否（残余は [08章§2.1](./08_security_design.md)）。§3の可視性フィルタ（読取側）も中間段階をStory `placement-read-filters` で実装済み（§3.3参照）。
+> **更新（2026-08-04）**: repo template → runtime `CLAUDE.md` の決定論的projection（atomic write、0600、SHA-256 read-back検証）と、共通人格をCWDに依存せず各ターンへ明示注入する経路を実装。connector/cron/webは同じTurnPromptProviderを使用し、warm PTYはsystem prompt hash変更時にcold respawnする。global `MEMORY.md` はplacementへ注入しない。
+> **更新（2026-08-04）**: 人格はworkspace共通のまま、チャンネル固有の業務文脈だけを`connector + workspace + channel + placement`で分離して各ターンへ注入する。別スレッドのengine transcriptは統合しない。Graph取得と実効ツール状態も毎ターン解決し、失敗は`未確認`として表示する。
 
-## 1. 当初の問題（fact、PR #29前）
+## 1. 当初の問題（historical fact）
 
 - runtime home（`~/.ryoko`）のCLAUDE.md・SOUL.md・skills/・memory/ は**pilot上の手編集が正本**になっている。repo側に [template](../../packages/jimmy/template/) が存在するのに、デプロイ後は乖離し続け、変更履歴がない（`CLAUDE.md.pre-model-routing-20260725` のようなバックアップファイル慣行のみ）
 - system promptがエージェント自身に**自己改変を全面許可**している（[context.ts](../../packages/jimmy/src/sessions/context.ts)「You can read, write, and modify any of these files」）
@@ -24,7 +26,7 @@
 判定基準は「これは誰の記憶か」:
 - マナという**ランタイムの動作**の学び（例: このAPIはlimit最大50）→ memory/
 - **会社・顧客・業務**の事実や判断基準（例: この顧客の締め日、経理の承認ルール）→ brainbaseへ送る。ランタイムに置くと脳の複製・二重管理になる（[02](./02_data_design.md)の原則違反）
-- **会話の文脈** → engine transcript（session-scoped、authority rebindでクリア）。ファイルに退避しない
+- **会話の文脈** → 現スレッドはengine transcript、別スレッドの直近業務文脈は同一workspace/channel/placementに限定したSQLite projection。ファイルに退避せず、Graphの正本とも混同しない
 
 ## 3. 権限モデル — 第二の権限体系を発明しない
 
@@ -80,10 +82,20 @@
 | 層 | 内容 | 実装 |
 |---|---|---|
 | ランタイム共通人格 | マナの性格・応答規律・言語 | CLAUDE.md/SOUL.md（repo正本・deploy配布） |
-| チャンネル文脈 | そのチャンネルの業務・プロジェクト・判断基準 | placementのsystem prompt注入（[context.ts](../../packages/jimmy/src/sessions/context.ts)）。将来はGraphから取得（10章§1） |
-| 会話文脈 | スレッド内の経緯 | engine transcript |
+| チャンネル文脈 | そのチャンネルの業務・プロジェクト・判断基準 | placement設定 + 毎ターンのBrainbase Graph取得 + 同一scopeの永続化済み別スレッド発話をsystem promptへ注入 |
+| 会話文脈 | 現スレッドの完全な経緯 | engine transcript（スレッド単位で分離） |
+| 実効ツール状態 | そのターンで実際に構成されたMCP能力 | MCP allowlist・設定・credentialを解決してsystem promptへ注入。Gateway内の許可ツール名はplacement policyとして同時注入され、そのMCP自体の状態と合わせて判断する。snapshotを`/status`/Session APIへ表示 |
 
 チャンネル固有の指示をCLAUDE.mdへ書き足すことは、全チャンネルへの漏えいであり禁止。行き先はplacement設定（またはGraph）。
+
+### 5.1 runtime適用契約
+
+1. repoの `packages/jimmy/template/CLAUDE.md` を唯一のauthoring sourceとする。
+2. gateway起動時にportal変数を展開し、`~/.ryoko/CLAUDE.md`へatomic projectionする。canonical template欠落・read-back不一致はfail closed。
+3. 各ターンでprojectionを再検証し、`CLAUDE.md`・`IDENTITY.md`・`SOUL.md`を共通人格として明示注入する。非placementだけglobal `MEMORY.md`も含める。
+4. 共通人格の後にsession・speaker・placement・実効capabilityを注入し、競合時は後者を優先する。workspace-local `CLAUDE.md`は共通人格やplacement境界を上書きしない。
+5. interactive Claudeのwarm PTYはsystem prompt hashをspawn identityに含め、変化時はresume付きcold respawnで新しい指示を適用する。
+6. runtime `CLAUDE.md`を直接編集するwriterは持たない。onboardingはconfigを更新し、同じprojectorでprojectionを更新する。
 
 ## 6. スキルの台帳統合
 
@@ -97,12 +109,14 @@
 
 | 項目 | 現状 | 目標 |
 |---|---|---|
-| 人格・スキルの正本 | pilot手編集（履歴なし、templateと乖離） | repo template正本 + deploy配布 |
-| 実行時の自己改変 | placementでは禁止済み（PR #29。非placementは許可のまま） | HITL提案 + PR着地への置換 |
+| 人格・スキルの正本 | `CLAUDE.md`はrepo template正本 + 検証済みruntime projection。SOUL/IDENTITY/skillsの完全なrepo配布は残課題 | 全人格・スキルをrepo template正本 + deploy配布 |
+| 実行時の自己改変 | placementは禁止。生成物`CLAUDE.md`の直接編集指示は除去。非placementの他ファイルはcapability・ユーザー意図で制限 | HITL提案 + PR着地への完全置換 |
 | placementからの書込 | denyルール（PR #29）+ Bashガードhookで遮断済み（残余は08章§2.1） | OSレベル分離による完全遮断 |
-| 記憶の行き先 | すべてJINN_HOME共有ファイル | 3分類ルール（§2）: 運用記憶/業務事実/会話文脈 |
-| 記憶の読取権限 | placementローカル層（`memory/placements/`）実装済み: 自placement分のみ注入+他placementはdeny遮断（Story `placement-read-filters`） | 3層モデル（§3.1）: 脳=RACI / placementローカル=自placementのみ / 共通=全公開かつ機微禁止 |
+| 記憶の行き先 | 業務会話はreview-required候補としてdurable outboxへ記録しcandidate-storeへ送信。別スレッド文脈はscope付きSQLite projection、運用記憶の完全なHITL/git化は残課題 | 3分類ルール（§2）: 運用記憶/業務事実/会話文脈 |
+| 毎ターンの文脈 | Graph + 同一チャンネル業務文脈をconnector/cron/webでhydrate。失敗は`未確認`。人格はworkspace共通 | Graph RACIによる最終scope強制とproduction E2E |
+| 実効ツールの安定性 | MCPをallowlist・設定・credentialから毎ターン解決し、利用可否と理由をprompt/API/statusへ表示。Gateway tool allowlistはplacement policyとして表示・実行時強制 | 外部サービス自体の可用性監視とproduction E2E |
+| 記憶の読取権限 | global `MEMORY.md`は非placementのみ。placementローカル層（`memory/placements/`）は自placement分のみ注入+他placementはdeny遮断 | 3層モデル（§3.1）: 脳=RACI / placementローカル=自placementのみ / 共通=全公開かつ機微禁止 |
 | スキルの可視性 | capabilities+scopeの導出フィルタ実装済み（マニフェスト注入。Story `placement-read-filters`。本文のファイル読取遮断は最終段階） | capabilities+scopeからの導出フィルタ（§3.2）+実行ホーム分離 |
-| 変更管理 | バックアップファイル慣行 | git履歴 + 台帳統合 |
+| 変更管理 | `CLAUDE.md`はgit履歴 + SHA-256検証。SOUL/IDENTITY/skills/memoryの台帳統合は残課題 | git履歴 + 台帳統合 |
 
 §1の境界の穴（placementセッションからの人格・記憶書込）はPR #29（Write系denyルール）とBashガードhook（冒頭の更新注記参照）で遮断済み。残るは読取側フィルタと、ガードの検査限界（[08_security_design.md](./08_security_design.md) §2.1に明記）。攻撃面としては08章2.1（信頼できないSlack入力）の具体例として扱う。

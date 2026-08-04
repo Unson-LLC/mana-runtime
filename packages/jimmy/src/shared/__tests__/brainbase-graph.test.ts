@@ -4,7 +4,7 @@ vi.mock("../logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { GraphPeopleClient, resolvePersonByName, type GraphPerson } from "../brainbase-graph.js";
+import { BrainbaseContextClient, GraphPeopleClient, resolvePersonByName, type GraphPerson } from "../brainbase-graph.js";
 
 const PEOPLE: GraphPerson[] = [
   { id: "per_sato_keigo", name: "佐藤 圭吾", aliases: ["佐藤圭吾", "sato", "K.Sato"] },
@@ -63,5 +63,66 @@ describe("GraphPeopleClient", () => {
     expect(await client.listPeople()).toEqual([]);
     const unconfigured = new GraphPeopleClient({ baseUrl: "", token: "", fetchImpl });
     expect(await unconfigured.listPeople()).toEqual([]);
+  });
+});
+
+describe("BrainbaseContextClient", () => {
+  it("hydrates on every turn and distinguishes unavailable from an empty Graph", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          report: { sections: [{ title: "Decisions", items: [{ title: "決定A" }] }] },
+          meta: { timestamp: "A" },
+          philosophy_context: { prompt_block: "方針A" },
+          scoped_memory: { records: [{ body: "共有記憶A" }], denied: [] },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ report: "決定B", meta: { timestamp: "B" } }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+    const client = new BrainbaseContextClient({
+      baseUrl: "https://bb.example",
+      token: "t",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const firstHydration = await client.hydrate({ project: "unson", workspace: "T1", channelId: "C1", sessionId: "S1" });
+    expect(firstHydration).toMatchObject({ status: "available", revision: "A" });
+    expect(firstHydration.content).toContain("決定A");
+    expect(firstHydration.content).toContain("方針A");
+    expect(firstHydration.content).toContain("共有記憶A");
+    expect(await client.hydrate({ project: "unson", workspace: "T1", channelId: "C1", sessionId: "S1" }))
+      .toMatchObject({ status: "available", revision: "B", content: "決定B" });
+    expect(await client.hydrate({ project: "unson", workspace: "T1", channelId: "C1", sessionId: "S1" }))
+      .toMatchObject({ status: "unavailable", reasonCode: "http_503" });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    const requested = new URL(String(fetchImpl.mock.calls[0]?.[0]));
+    expect(Object.fromEntries(requested.searchParams)).toMatchObject({
+      project: "unson",
+      workspace: "T1",
+      channelId: "C1",
+      sessionId: "S1",
+      humanReadable: "true",
+      includeEdges: "true",
+      includePhilosophy: "true",
+      includeMemory: "true",
+      scope: "graph",
+    });
+  });
+
+  it("uses the Brainbase default project and reports a truly empty response as empty", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ entities: {}, edges: [], report: null, meta: {} }),
+    }) as unknown as typeof fetch;
+    const client = new BrainbaseContextClient({ baseUrl: "https://bb.example", token: "t", fetchImpl });
+
+    await expect(client.hydrate({ workspace: "T1", channelId: "C1", sessionId: "S1" }))
+      .resolves.toMatchObject({ status: "empty", content: "" });
+    expect(new URL(String((fetchImpl as any).mock.calls[0][0])).searchParams.get("project"))
+      .toBe("brainbase");
   });
 });

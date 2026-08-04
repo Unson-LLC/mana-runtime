@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { CronJob, Engine, IncomingMessage, JinnConfig, PlacementProfile, Session, Target } from "../shared/types.js";
+import type { CronJob, Engine, IncomingMessage, JinnConfig, JsonObject, PlacementProfile, Session, Target } from "../shared/types.js";
 import { isInterruptibleEngine } from "../shared/types.js";
 import type { SessionManager } from "../sessions/manager.js";
 import { buildContext } from "../sessions/context.js";
@@ -26,6 +26,8 @@ import {
   cancelAllPendingQueueItems,
   listAllPendingQueueItems,
   getFile,
+  getTurnContextSnapshot,
+  recordTurnContextSnapshot,
 } from "../sessions/registry.js";
 import { forkEngineSession } from "../sessions/fork.js";
 import {
@@ -76,9 +78,25 @@ import {
 import { constantTimeEqual, OPERATOR_TOKEN_HEADER, verifyOperatorToken } from "./operator-auth.js";
 import { emitSecurityEvent, placementConfigRevision } from "../shared/security-events.js";
 import { buildSettingsTopology, type SlackRuntimeSnapshot } from "./settings-topology.js";
+import type { RuntimeInstructionProvider } from "../sessions/runtime-instructions.js";
+import type { TurnPromptProvider } from "../sessions/turn-prompt-provider.js";
+import type { TurnPreparationService } from "../sessions/turn-preparation-service.js";
+import type { EffectiveCapability } from "../sessions/turn-context.js";
+import type { LearningCandidateService } from "../learning/candidate-outbox.js";
 
 /** Max bytes accepted on /api/internal/hook (loopback-only relay payloads are tiny). */
 const HOOK_BODY_MAX_BYTES = 64 * 1024;
+const WEB_WORKSPACE_ID = "local-web";
+
+function webTransportMeta(placementId?: string): JsonObject {
+  const scope = placementId ?? "unplaced";
+  return {
+    ...(placementId ? { placementId } : {}),
+    workspaceId: WEB_WORKSPACE_ID,
+    channelId: `web:${scope}`,
+    actorExternalId: "web-user",
+  };
+}
 
 export const CONFIG_KNOWN_KEYS = [
   "jinn", "gateway", "engines", "models", "connectors", "logging", "mcp",
@@ -95,6 +113,14 @@ export interface ApiContext {
   getSettingsTopologyConfig?: () => JinnConfig;
   emit: (event: string, payload: unknown) => void;
   connectors: Map<string, import("../shared/types.js").Connector>;
+  /** Composition-root supplied canonical persona loader. */
+  runtimeInstructionProvider?: RuntimeInstructionProvider;
+  /** Shared prompt composition path used by connector and web turns. */
+  turnPromptProvider?: TurnPromptProvider;
+  /** Per-turn Graph and shared-channel context hydration. */
+  turnPreparationService?: TurnPreparationService;
+  /** Durable, review-required conversation learning outbox. */
+  learningCandidateService?: LearningCandidateService;
   /** Test/embedding seam; production reads the redacted config-history index. */
   settingsTopologyHistory?: () => import("../shared/config-history.js").ConfigHistoryEntry[];
   reloadConnectorInstances?: () => Promise<{ started: string[]; stopped: string[]; errors: string[] }>;
@@ -484,12 +510,12 @@ function dispatchWebSessionRun(
   engine: Engine,
   config: JinnConfig,
   context: ApiContext,
-  opts?: { delayMs?: number; queueItemId?: string; attachments?: string[] },
+  opts?: { delayMs?: number; queueItemId?: string; attachments?: string[]; userMessageId?: string },
 ): void {
   const run = async () => {
     await context.sessionManager.getQueue().enqueue(session.sessionKey || session.sourceRef, async () => {
       context.emit("session:started", { sessionId: session.id });
-      await runWebSession(session, prompt, engine, config, context, opts?.attachments);
+      await runWebSession(session, prompt, engine, config, context, opts?.attachments, opts?.userMessageId);
     }, opts?.queueItemId);
   };
 
@@ -696,7 +722,10 @@ function matchRoute(
   return params;
 }
 
-function serializeSession(session: Session, context: ApiContext): Session {
+function serializeSession(
+  session: Session,
+  context: ApiContext,
+): Session & { turnContextStatus: ReturnType<typeof getTurnContextSnapshot> | null } {
   const queue = context.sessionManager.getQueue();
   const queueDepth = queue.getPendingCount(session.sessionKey || session.sourceRef);
   const transportState = queue.getTransportState(session.sessionKey || session.sourceRef, session.status);
@@ -704,6 +733,7 @@ function serializeSession(session: Session, context: ApiContext): Session {
     ...session,
     queueDepth,
     transportState,
+    turnContextStatus: getTurnContextSnapshot(session.id) ?? null,
   };
 }
 
@@ -1158,6 +1188,7 @@ export async function handleApiRequest(
         connector: "web",
         sessionKey,
         replyContext: { source: "web" },
+        transportMeta: webTransportMeta(),
         employee: body.employee,
         title: body.title,
         portalName: config.portal?.portalName,
@@ -1226,13 +1257,13 @@ export async function handleApiRequest(
         employee: execution.employee,
         model: execution.model,
         parentSessionId: parentResolution.parentSessionId,
-        transportMeta: parentPlacement ? { placementId: parentPlacement.id } : undefined,
+        transportMeta: webTransportMeta(parentPlacement?.id),
         effortLevel: execution.effortLevel,
         prompt,
         portalName: config.portal?.portalName,
       });
       logger.info(`Web session created: ${session.id}`);
-      insertMessage(session.id, "user", prompt);
+      const userMessageId = insertMessage(session.id, "user", prompt);
 
       // Run engine asynchronously — respond immediately, push result via WebSocket
       const engine = context.sessionManager.getEngine(engineName);
@@ -1259,7 +1290,11 @@ export async function handleApiRequest(
       const queueItemId = enqueueQueueItem(session.id, queueSessionKey, prompt);
       context.emit("queue:updated", { sessionId: session.id, sessionKey: queueSessionKey });
 
-      dispatchWebSessionRun(session, prompt, engine, config, context, { queueItemId, attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined });
+      dispatchWebSessionRun(session, prompt, engine, config, context, {
+        queueItemId,
+        attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined,
+        userMessageId,
+      });
 
       return json(res, serializeSession(session, context), 201);
     }
@@ -1292,7 +1327,7 @@ export async function handleApiRequest(
       if (!engine) return serverError(res, `Engine "${session.engine}" not available`);
 
       // Persist the message immediately
-      insertMessage(session.id, messageRole, prompt);
+      const userMessageId = insertMessage(session.id, messageRole, prompt);
 
       // Emit notification event for UI display (renders as system banner, not user bubble)
       if (isNotification) {
@@ -1346,7 +1381,11 @@ export async function handleApiRequest(
       const queueItemId = enqueueQueueItem(session.id, sessionKey, prompt);
       context.emit("queue:updated", { sessionId: session.id, sessionKey });
 
-      dispatchWebSessionRun(session, prompt, engine, config, context, { queueItemId, attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined });
+      dispatchWebSessionRun(session, prompt, engine, config, context, {
+        queueItemId,
+        attachments: attachmentPaths.length > 0 ? attachmentPaths : undefined,
+        userMessageId: isNotification ? undefined : userMessageId,
+      });
 
       return json(res, { status: "queued", sessionId: session.id });
     }
@@ -2355,22 +2394,9 @@ Handle this as a priority request from a colleague.`;
         ? `\n\n## Language\nAlways respond in ${language}. All communication with the user must be in ${language}.`
         : "";
 
-      // Update CLAUDE.md with personalized COO name and language
-      const claudeMdPath = path.join(JINN_HOME, "CLAUDE.md");
-      if (fs.existsSync(claudeMdPath)) {
-        let claudeMd = fs.readFileSync(claudeMdPath, "utf-8");
-        // Replace the identity line in CLAUDE.md
-        claudeMd = claudeMd.replace(
-          /^You are \w+, the COO of the user's AI organization\.$/m,
-          `You are ${effectiveName}, the COO of the user's AI organization.`,
-        );
-        // Remove existing language section if present, then add new one if needed
-        claudeMd = claudeMd.replace(/\n\n## Language\nAlways respond in .+\. All communication with the user must be in .+\./m, "");
-        if (languageSection) {
-          claudeMd = claudeMd.trimEnd() + languageSection + "\n";
-        }
-        fs.writeFileSync(claudeMdPath, claudeMd);
-      }
+      // Re-render the generated runtime projection from the canonical template.
+      // The HTTP handler never edits CLAUDE.md directly.
+      context.runtimeInstructionProvider?.({ portalName: effectiveName });
 
       // Update AGENTS.md with personalized name and language
       const agentsMdPath = path.join(JINN_HOME, "AGENTS.md");
@@ -2822,6 +2848,7 @@ export async function runWebSession(
   config: JinnConfig,
   context: ApiContext,
   attachments?: string[],
+  userMessageId?: string,
 ): Promise<void> {
   const currentSession = getSession(session.id);
   if (!currentSession) {
@@ -2852,6 +2879,7 @@ export async function runWebSession(
   }
 
   let mcpConfigPath: string | undefined;
+  let effectiveCapabilities: EffectiveCapability[] = [];
   const placementId = (currentSession.transportMeta as Record<string, unknown> | undefined)?.placementId;
   const { placement, disabled } = findEnabledPlacement(config.placements, placementId);
   if (disabled) {
@@ -2875,6 +2903,7 @@ export async function runWebSession(
       allowedGatewayTools: placement ? (placement.capabilities?.gatewayTools ?? []) : undefined,
       allowedDeliveryTargets: placement ? placementDeliveryTargets(placement) : undefined,
     }, placement ? (placement.capabilities?.mcp ?? false) : undefined);
+    effectiveCapabilities = mcpConfig.effectiveCapabilities;
     // A Placement must always receive an explicit config, including an empty
     // one, so --strict-mcp-config can exclude user/global MCPs.
     if (placement || Object.keys(mcpConfig.mcpServers).length > 0) {
@@ -2887,10 +2916,13 @@ export async function runWebSession(
   const orgHierarchy = resolveOrgHierarchy(scanOrgForHierarchy());
 
   try {
-
-    const systemPrompt = buildContext({
+    const transportMeta = (currentSession.transportMeta ?? {}) as Record<string, unknown>;
+    const sharedChannelId = typeof transportMeta.channelId === "string"
+      ? transportMeta.channelId
+      : currentSession.sourceRef;
+    const promptOptions = {
       source: "web",
-      channel: currentSession.sourceRef,
+      channel: sharedChannelId,
       user: "web-user",
       employee,
       placement,
@@ -2898,7 +2930,55 @@ export async function runWebSession(
       config,
       sessionId: currentSession.id,
       hierarchy: orgHierarchy,
+    };
+    const workspaceId = typeof transportMeta.workspaceId === "string"
+      ? transportMeta.workspaceId
+      : typeof transportMeta.team === "string"
+        ? transportMeta.team
+        : undefined;
+    const captureLearningTurn = (assistantMessageId: string, assistantContent: string): void => {
+      if (!userMessageId || !context.learningCandidateService) return;
+      context.learningCandidateService.capture({
+        sessionId: currentSession.id,
+        userMessageId,
+        assistantMessageId,
+        userContent: prompt,
+        assistantContent,
+        workspace: workspaceId ?? "unknown",
+        channelId: sharedChannelId,
+        actorExternalId: typeof transportMeta.actorExternalId === "string"
+          ? transportMeta.actorExternalId
+          : "web-user",
+        actorPersonId: typeof transportMeta.actorPersonId === "string"
+          ? transportMeta.actorPersonId
+          : undefined,
+        projectCode: placement?.projects?.[0],
+      });
+      void context.learningCandidateService.flush().catch((error) => {
+        logger.warn(`[learning] candidate flush failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    };
+    const preparedTurn = context.turnPreparationService
+      ? await context.turnPreparationService.prepare({
+          promptOptions,
+          workspaceId,
+          sessionId: currentSession.id,
+          project: placement?.projects?.[0],
+          effectiveCapabilities,
+        })
+      : undefined;
+    const buildTurnPrompt = context.turnPromptProvider ?? buildContext;
+    const systemPrompt = preparedTurn?.systemPrompt ?? buildTurnPrompt({
+      ...promptOptions,
+      effectiveCapabilities,
     });
+    if (preparedTurn) {
+      recordTurnContextSnapshot(
+        currentSession.id,
+        preparedTurn.contextStatus,
+        preparedTurn.effectiveCapabilities,
+      );
+    }
 
     const engineConfig = currentSession.engine === "codex"
       ? config.engines.codex
@@ -3070,7 +3150,8 @@ export async function runWebSession(
           }, config.placements);
 
           if (fallbackResult.result) {
-            insertMessage(currentSession.id, "assistant", fallbackResult.result);
+            const assistantMessageId = insertMessage(currentSession.id, "assistant", fallbackResult.result);
+            if (!fallbackResult.error) captureLearningTurn(assistantMessageId, fallbackResult.result);
             await deliverApiSessionResult(currentSession, fallbackResult.result, context).catch((err) => {
               logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
             });
@@ -3231,7 +3312,10 @@ export async function runWebSession(
 
           // Usage limit cleared — handle result
           if (retryResult.result) {
-            insertMessage(currentSession.id, "assistant", retryResult.result);
+            const assistantMessageId = insertMessage(currentSession.id, "assistant", retryResult.result);
+            if (!retryInterrupted && !retryResult.error) {
+              captureLearningTurn(assistantMessageId, retryResult.result);
+            }
             await deliverApiSessionResult(currentSession, retryResult.result, context).catch((err) => {
               logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
             });
@@ -3293,7 +3377,8 @@ export async function runWebSession(
 
     // Persist the assistant response
     if (result.result) {
-      insertMessage(currentSession.id, "assistant", result.result);
+      const assistantMessageId = insertMessage(currentSession.id, "assistant", result.result);
+      if (!wasInterrupted && !result.error) captureLearningTurn(assistantMessageId, result.result);
       await deliverApiSessionResult(currentSession, result.result, context).catch((err) => {
         logger.warn(`API session ${currentSession.id} connector delivery failed: ${err instanceof Error ? err.message : String(err)}`);
       });
