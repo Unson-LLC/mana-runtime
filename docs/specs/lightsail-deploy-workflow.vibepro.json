@@ -136,6 +136,17 @@
         "code_refs": [{ "file": "scripts/deploy/openryoko-pilot-deploy", "anchor": "warning: worktree metadata pruning failed" }],
         "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "post-activation prune failure preserves success" }]
       }
+    },
+    {
+      "id": "LDW-012",
+      "type": "invariant",
+      "statement": "Reinstalling the control plane preserves an existing active release pointer and seeds it from the source clone only on first installation; a rollback across control-plane versions requires the setup administrator to reinstall from the known-good target SHA before the deploy operator runs the workflow.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Rollback across control-plane versions" }],
+        "code_refs": [{ "file": "scripts/deploy/install-pilot-deployer.sh", "anchor": "if [[ ! -e \"$runtime_home/current\"" }],
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "installer preserves existing current pointer" }]
+      }
     }
   ],
   "open_questions": []

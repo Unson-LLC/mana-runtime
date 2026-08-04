@@ -65,6 +65,7 @@ sequenceDiagram
 - host key checkingを無効化しない。
 - workflow log、GitHub summary、server outputへ鍵、token、environment file内容を出さない。
 - deploy scriptを変更したcommitは、setup administratorがその対象SHAからinstallerを再実行するまでfail closedとする。旧installed control planeで新しいrepository testだけが通る状態を成功扱いしない。
+- deploy scriptの版を跨ぐrollbackでは、setup administratorがrollback対象のknown-good SHAからcontrol planeを再installし、installerが既存の`/home/ryoko/current`を変更していないことを確認してからworkflowを実行する。deploy operatorだけでcontrol-plane版を跨いではならない。
 
 ## Diagrams
 
@@ -97,4 +98,5 @@ Trust boundaryはGitHub `production` Environment、restricted SSH principal、ro
 - main外commit、lock競合、build失敗、guard timeout、systemd active-check失敗、entrypoint不一致、MainPID command不一致をcaller経路へ注入し、active pointerがknown-good releaseから変わらないことを確認する。
 - build失敗時に未完成releaseが削除され、service restartが呼ばれないことを確認する。
 - activation成功後のworktree prune失敗がwarningに留まり、deploy成功を反転しないことを確認する。
+- control-plane再installが既存の`/home/ryoko/current`を保持し、初回install時だけsource cloneへのpointerをseedすることを確認する。
 - 本番導入時はcurrent SHA、installed control-plane digest、deploy account password lock、restricted `authorized_keys`、限定sudoers、arbitrary/short command拒否、systemd MainPID/entrypoint、workflow run URLを記録する。
