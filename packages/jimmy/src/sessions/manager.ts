@@ -51,7 +51,7 @@ import {
   type PendingDevelopmentRun,
 } from "./development-pending.js";
 import { reconcilePendingDevelopmentRuns } from "./development-reconciler.js";
-import { placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
+import { placementDeliveryTargets, placementWorkingDirectory, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import { placementConfigRevision } from "../shared/security-events.js";
 import { getSessionDelegationToken, SESSION_DELEGATION_HEADER } from "./delegation-auth.js";
 
@@ -785,11 +785,12 @@ export class SessionManager {
         }
       }
 
+      const sessionCwd = placementWorkingDirectory(placement);
       let result = await runPlacementBoundEngine(engine, placement, {
         prompt: promptToRun,
         resumeSessionId: session.engineSessionId ?? undefined,
         systemPrompt,
-        cwd: JINN_HOME,
+        cwd: sessionCwd,
         bin: engineConfig.bin,
         model: session.model ?? engineConfig.model,
         effortLevel,
@@ -862,7 +863,7 @@ export class SessionManager {
           prompt: promptToRun,
           resumeSessionId: undefined,
           systemPrompt,
-          cwd: JINN_HOME,
+          cwd: sessionCwd,
           bin: engineConfig.bin,
           model: session.model ?? engineConfig.model,
           effortLevel,
@@ -919,7 +920,7 @@ export class SessionManager {
               "If the work was already finished, reply with the final result.",
             resumeSessionId: resumeId,
             systemPrompt,
-            cwd: JINN_HOME,
+            cwd: sessionCwd,
             bin: engineConfig.bin,
             model: session.model ?? engineConfig.model,
             effortLevel,
@@ -1008,7 +1009,7 @@ export class SessionManager {
               prompt: fallbackPrompt,
               resumeSessionId: codexResume,
               systemPrompt,
-              cwd: JINN_HOME,
+              cwd: sessionCwd,
               bin: fallbackConfig.bin,
               model: session.model ?? fallbackConfig.model,
               effortLevel: fallbackEffort,
@@ -1152,7 +1153,7 @@ export class SessionManager {
               prompt: msg.text,
               resumeSessionId: currentSession.engineSessionId ?? undefined,
               systemPrompt,
-              cwd: JINN_HOME,
+              cwd: sessionCwd,
               bin: engineConfig.bin,
               model: currentSession.model ?? engineConfig.model,
               effortLevel,
