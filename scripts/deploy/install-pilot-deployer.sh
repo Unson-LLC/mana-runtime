@@ -42,7 +42,14 @@ rendered_config="$(mktemp -d)"
 trap 'rm -rf "$rendered_config" "${dropin_tmp:-}" "${wrapper_tmp:-}"' EXIT
 "$script_dir/render-pilot-deploy-config" --authorized-key-file "$key_file" --output-dir "$rendered_config"
 
-id "$deploy_user" >/dev/null 2>&1 || useradd --system --create-home --home-dir "/home/$deploy_user" --shell /usr/sbin/nologin "$deploy_user"
+[[ -x /bin/bash ]] || { echo "/bin/bash is required for sshd forced-command execution" >&2; exit 1; }
+# sshd invokes authorized_keys forced commands through the account shell with
+# `-c`. Keep the password locked and the key restricted below, but use a shell
+# that can actually dispatch the forced command. usermod also repairs installs
+# made by an earlier version that selected nologin.
+id "$deploy_user" >/dev/null 2>&1 \
+  || useradd --system --create-home --home-dir "/home/$deploy_user" --shell /bin/bash "$deploy_user"
+usermod --shell /bin/bash "$deploy_user"
 install -o root -g root -m 0755 "$script_dir/openryoko-pilot-deploy" /usr/local/sbin/openryoko-pilot-deploy
 install -o root -g root -m 0755 "$script_dir/openryoko-deploy-command" /usr/local/sbin/openryoko-deploy-command
 install -o root -g root -m 0755 "$source_repo/scripts/development-runner/guard-restart.sh" /usr/local/libexec/openryoko-guard-restart

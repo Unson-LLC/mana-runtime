@@ -28,9 +28,16 @@ if SSH_ORIGINAL_COMMAND="deploy deadbeef" bash "$deploy_dir/openryoko-deploy-com
 fi
 
 valid_sha="0123456789abcdef0123456789abcdef01234567"
-output="$(SSH_ORIGINAL_COMMAND="deploy $valid_sha" bash -x "$deploy_dir/openryoko-deploy-command" 2>&1 || true)"
+output="$(SSH_ORIGINAL_COMMAND="deploy $valid_sha" /bin/bash -c 'bash -x "$1"' _ "$deploy_dir/openryoko-deploy-command" 2>&1 || true)"
 [[ "$output" == *"/usr/local/sbin/openryoko-pilot-deploy $valid_sha"* ]] \
   || { echo "forced command did not preserve the validated SHA as one argv" >&2; exit 1; }
+grep -Fq 'useradd --system --create-home --home-dir "/home/$deploy_user" --shell /bin/bash' "$deploy_dir/install-pilot-deployer.sh"
+grep -Fq 'usermod --shell /bin/bash "$deploy_user"' "$deploy_dir/install-pilot-deployer.sh"
+if grep -Fq '/usr/sbin/nologin' "$deploy_dir/install-pilot-deployer.sh"; then
+  echo "installer configures a shell that prevents sshd forced-command execution" >&2
+  exit 1
+fi
+echo "sshd account-shell forced-command fixture passed"
 
 ruby "$workflow_checker" "$workflow" >/dev/null
 echo "deploy workflow semantic contract passed"
