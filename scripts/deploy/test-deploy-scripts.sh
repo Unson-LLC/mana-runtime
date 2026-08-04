@@ -105,6 +105,23 @@ chmod +x "$account_fixture_bin"/*
 )
 grep -Fqx -- '--shell /bin/bash --lock openryoko-deploy' "$account_fixture_root/usermod.args"
 
+# The real installer declares these names readonly before sourcing the helper.
+# Reproduce that shell scope so helper locals cannot accidentally collide with
+# installer globals (a plain helper-only fixture does not detect this).
+(
+  export ACCOUNT_FIXTURE_ROOT="$account_fixture_root"
+  PATH="$account_fixture_bin:/bin:/usr/bin"
+  readonly deploy_user="openryoko-deploy"
+  readonly runtime_home="$pointer_fixture/runtime"
+  readonly source_repo="$pointer_fixture/source"
+  source "$account_library"
+  ensure_deploy_account "$deploy_user" "/home/$deploy_user" /bin/bash
+  rm -f "$runtime_home/current"
+  seed_release_pointer_if_missing "$runtime_home" "$source_repo"
+  [[ "$(readlink "$runtime_home/current")" == "$source_repo" ]]
+)
+echo "installer readonly-scope fixture passed"
+
 cat > "$account_fixture_bin/getent" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' 'openryoko-deploy:$6$unexpected-password:20000:0:99999:7:::'
