@@ -15,6 +15,7 @@ test('S-001 S-002 S-003 S-004: headless contract; production journey remains a r
   expect(output, 'vibepro: ac:1 manual workflow contract').toContain('deploy workflow semantic contract passed')
   expect(output, 'vibepro: ac:2 main commit resolution').toContain('commit resolution fixtures passed')
   expect(output, 'vibepro: ac:3 restricted installer artifacts').toContain('installer artifact fixtures passed')
+  expect(output, 'vibepro: ac:4 compiler failure propagation').toContain('Jimmy build failure propagation fixture passed')
   expect(output, 'vibepro: ac:4 forced SSH command validation').toContain('deploy script, workflow contract, and rollback validation passed')
   expect(output, 'vibepro: ac:5 build failure safety').toContain('rollback validation passed')
   expect(output, 'vibepro: ac:6 guarded restart safety').toContain('rollback validation passed')

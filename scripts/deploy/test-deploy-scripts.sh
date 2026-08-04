@@ -145,7 +145,27 @@ if ruby "$workflow_checker" "$workflow_fixture_root/disabled-host-check.yml" >/d
 fi
 
 rollback_root="$(mktemp -d)"
-trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "$resolver_root" "$render_root" "$account_fixture_root" "${failure_root:-}"' EXIT
+trap 'rm -rf "$rollback_root" "$workflow_fixture_root" "$resolver_root" "$render_root" "$account_fixture_root" "${build_fixture_root:-}" "${failure_root:-}"' EXIT
+
+build_fixture_root="$(mktemp -d)"
+mkdir -p "$build_fixture_root/bin"
+cat > "$build_fixture_root/bin/tsc" <<'STUB'
+#!/usr/bin/env bash
+exit 42
+STUB
+chmod +x "$build_fixture_root/bin/tsc"
+jimmy_build_command="$(node -p "require('./packages/jimmy/package.json').scripts.build")"
+set +e
+(
+  cd "$build_fixture_root"
+  PATH="$build_fixture_root/bin:/bin:/usr/bin" /bin/sh -c "$jimmy_build_command"
+)
+jimmy_build_status=$?
+set -e
+[[ $jimmy_build_status -eq 42 ]] \
+  || { echo "Jimmy package build masked the TypeScript compiler failure" >&2; exit 1; }
+echo "Jimmy build failure propagation fixture passed"
+
 mkdir -p "$rollback_root/previous" "$rollback_root/failed"
 ln -s "$rollback_root/failed" "$rollback_root/current"
 set +e
