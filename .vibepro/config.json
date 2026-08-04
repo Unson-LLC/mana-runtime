@@ -60,9 +60,9 @@
     },
     "delivery_efficiency_by_story": {
       "story-lightsail-deploy-workflow": {
-        "max_subagent_count": 54,
-        "max_agent_consumption_ms": 16200000,
-        "amendment_reason": "The user explicitly approved expansion and continuation. Ten final Story-local slots are reserved for current-HEAD stale-review replacement, gate review, and adjudication after the operator-access documentation fix. They do not permit replacement loops, unrelated roles, gate waivers, merge, or deployment."
+        "max_subagent_count": 62,
+        "max_agent_consumption_ms": 18600000,
+        "amendment_reason": "The user explicitly instructed implementation to continue. Eight final Story-local lifecycle slots are reserved only to map the four already-completed independent current-HEAD reviews onto VibePro's required stage roles. They do not permit new design exploration, replacement loops, unrelated roles, gate waivers, merge, or deployment."
       },
       "story-mana-configuration-visibility": {
         "max_subagent_count": 57,
