@@ -4,7 +4,9 @@ import { test, expect } from '@playwright/test'
 
 const repoRoot = path.resolve(__dirname, '..')
 
-test('S-001 S-002 S-003 S-004: headless deployment contract boundary', () => {
+// This spec is intentionally a headless contract boundary. It does not claim
+// to exercise GitHub Environment approval, workflow UI state, SSH, or Lightsail.
+test('S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate', () => {
   const output = execFileSync(
     path.join(repoRoot, 'scripts/deploy/test-deploy-scripts.sh'),
     { cwd: repoRoot, encoding: 'utf8' },

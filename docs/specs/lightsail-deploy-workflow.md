@@ -67,6 +67,7 @@ sequenceDiagram
 
 ## Verification
 
+- `pnpm test:e2e:deploy`はGitHub UIやLightsail実機のE2Eではなく、Playwrightをrunnerとして使うheadless contract replayである。production journeyの証跡はStoryのR-01〜R-03へ分離する。
 - `bash -n`で3本のserver-side scriptを検証する。
 - forced commandがarbitrary commandとshort SHAを拒否する。
 - valid-form SHAが1個のargvとしてdeploy scriptへ渡ることをtraceで確認する。

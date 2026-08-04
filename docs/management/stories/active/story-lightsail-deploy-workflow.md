@@ -50,6 +50,12 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 - GitHub `production` Environment、required reviewers、Environment secret/variablesの設定手順がある。
 - Lightsailへの導入とrollback drillの手順がある。
 
+### Evidence boundary
+
+- PR前の`test:e2e:deploy`は、Playwright runnerからworkflow YAML、入力配線、summary、commit resolver、forced command、installer生成物、rollback fixtureを再生するheadless contract testである。
+- このテストはGitHubの`workflow_dispatch`画面、Environment承認待ち、Actions job遷移、SSH接続、Lightsail実機、Slack/Webの利用結果を観測しないため、それらのE2E成功証跡として扱わない。
+- GitHub／Lightsailのproduction journeyは、マージ後にR-01〜R-03を実行して初めて完了とする。
+
 ## Release completion gate
 
 - R-01: merge後、production Environmentのrequired reviewerが梅田さんの手動workflowを承認できる。

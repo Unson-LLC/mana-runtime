@@ -17,7 +17,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:integration:deploy
-      - run: pnpm test:e2e:deploy
+      - name: Headless deploy contract (not GitHub or Lightsail E2E)
+        run: pnpm test:e2e:deploy
 
   typecheck:
     runs-on: ubuntu-latest
