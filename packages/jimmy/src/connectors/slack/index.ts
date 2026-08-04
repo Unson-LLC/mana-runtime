@@ -674,7 +674,12 @@ export class SlackConnector implements Connector {
         SETTINGS_DM_COMMANDS.has(rawText.trim())
       ) {
         const blocks = buildSettingsDmBlocks(this.settingsWebUrl ?? undefined);
-        await this.app.client.chat.postMessage({ channel: (event as any).channel, text: "Mana設定", blocks });
+        await this.app.client.chat.postMessage({
+          channel: (event as any).channel,
+          text: "Mana設定",
+          blocks,
+          ...(threadTs ? { thread_ts: threadTs } : {}),
+        });
         return;
       }
 

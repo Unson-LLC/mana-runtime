@@ -284,7 +284,7 @@ describe("SlackConnector authorization", () => {
     expect(replied).not.toContain("mana.example.com");
   });
 
-  it("handles an exact settings DM before respondTo and without a normal handler", async () => {
+  it("handles an exact settings DM in the same thread before respondTo and without a normal handler", async () => {
     await setup({
       settingsHome: { enabled: true, webBaseUrl: "https://mana.example.com" },
       respondToIm: "never",
@@ -292,12 +292,23 @@ describe("SlackConnector authorization", () => {
     });
 
     await bolt.state.messageHandler?.({
-      event: { user: "U_ALLOWED", channel: "D1", channel_type: "im", ts: `${Date.now() / 1000}`, text: "  ルーティング  " },
+      event: {
+        user: "U_ALLOWED",
+        channel: "D1",
+        channel_type: "im",
+        thread_ts: "THREAD_TS",
+        ts: `${Date.now() / 1000}`,
+        text: "  ルーティング  ",
+      },
       context: { teamId: "T_WORKSPACE" },
     });
 
     expect(bolt.client.chat.postMessage).toHaveBeenCalledOnce();
-    expect(bolt.client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: "D1", blocks: expect.any(Array) }));
+    expect(bolt.client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "D1",
+      thread_ts: "THREAD_TS",
+      blocks: expect.any(Array),
+    }));
     expect(JSON.stringify(bolt.client.chat.postMessage.mock.calls)).toContain("https://mana.example.com/settings/topology");
   });
 

@@ -27,7 +27,7 @@ test.describe('Mana configuration visibility boundaries', () => {
       'publishes a fail-closed App Home settings entry only for an explicitly allowlisted user',
     )
     expect(output, 'vibepro: ac:4 AC-03 exact settings DM bypasses normal conversation handling').toContain(
-      'handles an exact settings DM before respondTo and without a normal handler',
+      'handles an exact settings DM in the same thread before respondTo and without a normal handler',
     )
     expect(output, 'vibepro: ac:6 AC-05 delivery errors use allowlisted route identifiers only').toContain(
       'regenerates once on contract violations, then fails loud',
