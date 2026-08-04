@@ -60,9 +60,9 @@
     },
     "delivery_efficiency_by_story": {
       "story-lightsail-deploy-workflow": {
-        "max_subagent_count": 44,
-        "max_agent_consumption_ms": 13200000,
-        "amendment_reason": "The user explicitly approved expansion and continuation. Ten additional Story-local slots are reserved for one bounded current-HEAD re-review after fixing the two runtime-contract test gaps. They do not permit replacement loops, unrelated roles, gate waivers, merge, or deployment."
+        "max_subagent_count": 54,
+        "max_agent_consumption_ms": 16200000,
+        "amendment_reason": "The user explicitly approved expansion and continuation. Ten final Story-local slots are reserved for current-HEAD stale-review replacement, gate review, and adjudication after the operator-access documentation fix. They do not permit replacement loops, unrelated roles, gate waivers, merge, or deployment."
       },
       "story-mana-configuration-visibility": {
         "max_subagent_count": 57,
