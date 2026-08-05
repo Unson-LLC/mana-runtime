@@ -304,6 +304,14 @@ mkdir -p "$fixture_bin" "$failure_root/source/.git" "$failure_root/releases" "$f
 cat > "$failure_root/pnpm" <<'PNPM'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${FIXTURE_EXPECT_RELEASE_CWD:-0}" == "1" ]]; then
+  expected_release_dir="$(< "$FIXTURE_ROOT/release-dir")"
+  printf '%s\n' "$PWD" >> "$FIXTURE_ROOT/pnpm-pwd.log"
+  [[ "$PWD" == "$expected_release_dir" && -r "$PWD/package.json" ]] || {
+    echo "package manager did not start in the readable release worktree: pwd=$PWD release=$expected_release_dir" >&2
+    exit 43
+  }
+fi
 release_dir=""
 if [[ "${1:-}" == "--dir" ]]; then release_dir="$2"; shift 2; fi
 if [[ "${1:-}" == "build" ]]; then
@@ -320,7 +328,12 @@ name="$(basename "$0")"
 case "$name" in
   git)
     if [[ " $* " == *" merge-base "* && "${FIXTURE_MODE:-}" == "main-reject" ]]; then exit 1; fi
-    if [[ " $* " == *" worktree add "* ]]; then mkdir -p "${@: -2:1}"; fi
+    if [[ " $* " == *" worktree add "* ]]; then
+      release_dir="${@: -2:1}"
+      mkdir -p "$release_dir"
+      printf '%s\n' "$release_dir" > "$FIXTURE_ROOT/release-dir"
+      printf '%s\n' '{"packageManager":"pnpm@10.6.4"}' > "$release_dir/package.json"
+    fi
     if [[ " $* " == *" worktree remove "* ]]; then rm -rf "${@: -1}"; fi
     if [[ " $* " == *" rev-parse HEAD "* ]]; then printf '%s\n' "$FIXTURE_SHA"; fi
     if [[ " $* " == *" worktree prune "* && "${FIXTURE_MODE:-}" == "prune-fail" ]]; then exit 1; fi
@@ -436,6 +449,7 @@ rm -rf "$failure_root/releases"/*
 rm -f "$failure_root/current"
 ln -s "$failure_root/previous" "$failure_root/current"
 : > "$failure_root/systemctl.log"
+: > "$failure_root/pnpm-pwd.log"
 cat > "$failure_root/guard" <<'GUARD'
 #!/usr/bin/env bash
 exit 0
@@ -443,6 +457,7 @@ GUARD
 chmod +x "$failure_root/guard"
 PATH="$fixture_path" \
 FIXTURE_MODE=prune-fail \
+FIXTURE_EXPECT_RELEASE_CWD=1 \
 FIXTURE_ROOT="$failure_root" \
 FIXTURE_SHA="$failure_sha" \
 FIXTURE_SYSTEMCTL_LOG="$failure_root/systemctl.log" \
@@ -470,5 +485,7 @@ grep -Fq 'warning: worktree metadata pruning failed after successful activation'
     echo "post-activation prune failure did not emit a warning" >&2
     exit 1
   }
+[[ "$(wc -l < "$failure_root/pnpm-pwd.log" | tr -d ' ')" == "2" ]] \
+  || { echo "package manager did not start in the release worktree for install and build" >&2; exit 1; }
 
 echo "deploy script, workflow contract, and rollback validation passed"
