@@ -69,7 +69,16 @@ export class HookRegistry {
     if (listener) { listener(payload); return; }
     const isTerminal = payload.hook_event_name === "Stop" || payload.hook_event_name === "StopFailure";
     if (this.orphanHandler) {
-      try { this.orphanHandler(jinnSessionId, payload); } catch { /* never break the endpoint */ }
+      try {
+        this.orphanHandler(jinnSessionId, payload);
+      } catch (err) {
+        // Still must never break the endpoint — but a throw here means a completed
+        // background result vanished before any delivery code ran, so say so.
+        console.warn(
+          `[HookRegistry] orphan handler threw for session ${jinnSessionId} (${payload.hook_event_name}); ` +
+          `the hook was dropped: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       // Terminal orphans are CONSUMED by the handler: buffering them would let a
       // stale Stop drain into the next turn's resolver and settle it instantly
       // with the previous turn's text.

@@ -525,9 +525,18 @@ export class SessionManager {
    */
   async handleOrphanHook(sessionId: string, hook: { hook_event_name: string; last_assistant_message?: unknown; error?: unknown }): Promise<void> {
     try {
-      if (this.config.sessions?.backgroundDelivery === false) return;
+      // Every early return below drops a completed background result on the floor.
+      // Each one is a plausible cause of "Ryoko said it would report back and never
+      // did", and none of them left a trace — so each now says which gate closed.
+      if (this.config.sessions?.backgroundDelivery === false) {
+        logger.warn(`Orphan ${hook.hook_event_name} for session ${sessionId} dropped: sessions.backgroundDelivery is disabled in config`);
+        return;
+      }
       const session = getSession(sessionId);
-      if (!session) return;
+      if (!session) {
+        logger.warn(`Orphan ${hook.hook_event_name} dropped: no session record for ${sessionId}`);
+        return;
+      }
 
       if (hook.hook_event_name === "StopFailure") {
         // Background continuation failed — record it for operators, but don't
@@ -541,17 +550,26 @@ export class SessionManager {
       if (hook.hook_event_name !== "Stop") return;
 
       const text = typeof hook.last_assistant_message === "string" ? hook.last_assistant_message.trim() : "";
-      if (!text) return;
+      if (!text) {
+        logger.warn(`Orphan Stop for session ${sessionId} dropped: hook carried no last_assistant_message`);
+        return;
+      }
 
       // A turn may have started between the orphan arriving and this handler
       // running — its resolver owns delivery now; don't double-post.
       const engine = this.engines.get(session.engine) as (Engine & { isTurnRunning?: (id: string) => boolean }) | undefined;
-      if (engine?.isTurnRunning?.(session.id)) return;
+      if (engine?.isTurnRunning?.(session.id)) {
+        logger.info(`Orphan Stop for session ${sessionId} handed to the in-flight turn's resolver (${text.length} chars)`);
+        return;
+      }
 
       // Dedupe: identical to the message we already delivered → nothing new.
       const history = getMessages(session.id);
       const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
-      if (lastAssistant?.content === text) return;
+      if (lastAssistant?.content === text) {
+        logger.info(`Orphan Stop for session ${sessionId} dropped: identical to the message already delivered`);
+        return;
+      }
 
       insertMessage(session.id, "assistant", text);
       const updated = updateSession(session.id, {
@@ -577,6 +595,12 @@ export class SessionManager {
         await deliverPublic(connector, target, publicAction).catch((err) => {
           logger.warn(`Background completion delivery failed for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
         });
+      } else {
+        // Recorded in the session, but there is no channel to post it back to.
+        logger.warn(
+          `Background completion for session ${sessionId} not posted to any channel: ` +
+          `${session.connector ? (connector ? "no replyContext" : `connector "${session.connector}" not registered`) : "session has no connector"}`,
+        );
       }
 
       // Child (sub-)session: this late completion IS the "完了通知" the parent
@@ -1381,6 +1405,12 @@ export class SessionManager {
           const { publicAction } = normalizeDelivery(responseText, deliveryCtx);
           await deliverPublic(connector, target, publicAction);
         }
+      } else {
+        // Quiet interrupt: intentional for /stop and engine switches, but a PTY that
+        // died mid-turn lands here too and looks identical to the user (silence).
+        // Pair this with the "PTY death" warning from claude-interactive.ts to tell
+        // the two apart.
+        logger.warn(`Session ${session.id}: turn interrupted (${result.error ?? "no reason"}) — reply suppressed, nothing posted to the channel`);
       }
       const updatedSession = updateSession(session.id, {
         ...(result.sessionId?.trim() ? { engineSessionId: result.sessionId } : {}),
