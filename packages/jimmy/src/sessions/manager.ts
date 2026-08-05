@@ -159,6 +159,13 @@ function placementTransportMeta(meta: Session["transportMeta"]): Session["transp
 
 const MAX_PROGRESS_MESSAGE_CHARS = 200;
 
+/** Interrupt reasons that mean something went WRONG, as opposed to the routine ones
+ *  (/stop, a newer message superseding this turn, engine switch, gateway shutdown).
+ *  Only these deserve warn level — see the quiet-interrupt branch in runSession.
+ *  Produced by handlePtyDeath (`Interrupted: claude <cause>`) and the turn watchdog
+ *  in engines/claude-interactive.ts. Exported for unit tests. */
+export const UNEXPECTED_INTERRUPT_RE = /claude process exited|PTY socket error|turn timed out/;
+
 /**
  * Renders one `DevelopmentProgress` snapshot from the isolated `/vibepro`
  * runner as the text for an editable, in-thread progress message. Real-world
@@ -525,9 +532,18 @@ export class SessionManager {
    */
   async handleOrphanHook(sessionId: string, hook: { hook_event_name: string; last_assistant_message?: unknown; error?: unknown }): Promise<void> {
     try {
-      if (this.config.sessions?.backgroundDelivery === false) return;
+      // Every early return below drops a completed background result on the floor.
+      // Each one is a plausible cause of "Ryoko said it would report back and never
+      // did", and none of them left a trace — so each now says which gate closed.
+      if (this.config.sessions?.backgroundDelivery === false) {
+        logger.warn(`Orphan ${hook.hook_event_name} for session ${sessionId} dropped: sessions.backgroundDelivery is disabled in config`);
+        return;
+      }
       const session = getSession(sessionId);
-      if (!session) return;
+      if (!session) {
+        logger.warn(`Orphan ${hook.hook_event_name} dropped: no session record for ${sessionId}`);
+        return;
+      }
 
       if (hook.hook_event_name === "StopFailure") {
         // Background continuation failed — record it for operators, but don't
@@ -541,17 +557,31 @@ export class SessionManager {
       if (hook.hook_event_name !== "Stop") return;
 
       const text = typeof hook.last_assistant_message === "string" ? hook.last_assistant_message.trim() : "";
-      if (!text) return;
+      if (!text) {
+        logger.warn(`Orphan Stop for session ${sessionId} dropped: hook carried no last_assistant_message`);
+        return;
+      }
 
       // A turn may have started between the orphan arriving and this handler
       // running — its resolver owns delivery now; don't double-post.
       const engine = this.engines.get(session.engine) as (Engine & { isTurnRunning?: (id: string) => boolean }) | undefined;
-      if (engine?.isTurnRunning?.(session.id)) return;
+      if (engine?.isTurnRunning?.(session.id)) {
+        // NOT a handoff: HookRegistry already consumed this payload on the orphan
+        // path (terminal orphans are never buffered), so the turn that started in
+        // the meantime will never see it. The text is dropped on purpose — posting
+        // it now would double-post against that turn's own reply — but it IS a
+        // completed result being discarded, so say exactly that.
+        logger.warn(`Orphan Stop for session ${sessionId} dropped: a new turn started before delivery, so this ${text.length}-char result is discarded to avoid double-posting`);
+        return;
+      }
 
       // Dedupe: identical to the message we already delivered → nothing new.
       const history = getMessages(session.id);
       const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
-      if (lastAssistant?.content === text) return;
+      if (lastAssistant?.content === text) {
+        logger.info(`Orphan Stop for session ${sessionId} dropped: identical to the message already delivered`);
+        return;
+      }
 
       insertMessage(session.id, "assistant", text);
       const updated = updateSession(session.id, {
@@ -577,6 +607,12 @@ export class SessionManager {
         await deliverPublic(connector, target, publicAction).catch((err) => {
           logger.warn(`Background completion delivery failed for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
         });
+      } else {
+        // Recorded in the session, but there is no channel to post it back to.
+        logger.warn(
+          `Background completion for session ${sessionId} not posted to any channel: ` +
+          `${session.connector ? (connector ? "no replyContext" : `connector "${session.connector}" not registered`) : "session has no connector"}`,
+        );
       }
 
       // Child (sub-)session: this late completion IS the "完了通知" the parent
@@ -632,6 +668,12 @@ export class SessionManager {
       transportMeta: mergeTransportMeta(session.transportMeta, msg.transportMeta),
       lastActivity: new Date().toISOString(),
     });
+
+    // Pairs with the "completed in Xms" line at the tail of this method. Only the
+    // completion was logged before, so a turn that started and never finished — the
+    // :eyes: reaction and the typing indicator stuck on forever — left the log
+    // looking exactly like a turn that never started at all.
+    logger.info(`Session ${session.id} turn started (engine ${session.engine}, key ${msg.sessionKey})`);
 
     // Resolve MCP config before try block so it's accessible in catch for cleanup
     let mcpConfigPath: string | undefined;
@@ -1381,6 +1423,16 @@ export class SessionManager {
           const { publicAction } = normalizeDelivery(responseText, deliveryCtx);
           await deliverPublic(connector, target, publicAction);
         }
+      } else {
+        // Quiet interrupt. Most reasons are routine (/stop, a newer message
+        // replacing this turn, engine switch, gateway shutdown) and must not warn —
+        // same reasoning as handlePtyDeath's `expected` gate: a warning that fires
+        // during normal use stops being evidence of anything. Only a crash or a
+        // wedged turn is worth a warning, and those reasons are enumerated.
+        const reason = result.error ?? "no reason";
+        const line = `Session ${session.id}: turn interrupted (${reason}) — reply suppressed, nothing posted to the channel`;
+        if (UNEXPECTED_INTERRUPT_RE.test(reason)) logger.warn(line);
+        else logger.info(line);
       }
       const updatedSession = updateSession(session.id, {
         ...(result.sessionId?.trim() ? { engineSessionId: result.sessionId } : {}),

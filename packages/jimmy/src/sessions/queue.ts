@@ -1,4 +1,5 @@
 import { markQueueItemRunning, markQueueItemCompleted } from "./registry.js";
+import { logger } from "../shared/logger.js";
 
 export class SessionQueue {
   private queues = new Map<string, Promise<void>>();
@@ -76,7 +77,15 @@ export class SessionQueue {
    * Enqueue a task for a session. Tasks are serialized per session key.
    */
   async enqueue(sessionKey: string, fn: () => Promise<void>, queueItemId?: string): Promise<void> {
-    this.pending.set(sessionKey, (this.pending.get(sessionKey) || 0) + 1);
+    const depth = (this.pending.get(sessionKey) || 0) + 1;
+    this.pending.set(sessionKey, depth);
+    // A message parked behind a wedged turn looks IDENTICAL to a message the engine
+    // never saw: no reply, no log, nothing. Both of those states have to be readable
+    // from the log, or a stuck queue gets misdiagnosed as a lost hook.
+    const enqueuedAt = Date.now();
+    if (depth > 1) {
+      logger.info(`Queued message for ${sessionKey} behind ${depth - 1} task(s) — it cannot start until they settle`);
+    }
     // Snapshot the cancellation generation at enqueue time. A later clearQueue()
     // bumps it and skips this task; tasks enqueued after that clearQueue capture the
     // new value and still run.
@@ -84,8 +93,16 @@ export class SessionQueue {
     const prev = this.queues.get(sessionKey) || Promise.resolve();
     const runTask = async () => {
       this.running.add(sessionKey);
+      const waitedMs = Date.now() - enqueuedAt;
+      if (waitedMs >= 1000) {
+        logger.info(`Starting queued message for ${sessionKey} after waiting ${Math.round(waitedMs / 1000)}s`);
+      }
       try {
         // Wait while paused (500ms poll)
+        if (this.paused.has(sessionKey)) {
+          // Nothing resumes this automatically — only an operator API call does.
+          logger.warn(`Queue for ${sessionKey} is paused — this message waits indefinitely until the queue is resumed`);
+        }
         while (this.paused.has(sessionKey)) {
           await new Promise(resolve => setTimeout(resolve, 500));
         }

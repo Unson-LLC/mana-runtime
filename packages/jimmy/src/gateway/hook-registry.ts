@@ -1,3 +1,5 @@
+import { logger } from "../shared/logger.js";
+
 export interface HookPayload {
   hook_event_name: "SessionStart" | "Stop" | "StopFailure" | "PreToolUse" | "PostToolUse" | string;
   session_id?: string;
@@ -37,7 +39,10 @@ export class HookRegistry {
       // Engine guards against concurrent turns per session, so this should
       // never happen. Warn loudly if it does — silently overwriting the
       // previous listener would mean the prior turn's resolver never fires.
-      console.warn(
+      // logger, not console — see the note in deliver(): a daemon with
+      // logging.stdout disabled never sees console output in gateway.log, so
+      // "warn loudly" was silent in production.
+      logger.warn(
         `[HookRegistry] duplicate listener registration for session ${jinnSessionId}; previous listener will be replaced`,
       );
     }
@@ -66,10 +71,32 @@ export class HookRegistry {
 
   deliver(jinnSessionId: string, payload: HookPayload): void {
     const listener = this.listeners.get(jinnSessionId);
-    if (listener) { listener(payload); return; }
     const isTerminal = payload.hook_event_name === "Stop" || payload.hook_event_name === "StopFailure";
+    // Terminal hooks are low-volume (a few per turn) and each one decides whether a
+    // reply gets delivered. Recording arrival + which branch took it is what makes
+    // "no log at all" a usable answer: it separates "the hook never reached the
+    // gateway" from "it arrived and something downstream dropped it".
+    if (isTerminal) {
+      logger.info(
+        `Hook ${payload.hook_event_name} for session ${jinnSessionId} → ` +
+        (listener ? "in-flight turn's resolver" : this.orphanHandler ? "orphan handler (no turn in flight)" : "buffer (no listener, no orphan handler)"),
+      );
+    }
+    if (listener) { listener(payload); return; }
     if (this.orphanHandler) {
-      try { this.orphanHandler(jinnSessionId, payload); } catch { /* never break the endpoint */ }
+      try {
+        this.orphanHandler(jinnSessionId, payload);
+      } catch (err) {
+        // Still must never break the endpoint — but a throw here means a completed
+        // background result vanished before any delivery code ran, so say so.
+        // Must go through logger, not console: the daemon runs with logging.stdout
+        // disabled, and a console line never reaches gateway.log — i.e. it would be
+        // invisible in exactly the configuration this diagnostic exists for.
+        logger.warn(
+          `[HookRegistry] orphan handler threw for session ${jinnSessionId} (${payload.hook_event_name}); ` +
+          `the hook was dropped: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       // Terminal orphans are CONSUMED by the handler: buffering them would let a
       // stale Stop drain into the next turn's resolver and settle it instantly
       // with the previous turn's text.

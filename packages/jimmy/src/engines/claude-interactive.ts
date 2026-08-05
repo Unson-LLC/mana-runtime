@@ -354,6 +354,12 @@ export class TurnResolver {
   private stopPayload: HookPayload | undefined;
   private stopFailurePayload: HookPayload | undefined;
   private graceTimer: NodeJS.Timeout | undefined;
+  /** How many times the grace window has been re-armed (diagnostics only). */
+  private graceExtensions = 0;
+  /** When the StopFailure grace window was first armed (diagnostics only). */
+  private graceStartedAt = 0;
+  /** One-shot guard so the Stop-before-SessionStart note isn't repeated per hook. */
+  private notedStopBeforeSessionStart = false;
 
   constructor(private opts: TurnResolverOpts) {
     this.promise = new Promise((res) => { this.resolve = res; });
@@ -385,7 +391,17 @@ export class TurnResolver {
       // numTurns:1 keeps isDeadSessionError from false-positiving.
       this.stopFailurePayload = h;
       if (typeof h.session_id === "string" && !this.claudeSessionId) this.claudeSessionId = h.session_id;
-      if (!IMMEDIATE_STOP_FAILURE_ERRORS.has(String(h.error ?? "unknown"))) {
+      const errorKind = String(h.error ?? "unknown");
+      if (!IMMEDIATE_STOP_FAILURE_ERRORS.has(errorKind)) {
+        // The grace window is silent by construction — a turn can sit here for 20s,
+        // or indefinitely while shouldDeferStopFailure keeps returning true, with no
+        // trace anywhere. Announce entering it so a "hung turn" is distinguishable
+        // from a dead PTY in gateway.log.
+        logger.warn(
+          `StopFailure (${errorKind}) for turn ${this.logTag} — holding ` +
+          `${this.opts.stopFailureGraceMs ?? STOP_FAILURE_GRACE_MS}ms in case claude recovers`,
+        );
+        this.graceStartedAt = Date.now();
         this.armGrace();
       } else {
         this.settleWithFailure();
@@ -394,6 +410,11 @@ export class TurnResolver {
       // PreToolUse/PostToolUse/etc — proof of life while a failure is pending.
       this.noteActivity();
     }
+  }
+
+  /** Identifier for log lines: the Claude session id once known, else the fallback. */
+  private get logTag(): string {
+    return this.claudeSessionId ?? this.opts.fallbackSessionId ?? "unknown-session";
   }
 
   /** Claude session id learned so far (for engineSessionId persistence on warm-PTY turns). */
@@ -408,7 +429,19 @@ export class TurnResolver {
   }
 
   private maybeComplete(): void {
-    if (!this.gotSessionStart || !this.stopPayload) return;
+    if (!this.gotSessionStart || !this.stopPayload) {
+      // Stop arrived before SessionStart. Hooks are independent HTTP posts, so this
+      // is ordinary reordering most of the time — a later SessionStart calls back in
+      // here and settles the turn normally. Claiming a hang here would manufacture
+      // false incidents, so state only what is true: the turn is still waiting. A
+      // SessionStart that never comes shows up as this line with no matching
+      // "completed in …", and eventually as the turn watchdog's warning.
+      if (this.stopPayload && !this.gotSessionStart && !this.notedStopBeforeSessionStart) {
+        this.notedStopBeforeSessionStart = true;
+        logger.info(`Turn ${this.logTag} got Stop before SessionStart — waiting for SessionStart before it can settle`);
+      }
+      return;
+    }
     const sid = this.claudeSessionId ?? this.opts.fallbackSessionId;
     if (!sid) {
       this.settle({ sessionId: "", result: "", error: "Interactive turn produced no Claude session id" });
@@ -447,7 +480,17 @@ export class TurnResolver {
   /** Proof of life (SSE delta / tool hook) while a StopFailure is pending —
    *  re-arms the grace window. No-op when no failure is pending. */
   noteActivity(): void {
-    if (this.graceTimer) this.armGrace();
+    if (this.graceTimer) {
+      this.graceExtensions++;
+      // This runs per SSE delta (handleSseEvent), so one line per re-arm would flood
+      // gateway.log — and add file I/O to the streaming hot path — during exactly the
+      // long recovery we want to observe. Announce once that output resumed; the
+      // running total is reported by the defer/settle lines instead.
+      if (this.graceExtensions === 1) {
+        logger.info(`StopFailure grace re-armed for turn ${this.logTag} — claude resumed output`);
+      }
+      this.armGrace();
+    }
   }
 
   private armGrace(): void {
@@ -455,6 +498,13 @@ export class TurnResolver {
     const ms = this.opts.stopFailureGraceMs ?? STOP_FAILURE_GRACE_MS;
     this.graceTimer = setTimeout(() => {
       if (this.opts.shouldDeferStopFailure?.()) {
+        // Indefinite hold: this branch can repeat forever while sub-agents run.
+        // It is the shape of "Ryoko promised a result and never came back", so the
+        // held-for time is the number to read.
+        logger.info(
+          `StopFailure grace expired for turn ${this.logTag} but work is still in flight — ` +
+          `deferring another ${ms}ms (held ${Math.round((Date.now() - this.graceStartedAt) / 1000)}s, ${this.graceExtensions} re-arms)`,
+        );
         this.armGrace();
         return;
       }
@@ -471,6 +521,9 @@ export class TurnResolver {
   }
 
   private settleWithFailure(): void {
+    if (!this.settled) {
+      logger.warn(`Turn ${this.logTag} settling as failed: StopFailure ${this.stopFailurePayload?.error ?? "unknown"}`);
+    }
     this.settle({
       sessionId: this.claudeSessionId ?? this.opts.fallbackSessionId ?? "",
       result: "",
@@ -917,9 +970,29 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  scrollback) only if this is still the session's current handle; (2) stop the per-PTY
    *  SSE proxy; (3) interrupt the active turn iff this proc is the bound one, so run()'s
    *  promise resolves instead of hanging until the turn watchdog (issue #18). */
-  private handlePtyDeath(jinnSessionId: string, proc: pty.IPty, handle: PtyHandle, cause: string): void {
+  private handlePtyDeath(jinnSessionId: string, proc: pty.IPty, handle: PtyHandle, cause: string, expected = false): void {
     if (this.deadHandles.has(handle)) return;
     this.deadHandles.add(handle);
+    // Observability: a PTY death that takes an in-flight turn with it is invisible
+    // today. The turn settles as `Interrupted: …`, and manager.ts deliberately does
+    // NOT post interrupted results (`if (!wasInterrupted)` in runSession) — so the
+    // user gets silence and the log shows nothing at all. Record every death, and
+    // whether it swallowed a turn, before doing any cleanup.
+    //
+    // `expected` means WE asked for this teardown (/stop, shutdown, LRU eviction,
+    // keep-warm reaping, spawn-parameter change — all route through handle.kill()).
+    // Those must not warn: a warning that fires on routine shutdown stops being
+    // evidence of a crash, which is the entire point of this line.
+    const activeEntry = this.active.get(jinnSessionId);
+    const killedTurn = !!activeEntry && activeEntry.boundProc === proc;
+    const detail = killedTurn
+      ? expected
+        ? " — interrupting the turn bound to it (requested teardown)"
+        : " — a turn was bound to this PTY; it settles as interrupted and its reply is NOT delivered"
+      : " — no turn bound to this PTY";
+    const line = `PTY death for session ${jinnSessionId} (pid ${proc.pid}): ${cause}${detail}`;
+    if (expected) logger.info(line);
+    else logger.warn(line);
     // Identity gate: in a kill->respawn race the lifecycle/stream entries already point
     // at the NEW PTY by the time THIS (old) PTY dies. Only touch shared state when this
     // handle is still the session's current warm one — else we'd evict the live PTY.
@@ -944,9 +1017,8 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // Settle the active turn as interrupted so run()'s promise doesn't hang — but only
     // if this dying proc is the one bound to the active turn. After a kill->respawn race
     // the active entry holds the NEW turn's resolver+proc; identity mismatch => no-op.
-    const e = this.active.get(jinnSessionId);
-    if (e && e.boundProc === proc) {
-      e.resolver.interrupt(`Interrupted: claude ${cause}`);
+    if (activeEntry && activeEntry.boundProc === proc) {
+      activeEntry.resolver.interrupt(`Interrupted: claude ${cause}`);
     }
   }
 
@@ -998,7 +1070,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       } else {
         logger.warn(`PTY socket error for session ${jinnSessionId}: ${err.message}`);
       }
-      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code ?? err.message})`);
+      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code ?? err.message})`, teardownRequested);
     });
 
     proc.onData((d) => {
@@ -1023,7 +1095,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       }
     });
     proc.onExit(() => {
-      this.handlePtyDeath(jinnSessionId, proc, handle, "process exited");
+      this.handlePtyDeath(jinnSessionId, proc, handle, "process exited", teardownRequested);
     });
     (handle as any)._proc = proc;
     // Keep the per-PTY proxy reachable from the handle so handlePtyDeath can tear it

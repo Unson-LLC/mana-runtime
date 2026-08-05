@@ -62,6 +62,7 @@ import { logger } from "../../shared/logger.js";
 
 const flush = () => new Promise((r) => setTimeout(r, 15));
 const mockWarn = vi.mocked(logger.warn);
+const mockInfo = vi.mocked(logger.info);
 const mockDebug = vi.mocked(logger.debug);
 
 describe("InteractiveClaudeEngine — kill->respawn race (Item C)", () => {
@@ -124,6 +125,41 @@ describe("InteractiveClaudeEngine — kill->respawn race (Item C)", () => {
     ptyC.fireExit(); // current PTY dies mid-turn with no Stop hook
     const r = await p;
     expect(r.error).toMatch(/claude process exited/);
+    // An interrupted result is never posted to the channel (manager.ts's
+    // `if (!wasInterrupted)`), so the user just sees silence. This warning is the
+    // ONLY trace that a reply was swallowed — don't let it be dropped again.
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.stringMatching(/PTY death for session s2.*process exited.*NOT delivered/),
+    );
+  });
+
+  it("an idle PTY's death is logged but marked as taking no turn with it", async () => {
+    const p = engine.run({ sessionId: "s3", prompt: "d", cwd: "/tmp" } as any);
+    await flush();
+    hookCb!({ hook_event_name: "SessionStart", session_id: "c3" });
+    hookCb!({ hook_event_name: "Stop", last_assistant_message: "ok" });
+    await p;
+    mockWarn.mockClear();
+
+    ptys[0].fireExit(); // the warm PTY dies later, between turns
+    await flush();
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.stringMatching(/PTY death for session s3.*no turn bound/),
+    );
+  });
+
+  it("an intentional teardown does not warn — the warning must stay evidence of a crash", async () => {
+    const p = engine.run({ sessionId: "s4", prompt: "e", cwd: "/tmp" } as any);
+    await flush();
+    engine.kill("s4", "Interrupted: user stopped"); // /stop, shutdown, LRU eviction, reaper
+    await p;
+    mockWarn.mockClear();
+
+    ptys[0].fireExit(); // the SIGTERM we asked for finally lands
+    await flush();
+    // A warning that fires on routine shutdown is worthless as a crash signal.
+    expect(mockWarn).not.toHaveBeenCalledWith(expect.stringContaining("PTY death"));
+    expect(mockInfo).toHaveBeenCalledWith(expect.stringContaining("PTY death for session s4"));
   });
 });
 
