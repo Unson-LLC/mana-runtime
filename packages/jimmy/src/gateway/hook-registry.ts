@@ -39,7 +39,10 @@ export class HookRegistry {
       // Engine guards against concurrent turns per session, so this should
       // never happen. Warn loudly if it does — silently overwriting the
       // previous listener would mean the prior turn's resolver never fires.
-      console.warn(
+      // logger, not console — see the note in deliver(): a daemon with
+      // logging.stdout disabled never sees console output in gateway.log, so
+      // "warn loudly" was silent in production.
+      logger.warn(
         `[HookRegistry] duplicate listener registration for session ${jinnSessionId}; previous listener will be replaced`,
       );
     }
@@ -86,7 +89,10 @@ export class HookRegistry {
       } catch (err) {
         // Still must never break the endpoint — but a throw here means a completed
         // background result vanished before any delivery code ran, so say so.
-        console.warn(
+        // Must go through logger, not console: the daemon runs with logging.stdout
+        // disabled, and a console line never reaches gateway.log — i.e. it would be
+        // invisible in exactly the configuration this diagnostic exists for.
+        logger.warn(
           `[HookRegistry] orphan handler threw for session ${jinnSessionId} (${payload.hook_event_name}); ` +
           `the hook was dropped: ${err instanceof Error ? err.message : String(err)}`,
         );

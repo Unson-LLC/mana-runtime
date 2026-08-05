@@ -159,6 +159,13 @@ function placementTransportMeta(meta: Session["transportMeta"]): Session["transp
 
 const MAX_PROGRESS_MESSAGE_CHARS = 200;
 
+/** Interrupt reasons that mean something went WRONG, as opposed to the routine ones
+ *  (/stop, a newer message superseding this turn, engine switch, gateway shutdown).
+ *  Only these deserve warn level — see the quiet-interrupt branch in runSession.
+ *  Produced by handlePtyDeath (`Interrupted: claude <cause>`) and the turn watchdog
+ *  in engines/claude-interactive.ts. Exported for unit tests. */
+export const UNEXPECTED_INTERRUPT_RE = /claude process exited|PTY socket error|turn timed out/;
+
 /**
  * Renders one `DevelopmentProgress` snapshot from the isolated `/vibepro`
  * runner as the text for an editable, in-thread progress message. Real-world
@@ -559,7 +566,12 @@ export class SessionManager {
       // running — its resolver owns delivery now; don't double-post.
       const engine = this.engines.get(session.engine) as (Engine & { isTurnRunning?: (id: string) => boolean }) | undefined;
       if (engine?.isTurnRunning?.(session.id)) {
-        logger.info(`Orphan Stop for session ${sessionId} handed to the in-flight turn's resolver (${text.length} chars)`);
+        // NOT a handoff: HookRegistry already consumed this payload on the orphan
+        // path (terminal orphans are never buffered), so the turn that started in
+        // the meantime will never see it. The text is dropped on purpose — posting
+        // it now would double-post against that turn's own reply — but it IS a
+        // completed result being discarded, so say exactly that.
+        logger.warn(`Orphan Stop for session ${sessionId} dropped: a new turn started before delivery, so this ${text.length}-char result is discarded to avoid double-posting`);
         return;
       }
 
@@ -1412,11 +1424,15 @@ export class SessionManager {
           await deliverPublic(connector, target, publicAction);
         }
       } else {
-        // Quiet interrupt: intentional for /stop and engine switches, but a PTY that
-        // died mid-turn lands here too and looks identical to the user (silence).
-        // Pair this with the "PTY death" warning from claude-interactive.ts to tell
-        // the two apart.
-        logger.warn(`Session ${session.id}: turn interrupted (${result.error ?? "no reason"}) — reply suppressed, nothing posted to the channel`);
+        // Quiet interrupt. Most reasons are routine (/stop, a newer message
+        // replacing this turn, engine switch, gateway shutdown) and must not warn —
+        // same reasoning as handlePtyDeath's `expected` gate: a warning that fires
+        // during normal use stops being evidence of anything. Only a crash or a
+        // wedged turn is worth a warning, and those reasons are enumerated.
+        const reason = result.error ?? "no reason";
+        const line = `Session ${session.id}: turn interrupted (${reason}) — reply suppressed, nothing posted to the channel`;
+        if (UNEXPECTED_INTERRUPT_RE.test(reason)) logger.warn(line);
+        else logger.info(line);
       }
       const updatedSession = updateSession(session.id, {
         ...(result.sessionId?.trim() ? { engineSessionId: result.sessionId } : {}),

@@ -358,8 +358,8 @@ export class TurnResolver {
   private graceExtensions = 0;
   /** When the StopFailure grace window was first armed (diagnostics only). */
   private graceStartedAt = 0;
-  /** One-shot guard so the missing-SessionStart warning isn't repeated per hook. */
-  private warnedMissingSessionStart = false;
+  /** One-shot guard so the Stop-before-SessionStart note isn't repeated per hook. */
+  private notedStopBeforeSessionStart = false;
 
   constructor(private opts: TurnResolverOpts) {
     this.promise = new Promise((res) => { this.resolve = res; });
@@ -430,13 +430,15 @@ export class TurnResolver {
 
   private maybeComplete(): void {
     if (!this.gotSessionStart || !this.stopPayload) {
-      // Stop arrived but SessionStart never did: this turn can no longer settle by
-      // itself and will hang until the 90-min watchdog, with the typing indicator
-      // stuck on the whole time. Silent before — and indistinguishable from "the
-      // Stop hook never arrived", which has a completely different cause.
-      if (this.stopPayload && !this.gotSessionStart && !this.warnedMissingSessionStart) {
-        this.warnedMissingSessionStart = true;
-        logger.warn(`Turn ${this.logTag} got Stop but never got SessionStart — it cannot settle and will hang until the turn watchdog`);
+      // Stop arrived before SessionStart. Hooks are independent HTTP posts, so this
+      // is ordinary reordering most of the time — a later SessionStart calls back in
+      // here and settles the turn normally. Claiming a hang here would manufacture
+      // false incidents, so state only what is true: the turn is still waiting. A
+      // SessionStart that never comes shows up as this line with no matching
+      // "completed in …", and eventually as the turn watchdog's warning.
+      if (this.stopPayload && !this.gotSessionStart && !this.notedStopBeforeSessionStart) {
+        this.notedStopBeforeSessionStart = true;
+        logger.info(`Turn ${this.logTag} got Stop before SessionStart — waiting for SessionStart before it can settle`);
       }
       return;
     }
