@@ -1,3 +1,5 @@
+import { logger } from "../shared/logger.js";
+
 export interface HookPayload {
   hook_event_name: "SessionStart" | "Stop" | "StopFailure" | "PreToolUse" | "PostToolUse" | string;
   session_id?: string;
@@ -66,8 +68,18 @@ export class HookRegistry {
 
   deliver(jinnSessionId: string, payload: HookPayload): void {
     const listener = this.listeners.get(jinnSessionId);
-    if (listener) { listener(payload); return; }
     const isTerminal = payload.hook_event_name === "Stop" || payload.hook_event_name === "StopFailure";
+    // Terminal hooks are low-volume (a few per turn) and each one decides whether a
+    // reply gets delivered. Recording arrival + which branch took it is what makes
+    // "no log at all" a usable answer: it separates "the hook never reached the
+    // gateway" from "it arrived and something downstream dropped it".
+    if (isTerminal) {
+      logger.info(
+        `Hook ${payload.hook_event_name} for session ${jinnSessionId} → ` +
+        (listener ? "in-flight turn's resolver" : this.orphanHandler ? "orphan handler (no turn in flight)" : "buffer (no listener, no orphan handler)"),
+      );
+    }
+    if (listener) { listener(payload); return; }
     if (this.orphanHandler) {
       try {
         this.orphanHandler(jinnSessionId, payload);
