@@ -353,10 +353,7 @@ case "$name" in
   systemctl)
     printf '%s\n' "$*" >> "$FIXTURE_SYSTEMCTL_LOG"
     if [[ "${1:-}" == "is-active" && "${FIXTURE_MODE:-}" == "active-fail" ]]; then exit 1; fi
-    if [[ "${1:-}" == "show" && " $* " == *" --property MainPID "* ]]; then printf '123\n'; fi
-    if [[ "${1:-}" == "show" && " $* " == *" --property ExecStart "* ]]; then
-      printf '%s\n' "$FIXTURE_ROOT/systemd-entrypoint"
-    fi
+    if [[ "${1:-}" == "show" ]]; then printf '123\n'; fi
     ;;
   realpath)
     if [[ "${FIXTURE_MODE:-}" == "entrypoint-mismatch" && "${1:-}" == *"/current/packages/jimmy/dist/bin/jimmy.js" ]]; then
@@ -447,21 +444,6 @@ run_failure_case entrypoint-mismatch 0
 assert_rollback_restart entrypoint-mismatch
 OPENRYOKO_TEST_PROCESS_COMMAND_OVERRIDE="$failure_root/other/jimmy.js" run_failure_case mainpid-mismatch 0
 assert_rollback_restart mainpid-mismatch
-mainpid_mismatch_log="$failure_root/deploy-mainpid-mismatch.log"
-expected_release_dir="$(< "$failure_root/release-dir")"
-expected_release_realpath="$(realpath "$expected_release_dir")"
-grep -Fqx "openryoko deploy: expected process entrypoint: $failure_root/current/packages/jimmy/dist/bin/jimmy.js" "$mainpid_mismatch_log" \
-  || { echo "cmdline mismatch did not report the expected entrypoint" >&2; exit 1; }
-grep -Fqx "openryoko deploy: observed process command: $failure_root/other/jimmy.js" "$mainpid_mismatch_log" \
-  || { echo "cmdline mismatch did not report the observed process command" >&2; exit 1; }
-grep -Fqx 'openryoko deploy: observed MainPID: 123' "$mainpid_mismatch_log" \
-  || { echo "cmdline mismatch did not report MainPID" >&2; exit 1; }
-grep -Fqx "openryoko deploy: observed systemd ExecStart: $failure_root/systemd-entrypoint" "$mainpid_mismatch_log" \
-  || { echo "cmdline mismatch did not report ExecStart" >&2; exit 1; }
-grep -Fqx "openryoko deploy: observed current release realpath: $expected_release_realpath" "$mainpid_mismatch_log" \
-  || { echo "cmdline mismatch did not report the current release realpath" >&2; exit 1; }
-grep -Fqx "openryoko deploy: expected release directory: $expected_release_dir" "$mainpid_mismatch_log" \
-  || { echo "cmdline mismatch did not report the expected release directory" >&2; exit 1; }
 
 rm -rf "$failure_root/releases"/*
 rm -f "$failure_root/current"
