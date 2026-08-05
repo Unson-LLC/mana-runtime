@@ -8,9 +8,6 @@ describe("classifyCriticalTask", () => {
   it.each([
     "critical-reviewerに委譲して、結果を統合して",
     "これは重要な判断なのでOpus/xhighでレビューして",
-    "本番環境の認証トークンを変更して",
-    "Please review and approve this high-impact architecture decision",
-    "Publish this customer-facing final deliverable",
   ])("routes critical work: %s", (text) => {
     expect(classifyCriticalTask(text).critical).toBe(true);
   });
@@ -21,6 +18,10 @@ describe("classifyCriticalTask", () => {
     "セキュリティ方針を要約して",
     "アーキテクチャ資料の誤字を直して",
     "顧客向け文章の下書きを作って",
+    "本番環境の認証トークンを変更して",
+    "Please review and approve this high-impact architecture decision",
+    "Publish this customer-facing final deliverable",
+    "本番デプロイの依頼ではありません",
   ])("keeps routine work on the parent: %s", (text) => {
     expect(classifyCriticalTask(text)).toEqual({ critical: false });
   });

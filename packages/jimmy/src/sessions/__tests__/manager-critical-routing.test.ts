@@ -119,7 +119,7 @@ describe("SessionManager deterministic critical routing", () => {
     expect(registry.insertMessage).toHaveBeenCalledWith(
       "parent-1",
       "assistant",
-      expect.stringContaining("opus/xhigh"),
+      expect.stringMatching(/明示的にレビュー依頼.*opus\/xhigh/),
     );
     expect(slack.replyMessage).toHaveBeenCalledOnce();
   });

@@ -689,7 +689,7 @@ describe("SlackConnector authorization", () => {
     }));
   });
 
-  it("uses Bolt context.teamId as the reaction workspace boundary", async () => {
+  it("does not perform any side effect for a reaction while reaction turns are disabled", async () => {
     const { handler } = await setup();
 
     await bolt.state.reactionHandler?.({
@@ -703,10 +703,11 @@ describe("SlackConnector authorization", () => {
       context: { teamId: "T_WORKSPACE" },
     });
 
-    expect(handler).toHaveBeenCalledOnce();
-    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C_PILOT",
-      transportMeta: expect.objectContaining({ team: "T_WORKSPACE" }),
-    }));
+    expect(handler).not.toHaveBeenCalled();
+    expect(bolt.client.reactions.add).not.toHaveBeenCalled();
+    expect(bolt.client.conversations.history).not.toHaveBeenCalled();
+    expect(bolt.client.conversations.replies).not.toHaveBeenCalled();
+    expect(bolt.client.conversations.info).not.toHaveBeenCalled();
+    expect(bolt.client.users.info).not.toHaveBeenCalled();
   });
 });

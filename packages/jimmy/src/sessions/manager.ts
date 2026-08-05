@@ -428,7 +428,7 @@ export class SessionManager {
         if (!child.id) throw new Error("child session API did not return an id");
 
         const routeLabel = [child.model, child.effortLevel].filter(Boolean).join("/");
-        const acknowledgement = `重要タスクとして ${reviewerEmployee}${routeLabel ? `（${routeLabel}）` : ""}へレビューを委譲しました。完了後、このスレッドに統合結果を返します。`;
+        const acknowledgement = `明示的にレビュー依頼と判断したため、重要タスクとして ${reviewerEmployee}${routeLabel ? `（${routeLabel}）` : ""}へレビューを委譲しました。完了後、このスレッドに統合結果を返します。`;
         insertMessage(session.id, "assistant", acknowledgement);
         updateSession(session.id, {
           status: "idle",

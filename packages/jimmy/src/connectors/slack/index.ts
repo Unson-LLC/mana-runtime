@@ -63,6 +63,13 @@ const { App, SocketModeReceiver } = SlackBolt;
 
 const SETTINGS_DM_COMMANDS = new Set(["設定", "mana設定", "ルーティング", "接続状態"]);
 
+// Reaction-to-turn routing is intentionally off by default. Reactions do not
+// communicate an unambiguous task, and the previous behavior could run a full
+// turn using the reacted-to message without a clear user request. Keep the
+// implementation below as a future extension; re-enable it only by changing
+// this constant to true after its explicit interaction contract is decided.
+const REACTION_TURN_TRIGGER_ENABLED = false;
+
 export interface SlackConnectorContext {
   /** Display name of the Jinn instance (used as botName in triage) */
   portalName?: string;
@@ -948,6 +955,10 @@ export class SlackConnector implements Connector {
     }
 
     this.app.event("reaction_added", async ({ event, context }) => {
+      // Do this before every side effect, including the eyes acknowledgement.
+      // See REACTION_TURN_TRIGGER_ENABLED above for the explicit re-enable path.
+      if (!REACTION_TURN_TRIGGER_ENABLED) return;
+
       // Only handle reactions on messages (not files, etc.)
       if (event.item.type !== "message") return;
 
