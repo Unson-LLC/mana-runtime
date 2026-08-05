@@ -80,31 +80,6 @@ rollback_activation() {
   return "$failed_status"
 }
 
-emit_activation_diagnostics() {
-  local observed_process_command="$1"
-  local current_release_dir
-  local exec_start
-
-  current_release_dir="$(realpath "$CURRENT_LINK" 2>/dev/null || true)"
-  exec_start="$(systemctl show --property ExecStart --value "$SERVICE" || true)"
-  echo "openryoko deploy: expected process entrypoint: $CURRENT_LINK/packages/jimmy/dist/bin/jimmy.js" >&2
-  echo "openryoko deploy: observed process command: $observed_process_command" >&2
-  echo "openryoko deploy: observed MainPID: $main_pid" >&2
-  echo "openryoko deploy: observed systemd ExecStart: $exec_start" >&2
-  echo "openryoko deploy: observed current release realpath: $current_release_dir" >&2
-  echo "openryoko deploy: expected release directory: $release_dir" >&2
-}
-
-observed_process_command() {
-  local pid="$1"
-
-  if [[ "$DEPLOY_TESTING" == "1" && -n "${OPENRYOKO_TEST_PROCESS_COMMAND:-}" ]]; then
-    printf '%s' "$OPENRYOKO_TEST_PROCESS_COMMAND"
-  elif [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
-    tr '\0' ' ' < "/proc/$pid/cmdline" || true
-  fi
-}
-
 if [[ "${OPENRYOKO_DEPLOY_SOURCE_ONLY:-0}" == "1" ]]; then
   return 0 2>/dev/null || exit 0
 fi
@@ -181,18 +156,19 @@ done
 systemctl is-active --quiet "$SERVICE" || rollback $?
 active_entrypoint="$(realpath "$CURRENT_LINK/packages/jimmy/dist/bin/jimmy.js")"
 expected_entrypoint="$(realpath "$release_dir/packages/jimmy/dist/bin/jimmy.js")"
-main_pid="$(systemctl show --property MainPID --value "$SERVICE")"
 if [[ "$active_entrypoint" != "$expected_entrypoint" ]]; then
   echo "openryoko deploy: active entrypoint does not match the requested release" >&2
-  process_command="$(observed_process_command "$main_pid")"
-  emit_activation_diagnostics "$process_command"
   rollback 1
 fi
+main_pid="$(systemctl show --property MainPID --value "$SERVICE")"
 [[ "$main_pid" =~ ^[1-9][0-9]*$ ]] || rollback 1
-process_command="$(observed_process_command "$main_pid")"
+if [[ "$DEPLOY_TESTING" == "1" && -n "${OPENRYOKO_TEST_PROCESS_COMMAND:-}" ]]; then
+  process_command="$OPENRYOKO_TEST_PROCESS_COMMAND"
+else
+  process_command="$(tr '\0' ' ' < "/proc/$main_pid/cmdline")"
+fi
 if [[ "$process_command" != *"$CURRENT_LINK/packages/jimmy/dist/bin/jimmy.js"* ]]; then
   echo "openryoko deploy: systemd process is not running the release-pointer entrypoint" >&2
-  emit_activation_diagnostics "$process_command"
   rollback 1
 fi
 trap - ERR
