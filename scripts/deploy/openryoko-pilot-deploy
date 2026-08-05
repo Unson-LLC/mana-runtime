@@ -55,6 +55,15 @@ run_as_runtime() {
     "$@"
 }
 
+run_as_runtime_at() {
+  local working_dir="$1"
+  shift
+  (
+    cd "$working_dir"
+    run_as_runtime "$@"
+  )
+}
+
 rollback_activation() {
   local failed_status="$1"
   local current_link="$2"
@@ -109,8 +118,8 @@ cleanup_incomplete_release() {
   fi
 }
 trap cleanup_incomplete_release EXIT
-run_as_runtime "$PNPM_BIN" --dir "$release_dir" install --frozen-lockfile
-run_as_runtime "$PNPM_BIN" --dir "$release_dir" build
+run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" install --frozen-lockfile
+run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" build
 [[ -f "$release_dir/packages/jimmy/dist/bin/jimmy.js" ]] || die "build did not create the Jimmy entrypoint"
 [[ "$(run_as_runtime git -C "$release_dir" rev-parse HEAD)" == "$target_sha" ]] \
   || die "release worktree HEAD does not match the requested commit"
