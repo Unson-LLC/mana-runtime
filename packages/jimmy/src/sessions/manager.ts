@@ -657,6 +657,12 @@ export class SessionManager {
       lastActivity: new Date().toISOString(),
     });
 
+    // Pairs with the "completed in Xms" line at the tail of this method. Only the
+    // completion was logged before, so a turn that started and never finished — the
+    // :eyes: reaction and the typing indicator stuck on forever — left the log
+    // looking exactly like a turn that never started at all.
+    logger.info(`Session ${session.id} turn started (engine ${session.engine}, key ${msg.sessionKey})`);
+
     // Resolve MCP config before try block so it's accessible in catch for cleanup
     let mcpConfigPath: string | undefined;
 
