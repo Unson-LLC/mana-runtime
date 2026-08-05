@@ -356,6 +356,8 @@ export class TurnResolver {
   private graceTimer: NodeJS.Timeout | undefined;
   /** How many times the grace window has been re-armed (diagnostics only). */
   private graceExtensions = 0;
+  /** When the StopFailure grace window was first armed (diagnostics only). */
+  private graceStartedAt = 0;
   /** One-shot guard so the missing-SessionStart warning isn't repeated per hook. */
   private warnedMissingSessionStart = false;
 
@@ -399,6 +401,7 @@ export class TurnResolver {
           `StopFailure (${errorKind}) for turn ${this.logTag} — holding ` +
           `${this.opts.stopFailureGraceMs ?? STOP_FAILURE_GRACE_MS}ms in case claude recovers`,
         );
+        this.graceStartedAt = Date.now();
         this.armGrace();
       } else {
         this.settleWithFailure();
@@ -477,7 +480,13 @@ export class TurnResolver {
   noteActivity(): void {
     if (this.graceTimer) {
       this.graceExtensions++;
-      logger.info(`StopFailure grace re-armed (#${this.graceExtensions}) for turn ${this.logTag} — claude is still producing output`);
+      // This runs per SSE delta (handleSseEvent), so one line per re-arm would flood
+      // gateway.log — and add file I/O to the streaming hot path — during exactly the
+      // long recovery we want to observe. Announce once that output resumed; the
+      // running total is reported by the defer/settle lines instead.
+      if (this.graceExtensions === 1) {
+        logger.info(`StopFailure grace re-armed for turn ${this.logTag} — claude resumed output`);
+      }
       this.armGrace();
     }
   }
@@ -488,8 +497,12 @@ export class TurnResolver {
     this.graceTimer = setTimeout(() => {
       if (this.opts.shouldDeferStopFailure?.()) {
         // Indefinite hold: this branch can repeat forever while sub-agents run.
-        // It is the shape of "Ryoko promised a result and never came back".
-        logger.info(`StopFailure grace expired for turn ${this.logTag} but work is still in flight — deferring another ${ms}ms`);
+        // It is the shape of "Ryoko promised a result and never came back", so the
+        // held-for time is the number to read.
+        logger.info(
+          `StopFailure grace expired for turn ${this.logTag} but work is still in flight — ` +
+          `deferring another ${ms}ms (held ${Math.round((Date.now() - this.graceStartedAt) / 1000)}s, ${this.graceExtensions} re-arms)`,
+        );
         this.armGrace();
         return;
       }
@@ -955,7 +968,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
    *  scrollback) only if this is still the session's current handle; (2) stop the per-PTY
    *  SSE proxy; (3) interrupt the active turn iff this proc is the bound one, so run()'s
    *  promise resolves instead of hanging until the turn watchdog (issue #18). */
-  private handlePtyDeath(jinnSessionId: string, proc: pty.IPty, handle: PtyHandle, cause: string): void {
+  private handlePtyDeath(jinnSessionId: string, proc: pty.IPty, handle: PtyHandle, cause: string, expected = false): void {
     if (this.deadHandles.has(handle)) return;
     this.deadHandles.add(handle);
     // Observability: a PTY death that takes an in-flight turn with it is invisible
@@ -963,14 +976,21 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     // NOT post interrupted results (`if (!wasInterrupted)` in runSession) — so the
     // user gets silence and the log shows nothing at all. Record every death, and
     // whether it swallowed a turn, before doing any cleanup.
+    //
+    // `expected` means WE asked for this teardown (/stop, shutdown, LRU eviction,
+    // keep-warm reaping, spawn-parameter change — all route through handle.kill()).
+    // Those must not warn: a warning that fires on routine shutdown stops being
+    // evidence of a crash, which is the entire point of this line.
     const activeEntry = this.active.get(jinnSessionId);
     const killedTurn = !!activeEntry && activeEntry.boundProc === proc;
-    logger.warn(
-      `PTY death for session ${jinnSessionId} (pid ${proc.pid}): ${cause}` +
-      (killedTurn
-        ? " — a turn was bound to this PTY; it settles as interrupted and its reply is NOT delivered"
-        : " — no turn bound to this PTY"),
-    );
+    const detail = killedTurn
+      ? expected
+        ? " — interrupting the turn bound to it (requested teardown)"
+        : " — a turn was bound to this PTY; it settles as interrupted and its reply is NOT delivered"
+      : " — no turn bound to this PTY";
+    const line = `PTY death for session ${jinnSessionId} (pid ${proc.pid}): ${cause}${detail}`;
+    if (expected) logger.info(line);
+    else logger.warn(line);
     // Identity gate: in a kill->respawn race the lifecycle/stream entries already point
     // at the NEW PTY by the time THIS (old) PTY dies. Only touch shared state when this
     // handle is still the session's current warm one — else we'd evict the live PTY.
@@ -1048,7 +1068,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       } else {
         logger.warn(`PTY socket error for session ${jinnSessionId}: ${err.message}`);
       }
-      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code ?? err.message})`);
+      this.handlePtyDeath(jinnSessionId, proc, handle, `PTY socket error (${code ?? err.message})`, teardownRequested);
     });
 
     proc.onData((d) => {
@@ -1073,7 +1093,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       }
     });
     proc.onExit(() => {
-      this.handlePtyDeath(jinnSessionId, proc, handle, "process exited");
+      this.handlePtyDeath(jinnSessionId, proc, handle, "process exited", teardownRequested);
     });
     (handle as any)._proc = proc;
     // Keep the per-PTY proxy reachable from the handle so handlePtyDeath can tear it
