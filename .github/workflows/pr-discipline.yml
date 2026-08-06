@@ -1,0 +1,24 @@
+name: PR Discipline
+# 軽量規約の存在チェックのみ（fail-closed禁止: branch protectionのrequired checkには入れない）。
+# 落ちてもmergeはブロックされない。レビュー時の注意喚起が目的。
+on:
+  pull_request:
+    types: [opened, edited, reopened]
+    branches: [main]
+
+jobs:
+  check-template-sections:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body has Story and AC sections
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          missing=""
+          echo "$BODY" | grep -q '^## Story' || missing="$missing '## Story'"
+          echo "$BODY" | grep -q '^## 受け入れ条件と対応テスト' || missing="$missing '## 受け入れ条件と対応テスト'"
+          if [ -n "$missing" ]; then
+            echo "::warning::PR本文に次の節がありません:$missing — テンプレートに沿って追記してください（mergeはブロックしません）"
+            exit 1
+          fi
+          echo "PR本文に必須2節あり"
