@@ -60,12 +60,15 @@ export function sanitizeMinutesMrkdwn(text: string): string {
 // ---------------------------------------------------------------------------
 
 export interface MinutesDestination {
+  destinationId?: string;
   /** Stable project id (e.g. proj_salestailor) — the classification enum. */
   projectId: string;
   /** Human-readable project name shown to the LLM and in Slack UI. */
   name: string;
   /** Slack channel the minutes get posted into. */
   channelId: string;
+  connectorInstanceId?: string;
+  workspaceId?: string;
 }
 
 export function buildRoutingPrompt(

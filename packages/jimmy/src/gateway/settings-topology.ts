@@ -1,6 +1,7 @@
 import type { ConfigHistoryEntry } from "../shared/config-history.js";
 import { safeSettingsBaseUrl } from "../shared/settings-url.js";
 import type { JinnConfig, SlackConnectorConfig, SlackRespondMode } from "../shared/types.js";
+import { normalizeMeetingMinutesDestinations } from "../connectors/slack/meeting-minutes-destinations.js";
 
 export type TopologyVerificationStatus = "verified" | "error" | "unconfirmed";
 export type TopologyVerificationCode =
@@ -147,8 +148,12 @@ export function buildSlackTopologyProbePlan(config: JinnConfig): SlackTopologyPr
     const pipeline = source.config.meetingMinutesPipeline;
     if (!pipeline?.enabled) continue;
     for (const channelId of pipeline.routerChannels ?? []) add(source.instanceId, channelId);
-    for (const destination of pipeline.destinations ?? []) add(source.instanceId, destination.channelId);
-    for (const destination of pipeline.shareDestinations ?? []) {
+    const destinations = normalizeMeetingMinutesDestinations({
+      sourceConnectorInstanceId: source.instanceId,
+      destinations: pipeline.destinations,
+      shareDestinations: pipeline.shareDestinations,
+    });
+    for (const destination of destinations) {
       add(destination.connectorInstanceId, destination.channelId, destination.workspaceId);
     }
   }
@@ -264,20 +269,27 @@ export function buildSettingsTopology(input: {
         verification: routeVerification(true, sourceSnapshot, channelId),
       };
     });
-    for (const destination of pipeline.destinations ?? []) {
-      const snapshot = sourceSnapshot;
-      const verification = routeVerification(true, snapshot, destination.channelId);
+    const destinations = normalizeMeetingMinutesDestinations({
+      sourceConnectorInstanceId: source.instanceId,
+      destinations: pipeline.destinations,
+      shareDestinations: pipeline.shareDestinations,
+    });
+    for (const destination of destinations) {
+      const targetExists = declarationIds.has(destination.connectorInstanceId)
+        && (liveConnectorInstanceIds?.has(destination.connectorInstanceId) ?? true);
+      const snapshot = snapshots.get(destination.connectorInstanceId);
+      const verification = routeVerification(targetExists, snapshot, destination.channelId, destination.workspaceId);
       const channelProbe = snapshot?.channels[destination.channelId];
       routes.push({
-        id: `primary:${source.instanceId}:${destination.projectId}:${destination.channelId}`,
+        id: `primary:${source.instanceId}:${destination.destinationId}`,
         kind: "primary",
         sourceConnectorInstanceId: source.instanceId,
         sourceWorkspaceId: sourceSnapshot?.workspaceId ?? null,
         sourceWorkspaceName: sourceSnapshot?.workspaceName ?? null,
         routerChannels,
         routerChannelDetails,
-        destinationConnectorInstanceId: source.instanceId,
-        workspaceId: snapshot?.workspaceId ?? null,
+        destinationConnectorInstanceId: destination.connectorInstanceId,
+        workspaceId: destination.workspaceId ?? snapshot?.workspaceId ?? null,
         workspaceName: snapshot?.workspaceName ?? null,
         projectId: destination.projectId,
         projectName: destination.name,
@@ -286,31 +298,6 @@ export function buildSettingsTopology(input: {
         verification,
       });
       if (verification.status !== "verified") warnings.push({ code: verification.code, severity: verification.status === "error" ? "error" : "warning", targetId: destination.channelId, message: warningMessage(verification.code) });
-    }
-    for (const destination of pipeline.shareDestinations ?? []) {
-      const targetExists = declarationIds.has(destination.connectorInstanceId)
-        && (liveConnectorInstanceIds?.has(destination.connectorInstanceId) ?? true);
-      const snapshot = snapshots.get(destination.connectorInstanceId);
-      const verification = routeVerification(targetExists, snapshot, destination.channelId, destination.workspaceId);
-      const channelProbe = snapshot?.channels[destination.channelId];
-      routes.push({
-        id: `share:${source.instanceId}:${destination.shareId}`,
-        kind: "share",
-        sourceConnectorInstanceId: source.instanceId,
-        sourceWorkspaceId: sourceSnapshot?.workspaceId ?? null,
-        sourceWorkspaceName: sourceSnapshot?.workspaceName ?? null,
-        routerChannels,
-        routerChannelDetails,
-        destinationConnectorInstanceId: destination.connectorInstanceId,
-        workspaceId: destination.workspaceId,
-        workspaceName: snapshot?.workspaceName ?? null,
-        projectId: destination.projectId,
-        projectName: destination.name,
-        channelId: destination.channelId,
-        channelName: channelProbe?.name ?? null,
-        verification,
-      });
-      if (verification.status !== "verified") warnings.push({ code: verification.code, severity: verification.status === "error" ? "error" : "warning", targetId: destination.shareId, message: warningMessage(verification.code) });
     }
   }
 

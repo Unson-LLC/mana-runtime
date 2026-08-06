@@ -129,7 +129,7 @@ function makePipeline(overrides: {
       }
     };
   }
-  return { pipeline, apiCall, fetchTranscript, classify, generate, handoff };
+  return { pipeline, apiCall, fetchTranscript, classify, generate, handoff, share: overrides.share };
 }
 
 function fileEvent(overrides: Record<string, unknown> = {}) {
@@ -342,6 +342,51 @@ describe("routing fallback", () => {
     expect(run.destinationApprovedBy).toBe(OPERATOR);
     expect(run.destinationApprovedAt).toEqual(expect.any(Number));
     expect(postedMessages(apiCall).some((p) => p.channel === "C_BAAO")).toBe(true);
+  });
+
+  it("posts directly to a pre-selected cross-workspace destination without a source copy", async () => {
+    const share = vi.fn().mockImplementation(async ({ onProgress }) => {
+      onProgress({ parentTs: "9000.1", threadTs: ["9000.2"] });
+      return { parentTs: "9000.1" };
+    });
+    const remote = {
+      shareId: "baao-business",
+      projectId: "proj_baao",
+      name: "事業運営 / BAAO",
+      connectorInstanceId: "slack-biz",
+      workspaceId: "T_BIZ",
+      channelId: "C_BIZ_BAAO",
+    };
+    const { pipeline, apiCall } = makePipeline({
+      autoConfirm: false,
+      share,
+      classify: vi.fn().mockResolvedValue(null),
+      config: { shareDestinations: [remote] },
+    });
+    const event = fileEvent();
+    await pipeline.maybeHandleFileMessage(event);
+    const key = runKey(ROUTER, "F001", event.ts as string);
+
+    await pipeline.handleChooseDestination(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, destinationId: remote.shareId }) } },
+    );
+
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(share).toHaveBeenCalledWith(expect.objectContaining({ destination: remote }));
+    expect(postedMessages(apiCall).some((message) => message.channel === "C_BAAO")).toBe(false);
+    expect(postedMessages(apiCall).some((message) => message.channel === "C_BIZ_BAAO")).toBe(false);
+    expect(JSON.stringify(postedMessages(apiCall, "chat.update").at(-1)?.blocks)).not.toContain(
+      "meeting_minutes_share",
+    );
+    expect(readState().runs[key]).toMatchObject({
+      status: "posted",
+      destinationId: remote.shareId,
+      destinationConnectorInstanceId: "slack-biz",
+      destinationWorkspaceId: "T_BIZ",
+      destinationChannelId: "C_BIZ_BAAO",
+      postedParentTs: "9000.1",
+    });
   });
 
   it("uses the operator choice instead of the LLM proposal", async () => {

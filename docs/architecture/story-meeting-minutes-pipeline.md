@@ -34,8 +34,8 @@ manaからの主な設計変更:
 
 スコープ外: GitHubへのtranscript/minutesコミット（議事録はSlack、タスクは
 正本ストアに残る。必要になったら別story）、カレンダー会議同定、決定事項抽出
-（Graph decisions書き込み）、フォローアップメッセージ起草。クロスワークスペース共有は
-通常ルーティングと分離し、通常投稿後のoperatorによる明示承認時だけ実行する。
+（Graph decisions書き込み）、フォローアップメッセージ起草。クロスワークスペース宛先も
+投稿前selectへ統合し、選択したworkspaceのexact connectorへ一度だけ直接配送する。
 
 ## DAG構成（Eve設計の写像）
 
@@ -49,11 +49,10 @@ flowchart TD
   CTX --> RT["② 振り分け分類 (invokeOneShot 小モデル)\ntranscript冒頭 + destination候補一覧 → projectId"]
   RT --> ASK["router スレッドに候補+宛先select提示（常に投稿前確認）"]
   ASK -->|operator選択| GEN
-  GEN --> POST["④ プロジェクトチャンネルへ展開\n親=要約 / スレッド=本文2900字分割"]
+  GEN --> POST["④ 選択済みworkspace/channelへ直接展開\n親=要約 / スレッド=本文2900字分割"]
   POST --> HAND["⑤ タスク動線ハンドオフ\nMeetingTaskProposalNotifier.processMinutesText()"]
   POST --> CTRL["routerスレッドに結果+振り直しselect"]
   CTRL -->|振り直し| REROUTE["誤投稿先の親/本文をscrub → 新宛先に再展開 → タスクは手動確認を案内"]
-  CTRL -->|明示共有| SHARE["shareDestinationsを再照合 → target connector認証/所属確認 → 別workspaceへ生成済み議事録だけを共有"]
 ```
 
 各段は state の `status` を単調に進める:
@@ -104,11 +103,12 @@ flowchart TD
 - **振り分け**: LLM分類の出力は `destinations` のprojectId enumに限定して
   バリデートする（listにないIDは「判定不能」扱い）。候補内IDでも配送権限にはせず、
   routerスレッドでoperatorが明示確定するまで生成・投稿しない。
-- **別workspace共有**: `shareDestinations` はLLM候補・通常宛先・reroute候補に混ぜない。
-  action payloadはrun keyとshareIdだけとし、現在のconfigから
+- **別workspace直接配送**: 既存 `shareDestinations` は互換のため投稿前の宛先候補へ正規化する。
+  action payloadはrun keyとopaqueなdestination IDだけとし、現在のconfigから
   `connectorInstanceId + workspaceId + channelId` を再解決する。target connector不在、
   `auth.test`のworkspace不一致、bot非所属、archive済みはすべて投稿前にfail closed。
-  source connectorへのtoken/client fallbackは禁止し、生transcriptとタスク提案は共有しない。
+  source connectorへのtoken/client fallbackは禁止し、生transcriptは配送しない。remote宛の
+  タスク提案はsource tokenへfallbackせず安全にskipする。投稿後の「別workspaceへ共有」UIは出さない。
 - **操作権限**: 振り直しselect・宛先selectの操作は `operatorUserIds`
   （未設定時は connector の `allowFrom` にフォールバック。どちらも空なら機能停止）
   のユーザーのみ。認可外はephemeralで拒否。`meeting-task-proposal` の
@@ -220,6 +220,7 @@ meetingMinutesPipeline:
     - projectId: proj_test
       name: manaテスト
       channelId: C0A2L9FEKEJ
+  # 旧shareDestinationsも投稿前のdirect destinationとして互換読込する
   shareDestinations:
     - shareId: proj-test-business
       projectId: proj_test
