@@ -33,6 +33,7 @@ export const MAX_TRANSCRIPT_CHARS = 120_000;
 const ROUTING_HEAD_CHARS = 4_000;
 /** Slack section block text limit is 3000; keep headroom like mana did. */
 export const SLACK_BLOCK_TEXT_LIMIT = 2_900;
+const SLACK_OVERVIEW_SUFFIX = "\n…（全文はスレッド内）";
 /** Deterministic floor — mana's meeting-length-based floors are unverifiable. */
 export const MIN_MINUTES_CHARS = 800;
 
@@ -236,6 +237,19 @@ export interface MinutesValidationError {
   reason: string;
 }
 
+/** Keeps the parent overview within the same conservative Slack limit as blocks. */
+export function fitSlackOverview(
+  text: string,
+  limit: number = SLACK_BLOCK_TEXT_LIMIT,
+): string {
+  if (text.length <= limit) return text;
+  const boundary = Math.max(1, limit - SLACK_OVERVIEW_SUFFIX.length);
+  let splitIndex = text.lastIndexOf("\n", boundary);
+  if (splitIndex <= 0) splitIndex = text.lastIndexOf(" ", boundary);
+  if (splitIndex <= 0) splitIndex = boundary;
+  return `${text.slice(0, splitIndex).trimEnd()}${SLACK_OVERVIEW_SUFFIX}`;
+}
+
 /**
  * Parses and validates the LLM output against the deterministic parts of the
  * quality contract. Returns the minutes or a validation error (the caller
@@ -272,10 +286,10 @@ export function parseMinutesResult(
 
   // Overview = everything before the first topic separator.
   const separatorIndex = lines.findIndex((line) => /^-{5,}\s*$/.test(line.trim()));
-  const overview = lines
+  const overview = fitSlackOverview(lines
     .slice(0, separatorIndex === -1 ? lines.length : separatorIndex)
     .join("\n")
-    .trim();
+    .trim());
 
   return { minutes: { title, overview, body } };
 }

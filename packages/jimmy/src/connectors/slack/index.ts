@@ -36,7 +36,7 @@ import {
   type MeetingMinutesShareRequest,
   type MeetingMinutesUpdateRequest,
 } from "./meeting-minutes-pipeline.js";
-import { splitForSlack } from "./meeting-minutes-generator.js";
+import { fitSlackOverview, splitForSlack } from "./meeting-minutes-generator.js";
 import { VibeproDecisionNotifier } from "./vibepro-decision.js";
 import { VibeproGateResultNotifier } from "./vibepro-gate-result.js";
 import { extractGoalCondition, shouldExtractGoal } from "./goal-extractor.js";
@@ -1254,7 +1254,7 @@ export class SlackConnector implements Connector {
     }
     const parent = await client.apiCall("chat.postMessage", {
       channel: request.destination.channelId,
-      text: request.minutes.overview,
+      text: fitSlackOverview(request.minutes.overview),
       unfurl_links: false,
     });
     const parentTs = parent.ts;
@@ -1329,7 +1329,7 @@ export class SlackConnector implements Connector {
     await client.apiCall("chat.update", {
       channel: request.destination.channelId,
       ts: request.existing.parentTs,
-      text: request.minutes.overview,
+      text: fitSlackOverview(request.minutes.overview),
       blocks: [],
     });
     return { parentTs: request.existing.parentTs, threadTs };

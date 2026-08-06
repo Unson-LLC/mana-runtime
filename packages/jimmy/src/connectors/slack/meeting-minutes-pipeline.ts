@@ -29,6 +29,7 @@ import {
 } from "../../shared/brainbase-tasks.js";
 import {
   classifyMinutesDestination,
+  fitSlackOverview,
   generateMinutes,
   splitForSlack,
   type GeneratedMinutes,
@@ -1430,7 +1431,15 @@ export class MeetingMinutesPipeline {
         if (!saveState(state)) throw new Error("refresh candidate could not be persisted");
       }
 
-      const candidate = run.refresh.candidate;
+      const candidate = {
+        ...run.refresh.candidate,
+        overview: fitSlackOverview(run.refresh.candidate.overview),
+      };
+      if (candidate.overview !== run.refresh.candidate.overview) {
+        run.refresh.candidate = candidate;
+        run.refresh.updatedAt = Date.now();
+        if (!saveState(state)) throw new Error("normalized refresh candidate could not be persisted");
+      }
       const existing = {
         parentTs: run.postedParentTs,
         threadTs: [...(run.postedThreadTs ?? [])],
@@ -1571,7 +1580,7 @@ export class MeetingMinutesPipeline {
     }
     // Parent is the commit marker and is updated last.
     await this.client.apiCall("chat.update", {
-      channel: channelId, ts: existing.parentTs, text: minutes.overview, blocks: [],
+      channel: channelId, ts: existing.parentTs, text: fitSlackOverview(minutes.overview), blocks: [],
     });
     return { parentTs: existing.parentTs, threadTs };
   }
