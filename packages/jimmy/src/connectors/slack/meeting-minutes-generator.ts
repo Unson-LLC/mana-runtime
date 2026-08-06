@@ -65,6 +65,8 @@ export interface MinutesDestination {
   projectId: string;
   /** Human-readable project name shown to the LLM and in Slack UI. */
   name: string;
+  /** Optional presentation icon. Invalid or missing values use the folder fallback. */
+  emoji?: string;
   /** Slack channel the minutes get posted into. */
   channelId: string;
   connectorInstanceId?: string;

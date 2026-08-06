@@ -34,4 +34,17 @@ describe("normalizeMeetingMinutesDestinations", () => {
       shareDestinations: [{ shareId: "same", projectId: "p2", name: "Two", connectorInstanceId: "slack-client", workspaceId: "T2", channelId: "C2" }],
     })).toThrow("duplicate meeting-minutes destinationId");
   });
+
+  it("normalizes optional destination emoji with a folder fallback", () => {
+    const result = normalizeMeetingMinutesDestinations({
+      sourceConnectorInstanceId: "slack",
+      destinations: [
+        { projectId: "p1", name: "One", emoji: "  ⚔️  ", channelId: "C1" },
+        { projectId: "p2", name: "Two", emoji: "bad\nvalue", channelId: "C2" },
+        { projectId: "p3", name: "Three", channelId: "C3" },
+      ],
+    });
+
+    expect(result.map((destination) => destination.emoji)).toEqual(["⚔️", "📁", "📁"]);
+  });
 });

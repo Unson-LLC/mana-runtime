@@ -12,6 +12,7 @@ vi.mock("../../../shared/logger.js", () => ({
 }));
 
 import {
+  ACTION_MM_CHOOSE_DEST_PATTERN,
   MeetingMinutesPipeline,
   advanceStatus,
   runKey,
@@ -267,6 +268,14 @@ describe("happy path", () => {
     // Control message in the router thread with the reroute select.
     const control = posts.find((p) => p.channel === ROUTER && p.thread_ts === event.ts);
     expect(control).toBeDefined();
+    const completedControl = postedMessages(apiCall, "chat.update").at(-1);
+    const reroute = completedControl.blocks
+      .flatMap((block: any) => block.elements ?? [])
+      .find((element: any) => element.action_id === "meeting_minutes_reroute");
+    expect(reroute.type).toBe("static_select");
+    expect(reroute.confirm).toBeDefined();
+    expect(reroute.options[0].text.text).toBe("📁 BAAO");
+    expect(JSON.stringify(reroute.options.map((option: any) => option.text))).not.toMatch(/C_BAAO|C_ST/);
 
     const state = readState();
     const run = Object.values(state.runs)[0];
@@ -321,6 +330,53 @@ describe("routing fallback", () => {
     expect(run.status).toBe("awaiting_destination");
     const control = postedMessages(apiCall).find((p) => p.channel === ROUTER);
     expect(JSON.stringify(control?.blocks)).toContain("meeting_minutes_choose_destination");
+  });
+
+  it("renders human-readable destination buttons in rows of five", async () => {
+    const destinations = Array.from({ length: 6 }, (_, index) => ({
+      destinationId: `dest-${index}`,
+      projectId: `project-${index}`,
+      name: `Project ${index}`,
+      ...(index === 0 ? { emoji: "🛡️" } : {}),
+      connectorInstanceId: `slack-${index}`,
+      workspaceId: `T_INTERNAL_${index}`,
+      channelId: `C_INTERNAL_${index}`,
+    }));
+    const { pipeline, apiCall } = makePipeline({
+      autoConfirm: false,
+      classify: vi.fn().mockResolvedValue(null),
+      config: { destinations },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    const control = postedMessages(apiCall).find((p) => p.channel === ROUTER);
+    const rows = control.blocks.filter((block: any) => block.type === "actions");
+    expect(rows.map((row: any) => row.elements.length)).toEqual([5, 1]);
+    const buttons = rows.flatMap((row: any) => row.elements);
+    expect(buttons).toHaveLength(6);
+    expect(buttons.map((button: any) => button.action_id)).toEqual([
+      "meeting_minutes_choose_destination:0:0",
+      "meeting_minutes_choose_destination:0:1",
+      "meeting_minutes_choose_destination:0:2",
+      "meeting_minutes_choose_destination:0:3",
+      "meeting_minutes_choose_destination:0:4",
+      "meeting_minutes_choose_destination:1:0",
+    ]);
+    expect(new Set(buttons.map((button: any) => button.action_id)).size).toBe(6);
+    expect(buttons.every((button: any) => ACTION_MM_CHOOSE_DEST_PATTERN.test(button.action_id))).toBe(true);
+    expect(buttons.every((button: any) => button.type === "button" && button.style === "primary")).toBe(true);
+    expect(buttons[0].text).toEqual({ type: "plain_text", text: "🛡️ Project 0", emoji: true });
+    expect(buttons[1].text).toEqual({ type: "plain_text", text: "📁 Project 1", emoji: true });
+    expect(JSON.parse(buttons[0].value)).toEqual({ key: expect.any(String), destinationId: "dest-0" });
+    const visibleText = buttons.map((button: any) => button.text.text).join("\n");
+    expect(visibleText).not.toMatch(/T_INTERNAL|C_INTERNAL|slack-|dest-/);
+    expect(buttons.some((button: any) => button.type === "static_select")).toBe(false);
+  });
+
+  it("registers only the anchored destination-button action pattern", () => {
+    expect(ACTION_MM_CHOOSE_DEST_PATTERN.test("meeting_minutes_choose_destination:2:4")).toBe(true);
+    expect(ACTION_MM_CHOOSE_DEST_PATTERN.test("xmeeting_minutes_choose_destination:2:4")).toBe(false);
+    expect(ACTION_MM_CHOOSE_DEST_PATTERN.test("meeting_minutes_choose_destination:2:4:x")).toBe(false);
   });
 
   it("resumes when the operator picks a destination", async () => {

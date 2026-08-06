@@ -647,6 +647,7 @@ export interface SlackConnectorConfig {
       destinationId?: string;
       projectId: string;
       name: string;
+      emoji?: string;
       channelId: string;
       connectorInstanceId?: string;
       workspaceId?: string;
@@ -656,6 +657,7 @@ export interface SlackConnectorConfig {
       shareId: string;
       projectId: string;
       name: string;
+      emoji?: string;
       connectorInstanceId: string;
       workspaceId: string;
       channelId: string;

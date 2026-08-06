@@ -148,6 +148,7 @@ const DAY_MS = 86_400_000;
 export const IN_PLACE_PROJECT_ID = "__in_place__";
 
 export const ACTION_MM_CHOOSE_DEST = "meeting_minutes_choose_destination";
+export const ACTION_MM_CHOOSE_DEST_PATTERN = /^meeting_minutes_choose_destination:\d+:\d+$/;
 export const ACTION_MM_REROUTE = "meeting_minutes_reroute";
 export const ACTION_MM_RETRY = "meeting_minutes_retry";
 export const ACTION_MM_SHARE = "meeting_minutes_share";
@@ -157,6 +158,7 @@ export interface MinutesShareDestination {
   shareId: string;
   projectId: string;
   name: string;
+  emoji?: string;
   connectorInstanceId: string;
   workspaceId: string;
   channelId: string;
@@ -394,6 +396,7 @@ export class MeetingMinutesPipeline {
       });
     };
     this.app.action(ACTION_MM_CHOOSE_DEST, wrap((body, action) => this.handleChooseDestination(body, action)));
+    this.app.action(ACTION_MM_CHOOSE_DEST_PATTERN, wrap((body, action) => this.handleChooseDestination(body, action)));
     this.app.action(ACTION_MM_REROUTE, wrap((body, action) => this.handleReroute(body, action)));
     this.app.action(ACTION_MM_RETRY, wrap((body, action) => this.handleRetry(body, action)));
   }
@@ -880,30 +883,30 @@ export class MeetingMinutesPipeline {
       .map((d) => ({
         text: {
           type: "plain_text",
-          text: `${d.name} (${d.workspaceId ?? "受付workspace"} / ${d.channelId})`.slice(0, 75),
+          text: `${d.emoji ?? "📁"} ${d.name}`.slice(0, 75),
+          emoji: true,
         },
         value: d.destinationId,
       }));
   }
 
   private destinationSelectBlocks(key: string, text: string): unknown[] {
-    return [
-      { type: "section", text: { type: "mrkdwn", text } },
-      {
+    const options = this.destinationOptions();
+    const rows: unknown[] = [];
+    for (let offset = 0; offset < options.length; offset += 5) {
+      const rowIndex = offset / 5;
+      rows.push({
         type: "actions",
-        elements: [
-          {
-            type: "static_select",
-            action_id: ACTION_MM_CHOOSE_DEST,
-            placeholder: { type: "plain_text", text: "宛先プロジェクトを選択" },
-            options: this.destinationOptions().map((o) => ({
-              ...(o as Record<string, unknown>),
-              value: JSON.stringify({ key, destinationId: (o as { value: string }).value }),
-            })),
-          },
-        ],
-      },
-    ];
+        elements: options.slice(offset, offset + 5).map((option, columnIndex) => ({
+          type: "button",
+          action_id: `${ACTION_MM_CHOOSE_DEST}:${rowIndex}:${columnIndex}`,
+          style: "primary",
+          text: (option as { text: unknown }).text,
+          value: JSON.stringify({ key, destinationId: (option as { value: string }).value }),
+        })),
+      });
+    }
+    return [{ type: "section", text: { type: "mrkdwn", text } }, ...rows];
   }
 
   private rerouteBlocks(key: string, text: string, currentDestinationId: string): unknown[] {
