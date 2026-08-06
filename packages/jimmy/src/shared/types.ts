@@ -642,9 +642,16 @@ export interface SlackConnectorConfig {
      * Wildcards are forbidden; every router must be explicitly allowlisted.
      */
     routerChannels?: string[];
-    /** Destination projects (projectId / name / channelId). Required; empty = off. */
-    destinations?: { projectId: string; name: string; channelId: string }[];
-    /** Explicitly approved cross-workspace copy targets. Never used by the LLM router. */
+    /** Pre-post destinations. Legacy three-field entries remain source-local. */
+    destinations?: {
+      destinationId?: string;
+      projectId: string;
+      name: string;
+      channelId: string;
+      connectorInstanceId?: string;
+      workspaceId?: string;
+    }[];
+    /** @deprecated Normalized into pre-post direct destinations for compatibility. */
     shareDestinations?: {
       shareId: string;
       projectId: string;

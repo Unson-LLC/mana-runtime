@@ -57,7 +57,7 @@ describe("buildSettingsTopology", () => {
     ]);
   });
 
-  it("projects primary and cross-workspace share routes onto their declaring and target connectors", () => {
+  it("projects source-local and cross-workspace direct routes onto their exact connectors", () => {
     const result = buildSettingsTopology({
       config,
       observedAt: "2026-08-02T00:00:00.000Z",
@@ -70,7 +70,7 @@ describe("buildSettingsTopology", () => {
 
     expect(result.routes).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "primary", sourceConnectorInstanceId: "slack", destinationConnectorInstanceId: "slack", projectId: "p1", channelId: "C_PRIMARY" }),
-      expect.objectContaining({ kind: "share", sourceConnectorInstanceId: "slack", destinationConnectorInstanceId: "slack-archive", projectId: "p1", workspaceId: "T_ARCHIVE", channelId: "C_SHARE" }),
+      expect.objectContaining({ kind: "primary", sourceConnectorInstanceId: "slack", destinationConnectorInstanceId: "slack-archive", projectId: "p1", workspaceId: "T_ARCHIVE", channelId: "C_SHARE" }),
     ]));
     expect(result.connectors).toEqual(expect.arrayContaining([
       expect.objectContaining({ instanceId: "slack", allowlistedOperatorCount: 2 }),
@@ -84,8 +84,8 @@ describe("buildSettingsTopology", () => {
     const result = buildSettingsTopology({ config: missingTarget, observedAt: "2026-08-02T00:00:00.000Z", runtimeSnapshots: new Map(), history: [] });
 
     expect(result.routes).toHaveLength(2);
-    expect(result.routes.find((route) => route.kind === "primary")?.verification).toMatchObject({ status: "unconfirmed", code: "runtime_snapshot_unavailable" });
-    expect(result.routes.find((route) => route.kind === "share")?.verification).toMatchObject({ status: "error", code: "target_connector_missing" });
+    expect(result.routes.find((route) => route.destinationConnectorInstanceId === "slack")?.verification).toMatchObject({ status: "unconfirmed", code: "runtime_snapshot_unavailable" });
+    expect(result.routes.find((route) => route.destinationConnectorInstanceId === "slack-archive")?.verification).toMatchObject({ status: "error", code: "target_connector_missing" });
     expect(result.warnings.map((warning) => warning.code)).toEqual(expect.arrayContaining(["runtime_snapshot_unavailable", "target_connector_missing"]));
   });
 
@@ -98,7 +98,7 @@ describe("buildSettingsTopology", () => {
       history: [],
     });
 
-    expect(result.routes.find((route) => route.kind === "share")?.verification).toMatchObject({
+    expect(result.routes.find((route) => route.destinationConnectorInstanceId === "slack-archive")?.verification).toMatchObject({
       status: "error",
       code: "target_connector_missing",
     });
@@ -170,7 +170,7 @@ describe("buildSettingsTopology", () => {
       history: [],
     });
 
-    const share = result.routes.find((route) => route.kind === "share");
+    const share = result.routes.find((route) => route.destinationConnectorInstanceId === "slack-archive");
     expect(share).toMatchObject({
       sourceWorkspaceId: "T_PRIMARY",
       sourceWorkspaceName: "Primary",
@@ -178,7 +178,7 @@ describe("buildSettingsTopology", () => {
       verification: { status: "unconfirmed", code: "workspace_identity_unavailable" },
       routerChannelDetails: [expect.objectContaining({ channelId: "C_ROUTER", channelName: "router", verification: expect.objectContaining({ status: "verified" }) })],
     });
-    expect(result.warnings).toContainEqual(expect.objectContaining({ code: "workspace_identity_unavailable", targetId: "share-1" }));
+    expect(result.warnings).toContainEqual(expect.objectContaining({ code: "workspace_identity_unavailable", targetId: "C_SHARE" }));
   });
 
   it("serializes only allowlisted history metadata and never config credentials or env names", () => {

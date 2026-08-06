@@ -46,6 +46,10 @@ import {
   buildSettingsDeepLink,
   type SettingsDeepLinkTarget,
 } from "./settings-deep-link.js";
+import {
+  normalizeMeetingMinutesDestinations,
+  type CanonicalMinutesDestination,
+} from "./meeting-minutes-destinations.js";
 
 export interface MeetingMinutesPipelineConfig {
   /** Master switch — defaults to false when the block is absent. */
@@ -92,6 +96,7 @@ export interface MinutesRun {
   /** Legacy state compatibility only; wildcard routing is no longer accepted. */
   inPlace?: boolean;
   projectId?: string;
+  destinationId?: string;
   /** LLM proposal only; it is never delivery authority. */
   suggestedProjectId?: string;
   routingReason?: string;
@@ -99,6 +104,8 @@ export interface MinutesRun {
   destinationApprovedBy?: string;
   destinationApprovedAt?: number;
   destinationChannelId?: string;
+  destinationConnectorInstanceId?: string;
+  destinationWorkspaceId?: string;
   /** Parent (overview) message ts in the destination channel. */
   postedParentTs?: string;
   /** Child message timestamps, retained so a later reroute can scrub stale content. */
@@ -283,7 +290,7 @@ export class MeetingMinutesPipeline {
   private readonly enabled: boolean;
   private readonly routerChannels: Set<string>;
   private readonly watchAllChannels: boolean;
-  private readonly destinations: MinutesDestination[];
+  private readonly destinations: CanonicalMinutesDestination[];
   private readonly shareDestinations: MinutesShareDestination[];
   private readonly invalidWildcardConfig: boolean;
   private readonly operators: ApproverResolver;
@@ -310,9 +317,6 @@ export class MeetingMinutesPipeline {
     this.invalidWildcardConfig = configuredRouters.includes("*");
     this.routerChannels = new Set(configuredRouters.filter((value) => value !== "*"));
     this.watchAllChannels = false;
-    this.destinations = (config.destinations ?? []).filter(
-      (d) => d && d.projectId && d.name && d.channelId,
-    );
     this.shareDestinations = (config.shareDestinations ?? []).filter(
       (d) =>
         d &&
@@ -323,6 +327,11 @@ export class MeetingMinutesPipeline {
         d.workspaceId &&
         d.channelId,
     );
+    this.destinations = normalizeMeetingMinutesDestinations({
+      sourceConnectorInstanceId: deps.sourceConnectorInstanceId ?? "slack",
+      destinations: config.destinations,
+      shareDestinations: this.shareDestinations,
+    });
     const operatorIds = (
       config.operatorUserIds?.length ? config.operatorUserIds : fallbackOperators
     ).filter(Boolean);
@@ -387,7 +396,6 @@ export class MeetingMinutesPipeline {
     this.app.action(ACTION_MM_CHOOSE_DEST, wrap((body, action) => this.handleChooseDestination(body, action)));
     this.app.action(ACTION_MM_REROUTE, wrap((body, action) => this.handleReroute(body, action)));
     this.app.action(ACTION_MM_RETRY, wrap((body, action) => this.handleRetry(body, action)));
-    this.app.action(ACTION_MM_SHARE, wrap((body, action) => this.handleShareMinutes(body, action)));
   }
 
   stop(): void {
@@ -514,6 +522,7 @@ export class MeetingMinutesPipeline {
         : await classify(transcript.text, this.destinations, this.routingOptions);
       advanceStatus(run, "awaiting_destination");
       run.projectId = undefined;
+      run.destinationId = undefined;
       run.destinationChannelId = undefined;
       if (routed) {
         run.suggestedProjectId = routed.destination.projectId;
@@ -537,9 +546,18 @@ export class MeetingMinutesPipeline {
           name: run.fileName.replace(/\.txt$/i, ""),
           channelId: run.destinationChannelId ?? run.routerChannelId,
         }
-      : this.destinations.find((d) => d.projectId === run.projectId);
+      : this.destinations.find((d) => d.destinationId === run.destinationId);
     if (!destination) {
       await this.failRun(state, key, "route", `宛先プロジェクト ${run.projectId} がconfigにありません`);
+      return;
+    }
+    if (
+      !run.inPlace &&
+      (run.destinationConnectorInstanceId !== ("connectorInstanceId" in destination ? destination.connectorInstanceId : undefined) ||
+        run.destinationWorkspaceId !== ("workspaceId" in destination ? destination.workspaceId : undefined) ||
+        run.destinationChannelId !== destination.channelId)
+    ) {
+      await this.failRun(state, key, "route", "承認後に宛先設定が変更されたため投稿を中止しました");
       return;
     }
 
@@ -560,7 +578,51 @@ export class MeetingMinutesPipeline {
     // Stage: post (parent = overview, thread = 2900-char body chunks).
     if ((STATUS_RANK[run.status] ?? -1) < STATUS_RANK.posted) {
       try {
-        if (!run.postedParentTs) {
+        const connectorInstanceId = "connectorInstanceId" in destination
+          ? destination.connectorInstanceId
+          : this.deps.sourceConnectorInstanceId;
+        const isRemote = connectorInstanceId !== this.deps.sourceConnectorInstanceId;
+        if (isRemote) {
+          const deliver = this.deps.shareMinutes;
+          const sourceConnectorInstanceId = this.deps.sourceConnectorInstanceId;
+          const workspaceId = "workspaceId" in destination ? destination.workspaceId : undefined;
+          const destinationId = "destinationId" in destination ? destination.destinationId : undefined;
+          if (!deliver || !sourceConnectorInstanceId || !workspaceId || !destinationId || !connectorInstanceId) {
+            throw new Error("target delivery connector is unavailable");
+          }
+          if (run.postedParentTs) {
+            throw new Error("partial remote delivery requires operator review");
+          }
+          const result = await deliver({
+            sourceConnectorInstanceId,
+            destination: {
+              shareId: destinationId,
+              projectId: destination.projectId,
+              name: destination.name,
+              connectorInstanceId,
+              workspaceId,
+              channelId: destination.channelId,
+            },
+            minutes,
+            onProgress: ({ parentTs, threadTs }) => {
+              const freshRun = state.runs[key];
+              if (!freshRun || freshRun.destinationId !== destinationId) {
+                throw new Error("delivery authority state is unavailable");
+              }
+              freshRun.postedParentTs = parentTs;
+              freshRun.postedThreadTs = [...threadTs];
+              if (!saveState(state)) throw new Error("delivery progress could not be persisted");
+            },
+          });
+          run.postedParentTs = result.parentTs;
+          run.postedThreadTs ??= [];
+        } else if (!run.postedParentTs) {
+          if (
+            "workspaceId" in destination && destination.workspaceId &&
+            this.deps.getWorkspaceId?.() !== destination.workspaceId
+          ) {
+            throw new Error("source workspace identity mismatch");
+          }
           const parent = await this.client.apiCall("chat.postMessage", {
             channel: destination.channelId,
             text: minutes.overview,
@@ -574,7 +636,7 @@ export class MeetingMinutesPipeline {
           saveState(state);
         }
         const chunks = splitForSlack(minutes.body);
-        for (const chunk of chunks.slice(run.postedThreadTs?.length ?? 0)) {
+        for (const chunk of (isRemote ? [] : chunks.slice(run.postedThreadTs?.length ?? 0))) {
           const child = await this.client.apiCall("chat.postMessage", {
             channel: destination.channelId,
             thread_ts: run.postedParentTs,
@@ -604,7 +666,10 @@ export class MeetingMinutesPipeline {
     // Stage: task handoff (best-effort — the posting already succeeded).
     let handoffNote = "";
     if ((STATUS_RANK[run.status] ?? -1) < STATUS_RANK.tasks_dispatched) {
-      const notifier = this.deps.taskProposalNotifier;
+      const notifier = "connectorInstanceId" in destination &&
+        destination.connectorInstanceId !== this.deps.sourceConnectorInstanceId
+        ? null
+        : this.deps.taskProposalNotifier;
       if (notifier && run.postedParentTs) {
         try {
           const dispatched = await notifier.processMinutesText(
@@ -634,7 +699,11 @@ export class MeetingMinutesPipeline {
       : `✅ *${destination.name}* <#${destination.channelId}> へ議事録を展開しました\n${minutes.title}${run.routingReason ? `\n_振り分け根拠: ${run.routingReason}_` : ""}${handoffNote}`;
     await this.updateControl(state, key, {
       text: summary,
-      blocks: this.successBlocks(key, summary, destination.projectId),
+      blocks: this.successBlocks(
+        key,
+        summary,
+        "destinationId" in destination ? destination.destinationId : IN_PLACE_PROJECT_ID,
+      ),
     });
   }
 
@@ -804,13 +873,16 @@ export class MeetingMinutesPipeline {
     });
   }
 
-  private destinationOptions(excludeProjectId?: string): unknown[] {
+  private destinationOptions(excludeDestinationId?: string): unknown[] {
     return this.destinations
-      .filter((d) => d.projectId !== excludeProjectId)
+      .filter((d) => d.destinationId !== excludeDestinationId)
       .slice(0, 100)
       .map((d) => ({
-        text: { type: "plain_text", text: d.name.slice(0, 75) },
-        value: d.projectId,
+        text: {
+          type: "plain_text",
+          text: `${d.name} (${d.workspaceId ?? "受付workspace"} / ${d.channelId})`.slice(0, 75),
+        },
+        value: d.destinationId,
       }));
   }
 
@@ -826,7 +898,7 @@ export class MeetingMinutesPipeline {
             placeholder: { type: "plain_text", text: "宛先プロジェクトを選択" },
             options: this.destinationOptions().map((o) => ({
               ...(o as Record<string, unknown>),
-              value: JSON.stringify({ key, projectId: (o as { value: string }).value }),
+              value: JSON.stringify({ key, destinationId: (o as { value: string }).value }),
             })),
           },
         ],
@@ -834,10 +906,10 @@ export class MeetingMinutesPipeline {
     ];
   }
 
-  private rerouteBlocks(key: string, text: string, currentProjectId: string): unknown[] {
-    const options = this.destinationOptions(currentProjectId).map((o) => ({
+  private rerouteBlocks(key: string, text: string, currentDestinationId: string): unknown[] {
+    const options = this.destinationOptions(currentDestinationId).map((o) => ({
       ...(o as Record<string, unknown>),
-      value: JSON.stringify({ key, projectId: (o as { value: string }).value }),
+      value: JSON.stringify({ key, destinationId: (o as { value: string }).value }),
     }));
     const blocks: unknown[] = [{ type: "section", text: { type: "mrkdwn", text } }];
     if (options.length > 0) {
@@ -862,45 +934,15 @@ export class MeetingMinutesPipeline {
     return blocks;
   }
 
-  private successBlocks(key: string, text: string, currentProjectId: string): unknown[] {
-    const blocks = this.rerouteBlocks(key, text, currentProjectId);
-    const options = this.shareDestinations
-      .filter((destination) => destination.projectId === currentProjectId)
-      .slice(0, 100)
-      .map((destination) => ({
-        text: { type: "plain_text", text: destination.name.slice(0, 75) },
-        value: JSON.stringify({ key, shareId: destination.shareId }),
-      }));
-    if (options.length > 0) {
-      blocks.push({
-        type: "actions",
-        elements: [
-          {
-            type: "static_select",
-            action_id: ACTION_MM_SHARE,
-            placeholder: { type: "plain_text", text: "他のワークスペースに共有" },
-            options,
-            confirm: {
-              title: { type: "plain_text", text: "議事録を共有" },
-              text: {
-                type: "plain_text",
-                text: "選択先へ生成済み議事録だけを共有します。元のtranscriptは共有しません。",
-              },
-              confirm: { type: "plain_text", text: "共有する" },
-              deny: { type: "plain_text", text: "やめる" },
-            },
-          },
-        ],
-      });
-    }
-    return blocks;
+  private successBlocks(key: string, text: string, currentDestinationId: string): unknown[] {
+    return this.rerouteBlocks(key, text, currentDestinationId);
   }
 
   // -------------------------------------------------------------------------
   // Actions
   // -------------------------------------------------------------------------
 
-  private parseSelectedValue(action: any): { key: string; projectId?: string; shareId?: string } | null {
+  private parseSelectedValue(action: any): { key: string; destinationId?: string; projectId?: string; shareId?: string } | null {
     const raw = action?.selected_option?.value ?? action?.value;
     try {
       const parsed = JSON.parse(raw ?? "");
@@ -972,9 +1014,15 @@ export class MeetingMinutesPipeline {
       await this.notifyEphemeral(body, "この実行はすでに振り分け済みです。");
       return;
     }
-    const destination = this.destinations.find((d) => d.projectId === value?.projectId);
+    const destination = this.destinations.find((d) =>
+      d.destinationId === value?.destinationId ||
+      (!value?.destinationId && d.projectId === value?.projectId),
+    );
     if (!destination) return;
     run.projectId = destination.projectId;
+    run.destinationId = destination.destinationId;
+    run.destinationConnectorInstanceId = destination.connectorInstanceId;
+    run.destinationWorkspaceId = destination.workspaceId;
     run.destinationChannelId = destination.channelId;
     run.routingReason = "operator選択";
     run.destinationApprovedBy = body.user.id;
@@ -1001,8 +1049,18 @@ export class MeetingMinutesPipeline {
       await this.notifyEphemeral(body, "この実行はまだ展開されていないため、振り直しできません。");
       return;
     }
-    const next = this.destinations.find((d) => d.projectId === value?.projectId);
-    if (!next || next.projectId === run.projectId) return;
+    const next = this.destinations.find((d) =>
+      d.destinationId === value?.destinationId ||
+      (!value?.destinationId && d.projectId === value?.projectId),
+    );
+    if (!next || next.destinationId === run.destinationId) return;
+    if (
+      next.connectorInstanceId !== this.deps.sourceConnectorInstanceId ||
+      run.destinationConnectorInstanceId !== this.deps.sourceConnectorInstanceId
+    ) {
+      await this.notifyEphemeral(body, "workspaceをまたぐ振り直しは未対応です。投稿の重複を避けるため実行しません。");
+      return;
+    }
     const previousChannelId = run.destinationChannelId;
     if (run.reroute && run.reroute.status !== "completed") {
       await this.notifyEphemeral(
@@ -1079,6 +1137,9 @@ export class MeetingMinutesPipeline {
         saveState(state);
       }
       run.projectId = next.projectId;
+      run.destinationId = next.destinationId;
+      run.destinationConnectorInstanceId = next.connectorInstanceId;
+      run.destinationWorkspaceId = next.workspaceId;
       run.destinationChannelId = next.channelId;
       run.inPlace = false;
       run.postedParentTs = newParentTs;
@@ -1097,7 +1158,7 @@ export class MeetingMinutesPipeline {
       const summary = `✅ *${next.name}* <#${next.channelId}> へ振り直しました\n${run.minutes.title}\n_登録済みタスクはタスク登録メッセージの取り消し/編集から操作してください_`;
       await this.updateControl(state, key, {
         text: summary,
-        blocks: this.successBlocks(key, summary, next.projectId),
+        blocks: this.successBlocks(key, summary, next.destinationId),
       });
     } catch (err) {
       run.reroute = {
