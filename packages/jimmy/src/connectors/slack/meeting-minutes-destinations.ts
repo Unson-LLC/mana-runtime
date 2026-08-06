@@ -4,6 +4,7 @@ export interface LegacyMinutesShareDestination {
   shareId: string;
   projectId: string;
   name: string;
+  emoji?: string;
   connectorInstanceId: string;
   workspaceId: string;
   channelId: string;
@@ -14,6 +15,17 @@ export interface CanonicalMinutesDestination extends MinutesDestination {
   connectorInstanceId: string;
   workspaceId?: string;
   authorityMode: "legacy-source" | "explicit";
+}
+
+const DEFAULT_DESTINATION_EMOJI = "📁";
+
+function normalizeDestinationEmoji(value: unknown): string {
+  if (typeof value !== "string") return DEFAULT_DESTINATION_EMOJI;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 16 || /[\u0000-\u001f\u007f<>&]/u.test(trimmed)) {
+    return DEFAULT_DESTINATION_EMOJI;
+  }
+  return trimmed;
 }
 
 export function normalizeMeetingMinutesDestinations(input: {
@@ -31,6 +43,7 @@ export function normalizeMeetingMinutesDestinations(input: {
     }
     normalized.push({
       ...destination,
+      emoji: normalizeDestinationEmoji(destination.emoji),
       destinationId: destination.destinationId?.trim() || `legacy:${destination.projectId}:${destination.channelId}`,
       connectorInstanceId: connector || input.sourceConnectorInstanceId,
       ...(workspace ? { workspaceId: workspace } : {}),
@@ -43,6 +56,7 @@ export function normalizeMeetingMinutesDestinations(input: {
       destinationId: destination.shareId,
       projectId: destination.projectId,
       name: destination.name,
+      emoji: normalizeDestinationEmoji(destination.emoji),
       connectorInstanceId: destination.connectorInstanceId,
       workspaceId: destination.workspaceId,
       channelId: destination.channelId,
