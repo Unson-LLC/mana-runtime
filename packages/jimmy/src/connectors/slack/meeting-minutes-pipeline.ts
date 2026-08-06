@@ -1499,6 +1499,9 @@ export class MeetingMinutesPipeline {
         ),
       });
     } catch (err) {
+      const errorMessage = (err instanceof Error ? err.message : String(err))
+        .replace(/[\r\n]+/g, " ")
+        .slice(0, 300);
       if (lockKey) {
         const failed = loadState();
         const failedRun = failed.runs[lockKey];
@@ -1514,7 +1517,8 @@ export class MeetingMinutesPipeline {
                 ?? "現在の宛先";
             const failureText =
               `⚠️ *${destinationName}* の議事録更新に失敗しました\n` +
-              "既存の議事録は保持しています。同じボタンから更新を再開できます。";
+              "既存の議事録は保持しています。同じボタンから更新を再開できます。\n" +
+              `_更新エラー: ${errorMessage}_`;
             await this.updateControl(failed, lockKey, {
               text: failureText,
               blocks: this.successBlocks(
@@ -1527,13 +1531,13 @@ export class MeetingMinutesPipeline {
           }
         }
       }
-      const errorMessage = (err instanceof Error ? err.message : String(err))
-        .replace(/[\r\n]+/g, " ")
-        .slice(0, 300);
       logger.warn(
         `[meeting-minutes] code=refresh_failed run=${lockKey ?? "unknown"} error=${errorMessage}`,
       );
-      await this.notifyEphemeral(body, "議事録の更新に失敗しました。既存内容を正本として保持し、同じ更新ボタンから再開できます。");
+      await this.notifyEphemeral(
+        body,
+        `議事録の更新に失敗しました。既存内容を正本として保持し、同じ更新ボタンから再開できます。\n更新エラー: ${errorMessage}`,
+      );
     } finally {
       if (lockKey) this.runLocks.delete(lockKey);
     }
