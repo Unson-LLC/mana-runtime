@@ -1301,7 +1301,7 @@ export class SlackConnector implements Connector {
     if (!channel || channel.id !== request.destination.channelId || channel.is_archived === true || channel.is_member !== true) {
       throw new Error("target channel is unavailable, archived, or bot is not a member");
     }
-    const desired = splitForSlack(request.minutes.body);
+    const desired = splitForSlack(request.minutes.body, 900);
     const threadTs = [...request.existing.threadTs];
     for (let i = 0; i < desired.length; i++) {
       if (threadTs[i]) {
