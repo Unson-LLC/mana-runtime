@@ -532,7 +532,9 @@ export interface SlackConnectorConfig {
   id?: string;
   /** Employee to handle messages from this connector instance */
   employee?: string;
-  appToken: string;
+  /** Defaults to socket-mode. outbound-only is valid only for named instances. */
+  mode?: "socket-mode" | "outbound-only";
+  appToken?: string;
   botToken: string;
   /**
    * For named instances only: env var names holding this instance's tokens.
@@ -542,6 +544,10 @@ export interface SlackConnectorConfig {
    */
   appTokenEnv?: string;
   botTokenEnv?: string;
+  /** Required, exact workspace authority for outbound-only instances. */
+  workspaceId?: string;
+  /** Required exact channel IDs for outbound-only delivery/readiness. */
+  outboundChannelAllowlist?: string[];
   allowFrom?: string | string[];
   ignoreOldMessagesOnBoot?: boolean;
   /** Read-only Mana settings entry shown in Slack App Home and exact DM shortcuts. */

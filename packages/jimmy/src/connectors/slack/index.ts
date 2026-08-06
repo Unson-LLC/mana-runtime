@@ -134,6 +134,9 @@ export class SlackConnector implements Connector {
   // Slack connector happens to be registered under the shared "slack" name.
   instanceId: string;
   private app: InstanceType<typeof App>;
+  private readonly mode: "socket-mode" | "outbound-only";
+  private readonly configuredWorkspaceId: string | null;
+  private readonly outboundChannelAllowlist: Set<string>;
   private handler: ((msg: IncomingMessage) => void) | null = null;
   private readonly allowedUsers: Set<string> | null;
   private readonly settingsHomeEnabled: boolean;
@@ -242,12 +245,25 @@ export class SlackConnector implements Connector {
 
   constructor(config: SlackConnectorConfig, context: SlackConnectorContext = {}) {
     this.instanceId = config.id || "slack";
-    const receiver = new SocketModeReceiver({ appToken: config.appToken });
-    this.app = new App({
-      token: config.botToken,
-      receiver,
-    });
-    this.bindRuntimeHealthSignals(receiver.client);
+    this.mode = config.mode ?? "socket-mode";
+    this.configuredWorkspaceId = config.workspaceId?.trim() || null;
+    this.outboundChannelAllowlist = new Set(config.outboundChannelAllowlist ?? []);
+    if (this.mode === "outbound-only") {
+      // Bolt's default HTTP receiver requires a signing secret even when it is
+      // never started. Supply an inert receiver so outbound-only instances
+      // construct only the Web API client and cannot accept inbound traffic.
+      const outboundReceiver = {
+        init: async () => {},
+        start: async () => {},
+        stop: async () => {},
+      };
+      this.app = new App({ token: config.botToken, receiver: outboundReceiver as any });
+    } else {
+      if (!config.appToken) throw new Error("Socket-mode Slack connector requires appToken");
+      const receiver = new SocketModeReceiver({ appToken: config.appToken });
+      this.app = new App({ token: config.botToken, receiver });
+      this.bindRuntimeHealthSignals(receiver.client);
+    }
     this.ignoreOldMessagesOnBoot = config.ignoreOldMessagesOnBoot !== false;
     const allowFrom = Array.isArray(config.allowFrom)
       ? config.allowFrom
@@ -558,6 +574,37 @@ export class SlackConnector implements Connector {
   }
 
   async start() {
+    if (this.mode === "outbound-only") {
+      try {
+        const authResult = await this.app.client.auth.test();
+        if (!this.configuredWorkspaceId || authResult.team_id !== this.configuredWorkspaceId) {
+          throw new Error("outbound-only workspace identity mismatch");
+        }
+        this.botUserId = authResult.user_id ?? null;
+        this.workspaceId = authResult.team_id ?? null;
+        this.workspaceName = typeof authResult.team === "string" ? authResult.team : null;
+        await this.refreshSettingsTopologyProbe(
+          [...this.outboundChannelAllowlist].map((channelId) => ({
+            channelId,
+            workspaceId: this.configuredWorkspaceId ?? undefined,
+          })),
+          true,
+        );
+        const snapshot = this.getSettingsTopologySnapshot();
+        if ([...this.outboundChannelAllowlist].some((channelId) => snapshot.channels[channelId]?.status !== "verified")) {
+          throw new Error("outbound-only channel readiness failed");
+        }
+        this.started = true;
+        this.lastError = null;
+        logger.info(`[slack] outbound-only connector ready connector=${this.instanceId}`);
+        return;
+      } catch (err) {
+        this.started = false;
+        this.lastError = "slack_outbound_readiness_failed";
+        this.healthObservedAt = new Date().toISOString();
+        throw err;
+      }
+    }
     // "/vibepro" is the primary command name; "/ryoko-develop" stays registered
     // so Slack apps whose installed manifest still declares the old command
     // keep working until they are re-installed with the updated manifest.
@@ -1124,6 +1171,17 @@ export class SlackConnector implements Connector {
 
   async stop() {
     this.stopping = true;
+    if (this.mode === "outbound-only") {
+      this.invalidateSettingsTopologyProbe();
+      this.started = false;
+      this.lastError = null;
+      this.workspaceId = null;
+      this.workspaceName = null;
+      this.botUserId = null;
+      this.stopping = false;
+      logger.info(`[slack] outbound-only connector stopped connector=${this.instanceId}`);
+      return;
+    }
     this.agentsCanvas?.stop();
     this.taskCanvas?.stop();
     this.taskReminder?.stop();
@@ -1153,6 +1211,14 @@ export class SlackConnector implements Connector {
     if (!this.started) throw new Error(`target connector ${this.instanceId} is not running`);
     if (request.destination.connectorInstanceId !== this.instanceId) {
       throw new Error("target connector identity mismatch");
+    }
+    if (this.mode === "outbound-only") {
+      if (request.destination.workspaceId !== this.configuredWorkspaceId) {
+        throw new Error("target workspace identity mismatch");
+      }
+      if (!this.outboundChannelAllowlist.has(request.destination.channelId)) {
+        throw new Error("target channel is not allowlisted");
+      }
     }
     const client = this.app.client as unknown as {
       apiCall(method: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -1220,6 +1286,7 @@ export class SlackConnector implements Connector {
    */
   async refreshSettingsTopologyProbe(
     targets: Array<{ channelId: string; workspaceId?: string }>,
+    requireExactChannelId = false,
   ): Promise<void> {
     this.topologyProbeTargets = targets.map((target) => ({ ...target }));
     const generation = ++this.topologyProbeGeneration;
@@ -1244,7 +1311,12 @@ export class SlackConnector implements Connector {
           }),
         ]);
         const channel = response.channel as any;
-        if (!channel) {
+        if (
+          !channel ||
+          (requireExactChannelId
+            ? channel.id !== target.channelId
+            : typeof channel.id === "string" && channel.id !== target.channelId)
+        ) {
           next[target.channelId] = { channelId: target.channelId, checkedAt, status: "error", code: "channel_not_found" };
         } else if (channel.is_archived === true) {
           next[target.channelId] = { channelId: target.channelId, name: channel.name, checkedAt, status: "error", code: "channel_archived" };

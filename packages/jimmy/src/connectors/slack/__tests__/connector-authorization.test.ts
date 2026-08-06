@@ -21,12 +21,18 @@ const bolt = vi.hoisted(() => {
     viewHandlers: Record<string, (args: any) => Promise<void>>;
     socketHandlers: Record<string, (...args: unknown[]) => void>;
     appErrorHandler?: (error: Error) => Promise<void>;
+    receiverConstructs: number;
+    appStarts: number;
+    appStops: number;
   } = {
     registeredCommands: [],
     actionHandlers: {},
     viewHandlers: {},
     eventHandlers: {},
     socketHandlers: {},
+    receiverConstructs: 0,
+    appStarts: 0,
+    appStops: 0,
   };
   const client = {
     auth: { test: vi.fn(async () => ({ user_id: "U_BOT", team_id: "T_WORKSPACE" })) },
@@ -65,6 +71,7 @@ vi.mock("../../../shared/logger.js", () => ({ logger: log }));
 
 vi.mock("@slack/bolt", () => ({
   SocketModeReceiver: class MockSocketModeReceiver {
+    constructor() { bolt.state.receiverConstructs += 1; }
     client = {
       on: (event: string, handler: (...args: unknown[]) => void) => {
         bolt.state.socketHandlers[event] = handler;
@@ -94,8 +101,8 @@ vi.mock("@slack/bolt", () => ({
     error(handler: (error: Error) => Promise<void>) {
       bolt.state.appErrorHandler = handler;
     }
-    start = vi.fn(async () => {});
-    stop = vi.fn(async () => {});
+    start = vi.fn(async () => { bolt.state.appStarts += 1; });
+    stop = vi.fn(async () => { bolt.state.appStops += 1; });
   },
 }));
 
@@ -113,6 +120,57 @@ describe("SlackConnector authorization", () => {
     bolt.state.eventHandlers = {};
     bolt.state.socketHandlers = {};
     bolt.state.appErrorHandler = undefined;
+    bolt.state.receiverConstructs = 0;
+    bolt.state.appStarts = 0;
+    bolt.state.appStops = 0;
+  });
+
+  it("starts outbound-only with readiness probes and no socket or inbound lifecycle", async () => {
+    bolt.client.auth.test.mockResolvedValueOnce({ user_id: "U_BOT", team_id: "T_TARGET", team: "Target" } as any);
+    bolt.client.conversations.info
+      .mockResolvedValueOnce({ channel: { id: "C_ONE", name: "one", is_archived: false, is_member: true } } as any)
+      .mockResolvedValueOnce({ channel: { id: "C_TWO", name: "two", is_archived: false, is_member: true } } as any);
+    const connector = new SlackConnector({
+      id: "slack-outbound",
+      mode: "outbound-only",
+      botToken: "xoxb-test",
+      botTokenEnv: "OUTBOUND_BOT",
+      workspaceId: "T_TARGET",
+      outboundChannelAllowlist: ["C_ONE", "C_TWO"],
+    });
+
+    await connector.start();
+    expect(connector.getHealth()).toMatchObject({ status: "running" });
+    expect(bolt.state.receiverConstructs).toBe(0);
+    expect(bolt.state.appStarts).toBe(0);
+    expect(bolt.state.registeredCommands).toEqual([]);
+    expect(bolt.state.eventHandlers).toEqual({});
+    expect(bolt.state.actionHandlers).toEqual({});
+    expect(bolt.state.viewHandlers).toEqual({});
+    expect(bolt.state.messageHandler).toBeUndefined();
+    expect(connector.getSettingsTopologySnapshot().channels).toMatchObject({
+      C_ONE: { status: "verified" },
+      C_TWO: { status: "verified" },
+    });
+
+    await connector.stop();
+    expect(bolt.state.appStops).toBe(0);
+  });
+
+  it("fails outbound-only readiness on workspace mismatch", async () => {
+    bolt.client.auth.test.mockResolvedValueOnce({ user_id: "U_BOT", team_id: "T_WRONG" });
+    const connector = new SlackConnector({
+      id: "slack-outbound",
+      mode: "outbound-only",
+      botToken: "xoxb-test",
+      botTokenEnv: "OUTBOUND_BOT",
+      workspaceId: "T_TARGET",
+      outboundChannelAllowlist: ["C_ONE"],
+    });
+    await expect(connector.start()).rejects.toThrow("workspace identity mismatch");
+    expect(connector.getHealth()).toMatchObject({ status: "error" });
+    expect(bolt.client.conversations.info).not.toHaveBeenCalled();
+    expect(bolt.state.appStarts).toBe(0);
   });
 
   async function setup(options: {
