@@ -70,6 +70,34 @@ describe("resolveSlackRuntimeConfig", () => {
 });
 
 describe("resolveSlackInstanceRuntimeConfig", () => {
+  it("resolves an outbound-only instance from botTokenEnv alone", () => {
+    const result = resolveSlackInstanceRuntimeConfig({
+      id: "slack-outbound",
+      mode: "outbound-only",
+      botTokenEnv: "OUTBOUND_BOT",
+      workspaceId: "T_TARGET",
+      outboundChannelAllowlist: ["C111", "C222"],
+    }, { OUTBOUND_BOT: " xoxb-outbound " });
+
+    expect(result).toMatchObject({ mode: "outbound-only", botToken: "xoxb-outbound" });
+    expect(result).not.toHaveProperty("appToken");
+  });
+
+  it("rejects invalid or inbound-capable outbound-only configuration", () => {
+    const base = {
+      mode: "outbound-only" as const,
+      botTokenEnv: "OUTBOUND_BOT",
+      workspaceId: "T_TARGET",
+      outboundChannelAllowlist: ["C111"],
+    };
+    const env = { OUTBOUND_BOT: "xoxb-outbound" };
+    expect(() => resolveSlackInstanceRuntimeConfig({ ...base, outboundChannelAllowlist: [] }, env)).toThrow("non-empty outboundChannelAllowlist");
+    expect(() => resolveSlackInstanceRuntimeConfig({ ...base, outboundChannelAllowlist: ["C111", "C111"] }, env)).toThrow("unique Slack channel IDs");
+    expect(() => resolveSlackInstanceRuntimeConfig({ ...base, appTokenEnv: "OUTBOUND_APP" }, env)).toThrow("must not configure appTokenEnv");
+    expect(() => resolveSlackInstanceRuntimeConfig({ ...base, allowFrom: ["U_ONE"] }, env)).toThrow("must not configure allowFrom");
+    expect(() => resolveSlackInstanceRuntimeConfig({ ...base, meetingMinutesPipeline: { enabled: true } }, env)).toThrow("must not configure meetingMinutesPipeline");
+  });
+
   it("resolves per-instance tokens from the named env vars", () => {
     const config = { id: "slack-biz", appTokenEnv: "BIZ_APP", botTokenEnv: "BIZ_BOT" };
     const result = resolveSlackInstanceRuntimeConfig(config, {

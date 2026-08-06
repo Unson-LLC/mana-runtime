@@ -14,6 +14,9 @@ export function resolveSlackRuntimeConfig(
   config: SlackConfigSource | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): SlackConnectorConfig | null {
+  if (config?.mode === "outbound-only") {
+    throw new Error("Top-level Slack connector does not support outbound-only mode");
+  }
   const appToken = env[SLACK_APP_TOKEN_ENV]?.trim();
   const botToken = env[SLACK_BOT_TOKEN_ENV]?.trim();
 
@@ -54,9 +57,53 @@ export function resolveSlackRuntimeConfig(
  * compatibility when neither *TokenEnv field is set.
  */
 export function resolveSlackInstanceRuntimeConfig<
-  T extends Partial<Pick<SlackConnectorConfig, "appToken" | "botToken" | "appTokenEnv" | "botTokenEnv">>,
+  T extends Partial<SlackConnectorConfig>,
 >(config: T, env: NodeJS.ProcessEnv = process.env): T {
   const { appTokenEnv, botTokenEnv } = config;
+  if (config.mode === "outbound-only") {
+    if (config.appToken || appTokenEnv) {
+      throw new Error("Outbound-only Slack instance must not configure appTokenEnv or appToken");
+    }
+    if (config.botToken) {
+      throw new Error("Outbound-only Slack instance must not configure inline botToken");
+    }
+    if (!botTokenEnv) {
+      throw new Error("Outbound-only Slack instance requires botTokenEnv");
+    }
+    const workspaceId = config.workspaceId?.trim();
+    if (!workspaceId) {
+      throw new Error("Outbound-only Slack instance requires workspaceId");
+    }
+    const channels = config.outboundChannelAllowlist?.map((value) => value.trim()).filter(Boolean) ?? [];
+    if (channels.length === 0) {
+      throw new Error("Outbound-only Slack instance requires a non-empty outboundChannelAllowlist");
+    }
+    if (channels.some((channel) => !/^C[A-Z0-9]+$/.test(channel)) || new Set(channels).size !== channels.length) {
+      throw new Error("Outbound-only Slack instance requires unique Slack channel IDs");
+    }
+    for (const field of [
+      "allowFrom",
+      "settingsHome",
+      "respondTo",
+      "triage",
+      "goalExtraction",
+      "criticalRouting",
+      "agentsCanvas",
+      "taskCanvas",
+      "taskReminder",
+      "meetingTaskProposal",
+      "meetingMinutesPipeline",
+    ] as const) {
+      if (config[field] !== undefined) {
+        throw new Error(`Outbound-only Slack instance must not configure ${field}`);
+      }
+    }
+    const botToken = env[botTokenEnv]?.trim();
+    if (!botToken) {
+      throw new Error(`Slack instance credential missing: set ${botTokenEnv} in the gateway environment`);
+    }
+    return { ...config, workspaceId, outboundChannelAllowlist: channels, botToken };
+  }
   if (!appTokenEnv && !botTokenEnv) return config;
   if (!appTokenEnv || !botTokenEnv) {
     throw new Error("Slack instance requires both appTokenEnv and botTokenEnv when either is set");
