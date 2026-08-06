@@ -1558,7 +1558,7 @@ export class MeetingMinutesPipeline {
     existing: MeetingMinutesShareProgress,
     onProgress: (progress: MeetingMinutesShareProgress) => void,
   ): Promise<MeetingMinutesShareProgress> {
-    const desired = splitForSlack(minutes.body);
+    const desired = splitForSlack(minutes.body, 900);
     const threadTs = [...existing.threadTs];
     for (let i = 0; i < desired.length; i++) {
       if (threadTs[i]) {
