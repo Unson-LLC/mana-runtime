@@ -13,6 +13,7 @@ vi.mock("../../../shared/logger.js", () => ({
 
 import {
   ACTION_MM_CHOOSE_DEST_PATTERN,
+  ACTION_MM_REFRESH,
   MeetingMinutesPipeline,
   advanceStatus,
   runKey,
@@ -70,6 +71,7 @@ function makePipeline(overrides: {
   generate?: ReturnType<typeof vi.fn>;
   handoff?: ReturnType<typeof vi.fn> | null;
   share?: ReturnType<typeof vi.fn>;
+  update?: ReturnType<typeof vi.fn>;
   settingsWebBaseUrl?: string;
   workspaceId?: string;
   /** Test-only convenience: emulate the operator selecting the LLM suggestion. */
@@ -103,6 +105,7 @@ function makePipeline(overrides: {
       taskProposalNotifier: handoff ? { processMinutesText: handoff as any } : null,
       sourceConnectorInstanceId: "slack",
       shareMinutes: overrides.share as any,
+      updateMinutes: overrides.update as any,
       settingsWebBaseUrl: overrides.settingsWebBaseUrl,
       getWorkspaceId: () => overrides.workspaceId,
     },
@@ -130,7 +133,7 @@ function makePipeline(overrides: {
       }
     };
   }
-  return { pipeline, apiCall, fetchTranscript, classify, generate, handoff, share: overrides.share };
+  return { pipeline, apiCall, fetchTranscript, classify, generate, handoff, share: overrides.share, update: overrides.update };
 }
 
 function fileEvent(overrides: Record<string, unknown> = {}) {
@@ -164,6 +167,85 @@ afterEach(() => {
   fs.rmSync(STATE_DIR, { recursive: true, force: true });
   delete process.env.BRAINBASE_TASK_API_BASE_URL;
   delete process.env.BRAINBASE_TASK_API_TOKEN;
+});
+
+describe("minutes refresh", () => {
+  it("shows the overview and refresh button, then regenerates the same file and updates posts without redispatching tasks", async () => {
+    const refreshed = {
+      title: "更新後定例",
+      overview: "更新後の概要",
+      body: "更新後の本文",
+    };
+    const generate = vi.fn()
+      .mockResolvedValueOnce({ minutes: MINUTES })
+      .mockResolvedValueOnce({ minutes: refreshed });
+    const { pipeline, apiCall, fetchTranscript, handoff } = makePipeline({ generate });
+    await pipeline.maybeHandleFileMessage(fileEvent());
+    const [key, before] = Object.entries(readState().runs)[0];
+
+    const successUpdate = apiCall.mock.calls
+      .filter((call: unknown[]) => call[0] === "chat.update")
+      .at(-1)?.[1] as { blocks?: any[] };
+    expect(JSON.stringify(successUpdate.blocks)).toContain("📝 会議の概要");
+    expect(successUpdate.blocks?.some((block: any) => block.text?.text?.includes(MINUTES.overview))).toBe(true);
+    expect(JSON.stringify(successUpdate.blocks)).toContain(ACTION_MM_REFRESH);
+
+    const fetchCountBeforeRefresh = fetchTranscript.mock.calls.length;
+    apiCall.mockClear();
+    await pipeline.handleRefresh(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { value: JSON.stringify({ key }) },
+    );
+
+    expect(fetchTranscript).toHaveBeenCalledTimes(fetchCountBeforeRefresh + 1);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(handoff).toHaveBeenCalledTimes(1);
+    const destinationUpdates = apiCall.mock.calls
+      .filter((call: unknown[]) => call[0] === "chat.update")
+      .map((call: unknown[]) => call[1] as any)
+      .filter((payload: any) => payload.channel === "C_ST");
+    expect(destinationUpdates.some((payload: any) => payload.ts === before.postedParentTs && payload.text === refreshed.overview)).toBe(true);
+    expect(destinationUpdates.some((payload: any) => before.postedThreadTs?.includes(payload.ts) && payload.text === refreshed.body)).toBe(true);
+    const after = readState().runs[key];
+    expect(after.minutes).toEqual(refreshed);
+    expect(after.refresh?.status).toBe("completed");
+    expect(readState().lastMinutesByChannel.C_ST).toMatchObject({ overview: refreshed.overview });
+  });
+
+  it("rejects unauthorized refreshes before fetching or generating", async () => {
+    const { pipeline, fetchTranscript, generate, apiCall } = makePipeline();
+    await pipeline.maybeHandleFileMessage(fileEvent());
+    const key = Object.keys(readState().runs)[0];
+    fetchTranscript.mockClear();
+    generate.mockClear();
+    await pipeline.handleRefresh(
+      { user: { id: "U_INTRUDER" }, channel: { id: ROUTER } },
+      { value: JSON.stringify({ key }) },
+    );
+    expect(fetchTranscript).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(postedMessages(apiCall, "chat.postEphemeral").at(-1)?.text).toContain("権限");
+  });
+
+  it("serializes double clicks with the common run lock", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const generate = vi.fn()
+      .mockResolvedValueOnce({ minutes: MINUTES })
+      .mockImplementationOnce(async () => { await blocked; return { minutes: { ...MINUTES, overview: "new" } }; });
+    const { pipeline, apiCall } = makePipeline({ generate });
+    await pipeline.maybeHandleFileMessage(fileEvent());
+    const key = Object.keys(readState().runs)[0];
+    const body = { user: { id: OPERATOR }, channel: { id: ROUTER } };
+    const action = { value: JSON.stringify({ key }) };
+    const first = pipeline.handleRefresh(body, action);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    await pipeline.handleRefresh(body, action);
+    expect(postedMessages(apiCall, "chat.postEphemeral").at(-1)?.text).toContain("更新中");
+    release();
+    await first;
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("advanceStatus", () => {
@@ -442,6 +524,52 @@ describe("routing fallback", () => {
       destinationWorkspaceId: "T_BIZ",
       destinationChannelId: "C_BIZ_BAAO",
       postedParentTs: "9000.1",
+    });
+  });
+
+  it("refreshes a pre-selected cross-workspace destination through the dedicated update port", async () => {
+    const remote = {
+      shareId: "techknight",
+      projectId: "proj_techknight",
+      name: "Tech Knight / 議事録",
+      connectorInstanceId: "slack-techknight",
+      workspaceId: "T_TECH",
+      channelId: "C_TECH_MINUTES",
+    };
+    const share = vi.fn().mockImplementation(async ({ onProgress }) => {
+      onProgress({ parentTs: "9000.1", threadTs: ["9000.2"] });
+      return { parentTs: "9000.1" };
+    });
+    const update = vi.fn().mockImplementation(async ({ existing, onProgress }) => {
+      onProgress(existing);
+      return existing;
+    });
+    const generate = vi.fn()
+      .mockResolvedValueOnce({ minutes: MINUTES })
+      .mockResolvedValueOnce({ minutes: { ...MINUTES, overview: "Tech Knight更新概要" } });
+    const { pipeline, handoff } = makePipeline({
+      autoConfirm: false, share, update, generate,
+      classify: vi.fn().mockResolvedValue(null),
+      config: { shareDestinations: [remote] },
+    });
+    const event = fileEvent();
+    await pipeline.maybeHandleFileMessage(event);
+    const key = runKey(ROUTER, "F001", event.ts as string);
+    const body = { user: { id: OPERATOR }, channel: { id: ROUTER } };
+    await pipeline.handleChooseDestination(body, {
+      selected_option: { value: JSON.stringify({ key, destinationId: remote.shareId }) },
+    });
+    await pipeline.handleRefresh(body, { value: JSON.stringify({ key }) });
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      destination: remote,
+      existing: { parentTs: "9000.1", threadTs: ["9000.2"] },
+    }));
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(handoff).not.toHaveBeenCalled();
+    expect(readState().runs[key]).toMatchObject({
+      minutes: { overview: "Tech Knight更新概要" },
+      refresh: { status: "completed" },
     });
   });
 

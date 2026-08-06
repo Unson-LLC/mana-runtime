@@ -165,6 +165,21 @@ export function createMeetingMinutesShareGateway(
   };
 }
 
+export function createMeetingMinutesUpdateGateway(
+  connectorMap: Map<string, Connector>,
+): NonNullable<SlackConnectorContext["updateMeetingMinutes"]> {
+  return async (request) => {
+    if (request.sourceConnectorInstanceId === request.destination.connectorInstanceId) {
+      throw new Error("cross-workspace update requires a different target connector");
+    }
+    const target = connectorMap.get(request.destination.connectorInstanceId);
+    if (!(target instanceof SlackConnector)) {
+      throw new Error(`target Slack connector not found: ${request.destination.connectorInstanceId}`);
+    }
+    return target.updateSharedMeetingMinutes(request);
+  };
+}
+
 /**
  * Single routing gate for EVERY connector message. When `placements` are
  * configured this is fail-closed: a message that does not resolve to a unique,
@@ -498,6 +513,7 @@ export async function startGateway(
   /** IDs of connectors created from config.connectors.instances[] (vs legacy top-level connectors) */
   const instanceConnectorIds = new Set<string>();
   const shareMeetingMinutes = createMeetingMinutesShareGateway(connectorMap);
+  const updateMeetingMinutes = createMeetingMinutesUpdateGateway(connectorMap);
 
   // ---- Top-level connector start/stop helpers (closure over employeeRegistry, connectors, etc.) ----
   // These are defined here so they can be reused by both initial startup AND
@@ -554,6 +570,7 @@ export async function startGateway(
               sessionManager,
             ),
             shareMeetingMinutes,
+            updateMeetingMinutes,
             // Invite-driven auto-provisioning. The module re-reads config.yaml
             // from disk (single source of truth) and fails closed on every
             // error; only a real creation returns a greeting to post.
@@ -772,6 +789,7 @@ export async function startGateway(
                   sessionManager,
                 ),
                 shareMeetingMinutes,
+                updateMeetingMinutes,
               },
             );
             slack.onMessage((msg) => {
@@ -903,6 +921,7 @@ export async function startGateway(
                     sessionManager,
                   ),
                   shareMeetingMinutes,
+                  updateMeetingMinutes,
                 },
               );
               slack.onMessage((msg) => {
