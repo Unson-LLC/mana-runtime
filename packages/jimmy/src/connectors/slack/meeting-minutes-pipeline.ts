@@ -1527,7 +1527,12 @@ export class MeetingMinutesPipeline {
           }
         }
       }
-      logger.warn(`[meeting-minutes] code=refresh_failed run=${lockKey ?? "unknown"}`);
+      const errorMessage = (err instanceof Error ? err.message : String(err))
+        .replace(/[\r\n]+/g, " ")
+        .slice(0, 300);
+      logger.warn(
+        `[meeting-minutes] code=refresh_failed run=${lockKey ?? "unknown"} error=${errorMessage}`,
+      );
       await this.notifyEphemeral(body, "議事録の更新に失敗しました。既存内容を正本として保持し、同じ更新ボタンから再開できます。");
     } finally {
       if (lockKey) this.runLocks.delete(lockKey);
