@@ -227,6 +227,31 @@ describe("minutes refresh", () => {
     expect(postedMessages(apiCall, "chat.postEphemeral").at(-1)?.text).toContain("権限");
   });
 
+  it("restores the overview and refresh button when regeneration fails", async () => {
+    const generate = vi.fn()
+      .mockResolvedValueOnce({ minutes: MINUTES })
+      .mockResolvedValueOnce({ error: "temporary generation failure" });
+    const { pipeline, apiCall } = makePipeline({ generate });
+    await pipeline.maybeHandleFileMessage(fileEvent());
+    const key = Object.keys(readState().runs)[0];
+    apiCall.mockClear();
+
+    await pipeline.handleRefresh(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { value: JSON.stringify({ key }) },
+    );
+
+    const controlUpdates = apiCall.mock.calls
+      .filter((call: unknown[]) => call[0] === "chat.update")
+      .map((call: unknown[]) => call[1] as any)
+      .filter((payload: any) => payload.channel === ROUTER);
+    const restored = controlUpdates.at(-1);
+    expect(restored.text).toContain("既存の議事録は保持");
+    expect(JSON.stringify(restored.blocks)).toContain("2026-07-30 定例-要約");
+    expect(JSON.stringify(restored.blocks)).toContain(ACTION_MM_REFRESH);
+    expect(readState().runs[key].refresh?.status).toBe("failed");
+  });
+
   it("serializes double clicks with the common run lock", async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
