@@ -18,5 +18,5 @@ status: active
 
 ## Scope
 
-- 対象: `packages/jimmy/src/connectors/slack/meeting-minutes-generator.ts` の `fitSlackOverview` / `splitForSlack` と対応テスト。
+- 対象: `packages/jimmy/src/connectors/slack/meeting-minutes-generator.ts` の `fitSlackOverview` / `splitForSlack` と対応テスト。レビューで発見された同種の生slice（`meeting-minutes-pipeline.ts` の成功通知カード overview切り詰めと宛先名75字切り詰め）も `truncateSurrogateSafe` で対象に含める。
 - 非対象: Slack上限値の変更、書記素クラスタ（結合絵文字ZWJ列）単位の分割保証、他コネクタの分割処理。

@@ -250,6 +250,12 @@ function surrogateSafeIndex(text: string, index: number): number {
   return index;
 }
 
+/** Hard truncation that never ends on a lone high surrogate. */
+export function truncateSurrogateSafe(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return text.slice(0, surrogateSafeIndex(text, limit));
+}
+
 /** Keeps the parent overview within the same conservative Slack limit as blocks. */
 export function fitSlackOverview(
   text: string,

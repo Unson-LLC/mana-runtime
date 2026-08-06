@@ -32,6 +32,7 @@ import {
   fitSlackOverview,
   generateMinutes,
   splitForSlack,
+  truncateSurrogateSafe,
   type GeneratedMinutes,
   type MinutesContext,
   type MinutesDestination,
@@ -908,7 +909,7 @@ export class MeetingMinutesPipeline {
       .map((d) => ({
         text: {
           type: "plain_text",
-          text: `${d.emoji ?? "📁"} ${d.name}`.slice(0, 75),
+          text: truncateSurrogateSafe(`${d.emoji ?? "📁"} ${d.name}`, 75),
           emoji: true,
         },
         value: d.destinationId,
@@ -969,7 +970,8 @@ export class MeetingMinutesPipeline {
     overview: string,
   ): unknown[] {
     const blocks = this.rerouteBlocks(key, text, currentDestinationId);
-    const safeOverview = overview.length > 2800 ? `${overview.slice(0, 2799)}…` : overview;
+    const safeOverview =
+      overview.length > 2800 ? `${truncateSurrogateSafe(overview, 2799)}…` : overview;
     blocks.splice(1, 0, {
       type: "section",
       text: { type: "mrkdwn", text: `*📝 会議の概要*\n${safeOverview}` },

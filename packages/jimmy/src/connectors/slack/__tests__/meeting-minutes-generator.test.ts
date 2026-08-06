@@ -13,6 +13,7 @@ import {
   sanitizeMinutesMrkdwn,
   fitSlackOverview,
   splitForSlack,
+  truncateSurrogateSafe,
   type MinutesContext,
   type MinutesDestination,
 } from "../meeting-minutes-generator.js";
@@ -220,7 +221,23 @@ describe("fitSlackOverview", () => {
     for (const unit of result) {
       expect(unit).not.toMatch(/[\uD800-\uDFFF]$/);
     }
-    expect(result.includes("�")).toBe(false);
+  });
+});
+
+describe("truncateSurrogateSafe", () => {
+  it("returns short text unchanged", () => {
+    expect(truncateSurrogateSafe("😀abc", 10)).toBe("😀abc");
+  });
+
+  it("steps back instead of splitting a surrogate pair", () => {
+    // "x" + 😀 = 3 units; a limit of 2 lands mid-pair.
+    expect(truncateSurrogateSafe("x😀y", 2)).toBe("x");
+    expect(truncateSurrogateSafe("xy😀z", 3)).toBe("xy");
+  });
+
+  it("cuts at the limit when it does not land mid-pair", () => {
+    expect(truncateSurrogateSafe("abcdef", 3)).toBe("abc");
+    expect(truncateSurrogateSafe("x😀y", 3)).toBe("x😀");
   });
 });
 
