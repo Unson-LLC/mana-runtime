@@ -1507,6 +1507,24 @@ export class MeetingMinutesPipeline {
           failedRun.refresh.error = String(err).slice(0, 300);
           failedRun.refresh.updatedAt = Date.now();
           saveState(failed);
+          if (failedRun.minutes) {
+            const destinationName = failedRun.inPlace
+              ? failedRun.fileName.replace(/\.txt$/i, "")
+              : this.destinations.find((candidate) => candidate.destinationId === failedRun.destinationId)?.name
+                ?? "現在の宛先";
+            const failureText =
+              `⚠️ *${destinationName}* の議事録更新に失敗しました\n` +
+              "既存の議事録は保持しています。同じボタンから更新を再開できます。";
+            await this.updateControl(failed, lockKey, {
+              text: failureText,
+              blocks: this.successBlocks(
+                lockKey,
+                failureText,
+                failedRun.inPlace ? IN_PLACE_PROJECT_ID : failedRun.destinationId ?? IN_PLACE_PROJECT_ID,
+                failedRun.minutes.overview,
+              ),
+            });
+          }
         }
       }
       logger.warn(`[meeting-minutes] code=refresh_failed run=${lockKey ?? "unknown"}`);
