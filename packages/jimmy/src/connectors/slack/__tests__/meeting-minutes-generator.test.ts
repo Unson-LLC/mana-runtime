@@ -11,6 +11,7 @@ import {
   parseMinutesResult,
   parseRoutingResult,
   sanitizeMinutesMrkdwn,
+  fitSlackOverview,
   splitForSlack,
   type MinutesContext,
   type MinutesDestination,
@@ -197,6 +198,15 @@ describe("parseMinutesResult", () => {
 
   it("rejects empty output", () => {
     expect("error" in parseMinutesResult("", "2026-07-30")).toBe(true);
+  });
+});
+
+describe("fitSlackOverview", () => {
+  it("caps an oversized overview and points readers to the thread", () => {
+    const result = fitSlackOverview("概要\n" + "x".repeat(4_000));
+    expect(result.length).toBeLessThanOrEqual(2_900);
+    expect(result).toContain("概要");
+    expect(result).toMatch(/全文はスレッド内）$/);
   });
 });
 
