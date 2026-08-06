@@ -5,6 +5,7 @@ import { SlackConnector } from "../../connectors/slack/index.js";
 import {
   buildSlackConnectorContext,
   createMeetingMinutesShareGateway,
+  createMeetingMinutesUpdateGateway,
   refreshSettingsTopologyProbesForConfig,
 } from "../server.js";
 
@@ -86,6 +87,47 @@ describe("createMeetingMinutesShareGateway", () => {
         sourceConnectorInstanceId: "slack-biz",
       }),
     ).rejects.toThrow("different target connector");
+  });
+});
+
+describe("createMeetingMinutesUpdateGateway", () => {
+  const request = {
+    sourceConnectorInstanceId: "slack",
+    destination: {
+      shareId: "techknight",
+      projectId: "proj_techknight",
+      name: "Tech Knight",
+      connectorInstanceId: "slack-techknight",
+      workspaceId: "T_TECH",
+      channelId: "C_MINUTES",
+    },
+    minutes: { title: "更新", overview: "更新概要", body: "更新本文" },
+    existing: { parentTs: "1.0", threadTs: ["1.1"] },
+    onProgress: () => {},
+  };
+
+  it("calls only the exact configured Slack connector instance", async () => {
+    const exact = Object.create(SlackConnector.prototype) as SlackConnector;
+    exact.updateSharedMeetingMinutes = async () => ({ parentTs: "1.0", threadTs: ["1.1"] });
+    const other = Object.create(SlackConnector.prototype) as SlackConnector;
+    let otherCalled = false;
+    other.updateSharedMeetingMinutes = async () => {
+      otherCalled = true;
+      return { parentTs: "wrong", threadTs: [] };
+    };
+    const gateway = createMeetingMinutesUpdateGateway(new Map<string, Connector>([
+      ["slack-techknight", exact as unknown as Connector],
+      ["slack-other", other as unknown as Connector],
+    ]));
+    await expect(gateway(request)).resolves.toEqual({ parentTs: "1.0", threadTs: ["1.1"] });
+    expect(otherCalled).toBe(false);
+  });
+
+  it("fails closed for missing and same-instance targets", async () => {
+    const gateway = createMeetingMinutesUpdateGateway(new Map<string, Connector>());
+    await expect(gateway(request)).rejects.toThrow("not found");
+    await expect(gateway({ ...request, sourceConnectorInstanceId: "slack-techknight" }))
+      .rejects.toThrow("different target connector");
   });
 });
 

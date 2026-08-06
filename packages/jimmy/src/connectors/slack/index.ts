@@ -34,6 +34,7 @@ import { MeetingTaskProposalNotifier } from "./meeting-task-proposal.js";
 import {
   MeetingMinutesPipeline,
   type MeetingMinutesShareRequest,
+  type MeetingMinutesUpdateRequest,
 } from "./meeting-minutes-pipeline.js";
 import { splitForSlack } from "./meeting-minutes-generator.js";
 import { VibeproDecisionNotifier } from "./vibepro-decision.js";
@@ -109,6 +110,8 @@ export interface SlackConnectorContext {
   onBotLeftChannel?: (info: { channelId: string; workspaceId: string | null }) => void;
   /** Resolves the live named Slack connector and performs an approved minutes copy. */
   shareMeetingMinutes?: (request: MeetingMinutesShareRequest) => Promise<{ parentTs: string }>;
+  /** Resolves the exact live Slack connector and updates existing minutes in place. */
+  updateMeetingMinutes?: (request: MeetingMinutesUpdateRequest) => Promise<{ parentTs: string; threadTs: string[] }>;
   /**
    * Continues a `/vibepro` Story that stopped with `needs_input` because
    * VibePro gates were unresolved, after a human clicked "続行してGateを
@@ -170,6 +173,7 @@ export class SlackConnector implements Connector {
   private readonly onBotJoinedChannel: SlackConnectorContext["onBotJoinedChannel"];
   private readonly onBotLeftChannel: SlackConnectorContext["onBotLeftChannel"];
   private readonly shareMeetingMinutes: SlackConnectorContext["shareMeetingMinutes"];
+  private readonly updateMeetingMinutes: SlackConnectorContext["updateMeetingMinutes"];
   private readonly conversations: ConversationTracker;
   private readonly agentsCanvas: AgentsCanvasUpdater | null;
   private readonly taskCanvas: TaskCanvasUpdater | null;
@@ -287,6 +291,7 @@ export class SlackConnector implements Connector {
     this.onBotJoinedChannel = context.onBotJoinedChannel;
     this.onBotLeftChannel = context.onBotLeftChannel;
     this.shareMeetingMinutes = context.shareMeetingMinutes;
+    this.updateMeetingMinutes = context.updateMeetingMinutes;
     this.conversations = new ConversationTracker();
     this.agentsCanvas = config.agentsCanvas?.enabled
       ? new AgentsCanvasUpdater(this.app, config.agentsCanvas)
@@ -305,6 +310,7 @@ export class SlackConnector implements Connector {
           taskProposalNotifier: this.meetingTaskProposal,
           sourceConnectorInstanceId: this.instanceId,
           shareMinutes: this.shareMeetingMinutes,
+          updateMinutes: this.updateMeetingMinutes,
           settingsWebBaseUrl: config.settingsHome?.webBaseUrl,
           getWorkspaceId: () => this.workspaceId,
         })
@@ -1271,6 +1277,62 @@ export class SlackConnector implements Connector {
       request.onProgress({ parentTs, threadTs });
     }
     return { parentTs };
+  }
+
+  /** Dedicated cross-workspace update port. Revalidates identity and membership on every call. */
+  async updateSharedMeetingMinutes(
+    request: MeetingMinutesUpdateRequest,
+  ): Promise<{ parentTs: string; threadTs: string[] }> {
+    if (!this.started) throw new Error(`target connector ${this.instanceId} is not running`);
+    if (request.destination.connectorInstanceId !== this.instanceId) throw new Error("target connector identity mismatch");
+    if (this.mode === "outbound-only") {
+      if (request.destination.workspaceId !== this.configuredWorkspaceId) throw new Error("target workspace identity mismatch");
+      if (!this.outboundChannelAllowlist.has(request.destination.channelId)) throw new Error("target channel is not allowlisted");
+    }
+    const client = this.app.client as unknown as {
+      apiCall(method: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    };
+    const auth = await client.apiCall("auth.test", {});
+    if (auth.ok !== true || auth.team_id !== request.destination.workspaceId) {
+      throw new Error("target workspace identity mismatch");
+    }
+    const info = await client.apiCall("conversations.info", { channel: request.destination.channelId });
+    const channel = info.channel as Record<string, unknown> | undefined;
+    if (!channel || channel.id !== request.destination.channelId || channel.is_archived === true || channel.is_member !== true) {
+      throw new Error("target channel is unavailable, archived, or bot is not a member");
+    }
+    const desired = splitForSlack(request.minutes.body);
+    const threadTs = [...request.existing.threadTs];
+    for (let i = 0; i < desired.length; i++) {
+      if (threadTs[i]) {
+        await client.apiCall("chat.update", {
+          channel: request.destination.channelId, ts: threadTs[i], text: desired[i], blocks: [],
+        });
+      } else {
+        const child = await client.apiCall("chat.postMessage", {
+          channel: request.destination.channelId,
+          thread_ts: request.existing.parentTs,
+          text: desired[i],
+          unfurl_links: false,
+        });
+        if (typeof child.ts !== "string" || !child.ts) throw new Error("target thread post returned no timestamp");
+        threadTs.push(child.ts);
+      }
+      request.onProgress({ parentTs: request.existing.parentTs, threadTs });
+    }
+    for (let i = desired.length; i < threadTs.length; i++) {
+      await client.apiCall("chat.update", {
+        channel: request.destination.channelId, ts: threadTs[i], text: "（更新により置換済み）", blocks: [],
+      });
+      request.onProgress({ parentTs: request.existing.parentTs, threadTs });
+    }
+    await client.apiCall("chat.update", {
+      channel: request.destination.channelId,
+      ts: request.existing.parentTs,
+      text: request.minutes.overview,
+      blocks: [],
+    });
+    return { parentTs: request.existing.parentTs, threadTs };
   }
 
   invalidateSettingsTopologyProbe(): void {

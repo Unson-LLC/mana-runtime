@@ -112,6 +112,8 @@ export interface MinutesRun {
   postedThreadTs?: string[];
   /** Durable progress for a reroute whose Slack side effects span several API calls. */
   reroute?: MinutesRerouteRecord;
+  /** Durable journal for a refresh whose Slack updates span several API calls. */
+  refresh?: MinutesRefreshRecord;
   /** Our control message ts in the router thread (chat.update target). */
   controlTs?: string;
   /** Persisted so reroute can repost without regenerating. */
@@ -120,6 +122,18 @@ export interface MinutesRun {
   createdAt: number;
   updatedAt: number;
   expiresAt: number;
+}
+
+export interface MinutesRefreshRecord {
+  status: "generating" | "updating" | "completed" | "failed";
+  approvedBy: string;
+  approvedAt: number;
+  updatedAt: number;
+  /** Generated candidate is kept separate until every Slack mutation succeeds. */
+  candidate?: GeneratedMinutes;
+  updatedThreadTs: string[];
+  postedThreadTs: string[];
+  error?: string;
 }
 
 export interface MinutesRerouteRecord {
@@ -152,6 +166,7 @@ export const ACTION_MM_CHOOSE_DEST_PATTERN = /^meeting_minutes_choose_destinatio
 export const ACTION_MM_REROUTE = "meeting_minutes_reroute";
 export const ACTION_MM_RETRY = "meeting_minutes_retry";
 export const ACTION_MM_SHARE = "meeting_minutes_share";
+export const ACTION_MM_REFRESH = "meeting_minutes_refresh";
 
 export interface MinutesShareDestination {
   /** Opaque, stable key used in Block actions; all target fields are re-read from config. */
@@ -188,6 +203,10 @@ export interface MeetingMinutesShareRequest {
   minutes: GeneratedMinutes;
   /** Persist target side effects after every successful Slack post; throwing halts delivery. */
   onProgress: (progress: MeetingMinutesShareProgress) => void;
+}
+
+export interface MeetingMinutesUpdateRequest extends MeetingMinutesShareRequest {
+  existing: MeetingMinutesShareProgress;
 }
 
 /** Stage order for monotonic transitions. */
@@ -280,6 +299,8 @@ export interface MeetingMinutesPipelineDeps {
   sourceConnectorInstanceId?: string;
   /** Narrow gateway that resolves the live target connector and posts with its client. */
   shareMinutes?: (request: MeetingMinutesShareRequest) => Promise<{ parentTs: string }>;
+  /** Dedicated update gateway; target identity and channel authority are revalidated remotely. */
+  updateMinutes?: (request: MeetingMinutesUpdateRequest) => Promise<MeetingMinutesShareProgress>;
   /** Fixed operator Web origin. Credentials and error text are never added to it. */
   settingsWebBaseUrl?: string;
   /** Runtime workspace identity discovered by auth.test after construction. */
@@ -302,7 +323,8 @@ export class MeetingMinutesPipeline {
   private readonly routingOptions: MinutesLlmOptions;
   private readonly generationOptions: MinutesLlmOptions;
   private readonly deps: MeetingMinutesPipelineDeps;
-  private readonly shareLocks = new Set<string>();
+  /** One lock per run for every state-changing action. */
+  private readonly runLocks = new Set<string>();
   private readonly bootTimeMs = Date.now();
   private active = false;
 
@@ -399,6 +421,7 @@ export class MeetingMinutesPipeline {
     this.app.action(ACTION_MM_CHOOSE_DEST_PATTERN, wrap((body, action) => this.handleChooseDestination(body, action)));
     this.app.action(ACTION_MM_REROUTE, wrap((body, action) => this.handleReroute(body, action)));
     this.app.action(ACTION_MM_RETRY, wrap((body, action) => this.handleRetry(body, action)));
+    this.app.action(ACTION_MM_REFRESH, wrap((body, action) => this.handleRefresh(body, action)));
   }
 
   stop(): void {
@@ -706,6 +729,7 @@ export class MeetingMinutesPipeline {
         key,
         summary,
         "destinationId" in destination ? destination.destinationId : IN_PLACE_PROJECT_ID,
+        minutes.overview,
       ),
     });
   }
@@ -937,8 +961,34 @@ export class MeetingMinutesPipeline {
     return blocks;
   }
 
-  private successBlocks(key: string, text: string, currentDestinationId: string): unknown[] {
-    return this.rerouteBlocks(key, text, currentDestinationId);
+  private successBlocks(
+    key: string,
+    text: string,
+    currentDestinationId: string,
+    overview: string,
+  ): unknown[] {
+    const blocks = this.rerouteBlocks(key, text, currentDestinationId);
+    const safeOverview = overview.length > 2800 ? `${overview.slice(0, 2799)}…` : overview;
+    blocks.splice(1, 0, {
+      type: "section",
+      text: { type: "mrkdwn", text: `*📝 会議の概要*\n${safeOverview}` },
+    });
+    blocks.push({
+      type: "actions",
+      elements: [{
+        type: "button",
+        action_id: ACTION_MM_REFRESH,
+        text: { type: "plain_text", text: "🔄 議事録を更新", emoji: true },
+        value: JSON.stringify({ key }),
+        confirm: {
+          title: { type: "plain_text", text: "議事録を更新" },
+          text: { type: "plain_text", text: "同じTXTから最新ロジックで再生成し、既存の議事録を上書きします。登録済みタスクは変更しません。" },
+          confirm: { type: "plain_text", text: "更新する" },
+          deny: { type: "plain_text", text: "やめる" },
+        },
+      }],
+    });
+    return blocks;
   }
 
   // -------------------------------------------------------------------------
@@ -1045,6 +1095,13 @@ export class MeetingMinutesPipeline {
    */
   async handleReroute(body: any, action: any): Promise<void> {
     const value = this.parseSelectedValue(action);
+    const lockKey = value?.key;
+    if (lockKey && this.runLocks.has(lockKey)) {
+      await this.notifyEphemeral(body, "この議事録では別の操作が進行中です。");
+      return;
+    }
+    if (lockKey) this.runLocks.add(lockKey);
+    try {
     const loaded = await this.loadAuthorizedRun(body, value);
     if (!loaded) return;
     const { state, key, run } = loaded;
@@ -1161,7 +1218,7 @@ export class MeetingMinutesPipeline {
       const summary = `✅ *${next.name}* <#${next.channelId}> へ振り直しました\n${run.minutes.title}\n_登録済みタスクはタスク登録メッセージの取り消し/編集から操作してください_`;
       await this.updateControl(state, key, {
         text: summary,
-        blocks: this.successBlocks(key, summary, next.destinationId),
+        blocks: this.successBlocks(key, summary, next.destinationId, run.minutes.overview),
       });
     } catch (err) {
       run.reroute = {
@@ -1183,6 +1240,9 @@ export class MeetingMinutesPipeline {
         { projectId: next.projectId, channelId: next.channelId },
       );
     }
+    } finally {
+      if (lockKey) this.runLocks.delete(lockKey);
+    }
   }
 
   /** Explicitly copy generated minutes to a configured destination in another workspace. */
@@ -1191,11 +1251,11 @@ export class MeetingMinutesPipeline {
     // The state file is a whole-run snapshot. Lock the run, not the destination,
     // so simultaneous shares to different targets cannot overwrite each other.
     const lockKey = value?.key ?? null;
-    if (lockKey && this.shareLocks.has(lockKey)) {
+    if (lockKey && this.runLocks.has(lockKey)) {
       await this.notifyEphemeral(body, "この共有先への処理はすでに進行中です。");
       return;
     }
-    if (lockKey) this.shareLocks.add(lockKey);
+    if (lockKey) this.runLocks.add(lockKey);
     try {
       const loaded = await this.loadAuthorizedRun(body, value);
       if (!loaded) return;
@@ -1297,8 +1357,196 @@ export class MeetingMinutesPipeline {
         });
       }
     } finally {
-      if (lockKey) this.shareLocks.delete(lockKey);
+      if (lockKey) this.runLocks.delete(lockKey);
     }
+  }
+
+  /** Regenerate from the immutable Slack file and overwrite the existing destination posts. */
+  async handleRefresh(body: any, action: any): Promise<void> {
+    const value = this.parseSelectedValue(action);
+    const lockKey = value?.key;
+    if (lockKey && this.runLocks.has(lockKey)) {
+      await this.notifyEphemeral(body, "この議事録はすでに更新中です。");
+      return;
+    }
+    if (lockKey) this.runLocks.add(lockKey);
+    try {
+      const loaded = await this.loadAuthorizedRun(body, value);
+      if (!loaded) return;
+      const { state, key, run } = loaded;
+      if ((STATUS_RANK[run.status] ?? -1) < STATUS_RANK.posted || !run.minutes || !run.postedParentTs) {
+        await this.notifyEphemeral(body, "議事録の展開が完了していないため更新できません。");
+        return;
+      }
+      const destination = run.inPlace
+        ? {
+            projectId: IN_PLACE_PROJECT_ID,
+            name: run.fileName.replace(/\.txt$/i, ""),
+            channelId: run.destinationChannelId ?? run.routerChannelId,
+          }
+        : this.destinations.find((candidate) => candidate.destinationId === run.destinationId);
+      if (!destination || destination.channelId !== run.destinationChannelId) {
+        await this.notifyEphemeral(body, "現在の宛先設定と一致しないため更新を中止しました。");
+        return;
+      }
+      if (
+        !run.inPlace &&
+        (!("connectorInstanceId" in destination) ||
+          run.destinationConnectorInstanceId !== destination.connectorInstanceId ||
+          run.destinationWorkspaceId !== destination.workspaceId)
+      ) {
+        await this.notifyEphemeral(body, "connectorまたはworkspace設定が変更されたため更新を中止しました。");
+        return;
+      }
+
+      const now = Date.now();
+      const resumable = run.refresh?.status === "failed" && run.refresh.candidate;
+      run.refresh = resumable
+        ? { ...run.refresh!, status: "updating", error: undefined, updatedAt: now }
+        : {
+            status: "generating",
+            approvedBy: body.user.id,
+            approvedAt: now,
+            updatedAt: now,
+            updatedThreadTs: [],
+            postedThreadTs: [...(run.postedThreadTs ?? [])],
+          };
+      if (!saveState(state)) {
+        await this.notifyEphemeral(body, "更新開始を永続化できなかったため処理しませんでした。");
+        return;
+      }
+      await this.updateControl(state, key, { text: "⏳ 同じTXTから議事録を更新中…" });
+
+      if (!run.refresh.candidate) {
+        const transcript = await (this.deps.fetchTranscript ?? this.fetchTranscriptDefault.bind(this))(run.fileId);
+        if (!transcript?.text.trim() || sha256Hex(transcript.text) !== run.sourceTextHash) {
+          throw new Error("source transcript is unavailable or changed");
+        }
+        const generated = await this.generateWithRetry(transcript.text, destination, state, now);
+        if ("error" in generated) throw new Error("minutes generation failed");
+        run.refresh.candidate = generated.minutes;
+        run.refresh.status = "updating";
+        run.refresh.updatedAt = Date.now();
+        if (!saveState(state)) throw new Error("refresh candidate could not be persisted");
+      }
+
+      const candidate = run.refresh.candidate;
+      const existing = {
+        parentTs: run.postedParentTs,
+        threadTs: [...(run.postedThreadTs ?? [])],
+      };
+      const connectorInstanceId = "connectorInstanceId" in destination
+        ? destination.connectorInstanceId
+        : this.deps.sourceConnectorInstanceId;
+      const isRemote = connectorInstanceId !== this.deps.sourceConnectorInstanceId;
+      let result: MeetingMinutesShareProgress;
+      if (isRemote) {
+        const update = this.deps.updateMinutes;
+        const sourceConnectorInstanceId = this.deps.sourceConnectorInstanceId;
+        if (!update || !sourceConnectorInstanceId || !("workspaceId" in destination) || !destination.workspaceId) {
+          throw new Error("target update connector is unavailable");
+        }
+        result = await update({
+          sourceConnectorInstanceId,
+          destination: {
+            shareId: destination.destinationId,
+            projectId: destination.projectId,
+            name: destination.name,
+            connectorInstanceId: destination.connectorInstanceId,
+            workspaceId: destination.workspaceId,
+            channelId: destination.channelId,
+          },
+          minutes: candidate,
+          existing,
+          onProgress: (progress) => {
+            run.refresh!.postedThreadTs = [...progress.threadTs];
+            run.refresh!.updatedAt = Date.now();
+            if (!saveState(state)) throw new Error("refresh progress could not be persisted");
+          },
+        });
+      } else {
+        if (
+          "workspaceId" in destination && destination.workspaceId &&
+          this.deps.getWorkspaceId?.() !== destination.workspaceId
+        ) throw new Error("source workspace identity mismatch");
+        result = await this.updateLocalMinutes(destination.channelId, candidate, existing, (progress) => {
+          run.refresh!.postedThreadTs = [...progress.threadTs];
+          run.refresh!.updatedAt = Date.now();
+          if (!saveState(state)) throw new Error("refresh progress could not be persisted");
+        });
+      }
+
+      // Commit official state only after all Slack mutations completed.
+      run.minutes = candidate;
+      run.postedThreadTs = [...result.threadTs];
+      run.refresh.status = "completed";
+      run.refresh.updatedAt = Date.now();
+      run.updatedAt = Date.now();
+      state.lastMinutesByChannel[destination.channelId] = {
+        title: candidate.title,
+        overview: candidate.overview,
+        postedTs: run.postedParentTs,
+      };
+      if (!saveState(state)) throw new Error("completed refresh could not be persisted");
+      const summary = `✅ *${destination.name}* <#${destination.channelId}> の議事録を更新しました\n${candidate.title}\n_登録済みタスクは変更していません_`;
+      await this.updateControl(state, key, {
+        text: summary,
+        blocks: this.successBlocks(
+          key,
+          summary,
+          "destinationId" in destination ? destination.destinationId : IN_PLACE_PROJECT_ID,
+          candidate.overview,
+        ),
+      });
+    } catch (err) {
+      if (lockKey) {
+        const failed = loadState();
+        const failedRun = failed.runs[lockKey];
+        if (failedRun?.refresh) {
+          failedRun.refresh.status = "failed";
+          failedRun.refresh.error = String(err).slice(0, 300);
+          failedRun.refresh.updatedAt = Date.now();
+          saveState(failed);
+        }
+      }
+      logger.warn(`[meeting-minutes] code=refresh_failed run=${lockKey ?? "unknown"}`);
+      await this.notifyEphemeral(body, "議事録の更新に失敗しました。既存内容を正本として保持し、同じ更新ボタンから再開できます。");
+    } finally {
+      if (lockKey) this.runLocks.delete(lockKey);
+    }
+  }
+
+  private async updateLocalMinutes(
+    channelId: string,
+    minutes: GeneratedMinutes,
+    existing: MeetingMinutesShareProgress,
+    onProgress: (progress: MeetingMinutesShareProgress) => void,
+  ): Promise<MeetingMinutesShareProgress> {
+    const desired = splitForSlack(minutes.body);
+    const threadTs = [...existing.threadTs];
+    for (let i = 0; i < desired.length; i++) {
+      if (threadTs[i]) {
+        await this.client.apiCall("chat.update", { channel: channelId, ts: threadTs[i], text: desired[i], blocks: [] });
+      } else {
+        const posted = await this.client.apiCall("chat.postMessage", {
+          channel: channelId, thread_ts: existing.parentTs, text: desired[i], unfurl_links: false,
+        });
+        if (typeof posted.ts !== "string" || !posted.ts) throw new Error("refresh thread post returned no timestamp");
+        threadTs.push(posted.ts);
+      }
+      onProgress({ parentTs: existing.parentTs, threadTs });
+    }
+    for (let i = desired.length; i < threadTs.length; i++) {
+      await this.client.apiCall("chat.update", {
+        channel: channelId, ts: threadTs[i], text: "（更新により置換済み）", blocks: [],
+      });
+      onProgress({ parentTs: existing.parentTs, threadTs });
+    }
+    // Parent is the commit marker and is updated last.
+    await this.client.apiCall("chat.update", {
+      channel: channelId, ts: existing.parentTs, text: minutes.overview, blocks: [],
+    });
+    return { parentTs: existing.parentTs, threadTs };
   }
 
   /** Exposed for tests. Resume a failed run from its failed stage. */
