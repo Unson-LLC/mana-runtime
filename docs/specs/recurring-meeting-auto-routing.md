@@ -25,6 +25,23 @@ meetingMinutesPipeline:
 5. 投稿直前の既存destination snapshot検証、remote delivery gateway、更新・再試行契約を変更しない。
 6. stateにはrule IDとconfig由来の承認主体を記録するが、投稿文とtranscript本文は追加保存しない。
 
+## Threat model
+
+```mermaid
+flowchart LR
+  U["Slack file_share"] --> N["固定文字列を正規化"]
+  N --> A{"有効ruleが一意か"}
+  A -->|"no"| H["operator手動確認"]
+  A -->|"yes"| D["destinationIdをlive configで解決"]
+  D --> V{"connector/workspace/channel一致"}
+  V -->|"no"| S["配送停止"]
+  V -->|"yes"| G["既存local/remote gateway"]
+  X["攻撃・誤設定: 空rule/複数rule/未知destination"] --> A
+```
+
+信頼境界はoperator管理configとSlack eventの間に置く。eventやLLMは配送権限を作れず、
+競合・削除済み宛先・実行中の宛先変更は自動配送を成立させない。
+
 ## Test mapping
 
 - AC-01/04/06: 正規化された一意一致が分類なしでlocal destinationへ配信される。
