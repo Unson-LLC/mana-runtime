@@ -88,6 +88,18 @@ mcp:
   gateway:
     enabled: true          # メッセージング・組織・cron・セッション用の内蔵MCPサーバー
   # custom:
+  #   # Google Drive only. The Mana MCP adapter calls the current Google
+  #   # Workspace CLI from a fixed, account-isolated credential directory.
+  #   google-drive:
+  #     enabled: true
+  #     command: node
+  #     args: ["/home/ryoko/mcp/google-drive-server.js"]
+  #     env:
+  #       GOOGLE_DRIVE_CLI_BIN: /home/ryoko/bin/gws-drive-cli
+  #       GOOGLE_DRIVE_EXPECTED_ACCOUNT: info@unson.jp
+  #       GOOGLE_DRIVE_ALLOWED_UPLOAD_ROOTS: /home/ryoko/workspaces
+  #       GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /home/ryoko/.config/gws-info-unson
+  #       GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: file
   #   my-server:
   #     enabled: true
   #     command: npx

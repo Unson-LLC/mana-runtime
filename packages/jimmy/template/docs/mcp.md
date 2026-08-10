@@ -74,6 +74,48 @@ mcp:
       args: ["/path/to/my-mcp-server.js"]
 ```
 
+### Google Drive (account-pinned)
+
+Google Drive can be exposed through Mana's Drive-only MCP adapter. The adapter
+uses the current Google Workspace CLI for API calls, verifies the authenticated
+account before every operation, omits delete/share tools, and restricts local
+uploads to configured roots. Keep its credential store separate from other
+Google accounts.
+
+```bash
+npm install --prefix /home/ryoko/mcp/google-workspace-cli @googleworkspace/cli@0.22.5
+install -m 0755 \
+  /home/ryoko/mcp/google-workspace-cli/node_modules/@googleworkspace/cli/bin/gws \
+  /home/ryoko/bin/gws-drive-cli
+install -m 0755 \
+  /home/ryoko/current/packages/jimmy/dist/src/mcp/google-drive-server.js \
+  /home/ryoko/mcp/google-drive-server.js
+```
+
+```yaml
+mcp:
+  custom:
+    google-drive:
+      enabled: true
+      command: node
+      args: ["/home/ryoko/mcp/google-drive-server.js"]
+      env:
+        GOOGLE_DRIVE_CLI_BIN: /home/ryoko/bin/gws-drive-cli
+        GOOGLE_DRIVE_EXPECTED_ACCOUNT: info@unson.jp
+        GOOGLE_DRIVE_ALLOWED_UPLOAD_ROOTS: /home/ryoko/workspaces
+        GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /home/ryoko/.config/gws-info-unson
+        GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: file
+```
+
+Only placements that explicitly include `google-drive` in
+`capabilities.mcp` receive `mcp__google-drive__*` tools. The account credential
+may cover the whole Drive, but folder/channel restrictions must not rely on
+`dataScopes`; enforce those restrictions in a request-validating MCP proxy
+before enabling them.
+
+See [Google Drive MCP operations](../../../../docs/operations/google-drive-mcp.md)
+for authentication, deployment, and verification.
+
 ## Per-Employee Overrides
 
 Employees can opt out of MCP servers or request only specific ones:

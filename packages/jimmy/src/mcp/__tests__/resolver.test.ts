@@ -97,4 +97,42 @@ describe("resolveMcpServers", () => {
     expect(JSON.stringify(resolved.effectiveCapabilities)).not.toContain("TEST_MISSING_SEARCH_KEY");
     if (previous !== undefined) process.env.TEST_MISSING_SEARCH_KEY = previous;
   });
+
+  it("pins the Google Drive MCP account and exposes it only to an allowed placement", () => {
+    const config = {
+      gateway: { enabled: true },
+      custom: {
+        "google-drive": {
+          enabled: true,
+          command: "node",
+          args: ["/home/ryoko/mcp/google-drive-server.js"],
+          env: {
+            GOOGLE_DRIVE_CLI_BIN: "/home/ryoko/bin/gws-drive-cli",
+            GOOGLE_DRIVE_EXPECTED_ACCOUNT: "info@unson.jp",
+            GOOGLE_DRIVE_ALLOWED_UPLOAD_ROOTS: "/home/ryoko/workspaces",
+            GOOGLE_WORKSPACE_CLI_CONFIG_DIR: "/home/ryoko/.config/gws-info-unson",
+            GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: "file",
+          },
+        },
+      },
+    } satisfies JinnConfig["mcp"];
+
+    const allowed = resolveMcpServers(config, undefined, { sessionId: "drive-allowed" }, ["google-drive"]);
+    expect(allowed.mcpServers).toEqual({
+      "google-drive": {
+        command: "node",
+        args: ["/home/ryoko/mcp/google-drive-server.js"],
+        env: {
+          GOOGLE_DRIVE_CLI_BIN: "/home/ryoko/bin/gws-drive-cli",
+          GOOGLE_DRIVE_EXPECTED_ACCOUNT: "info@unson.jp",
+          GOOGLE_DRIVE_ALLOWED_UPLOAD_ROOTS: "/home/ryoko/workspaces",
+          GOOGLE_WORKSPACE_CLI_CONFIG_DIR: "/home/ryoko/.config/gws-info-unson",
+          GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: "file",
+        },
+      },
+    });
+
+    const denied = resolveMcpServers(config, undefined, { sessionId: "drive-denied" }, ["gateway"]);
+    expect(denied.mcpServers).not.toHaveProperty("google-drive");
+  });
 });
