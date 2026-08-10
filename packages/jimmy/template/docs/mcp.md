@@ -116,6 +116,16 @@ before enabling them.
 See [Google Drive MCP operations](../../../../docs/operations/google-drive-mcp.md)
 for authentication, deployment, and verification.
 
+## DocuSign contract ledger
+
+Mana's `docusign` MCP adapter exposes account-pinned, read-only eSignature
+envelope metadata. Contract status remains authoritative in DocuSign while the
+`google-drive` MCP writes the operational Google Sheets ledger. Placements must
+explicitly allow both servers; neither server expands the other's authority.
+
+See [DocuSign contract-ledger synchronization](../../../../docs/operations/docusign-contract-ledger.md)
+for OAuth, Infisical, deployment, and reconciliation requirements.
+
 ## Per-Employee Overrides
 
 Employees can opt out of MCP servers or request only specific ones:
