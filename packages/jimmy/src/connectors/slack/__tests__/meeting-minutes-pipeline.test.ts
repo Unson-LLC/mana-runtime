@@ -572,6 +572,8 @@ describe("routing fallback", () => {
         autoRoutes: [
           { ruleId: "", destinationId: "proj_salestailor", messageTextIncludesAll: ["定例"] },
           { ruleId: "empty-matchers", destinationId: "proj_salestailor" },
+          { destinationId: "proj_salestailor", messageTextIncludesAll: ["定例"] } as any,
+          { ruleId: "missing-destination", messageTextIncludesAll: ["定例"] } as any,
         ],
       },
     });
