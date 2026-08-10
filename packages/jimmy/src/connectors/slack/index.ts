@@ -307,7 +307,7 @@ export class SlackConnector implements Connector {
       ? taskCanvasConfigsForPlacements(
           { ...config.taskCanvas, settingsWebBaseUrl: config.settingsHome?.webBaseUrl },
           context.placements,
-          this.instanceId,
+          this.name,
           this.configuredWorkspaceId,
         )
       : [];
@@ -320,9 +320,9 @@ export class SlackConnector implements Connector {
           projectCodesForChannel: (channelId) =>
             placementProjectCodesForChannel(
               context.placements,
-              this.instanceId,
+              this.name,
               channelId,
-              this.configuredWorkspaceId,
+              this.workspaceId ?? this.configuredWorkspaceId,
             ),
         })
       : null;

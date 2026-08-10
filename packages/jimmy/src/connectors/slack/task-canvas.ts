@@ -221,13 +221,15 @@ function saveCanvasId(channelId: string | undefined, canvasId: string | null): v
 export function taskCanvasConfigsForPlacements(
   config: TaskCanvasConfig,
   placements: PlacementProfile[] | undefined,
-  connectorId: string,
+  connectorName: string,
   workspaceId?: string | null,
 ): TaskCanvasConfig[] {
+  if (placements?.length && !workspaceId) return [];
   const matching = (placements ?? []).filter((placement) =>
     placement.enabled !== false
-    && placement.connector === connectorId
-    && (!workspaceId || placement.workspaceId === workspaceId),
+    && placement.taskCanvas?.enabled !== false
+    && placement.connector === connectorName
+    && placement.workspaceId === workspaceId,
   );
   if (matching.length === 0) return placements?.length ? [] : [{ ...config }];
   const byChannel = new Map<string, Set<string>>();
@@ -244,7 +246,7 @@ export function taskCanvasConfigsForPlacements(
     channelId,
     projectCodes: [...projects],
     settingsUrl: buildTaskCanvasProjectSettingsUrl(config.settingsWebBaseUrl, {
-      connectorId,
+      connectorId: connectorName,
       workspaceId,
       channelId,
     }) ?? undefined,
@@ -253,16 +255,17 @@ export function taskCanvasConfigsForPlacements(
 
 export function placementProjectCodesForChannel(
   placements: PlacementProfile[] | undefined,
-  connectorId: string,
+  connectorName: string,
   channelId: string,
   workspaceId?: string | null,
 ): string[] {
   return [...new Set((placements ?? [])
     .filter((placement) =>
       placement.enabled !== false
-      && placement.connector === connectorId
+      && placement.connector === connectorName
       && placement.channelId === channelId
-      && (!workspaceId || placement.workspaceId === workspaceId),
+      && Boolean(workspaceId)
+      && placement.workspaceId === workspaceId,
     )
     .flatMap((placement) => placement.projects ?? [])
     .map((project) => project.trim())

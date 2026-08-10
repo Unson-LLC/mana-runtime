@@ -12,6 +12,12 @@ Slackの各チャンネルCanvasで、そのplacementに設定された複数pro
 - Canvasは担当者別（未割当を含む）に表示し、各Taskにprojectタグを表示する。
 - CanvasはBrainbase PostgreSQLの読み取り専用projectionであり、直接編集を正本へ戻さない。
 - meeting task proposalから登録するTaskには、そのSlack channelのplacement projectsを保存する。
+- Slack placementの `connector` はinstance IDではなくtransport種別 `slack` とし、
+  Canvas対象は `connector + workspaceId + channelId` の完全一致で決める。
+- placement運用時にconnector側の `workspaceId` が未設定なら、別workspaceへ誤配信せず
+  Canvas生成をfail closedする。
+- `placement.taskCanvas.enabled: false` はCanvasだけを対象外にし、通常のmessage routing、
+  delivery、meeting task proposalは維持する。
 
 ## Release boundary
 
