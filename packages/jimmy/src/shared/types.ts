@@ -668,6 +668,13 @@ export interface SlackConnectorConfig {
       workspaceId: string;
       channelId: string;
     }[];
+    /** Explicit, deterministic recurring-meeting routes. Ambiguity falls back to manual selection. */
+    autoRoutes?: {
+      ruleId: string;
+      destinationId: string;
+      messageTextIncludesAll?: string[];
+      fileNameIncludesAll?: string[];
+    }[];
     /** User IDs allowed to reroute/retry. Defaults to allowFrom. */
     operatorUserIds?: string[];
     /** Max transcript file size in bytes. Default 1 MiB. */

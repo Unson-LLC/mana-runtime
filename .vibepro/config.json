@@ -92,9 +92,7 @@
         "view": "business",
         "period": null,
         "started_at": null,
-        "due_at": null,
-        "category": "product",
-        "derived_by": "vibepro-story-derive"
+        "due_at": null
       },
       {
         "story_id": "story-quality-test-ci-readiness",
@@ -131,7 +129,9 @@
         "view": "business",
         "period": null,
         "started_at": null,
-        "due_at": null
+        "due_at": null,
+        "category": "product",
+        "derived_by": "vibepro-story-derive"
       },
       {
         "story_id": "story-lightsail-deploy-workflow",
@@ -143,8 +143,21 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-recurring-meeting-auto-routing",
+        "title": "承認済み定例議事録を安全に自動配信する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "quarter",
+        "view": "business",
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "category": "product",
+        "derived_by": "vibepro-story-derive"
       }
     ],
-    "current_story_id": "story-lightsail-deploy-workflow"
+    "current_story_id": "story-recurring-meeting-auto-routing"
   }
 }

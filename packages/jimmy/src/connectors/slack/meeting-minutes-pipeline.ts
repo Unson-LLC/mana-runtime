@@ -64,6 +64,8 @@ export interface MeetingMinutesPipelineConfig {
   destinations?: MinutesDestination[];
   /** Explicitly approved copy targets in other Slack workspaces. Never sent to the LLM. */
   shareDestinations?: MinutesShareDestination[];
+  /** Operator-approved deterministic routes for recurring meetings. */
+  autoRoutes?: MeetingMinutesAutoRoute[];
   /** Slack user IDs allowed to reroute/retry. Falls back to allowFrom. */
   operatorUserIds?: string[];
   /** Max transcript file size in bytes. Default 1 MiB. */
@@ -73,6 +75,17 @@ export interface MeetingMinutesPipelineConfig {
   /** LLM overrides per stage. */
   routing?: MinutesLlmOptions;
   generation?: MinutesLlmOptions;
+}
+
+export interface MeetingMinutesAutoRoute {
+  /** Stable, non-secret identifier recorded in run state and logs. */
+  ruleId: string;
+  /** Exact destination key; resolved again from the live config before delivery. */
+  destinationId: string;
+  /** Every non-empty token must occur in the Slack upload message. */
+  messageTextIncludesAll?: string[];
+  /** Every non-empty token must occur in the uploaded .txt file name. */
+  fileNameIncludesAll?: string[];
 }
 
 /**
@@ -101,9 +114,11 @@ export interface MinutesRun {
   /** LLM proposal only; it is never delivery authority. */
   suggestedProjectId?: string;
   routingReason?: string;
-  /** Slack-signed source-workspace operator who made the delivery decision. */
+  /** Slack operator ID, or the explicit config rule that authorized delivery. */
   destinationApprovedBy?: string;
   destinationApprovedAt?: number;
+  /** Explicit recurring-route rule used for automatic delivery. */
+  autoRouteId?: string;
   destinationChannelId?: string;
   destinationConnectorInstanceId?: string;
   destinationWorkspaceId?: string;
@@ -304,6 +319,40 @@ export function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+function normalizeAutoRouteText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim();
+}
+
+/** Returns authority only for one unambiguous, valid, configured match. */
+export function matchMeetingMinutesAutoRoute(
+  rules: MeetingMinutesAutoRoute[],
+  destinations: CanonicalMinutesDestination[],
+  messageText: string,
+  fileName: string,
+): { rule: MeetingMinutesAutoRoute; destination: CanonicalMinutesDestination } | null {
+  const normalizedMessage = normalizeAutoRouteText(messageText);
+  const normalizedFileName = normalizeAutoRouteText(fileName);
+  const destinationsById = new Map(destinations.map((destination) => [destination.destinationId, destination]));
+  const matches = rules.flatMap((rule) => {
+    const ruleId = typeof rule?.ruleId === "string" ? rule.ruleId.trim() : "";
+    const destinationId = typeof rule?.destinationId === "string" ? rule.destinationId.trim() : "";
+    const destination = destinationsById.get(destinationId);
+    const messageTokens = (rule?.messageTextIncludesAll ?? [])
+      .filter((token): token is string => typeof token === "string")
+      .map(normalizeAutoRouteText)
+      .filter(Boolean);
+    const fileTokens = (rule?.fileNameIncludesAll ?? [])
+      .filter((token): token is string => typeof token === "string")
+      .map(normalizeAutoRouteText)
+      .filter(Boolean);
+    if (!ruleId || !destination || messageTokens.length + fileTokens.length === 0) return [];
+    if (!messageTokens.every((token) => normalizedMessage.includes(token))) return [];
+    if (!fileTokens.every((token) => normalizedFileName.includes(token))) return [];
+    return [{ rule: { ...rule, ruleId, destinationId }, destination }];
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /** Advance status; never regress a completed stage (failed:* is a marker, not a rank). */
 export function advanceStatus(run: MinutesRun, next: MinutesRunStatus): void {
   if (next.startsWith("failed:")) {
@@ -359,6 +408,7 @@ export class MeetingMinutesPipeline {
   private readonly watchAllChannels: boolean;
   private readonly destinations: CanonicalMinutesDestination[];
   private readonly shareDestinations: MinutesShareDestination[];
+  private readonly autoRoutes: MeetingMinutesAutoRoute[];
   private readonly invalidWildcardConfig: boolean;
   private readonly operators: ApproverResolver;
   private readonly operatorsEmpty: boolean;
@@ -398,6 +448,7 @@ export class MeetingMinutesPipeline {
       destinations: config.destinations,
       shareDestinations: this.shareDestinations,
     });
+    this.autoRoutes = Array.isArray(config.autoRoutes) ? config.autoRoutes : [];
     const operatorIds = (
       config.operatorUserIds?.length ? config.operatorUserIds : fallbackOperators
     ).filter(Boolean);
@@ -525,6 +576,27 @@ export class MeetingMinutesPipeline {
       updatedAt: now,
       expiresAt: now + this.ttlMs,
     };
+    if (!inPlace) {
+      const autoRoute = matchMeetingMinutesAutoRoute(
+        this.autoRoutes,
+        this.destinations,
+        typeof event.text === "string" ? event.text : "",
+        run.fileName,
+      );
+      if (autoRoute) {
+        const { rule, destination } = autoRoute;
+        run.projectId = destination.projectId;
+        run.destinationId = destination.destinationId;
+        run.destinationChannelId = destination.channelId;
+        run.destinationConnectorInstanceId = destination.connectorInstanceId;
+        run.destinationWorkspaceId = destination.workspaceId;
+        run.routingReason = `承認済み定例ルール: ${rule.ruleId}`;
+        run.destinationApprovedBy = `config:auto-route:${rule.ruleId}`;
+        run.destinationApprovedAt = now;
+        run.autoRouteId = rule.ruleId;
+        advanceStatus(run, "routed");
+      }
+    }
     state.runs[key] = run;
     saveState(state);
 

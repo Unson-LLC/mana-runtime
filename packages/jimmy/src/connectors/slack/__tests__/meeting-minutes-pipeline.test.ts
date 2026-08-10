@@ -492,6 +492,118 @@ describe("happy path", () => {
 });
 
 describe("routing fallback", () => {
+  it("auto-routes an explicitly configured recurring meeting without LLM classification", async () => {
+    const classify = vi.fn();
+    const { pipeline, apiCall, generate } = makePipeline({
+      autoConfirm: false,
+      classify,
+      config: {
+        destinations: [
+          { destinationId: "tech-knight-minutes", ...DESTINATIONS[0] },
+          { destinationId: "baao-minutes", ...DESTINATIONS[1] },
+        ],
+        autoRoutes: [{
+          ruleId: "tech-knight-board-weekly",
+          destinationId: "tech-knight-minutes",
+          messageTextIncludesAll: ["Ｔｅｃｈ　Ｋｎｉｇｈｔ", "ボード 定例"],
+          fileNameIncludesAll: ["BOARD-WEEKLY"],
+        }],
+      },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent({
+      text: "Tech Knight  ボード　定例 の文字起こしです",
+      files: [{ id: "F001", name: "2026-08-10_board-weekly.txt", size: 5000 }],
+    }));
+
+    expect(classify).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(postedMessages(apiCall).some((message) => message.channel === "C_ST")).toBe(true);
+    expect(Object.values(readState().runs)[0]).toMatchObject({
+      status: "tasks_dispatched",
+      destinationId: "tech-knight-minutes",
+      autoRouteId: "tech-knight-board-weekly",
+      destinationApprovedBy: "config:auto-route:tech-knight-board-weekly",
+      routingReason: "承認済み定例ルール: tech-knight-board-weekly",
+    });
+  });
+
+  it("falls back to manual confirmation when multiple recurring rules match", async () => {
+    const classify = vi.fn().mockResolvedValue(null);
+    const { pipeline, apiCall, generate } = makePipeline({
+      autoConfirm: false,
+      classify,
+      config: {
+        autoRoutes: [
+          { ruleId: "weekly-a", destinationId: "proj_salestailor", messageTextIncludesAll: ["定例"] },
+          { ruleId: "weekly-b", destinationId: "proj_baao", messageTextIncludesAll: ["定例"] },
+        ],
+      },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent({ text: "ボード定例" }));
+
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(generate).not.toHaveBeenCalled();
+    expect(Object.values(readState().runs)[0].status).toBe("awaiting_destination");
+    expect(postedMessages(apiCall).some((message) => ["C_ST", "C_BAAO"].includes(message.channel))).toBe(false);
+  });
+
+  it("ignores a recurring rule whose destination is not configured", async () => {
+    const classify = vi.fn().mockResolvedValue(null);
+    const { pipeline, generate } = makePipeline({
+      autoConfirm: false,
+      classify,
+      config: {
+        autoRoutes: [{ ruleId: "removed-target", destinationId: "missing", messageTextIncludesAll: ["定例"] }],
+      },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent({ text: "定例" }));
+
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(generate).not.toHaveBeenCalled();
+    expect(Object.values(readState().runs)[0].status).toBe("awaiting_destination");
+  });
+
+  it("auto-routes cross-workspace only through the configured delivery gateway", async () => {
+    const share = vi.fn().mockImplementation(async ({ onProgress }) => {
+      onProgress({ parentTs: "9000.1", threadTs: ["9000.2"] });
+      return { parentTs: "9000.1" };
+    });
+    const classify = vi.fn();
+    const remote = {
+      shareId: "tech-knight-minutes",
+      projectId: "proj_techknight",
+      name: "Tech Knight / 議事録",
+      connectorInstanceId: "slack-techknight",
+      workspaceId: "T_TECH",
+      channelId: "C_TECH_MINUTES",
+    };
+    const { pipeline, apiCall } = makePipeline({
+      autoConfirm: false,
+      classify,
+      share,
+      config: {
+        shareDestinations: [remote],
+        autoRoutes: [{
+          ruleId: "tech-knight-board-weekly",
+          destinationId: remote.shareId,
+          messageTextIncludesAll: ["Tech Knight", "ボード定例"],
+        }],
+      },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent({ text: "Tech Knight ボード定例" }));
+
+    expect(classify).not.toHaveBeenCalled();
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(share).toHaveBeenCalledWith(expect.objectContaining({ destination: remote }));
+    expect(postedMessages(apiCall).some((message) => message.channel === remote.channelId)).toBe(false);
+    expect(Object.values(readState().runs)[0]).toMatchObject({
+      destinationId: remote.shareId,
+      destinationWorkspaceId: remote.workspaceId,
+      destinationChannelId: remote.channelId,
+      autoRouteId: "tech-knight-board-weekly",
+    });
+  });
+
   it("requires operator confirmation by default", async () => {
     const { pipeline, apiCall, generate } = makePipeline({
       autoConfirm: false,
