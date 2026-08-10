@@ -703,6 +703,25 @@ export function stripTopLevelSlackCredentials(
   };
 }
 
+/**
+ * Connector instances capture placement and portal routing at construction.
+ * Return true only when a config change affects that live connector runtime.
+ */
+export function connectorRuntimeConfigChanged(
+  existing: Record<string, unknown>,
+  next: Record<string, unknown>,
+): boolean {
+  const previousPortal = (existing.portal as Record<string, unknown> | undefined) ?? {};
+  const nextPortal = (next.portal as Record<string, unknown> | undefined) ?? {};
+
+  return (
+    JSON.stringify(existing.connectors ?? null) !== JSON.stringify(next.connectors ?? null) ||
+    previousPortal.portalName !== nextPortal.portalName ||
+    previousPortal.operatorName !== nextPortal.operatorName ||
+    JSON.stringify(existing.placements ?? null) !== JSON.stringify(next.placements ?? null)
+  );
+}
+
 function matchRoute(
   pattern: string,
   pathname: string,
@@ -2032,15 +2051,7 @@ Handle this as a priority request from a colleague.`;
       // change, because SlackConnector captures those at construction and
       // would otherwise keep displaying the old portal name in triage prompts
       // until a daemon restart.
-      const portalSliceChanged = (() => {
-        const prev = (existing as { portal?: Record<string, unknown> }).portal ?? {};
-        const next = (merged as { portal?: Record<string, unknown> }).portal ?? {};
-        return prev.portalName !== next.portalName || prev.operatorName !== next.operatorName;
-      })();
-      const connectorsChanged =
-        JSON.stringify(existing.connectors ?? null) !==
-          JSON.stringify((merged as Record<string, unknown>).connectors ?? null) ||
-        portalSliceChanged;
+      const connectorsChanged = connectorRuntimeConfigChanged(existing, merged);
 
       // Tell the watcher to skip its connector-reload reaction for the file
       // write we're about to do — we'll handle the reload ourselves below

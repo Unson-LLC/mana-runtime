@@ -573,7 +573,10 @@ export interface SlackConnectorConfig {
   agentsCanvas?: {
     /** Master switch — defaults to false when the block is absent. */
     enabled?: boolean;
-    /** Slack channel ID to host the canvas in. If unset, a standalone canvas is created. */
+    /**
+     * Legacy Slack channel ID. When placements are configured, one canvas is
+     * derived for every matching placement channel instead.
+     */
     channelId?: string;
     /** Canvas title. Default: "Ryoko Agents View". */
     title?: string;

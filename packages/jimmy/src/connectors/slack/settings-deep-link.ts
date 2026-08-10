@@ -52,6 +52,19 @@ export function buildSettingsTopologyUrl(webBaseUrl: string | undefined): string
   return url.toString().replace(/\/$/, "");
 }
 
+export function buildTaskCanvasProjectSettingsUrl(
+  webBaseUrl: string | undefined,
+  target: { connectorId: string; workspaceId?: string | null; channelId: string },
+): string | null {
+  const url = safeSettingsBaseUrl(webBaseUrl);
+  if (!url) return null;
+  url.pathname = "/placements/projects";
+  url.searchParams.set("connector", target.connectorId.trim());
+  if (target.workspaceId?.trim()) url.searchParams.set("workspace", target.workspaceId.trim());
+  url.searchParams.set("channel", target.channelId.trim());
+  return url.toString();
+}
+
 /**
  * Builds an operator-facing link without carrying credentials, error text, or
  * arbitrary caller-controlled query fields into the Web UI.

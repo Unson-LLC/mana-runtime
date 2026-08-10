@@ -371,6 +371,7 @@ export interface MeetingTaskProposalDeps {
     options?: ExtractMeetingTasksOptions,
   ) => Promise<MeetingTaskCandidate[]>;
   approverResolver?: ApproverResolver;
+  projectCodesForChannel?: (channelId: string) => string[];
 }
 
 export class MeetingTaskProposalNotifier {
@@ -385,6 +386,7 @@ export class MeetingTaskProposalNotifier {
   private readonly taskClientFactory: () => BrainbaseTaskClient;
   private readonly peopleClient: GraphPeopleClient;
   private readonly enabled: boolean;
+  private readonly projectCodesForChannel: (channelId: string) => string[];
   private readonly bootTimeMs = Date.now();
   private active = false;
 
@@ -406,6 +408,7 @@ export class MeetingTaskProposalNotifier {
     this.taskClientFactory = deps.taskClientFactory ?? (() => new BrainbaseTaskClient());
     this.peopleClient = deps.peopleClient ?? new GraphPeopleClient();
     this.enabled = config.enabled === true;
+    this.projectCodesForChannel = deps.projectCodesForChannel ?? (() => []);
   }
 
   /**
@@ -637,6 +640,7 @@ export class MeetingTaskProposalNotifier {
         description: descriptionParts.filter(Boolean).join("\n"),
         ...(candidate.assigneePersonId ? { assignee_person_id: candidate.assigneePersonId } : {}),
         ...(candidate.due ? { due_at: `${candidate.due}T00:00:00+09:00` } : {}),
+        project_codes: this.projectCodesForChannel(proposal.channelId),
       },
       candidateIdempotencyKey(proposal, candidate.index),
     );

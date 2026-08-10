@@ -66,12 +66,12 @@ describe("BrainbaseTaskClient", () => {
 
   it("lists tasks with query filters", async () => {
     const fetchImpl = fakeFetch((url, init) => {
-      expect(url).toBe("https://bb.example/api/companion/tasks?status=pending&limit=5");
+      expect(url).toBe("https://bb.example/api/companion/tasks?status=pending&limit=5&project_code=mana&project_code=brainbase");
       expect(init.method).toBe("GET");
       return { status: 200, body: { items: [] } };
     });
     const client = new BrainbaseTaskClient({ ...options, fetchImpl });
-    const result = await client.listTasks({ status: "pending", limit: 5 });
+    const result = await client.listTasks({ status: "pending", limit: 5, project_code: ["mana", "brainbase"] });
     expect(result.items).toEqual([]);
   });
 

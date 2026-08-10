@@ -63,6 +63,7 @@ function makeNotifier(overrides: {
   taskClient?: ReturnType<typeof makeTaskClient>;
   people?: typeof PEOPLE;
   config?: Record<string, unknown>;
+  projectCodes?: string[];
 } = {}) {
   const { app, apiCall } = makeApp();
   const extract = overrides.extract ?? vi.fn().mockResolvedValue([
@@ -78,6 +79,7 @@ function makeNotifier(overrides: {
       extractImpl: extract as any,
       taskClientFactory: () => taskClient.client,
       peopleClient: makePeopleClient(overrides.people),
+      projectCodesForChannel: () => overrides.projectCodes ?? [],
     },
   );
   notifier.register();
@@ -188,6 +190,12 @@ describe("default registration on detection", () => {
     expect(createTask.mock.calls[1][0]).not.toHaveProperty("assignee_person_id");
     const stored = readState()[proposalKey(CHANNEL, SOURCE_TS)];
     expect(stored.candidates[0].assigneePersonName).toBe("佐藤 圭吾");
+  });
+
+  it("binds registered tasks to the channel placement project union", async () => {
+    const { notifier, createTask } = makeNotifier({ projectCodes: ["mana", "brainbase"] });
+    await notifier.maybeHandleMessage(messageEvent({ ts: SOURCE_TS }));
+    expect(createTask.mock.calls[0][0]).toMatchObject({ project_codes: ["mana", "brainbase"] });
   });
 
   it("skips assignee when the Graph is unavailable (empty people)", async () => {
