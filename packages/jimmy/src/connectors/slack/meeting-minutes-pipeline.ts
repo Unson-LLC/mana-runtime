@@ -219,27 +219,51 @@ const STATUS_RANK: Record<string, number> = {
   tasks_dispatched: 4,
 };
 
+let cachedState: PipelineState | null = null;
+let cachedStateIdentity: string | null = null;
+/** Shared across every Slack workspace connector in this Node process. */
+const runLocks = new Set<string>();
+
+function stateFileIdentity(): string | null {
+  try {
+    const stat = fs.statSync(STATE_FILE);
+    return `${stat.ino}:${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return null;
+  }
+}
+
 function loadState(): PipelineState {
+  const identity = stateFileIdentity();
+  if (cachedState && identity && identity === cachedStateIdentity) return cachedState;
   try {
     const parsed = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8")) as PipelineState;
     if (parsed && typeof parsed === "object") {
-      return {
+      cachedState = {
         runs: parsed.runs && typeof parsed.runs === "object" ? parsed.runs : {},
         lastMinutesByChannel:
           parsed.lastMinutesByChannel && typeof parsed.lastMinutesByChannel === "object"
             ? parsed.lastMinutesByChannel
             : {},
       };
+      cachedStateIdentity = identity;
+      return cachedState;
     }
   } catch {
     /* fresh state */
   }
-  return { runs: {}, lastMinutesByChannel: {} };
+  cachedState = { runs: {}, lastMinutesByChannel: {} };
+  cachedStateIdentity = null;
+  return cachedState;
 }
 
 function saveState(state: PipelineState): boolean {
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    const tempFile = `${STATE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(state, null, 2));
+    fs.renameSync(tempFile, STATE_FILE);
+    cachedState = state;
+    cachedStateIdentity = stateFileIdentity();
     return true;
   } catch {
     logger.warn("[meeting-minutes] code=state_persist_failed");
@@ -251,6 +275,25 @@ function pruneExpired(state: PipelineState, now: number): void {
   for (const key of Object.keys(state.runs)) {
     if (state.runs[key].expiresAt <= now) delete state.runs[key];
   }
+}
+
+function recoverRunFromKey(key: string, channelId: string, ttlMs: number): MinutesRun | null {
+  const match = /^router:([^:]+):([^:]+):(\d+(?:\.\d+)?)$/.exec(key);
+  if (!match || match[1] !== channelId) return null;
+  const createdAt = Number.parseFloat(match[3]) * 1000;
+  if (!Number.isFinite(createdAt)) return null;
+  return {
+    routerChannelId: match[1],
+    fileId: match[2],
+    sourceTs: match[3],
+    fileName: "transcript.txt",
+    sourceTextHash: "",
+    // A destination button can only exist after routing reached this stage.
+    status: "awaiting_destination",
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt: createdAt + ttlMs,
+  };
 }
 
 export function runKey(channelId: string, fileId: string, ts: string): string {
@@ -324,8 +367,6 @@ export class MeetingMinutesPipeline {
   private readonly routingOptions: MinutesLlmOptions;
   private readonly generationOptions: MinutesLlmOptions;
   private readonly deps: MeetingMinutesPipelineDeps;
-  /** One lock per run for every state-changing action. */
-  private readonly runLocks = new Set<string>();
   private readonly bootTimeMs = Date.now();
   private active = false;
 
@@ -1040,11 +1081,34 @@ export class MeetingMinutesPipeline {
       return null;
     }
     const state = loadState();
-    pruneExpired(state, Date.now());
-    const run = state.runs[value.key];
+    const now = Date.now();
+    const requestedBeforePrune = state.runs[value.key];
+    pruneExpired(state, now);
+    let run: MinutesRun | undefined = state.runs[value.key];
     if (!run) {
+      if (requestedBeforePrune?.expiresAt <= now) {
+        saveState(state);
+        await this.notifyEphemeral(body, "この実行は期限切れです。transcriptを再アップロードしてください。", { channelId });
+        return null;
+      }
+      if (channelId) {
+        run = recoverRunFromKey(value.key, channelId, this.ttlMs) ?? undefined;
+      }
+      if (run && typeof run.expiresAt === "number" && run.expiresAt <= now) {
+        await this.notifyEphemeral(body, "この実行は期限切れです。transcriptを再アップロードしてください。", { channelId });
+        return null;
+      }
+      if (run) {
+        state.runs[value.key] = run;
+        if (!saveState(state)) {
+          await this.notifyEphemeral(body, "実行状態の復元に失敗しました。もう一度お試しください。", { channelId });
+          return null;
+        }
+        logger.warn(`[meeting-minutes] code=missing_run_recovered run=${value.key}`);
+        return { state, key: value.key, run };
+      }
       saveState(state);
-      await this.notifyEphemeral(body, "この実行は期限切れです。transcriptを再アップロードしてください。", { channelId });
+      await this.notifyEphemeral(body, "この実行の状態を確認できません。元の受付チャンネルからやり直してください。", { channelId });
       return null;
     }
     if (!channelId || channelId !== run.routerChannelId) {
@@ -1097,11 +1161,11 @@ export class MeetingMinutesPipeline {
   async handleReroute(body: any, action: any): Promise<void> {
     const value = this.parseSelectedValue(action);
     const lockKey = value?.key;
-    if (lockKey && this.runLocks.has(lockKey)) {
+    if (lockKey && runLocks.has(lockKey)) {
       await this.notifyEphemeral(body, "この議事録では別の操作が進行中です。");
       return;
     }
-    if (lockKey) this.runLocks.add(lockKey);
+    if (lockKey) runLocks.add(lockKey);
     try {
     const loaded = await this.loadAuthorizedRun(body, value);
     if (!loaded) return;
@@ -1242,7 +1306,7 @@ export class MeetingMinutesPipeline {
       );
     }
     } finally {
-      if (lockKey) this.runLocks.delete(lockKey);
+      if (lockKey) runLocks.delete(lockKey);
     }
   }
 
@@ -1252,11 +1316,11 @@ export class MeetingMinutesPipeline {
     // The state file is a whole-run snapshot. Lock the run, not the destination,
     // so simultaneous shares to different targets cannot overwrite each other.
     const lockKey = value?.key ?? null;
-    if (lockKey && this.runLocks.has(lockKey)) {
+    if (lockKey && runLocks.has(lockKey)) {
       await this.notifyEphemeral(body, "この共有先への処理はすでに進行中です。");
       return;
     }
-    if (lockKey) this.runLocks.add(lockKey);
+    if (lockKey) runLocks.add(lockKey);
     try {
       const loaded = await this.loadAuthorizedRun(body, value);
       if (!loaded) return;
@@ -1358,7 +1422,7 @@ export class MeetingMinutesPipeline {
         });
       }
     } finally {
-      if (lockKey) this.runLocks.delete(lockKey);
+      if (lockKey) runLocks.delete(lockKey);
     }
   }
 
@@ -1366,11 +1430,11 @@ export class MeetingMinutesPipeline {
   async handleRefresh(body: any, action: any): Promise<void> {
     const value = this.parseSelectedValue(action);
     const lockKey = value?.key;
-    if (lockKey && this.runLocks.has(lockKey)) {
+    if (lockKey && runLocks.has(lockKey)) {
       await this.notifyEphemeral(body, "この議事録はすでに更新中です。");
       return;
     }
-    if (lockKey) this.runLocks.add(lockKey);
+    if (lockKey) runLocks.add(lockKey);
     try {
       const loaded = await this.loadAuthorizedRun(body, value);
       if (!loaded) return;
@@ -1548,7 +1612,7 @@ export class MeetingMinutesPipeline {
         `議事録の更新に失敗しました。既存内容を正本として保持し、同じ更新ボタンから再開できます。\n更新エラー: ${errorMessage}`,
       );
     } finally {
-      if (lockKey) this.runLocks.delete(lockKey);
+      if (lockKey) runLocks.delete(lockKey);
     }
   }
 
