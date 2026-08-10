@@ -13,6 +13,7 @@ import {
   sanitizeMinutesMrkdwn,
   fitSlackOverview,
   splitForSlack,
+  truncateSurrogateSafe,
   type MinutesContext,
   type MinutesDestination,
 } from "../meeting-minutes-generator.js";
@@ -208,6 +209,36 @@ describe("fitSlackOverview", () => {
     expect(result).toContain("概要");
     expect(result).toMatch(/全文はスレッド内）$/);
   });
+
+  it("does not split a surrogate pair at the forced truncation boundary", () => {
+    // No newline/space anywhere → the hard boundary lands mid-😀 without the guard.
+    const suffixLength = "\n…（全文はスレッド内）".length;
+    const limit = 100;
+    const boundary = limit - suffixLength;
+    const text = "あ".repeat(boundary - 1) + "😀".repeat(50);
+    const result = fitSlackOverview(text, limit);
+    expect(result.length).toBeLessThanOrEqual(limit);
+    for (const unit of result) {
+      expect(unit).not.toMatch(/[\uD800-\uDFFF]$/);
+    }
+  });
+});
+
+describe("truncateSurrogateSafe", () => {
+  it("returns short text unchanged", () => {
+    expect(truncateSurrogateSafe("😀abc", 10)).toBe("😀abc");
+  });
+
+  it("steps back instead of splitting a surrogate pair", () => {
+    // "x" + 😀 = 3 units; a limit of 2 lands mid-pair.
+    expect(truncateSurrogateSafe("x😀y", 2)).toBe("x");
+    expect(truncateSurrogateSafe("xy😀z", 3)).toBe("xy");
+  });
+
+  it("cuts at the limit when it does not land mid-pair", () => {
+    expect(truncateSurrogateSafe("abcdef", 3)).toBe("abc");
+    expect(truncateSurrogateSafe("x😀y", 3)).toBe("x😀");
+  });
 });
 
 describe("splitForSlack", () => {
@@ -229,5 +260,18 @@ describe("splitForSlack", () => {
   it("hard-splits when no boundary exists", () => {
     const chunks = splitForSlack("x".repeat(6000), 2900);
     expect(chunks.map((c) => c.length)).toEqual([2900, 2900, 200]);
+  });
+
+  it("does not split a surrogate pair at a hard chunk boundary", () => {
+    // 😀 is 2 UTF-16 units; an odd prefix puts every pair astride the limit.
+    const text = "x" + "😀".repeat(3000);
+    const chunks = splitForSlack(text, 2900);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(2900);
+      expect(chunk).not.toMatch(/^[\uDC00-\uDFFF]/);
+      expect(chunk).not.toMatch(/[\uD800-\uDBFF]$/);
+    }
+    expect(chunks.join("")).toBe(text);
   });
 });

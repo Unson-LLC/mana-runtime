@@ -237,6 +237,25 @@ export interface MinutesValidationError {
   reason: string;
 }
 
+/**
+ * Moves a hard split index one left when it would land between a surrogate
+ * pair — slicing there produces lone surrogates that Slack renders as U+FFFD.
+ * Newline/space split points never need this; only forced boundaries do.
+ */
+function surrogateSafeIndex(text: string, index: number): number {
+  if (index > 1 && index < text.length) {
+    const prev = text.charCodeAt(index - 1);
+    if (prev >= 0xd800 && prev <= 0xdbff) return index - 1;
+  }
+  return index;
+}
+
+/** Hard truncation that never ends on a lone high surrogate. */
+export function truncateSurrogateSafe(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return text.slice(0, surrogateSafeIndex(text, limit));
+}
+
 /** Keeps the parent overview within the same conservative Slack limit as blocks. */
 export function fitSlackOverview(
   text: string,
@@ -246,7 +265,7 @@ export function fitSlackOverview(
   const boundary = Math.max(1, limit - SLACK_OVERVIEW_SUFFIX.length);
   let splitIndex = text.lastIndexOf("\n", boundary);
   if (splitIndex <= 0) splitIndex = text.lastIndexOf(" ", boundary);
-  if (splitIndex <= 0) splitIndex = boundary;
+  if (splitIndex <= 0) splitIndex = surrogateSafeIndex(text, boundary);
   return `${text.slice(0, splitIndex).trimEnd()}${SLACK_OVERVIEW_SUFFIX}`;
 }
 
@@ -309,7 +328,7 @@ export function splitForSlack(text: string, limit: number = SLACK_BLOCK_TEXT_LIM
     }
     let splitIndex = remaining.lastIndexOf("\n", limit);
     if (splitIndex <= 0) splitIndex = remaining.lastIndexOf(" ", limit);
-    if (splitIndex <= 0) splitIndex = limit;
+    if (splitIndex <= 0) splitIndex = surrogateSafeIndex(remaining, limit);
     chunks.push(remaining.slice(0, splitIndex));
     remaining = remaining.slice(splitIndex).replace(/^\s+/, "");
   }

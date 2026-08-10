@@ -143,8 +143,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "slack-split-surrogate-safe",
+        "title": "Slack分割・切り詰めでサロゲートペアを分断しない",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-lightsail-deploy-workflow"
+    "current_story_id": "slack-split-surrogate-safe"
   }
 }
