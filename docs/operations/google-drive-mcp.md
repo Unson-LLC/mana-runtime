@@ -2,8 +2,8 @@
 
 Mana Runtime exposes the `info@unson.jp` Google Drive account through its
 existing custom MCP catalog. This runbook keeps the OAuth credential out of
-`config.yaml`, restricts the server surface to Drive, and preserves placement
-deny-by-default behavior.
+`config.yaml`, restricts the server surface to Drive plus Sheets value I/O,
+and preserves placement deny-by-default behavior.
 
 ## Fixed components
 
@@ -89,7 +89,9 @@ $GWS drive files list --params '{"pageSize":1,"fields":"files(id,name,webViewLin
 ```
 
 Then verify the MCP protocol (`initialize`, `tools/list`) and perform one
-reversible production journey through Mana: create a small Drive artifact,
-obtain its `webViewLink`, and return that link to the originating Slack thread.
-Record local tests, MCP protocol evidence, the Drive artifact ID/link, and the
-Slack permalink separately; none of them substitutes for another.
+reversible production journey through Mana: create a spreadsheet with
+`create_spreadsheet`, populate it with `write_sheet_values`, verify it with
+`get_sheet_values`, obtain its `webViewLink`, and return that link to the
+originating Slack thread. Record local tests, MCP protocol evidence, the Drive
+artifact ID/link, and the Slack permalink separately; none of them substitutes
+for another.

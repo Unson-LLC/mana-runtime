@@ -4,13 +4,14 @@
  *
  * Google Workspace CLI removed its native MCP transport after v0.6.3. This
  * adapter keeps the current CLI as the Google API client and exposes a small,
- * auditable Drive-only MCP surface to Mana Runtime.
+ * auditable Drive and Sheets MCP surface to Mana Runtime.
  */
 
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -91,6 +92,55 @@ export const GOOGLE_DRIVE_TOOLS = [
       required: ["sourcePath"],
     },
   },
+  {
+    name: "create_spreadsheet",
+    description: "Create an empty Google Sheets spreadsheet in Drive and return its ID and web link.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Spreadsheet title" },
+        parentId: { type: "string", description: "Destination folder ID; omit for My Drive root" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "write_sheet_values",
+    description: "Write a two-dimensional array of values to a Google Sheets range.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spreadsheetId: { type: "string" },
+        range: { type: "string", description: "A1 notation, for example Sheet1!A1:P2" },
+        values: {
+          type: "array",
+          description: "Rows of string, number, boolean, or null cell values",
+          items: {
+            type: "array",
+            items: { type: ["string", "number", "boolean", "null"] },
+          },
+        },
+        valueInputOption: {
+          type: "string",
+          enum: ["RAW", "USER_ENTERED"],
+          default: "USER_ENTERED",
+        },
+      },
+      required: ["spreadsheetId", "range", "values"],
+    },
+  },
+  {
+    name: "get_sheet_values",
+    description: "Read values from a Google Sheets range for verification or follow-up editing.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spreadsheetId: { type: "string" },
+        range: { type: "string", description: "A1 notation" },
+      },
+      required: ["spreadsheetId", "range"],
+    },
+  },
 ] as const;
 
 async function runGws(args: string[], cwd?: string): Promise<unknown> {
@@ -113,6 +163,29 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+export function requireNonEmptyString(value: unknown, field: string): string {
+  const result = typeof value === "string" ? value.trim() : "";
+  if (!result) throw new Error(`${field} must be a non-empty string`);
+  return result;
+}
+
+export type SheetCellValue = string | number | boolean | null;
+
+export function normalizeSheetValues(value: unknown): SheetCellValue[][] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("values must be a non-empty two-dimensional array");
+  }
+  return value.map((row, rowIndex) => {
+    if (!Array.isArray(row)) throw new Error(`values[${rowIndex}] must be an array`);
+    return row.map((cell, columnIndex) => {
+      if (cell === null || ["string", "number", "boolean"].includes(typeof cell)) {
+        return cell as SheetCellValue;
+      }
+      throw new Error(`values[${rowIndex}][${columnIndex}] has an unsupported type`);
+    });
+  });
 }
 
 async function verifyAccount(): Promise<Record<string, unknown>> {
@@ -161,11 +234,11 @@ export async function handleGoogleDriveTool(name: string, args: Record<string, u
     }
     case "get_file":
       return runGws(["drive", "files", "get", "--params", JSON.stringify({
-        fileId: String(args.fileId || ""), fields: FILE_FIELDS, supportsAllDrives: true,
+        fileId: requireNonEmptyString(args.fileId, "fileId"), fields: FILE_FIELDS, supportsAllDrives: true,
       })]);
     case "create_folder": {
       const metadata: Record<string, unknown> = {
-        name: String(args.name || ""),
+        name: requireNonEmptyString(args.name, "name"),
         mimeType: "application/vnd.google-apps.folder",
       };
       if (args.parentId) metadata.parents = [String(args.parentId)];
@@ -186,6 +259,30 @@ export async function handleGoogleDriveTool(name: string, args: Record<string, u
       if (args.mimeType) cliArgs.push("--upload-content-type", String(args.mimeType));
       return runGws(cliArgs, path.dirname(source));
     }
+    case "create_spreadsheet": {
+      const metadata: Record<string, unknown> = {
+        name: requireNonEmptyString(args.title, "title"),
+        mimeType: "application/vnd.google-apps.spreadsheet",
+      };
+      if (args.parentId) metadata.parents = [requireNonEmptyString(args.parentId, "parentId")];
+      return runGws(["drive", "files", "create", "--params", JSON.stringify({
+        fields: FILE_FIELDS, supportsAllDrives: true,
+      }), "--json", JSON.stringify(metadata)]);
+    }
+    case "write_sheet_values": {
+      const spreadsheetId = requireNonEmptyString(args.spreadsheetId, "spreadsheetId");
+      const range = requireNonEmptyString(args.range, "range");
+      const valueInputOption = args.valueInputOption === "RAW" ? "RAW" : "USER_ENTERED";
+      const values = normalizeSheetValues(args.values);
+      return runGws(["sheets", "spreadsheets", "values", "update", "--params", JSON.stringify({
+        spreadsheetId, range, valueInputOption,
+      }), "--json", JSON.stringify({ majorDimension: "ROWS", values })]);
+    }
+    case "get_sheet_values":
+      return runGws(["sheets", "spreadsheets", "values", "get", "--params", JSON.stringify({
+        spreadsheetId: requireNonEmptyString(args.spreadsheetId, "spreadsheetId"),
+        range: requireNonEmptyString(args.range, "range"),
+      })]);
     default:
       throw new Error(`Unknown Google Drive tool: ${name}`);
   }
@@ -202,7 +299,7 @@ async function handleRequest(request: JsonRpcRequest): Promise<void> {
     sendResponse({ jsonrpc: "2.0", id, result: {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "mana-google-drive", version: "1.0.0" },
+      serverInfo: { name: "mana-google-drive", version: "1.1.0" },
     } });
     return;
   }
@@ -228,18 +325,25 @@ async function handleRequest(request: JsonRpcRequest): Promise<void> {
   sendResponse({ jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${method}` } });
 }
 
-const rl = createInterface({ input: process.stdin });
-const pendingRequests = new Set<Promise<void>>();
-rl.on("line", (line) => {
-  try {
-    const request = JSON.parse(line) as JsonRpcRequest;
-    const pending = handleRequest(request);
-    pendingRequests.add(pending);
-    void pending.finally(() => pendingRequests.delete(pending));
-  } catch {
-    // Ignore unparseable stdio noise.
-  }
-});
-rl.on("close", () => {
-  void Promise.allSettled([...pendingRequests]).then(() => process.exit(0));
-});
+export function startGoogleDriveMcpServer(): void {
+  const rl = createInterface({ input: process.stdin });
+  const pendingRequests = new Set<Promise<void>>();
+  rl.on("line", (line) => {
+    try {
+      const request = JSON.parse(line) as JsonRpcRequest;
+      const pending = handleRequest(request);
+      pendingRequests.add(pending);
+      void pending.finally(() => pendingRequests.delete(pending));
+    } catch {
+      // Ignore unparseable stdio noise.
+    }
+  });
+  rl.on("close", () => {
+    void Promise.allSettled([...pendingRequests]).then(() => process.exit(0));
+  });
+}
+
+const entryPath = process.argv[1];
+if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
+  startGoogleDriveMcpServer();
+}
