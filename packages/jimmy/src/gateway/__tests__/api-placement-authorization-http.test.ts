@@ -10,7 +10,7 @@ vi.hoisted(() => {
 
 import type { AddressInfo } from "node:net";
 import type { ApiContext } from "../api.js";
-import type { Connector, JinnConfig } from "../../shared/types.js";
+import type { Connector, JinnConfig, PlacementProfile } from "../../shared/types.js";
 import { handleApiRequest } from "../api.js";
 import { createSession, getSession, initDb, updateSession } from "../../sessions/registry.js";
 import {
@@ -94,6 +94,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
         connector: "slack",
         workspaceId: "T1",
         channelId: "C1",
+        projects: ["back-office"],
         audience: { type: "operator", allowedUsers: ["U1"] },
         agent: { employee: "ryoko", escalationEmployee: "reviewer" },
         capabilities: { gatewayTools: ["send_message"] },
@@ -389,6 +390,76 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       expect(mismatched.status).toBe(403);
     } finally {
       config.placements![0].capabilities!.gatewayTools = ["send_message"];
+    }
+  });
+
+  it("forces placement channel projects onto canonical task creation", async () => {
+    const originalPlacements = config.placements;
+    const originalFetch = globalThis.fetch;
+    const companionBodies: Array<Record<string, unknown>> = [];
+    const scopedPlacement = {
+      ...originalPlacements![0],
+      capabilities: { ...originalPlacements![0].capabilities, gatewayTools: ["create_task"] },
+    } as PlacementProfile;
+    config.placements = [
+      { ...scopedPlacement, projects: [" back-office ", "shared"] },
+      { ...scopedPlacement, id: "same-channel", projects: ["shared", "finance"] },
+      { ...scopedPlacement, id: "disabled", enabled: false, projects: ["disabled"] },
+      { ...scopedPlacement, id: "other-workspace", workspaceId: "T2", projects: ["other-workspace"] },
+      { ...scopedPlacement, id: "other-channel", channelId: "C2", projects: ["other-channel"] },
+    ];
+    process.env.BRAINBASE_TASK_API_BASE_URL = "https://bb.example";
+    process.env.BRAINBASE_TASK_API_TOKEN = "bbsvc_test";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) === "https://bb.example/api/companion/tasks") {
+        companionBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({
+          id: "ct1.test",
+          version: 1,
+          title: "placement-bound task",
+          project_codes: companionBodies.at(-1)?.project_codes,
+        }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      return originalFetch(input, init);
+    });
+
+    try {
+      const created = await fetch(`${baseUrl}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "create_task",
+        },
+        body: JSON.stringify({
+          title: "placement-bound task",
+          project_codes: ["spoofed-project"],
+        }),
+      });
+      expect(created.status).toBe(201);
+      expect(companionBodies).toHaveLength(1);
+      expect(companionBodies[0].project_codes).toEqual(["back-office", "shared", "finance"]);
+
+      config.placements = [{ ...config.placements[0], projects: [] }];
+      const unscoped = await fetch(`${baseUrl}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "create_task",
+        },
+        body: JSON.stringify({ title: "must not become an orphan" }),
+      });
+      expect(unscoped.status).toBe(409);
+      await expect(unscoped.json()).resolves.toEqual({ error: "placement has no projects configured" });
+      expect(companionBodies).toHaveLength(1);
+    } finally {
+      fetchSpy.mockRestore();
+      delete process.env.BRAINBASE_TASK_API_BASE_URL;
+      delete process.env.BRAINBASE_TASK_API_TOKEN;
+      config.placements = originalPlacements;
     }
   });
 

@@ -31,6 +31,38 @@ export function findEnabledPlacement(
   return { placement, disabled: false };
 }
 
+/**
+ * Resolve the canonical project scope for a placement-bound write.
+ *
+ * The authenticated placement is the authority anchor. Projects are unioned
+ * only across enabled placements for the exact same connector, workspace, and
+ * channel so this stays aligned with channel Canvas filtering without allowing
+ * request bodies to smuggle a different project scope.
+ */
+export function placementProjectCodesForPlacement(
+  placements: PlacementProfile[] | undefined,
+  placementId: unknown,
+): string[] {
+  const { placement } = findEnabledPlacement(placements, placementId);
+  const connector = clean(placement?.connector);
+  const workspaceId = clean(placement?.workspaceId);
+  const channelId = clean(placement?.channelId);
+  if (!placement || !connector || !workspaceId || !channelId) return [];
+
+  const projectCodes = new Set<string>();
+  for (const candidate of placements ?? []) {
+    if (!isPlacementEnabled(candidate)) continue;
+    if (clean(candidate.connector) !== connector) continue;
+    if (clean(candidate.workspaceId) !== workspaceId) continue;
+    if (clean(candidate.channelId) !== channelId) continue;
+    for (const project of candidate.projects ?? []) {
+      const code = clean(project);
+      if (code) projectCodes.add(code);
+    }
+  }
+  return [...projectCodes];
+}
+
 export interface PlacementEngineBoundary {
   strictMcpConfig: boolean;
   enableChrome: false | undefined;

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementAllowedTools, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementSafeCliFlags, placementWorkingDirectory, placementWorkspaceDenyRules, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, isSkillVisibleToPlacement, PLACEMENT_MCP_TOOL_DENY, placementAllowedTools, placementEngineBoundary, placementMemoryReadDenyRules, placementNeedsChannelMembership, placementProjectCodesForPlacement, placementSafeCliFlags, placementWorkingDirectory, placementWorkspaceDenyRules, placementWriteDenyRules, resolvePlacement, runPlacementBoundEngine } from "../placement-profile.js";
 import type { PlacementProfile } from "../types.js";
 
 const placement: PlacementProfile = {
@@ -140,6 +140,26 @@ describe("findEnabledPlacement", () => {
   it("returns nothing for unknown or non-string ids", () => {
     expect(findEnabledPlacement([placement], "other")).toEqual({ disabled: false });
     expect(findEnabledPlacement([placement], undefined)).toEqual({ disabled: false });
+  });
+});
+
+describe("placementProjectCodesForPlacement", () => {
+  it("unions normalized projects only within the authenticated channel scope", () => {
+    const scoped: PlacementProfile = { ...placement, projects: [" back-office ", "shared"] };
+    expect(placementProjectCodesForPlacement([
+      scoped,
+      { ...scoped, id: "same-channel", projects: ["shared", "finance", ""] },
+      { ...scoped, id: "disabled", enabled: false, projects: ["disabled"] },
+      { ...scoped, id: "other-workspace", workspaceId: "T2", projects: ["other-workspace"] },
+      { ...scoped, id: "other-channel", channelId: "C2", projects: ["other-channel"] },
+      { ...scoped, id: "other-connector", connector: "discord", projects: ["other-connector"] },
+    ], scoped.id)).toEqual(["back-office", "shared", "finance"]);
+  });
+
+  it("fails closed for unknown, disabled, or incomplete authority anchors", () => {
+    expect(placementProjectCodesForPlacement([placement], "missing")).toEqual([]);
+    expect(placementProjectCodesForPlacement([{ ...placement, enabled: false }], placement.id)).toEqual([]);
+    expect(placementProjectCodesForPlacement([{ ...placement, workspaceId: "" }], placement.id)).toEqual([]);
   });
 });
 
