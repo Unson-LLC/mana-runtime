@@ -6,6 +6,7 @@ import {
   fetchAllTasks,
   renderTaskCanvasMarkdown,
   taskCanvasConfigsForPlacements,
+  placementProjectCodesForChannel,
 } from "../task-canvas.js";
 import { BrainbaseTaskClient, type BrainbaseTask } from "../../../shared/brainbase-tasks.js";
 
@@ -142,16 +143,16 @@ describe("taskCanvasConfigsForPlacements", () => {
       settingsWebBaseUrl: "https://mana.example",
     }, [{
       id: "p1",
-      connector: "slack-biz",
+      connector: "slack",
       workspaceId: "T1",
       channelId: "C1",
       audience: { type: "project-team", allowedUsers: ["U1"] },
-    }], "slack-biz", "T1");
+    }], "slack", "T1");
     expect(configs).toEqual([
       expect.objectContaining({
         channelId: "C1",
         projectCodes: [],
-        settingsUrl: "https://mana.example/placements/projects?connector=slack-biz&workspace=T1&channel=C1",
+        settingsUrl: "https://mana.example/placements/projects?connector=slack&workspace=T1&channel=C1",
       }),
     ]);
   });
@@ -159,15 +160,27 @@ describe("taskCanvasConfigsForPlacements", () => {
   it("creates one channel canvas per placement and unions duplicate-channel projects", () => {
     const base = { workspaceId: "T1", audience: { type: "project-team" as const, allowedUsers: ["U1"] } };
     const configs = taskCanvasConfigsForPlacements({ enabled: true }, [
-      { ...base, id: "p1", connector: "slack-biz", channelId: "C1", projects: ["mana"] },
-      { ...base, id: "p2", connector: "slack-biz", channelId: "C1", projects: ["brainbase", "mana"] },
-      { ...base, id: "p3", connector: "slack-biz", channelId: "C2", projects: ["staye"] },
+      { ...base, id: "p1", connector: "slack", channelId: "C1", projects: ["mana"] },
+      { ...base, id: "p2", connector: "slack", channelId: "C1", projects: ["brainbase", "mana"] },
+      { ...base, id: "p3", connector: "slack", channelId: "C2", projects: ["staye"] },
       { ...base, id: "p4", connector: "slack-other", channelId: "C3", projects: ["other"] },
-    ], "slack-biz", "T1");
+    ], "slack", "T1");
     expect(configs).toEqual([
       expect.objectContaining({ channelId: "C1", projectCodes: ["mana", "brainbase"] }),
       expect.objectContaining({ channelId: "C2", projectCodes: ["staye"] }),
     ]);
+  });
+
+  it("separates workspaces and excludes placements with Task Canvas disabled", () => {
+    const base = { connector: "slack", channelId: "C1", audience: { type: "project-team" as const } };
+    const placements = [
+      { ...base, id: "default", workspaceId: "T_DEFAULT", projects: ["brainbase"] },
+      { ...base, id: "biz", workspaceId: "T_BIZ", projects: ["unson"] },
+      { ...base, id: "disabled", workspaceId: "T_BIZ", channelId: "C2", projects: ["mana"], taskCanvas: { enabled: false } },
+    ];
+    expect(taskCanvasConfigsForPlacements({ enabled: true }, placements, "slack", "T_BIZ"))
+      .toEqual([expect.objectContaining({ channelId: "C1", projectCodes: ["unson"] })]);
+    expect(taskCanvasConfigsForPlacements({ enabled: true }, placements, "slack", null)).toEqual([]);
   });
 
   it("fails closed instead of creating an unscoped canvas when placements exist but do not match", () => {
@@ -180,6 +193,17 @@ describe("taskCanvasConfigsForPlacements", () => {
       audience: { type: "project-team", allowedUsers: ["U1"] },
     }], "slack-biz", "T1");
     expect(configs).toEqual([]);
+  });
+});
+
+describe("placementProjectCodesForChannel", () => {
+  it("uses connector type and exact workspace for meeting task projects", () => {
+    const placements = [
+      { id: "default", connector: "slack", workspaceId: "T_DEFAULT", channelId: "C1", projects: ["brainbase"], audience: { type: "project-team" as const } },
+      { id: "biz", connector: "slack", workspaceId: "T_BIZ", channelId: "C1", projects: ["unson"], audience: { type: "project-team" as const } },
+    ];
+    expect(placementProjectCodesForChannel(placements, "slack", "C1", "T_BIZ")).toEqual(["unson"]);
+    expect(placementProjectCodesForChannel(placements, "slack", "C1", null)).toEqual([]);
   });
 });
 

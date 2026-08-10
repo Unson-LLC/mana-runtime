@@ -864,6 +864,11 @@ export interface PlacementProfile {
    */
   monthlyBudgetUsd?: number;
   projects?: string[];
+  /** Placement-specific Task Canvas control. Absent means enabled. */
+  taskCanvas?: {
+    /** Disable only the read-only task board while preserving placement routing. */
+    enabled?: boolean;
+  };
   capabilities?: {
     mcp?: false | string[];
     gatewayTools?: string[];

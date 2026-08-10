@@ -24,6 +24,7 @@ function ChannelProjectSettings() {
   const channelId = params.get("channel")?.trim() ?? ""
   const [placements, setPlacements] = useState<PlacementProjectBinding[]>([])
   const [value, setValue] = useState("")
+  const [taskCanvasEnabled, setTaskCanvasEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -33,7 +34,7 @@ function ChannelProjectSettings() {
     setLoading(true)
     setError(null)
     try {
-      if (!connectorId || !channelId) throw new Error("connectorとchannelの指定が必要です")
+      if (!connectorId || !workspaceId || !channelId) throw new Error("connector、workspace、channelの指定が必要です")
       const config = await api.getConfig()
       const nextPlacements = Array.isArray(config.placements)
         ? config.placements as PlacementProjectBinding[]
@@ -41,7 +42,7 @@ function ChannelProjectSettings() {
       const matches = nextPlacements.filter((placement) =>
         placement.connector === connectorId
         && placement.channelId === channelId
-        && (!workspaceId || placement.workspaceId === workspaceId),
+        && placement.workspaceId === workspaceId,
       )
       if (matches.length !== 1) {
         resolveChannelPlacementUpdate(nextPlacements, {
@@ -50,6 +51,7 @@ function ChannelProjectSettings() {
       }
       setPlacements(nextPlacements)
       setValue((matches[0]?.projects ?? []).join("\n"))
+      setTaskCanvasEnabled(matches[0]?.taskCanvas?.enabled !== false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "設定を取得できませんでした")
     } finally {
@@ -71,7 +73,7 @@ function ChannelProjectSettings() {
       const projectCodes = splitProjectCodes(value)
       if (projectCodes.length === 0) throw new Error("project codeを1つ以上入力してください")
       const updated = resolveChannelPlacementUpdate(placements, {
-        connectorId, workspaceId: workspaceId || undefined, channelId, projectCodes,
+        connectorId, workspaceId: workspaceId || undefined, channelId, projectCodes, taskCanvasEnabled,
       })
       const result = await api.updateConfig({ placements: updated })
       if (result.status === "partial") throw new Error("保存しましたがCanvasの再読込に失敗しました")
@@ -114,6 +116,14 @@ function ChannelProjectSettings() {
                   className="mt-[var(--space-3)] w-full rounded-[var(--radius-sm)] border border-[var(--separator)] bg-[var(--bg)] p-[var(--space-3)] font-mono text-[length:var(--text-footnote)] text-[var(--text-primary)]"
                   placeholder="mana\nbrainbase"
                 />
+                <label className="mt-[var(--space-3)] flex items-center gap-[var(--space-2)] text-[length:var(--text-footnote)] text-[var(--text-primary)]">
+                  <input
+                    type="checkbox"
+                    checked={taskCanvasEnabled}
+                    onChange={(event) => { setTaskCanvasEnabled(event.target.checked); setSaved(false) }}
+                  />
+                  このチャンネルのタスクボードを有効にする
+                </label>
                 {candidates.length > 0 && (
                   <div className="mt-[var(--space-2)] flex flex-wrap gap-[var(--space-1)]">
                     {candidates.map((code) => (
