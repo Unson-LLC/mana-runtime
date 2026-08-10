@@ -357,6 +357,94 @@ describe("detection gates", () => {
   });
 });
 
+describe("state concurrency and recovery", () => {
+  it("preserves both runs when two workspace connectors process files concurrently", async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const fetchTranscript = vi.fn().mockImplementation(async (fileId: string) => {
+      if (fileId === "F_A") await firstBlocked;
+      return { text: `${fileId}の文字起こし`.repeat(100), fileName: `${fileId}.txt` };
+    });
+    const first = makePipeline({ autoConfirm: false, fetchTranscript });
+    const second = makePipeline({ autoConfirm: false, fetchTranscript });
+    const baseTs = Date.now() / 1000;
+    const eventA = fileEvent({
+      ts: String(baseTs),
+      files: [{ id: "F_A", name: "a.txt", size: 5000 }],
+    });
+    const eventB = fileEvent({
+      ts: String(baseTs + 0.001),
+      files: [{ id: "F_B", name: "b.txt", size: 5000 }],
+    });
+
+    const processingA = first.pipeline.maybeHandleFileMessage(eventA);
+    await vi.waitFor(() => expect(fetchTranscript).toHaveBeenCalledWith("F_A"));
+    await second.pipeline.maybeHandleFileMessage(eventB);
+    releaseFirst();
+    await processingA;
+
+    expect(Object.keys(readState().runs).sort()).toEqual([
+      runKey(ROUTER, "F_A", eventA.ts as string),
+      runKey(ROUTER, "F_B", eventB.ts as string),
+    ].sort());
+    expect(Object.values(readState().runs)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fileId: "F_A", status: "awaiting_destination" }),
+      expect.objectContaining({ fileId: "F_B", status: "awaiting_destination" }),
+    ]));
+  });
+
+  it("recovers a missing run from an authorized button key", async () => {
+    const { pipeline, generate } = makePipeline({ autoConfirm: false });
+    const sourceTs = String(Date.now() / 1000);
+    const key = runKey(ROUTER, "F_RECOVER", sourceTs);
+
+    await pipeline.handleChooseDestination(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_baao" }) } },
+    );
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(readState().runs[key]).toMatchObject({
+      routerChannelId: ROUTER,
+      fileId: "F_RECOVER",
+      sourceTs,
+      projectId: "proj_baao",
+      status: "tasks_dispatched",
+    });
+  });
+
+  it("keeps a genuinely expired run expired instead of recovering it", async () => {
+    const { pipeline, apiCall, generate } = makePipeline({ autoConfirm: false });
+    const sourceTs = String(Date.now() / 1000 - 10);
+    const key = runKey(ROUTER, "F_EXPIRED", sourceTs);
+    fs.writeFileSync(STATE_FILE, JSON.stringify({
+      runs: {
+        [key]: {
+          routerChannelId: ROUTER,
+          fileId: "F_EXPIRED",
+          sourceTs,
+          fileName: "expired.txt",
+          sourceTextHash: "hash",
+          status: "awaiting_destination",
+          createdAt: Date.now() - 20_000,
+          updatedAt: Date.now() - 20_000,
+          expiresAt: Date.now() - 1,
+        },
+      },
+      lastMinutesByChannel: {},
+    }));
+
+    await pipeline.handleChooseDestination(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { selected_option: { value: JSON.stringify({ key, projectId: "proj_baao" }) } },
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(postedMessages(apiCall, "chat.postEphemeral").at(-1)?.text).toContain("期限切れ");
+    expect(readState().runs[key]).toBeUndefined();
+  });
+});
+
 describe("happy path", () => {
   it("routes, generates, posts parent+thread, hands off tasks, offers reroute", async () => {
     const { pipeline, apiCall, handoff } = makePipeline();
