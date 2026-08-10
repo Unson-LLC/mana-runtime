@@ -20,6 +20,7 @@ export interface BrainbaseTask {
   description: string | null;
   status: "pending" | "in_progress" | "waiting" | "completed" | string;
   priority: "low" | "medium" | "high" | "urgent" | string;
+  project_codes?: string[];
   assignee_person_id: string | null;
   assignee_display_name: string | null;
   due_at: string | null;
@@ -34,6 +35,7 @@ export interface CreateTaskInput {
   priority?: "low" | "medium" | "high" | "urgent";
   assignee_person_id?: string;
   due_at?: string;
+  project_codes?: string[];
 }
 
 export interface UpdateTaskInput {
@@ -58,6 +60,7 @@ export interface ListTasksQuery {
   assignee_person_id?: string;
   limit?: number;
   cursor?: string;
+  project_code?: string[];
 }
 
 export class BrainbaseTaskError extends Error {
@@ -149,7 +152,11 @@ export class BrainbaseTaskClient {
   async listTasks(query: ListTasksQuery = {}): Promise<{ items: BrainbaseTask[]; next_cursor?: string | null }> {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+      if (Array.isArray(value)) {
+        for (const item of value) params.append(key, String(item));
+      } else if (value !== undefined && value !== null && value !== "") {
+        params.set(key, String(value));
+      }
     }
     const suffix = params.size > 0 ? `?${params.toString()}` : "";
     return this.request<{ items: BrainbaseTask[]; next_cursor?: string | null }>(

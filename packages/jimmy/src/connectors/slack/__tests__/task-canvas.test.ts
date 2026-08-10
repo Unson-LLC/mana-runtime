@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import type { App } from "@slack/bolt";
-import { TaskCanvasUpdater, renderTaskCanvasMarkdown } from "../task-canvas.js";
+import {
+  TaskCanvasUpdater,
+  fetchAllTasks,
+  renderTaskCanvasMarkdown,
+  taskCanvasConfigsForPlacements,
+} from "../task-canvas.js";
 import { BrainbaseTaskClient, type BrainbaseTask } from "../../../shared/brainbase-tasks.js";
 
 vi.mock("../../../shared/paths.js", () => ({
@@ -30,6 +35,7 @@ function makeTask(overrides: Partial<BrainbaseTask> = {}): BrainbaseTask {
     due_at: null,
     waiting_on: null,
     completed_at: null,
+    project_codes: [],
     ...overrides,
   };
 }
@@ -61,26 +67,26 @@ afterEach(() => {
 describe("renderTaskCanvasMarkdown", () => {
   it("groups tasks by status with counts and read-only notice", () => {
     const md = renderTaskCanvasMarkdown([
-      makeTask({ title: "着手中", status: "in_progress", priority: "high" }),
-      makeTask({ title: "未着手A", status: "pending", priority: "low" }),
-      makeTask({ title: "完了済", status: "completed" }),
-      makeTask({ title: "待ち中", status: "waiting", waiting_on: "レビュー" }),
+      makeTask({ id: "1", title: "着手中", status: "in_progress", priority: "high" }),
+      makeTask({ id: "2", title: "未着手A", status: "pending", priority: "low" }),
+      makeTask({ id: "3", title: "完了済", status: "completed" }),
+      makeTask({ id: "4", title: "待ち中", status: "waiting", waiting_on: "レビュー" }),
     ]);
     expect(md).toContain("# タスクボード");
     expect(md).toContain("読み取り専用ミラー");
-    expect(md).toContain("## 進行中（1件）");
+    expect(md).toContain("### 進行中（1件）");
     expect(md).toContain("* [高] 着手中");
-    expect(md).toContain("## 保留（1件）");
+    expect(md).toContain("### 保留（1件）");
     expect(md).toContain("待ち: レビュー");
-    expect(md).toContain("## 未着手（1件）");
+    expect(md).toContain("### 未着手（1件）");
     expect(md).toContain("## 完了（累計1件）");
   });
 
   it("sorts by priority then due date and caps sections", () => {
     const tasks = [
-      makeTask({ title: "低優先", priority: "low" }),
-      makeTask({ title: "緊急・期限あり", priority: "urgent", due_at: "2026-08-01T00:00:00Z" }),
-      makeTask({ title: "高優先", priority: "high" }),
+      makeTask({ id: "1", title: "低優先", priority: "low" }),
+      makeTask({ id: "2", title: "緊急・期限あり", priority: "urgent", due_at: "2026-08-01T00:00:00Z" }),
+      makeTask({ id: "3", title: "高優先", priority: "high" }),
     ];
     const md = renderTaskCanvasMarkdown(tasks, { maxPerSection: 2 });
     const urgentIndex = md.indexOf("緊急・期限あり");
@@ -95,6 +101,55 @@ describe("renderTaskCanvasMarkdown", () => {
     const md = renderTaskCanvasMarkdown([makeTask({ title: "<!channel> *強調* #見出し" })]);
     expect(md).not.toContain("<!channel>");
     expect(md).not.toContain("*強調*");
+  });
+
+  it("groups by assignee and shows every project tag", () => {
+    const md = renderTaskCanvasMarkdown([
+      makeTask({ id: "1", title: "担当あり", assignee_display_name: "佐藤圭吾", project_codes: ["mana", "brainbase"] }),
+      makeTask({ id: "2", title: "担当なし", project_codes: ["mana"] }),
+    ]);
+    expect(md).toContain("## 佐藤圭吾");
+    expect(md).toContain("## 未割当");
+    expect(md).toContain("[mana] [brainbase]");
+  });
+});
+
+describe("fetchAllTasks", () => {
+  it("queries the placement project union and deduplicates task ids", async () => {
+    const listTasks = vi.fn()
+      .mockResolvedValueOnce({ items: [makeTask({ id: "one" })], next_cursor: "next" })
+      .mockResolvedValueOnce({ items: [makeTask({ id: "one" }), makeTask({ id: "two" })], next_cursor: null });
+    const tasks = await fetchAllTasks({ listTasks } as unknown as BrainbaseTaskClient, ["mana", "brainbase"]);
+    expect(listTasks).toHaveBeenNthCalledWith(1, { limit: 50, project_code: ["mana", "brainbase"], cursor: undefined });
+    expect(tasks.map((task) => task.id)).toEqual(["one", "two"]);
+  });
+});
+
+describe("taskCanvasConfigsForPlacements", () => {
+  it("creates one channel canvas per placement and unions duplicate-channel projects", () => {
+    const base = { workspaceId: "T1", audience: { type: "project-team" as const, allowedUsers: ["U1"] } };
+    const configs = taskCanvasConfigsForPlacements({ enabled: true }, [
+      { ...base, id: "p1", connector: "slack-biz", channelId: "C1", projects: ["mana"] },
+      { ...base, id: "p2", connector: "slack-biz", channelId: "C1", projects: ["brainbase", "mana"] },
+      { ...base, id: "p3", connector: "slack-biz", channelId: "C2", projects: ["staye"] },
+      { ...base, id: "p4", connector: "slack-other", channelId: "C3", projects: ["other"] },
+    ], "slack-biz", "T1");
+    expect(configs).toEqual([
+      expect.objectContaining({ channelId: "C1", projectCodes: ["mana", "brainbase"] }),
+      expect.objectContaining({ channelId: "C2", projectCodes: ["staye"] }),
+    ]);
+  });
+
+  it("fails closed instead of creating an unscoped canvas when placements exist but do not match", () => {
+    const configs = taskCanvasConfigsForPlacements({ enabled: true }, [{
+      id: "other",
+      connector: "slack-other",
+      workspaceId: "T2",
+      channelId: "C2",
+      projects: ["other"],
+      audience: { type: "project-team", allowedUsers: ["U1"] },
+    }], "slack-biz", "T1");
+    expect(configs).toEqual([]);
   });
 });
 
@@ -117,7 +172,7 @@ describe("TaskCanvasUpdater", () => {
     expect(calls.map((c) => c.method)).toEqual(["conversations.canvases.create"]);
     expect(calls[0].payload.channel_id).toBe("C0TEST");
     const state = JSON.parse(fs.readFileSync("/tmp/openryoko-task-canvas-test/.task-canvas-state.json", "utf-8"));
-    expect(state.canvasId).toBe("F0CANVAS1");
+    expect(state.canvases.C0TEST).toBe("F0CANVAS1");
   });
 
   it("edits the existing canvas and skips no-op updates", async () => {

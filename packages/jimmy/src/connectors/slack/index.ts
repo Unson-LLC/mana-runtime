@@ -26,9 +26,14 @@ import {
 } from "./respond-policy.js";
 import { isOperatorSpeaker } from "../../shared/operator-match.js";
 import type { ChannelMembership } from "../../shared/placement-profile.js";
+import type { PlacementProfile } from "../../shared/types.js";
 import { ConversationTracker } from "./conversation-tracker.js";
 import { AgentsCanvasUpdater } from "./agents-canvas.js";
-import { TaskCanvasUpdater } from "./task-canvas.js";
+import {
+  TaskCanvasUpdater,
+  placementProjectCodesForChannel,
+  taskCanvasConfigsForPlacements,
+} from "./task-canvas.js";
 import { TaskReminderNotifier } from "./task-reminder.js";
 import { MeetingTaskProposalNotifier } from "./meeting-task-proposal.js";
 import {
@@ -72,6 +77,8 @@ const SETTINGS_DM_COMMANDS = new Set(["設定", "mana設定", "ルーティン�
 const REACTION_TURN_TRIGGER_ENABLED = false;
 
 export interface SlackConnectorContext {
+  /** Placement SSOT used to scope channel projections to their project union. */
+  placements?: PlacementProfile[];
   /** Display name of the Jinn instance (used as botName in triage) */
   portalName?: string;
   /** Configured operator name — used to identify operator vs third party */
@@ -176,7 +183,7 @@ export class SlackConnector implements Connector {
   private readonly updateMeetingMinutes: SlackConnectorContext["updateMeetingMinutes"];
   private readonly conversations: ConversationTracker;
   private readonly agentsCanvas: AgentsCanvasUpdater | null;
-  private readonly taskCanvas: TaskCanvasUpdater | null;
+  private readonly taskCanvases: TaskCanvasUpdater[];
   private readonly taskReminder: TaskReminderNotifier | null;
   private readonly meetingTaskProposal: MeetingTaskProposalNotifier | null;
   private readonly meetingMinutesPipeline: MeetingMinutesPipeline | null;
@@ -296,14 +303,28 @@ export class SlackConnector implements Connector {
     this.agentsCanvas = config.agentsCanvas?.enabled
       ? new AgentsCanvasUpdater(this.app, config.agentsCanvas)
       : null;
-    this.taskCanvas = config.taskCanvas?.enabled
-      ? new TaskCanvasUpdater(this.app, config.taskCanvas)
-      : null;
+    const taskCanvasConfigs = config.taskCanvas?.enabled
+      ? taskCanvasConfigsForPlacements(
+          config.taskCanvas,
+          context.placements,
+          this.instanceId,
+          this.configuredWorkspaceId,
+        )
+      : [];
+    this.taskCanvases = taskCanvasConfigs.map((canvasConfig) => new TaskCanvasUpdater(this.app, canvasConfig));
     this.taskReminder = config.taskReminder?.enabled
       ? new TaskReminderNotifier(this.app, config.taskReminder)
       : null;
     this.meetingTaskProposal = config.meetingTaskProposal?.enabled
-      ? new MeetingTaskProposalNotifier(this.app, config.meetingTaskProposal, allowFrom)
+      ? new MeetingTaskProposalNotifier(this.app, config.meetingTaskProposal, allowFrom, {
+          projectCodesForChannel: (channelId) =>
+            placementProjectCodesForChannel(
+              context.placements,
+              this.instanceId,
+              channelId,
+              this.configuredWorkspaceId,
+            ),
+        })
       : null;
     this.meetingMinutesPipeline = config.meetingMinutesPipeline?.enabled
       ? new MeetingMinutesPipeline(this.app, config.meetingMinutesPipeline, allowFrom, {
@@ -1171,7 +1192,7 @@ export class SlackConnector implements Connector {
     this.lastError = null;
     logger.info("Slack connector started (socket mode)");
     this.agentsCanvas?.start();
-    this.taskCanvas?.start();
+    for (const taskCanvas of this.taskCanvases) taskCanvas.start();
     this.taskReminder?.start();
   }
 
@@ -1189,7 +1210,7 @@ export class SlackConnector implements Connector {
       return;
     }
     this.agentsCanvas?.stop();
-    this.taskCanvas?.stop();
+    for (const taskCanvas of this.taskCanvases) taskCanvas.stop();
     this.taskReminder?.stop();
     this.meetingTaskProposal?.stop();
     this.meetingMinutesPipeline?.stop();

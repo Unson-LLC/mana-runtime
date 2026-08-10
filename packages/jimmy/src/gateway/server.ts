@@ -133,6 +133,7 @@ export function buildSlackConnectorContext(
   sessionManager?: SessionManager,
 ): SlackConnectorContext {
   return {
+    placements: cfg.placements,
     portalName: cfg.portal?.portalName,
     operatorName: cfg.portal?.operatorName,
     operatorAliases: cfg.portal?.operatorAliases,

@@ -8,8 +8,8 @@
  *
  * Lifecycle: started by SlackConnector when `taskCanvas.enabled === true`.
  * Polls the Brainbase task API every `pollIntervalMs` (default 5 min),
- * renders Markdown, and pushes it into a single Slack Canvas. The canvas is
- * created on first run and reused afterwards; its ID is persisted under
+ * renders Markdown, and pushes it into each placement channel's Slack Canvas.
+ * Canvases are created on first run and reused afterwards; their IDs are persisted under
  * `${JINN_HOME}/.task-canvas-state.json`.
  */
 
@@ -23,10 +23,11 @@ import {
 } from "../../shared/brainbase-tasks.js";
 import { JINN_HOME } from "../../shared/paths.js";
 import { logger } from "../../shared/logger.js";
+import type { PlacementProfile } from "../../shared/types.js";
 
 export interface TaskCanvasConfig {
   enabled?: boolean;
-  /** Slack channel to host the canvas. If unset, a standalone canvas is created. */
+  /** Slack channel to host this projection. If unset, a standalone canvas is created. */
   channelId?: string;
   /** Display title. Defaults to "タスクボード". */
   title?: string;
@@ -34,11 +35,14 @@ export interface TaskCanvasConfig {
   pollIntervalMs?: number;
   /** Max tasks rendered per status section. Default 50. */
   maxPerSection?: number;
+  /** Union of placement projects visible in this channel canvas. */
+  projectCodes?: string[];
 }
 
 interface PersistedState {
   canvasId?: string;
   channelId?: string;
+  canvases?: Record<string, string>;
 }
 
 const STATE_FILE = path.join(JINN_HOME, ".task-canvas-state.json");
@@ -75,10 +79,10 @@ function sanitize(text: string): string {
 
 function taskLine(task: BrainbaseTask): string {
   const priority = PRIORITY_LABEL[task.priority] ?? sanitize(task.priority);
-  const assignee = task.assignee_display_name ? `（${sanitize(task.assignee_display_name)}）` : "";
+  const projects = (task.project_codes ?? []).map((code) => `[${sanitize(code)}]`).join(" ");
   const due = task.due_at ? ` 期限: ${task.due_at.slice(0, 10)}` : "";
   const waiting = task.status === "waiting" && task.waiting_on ? ` 待ち: ${sanitize(task.waiting_on)}` : "";
-  return `* [${priority}] ${sanitize(task.title)}${assignee}${due}${waiting}`;
+  return `* ${projects ? `${projects} ` : ""}[${priority}] ${sanitize(task.title)}${due}${waiting}`;
 }
 
 function sortTasks(tasks: BrainbaseTask[]): BrainbaseTask[] {
@@ -92,14 +96,14 @@ function sortTasks(tasks: BrainbaseTask[]): BrainbaseTask[] {
   });
 }
 
-function renderSection(title: string, tasks: BrainbaseTask[], maxPerSection: number): string {
+function renderSection(title: string, tasks: BrainbaseTask[], maxPerSection: number, level = 2): string {
   const sorted = sortTasks(tasks);
   const shown = sorted.slice(0, maxPerSection);
   const lines = shown.map(taskLine);
   const omitted = sorted.length - shown.length;
   if (omitted > 0) lines.push(`* …ほか${omitted}件`);
   if (lines.length === 0) lines.push("* なし");
-  return `## ${title}（${sorted.length}件）\n${lines.join("\n")}`;
+  return `${"#".repeat(level)} ${title}（${sorted.length}件）\n${lines.join("\n")}`;
 }
 
 export function renderTaskCanvasMarkdown(
@@ -108,35 +112,52 @@ export function renderTaskCanvasMarkdown(
 ): string {
   const title = options.title ?? DEFAULT_TITLE;
   const maxPerSection = options.maxPerSection ?? DEFAULT_MAX_PER_SECTION;
-  const byStatus = (status: string) => tasks.filter((task) => task.status === status);
-  const completed = byStatus("completed");
+  const unique = [...new Map(tasks.map((task) => [task.id, task])).values()];
+  const active = unique.filter((task) => task.status !== "completed");
+  const completed = unique.filter((task) => task.status === "completed");
+  const assignees = new Map<string, BrainbaseTask[]>();
+  for (const task of active) {
+    const assignee = task.assignee_display_name?.trim() || "未割当";
+    assignees.set(assignee, [...(assignees.get(assignee) ?? []), task]);
+  }
+  const assigneeSections = [...assignees.entries()]
+    .sort(([a], [b]) => a === "未割当" ? 1 : b === "未割当" ? -1 : a.localeCompare(b, "ja"))
+    .flatMap(([assignee, assigned]) => [
+      `## ${sanitize(assignee)}`,
+      "",
+      renderSection("進行中", assigned.filter((task) => task.status === "in_progress"), maxPerSection, 3),
+      "",
+      renderSection("保留", assigned.filter((task) => task.status === "waiting"), maxPerSection, 3),
+      "",
+      renderSection("未着手", assigned.filter((task) => task.status === "pending"), maxPerSection, 3),
+      "",
+    ]);
   return [
     `# ${title}`,
     "",
     "正本はBrainbase（PostgreSQL）。このcanvasは読み取り専用ミラーで、直接編集しても正本には反映されず次回更新で上書きされます。",
     ...(options.nowIso ? [`最終更新: ${options.nowIso}`] : []),
     "",
-    renderSection("進行中", byStatus("in_progress"), maxPerSection),
-    "",
-    renderSection("保留", byStatus("waiting"), maxPerSection),
-    "",
-    renderSection("未着手", byStatus("pending"), maxPerSection),
-    "",
+    ...assigneeSections,
     `## 完了（累計${completed.length}件）`,
     "",
   ].join("\n");
 }
 
-export async function fetchAllTasks(client: BrainbaseTaskClient): Promise<BrainbaseTask[]> {
-  const tasks: BrainbaseTask[] = [];
+export async function fetchAllTasks(client: BrainbaseTaskClient, projectCodes: string[] = []): Promise<BrainbaseTask[]> {
+  const tasks = new Map<string, BrainbaseTask>();
   let cursor: string | undefined;
-  while (tasks.length < FETCH_MAX_TASKS) {
-    const page = await client.listTasks({ limit: FETCH_PAGE_LIMIT, cursor });
-    tasks.push(...page.items);
+  while (tasks.size < FETCH_MAX_TASKS) {
+    const page = await client.listTasks({
+      limit: FETCH_PAGE_LIMIT,
+      project_code: projectCodes.length ? projectCodes : undefined,
+      cursor,
+    });
+    for (const task of page.items) tasks.set(task.id, task);
     if (!page.next_cursor || page.items.length === 0) break;
     cursor = page.next_cursor;
   }
-  return tasks;
+  return [...tasks.values()];
 }
 
 function loadState(): PersistedState {
@@ -153,6 +174,70 @@ function saveState(state: PersistedState): void {
   } catch (err) {
     logger.warn(`[task-canvas] failed to persist state: ${err}`);
   }
+}
+
+function stateKey(channelId?: string): string {
+  return channelId || "standalone";
+}
+
+function savedCanvasId(state: PersistedState, channelId?: string): string | undefined {
+  return state.canvases?.[stateKey(channelId)]
+    ?? (state.channelId === channelId ? state.canvasId : undefined);
+}
+
+function saveCanvasId(channelId: string | undefined, canvasId: string | null): void {
+  const current = loadState();
+  const canvases = { ...(current.canvases ?? {}) };
+  if (canvasId) canvases[stateKey(channelId)] = canvasId;
+  else delete canvases[stateKey(channelId)];
+  saveState({ canvases });
+}
+
+export function taskCanvasConfigsForPlacements(
+  config: TaskCanvasConfig,
+  placements: PlacementProfile[] | undefined,
+  connectorId: string,
+  workspaceId?: string | null,
+): TaskCanvasConfig[] {
+  const matching = (placements ?? []).filter((placement) =>
+    placement.enabled !== false
+    && placement.connector === connectorId
+    && (!workspaceId || placement.workspaceId === workspaceId)
+    && (placement.projects?.length ?? 0) > 0,
+  );
+  if (matching.length === 0) return placements?.length ? [] : [{ ...config }];
+  const byChannel = new Map<string, Set<string>>();
+  for (const placement of matching) {
+    const projects = byChannel.get(placement.channelId) ?? new Set<string>();
+    for (const project of placement.projects ?? []) {
+      const normalized = project.trim();
+      if (normalized) projects.add(normalized);
+    }
+    byChannel.set(placement.channelId, projects);
+  }
+  return [...byChannel.entries()].map(([channelId, projects]) => ({
+    ...config,
+    channelId,
+    projectCodes: [...projects],
+  }));
+}
+
+export function placementProjectCodesForChannel(
+  placements: PlacementProfile[] | undefined,
+  connectorId: string,
+  channelId: string,
+  workspaceId?: string | null,
+): string[] {
+  return [...new Set((placements ?? [])
+    .filter((placement) =>
+      placement.enabled !== false
+      && placement.connector === connectorId
+      && placement.channelId === channelId
+      && (!workspaceId || placement.workspaceId === workspaceId),
+    )
+    .flatMap((placement) => placement.projects ?? [])
+    .map((project) => project.trim())
+    .filter(Boolean))];
 }
 
 function extractCanvasId(res: Record<string, unknown>): string | null {
@@ -209,12 +294,11 @@ export class TaskCanvasUpdater {
       title: config.title || DEFAULT_TITLE,
       pollIntervalMs: Math.max(MIN_POLL_MS, config.pollIntervalMs ?? DEFAULT_POLL_MS),
       maxPerSection: config.maxPerSection ?? DEFAULT_MAX_PER_SECTION,
+      projectCodes: [...new Set(config.projectCodes?.map((code) => code.trim()).filter(Boolean) ?? [])],
     };
 
     const persisted = loadState();
-    if (persisted.canvasId && persisted.channelId === this.config.channelId) {
-      this.canvasId = persisted.canvasId;
-    }
+    this.canvasId = savedCanvasId(persisted, this.config.channelId) ?? null;
   }
 
   start(): void {
@@ -253,7 +337,7 @@ export class TaskCanvasUpdater {
     if (this.inflight || this.stopped) return;
     this.inflight = true;
     try {
-      const tasks = await fetchAllTasks(this.taskClientFactory());
+      const tasks = await fetchAllTasks(this.taskClientFactory(), this.config.projectCodes);
       const markdown = renderTaskCanvasMarkdown(tasks, {
         title: this.config.title,
         maxPerSection: this.config.maxPerSection,
@@ -297,7 +381,7 @@ export class TaskCanvasUpdater {
       if (isCanvasNotFoundError(err)) {
         logger.warn(`[task-canvas] edit target is gone, will try recreating: ${err}`);
         this.canvasId = null;
-        saveState({ canvasId: undefined, channelId: this.config.channelId });
+        saveCanvasId(this.config.channelId, null);
       } else {
         logger.warn(`[task-canvas] edit failed, keeping existing canvas id to avoid duplicate canvases: ${err}`);
       }
@@ -343,7 +427,7 @@ export class TaskCanvasUpdater {
       }
       this.canvasId = canvasId;
     }
-    saveState({ canvasId: this.canvasId, channelId: this.config.channelId });
+    saveCanvasId(this.config.channelId, this.canvasId);
     logger.info(`[task-canvas] created canvas ${this.canvasId}`);
   }
 
