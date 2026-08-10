@@ -100,6 +100,18 @@ mcp:
   #       GOOGLE_DRIVE_ALLOWED_UPLOAD_ROOTS: /home/ryoko/workspaces
   #       GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /home/ryoko/.config/gws-info-unson
   #       GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: file
+  #   # DocuSign envelope state for the Google Sheets contract ledger.
+  #   docusign:
+  #     enabled: true
+  #     command: node
+  #     args: ["/home/ryoko/mcp/docusign-server.js"]
+  #     env:
+  #       DOCUSIGN_AUTH_SERVER: account.docusign.com
+  #       DOCUSIGN_EXPECTED_USER_EMAIL: info@unson.jp
+  #       DOCUSIGN_ACCOUNT_ID: ${DOCUSIGN_ACCOUNT_ID}
+  #       DOCUSIGN_INTEGRATION_KEY: ${DOCUSIGN_INTEGRATION_KEY}
+  #       DOCUSIGN_USER_ID: ${DOCUSIGN_USER_ID}
+  #       DOCUSIGN_PRIVATE_KEY_BASE64: ${DOCUSIGN_PRIVATE_KEY_BASE64}
   #   my-server:
   #     enabled: true
   #     command: npx
