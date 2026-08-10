@@ -46,6 +46,6 @@ flowchart LR
 
 - AC-01/04/06: 正規化された一意一致が分類なしでlocal destinationへ配信される。
 - AC-02: 未一致が`awaiting_destination`となる既存testを維持する。
-- AC-03: 複数一致と未知destinationが自動投稿しない。
+- AC-03: 複数一致、未知destination、空条件や識別子欠落を含む無効ruleが自動投稿しない。
 - AC-05: 明示ruleのcross-workspace配送が既存`shareMinutes`だけを呼ぶ。
 - AC-07: meeting-minutes pipeline suiteとtypecheckを通す。

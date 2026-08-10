@@ -563,6 +563,27 @@ describe("routing fallback", () => {
     expect(Object.values(readState().runs)[0].status).toBe("awaiting_destination");
   });
 
+  it("falls back to manual confirmation for invalid recurring rules", async () => {
+    const classify = vi.fn().mockResolvedValue(null);
+    const { pipeline, generate } = makePipeline({
+      autoConfirm: false,
+      classify,
+      config: {
+        autoRoutes: [
+          { ruleId: "", destinationId: "proj_salestailor", messageTextIncludesAll: ["定例"] },
+          { ruleId: "empty-matchers", destinationId: "proj_salestailor" },
+        ],
+      },
+    });
+    await pipeline.maybeHandleFileMessage(fileEvent({ text: "定例" }));
+
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(generate).not.toHaveBeenCalled();
+    const run = Object.values(readState().runs)[0];
+    expect(run.status).toBe("awaiting_destination");
+    expect(run).not.toHaveProperty("autoRouteId");
+  });
+
   it("auto-routes cross-workspace only through the configured delivery gateway", async () => {
     const share = vi.fn().mockImplementation(async ({ onProgress }) => {
       onProgress({ parentTs: "9000.1", threadTs: ["9000.2"] });
