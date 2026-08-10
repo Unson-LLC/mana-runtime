@@ -67,7 +67,7 @@ import { deliverPublic, normalizeDelivery } from "../sessions/reply-disposition.
 import { loadInstances } from "../cli/instances.js";
 import { findEmployee, scanOrg } from "./org.js";
 import { cleanupMcpConfigFile, resolveMcpServers, writeMcpConfigFile } from "../mcp/resolver.js";
-import { findEnabledPlacement, isPlacementEmployeeAllowed, placementDeliveryTargets, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
+import { findEnabledPlacement, isPlacementEmployeeAllowed, placementDeliveryTargets, placementProjectCodesForPlacement, runPlacementBoundEngine, supportsPlacementEngine } from "../shared/placement-profile.js";
 import {
   CURRENT_SESSION_HEADER,
   SESSION_DELEGATION_HEADER,
@@ -1738,6 +1738,24 @@ Handle this as a priority request from a colleague.`;
       if (!body || typeof body.title !== "string" || !body.title.trim()) {
         return badRequest(res, "title is required");
       }
+      let projectCodes: string[] | undefined;
+      if (gatewayPlacementId) {
+        // Re-resolve after the async body read so a placement disabled or
+        // removed concurrently cannot create an unscoped task.
+        const { placement } = findEnabledPlacement(context.getConfig().placements, gatewayPlacementId);
+        if (!placement) {
+          return json(res, { error: "placement is unavailable" }, 403);
+        }
+        projectCodes = placementProjectCodesForPlacement(context.getConfig().placements, gatewayPlacementId);
+        if (projectCodes.length === 0) {
+          return json(res, { error: "placement has no projects configured" }, 409);
+        }
+      } else if (body.project_codes !== undefined) {
+        if (!Array.isArray(body.project_codes) || body.project_codes.some((code) => typeof code !== "string")) {
+          return badRequest(res, "project_codes must be an array of strings");
+        }
+        projectCodes = [...new Set(body.project_codes.map((code) => code.trim()).filter(Boolean))];
+      }
       try {
         const client = new BrainbaseTaskClient();
         const task = await client.createTask(
@@ -1748,6 +1766,7 @@ Handle this as a priority request from a colleague.`;
             assignee_person_id:
               typeof body.assignee_person_id === "string" ? body.assignee_person_id : undefined,
             due_at: typeof body.due_at === "string" ? body.due_at : undefined,
+            project_codes: projectCodes,
           },
           typeof body.idempotency_key === "string" ? body.idempotency_key : undefined,
         );

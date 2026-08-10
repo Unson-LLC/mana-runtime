@@ -87,6 +87,24 @@ describe("BrainbaseTaskClient", () => {
     expect(task.status).toBe("completed");
   });
 
+  it("updates canonical project codes in the task payload", async () => {
+    const fetchImpl = fakeFetch((url, init) => {
+      expect(url).toBe("https://bb.example/api/companion/tasks/ct1.x");
+      expect(init.method).toBe("PATCH");
+      expect(JSON.parse(String(init.body))).toEqual({
+        expected_version: 1,
+        project_codes: ["back-office"],
+      });
+      return { status: 200, body: { id: "ct1.x", version: 2, project_codes: ["back-office"] } };
+    });
+    const client = new BrainbaseTaskClient({ ...options, fetchImpl });
+    const task = await client.updateTask("ct1.x", {
+      expected_version: 1,
+      project_codes: ["back-office"],
+    });
+    expect(task.project_codes).toEqual(["back-office"]);
+  });
+
   it("surfaces the API error code and status on failure", async () => {
     const fetchImpl = fakeFetch(() => ({
       status: 503,

@@ -45,6 +45,7 @@ export interface UpdateTaskInput {
   priority?: "low" | "medium" | "high" | "urgent";
   due_at?: string;
   assignee_person_id?: string | null;
+  project_codes?: string[];
 }
 
 export interface TransitionTaskInput {
