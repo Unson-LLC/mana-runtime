@@ -65,6 +65,16 @@ afterEach(() => {
 });
 
 describe("renderTaskCanvasMarkdown", () => {
+  it("renders a project settings state before a channel is bound", () => {
+    const md = renderTaskCanvasMarkdown([], {
+      projectCodes: [],
+      settingsUrl: "https://mana.example/placements/projects?channel=C1",
+    });
+    expect(md).toContain("projectが未設定");
+    expect(md).toContain("[projectを設定](https://mana.example/placements/projects?channel=C1)");
+    expect(md).not.toContain("## 完了");
+  });
+
   it("groups tasks by status with counts and read-only notice", () => {
     const md = renderTaskCanvasMarkdown([
       makeTask({ id: "1", title: "着手中", status: "in_progress", priority: "high" }),
@@ -126,6 +136,26 @@ describe("fetchAllTasks", () => {
 });
 
 describe("taskCanvasConfigsForPlacements", () => {
+  it("creates a setup canvas for a placement whose projects are not configured", () => {
+    const configs = taskCanvasConfigsForPlacements({
+      enabled: true,
+      settingsWebBaseUrl: "https://mana.example",
+    }, [{
+      id: "p1",
+      connector: "slack-biz",
+      workspaceId: "T1",
+      channelId: "C1",
+      audience: { type: "project-team", allowedUsers: ["U1"] },
+    }], "slack-biz", "T1");
+    expect(configs).toEqual([
+      expect.objectContaining({
+        channelId: "C1",
+        projectCodes: [],
+        settingsUrl: "https://mana.example/placements/projects?connector=slack-biz&workspace=T1&channel=C1",
+      }),
+    ]);
+  });
+
   it("creates one channel canvas per placement and unions duplicate-channel projects", () => {
     const base = { workspaceId: "T1", audience: { type: "project-team" as const, allowedUsers: ["U1"] } };
     const configs = taskCanvasConfigsForPlacements({ enabled: true }, [
@@ -154,6 +184,25 @@ describe("taskCanvasConfigsForPlacements", () => {
 });
 
 describe("TaskCanvasUpdater", () => {
+  it("publishes setup canvas without querying Brainbase when project binding is empty", async () => {
+    const taskFactory = vi.fn(fakeTaskClient([]));
+    const app = fakeApp(async (method) => method === "conversations.canvases.create" ? { canvas_id: "FSETUP" } : {});
+    const updater = new TaskCanvasUpdater(app, {
+      enabled: true,
+      channelId: "C0TEST",
+      projectCodes: [],
+      settingsUrl: "https://mana.example/placements/projects?channel=C0TEST",
+    }, taskFactory);
+
+    await updater.tick();
+
+    expect(taskFactory).not.toHaveBeenCalled();
+    const apiCall = (app.client as unknown as { apiCall: ReturnType<typeof vi.fn> }).apiCall;
+    expect(apiCall).toHaveBeenCalledWith("conversations.canvases.create", expect.objectContaining({
+      document_content: expect.objectContaining({ markdown: expect.stringContaining("projectが未設定") }),
+    }));
+  });
+
   it("creates a channel canvas on first tick and persists its id", async () => {
     const calls: Array<{ method: string; payload: Record<string, unknown> }> = [];
     const app = fakeApp(async (method, payload) => {

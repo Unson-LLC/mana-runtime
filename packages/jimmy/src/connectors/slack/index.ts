@@ -305,7 +305,7 @@ export class SlackConnector implements Connector {
       : null;
     const taskCanvasConfigs = config.taskCanvas?.enabled
       ? taskCanvasConfigsForPlacements(
-          config.taskCanvas,
+          { ...config.taskCanvas, settingsWebBaseUrl: config.settingsHome?.webBaseUrl },
           context.placements,
           this.instanceId,
           this.configuredWorkspaceId,

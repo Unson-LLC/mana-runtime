@@ -1413,7 +1413,10 @@ export async function startGateway(
         const connectorsChanged =
           JSON.stringify(baseline.connectors ?? null) !==
           JSON.stringify(currentConfig.connectors ?? null);
-        if (connectorsChanged || portalNamesChanged) {
+        const placementsChanged =
+          JSON.stringify(baseline.placements ?? null) !==
+          JSON.stringify(currentConfig.placements ?? null);
+        if (connectorsChanged || portalNamesChanged || placementsChanged) {
           reloadAllConnectors()
             .then((result) => {
               logger.info(

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { deepMerge, stripTopLevelSlackCredentials } from "../api.js";
+import {
+  connectorRuntimeConfigChanged,
+  deepMerge,
+  stripTopLevelSlackCredentials,
+} from "../api.js";
 
 /**
  * PUT /api/config deep-merges the incoming partial config into the on-disk one
@@ -63,5 +67,46 @@ describe("stripTopLevelSlackCredentials", () => {
       connectors: { slack: { allowFrom: ["U_ALLOWED"] } },
     });
     expect(input.connectors.slack.botToken).toBe("xoxb-secret");
+  });
+});
+
+describe("connectorRuntimeConfigChanged", () => {
+  const existing = {
+    portal: { portalName: "Mana", operatorName: "mana" },
+    connectors: { slack: { enabled: true } },
+    placements: [
+      {
+        connector: "slack-main",
+        workspace: "T_WORKSPACE",
+        channel: "C_PROJECT",
+        projects: ["PRJ-A"],
+      },
+    ],
+    engines: { default: "claude" },
+  };
+
+  it("reloads connectors when a channel's project binding changes", () => {
+    const next = deepMerge(existing, {
+      placements: [
+        {
+          connector: "slack-main",
+          workspace: "T_WORKSPACE",
+          channel: "C_PROJECT",
+          projects: ["PRJ-A", "PRJ-B"],
+        },
+      ],
+    });
+
+    expect(connectorRuntimeConfigChanged(existing, next)).toBe(true);
+  });
+
+  it("does not reload connectors for unrelated engine settings", () => {
+    const next = deepMerge(existing, { engines: { default: "codex" } });
+
+    expect(connectorRuntimeConfigChanged(existing, next)).toBe(false);
+  });
+
+  it("does not reload connectors when runtime configuration is unchanged", () => {
+    expect(connectorRuntimeConfigChanged(existing, structuredClone(existing))).toBe(false);
   });
 });

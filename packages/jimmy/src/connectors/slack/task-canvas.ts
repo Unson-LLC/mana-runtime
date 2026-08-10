@@ -24,6 +24,7 @@ import {
 import { JINN_HOME } from "../../shared/paths.js";
 import { logger } from "../../shared/logger.js";
 import type { PlacementProfile } from "../../shared/types.js";
+import { buildTaskCanvasProjectSettingsUrl } from "./settings-deep-link.js";
 
 export interface TaskCanvasConfig {
   enabled?: boolean;
@@ -37,6 +38,10 @@ export interface TaskCanvasConfig {
   maxPerSection?: number;
   /** Union of placement projects visible in this channel canvas. */
   projectCodes?: string[];
+  /** Mana Web UI origin used to build a channel-scoped project settings link. */
+  settingsWebBaseUrl?: string;
+  /** Fully resolved settings link rendered in the canvas. */
+  settingsUrl?: string;
 }
 
 interface PersistedState {
@@ -108,10 +113,28 @@ function renderSection(title: string, tasks: BrainbaseTask[], maxPerSection: num
 
 export function renderTaskCanvasMarkdown(
   tasks: BrainbaseTask[],
-  options: { title?: string; maxPerSection?: number; nowIso?: string } = {},
+  options: {
+    title?: string;
+    maxPerSection?: number;
+    nowIso?: string;
+    projectCodes?: string[];
+    settingsUrl?: string;
+  } = {},
 ): string {
   const title = options.title ?? DEFAULT_TITLE;
   const maxPerSection = options.maxPerSection ?? DEFAULT_MAX_PER_SECTION;
+  const projectCodes = options.projectCodes?.map((code) => code.trim()).filter(Boolean);
+  if (projectCodes && projectCodes.length === 0) {
+    return [
+      `# ${title}`,
+      "",
+      "このチャンネルはprojectが未設定です。タスクを表示するprojectを1つ以上選択してください。",
+      options.settingsUrl
+        ? `[projectを設定](${options.settingsUrl})`
+        : "Manaの管理画面URLが未設定です。管理者に確認してください。",
+      "",
+    ].join("\n");
+  }
   const unique = [...new Map(tasks.map((task) => [task.id, task])).values()];
   const active = unique.filter((task) => task.status !== "completed");
   const completed = unique.filter((task) => task.status === "completed");
@@ -136,6 +159,8 @@ export function renderTaskCanvasMarkdown(
     `# ${title}`,
     "",
     "正本はBrainbase（PostgreSQL）。このcanvasは読み取り専用ミラーで、直接編集しても正本には反映されず次回更新で上書きされます。",
+    ...(projectCodes?.length ? [`対象project: ${projectCodes.map(sanitize).join(", ")}`] : []),
+    ...(options.settingsUrl ? [`[project設定を変更](${options.settingsUrl})`] : []),
     ...(options.nowIso ? [`最終更新: ${options.nowIso}`] : []),
     "",
     ...assigneeSections,
@@ -202,8 +227,7 @@ export function taskCanvasConfigsForPlacements(
   const matching = (placements ?? []).filter((placement) =>
     placement.enabled !== false
     && placement.connector === connectorId
-    && (!workspaceId || placement.workspaceId === workspaceId)
-    && (placement.projects?.length ?? 0) > 0,
+    && (!workspaceId || placement.workspaceId === workspaceId),
   );
   if (matching.length === 0) return placements?.length ? [] : [{ ...config }];
   const byChannel = new Map<string, Set<string>>();
@@ -219,6 +243,11 @@ export function taskCanvasConfigsForPlacements(
     ...config,
     channelId,
     projectCodes: [...projects],
+    settingsUrl: buildTaskCanvasProjectSettingsUrl(config.settingsWebBaseUrl, {
+      connectorId,
+      workspaceId,
+      channelId,
+    }) ?? undefined,
   }));
 }
 
@@ -280,9 +309,11 @@ export class TaskCanvasUpdater {
   private lastMarkdown: string | null = null;
   private readonly client: SlackClientLike;
   private readonly taskClientFactory: () => BrainbaseTaskClient;
-  private readonly config: Required<Omit<TaskCanvasConfig, "channelId" | "enabled">> & {
+  private readonly config: Required<Omit<TaskCanvasConfig, "channelId" | "enabled" | "projectCodes" | "settingsWebBaseUrl" | "settingsUrl">> & {
     channelId?: string;
     enabled: boolean;
+    projectCodes?: string[];
+    settingsUrl?: string;
   };
 
   constructor(app: App, config: TaskCanvasConfig, taskClientFactory?: () => BrainbaseTaskClient) {
@@ -294,7 +325,10 @@ export class TaskCanvasUpdater {
       title: config.title || DEFAULT_TITLE,
       pollIntervalMs: Math.max(MIN_POLL_MS, config.pollIntervalMs ?? DEFAULT_POLL_MS),
       maxPerSection: config.maxPerSection ?? DEFAULT_MAX_PER_SECTION,
-      projectCodes: [...new Set(config.projectCodes?.map((code) => code.trim()).filter(Boolean) ?? [])],
+      projectCodes: config.projectCodes === undefined
+        ? undefined
+        : [...new Set(config.projectCodes.map((code) => code.trim()).filter(Boolean))],
+      settingsUrl: config.settingsUrl,
     };
 
     const persisted = loadState();
@@ -306,7 +340,7 @@ export class TaskCanvasUpdater {
       logger.info("[task-canvas] disabled by config");
       return;
     }
-    if (!isBrainbaseTaskStoreConfigured()) {
+    if ((this.config.projectCodes === undefined || this.config.projectCodes.length > 0) && !isBrainbaseTaskStoreConfigured()) {
       logger.warn(
         "[task-canvas] Brainbase task store is not configured (BRAINBASE_TASK_API_BASE_URL / BRAINBASE_TASK_API_TOKEN) — mirror not started",
       );
@@ -337,10 +371,14 @@ export class TaskCanvasUpdater {
     if (this.inflight || this.stopped) return;
     this.inflight = true;
     try {
-      const tasks = await fetchAllTasks(this.taskClientFactory(), this.config.projectCodes);
+      const tasks = this.config.projectCodes?.length === 0
+        ? []
+        : await fetchAllTasks(this.taskClientFactory(), this.config.projectCodes);
       const markdown = renderTaskCanvasMarkdown(tasks, {
         title: this.config.title,
         maxPerSection: this.config.maxPerSection,
+        projectCodes: this.config.projectCodes,
+        settingsUrl: this.config.settingsUrl,
       });
       if (markdown === this.lastMarkdown) {
         this.consecutiveFailures = 0;
