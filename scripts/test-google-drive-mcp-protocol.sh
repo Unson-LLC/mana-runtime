@@ -21,3 +21,5 @@ printf '%s\n' \
 grep -Fq '"serverInfo":{"name":"mana-google-drive","version":"1.2.0"}' "$output_file"
 grep -Fq '"name":"create_file"' "$output_file"
 echo "Google Drive MCP initialize and tools/list protocol fixture passed"
+
+bash "$repo_root/scripts/deploy/test-deploy-scripts.sh"
