@@ -1,0 +1,60 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-placement-memory-promotion",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "SC-MEM-1",
+      "type": "scenario",
+      "statement": "At gateway startup, the final user turn of each durably stored session with a resolvable workspace and channel is captured as a review-required learning candidate.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/learning/reconcile-conversations.ts", "anchor": "reconcileLearningCandidates" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/learning/__tests__/reconcile-conversations.test.ts", "must_contain": "captures the final interrupted turn with its current speaker scope" }] }
+    },
+    {
+      "id": "INV-MEM-2",
+      "type": "invariant",
+      "statement": "Reconciliation fails closed when workspace or channel scope is absent and never writes Graph or placement memory directly.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/learning/reconcile-conversations.ts", "anchor": "sessionsSkippedUnscoped" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/learning/__tests__/reconcile-conversations.test.ts", "must_contain": "skips sessions that cannot be scoped to a workspace and channel" }] }
+    },
+    {
+      "id": "CON-MEM-3",
+      "type": "contract",
+      "statement": "Candidates retain workspace, channel, actor and placement-derived project scope, use the existing deterministic outbox identity, and remain requiresReview true.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [
+          { "file": "packages/jimmy/src/learning/reconcile-conversations.ts", "anchor": "service.capture" },
+          { "file": "packages/jimmy/src/learning/candidate-outbox.ts", "anchor": "requiresReview" }
+        ]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/learning/__tests__/reconcile-conversations.test.ts", "must_contain": "projectCode" }] }
+    },
+    {
+      "id": "SC-MEM-4",
+      "type": "scenario",
+      "statement": "When no completed assistant response follows the final user turn, the candidate records an explicit incomplete-response marker and remains available for human review.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/learning/reconcile-conversations.ts", "anchor": "No completed assistant response was persisted" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/learning/__tests__/reconcile-conversations.test.ts", "must_contain": "missing:u2" }] }
+    },
+    {
+      "id": "INV-MEM-5",
+      "type": "invariant",
+      "statement": "Startup reconciliation is disabled without an explicit placement allowlist and excludes every placement not listed.",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria" }],
+        "code_refs": [{ "file": "packages/jimmy/src/learning/reconcile-conversations.ts", "anchor": "options.placementIds.has" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/learning/__tests__/reconcile-conversations.test.ts", "must_contain": "is disabled by default and only enables explicitly listed placements" }] }
+    }
+  ]
+}

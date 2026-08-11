@@ -143,8 +143,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-placement-memory-promotion",
+        "title": "Slackチャンネルの業務文脈を安全に記憶し再利用する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-lightsail-deploy-workflow"
+    "current_story_id": "story-placement-memory-promotion"
   }
 }
