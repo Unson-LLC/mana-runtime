@@ -3,10 +3,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 server="$repo_root/packages/jimmy/dist/src/mcp/google-drive-server.js"
-[[ -f "$server" ]] || {
-  echo "Google Drive MCP build output is missing; run pnpm build first" >&2
-  exit 1
-}
+
+# Keep this deploy-contract test self-contained in clean CI checkouts.
+pnpm --dir "$repo_root" --filter openryoko build
+[[ -f "$server" ]]
 
 output_file="$(mktemp)"
 trap 'rm -f "$output_file"' EXIT
