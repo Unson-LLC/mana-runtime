@@ -24,6 +24,23 @@ export interface GraphPerson {
   aliases: string[];
 }
 
+export type GraphDirectoryUnavailableReason =
+  | "unconfigured"
+  | "upstream"
+  | "network"
+  | "invalid_json"
+  | "timeout"
+  | "truncated";
+
+export type GraphPeopleDirectoryResult =
+  | { status: "available"; people: GraphPerson[] }
+  | { status: "unavailable"; reason: GraphDirectoryUnavailableReason; statusCode?: number };
+
+export type GraphPersonResolution =
+  | { status: "resolved"; person: GraphPerson }
+  | { status: "unknown" }
+  | { status: "ambiguous" };
+
 export interface BrainbaseContextQuery {
   project?: string;
   workspace?: string;
@@ -171,9 +188,10 @@ export class GraphEntityClient {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
   private readonly cache = new Map<string, { entities: GraphEntity[]; fetchedAt: number }>();
 
-  constructor(options: { baseUrl?: string; token?: string; fetchImpl?: typeof fetch } = {}) {
+  constructor(options: { baseUrl?: string; token?: string; fetchImpl?: typeof fetch; timeoutMs?: number } = {}) {
     const baseUrl =
       options.baseUrl ??
       process.env.BRAINBASE_GRAPH_API_BASE_URL ??
@@ -182,31 +200,63 @@ export class GraphEntityClient {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.token = options.token ?? process.env.BRAINBASE_GRAPH_API_TOKEN ?? "";
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.timeoutMs = Math.max(1, options.timeoutMs ?? 5_000);
   }
 
-  /**
-   * Lists entities of one type (name + aliases). Cached for 5 minutes per
-   * type. Returns [] on any failure — callers must treat an empty list as
-   * "Graph unavailable", not "no entities exist".
-   */
-  async listEntities(type: string, now: number = Date.now()): Promise<GraphEntity[]> {
-    const cached = this.cache.get(type);
+  protected async listEntitiesStrict(
+    type: string,
+    now: number = Date.now(),
+    useCache = false,
+  ): Promise<
+    | { status: "available"; entities: GraphEntity[] }
+    | { status: "unavailable"; reason: GraphDirectoryUnavailableReason; statusCode?: number }
+  > {
+    const cached = useCache ? this.cache.get(type) : undefined;
     if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
-      return cached.entities;
+      return { status: "available", entities: cached.entities };
     }
-    if (!this.baseUrl || !this.token) return [];
-    try {
-      const res = await this.fetchImpl(
-        `${this.baseUrl}/api/info/graph/entities?type=${encodeURIComponent(type)}&limit=500`,
-        { headers: { Authorization: `Bearer ${this.token}` } },
-      );
+    if (!this.baseUrl || !this.token) return { status: "unavailable", reason: "unconfigured" };
+
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const request = async (): Promise<
+      | { status: "available"; entities: GraphEntity[] }
+      | { status: "unavailable"; reason: GraphDirectoryUnavailableReason; statusCode?: number }
+    > => {
+      let res: Response;
+      try {
+        res = await this.fetchImpl(
+          `${this.baseUrl}/api/info/graph/entities?type=${encodeURIComponent(type)}&limit=500`,
+          { headers: { Authorization: `Bearer ${this.token}` }, signal: controller.signal },
+        );
+      } catch (err) {
+        logger.warn(`[brainbase-graph] ${type} list failed: ${err}`);
+        return { status: "unavailable", reason: "network" };
+      }
       if (!res.ok) {
         logger.warn(`[brainbase-graph] ${type} list failed: ${res.status}`);
-        return [];
+        return { status: "unavailable", reason: "upstream", statusCode: res.status };
       }
-      const body = (await res.json()) as { records?: GraphEntityRecord[] };
+
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch (err) {
+        logger.warn(`[brainbase-graph] ${type} list returned invalid JSON: ${err}`);
+        return { status: "unavailable", reason: "invalid_json" };
+      }
+      if (!body || typeof body !== "object" || !Array.isArray((body as { records?: unknown }).records)) {
+        logger.warn(`[brainbase-graph] ${type} list returned an invalid records payload`);
+        return { status: "unavailable", reason: "invalid_json" };
+      }
+      const records = (body as { records: GraphEntityRecord[] }).records;
+      if (records.length >= 500) {
+        logger.warn(`[brainbase-graph] ${type} list reached the response limit and may be truncated`);
+        return { status: "unavailable", reason: "truncated" };
+      }
       const entities: GraphEntity[] = [];
-      for (const record of body.records ?? []) {
+      for (const record of records) {
+        if (!record || typeof record !== "object" || typeof record.id !== "string") continue;
         const name = typeof record.payload?.name === "string" ? record.payload.name.trim() : "";
         if (!record.id || !name) continue;
         const aliases = Array.isArray(record.payload?.aliases)
@@ -215,11 +265,30 @@ export class GraphEntityClient {
         entities.push({ id: record.id, name, aliases });
       }
       this.cache.set(type, { entities, fetchedAt: now });
-      return entities;
-    } catch (err) {
-      logger.warn(`[brainbase-graph] ${type} list failed: ${err}`);
-      return [];
-    }
+      return { status: "available", entities };
+    };
+
+    const result = await Promise.race([
+      request(),
+      new Promise<{ status: "unavailable"; reason: "timeout" }>((resolve) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          resolve({ status: "unavailable", reason: "timeout" });
+        }, this.timeoutMs);
+      }),
+    ]);
+    if (timeout) clearTimeout(timeout);
+    return result;
+  }
+
+  /**
+   * Lists entities of one type (name + aliases). Cached for 5 minutes per
+   * type. Returns [] on any failure — callers must treat an empty list as
+   * "Graph unavailable", not "no entities exist".
+   */
+  async listEntities(type: string, now: number = Date.now()): Promise<GraphEntity[]> {
+    const result = await this.listEntitiesStrict(type, now, true);
+    return result.status === "available" ? result.entities : [];
   }
 }
 
@@ -231,6 +300,13 @@ export class GraphPeopleClient extends GraphEntityClient {
    */
   async listPeople(now: number = Date.now()): Promise<GraphPerson[]> {
     return this.listEntities("person", now);
+  }
+
+  async listPeopleStrict(now: number = Date.now()): Promise<GraphPeopleDirectoryResult> {
+    const result = await this.listEntitiesStrict("person", now);
+    return result.status === "available"
+      ? { status: "available", people: result.entities }
+      : result;
   }
 }
 
@@ -245,10 +321,17 @@ function normalizeName(value: string): string {
  * return null — a wrong assignee on a canonical task is worse than none.
  */
 export function resolvePersonByName(people: GraphPerson[], rawName: string): GraphPerson | null {
+  const result = resolvePersonByNameStrict(people, rawName);
+  return result.status === "resolved" ? result.person : null;
+}
+
+export function resolvePersonByNameStrict(people: GraphPerson[], rawName: string): GraphPersonResolution {
   const needle = normalizeName(rawName);
-  if (!needle) return null;
+  if (!needle) return { status: "unknown" };
   const matches = people.filter((person) =>
     [person.name, ...person.aliases].some((candidate) => normalizeName(candidate) === needle),
   );
-  return matches.length === 1 ? matches[0] : null;
+  if (matches.length === 0) return { status: "unknown" };
+  if (matches.length > 1) return { status: "ambiguous" };
+  return { status: "resolved", person: matches[0] };
 }

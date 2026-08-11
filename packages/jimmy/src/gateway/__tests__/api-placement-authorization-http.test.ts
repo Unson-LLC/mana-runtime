@@ -463,6 +463,333 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
     }
   });
 
+  it("resolves placement assignee names and fail-closes before task creation", async () => {
+    const originalPlacements = config.placements;
+    const originalFetch = globalThis.fetch;
+    const companionBodies: Array<Record<string, unknown>> = [];
+    const companionIdempotencyKeys: Array<string | null> = [];
+    let graphStatus = 200;
+    let graphRecords: Array<Record<string, unknown>> = [{
+      id: "per_umeda_haruka",
+      payload: { name: "梅田 遼", aliases: ["Haruka Umeda"] },
+    }];
+    config.placements = [{
+      ...originalPlacements![0],
+      projects: ["back-office"],
+      capabilities: { ...originalPlacements![0].capabilities, gatewayTools: ["create_task"] },
+    }];
+    process.env.BRAINBASE_TASK_API_BASE_URL = "https://bb.example";
+    process.env.BRAINBASE_TASK_API_TOKEN = "bbsvc_test";
+    process.env.BRAINBASE_GRAPH_API_BASE_URL = "https://graph.example";
+    process.env.BRAINBASE_GRAPH_API_TOKEN = "bbsvc_graph";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const target = String(input);
+      if (target.startsWith("https://graph.example/api/info/graph/entities")) {
+        return new Response(JSON.stringify({ records: graphRecords }), {
+          status: graphStatus,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (target === "https://bb.example/api/companion/tasks") {
+        companionBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        companionIdempotencyKeys.push(new Headers(init?.headers).get("idempotency-key"));
+        return new Response(JSON.stringify({ id: "ct1.assigned", version: 1, title: "assigned" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return originalFetch(input, init);
+    });
+    const create = (body: Record<string, unknown>) => fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+        [CURRENT_SESSION_HEADER]: parentId,
+        "x-jinn-gateway-tool": "create_task",
+      },
+      body: JSON.stringify({ title: "assigned", idempotency_key: "idem-create", ...body }),
+    });
+
+    try {
+      const resolved = await create({ assignee_name: "Haruka Umeda" });
+      expect(resolved.status).toBe(201);
+      expect(companionBodies).toEqual([expect.objectContaining({
+        assignee_person_id: "per_umeda_haruka",
+        project_codes: ["back-office"],
+      })]);
+      expect(companionIdempotencyKeys).toEqual(["idem-create"]);
+
+      for (const raw of [null, "per_spoofed"]) {
+        const rejected = await create({ assignee_person_id: raw });
+        expect(rejected.status).toBe(400);
+        await expect(rejected.json()).resolves.toMatchObject({ code: "assignee_person_id_forbidden" });
+      }
+      const blank = await create({ assignee_name: "   " });
+      expect(blank.status).toBe(400);
+      await expect(blank.json()).resolves.toMatchObject({ code: "invalid_assignee_name" });
+      const wrongType = await create({ assignee_name: 42 });
+      expect(wrongType.status).toBe(400);
+      await expect(wrongType.json()).resolves.toMatchObject({ code: "invalid_assignee_name" });
+
+      graphRecords = [];
+      const unknown = await create({ assignee_name: "Nobody" });
+      expect(unknown.status).toBe(422);
+      await expect(unknown.json()).resolves.toMatchObject({ code: "assignee_not_found" });
+
+      graphRecords = [
+        { id: "per_a", payload: { name: "A", aliases: ["Shared"] } },
+        { id: "per_b", payload: { name: "B", aliases: ["Shared"] } },
+      ];
+      const ambiguous = await create({ assignee_name: "Shared" });
+      expect(ambiguous.status).toBe(422);
+      await expect(ambiguous.json()).resolves.toMatchObject({ code: "assignee_ambiguous" });
+
+      graphStatus = 503;
+      const unavailable = await create({ assignee_name: "梅田 遼" });
+      expect(unavailable.status).toBe(503);
+      await expect(unavailable.json()).resolves.toMatchObject({ code: "assignee_directory_unavailable" });
+      expect(companionBodies).toHaveLength(1);
+    } finally {
+      fetchSpy.mockRestore();
+      delete process.env.BRAINBASE_TASK_API_BASE_URL;
+      delete process.env.BRAINBASE_TASK_API_TOKEN;
+      delete process.env.BRAINBASE_GRAPH_API_BASE_URL;
+      delete process.env.BRAINBASE_GRAPH_API_TOKEN;
+      config.placements = originalPlacements;
+    }
+  });
+
+  it("resolves placement assignees on update and sends only the update allowlist", async () => {
+    const originalPlacements = config.placements;
+    const originalFetch = globalThis.fetch;
+    let companionBody: Record<string, unknown> | undefined;
+    let companionIdempotencyKey: string | null = null;
+    config.placements = [{
+      ...originalPlacements![0],
+      capabilities: { ...originalPlacements![0].capabilities, gatewayTools: ["update_task"] },
+    }];
+    process.env.BRAINBASE_TASK_API_BASE_URL = "https://bb.example";
+    process.env.BRAINBASE_TASK_API_TOKEN = "bbsvc_test";
+    process.env.BRAINBASE_GRAPH_API_BASE_URL = "https://graph.example";
+    process.env.BRAINBASE_GRAPH_API_TOKEN = "bbsvc_graph";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const target = String(input);
+      if (target.startsWith("https://graph.example/api/info/graph/entities")) {
+        return new Response(JSON.stringify({ records: [{
+          id: "per_umeda_haruka",
+          payload: { name: "梅田 遼", aliases: ["Haruka Umeda"] },
+        }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (target === "https://bb.example/api/companion/tasks/ct1.test") {
+        companionBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        companionIdempotencyKey = new Headers(init?.headers).get("idempotency-key");
+        return new Response(JSON.stringify({ id: "ct1.test", version: 4, title: "updated" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return originalFetch(input, init);
+    });
+
+    try {
+      const spoofed = await fetch(`${baseUrl}/api/tasks/ct1.test`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "update_task",
+        },
+        body: JSON.stringify({ expected_version: 3, assignee_person_id: "per_spoofed" }),
+      });
+      expect(spoofed.status).toBe(400);
+      await expect(spoofed.json()).resolves.toMatchObject({ code: "assignee_person_id_forbidden" });
+      expect(companionBody).toBeUndefined();
+
+      const projectSpoofed = await fetch(`${baseUrl}/api/tasks/ct1.test`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "update_task",
+        },
+        body: JSON.stringify({ expected_version: 3, project_codes: ["other-project"] }),
+      });
+      expect(projectSpoofed.status).toBe(400);
+      await expect(projectSpoofed.json()).resolves.toMatchObject({ code: "project_codes_forbidden" });
+      expect(companionBody).toBeUndefined();
+
+      const updated = await fetch(`${baseUrl}/api/tasks/ct1.test`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "update_task",
+        },
+        body: JSON.stringify({
+          expected_version: 3,
+          title: "updated",
+          assignee_name: "梅田 遼",
+          idempotency_key: "idem-update",
+          arbitrary: "must-not-leak",
+        }),
+      });
+      expect(updated.status).toBe(200);
+      expect(companionBody).toEqual({
+        expected_version: 3,
+        title: "updated",
+        assignee_person_id: "per_umeda_haruka",
+      });
+      expect(companionIdempotencyKey).toBe("idem-update");
+    } finally {
+      fetchSpy.mockRestore();
+      delete process.env.BRAINBASE_TASK_API_BASE_URL;
+      delete process.env.BRAINBASE_TASK_API_TOKEN;
+      delete process.env.BRAINBASE_GRAPH_API_BASE_URL;
+      delete process.env.BRAINBASE_GRAPH_API_TOKEN;
+      config.placements = originalPlacements;
+    }
+  });
+
+  it.each(["missing", "disabled"] as const)(
+    "revalidates a %s placement after Graph resolution before updating a task",
+    async (placementState) => {
+    const originalPlacements = config.placements;
+    const originalFetch = globalThis.fetch;
+    let graphRequestedResolve!: () => void;
+    const graphRequested = new Promise<void>((resolve) => { graphRequestedResolve = resolve; });
+    let releaseGraph!: (response: Response) => void;
+    const graphResponse = new Promise<Response>((resolve) => { releaseGraph = resolve; });
+    let companionCalls = 0;
+    config.placements = [{
+      ...originalPlacements![0],
+      capabilities: { ...originalPlacements![0].capabilities, gatewayTools: ["update_task"] },
+    }];
+    process.env.BRAINBASE_TASK_API_BASE_URL = "https://bb.example";
+    process.env.BRAINBASE_TASK_API_TOKEN = "bbsvc_test";
+    process.env.BRAINBASE_GRAPH_API_BASE_URL = "https://graph.example";
+    process.env.BRAINBASE_GRAPH_API_TOKEN = "bbsvc_graph";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const target = String(input);
+      if (target.startsWith("https://graph.example/api/info/graph/entities")) {
+        graphRequestedResolve();
+        return graphResponse;
+      }
+      if (target === "https://bb.example/api/companion/tasks/ct1.test") {
+        companionCalls += 1;
+        return new Response(JSON.stringify({ id: "ct1.test", version: 4, title: "updated" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return originalFetch(input, init);
+    });
+
+    try {
+      const pending = fetch(`${baseUrl}/api/tasks/ct1.test`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "update_task",
+        },
+        body: JSON.stringify({ expected_version: 3, assignee_name: "梅田 遼" }),
+      });
+      await graphRequested;
+      config.placements = placementState === "missing"
+        ? []
+        : [{ ...config.placements![0], enabled: false }];
+      releaseGraph(new Response(JSON.stringify({ records: [{
+        id: "per_umeda_haruka",
+        payload: { name: "梅田 遼", aliases: [] },
+      }] }), { status: 200, headers: { "content-type": "application/json" } }));
+
+      const response = await pending;
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: "placement is unavailable" });
+      expect(companionCalls).toBe(0);
+    } finally {
+      fetchSpy.mockRestore();
+      delete process.env.BRAINBASE_TASK_API_BASE_URL;
+      delete process.env.BRAINBASE_TASK_API_TOKEN;
+      delete process.env.BRAINBASE_GRAPH_API_BASE_URL;
+      delete process.env.BRAINBASE_GRAPH_API_TOKEN;
+      config.placements = originalPlacements;
+    }
+    },
+  );
+
+  it("keeps legacy create omission and operator update null compatibility", async () => {
+    const originalFetch = globalThis.fetch;
+    const companionBodies: Array<Record<string, unknown>> = [];
+    process.env.BRAINBASE_TASK_API_BASE_URL = "https://bb.example";
+    process.env.BRAINBASE_TASK_API_TOKEN = "bbsvc_test";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) === "https://bb.example/api/companion/tasks" || String(input) === "https://bb.example/api/companion/tasks/ct1.operator") {
+        companionBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ id: "ct1.operator", version: 2, title: "operator" }), {
+          status: init?.method === "PATCH" ? 200 : 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return originalFetch(input, init);
+    });
+
+    try {
+      for (const assignee_person_id of ["per_direct", null]) {
+        const response = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-openryoko-operator-token": "operator-canary",
+          },
+          body: JSON.stringify({ title: "operator", assignee_person_id }),
+        });
+        expect(response.status).toBe(201);
+      }
+      expect(companionBodies.map((body) => body.assignee_person_id)).toEqual(["per_direct", undefined]);
+
+      const cleared = await fetch(`${baseUrl}/api/tasks/ct1.operator`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-openryoko-operator-token": "operator-canary",
+        },
+        body: JSON.stringify({
+          expected_version: 1,
+          assignee_person_id: null,
+          project_codes: [" finance ", "finance", "", "back-office"],
+        }),
+      });
+      expect(cleared.status).toBe(200);
+      expect(companionBodies.at(-1)).toEqual({
+        expected_version: 1,
+        assignee_person_id: null,
+        project_codes: ["finance", "back-office"],
+      });
+
+      const placementOnly = await fetch(`${baseUrl}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openryoko-operator-token": "operator-canary",
+        },
+        body: JSON.stringify({ title: "operator", assignee_name: "梅田 遼" }),
+      });
+      expect(placementOnly.status).toBe(400);
+      await expect(placementOnly.json()).resolves.toMatchObject({ code: "assignee_name_placement_only" });
+      expect(companionBodies).toHaveLength(3);
+    } finally {
+      fetchSpy.mockRestore();
+      delete process.env.BRAINBASE_TASK_API_BASE_URL;
+      delete process.env.BRAINBASE_TASK_API_TOKEN;
+    }
+  });
+
   it("allows only an authenticated placement delivery target on the direct connector route", async () => {
     sendMessage.mockClear();
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
