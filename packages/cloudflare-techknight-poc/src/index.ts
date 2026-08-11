@@ -87,6 +87,7 @@ export default {
       await consumeTechKnightMessage(message, {
         expectedTenantId: env.TENANT_ID,
         expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+        expectedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
         process: async (event) => {
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;

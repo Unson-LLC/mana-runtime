@@ -56,16 +56,38 @@ describe("TechKnight queue consumer", () => {
   it.each([
     event({ tenantId: "other" as "techknight" }),
     event({ workspaceId: "T_OTHER" }),
+    event({ channelId: "C_OTHER" }),
   ])("acknowledges an event outside the tenant boundary without processing it", async (body) => {
     const input = message(body);
     const process = vi.fn();
 
     await consumeTechKnightMessage(input, {
       expectedWorkspaceId: "T_TECHKNIGHT",
+      expectedChannelId: "C_MANA_TEST",
       process,
     });
 
     expect(process).not.toHaveBeenCalled();
+    expect(input.ack).toHaveBeenCalledOnce();
+    expect(input.retry).not.toHaveBeenCalled();
+  });
+
+  it("processes a non-TechKnight tenant when it matches the deployed boundary", async () => {
+    const input = message(event({
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      channelId: "C_BACK_OFFICE",
+    }));
+    const process = vi.fn().mockResolvedValue({ outcome: "replied" });
+
+    await consumeTechKnightMessage(input, {
+      expectedTenantId: "unson",
+      expectedWorkspaceId: "T_UNSON",
+      expectedChannelId: "C_BACK_OFFICE",
+      process,
+    });
+
+    expect(process).toHaveBeenCalledWith(input.body);
     expect(input.ack).toHaveBeenCalledOnce();
     expect(input.retry).not.toHaveBeenCalled();
   });

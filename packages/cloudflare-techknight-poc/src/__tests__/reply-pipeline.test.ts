@@ -70,6 +70,21 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
+  it("accepts a matching non-TechKnight tenant boundary", () => {
+    const input = event({
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      channelId: "C_BACK_OFFICE",
+    });
+    const { options } = harness({
+      expectedTenantId: "unson",
+      expectedWorkspaceId: "T_UNSON",
+      allowedChannelId: "C_BACK_OFFICE",
+    });
+
+    expect(isReplyEligible(input, options)).toBe(true);
+  });
+
   it("posts a Claude response to the originating Slack thread", async () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();
