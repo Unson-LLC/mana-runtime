@@ -111,7 +111,6 @@ describe("handleSlackRequest", () => {
   it("returns a verified URL challenge without queueing", async () => {
     const body = JSON.stringify({
       type: "url_verification",
-      team_id: "T_TECHKNIGHT",
       challenge: "challenge-value",
     });
     const send = vi.fn();

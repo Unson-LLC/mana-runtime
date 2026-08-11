@@ -133,15 +133,15 @@ export async function handleSlackRequest(
   } catch {
     return jsonResponse({ error: "slack_payload_invalid" }, 400);
   }
-  if (!isRecord(payload) || payload.team_id !== options.expectedTeamId) {
-    return jsonResponse({ error: "slack_team_forbidden" }, 403);
-  }
-
-  if (payload.type === "url_verification") {
+  if (isRecord(payload) && payload.type === "url_verification") {
     const challenge = nonEmptyString(payload.challenge);
     return challenge
       ? jsonResponse({ challenge }, 200)
       : jsonResponse({ error: "slack_payload_invalid" }, 400);
+  }
+
+  if (!isRecord(payload) || payload.team_id !== options.expectedTeamId) {
+    return jsonResponse({ error: "slack_team_forbidden" }, 403);
   }
 
   try {
