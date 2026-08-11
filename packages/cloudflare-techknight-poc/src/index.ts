@@ -17,10 +17,10 @@ import {
 import type { SlackQueueEvent } from "./types.js";
 import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import {
-  isMeetingTaskRequest,
   processMeetingTaskEvent,
 } from "./meeting-task-pipeline.js";
 import { resolveRuntimeBinding } from "./runtime-config.js";
+import { routeRuntimeEvent } from "./runtime-event-router.js";
 import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { persistEventOnce } from "./workspace-store.js";
 import { withDisposableResource } from "./disposable-resource.js";
@@ -35,6 +35,7 @@ interface Env extends SandboxRuntimeEnv {
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   RUNTIME_PROJECT_CODES?: string;
+  RUNTIME_EXECUTION_MODE?: string;
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent>;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
@@ -64,7 +65,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return Response.json({ ok: true, tenant: "techknight" });
+      return Response.json({
+        ok: true,
+        tenant: env.TENANT_ID,
+        meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
+      });
     }
     if (url.pathname.startsWith("/admin/sandbox/")) {
       return handleSandboxAdminRequest(request, env, {
@@ -95,29 +100,32 @@ export default {
             () => getWorkspace(handle),
             async (workspace) => {
               await persistEventOnce(workspace.fs, event);
-              if (isMeetingTaskRequest(event)) {
-                const binding = resolveRuntimeBinding(event, {
-                  tenantId: env.TENANT_ID,
-                  workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                  channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-                  projectCodes: env.RUNTIME_PROJECT_CODES,
-                });
-                return processMeetingTaskEvent(workspace.fs, event, {
-                  binding,
-                  brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
-                  brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
+              return routeRuntimeEvent(event, {
+                meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
+                processMeetingTask: () => {
+                  const binding = resolveRuntimeBinding(event, {
+                    tenantId: env.TENANT_ID,
+                    workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                    channelId: env.SLACK_ALLOWED_CHANNEL_ID,
+                    projectCodes: env.RUNTIME_PROJECT_CODES,
+                  });
+                  return processMeetingTaskEvent(workspace.fs, event, {
+                    binding,
+                    brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+                    brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
+                    slackBotToken: env.SLACK_BOT_TOKEN,
+                    oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                  });
+                },
+                processReply: () => processReplyEvent(workspace.fs, event, {
+                  expectedTenantId: env.TENANT_ID,
+                  expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                  allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
                   slackBotToken: env.SLACK_BOT_TOKEN,
                   oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
                   createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-                });
-              }
-              return processReplyEvent(workspace.fs, event, {
-                expectedTenantId: env.TENANT_ID,
-                expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
-                slackBotToken: env.SLACK_BOT_TOKEN,
-                oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
-                createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                }),
               });
             },
           );

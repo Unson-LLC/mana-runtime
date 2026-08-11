@@ -67,11 +67,14 @@ Workspaceには秘密を含まない次の状態だけを置く。
 - Brainbase部分失敗: candidate単位の決定的Idempotency-Keyで成功済みを保護し、全結果を記録する。
 - Slack通知失敗: Brainbase結果をWorkspaceに保持し、同じ本文を再生成せず通知だけ再試行する。
 - Cloudflare障害: 対象bindingだけLightsailへ戻せる。両runtimeの同時有効化は禁止する。
+- 所有権切替: `RUNTIME_EXECUTION_MODE=meeting_tasks`をCloudflare側の実行許可とし、Lightsailの
+  同一workspace/channel入口を停止・確認した後にだけ有効化する。未設定時は依頼を処理しない。
 
 ## 移行順序
 
 1. 共通Cloudflare runtime coreと議事録タスク縦断をTechKnight deploymentで検証する。
-2. 会社別bindingとsecretを追加し、workspace単位でSlack入口をCloudflareへ切り替える。
+2. 会社別bindingとsecretを追加し、Lightsail入口停止後にworkspace単位で
+   `RUNTIME_EXECUTION_MODE=meeting_tasks`を有効化する。
 3. 議事録生成、Canvas、通常task toolsの順に同じcoreへ移す。
 4. 観測期間後、該当Lightsail connectorを停止する。全binding移行後にLightsailを廃止する。
 

@@ -7,7 +7,8 @@
   "vars": {
     "TENANT_ID": "techknight",
     "SLACK_EXPECTED_TEAM_ID": "T07A9J3PEMB",
-    "SLACK_ALLOWED_CHANNEL_ID": "C0A1UQNLSBD"
+    "SLACK_ALLOWED_CHANNEL_ID": "C0A1UQNLSBD",
+    "RUNTIME_EXECUTION_MODE": "reply_only"
   },
   "durable_objects": {
     "bindings": [

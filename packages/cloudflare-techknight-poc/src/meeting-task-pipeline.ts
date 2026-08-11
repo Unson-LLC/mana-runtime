@@ -1,6 +1,7 @@
 import {
   postSlackReply,
   ReplyPipelineError,
+  updateSlackReply,
   type ReplySandbox,
 } from "./reply-pipeline.js";
 import type { RuntimeBinding } from "./runtime-config.js";
@@ -28,10 +29,17 @@ interface RegisteredTask extends TaskCandidate {
   taskId: string;
 }
 
+interface FailedTask {
+  index: number;
+  code: string;
+}
+
 interface TaskRunState {
   eventId: string;
   candidates: TaskCandidate[];
   registered: RegisteredTask[];
+  failures: FailedTask[];
+  notificationTs?: string;
 }
 
 export interface MeetingTaskPipelineOptions {
@@ -170,7 +178,9 @@ async function loadTaskRun(fs: WorkspaceFs, eventId: string): Promise<TaskRunSta
   try {
     const raw = await fs.readFile(path);
     const text = typeof raw === "string" ? raw : await new Response(raw).text();
-    return JSON.parse(text) as TaskRunState;
+    const state = JSON.parse(text) as TaskRunState;
+    state.failures ??= [];
+    return state;
   } catch {
     throw new ReplyPipelineError("task_run_state_invalid");
   }
@@ -229,10 +239,34 @@ async function createBrainbaseTask(
 }
 
 function notificationText(state: TaskRunState): string {
-  const lines = state.registered
+  const registeredLines = [...state.registered]
     .sort((left, right) => left.index - right.index)
     .map((task) => `• ${task.title}（${task.taskId}）`);
-  return [`Brainbaseに${state.registered.length}件のタスクを登録しました。`, ...lines].join("\n");
+  const failedLines = [...state.failures]
+    .sort((left, right) => left.index - right.index)
+    .map((failure) => `• ${state.candidates[failure.index]?.title ?? `候補${failure.index + 1}`}（登録失敗: ${failure.code}）`);
+  return [
+    `Brainbaseタスク登録: 成功${state.registered.length}件・失敗${state.failures.length}件`,
+    ...registeredLines,
+    ...failedLines,
+  ].join("\n");
+}
+
+async function publishNotification(
+  fs: WorkspaceFs,
+  event: SlackQueueEvent,
+  state: TaskRunState,
+  options: MeetingTaskPipelineOptions,
+): Promise<string> {
+  const text = notificationText(state);
+  if (state.notificationTs) {
+    await updateSlackReply(event, state.notificationTs, text, options);
+    return state.notificationTs;
+  }
+  const responseTs = await postSlackReply(event, text, options);
+  state.notificationTs = responseTs;
+  await saveTaskRun(fs, state);
+  return responseTs;
 }
 
 export async function processMeetingTaskEvent(
@@ -249,17 +283,30 @@ export async function processMeetingTaskEvent(
       eventId: event.eventId,
       candidates: await extractCandidates(event, options),
       registered: [],
+      failures: [],
     };
     await saveTaskRun(fs, state);
   }
   for (let index = 0; index < state.candidates.length; index += 1) {
     if (state.registered.some((task) => task.index === index)) continue;
     const candidate = state.candidates[index];
-    const taskId = await createBrainbaseTask(event, candidate, index, options);
-    state.registered.push({ ...candidate, index, taskId });
+    try {
+      const taskId = await createBrainbaseTask(event, candidate, index, options);
+      state.registered.push({ ...candidate, index, taskId });
+      state.failures = state.failures.filter((failure) => failure.index !== index);
+    } catch (error) {
+      const code = error instanceof ReplyPipelineError ? error.code : "unexpected_error";
+      state.failures = [
+        ...state.failures.filter((failure) => failure.index !== index),
+        { index, code },
+      ];
+    }
     await saveTaskRun(fs, state);
   }
-  const responseTs = await postSlackReply(event, notificationText(state), options);
+  const responseTs = await publishNotification(fs, event, state, options);
+  if (state.failures.length > 0) {
+    throw new ReplyPipelineError("brainbase_task_registration_partial");
+  }
   await persistReplyCompletion(fs, {
     eventId: event.eventId,
     responseTs,

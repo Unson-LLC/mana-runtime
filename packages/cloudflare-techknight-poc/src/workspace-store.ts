@@ -1,5 +1,7 @@
 import type { SlackQueueEvent } from "./types.js";
 
+const MAX_PERSISTED_EVENT_TEXT_CHARS = 20_000;
+
 export interface WorkspaceFs {
   mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
   ls(prefix: string): Promise<string[]>;
@@ -27,7 +29,13 @@ export async function persistEventOnce(
     return { created: false, path };
   }
 
-  await fs.writeFile(path, JSON.stringify(event));
+  const persistedEvent = {
+    ...event,
+    text: event.text
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+      .slice(0, MAX_PERSISTED_EVENT_TEXT_CHARS),
+  };
+  await fs.writeFile(path, JSON.stringify(persistedEvent));
   return { created: true, path };
 }
 

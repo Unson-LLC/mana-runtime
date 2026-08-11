@@ -159,8 +159,12 @@ describe("Cloudflare meeting task pipeline", () => {
     const { options, sandbox } = harness({ fetch: partialFetch });
 
     await expect(processMeetingTaskEvent(fs, event(), options)).rejects.toMatchObject({
-      code: "brainbase_task_registration_failed",
+      code: "brainbase_task_registration_partial",
     });
+    const initialSlackCall = partialFetch.mock.calls.find(([url]) => String(url).includes("chat.postMessage"));
+    expect(JSON.parse(String((initialSlackCall?.[1] as RequestInit).body)).text).toContain(
+      "Brainbaseタスク登録: 成功1件・失敗1件",
+    );
     await expect(processMeetingTaskEvent(fs, event(), options)).resolves.toMatchObject({
       outcome: "tasks_registered",
       registered: 2,
@@ -172,6 +176,12 @@ describe("Cloudflare meeting task pipeline", () => {
       .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
     expect(taskBodies.filter((body) => body.title === "請求書を送付")).toHaveLength(1);
     expect(taskBodies.filter((body) => body.title === "契約内容を確認")).toHaveLength(2);
+    const updateCall = partialFetch.mock.calls.find(([url]) => String(url).includes("chat.update"));
+    expect(JSON.parse(String((updateCall?.[1] as RequestInit).body))).toMatchObject({
+      channel: "C_MANA_TEST",
+      ts: "1786500012.000001",
+      text: expect.stringContaining("Brainbaseタスク登録: 成功2件・失敗0件"),
+    });
   });
 
   it("rejects malformed Claude output before Brainbase or Slack is called", async () => {

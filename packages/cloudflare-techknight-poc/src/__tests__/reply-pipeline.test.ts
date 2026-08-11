@@ -99,6 +99,8 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("メンションしてみる");
     expect(prompt).not.toContain("<@U_BOT>");
     expect(prompt).not.toContain("\u0000");
+    expect(prompt).not.toContain("TechKnight");
+    expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
       expect.stringContaining("/tmp/mana-slack-prompt.txt"),
       {
