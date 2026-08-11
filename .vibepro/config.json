@@ -156,6 +156,17 @@
         "due_at": null
       },
       {
+        "story_id": "story-google-drive-write-e2e",
+        "title": "Google Drive成果物の書き込みとリンク返信を成功させる",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
+      },
+      {
         "story_id": "slack-task-assignee-inheritance",
         "title": "Slackで指定した担当者をCanonical Taskへ正式に紐付ける",
         "ssot": "local",

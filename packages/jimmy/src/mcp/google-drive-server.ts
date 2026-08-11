@@ -8,10 +8,12 @@
  */
 
 import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -21,6 +23,8 @@ const ALLOWED_UPLOAD_ROOTS = (process.env.GOOGLE_DRIVE_ALLOWED_UPLOAD_ROOTS || "
   .split(",")
   .map((entry) => entry.trim())
   .filter(Boolean);
+
+export const MAX_INLINE_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -74,6 +78,21 @@ export const GOOGLE_DRIVE_TOOLS = [
       properties: {
         name: { type: "string" },
         parentId: { type: "string", description: "Parent folder ID; omit for My Drive root" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "create_file",
+    description: "Create a Drive file from inline text or base64 content and return its ID and web link.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        name: { type: "string", description: "Drive filename" },
+        content: { type: "string", description: "UTF-8 text content; mutually exclusive with contentBase64" },
+        contentBase64: { type: "string", description: "Base64-encoded binary content; mutually exclusive with content" },
+        parentId: { type: "string", description: "Destination folder ID; omit for My Drive root" },
+        mimeType: { type: "string", description: "Optional upload content type" },
       },
       required: ["name"],
     },
@@ -171,6 +190,72 @@ export function requireNonEmptyString(value: unknown, field: string): string {
   return result;
 }
 
+export interface InlineFileContent {
+  bytes: Buffer;
+  mimeType: string;
+}
+
+export function decodeInlineFileContent(args: Record<string, unknown>): InlineFileContent {
+  const hasText = typeof args.content === "string";
+  const hasBase64 = typeof args.contentBase64 === "string";
+  if (hasText === hasBase64) {
+    throw new Error("exactly one of content or contentBase64 must be provided");
+  }
+
+  let bytes: Buffer;
+  let defaultMimeType: string;
+  if (hasText) {
+    if (args.content === "") throw new Error("content must not be empty");
+    bytes = Buffer.from(args.content as string, "utf8");
+    defaultMimeType = "text/plain; charset=utf-8";
+  } else {
+    const encoded = args.contentBase64 as string;
+    if (!encoded) throw new Error("contentBase64 must not be empty");
+    const strictBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+    if (encoded.length % 4 !== 0 || !strictBase64.test(encoded)) {
+      throw new Error("contentBase64 must be valid base64");
+    }
+    bytes = Buffer.from(encoded, "base64");
+    defaultMimeType = "application/octet-stream";
+  }
+
+  if (bytes.length > MAX_INLINE_UPLOAD_BYTES) {
+    throw new Error("inline file content exceeds the 20 MiB limit");
+  }
+  const mimeType = args.mimeType === undefined
+    ? defaultMimeType
+    : requireNonEmptyString(args.mimeType, "mimeType");
+  return { bytes, mimeType };
+}
+
+export type GwsRunner = (args: string[], cwd?: string) => Promise<unknown>;
+
+export async function createInlineDriveFile(
+  args: Record<string, unknown>,
+  runner: GwsRunner = runGws,
+): Promise<unknown> {
+  const name = requireNonEmptyString(args.name, "name");
+  const { bytes, mimeType } = decodeInlineFileContent(args);
+  const metadata: Record<string, unknown> = { name };
+  if (args.parentId !== undefined) {
+    metadata.parents = [requireNonEmptyString(args.parentId, "parentId")];
+  }
+
+  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "mana-drive-"));
+  try {
+    await writeFile(path.join(temporaryDirectory, "artifact"), bytes, { mode: 0o600 });
+    return await runner([
+      "drive", "files", "create",
+      "--params", JSON.stringify({ fields: FILE_FIELDS, supportsAllDrives: true }),
+      "--json", JSON.stringify(metadata),
+      "--upload", "artifact",
+      "--upload-content-type", mimeType,
+    ], temporaryDirectory);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 export type SheetCellValue = string | number | boolean | null;
 
 export function normalizeSheetValues(value: unknown): SheetCellValue[][] {
@@ -246,6 +331,8 @@ export async function handleGoogleDriveTool(name: string, args: Record<string, u
         fields: FILE_FIELDS, supportsAllDrives: true,
       }), "--json", JSON.stringify(metadata)]);
     }
+    case "create_file":
+      return createInlineDriveFile(args);
     case "upload_file": {
       const source = await assertAllowedUploadPath(String(args.sourcePath || ""));
       const metadata: Record<string, unknown> = { name: String(args.name || path.basename(source)) };
@@ -299,7 +386,7 @@ async function handleRequest(request: JsonRpcRequest): Promise<void> {
     sendResponse({ jsonrpc: "2.0", id, result: {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "mana-google-drive", version: "1.1.0" },
+      serverInfo: { name: "mana-google-drive", version: "1.2.0" },
     } });
     return;
   }
@@ -343,7 +430,16 @@ export function startGoogleDriveMcpServer(): void {
   });
 }
 
-const entryPath = process.argv[1];
-if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
+export function isDirectExecution(entryPath = process.argv[1], moduleUrl = import.meta.url): boolean {
+  if (!entryPath) return false;
+
+  try {
+    return realpathSync(entryPath) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectExecution()) {
   startGoogleDriveMcpServer();
 }
