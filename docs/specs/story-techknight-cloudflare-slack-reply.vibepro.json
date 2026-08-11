@@ -1,0 +1,56 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-techknight-cloudflare-slack-reply",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "INV-TKREPLY-BOUNDARY",
+      "type": "invariant",
+      "statement": "TechKnight workspaceと許可channelの非Bot app_mentionだけを応答処理する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 0 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-slack-reply.md", "section": "Trust boundaries" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts", "anchor": "isReplyEligible" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "rejects events outside the TechKnight reply boundary" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-TKREPLY-SECRET",
+      "type": "invariant",
+      "statement": "OAuth tokenとSlack Bot tokenはWorker secret境界から外へ保存または記録しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }, { "kind": "acceptance_criteria", "index": 4 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-slack-reply.md", "section": "Trust boundaries" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts", "anchor": "generateClaudeReply" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "keeps worker secrets out of sandbox input and completion records" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-TKREPLY-THREAD",
+      "type": "invariant",
+      "statement": "Claude応答は元Slackメッセージtsをthread_tsとして八雲まなAppから投稿する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-slack-reply.md", "section": "Decision" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts", "anchor": "postSlackReply" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "posts a Claude response to the originating Slack thread" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-TKREPLY-IDEMPOTENT",
+      "type": "invariant",
+      "statement": "完了記録のあるevent IDはClaudeとSlack投稿を再実行しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 5 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-slack-reply.md", "section": "Delivery and idempotency" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/workspace-store.ts", "anchor": "persistReplyCompletion" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "does not repeat a completed Slack reply" }]
+      },
+      "confidence": 1
+    }
+  ],
+  "open_questions": []
+}
