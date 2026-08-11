@@ -11,7 +11,7 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "test": "turbo run test",
-    "test:integration:deploy": "scripts/deploy/test-deploy-scripts.sh",
+    "test:integration:deploy": "scripts/test-google-drive-mcp-protocol.sh",
     "test:e2e:deploy": "playwright test --config playwright.deploy.config.ts",
     "test:integration": "pnpm --filter openryoko test:integration",
     "test:e2e": "node -e \"console.log(JSON.stringify({ node_arch: process.arch, node_version: process.version }))\" && playwright test",
