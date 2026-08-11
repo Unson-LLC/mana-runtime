@@ -154,8 +154,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-google-drive-write-e2e",
+        "title": "Google Drive成果物の書き込みとリンク返信を成功させる",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-placement-memory-promotion"
+    "current_story_id": "story-google-drive-write-e2e"
   }
 }

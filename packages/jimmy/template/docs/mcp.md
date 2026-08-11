@@ -79,8 +79,11 @@ mcp:
 Google Drive can be exposed through Mana's Drive-focused MCP adapter. The adapter
 uses the current Google Workspace CLI for Drive and Sheets API calls, verifies
 the authenticated account before every operation, can create/populate/read
-spreadsheets, omits delete/share tools, and restricts local uploads to configured
-roots. Keep its credential store separate from other Google accounts.
+spreadsheets, creates up to 20 MiB artifacts from inline text or base64, omits
+delete/share tools, and restricts user-supplied local uploads to configured
+roots. Inline artifacts use a private adapter-owned temporary file that is
+removed after the upload. Keep its credential store separate from other Google
+accounts.
 
 ```bash
 npm install --prefix /home/ryoko/mcp/google-workspace-cli @googleworkspace/cli@0.22.5
