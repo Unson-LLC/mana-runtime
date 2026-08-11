@@ -18,6 +18,11 @@ import {
   isDeliveryTargetAllowed,
   isGatewayToolAllowed,
 } from "./gateway-policy.js";
+import {
+  buildCreateTaskRequestBody,
+  buildUpdateTaskRequestBody,
+  withTaskAssigneeNameSchema,
+} from "./task-tool-input.js";
 
 const GATEWAY_URL = process.env.JINN_GATEWAY_URL || "http://127.0.0.1:7777";
 const SESSION_DELEGATION_TOKEN = process.env.JINN_SESSION_DELEGATION_TOKEN;
@@ -127,12 +132,12 @@ const TOOLS = [
       "Create a task in the canonical Brainbase task store (the single source of truth for tasks). ALWAYS use this — never a department board — when asked to create, register, or record a task. Returns the created task with its canonical ID.",
     inputSchema: {
       type: "object" as const,
-      properties: {
+      properties: withTaskAssigneeNameSchema({
         title: { type: "string", description: "Task title" },
         description: { type: "string", description: "Task description (optional)" },
         priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "Priority (default medium)" },
         due_at: { type: "string", description: "Due date-time in ISO 8601 (optional)" },
-      },
+      }),
       required: ["title"],
     },
   },
@@ -155,14 +160,14 @@ const TOOLS = [
       "Update a canonical task's title, description, priority, or due date. Requires the task's current version (expected_version) from create_task/list_tasks.",
     inputSchema: {
       type: "object" as const,
-      properties: {
+      properties: withTaskAssigneeNameSchema({
         task_id: { type: "string", description: "Canonical task ID" },
         expected_version: { type: "number", description: "Current task version (optimistic lock)" },
         title: { type: "string" },
         description: { type: "string" },
         priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
         due_at: { type: "string", description: "ISO 8601 due date-time" },
-      },
+      }),
       required: ["task_id", "expected_version"],
     },
   },
@@ -383,12 +388,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
 
     case "create_task": {
-      const result = await apiPost("/api/tasks", {
-        title: args.title,
-        ...(args.description ? { description: args.description } : {}),
-        ...(args.priority ? { priority: args.priority } : {}),
-        ...(args.due_at ? { due_at: args.due_at } : {}),
-      }, name);
+      const result = await apiPost("/api/tasks", buildCreateTaskRequestBody(args), name);
       return JSON.stringify(result);
     }
 
@@ -403,8 +403,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
 
     case "update_task": {
-      const { task_id, ...rest } = args as { task_id: string } & Record<string, unknown>;
-      const result = await apiPatch(`/api/tasks/${encodeURIComponent(task_id)}`, rest, name);
+      const taskId = String(args.task_id);
+      const result = await apiPatch(
+        `/api/tasks/${encodeURIComponent(taskId)}`,
+        buildUpdateTaskRequestBody(args),
+        name,
+      );
       return JSON.stringify(result);
     }
 
