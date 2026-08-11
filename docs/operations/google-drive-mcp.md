@@ -27,7 +27,7 @@ npm install --prefix /home/ryoko/mcp/google-workspace-cli @googleworkspace/cli@0
 install -m 0755 \
   /home/ryoko/mcp/google-workspace-cli/node_modules/@googleworkspace/cli/bin/gws \
   /home/ryoko/bin/gws-drive-cli
-install -m 0755 \
+ln -sfn \
   /home/ryoko/current/packages/jimmy/dist/src/mcp/google-drive-server.js \
   /home/ryoko/mcp/google-drive-server.js
 /home/ryoko/bin/gws-drive-cli --version
@@ -47,6 +47,10 @@ GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file \
 
 Never commit the OAuth client or generated credential files to either the
 application repository or `/home/ryoko/.ryoko` config history.
+
+The deploy script atomically maintains this symlink and verifies that it
+resolves into the activated release. Rollback changes `/home/ryoko/current`, so
+the adapter rolls back with the rest of the runtime.
 
 ## Runtime configuration
 
@@ -70,6 +74,14 @@ Add `google-drive` only to the `capabilities.mcp` arrays of placements that
 should use it. A configured global server is not sufficient: the placement
 allowlist is the runtime authorization boundary.
 
+For generated artifacts, prefer `create_file` with a `name` and exactly one of
+UTF-8 `content` or `contentBase64`. The adapter writes those bytes to a private
+temporary file, uploads it, and removes the temporary file on both success and
+failure. Inline content is limited to 20 MiB. `upload_file` remains available
+for larger pre-existing artifacts, but its `sourcePath` must remain below
+`GOOGLE_DRIVE_ALLOWED_UPLOAD_ROOTS`; do not broaden that allowlist to OS temp
+directories.
+
 The broad account credential does not itself enforce per-folder access. Before
 introducing channel- or user-specific Drive scopes, put a request-validating
 proxy in front of this server and enforce folder ancestry there. `dataScopes`
@@ -88,10 +100,11 @@ $GWS drive about get --params '{"fields":"user(emailAddress,displayName)"}'
 $GWS drive files list --params '{"pageSize":1,"fields":"files(id,name,webViewLink)"}'
 ```
 
-Then verify the MCP protocol (`initialize`, `tools/list`) and perform one
-reversible production journey through Mana: create a spreadsheet with
-`create_spreadsheet`, populate it with `write_sheet_values`, verify it with
-`get_sheet_values`, obtain its `webViewLink`, and return that link to the
-originating Slack thread. Record local tests, MCP protocol evidence, the Drive
-artifact ID/link, and the Slack permalink separately; none of them substitutes
-for another.
+Then verify the MCP protocol (`initialize`, `tools/list`) and perform two
+reversible production journeys through Mana: create a text artifact with
+`create_file`, and create/populate/read a spreadsheet with
+`create_spreadsheet`, `write_sheet_values`, and `get_sheet_values`. In each
+journey obtain the Drive-returned `webViewLink` and return it to the originating
+Slack thread. Record local tests, MCP protocol evidence, the Drive artifact
+ID/link, and the Slack permalink separately; none of them substitutes for
+another.

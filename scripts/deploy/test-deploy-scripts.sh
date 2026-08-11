@@ -317,7 +317,9 @@ if [[ "${1:-}" == "--dir" ]]; then release_dir="$2"; shift 2; fi
 if [[ "${1:-}" == "build" ]]; then
   [[ "${FIXTURE_MODE:-}" != "build-fail" ]] || exit 42
   mkdir -p "$release_dir/packages/jimmy/dist/bin"
+  mkdir -p "$release_dir/packages/jimmy/dist/src/mcp"
   : > "$release_dir/packages/jimmy/dist/bin/jimmy.js"
+  : > "$release_dir/packages/jimmy/dist/src/mcp/google-drive-server.js"
 fi
 PNPM
 chmod +x "$failure_root/pnpm"
@@ -401,6 +403,7 @@ GUARD
   OPENRYOKO_TEST_DEPLOY_SCRIPT_PATH="$deploy_dir/openryoko-pilot-deploy" \
   OPENRYOKO_TEST_DEPLOY_COMMAND_PATH="$deploy_dir/openryoko-deploy-command" \
   OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS=1 \
+  OPENRYOKO_TEST_GOOGLE_DRIVE_MCP_ADAPTER="$failure_root/mcp/google-drive-server.js" \
   OPENRYOKO_TEST_PROCESS_COMMAND="${OPENRYOKO_TEST_PROCESS_COMMAND_OVERRIDE:-$failure_root/current/packages/jimmy/dist/bin/jimmy.js}" \
     bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" "$requested_digest" >"$failure_root/deploy-$mode.log" 2>&1
   local status=$?
@@ -472,6 +475,7 @@ OPENRYOKO_TEST_PNPM_BIN="$failure_root/pnpm" \
 OPENRYOKO_TEST_DEPLOY_SCRIPT_PATH="$deploy_dir/openryoko-pilot-deploy" \
 OPENRYOKO_TEST_DEPLOY_COMMAND_PATH="$deploy_dir/openryoko-deploy-command" \
 OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS=1 \
+OPENRYOKO_TEST_GOOGLE_DRIVE_MCP_ADAPTER="$failure_root/mcp/google-drive-server.js" \
 OPENRYOKO_TEST_PROCESS_COMMAND="$failure_root/current/packages/jimmy/dist/bin/jimmy.js" \
   bash "$deploy_dir/openryoko-pilot-deploy" "$failure_sha" "$expected_source_output" >"$failure_root/deploy-prune-fail.log" 2>&1 \
   || {
@@ -479,6 +483,8 @@ OPENRYOKO_TEST_PROCESS_COMMAND="$failure_root/current/packages/jimmy/dist/bin/ji
     echo "post-activation prune failure reversed deploy success" >&2
     exit 1
   }
+[[ "$(realpath "$failure_root/mcp/google-drive-server.js")" == "$(realpath "$failure_root/current/packages/jimmy/dist/src/mcp/google-drive-server.js")" ]] \
+  || { echo "successful deploy did not bind Google Drive MCP adapter to current release" >&2; exit 1; }
 grep -Fq 'warning: worktree metadata pruning failed after successful activation' "$failure_root/deploy-prune-fail.log" \
   || {
     cat "$failure_root/deploy-prune-fail.log" >&2
