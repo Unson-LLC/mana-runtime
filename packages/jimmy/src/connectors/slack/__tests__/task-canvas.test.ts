@@ -66,31 +66,75 @@ afterEach(() => {
 });
 
 describe("renderTaskCanvasMarkdown", () => {
-  it("renders a project settings state before a channel is bound", () => {
+  it("renders a project settings state without duplicating the Slack canvas title", () => {
     const md = renderTaskCanvasMarkdown([], {
       projectCodes: [],
       settingsUrl: "https://mana.example/placements/projects?channel=C1",
     });
     expect(md).toContain("projectが未設定");
     expect(md).toContain("[projectを設定](https://mana.example/placements/projects?channel=C1)");
-    expect(md).not.toContain("## 完了");
+    expect(md).not.toMatch(/^# /m);
   });
 
-  it("groups tasks by status with counts and read-only notice", () => {
+  it("renders a compact single-project board and omits empty sections and repeated project tags", () => {
     const md = renderTaskCanvasMarkdown([
-      makeTask({ id: "1", title: "着手中", status: "in_progress", priority: "high" }),
-      makeTask({ id: "2", title: "未着手A", status: "pending", priority: "low" }),
-      makeTask({ id: "3", title: "完了済", status: "completed" }),
-      makeTask({ id: "4", title: "待ち中", status: "waiting", waiting_on: "レビュー" }),
-    ]);
-    expect(md).toContain("# タスクボード");
-    expect(md).toContain("読み取り専用ミラー");
-    expect(md).toContain("### 進行中（1件）");
-    expect(md).toContain("* [高] 着手中");
-    expect(md).toContain("### 保留（1件）");
-    expect(md).toContain("待ち: レビュー");
+      makeTask({ id: "1", title: "請求書確認", status: "pending", priority: "high", project_codes: ["back-office"] }),
+      makeTask({ id: "2", title: "完了済", status: "completed", project_codes: ["back-office"] }),
+    ], {
+      projectCodes: ["back-office"],
+      settingsUrl: "https://mana.example/projects",
+    });
+    expect(md).toContain("Brainbase同期（読み取り専用）｜対象project: back-office｜[project設定を変更]");
+    expect(md).toContain("未完了 1件｜進行中 0｜保留 0｜未着手 1｜その他 0｜完了 1");
+    expect(md).toContain("## 未割当（1件）");
     expect(md).toContain("### 未着手（1件）");
-    expect(md).toContain("## 完了（累計1件）");
+    expect(md).toContain("* **請求書確認**\n  🔴 高");
+    expect(md).not.toContain("### 進行中");
+    expect(md).not.toContain("### 保留");
+    expect(md).not.toContain("* なし");
+    expect(md).not.toContain("[back-office]");
+    expect(md).not.toMatch(/^# /m);
+  });
+
+  it("renders one empty-state line when there are no active tasks", () => {
+    const md = renderTaskCanvasMarkdown([
+      makeTask({ id: "1", status: "completed" }),
+    ], { projectCodes: ["back-office"] });
+    expect(md).toContain("未完了 0件｜進行中 0｜保留 0｜未着手 0｜その他 0｜完了 1");
+    expect(md).toContain("現在の未完了タスクはありません。");
+    expect(md).not.toMatch(/^## /m);
+    expect(md).not.toMatch(/^### /m);
+  });
+
+  it("shows only configured project intersections in binding order and sanitizes user-controlled text", () => {
+    const md = renderTaskCanvasMarkdown([
+      makeTask({
+        title: "<!channel> *契約*",
+        status: "waiting",
+        waiting_on: "<レビュー> #待ち",
+        assignee_display_name: "<佐藤> *圭吾*",
+        project_codes: ["other", "brainbase", "mana"],
+      }),
+    ], { projectCodes: ["mana", "brainbase"] });
+    expect(md).toContain("## 佐藤 圭吾（1件）");
+    expect(md).toContain("* **!channel 契約**");
+    expect(md).toContain("🟡 中｜[mana]｜[brainbase]｜待ち レビュー 待ち");
+    expect(md).not.toContain("[other]");
+    expect(md).not.toContain("<!channel>");
+    expect(md).not.toContain("*契約*");
+  });
+
+  it("keeps unknown active statuses visible and distinguishes unresolved assignees", () => {
+    const md = renderTaskCanvasMarkdown([
+      makeTask({
+        status: "blocked" as BrainbaseTask["status"],
+        assignee_person_id: "person-1",
+        assignee_display_name: null,
+      }),
+    ]);
+    expect(md).toContain("その他 1");
+    expect(md).toContain("## 担当者名未解決（1件）");
+    expect(md).toContain("### その他（1件）");
   });
 
   it("sorts by priority then due date and caps sections", () => {
@@ -105,23 +149,8 @@ describe("renderTaskCanvasMarkdown", () => {
     expect(urgentIndex).toBeGreaterThan(-1);
     expect(urgentIndex).toBeLessThan(highIndex);
     expect(md).toContain("…ほか1件");
-    expect(md).toContain("期限: 2026-08-01");
-  });
-
-  it("defangs mention and markdown syntax in task titles", () => {
-    const md = renderTaskCanvasMarkdown([makeTask({ title: "<!channel> *強調* #見出し" })]);
-    expect(md).not.toContain("<!channel>");
-    expect(md).not.toContain("*強調*");
-  });
-
-  it("groups by assignee and shows every project tag", () => {
-    const md = renderTaskCanvasMarkdown([
-      makeTask({ id: "1", title: "担当あり", assignee_display_name: "佐藤圭吾", project_codes: ["mana", "brainbase"] }),
-      makeTask({ id: "2", title: "担当なし", project_codes: ["mana"] }),
-    ]);
-    expect(md).toContain("## 佐藤圭吾");
-    expect(md).toContain("## 未割当");
-    expect(md).toContain("[mana] [brainbase]");
+    expect(md).toContain("🚨 緊急｜期限 2026-08-01");
+    expect(md).not.toContain("低優先");
   });
 });
 
@@ -244,6 +273,8 @@ describe("TaskCanvasUpdater", () => {
 
     expect(calls.map((c) => c.method)).toEqual(["conversations.canvases.create"]);
     expect(calls[0].payload.channel_id).toBe("C0TEST");
+    expect(calls[0].payload.title).toBe("タスクボード");
+    expect((calls[0].payload.document_content as { markdown: string }).markdown).not.toMatch(/^# /m);
     const state = JSON.parse(fs.readFileSync("/tmp/openryoko-task-canvas-test/.task-canvas-state.json", "utf-8"));
     expect(state.canvases.C0TEST).toBe("F0CANVAS1");
   });

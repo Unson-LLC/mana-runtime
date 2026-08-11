@@ -67,6 +67,13 @@ const PRIORITY_LABEL: Record<string, string> = {
   low: "低",
 };
 
+const PRIORITY_ICON: Record<string, string> = {
+  urgent: "🚨",
+  high: "🔴",
+  medium: "🟡",
+  low: "⚪",
+};
+
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 // Strip control chars and defang Slack mention / markdown syntax so a task
@@ -82,12 +89,25 @@ function sanitize(text: string): string {
     .trim();
 }
 
-function taskLine(task: BrainbaseTask): string {
+function visibleProjectCodes(task: BrainbaseTask, projectCodes?: string[]): string[] {
+  if (projectCodes?.length === 1) return [];
+  const taskProjects = new Set(task.project_codes ?? []);
+  return projectCodes && projectCodes.length > 1
+    ? projectCodes.filter((code) => taskProjects.has(code))
+    : [...taskProjects];
+}
+
+function taskLines(task: BrainbaseTask, projectCodes?: string[]): string[] {
   const priority = PRIORITY_LABEL[task.priority] ?? sanitize(task.priority);
-  const projects = (task.project_codes ?? []).map((code) => `[${sanitize(code)}]`).join(" ");
-  const due = task.due_at ? ` 期限: ${task.due_at.slice(0, 10)}` : "";
-  const waiting = task.status === "waiting" && task.waiting_on ? ` 待ち: ${sanitize(task.waiting_on)}` : "";
-  return `* ${projects ? `${projects} ` : ""}[${priority}] ${sanitize(task.title)}${due}${waiting}`;
+  const priorityIcon = PRIORITY_ICON[task.priority] ?? "⚪";
+  const projects = visibleProjectCodes(task, projectCodes).map((code) => `[${sanitize(code)}]`);
+  const metadata = [
+    `${priorityIcon} ${priority}`,
+    ...projects,
+    ...(task.due_at ? [`期限 ${task.due_at.slice(0, 10)}`] : []),
+    ...(task.status === "waiting" && task.waiting_on ? [`待ち ${sanitize(task.waiting_on)}`] : []),
+  ];
+  return [`* **${sanitize(task.title)}**`, `  ${metadata.join("｜")}`];
 }
 
 function sortTasks(tasks: BrainbaseTask[]): BrainbaseTask[] {
@@ -101,13 +121,19 @@ function sortTasks(tasks: BrainbaseTask[]): BrainbaseTask[] {
   });
 }
 
-function renderSection(title: string, tasks: BrainbaseTask[], maxPerSection: number, level = 2): string {
+function renderSection(
+  title: string,
+  tasks: BrainbaseTask[],
+  maxPerSection: number,
+  projectCodes?: string[],
+  level = 2,
+): string | null {
+  if (tasks.length === 0) return null;
   const sorted = sortTasks(tasks);
   const shown = sorted.slice(0, maxPerSection);
-  const lines = shown.map(taskLine);
+  const lines = shown.flatMap((task) => taskLines(task, projectCodes));
   const omitted = sorted.length - shown.length;
   if (omitted > 0) lines.push(`* …ほか${omitted}件`);
-  if (lines.length === 0) lines.push("* なし");
   return `${"#".repeat(level)} ${title}（${sorted.length}件）\n${lines.join("\n")}`;
 }
 
@@ -121,13 +147,10 @@ export function renderTaskCanvasMarkdown(
     settingsUrl?: string;
   } = {},
 ): string {
-  const title = options.title ?? DEFAULT_TITLE;
   const maxPerSection = options.maxPerSection ?? DEFAULT_MAX_PER_SECTION;
   const projectCodes = options.projectCodes?.map((code) => code.trim()).filter(Boolean);
   if (projectCodes && projectCodes.length === 0) {
     return [
-      `# ${title}`,
-      "",
       "このチャンネルはprojectが未設定です。タスクを表示するprojectを1つ以上選択してください。",
       options.settingsUrl
         ? `[projectを設定](${options.settingsUrl})`
@@ -138,33 +161,47 @@ export function renderTaskCanvasMarkdown(
   const unique = [...new Map(tasks.map((task) => [task.id, task])).values()];
   const active = unique.filter((task) => task.status !== "completed");
   const completed = unique.filter((task) => task.status === "completed");
+  const inProgress = active.filter((task) => task.status === "in_progress");
+  const waiting = active.filter((task) => task.status === "waiting");
+  const pending = active.filter((task) => task.status === "pending");
+  const other = active.filter((task) => !["in_progress", "waiting", "pending"].includes(task.status));
   const assignees = new Map<string, BrainbaseTask[]>();
   for (const task of active) {
-    const assignee = task.assignee_display_name?.trim() || "未割当";
+    const assignee = task.assignee_display_name?.trim()
+      || (task.assignee_person_id ? "担当者名未解決" : "未割当");
     assignees.set(assignee, [...(assignees.get(assignee) ?? []), task]);
   }
   const assigneeSections = [...assignees.entries()]
     .sort(([a], [b]) => a === "未割当" ? 1 : b === "未割当" ? -1 : a.localeCompare(b, "ja"))
-    .flatMap(([assignee, assigned]) => [
-      `## ${sanitize(assignee)}`,
-      "",
-      renderSection("進行中", assigned.filter((task) => task.status === "in_progress"), maxPerSection, 3),
-      "",
-      renderSection("保留", assigned.filter((task) => task.status === "waiting"), maxPerSection, 3),
-      "",
-      renderSection("未着手", assigned.filter((task) => task.status === "pending"), maxPerSection, 3),
-      "",
-    ]);
-  return [
-    `# ${title}`,
-    "",
-    "正本はBrainbase（PostgreSQL）。このcanvasは読み取り専用ミラーで、直接編集しても正本には反映されず次回更新で上書きされます。",
+    .flatMap(([assignee, assigned]) => {
+      const sections = [
+        renderSection("進行中", assigned.filter((task) => task.status === "in_progress"), maxPerSection, projectCodes, 3),
+        renderSection("保留", assigned.filter((task) => task.status === "waiting"), maxPerSection, projectCodes, 3),
+        renderSection("未着手", assigned.filter((task) => task.status === "pending"), maxPerSection, projectCodes, 3),
+        renderSection("その他", assigned.filter((task) => !["in_progress", "waiting", "pending"].includes(task.status)), maxPerSection, projectCodes, 3),
+      ].filter((section): section is string => section !== null);
+      return [`## ${sanitize(assignee)}（${assigned.length}件）`, "", ...sections.flatMap((section) => [section, ""])];
+    });
+  const header = [
+    "Brainbase同期（読み取り専用）",
     ...(projectCodes?.length ? [`対象project: ${projectCodes.map(sanitize).join(", ")}`] : []),
     ...(options.settingsUrl ? [`[project設定を変更](${options.settingsUrl})`] : []),
+  ].join("｜");
+  const summary = [
+    `未完了 ${active.length}件`,
+    `進行中 ${inProgress.length}`,
+    `保留 ${waiting.length}`,
+    `未着手 ${pending.length}`,
+    `その他 ${other.length}`,
+    `完了 ${completed.length}`,
+  ].join("｜");
+  return [
+    header,
     ...(options.nowIso ? [`最終更新: ${options.nowIso}`] : []),
     "",
-    ...assigneeSections,
-    `## 完了（累計${completed.length}件）`,
+    summary,
+    "",
+    ...(active.length ? assigneeSections : ["現在の未完了タスクはありません。", ""]),
     "",
   ].join("\n");
 }
