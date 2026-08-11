@@ -1,14 +1,34 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   createInlineDriveFile,
   decodeInlineFileContent,
   GOOGLE_DRIVE_TOOLS,
+  isDirectExecution,
   MAX_INLINE_UPLOAD_BYTES,
   normalizeSheetValues,
   requireNonEmptyString,
 } from "../google-drive-server.js";
 
 describe("google-drive-server", () => {
+  it("recognizes direct execution through a symbolic link", async () => {
+    const fixtureDir = await mkdtemp(path.join(tmpdir(), "mana-drive-entry-"));
+    const modulePath = path.join(fixtureDir, "google-drive-server.js");
+    const symlinkPath = path.join(fixtureDir, "stable-google-drive-server.js");
+
+    try {
+      await writeFile(modulePath, "");
+      await symlink(modulePath, symlinkPath);
+
+      expect(isDirectExecution(symlinkPath, pathToFileURL(modulePath).href)).toBe(true);
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
   it("exposes Drive artifact and Google Sheets write tools", () => {
     expect(GOOGLE_DRIVE_TOOLS.map((tool) => tool.name)).toEqual([
       "auth_status",
