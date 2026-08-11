@@ -13,6 +13,10 @@
       {
         "name": "TECHKNIGHT_WORKSPACE",
         "class_name": "TechKnightWorkspace"
+      },
+      {
+        "name": "TECHKNIGHT_SANDBOX",
+        "class_name": "TechKnightSandbox"
       }
     ]
   },
@@ -20,6 +24,18 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["TechKnightWorkspace"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["TechKnightSandbox"]
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "TechKnightSandbox",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1
     }
   ],
   "queues": {

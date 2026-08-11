@@ -7,10 +7,19 @@ import {
 import { DurableObject } from "cloudflare:workers";
 
 import { handleSlackRequest } from "./slack.js";
+import {
+  handleSandboxAdminRequest,
+} from "./sandbox-admin.js";
+import {
+  createTechKnightSandbox,
+  type SandboxRuntimeEnv,
+} from "./sandbox-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import { persistEventOnce } from "./workspace-store.js";
 
-interface Env {
+export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
+
+interface Env extends SandboxRuntimeEnv {
   SLACK_SIGNING_SECRET: string;
   SLACK_EXPECTED_TEAM_ID: string;
   TENANT_ID: "techknight";
@@ -51,6 +60,11 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
       return Response.json({ ok: true, tenant: "techknight" });
+    }
+    if (url.pathname.startsWith("/admin/sandbox/")) {
+      return handleSandboxAdminRequest(request, env, {
+        createSandbox: (id) => createTechKnightSandbox(env, id),
+      });
     }
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
       return Response.json({ error: "not_found" }, { status: 404 });

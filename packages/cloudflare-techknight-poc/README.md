@@ -2,7 +2,8 @@
 
 TechKnight専用のCloudflare境界を検証するPoCです。Slack Events APIで受けたイベントを
 署名・workspace境界で検証し、Queue、Durable Object、`@cloudflare/computer` Workspaceへ
-冪等に保存します。
+冪等に保存します。TechKnight専用SandboxにはClaude Codeを配置し、Anthropic OAuthは
+Containerへ保存せずWorker SecretからAnthropic宛通信にだけ差し込みます。
 
 既存Lightsail、Slack Socket Mode、Brainbase task pipelineは変更しません。
 
@@ -25,12 +26,18 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build
 3. TechKnight accountで`npx wrangler secret put SLACK_SIGNING_SECRET`を実行する。
 4. Queue、Durable Object、WorkerがTechKnight accountに作られることをdry-run出力で確認する。
 5. `npx wrangler deploy`を実行し、Slack URL verificationと重複eventの永続化を確認する。
+6. 推測されにくい値を`SANDBOX_PROBE_TOKEN` Secretとして設定する。
+7. TechKnight側で`claude setup-token`を実行して得た値だけを
+   `CLAUDE_CODE_OAUTH_TOKEN` Secretとして設定する。Unson側のTokenは流用しない。
+8. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
+9. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
+   OAuthがWorker Secretから復帰することを確認する。
 
 WranglerがUnson accountを示す場合はデプロイしません。secret値は設定ファイル、ログ、
 テストfixture、永続Workspaceへ書き込みません。
 
-## Next phase
+## Sandbox security boundary
 
-Cloudflare Computerはプレビュー段階のため、このPoCでは永続Workspaceだけを利用します。
-実Cloudflare上で境界と永続性を確認した後、TechKnight専用ContainerにClaude CLIを置き、
-Anthropic OAuthがUnson側と共有されないことを検証します。
+Sandboxの一般インターネット接続は無効で、Anthropic APIだけを許可します。OAuth Tokenと
+検証用TokenはContainerの環境変数・ファイル・応答に出しません。検証APIは固定コマンドだけを
+実行し、任意shellや任意promptは受け付けません。検証のたびにContainerを破棄します。

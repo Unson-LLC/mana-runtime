@@ -11,7 +11,8 @@
     "clean": "rm -rf dist .wrangler"
   },
   "dependencies": {
-    "@cloudflare/computer": "0.1.1"
+    "@cloudflare/computer": "0.1.1",
+    "@cloudflare/sandbox": "0.12.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260811.1",
