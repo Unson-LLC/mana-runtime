@@ -154,8 +154,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "slack-task-assignee-inheritance",
+        "title": "Slackで指定した担当者をCanonical Taskへ正式に紐付ける",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-placement-memory-promotion"
+    "current_story_id": "slack-task-assignee-inheritance"
   }
 }

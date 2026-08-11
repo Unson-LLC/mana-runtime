@@ -49,6 +49,7 @@ import {
   type TransitionTaskInput,
   type UpdateTaskInput,
 } from "../shared/brainbase-tasks.js";
+import { GraphPeopleClient, resolvePersonByNameStrict } from "../shared/brainbase-graph.js";
 import { getSttStatus, downloadModel, transcribe as sttTranscribe, resolveLanguages, WHISPER_LANGUAGES } from "../stt/stt.js";
 import { JINN_HOME } from "../shared/paths.js";
 import { handleHookPost, LOOPBACK as HOOK_LOOPBACK } from "./hook-endpoint.js";
@@ -633,6 +634,87 @@ function notFound(res: ServerResponse): void {
 
 function badRequest(res: ServerResponse, message: string): void {
   json(res, { error: message }, 400);
+}
+
+const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+type TaskAssigneeResolution =
+  | { ok: true; supplied: false }
+  | { ok: true; supplied: true; assigneePersonId: string | null }
+  | { ok: false; status: number; error: string; code: string; reason?: string };
+
+async function resolveTaskAssignee(
+  body: Record<string, unknown>,
+  placementRequest: boolean,
+): Promise<TaskAssigneeResolution> {
+  const hasRawId = hasOwn(body, "assignee_person_id");
+  const hasName = hasOwn(body, "assignee_name");
+
+  if (placementRequest && hasRawId) {
+    return {
+      ok: false,
+      status: 400,
+      error: "assignee_person_id is not allowed for placement requests",
+      code: "assignee_person_id_forbidden",
+    };
+  }
+  if (!placementRequest && hasName) {
+    return {
+      ok: false,
+      status: 400,
+      error: "assignee_name is only supported for placement requests",
+      code: "assignee_name_placement_only",
+    };
+  }
+  if (!placementRequest) {
+    if (!hasRawId) return { ok: true, supplied: false };
+    if (typeof body.assignee_person_id !== "string" && body.assignee_person_id !== null) {
+      return {
+        ok: false,
+        status: 400,
+        error: "assignee_person_id must be a string or null",
+        code: "invalid_assignee_person_id",
+      };
+    }
+    return { ok: true, supplied: true, assigneePersonId: body.assignee_person_id };
+  }
+
+  if (!hasName) return { ok: true, supplied: false };
+  if (typeof body.assignee_name !== "string" || !body.assignee_name.trim()) {
+    return {
+      ok: false,
+      status: 400,
+      error: "assignee_name must be a non-blank string",
+      code: "invalid_assignee_name",
+    };
+  }
+  const directory = await new GraphPeopleClient().listPeopleStrict();
+  if (directory.status === "unavailable") {
+    return {
+      ok: false,
+      status: 503,
+      error: "assignee directory is unavailable",
+      code: "assignee_directory_unavailable",
+      reason: directory.reason,
+    };
+  }
+  const resolved = resolvePersonByNameStrict(directory.people, body.assignee_name);
+  if (resolved.status === "unknown") {
+    return { ok: false, status: 422, error: "assignee was not found", code: "assignee_not_found" };
+  }
+  if (resolved.status === "ambiguous") {
+    return { ok: false, status: 422, error: "assignee name is ambiguous", code: "assignee_ambiguous" };
+  }
+  return { ok: true, supplied: true, assigneePersonId: resolved.person.id };
+}
+
+function taskAssigneeErrorResponse(res: ServerResponse, resolution: Extract<TaskAssigneeResolution, { ok: false }>): void {
+  json(res, {
+    error: resolution.error,
+    code: resolution.code,
+    ...(resolution.reason ? { reason: resolution.reason } : {}),
+  }, resolution.status);
 }
 
 function brainbaseTaskErrorResponse(res: ServerResponse, err: unknown): void {
@@ -1738,6 +1820,8 @@ Handle this as a priority request from a colleague.`;
       if (!body || typeof body.title !== "string" || !body.title.trim()) {
         return badRequest(res, "title is required");
       }
+      const assignee = await resolveTaskAssignee(body, Boolean(gatewayPlacementId));
+      if (!assignee.ok) return taskAssigneeErrorResponse(res, assignee);
       let projectCodes: string[] | undefined;
       if (gatewayPlacementId) {
         // Re-resolve after the async body read so a placement disabled or
@@ -1763,8 +1847,9 @@ Handle this as a priority request from a colleague.`;
             title: body.title as string,
             description: typeof body.description === "string" ? body.description : undefined,
             priority: typeof body.priority === "string" ? (body.priority as CreateTaskInput["priority"]) : undefined,
-            assignee_person_id:
-              typeof body.assignee_person_id === "string" ? body.assignee_person_id : undefined,
+            ...(assignee.supplied && assignee.assigneePersonId !== null
+              ? { assignee_person_id: assignee.assigneePersonId }
+              : {}),
             due_at: typeof body.due_at === "string" ? body.due_at : undefined,
             project_codes: projectCodes,
           },
@@ -1796,11 +1881,42 @@ Handle this as a priority request from a colleague.`;
       if (!Number.isInteger(body?.expected_version)) {
         return badRequest(res, "expected_version is required");
       }
+      let updateProjectCodes: string[] | undefined;
+      if (hasOwn(body, "project_codes")) {
+        if (gatewayPlacementId) {
+          return json(res, {
+            error: "project_codes is not allowed for placement task updates",
+            code: "project_codes_forbidden",
+          }, 400);
+        }
+        if (!Array.isArray(body.project_codes) || body.project_codes.some((code) => typeof code !== "string")) {
+          return json(res, {
+            error: "project_codes must be an array of strings",
+            code: "invalid_project_codes",
+          }, 400);
+        }
+        updateProjectCodes = [...new Set(body.project_codes.map((code) => code.trim()).filter(Boolean))];
+      }
+      const assignee = await resolveTaskAssignee(body, Boolean(gatewayPlacementId));
+      if (!assignee.ok) return taskAssigneeErrorResponse(res, assignee);
+      if (gatewayPlacementId) {
+        const { placement } = findEnabledPlacement(context.getConfig().placements, gatewayPlacementId);
+        if (!placement) {
+          return json(res, { error: "placement is unavailable" }, 403);
+        }
+      }
+      const update: UpdateTaskInput = { expected_version: body.expected_version as number };
+      if (typeof body.title === "string") update.title = body.title;
+      if (typeof body.description === "string") update.description = body.description;
+      if (typeof body.priority === "string") update.priority = body.priority as UpdateTaskInput["priority"];
+      if (typeof body.due_at === "string") update.due_at = body.due_at;
+      if (updateProjectCodes) update.project_codes = updateProjectCodes;
+      if (assignee.supplied) update.assignee_person_id = assignee.assigneePersonId;
       try {
         const client = new BrainbaseTaskClient();
         const task = await client.updateTask(
           params.id,
-          body as unknown as UpdateTaskInput,
+          update,
           typeof body.idempotency_key === "string" ? body.idempotency_key : undefined,
         );
         return json(res, task);
