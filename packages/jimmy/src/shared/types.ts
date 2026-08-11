@@ -928,6 +928,8 @@ export interface JinnConfig {
        *  Default 5400000 (90 min) — accommodates long autonomous batch runs that
        *  legitimately occupy one turn (e.g. the seminar-demo generator). */
       interactiveTurnTimeoutMs?: number;
+      /** Cold PTY deadline for receiving the first SessionStart hook. Default 60s. */
+      interactiveStartupTimeoutMs?: number;
     };
     codex: { bin: string; model: string; effortLevel?: string; childEffortOverride?: string };
     gemini?: { bin: string; model: string; effortLevel?: string; childEffortOverride?: string };

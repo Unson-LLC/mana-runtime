@@ -9,6 +9,11 @@ export interface SessionSettingsOpts {
    *  with matcher "Bash" — the deterministic shell-write guard for
    *  placement-protected paths (see assets/placement-guard.mjs). */
   placementGuardScript?: string;
+  /** Claude Code MCP approval decisions. Placement sessions populate these from
+   *  the generated strict MCP config and the workspace-local .mcp.json so an
+   *  unattended PTY can never stop at an approval dialog. */
+  enabledMcpjsonServers?: string[];
+  disabledMcpjsonServers?: string[];
 }
 
 interface HookCommand { type: "command"; command: string; }
@@ -27,6 +32,13 @@ function shellQuote(s: string): string {
 export interface ClaudeSettings {
   hooks: Record<"SessionStart" | "Stop" | "StopFailure" | "PreToolUse" | "PostToolUse", HookMatcher[]>;
   appendSystemPrompt?: string;
+  enabledMcpjsonServers?: string[];
+  disabledMcpjsonServers?: string[];
+}
+
+function normalizedNames(names: string[] | undefined): string[] | undefined {
+  if (!names) return undefined;
+  return [...new Set(names.map((name) => name.trim()).filter(Boolean))].sort();
 }
 
 export function buildSessionSettings(opts: SessionSettingsOpts): ClaudeSettings {
@@ -36,6 +48,8 @@ export function buildSessionSettings(opts: SessionSettingsOpts): ClaudeSettings 
   const cmd = (): HookMatcher => ({
     hooks: [{ type: "command", command }],
   });
+  const enabledMcpjsonServers = normalizedNames(opts.enabledMcpjsonServers);
+  const disabledMcpjsonServers = normalizedNames(opts.disabledMcpjsonServers);
   return {
     hooks: {
       SessionStart: [cmd()],
@@ -50,6 +64,42 @@ export function buildSessionSettings(opts: SessionSettingsOpts): ClaudeSettings 
       PostToolUse: [cmd()],
     },
     ...(opts.appendSystemPrompt ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
+    ...(enabledMcpjsonServers ? { enabledMcpjsonServers } : {}),
+    ...(disabledMcpjsonServers ? { disabledMcpjsonServers } : {}),
+  };
+}
+
+export interface McpApprovalSettings {
+  enabledMcpjsonServers: string[];
+  disabledMcpjsonServers: string[];
+}
+
+function readMcpServerNames(filePath: string): string[] {
+  const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as { mcpServers?: unknown };
+  if (!parsed.mcpServers || typeof parsed.mcpServers !== "object" || Array.isArray(parsed.mcpServers)) {
+    throw new Error(`MCP config ${filePath} must contain an mcpServers object`);
+  }
+  return normalizedNames(Object.keys(parsed.mcpServers)) ?? [];
+}
+
+/** Resolve explicit, non-interactive MCP approvals for a strict placement PTY.
+ *  Only server names are read; command arguments and environment values are
+ *  never copied into the settings file or logs. Invalid configs fail closed. */
+export function resolveMcpApprovalSettings(opts: {
+  cwd: string;
+  mcpConfigPath?: string;
+  strictMcpConfig?: boolean;
+}): McpApprovalSettings | undefined {
+  if (!opts.strictMcpConfig) return undefined;
+  if (!opts.mcpConfigPath) throw new Error("strict MCP mode requires an explicit MCP config path");
+
+  const enabledMcpjsonServers = readMcpServerNames(opts.mcpConfigPath);
+  const enabled = new Set(enabledMcpjsonServers);
+  const projectConfigPath = path.join(opts.cwd, ".mcp.json");
+  const projectNames = fs.existsSync(projectConfigPath) ? readMcpServerNames(projectConfigPath) : [];
+  return {
+    enabledMcpjsonServers,
+    disabledMcpjsonServers: projectNames.filter((name) => !enabled.has(name)),
   };
 }
 

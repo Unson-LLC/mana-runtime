@@ -60,6 +60,7 @@ export const ORG_DIR = path.join(JINN_HOME, "org");
 export const SKILLS_DIR = path.join(JINN_HOME, "skills");
 export const DOCS_DIR = path.join(JINN_HOME, "docs");
 export const LOGS_DIR = path.join(JINN_HOME, "logs");
+export const CLAUDE_STARTUP_EVIDENCE_DIR = path.join(LOGS_DIR, "claude-startup");
 export const TMP_DIR = path.join(JINN_HOME, "tmp");
 export const MODELS_DIR = path.join(JINN_HOME, "models");
 export const STT_MODELS_DIR = path.join(JINN_HOME, "models", "whisper");
