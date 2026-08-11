@@ -176,8 +176,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-techknight-cloudflare-slack-reply",
+        "title": "TechKnightのSlackメンションにCloudflare上のClaudeが返信する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-google-drive-write-e2e"
+    "current_story_id": "story-techknight-cloudflare-slack-reply"
   }
 }

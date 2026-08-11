@@ -1,0 +1,60 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "techknight-mana-runtime-poc",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "TENANT_ID": "techknight",
+    "SLACK_EXPECTED_TEAM_ID": "T07A9J3PEMB",
+    "SLACK_ALLOWED_CHANNEL_ID": "C0A1UQNLSBD"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TECHKNIGHT_WORKSPACE",
+        "class_name": "TechKnightWorkspace"
+      },
+      {
+        "name": "TECHKNIGHT_SANDBOX",
+        "class_name": "TechKnightSandbox"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TechKnightWorkspace"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["TechKnightSandbox"]
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "TechKnightSandbox",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "TECHKNIGHT_EVENTS",
+        "queue": "techknight-mana-runtime-poc-events"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "techknight-mana-runtime-poc-events",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "max_concurrency": 1,
+        "dead_letter_queue": "techknight-mana-runtime-poc-events-dlq"
+      }
+    ]
+  }
+}

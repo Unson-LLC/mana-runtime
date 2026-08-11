@@ -1,0 +1,24 @@
+{
+  "name": "@openryoko/cloudflare-techknight-poc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .wrangler"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "0.1.1",
+    "@cloudflare/sandbox": "0.12.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260811.1",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.120.1"
+  }
+}
