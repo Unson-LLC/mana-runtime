@@ -6,7 +6,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "TENANT_ID": "techknight",
-    "SLACK_EXPECTED_TEAM_ID": "T07A9J3PEMB"
+    "SLACK_EXPECTED_TEAM_ID": "T07A9J3PEMB",
+    "SLACK_ALLOWED_CHANNEL_ID": "C0A1UQNLSBD"
   },
   "durable_objects": {
     "bindings": [

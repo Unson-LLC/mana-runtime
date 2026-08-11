@@ -6,6 +6,8 @@ export interface SlackQueueEvent {
   threadTs: string;
   messageTs: string;
   userId?: string;
+  botId?: string;
+  subtype?: string;
   eventType: string;
   text: string;
   receivedAt: string;

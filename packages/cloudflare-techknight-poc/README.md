@@ -1,9 +1,10 @@
 # TechKnight Cloudflare Computer PoC
 
-TechKnight専用のCloudflare境界を検証するPoCです。Slack Events APIで受けたイベントを
+TechKnight専用のCloudflare実行環境です。Slack Events APIで受けたイベントを
 署名・workspace境界で検証し、Queue、Durable Object、`@cloudflare/computer` Workspaceへ
-冪等に保存します。TechKnight専用SandboxにはClaude Codeを配置し、Anthropic OAuthは
-Containerへ保存せずWorker SecretからAnthropic宛通信にだけ差し込みます。
+冪等に保存します。許可したチャンネルのメンションはTechKnight専用SandboxのClaude Codeで
+処理し、既存の八雲まなSlack Appから元スレッドへ返信します。Anthropic OAuthとSlack Bot
+tokenはContainerへ保存せず、Worker Secretの境界内でだけ使用します。
 
 既存Lightsail、Slack Socket Mode、Brainbase task pipelineは変更しません。
 
@@ -32,6 +33,9 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build
 8. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
 9. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
    OAuthがWorker Secretから復帰することを確認する。
+10. 八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
+11. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
+    `techknight_slack_reply`の完了ログを確認する。
 
 WranglerがUnson accountを示す場合はデプロイしません。secret値は設定ファイル、ログ、
 テストfixture、永続Workspaceへ書き込みません。

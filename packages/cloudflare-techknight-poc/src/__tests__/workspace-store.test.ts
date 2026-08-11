@@ -1,4 +1,8 @@
-import { persistEventOnce } from "../workspace-store.js";
+import {
+  isReplyCompleted,
+  persistEventOnce,
+  persistReplyCompletion,
+} from "../workspace-store.js";
 
 class MemoryFs {
   readonly files = new Map<string, string>();
@@ -48,5 +52,23 @@ describe("persistEventOnce", () => {
       path: "/events/Ev123.json",
     });
     expect(fs.files.size).toBe(1);
+  });
+});
+
+describe("reply completion", () => {
+  it("records only non-sensitive completion metadata", async () => {
+    const fs = new MemoryFs();
+    await expect(isReplyCompleted(fs, "Ev123")).resolves.toBe(false);
+    await expect(persistReplyCompletion(fs, {
+      eventId: "Ev123",
+      responseTs: "3.0",
+      completedAt: "2026-08-11T13:30:00.000Z",
+    })).resolves.toBe("/replies/Ev123.json");
+    await expect(isReplyCompleted(fs, "Ev123")).resolves.toBe(true);
+    expect(JSON.parse(fs.files.get("/replies/Ev123.json") ?? "{}")).toEqual({
+      eventId: "Ev123",
+      responseTs: "3.0",
+      completedAt: "2026-08-11T13:30:00.000Z",
+    });
   });
 });

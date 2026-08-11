@@ -95,6 +95,8 @@ export function normalizeSlackEvent(
   }
 
   const userId = nonEmptyString(payload.event.user);
+  const botId = nonEmptyString(payload.event.bot_id);
+  const subtype = nonEmptyString(payload.event.subtype);
   return {
     tenantId: "techknight",
     eventId,
@@ -103,6 +105,8 @@ export function normalizeSlackEvent(
     threadTs: nonEmptyString(payload.event.thread_ts) ?? messageTs,
     messageTs,
     ...(userId ? { userId } : {}),
+    ...(botId ? { botId } : {}),
+    ...(subtype ? { subtype } : {}),
     eventType,
     text: typeof payload.event.text === "string" ? payload.event.text : "",
     receivedAt,

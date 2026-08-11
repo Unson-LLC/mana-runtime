@@ -1,9 +1,15 @@
 import type { SlackQueueEvent } from "./types.js";
 
-interface WorkspaceFs {
+export interface WorkspaceFs {
   mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
   ls(prefix: string): Promise<string[]>;
   writeFile(path: string, value: string): Promise<unknown>;
+}
+
+export interface ReplyCompletion {
+  eventId: string;
+  responseTs: string;
+  completedAt: string;
 }
 
 export async function persistEventOnce(
@@ -22,4 +28,31 @@ export async function persistEventOnce(
 
   await fs.writeFile(path, JSON.stringify(event));
   return { created: true, path };
+}
+
+function validateEventId(eventId: string): void {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(eventId)) {
+    throw new Error("event_id_invalid");
+  }
+}
+
+export async function isReplyCompleted(
+  fs: WorkspaceFs,
+  eventId: string,
+): Promise<boolean> {
+  validateEventId(eventId);
+  const path = `/replies/${eventId}.json`;
+  await fs.mkdir("/replies", { recursive: true });
+  return (await fs.ls("/replies")).includes(path);
+}
+
+export async function persistReplyCompletion(
+  fs: WorkspaceFs,
+  completion: ReplyCompletion,
+): Promise<string> {
+  validateEventId(completion.eventId);
+  const path = `/replies/${completion.eventId}.json`;
+  await fs.mkdir("/replies", { recursive: true });
+  await fs.writeFile(path, JSON.stringify(completion));
+  return path;
 }
