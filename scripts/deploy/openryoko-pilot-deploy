@@ -16,6 +16,7 @@ if [[ "$DEPLOY_TESTING" == "1" ]]; then
   readonly DEPLOY_SCRIPT_PATH="${OPENRYOKO_TEST_DEPLOY_SCRIPT_PATH:?}"
   readonly DEPLOY_COMMAND_PATH="${OPENRYOKO_TEST_DEPLOY_COMMAND_PATH:?}"
   readonly ACTIVE_CHECK_ATTEMPTS="${OPENRYOKO_TEST_ACTIVE_CHECK_ATTEMPTS:-1}"
+  readonly GOOGLE_DRIVE_MCP_ADAPTER="${OPENRYOKO_TEST_GOOGLE_DRIVE_MCP_ADAPTER:-$RUNTIME_HOME/mcp/google-drive-server.js}"
 else
   readonly RUNTIME_USER="ryoko"
   readonly RUNTIME_HOME="/home/ryoko"
@@ -29,6 +30,7 @@ else
   readonly DEPLOY_SCRIPT_PATH="/usr/local/sbin/openryoko-pilot-deploy"
   readonly DEPLOY_COMMAND_PATH="/usr/local/sbin/openryoko-deploy-command"
   readonly ACTIVE_CHECK_ATTEMPTS=30
+  readonly GOOGLE_DRIVE_MCP_ADAPTER="$RUNTIME_HOME/mcp/google-drive-server.js"
 fi
 readonly RELEASE_KEEP_COUNT=3
 
@@ -121,6 +123,8 @@ trap cleanup_incomplete_release EXIT
 run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" install --frozen-lockfile
 run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" build
 [[ -f "$release_dir/packages/jimmy/dist/bin/jimmy.js" ]] || die "build did not create the Jimmy entrypoint"
+[[ -f "$release_dir/packages/jimmy/dist/src/mcp/google-drive-server.js" ]] \
+  || die "build did not create the Google Drive MCP adapter"
 [[ "$(run_as_runtime git -C "$release_dir" rev-parse HEAD)" == "$target_sha" ]] \
   || die "release worktree HEAD does not match the requested commit"
 build_ok=1
@@ -134,10 +138,6 @@ fi
 echo "openryoko deploy: waiting for development runner before restart"
 "$RESTART_GUARD" --wait 5400
 
-next_link="${CURRENT_LINK}.next.$$"
-ln -s "$release_dir" "$next_link"
-mv -Tf "$next_link" "$CURRENT_LINK"
-
 rollback() {
   local failed_status="${1:-$?}"
   trap - ERR
@@ -145,6 +145,17 @@ rollback() {
   exit "$failed_status"
 }
 trap 'rollback $?' ERR
+
+next_link="${CURRENT_LINK}.next.$$"
+ln -s "$release_dir" "$next_link"
+mv -Tf "$next_link" "$CURRENT_LINK"
+
+# The MCP catalog intentionally points at this stable path. Make it follow the
+# active release pointer so normal deploys and rollbacks switch the adapter too.
+install -d -o "$RUNTIME_USER" -g "$RUNTIME_USER" -m 0755 "$(dirname "$GOOGLE_DRIVE_MCP_ADAPTER")"
+adapter_link="${GOOGLE_DRIVE_MCP_ADAPTER}.next.$$"
+ln -s "$CURRENT_LINK/packages/jimmy/dist/src/mcp/google-drive-server.js" "$adapter_link"
+mv -Tf "$adapter_link" "$GOOGLE_DRIVE_MCP_ADAPTER"
 
 systemctl restart "$SERVICE" || rollback $?
 for ((attempt = 0; attempt < ACTIVE_CHECK_ATTEMPTS; attempt += 1)); do
@@ -158,6 +169,12 @@ active_entrypoint="$(realpath "$CURRENT_LINK/packages/jimmy/dist/bin/jimmy.js")"
 expected_entrypoint="$(realpath "$release_dir/packages/jimmy/dist/bin/jimmy.js")"
 if [[ "$active_entrypoint" != "$expected_entrypoint" ]]; then
   echo "openryoko deploy: active entrypoint does not match the requested release" >&2
+  rollback 1
+fi
+active_drive_adapter="$(realpath "$GOOGLE_DRIVE_MCP_ADAPTER")"
+expected_drive_adapter="$(realpath "$release_dir/packages/jimmy/dist/src/mcp/google-drive-server.js")"
+if [[ "$active_drive_adapter" != "$expected_drive_adapter" ]]; then
+  echo "openryoko deploy: Google Drive MCP adapter does not match the requested release" >&2
   rollback 1
 fi
 main_pid="$(systemctl show --property MainPID --value "$SERVICE")"
@@ -177,6 +194,7 @@ echo "openryoko deploy: active commit $target_sha"
 echo "openryoko deploy: control plane digest $actual_control_plane_digest"
 echo "openryoko deploy: main pid $main_pid"
 echo "openryoko deploy: entrypoint $active_entrypoint"
+echo "openryoko deploy: Google Drive MCP adapter $active_drive_adapter"
 
 # Keep the active and immediately previous releases even when pruning old worktrees.
 kept=0

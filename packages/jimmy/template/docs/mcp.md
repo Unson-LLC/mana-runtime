@@ -90,7 +90,7 @@ npm install --prefix /home/ryoko/mcp/google-workspace-cli @googleworkspace/cli@0
 install -m 0755 \
   /home/ryoko/mcp/google-workspace-cli/node_modules/@googleworkspace/cli/bin/gws \
   /home/ryoko/bin/gws-drive-cli
-install -m 0755 \
+ln -sfn \
   /home/ryoko/current/packages/jimmy/dist/src/mcp/google-drive-server.js \
   /home/ryoko/mcp/google-drive-server.js
 ```

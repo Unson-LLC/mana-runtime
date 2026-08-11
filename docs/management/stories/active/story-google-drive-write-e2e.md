@@ -23,6 +23,7 @@ status: active
 - Drive作成に失敗した場合、ファイルやリンクを作成済みと回答しない。
 - 既存の`upload_file`、Drive読み取り、Sheets操作、placementのMCP allowlist、アカウント固定を壊さない。
 - unit、typecheck、build、およびMCP protocol integration testが通る。
+- 通常デプロイとrollbackのどちらでも、固定MCPパスが現在のreleaseに含まれるGoogle Drive adapterを参照する。
 - 本番E2EでDrive上の実ファイル、リンク、Slack返信をそれぞれ確認する。
 
 ## Non-goals

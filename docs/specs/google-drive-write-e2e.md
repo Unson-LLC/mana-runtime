@@ -26,6 +26,13 @@ MCP server自身がOS temporary directory内に権限`0600`の一時ファイル
 
 `upload_file`のpath allowlist検査は変更しない。
 
+## Deployment contract
+
+本番MCP catalogが参照する`/home/ryoko/mcp/google-drive-server.js`は、deploy時に
+`/home/ryoko/current/packages/jimmy/dist/src/mcp/google-drive-server.js`へのsymlinkとして
+原子的に更新する。deployはbuild成果物の存在とsymlinkの解決先を確認してから成功とする。
+rollbackは`/home/ryoko/current`を前releaseへ戻すため、adapterも同時に戻る。
+
 ## Response and failure contract
 
 Google Workspace CLIのJSON応答をそのまま返し、少なくとも要求するfieldsに`id,name,mimeType,webViewLink,parents`を含める。CLIが失敗した場合はMCP errorとし、ファイルIDやリンクを合成しない。
@@ -35,4 +42,5 @@ Google Workspace CLIのJSON応答をそのまま返し、少なくとも要求�
 - Unit: tool公開、入力排他、不正base64、size limit、MIME type既定値
 - Integration: fake Google Workspace CLIに渡るmetadata、upload bytes、成功応答、一時ファイルcleanup
 - Regression:既存Google Drive MCP tests、package typecheck、build
+- Deploy: 通常activationとrollback後に固定MCPパスがactive releaseへ解決されること
 - Production E2E: Slack依頼からDrive実ファイル作成、ID/link取得、同一thread返信

@@ -27,7 +27,7 @@ npm install --prefix /home/ryoko/mcp/google-workspace-cli @googleworkspace/cli@0
 install -m 0755 \
   /home/ryoko/mcp/google-workspace-cli/node_modules/@googleworkspace/cli/bin/gws \
   /home/ryoko/bin/gws-drive-cli
-install -m 0755 \
+ln -sfn \
   /home/ryoko/current/packages/jimmy/dist/src/mcp/google-drive-server.js \
   /home/ryoko/mcp/google-drive-server.js
 /home/ryoko/bin/gws-drive-cli --version
@@ -47,6 +47,10 @@ GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file \
 
 Never commit the OAuth client or generated credential files to either the
 application repository or `/home/ryoko/.ryoko` config history.
+
+The deploy script atomically maintains this symlink and verifies that it
+resolves into the activated release. Rollback changes `/home/ryoko/current`, so
+the adapter rolls back with the rest of the runtime.
 
 ## Runtime configuration
 
