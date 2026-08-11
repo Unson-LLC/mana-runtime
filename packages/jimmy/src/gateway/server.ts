@@ -54,6 +54,11 @@ import { TurnPreparationService } from "../sessions/turn-preparation-service.js"
 import { BrainbaseContextClient } from "../shared/brainbase-graph.js";
 import { createStaticPersonResolver, LearningCandidateService, SqliteLearningOutboxRepository } from "../learning/candidate-outbox.js";
 import { createBrainbaseCandidateSubmitter } from "../learning/brainbase-candidate-store.js";
+import {
+  formatLearningReconciliationLog,
+  parseLearningReconciliationPlacements,
+  reconcileLearningCandidates,
+} from "../learning/reconcile-conversations.js";
 
 type SettingsTopologyProbeConnector = {
   invalidateSettingsTopologyProbe?: () => void;
@@ -353,7 +358,18 @@ export async function startGateway(
 
   // Initialize database and recover any sessions stuck from a previous run
   initDb();
-  void learningCandidateService.flush().then(({ submitted, pending }) => {
+  const learningReconciliation = reconcileLearningCandidates(
+    learningCandidateService,
+    config.placements,
+    undefined,
+    {
+      placementIds: parseLearningReconciliationPlacements(
+        process.env.OPENRYOKO_LEARNING_RECONCILE_PLACEMENTS,
+      ),
+    },
+  );
+  logger.info(formatLearningReconciliationLog(learningReconciliation));
+  void learningCandidateService.flush(100).then(({ submitted, pending }) => {
     if (submitted > 0 || pending > 0) {
       logger.info(`[learning] startup outbox drain submitted=${submitted} pending=${pending}`);
     }
