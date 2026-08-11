@@ -16,6 +16,7 @@ import {
 } from "./sandbox-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { persistEventOnce } from "./workspace-store.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
@@ -50,14 +51,6 @@ function workspaceName(event: SlackQueueEvent): string {
   return [event.tenantId, event.workspaceId, event.channelId, event.threadTs].join(":");
 }
 
-function isTechKnightEvent(event: SlackQueueEvent, env: Env): boolean {
-  return (
-    env.TENANT_ID === "techknight" &&
-    event.tenantId === "techknight" &&
-    event.workspaceId === env.SLACK_EXPECTED_TEAM_ID
-  );
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -85,40 +78,27 @@ export default {
 
   async queue(batch: MessageBatch<SlackQueueEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
-      const event = message.body;
-      if (!isTechKnightEvent(event, env)) {
-        message.ack();
-        continue;
-      }
-
-      try {
-        const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
-        const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-        using workspace = await getWorkspace(handle);
-        await persistEventOnce(workspace.fs, event);
-        const result = await processReplyEvent(workspace.fs, event, {
-          expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-          allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
-          slackBotToken: env.SLACK_BOT_TOKEN,
-          oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
-          createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-        });
-        console.log(JSON.stringify({
-          event: "techknight_slack_reply",
-          eventId: event.eventId,
-          channelId: event.channelId,
-          outcome: result.outcome,
-        }));
-        message.ack();
-      } catch (error) {
-        console.error(JSON.stringify({
-          event: "techknight_slack_reply_failed",
-          eventId: event.eventId,
-          channelId: event.channelId,
-          code: error instanceof ReplyPipelineError ? error.code : "unexpected_error",
-        }));
-        message.retry();
-      }
+      await consumeTechKnightMessage(message, {
+        expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+        process: async (event) => {
+          const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
+          const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+          using workspace = await getWorkspace(handle);
+          await persistEventOnce(workspace.fs, event);
+          return processReplyEvent(workspace.fs, event, {
+            expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+            allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
+            slackBotToken: env.SLACK_BOT_TOKEN,
+            oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+            createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+          });
+        },
+        log: (entry) => console.log(JSON.stringify(entry)),
+        logError: (entry) => console.error(JSON.stringify(entry)),
+        errorCode: (error) => error instanceof ReplyPipelineError
+          ? error.code
+          : "unexpected_error",
+      });
     }
   },
 } satisfies ExportedHandler<Env, SlackQueueEvent>;
