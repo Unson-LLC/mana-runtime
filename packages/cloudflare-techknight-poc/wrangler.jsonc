@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "techknight-mana-runtime-poc",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "TENANT_ID": "techknight",
+    "SLACK_EXPECTED_TEAM_ID": "REPLACE_IN_TECHKNIGHT_ACCOUNT"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TECHKNIGHT_WORKSPACE",
+        "class_name": "TechKnightWorkspace"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TechKnightWorkspace"]
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "TECHKNIGHT_EVENTS",
+        "queue": "techknight-mana-runtime-poc-events"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "techknight-mana-runtime-poc-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3
+      }
+    ]
+  }
+}

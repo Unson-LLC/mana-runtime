@@ -1,0 +1,59 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-techknight-cloudflare-computer-poc",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "INV-TKCF-SLACK-SIGNATURE",
+      "type": "invariant",
+      "statement": "Queue投入前にSlack raw bodyの署名、5分以内のtimestamp、TechKnight team IDを検証する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 0 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-computer-poc.md", "section": "Trust boundaries" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/slack.ts", "anchor": "verifySlackRequest" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts", "case": "accepts only a current valid Slack signature" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-TKCF-TENANT",
+      "type": "invariant",
+      "statement": "tenantはrequest由来ではなくdeployment固定値techknightとして正規化される",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 1 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-computer-poc.md", "section": "Decision" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/slack.ts", "anchor": "normalizeSlackEvent" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts", "case": "normalizes a TechKnight event without trusting tenant input" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-TKCF-WORKSPACE-IDEMPOTENCY",
+      "type": "invariant",
+      "statement": "event IDごとのComputer Workspace fileによりQueue再配送を冪等化する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-computer-poc.md", "section": "Decision" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/workspace-store.ts", "anchor": "persistEventOnce" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/workspace-store.test.ts", "case": "stores a duplicate event only once" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-TKCF-DEPLOYMENT-ACCOUNT",
+      "type": "invariant",
+      "statement": "TechKnight所有Cloudflare accountが確認できない状態ではdeployしない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-techknight-cloudflare-computer-poc.md", "section": "Deployment gate" }],
+        "code_refs": [],
+        "test_refs": []
+      },
+      "confidence": 1
+    }
+  ],
+  "open_questions": [
+    "TechKnight所有Cloudflare account IDとdeploy用OAuth identity",
+    "TechKnight Slack appのsigning secretとteam IDのsecret登録"
+  ]
+}
