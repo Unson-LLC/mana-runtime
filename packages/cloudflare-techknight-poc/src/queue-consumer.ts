@@ -16,17 +16,18 @@ export interface QueueConsumerOptions {
   errorCode?(error: unknown): string;
 }
 
-function isTechKnightEvent(
+function boundaryMismatchReason(
   event: SlackQueueEvent,
   expectedWorkspaceId: string,
   expectedTenantId = "techknight",
   expectedChannelId?: string,
-): boolean {
-  return (
-    event.tenantId === expectedTenantId &&
-    event.workspaceId === expectedWorkspaceId &&
-    (expectedChannelId === undefined || event.channelId === expectedChannelId)
-  );
+): string | undefined {
+  if (event.tenantId !== expectedTenantId) return "tenant_mismatch";
+  if (event.workspaceId !== expectedWorkspaceId) return "workspace_mismatch";
+  if (expectedChannelId !== undefined && event.channelId !== expectedChannelId) {
+    return "channel_mismatch";
+  }
+  return undefined;
 }
 
 export async function consumeTechKnightMessage(
@@ -34,12 +35,19 @@ export async function consumeTechKnightMessage(
   options: QueueConsumerOptions,
 ): Promise<void> {
   const event = message.body;
-  if (!isTechKnightEvent(
+  const mismatchReason = boundaryMismatchReason(
     event,
     options.expectedWorkspaceId,
     options.expectedTenantId,
     options.expectedChannelId,
-  )) {
+  );
+  if (mismatchReason) {
+    options.log?.({
+      event: "techknight_slack_reply_ignored",
+      eventId: event.eventId,
+      channelId: event.channelId,
+      reason: mismatchReason,
+    });
     message.ack();
     return;
   }

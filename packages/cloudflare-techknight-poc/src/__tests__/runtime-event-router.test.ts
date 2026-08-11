@@ -54,7 +54,7 @@ describe("Cloudflare runtime event router", () => {
       meetingTasksEnabled: false,
       processMeetingTask,
       processReply,
-    })).resolves.toEqual({ outcome: "ignored" });
+    })).resolves.toEqual({ outcome: "meeting_tasks_disabled" });
 
     expect(processMeetingTask).not.toHaveBeenCalled();
     expect(processReply).not.toHaveBeenCalled();

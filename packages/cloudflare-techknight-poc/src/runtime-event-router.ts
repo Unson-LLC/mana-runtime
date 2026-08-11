@@ -5,7 +5,14 @@ import {
 import type { ReplyProcessResult } from "./reply-pipeline.js";
 import type { SlackQueueEvent } from "./types.js";
 
-export type RuntimeEventResult = MeetingTaskProcessResult | ReplyProcessResult;
+export interface DisabledMeetingTaskResult {
+  outcome: "meeting_tasks_disabled";
+}
+
+export type RuntimeEventResult =
+  | MeetingTaskProcessResult
+  | ReplyProcessResult
+  | DisabledMeetingTaskResult;
 
 export interface RuntimeEventRouterOptions {
   meetingTasksEnabled: boolean;
@@ -18,6 +25,6 @@ export async function routeRuntimeEvent(
   options: RuntimeEventRouterOptions,
 ): Promise<RuntimeEventResult> {
   if (!isMeetingTaskRequest(event)) return options.processReply();
-  if (!options.meetingTasksEnabled) return { outcome: "ignored" };
+  if (!options.meetingTasksEnabled) return { outcome: "meeting_tasks_disabled" };
   return options.processMeetingTask();
 }

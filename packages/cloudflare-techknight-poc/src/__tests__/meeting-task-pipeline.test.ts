@@ -90,7 +90,8 @@ describe("Cloudflare meeting task pipeline", () => {
     expect(isMeetingTaskRequest(event({ text: "<@U_BOT> 議事録を要約して" }))).toBe(false);
   });
 
-  it("registers extracted tasks and reports them to the source thread", async () => {
+  // story-cloudflare-primary-runtime:AC-3
+  it("uses only trusted deployment project codes", async () => {
     const fs = new MemoryFs();
     const { options, fetchMock } = harness();
 
