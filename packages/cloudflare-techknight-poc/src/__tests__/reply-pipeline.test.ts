@@ -15,6 +15,12 @@ class MemoryFs {
     return [...this.files.keys()].filter((path) => path.startsWith(prefix));
   }
 
+  async readFile(path: string): Promise<string> {
+    const value = this.files.get(path);
+    if (value === undefined) throw new Error("ENOENT");
+    return value;
+  }
+
   async writeFile(path: string, value: string): Promise<void> {
     this.files.set(path, value);
   }

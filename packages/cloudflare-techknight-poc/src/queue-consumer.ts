@@ -7,6 +7,7 @@ export interface QueueMessageLike<T> {
 }
 
 export interface QueueConsumerOptions {
+  expectedTenantId?: string;
   expectedWorkspaceId: string;
   process(event: SlackQueueEvent): Promise<{ outcome: string }>;
   log?(entry: Record<string, string>): void;
@@ -14,8 +15,12 @@ export interface QueueConsumerOptions {
   errorCode?(error: unknown): string;
 }
 
-function isTechKnightEvent(event: SlackQueueEvent, expectedWorkspaceId: string): boolean {
-  return event.tenantId === "techknight" && event.workspaceId === expectedWorkspaceId;
+function isTechKnightEvent(
+  event: SlackQueueEvent,
+  expectedWorkspaceId: string,
+  expectedTenantId = "techknight",
+): boolean {
+  return event.tenantId === expectedTenantId && event.workspaceId === expectedWorkspaceId;
 }
 
 export async function consumeTechKnightMessage(
@@ -23,7 +28,7 @@ export async function consumeTechKnightMessage(
   options: QueueConsumerOptions,
 ): Promise<void> {
   const event = message.body;
-  if (!isTechKnightEvent(event, options.expectedWorkspaceId)) {
+  if (!isTechKnightEvent(event, options.expectedWorkspaceId, options.expectedTenantId)) {
     message.ack();
     return;
   }

@@ -3,6 +3,7 @@ import type { SlackQueueEvent } from "./types.js";
 export interface WorkspaceFs {
   mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
   ls(prefix: string): Promise<string[]>;
+  readFile(path: string): Promise<string | ReadableStream<Uint8Array>>;
   writeFile(path: string, value: string): Promise<unknown>;
 }
 

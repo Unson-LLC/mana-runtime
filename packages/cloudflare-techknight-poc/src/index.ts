@@ -16,6 +16,11 @@ import {
 } from "./sandbox-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import {
+  isMeetingTaskRequest,
+  processMeetingTaskEvent,
+} from "./meeting-task-pipeline.js";
+import { resolveRuntimeBinding } from "./runtime-config.js";
 import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { persistEventOnce } from "./workspace-store.js";
 import { withDisposableResource } from "./disposable-resource.js";
@@ -27,7 +32,10 @@ interface Env extends SandboxRuntimeEnv {
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
-  TENANT_ID: "techknight";
+  BRAINBASE_TASK_API_BASE_URL?: string;
+  BRAINBASE_TASK_API_TOKEN?: string;
+  RUNTIME_PROJECT_CODES?: string;
+  TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent>;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
 }
@@ -66,12 +74,9 @@ export default {
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    if (env.TENANT_ID !== "techknight") {
-      return Response.json({ error: "tenant_configuration_invalid" }, { status: 503 });
-    }
-
     return handleSlackRequest(request, {
       signingSecret: env.SLACK_SIGNING_SECRET,
+      tenantId: env.TENANT_ID,
       expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
       send: (event) => env.TECHKNIGHT_EVENTS.send(event),
     });
@@ -80,6 +85,7 @@ export default {
   async queue(batch: MessageBatch<SlackQueueEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       await consumeTechKnightMessage(message, {
+        expectedTenantId: env.TENANT_ID,
         expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
         process: async (event) => {
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
@@ -88,7 +94,24 @@ export default {
             () => getWorkspace(handle),
             async (workspace) => {
               await persistEventOnce(workspace.fs, event);
+              if (isMeetingTaskRequest(event)) {
+                const binding = resolveRuntimeBinding(event, {
+                  tenantId: env.TENANT_ID,
+                  workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                  channelId: env.SLACK_ALLOWED_CHANNEL_ID,
+                  projectCodes: env.RUNTIME_PROJECT_CODES,
+                });
+                return processMeetingTaskEvent(workspace.fs, event, {
+                  binding,
+                  brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+                  brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
+                  slackBotToken: env.SLACK_BOT_TOKEN,
+                  oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                  createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                });
+              }
               return processReplyEvent(workspace.fs, event, {
+                expectedTenantId: env.TENANT_ID,
                 expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
                 allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
                 slackBotToken: env.SLACK_BOT_TOKEN,
@@ -100,9 +123,14 @@ export default {
         },
         log: (entry) => console.log(JSON.stringify(entry)),
         logError: (entry) => console.error(JSON.stringify(entry)),
-        errorCode: (error) => error instanceof ReplyPipelineError
-          ? error.code
-          : "unexpected_error",
+        errorCode: (error) => {
+          if (error instanceof ReplyPipelineError) return error.code;
+          if (
+            typeof error === "object" && error !== null &&
+            typeof (error as { code?: unknown }).code === "string"
+          ) return (error as { code: string }).code;
+          return "unexpected_error";
+        },
       });
     }
   },

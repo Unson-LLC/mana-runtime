@@ -12,6 +12,7 @@ interface VerifySlackRequestOptions {
 
 interface HandleSlackRequestOptions {
   signingSecret: string;
+  tenantId?: string;
   expectedTeamId: string;
   nowMs?: number;
   send(event: SlackQueueEvent): Promise<unknown>;
@@ -78,6 +79,7 @@ export function normalizeSlackEvent(
   payload: unknown,
   expectedTeamId: string,
   receivedAt: string,
+  tenantId = "techknight",
 ): SlackQueueEvent {
   if (!isRecord(payload) || payload.team_id !== expectedTeamId) {
     throw new Error("slack_team_forbidden");
@@ -98,7 +100,7 @@ export function normalizeSlackEvent(
   const botId = nonEmptyString(payload.event.bot_id);
   const subtype = nonEmptyString(payload.event.subtype);
   return {
-    tenantId: "techknight",
+    tenantId,
     eventId,
     workspaceId: expectedTeamId,
     channelId,
@@ -153,6 +155,7 @@ export async function handleSlackRequest(
       payload,
       options.expectedTeamId,
       new Date(options.nowMs ?? Date.now()).toISOString(),
+      options.tenantId,
     );
     await options.send(event);
     return jsonResponse({ ok: true }, 200);

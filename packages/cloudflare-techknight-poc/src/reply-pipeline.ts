@@ -25,6 +25,7 @@ export interface ReplySandbox {
 }
 
 export interface ReplyPipelineOptions {
+  expectedTenantId?: string;
   expectedWorkspaceId: string;
   allowedChannelId: string;
   slackBotToken?: string;
@@ -48,10 +49,10 @@ export class ReplyPipelineError extends Error {
 
 export function isReplyEligible(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "expectedWorkspaceId" | "allowedChannelId">,
+  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId">,
 ): boolean {
   return (
-    event.tenantId === "techknight" &&
+    event.tenantId === (options.expectedTenantId ?? "techknight") &&
     event.workspaceId === options.expectedWorkspaceId &&
     event.channelId === options.allowedChannelId &&
     event.eventType === "app_mention" &&

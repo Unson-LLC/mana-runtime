@@ -1,0 +1,68 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-cloudflare-primary-runtime",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "INV-CFPRIMARY-BINDING",
+      "type": "invariant",
+      "statement": "tenant、workspace、channel、project codesはCloudflare deployment設定から決定し、Slack payloadやAI出力で上書きできない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 0 }, { "kind": "acceptance_criteria", "index": 2 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "信頼境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-config.ts", "anchor": "resolveRuntimeBinding" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "uses only trusted deployment project codes" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-TASK-WRITE",
+      "type": "invariant",
+      "statement": "許可された議事録タスク化依頼は検証済み候補をBrainbase Canonical Taskへ登録し元Slackスレッドへ結果を返す",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 1 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "決定" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-task-pipeline.ts", "anchor": "processMeetingTaskEvent" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "registers extracted tasks and reports them to the source thread" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-IDEMPOTENCY",
+      "type": "invariant",
+      "statement": "event IDとcandidate indexから決定したIdempotency-KeyとWorkspace完了記録によりQueue再配送でタスクと通知を重複作成しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "信頼境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-task-pipeline.ts", "anchor": "taskIdempotencyKey" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "uses deterministic task idempotency keys" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-SECRETS",
+      "type": "invariant",
+      "statement": "Slack、Brainbase、Anthropicのcredentialは会社別Worker secretに留め、prompt、Workspace永続状態、ログへ保存しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 4 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "信頼境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-task-pipeline.ts", "anchor": "createBrainbaseTask" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "does not expose secrets in sandbox input or persisted results" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-NO-FORK",
+      "type": "invariant",
+      "statement": "Cloudflareの業務ロジックはTechKnight固有値を引数化し、会社ごとの差をdeployment設定とsecretに限定する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "責務境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-config.ts", "anchor": "RuntimeBinding" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts", "case": "resolves independent company deployments with one implementation" }]
+      },
+      "confidence": 1
+    }
+  ],
+  "open_questions": []
+}

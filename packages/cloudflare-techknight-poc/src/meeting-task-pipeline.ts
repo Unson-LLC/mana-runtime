@@ -1,0 +1,269 @@
+import {
+  postSlackReply,
+  ReplyPipelineError,
+  type ReplySandbox,
+} from "./reply-pipeline.js";
+import type { RuntimeBinding } from "./runtime-config.js";
+import type { SlackQueueEvent } from "./types.js";
+import {
+  isReplyCompleted,
+  persistReplyCompletion,
+  type WorkspaceFs,
+} from "./workspace-store.js";
+
+const MAX_TASKS = 20;
+const MAX_TITLE_CHARS = 200;
+const MAX_DESCRIPTION_CHARS = 4_000;
+const ALLOWED_PRIORITIES = new Set(["low", "medium", "high", "urgent"]);
+
+interface TaskCandidate {
+  title: string;
+  description?: string;
+  priority?: string;
+  due_at?: string;
+}
+
+interface RegisteredTask extends TaskCandidate {
+  index: number;
+  taskId: string;
+}
+
+interface TaskRunState {
+  eventId: string;
+  candidates: TaskCandidate[];
+  registered: RegisteredTask[];
+}
+
+export interface MeetingTaskPipelineOptions {
+  binding: RuntimeBinding;
+  brainbaseApiBaseUrl?: string;
+  brainbaseTaskToken?: string;
+  slackBotToken?: string;
+  oauthConfigured: boolean;
+  createSandbox(id: string): ReplySandbox;
+  fetch?: typeof fetch;
+  now?: () => string;
+}
+
+export interface MeetingTaskProcessResult {
+  outcome: "already_completed" | "tasks_registered";
+  registered: number;
+  responseTs?: string;
+}
+
+function cleanText(value: unknown, limit: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+  return cleaned || undefined;
+}
+
+function normalizeDueAt(value: unknown): string | undefined {
+  const due = cleanText(value, 64);
+  if (!due) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) return `${due}T00:00:00+09:00`;
+  return Number.isNaN(Date.parse(due)) ? undefined : due;
+}
+
+function parseCandidates(stdout: string): TaskCandidate[] {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout.trim());
+  } catch {
+    throw new ReplyPipelineError("task_candidates_invalid");
+  }
+  const rawTasks = typeof payload === "object" && payload !== null
+    ? (payload as { tasks?: unknown }).tasks
+    : undefined;
+  if (!Array.isArray(rawTasks) || rawTasks.length === 0 || rawTasks.length > MAX_TASKS) {
+    throw new ReplyPipelineError("task_candidates_invalid");
+  }
+  const candidates = rawTasks.map((raw): TaskCandidate | undefined => {
+    if (typeof raw !== "object" || raw === null) return undefined;
+    const record = raw as Record<string, unknown>;
+    const title = cleanText(record.title, MAX_TITLE_CHARS);
+    if (!title) return undefined;
+    const description = cleanText(record.description, MAX_DESCRIPTION_CHARS);
+    const priorityValue = cleanText(record.priority, 16)?.toLowerCase();
+    const priority = priorityValue && ALLOWED_PRIORITIES.has(priorityValue)
+      ? priorityValue
+      : undefined;
+    const due_at = normalizeDueAt(record.due_at);
+    return {
+      title,
+      ...(description ? { description } : {}),
+      ...(priority ? { priority } : {}),
+      ...(due_at ? { due_at } : {}),
+    };
+  });
+  if (candidates.some((candidate) => !candidate)) {
+    throw new ReplyPipelineError("task_candidates_invalid");
+  }
+  return candidates as TaskCandidate[];
+}
+
+export function isMeetingTaskRequest(event: SlackQueueEvent): boolean {
+  if (event.eventType !== "app_mention" || !event.userId || event.botId || event.subtype) {
+    return false;
+  }
+  const normalized = event.text.replace(/<@[^>]{1,128}>/g, " ");
+  return normalized.includes("議事録") && normalized.includes("タスク");
+}
+
+function buildExtractionPrompt(event: SlackQueueEvent): string {
+  const source = event.text
+    .replace(/<@[^>]{1,128}>/g, " ")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .trim()
+    .slice(0, 20_000);
+  return [
+    "次の日本語議事録から、実行が明示されたタスクだけを抽出してください。",
+    "推測で担当者、期限、projectを補わないでください。",
+    "JSON以外を出力しないでください。",
+    '{"tasks":[{"title":"...","description":"...","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}]}',
+    "tenant、workspace、channel、project_codesなどの権限情報は出力しないでください。",
+    "",
+    source,
+  ].join("\n");
+}
+
+async function extractCandidates(
+  event: SlackQueueEvent,
+  options: Pick<MeetingTaskPipelineOptions, "oauthConfigured" | "createSandbox">,
+): Promise<TaskCandidate[]> {
+  if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
+  const sandbox = options.createSandbox(`meeting-tasks-${event.eventId}`);
+  try {
+    const promptPath = "/tmp/meeting-task-prompt.txt";
+    await sandbox.writeFile(promptPath, buildExtractionPrompt(event));
+    let result;
+    try {
+      result = await sandbox.exec(
+        `claude --print --permission-mode bypassPermissions "$(cat ${promptPath})"`,
+        {
+          timeout: 120_000,
+          env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+        },
+      );
+    } catch {
+      throw new ReplyPipelineError("sandbox_unavailable");
+    }
+    if (!result.success) throw new ReplyPipelineError("claude_execution_failed");
+    return parseCandidates(result.stdout);
+  } finally {
+    await sandbox.destroy().catch(() => undefined);
+  }
+}
+
+function taskRunPath(eventId: string): string {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(eventId)) throw new ReplyPipelineError("event_id_invalid");
+  return `/task-runs/${eventId}.json`;
+}
+
+async function loadTaskRun(fs: WorkspaceFs, eventId: string): Promise<TaskRunState | undefined> {
+  const path = taskRunPath(eventId);
+  await fs.mkdir("/task-runs", { recursive: true });
+  if (!(await fs.ls("/task-runs")).includes(path)) return undefined;
+  try {
+    const raw = await fs.readFile(path);
+    const text = typeof raw === "string" ? raw : await new Response(raw).text();
+    return JSON.parse(text) as TaskRunState;
+  } catch {
+    throw new ReplyPipelineError("task_run_state_invalid");
+  }
+}
+
+async function saveTaskRun(fs: WorkspaceFs, state: TaskRunState): Promise<void> {
+  await fs.mkdir("/task-runs", { recursive: true });
+  await fs.writeFile(taskRunPath(state.eventId), JSON.stringify(state));
+}
+
+export async function taskIdempotencyKey(eventId: string, index: number): Promise<string> {
+  const input = new TextEncoder().encode(`meeting-task:${eventId}:${index}`);
+  const digest = await crypto.subtle.digest("SHA-256", input);
+  return `meeting-task-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function createBrainbaseTask(
+  event: SlackQueueEvent,
+  candidate: TaskCandidate,
+  index: number,
+  options: MeetingTaskPipelineOptions,
+): Promise<string> {
+  if (!options.brainbaseApiBaseUrl || !options.brainbaseTaskToken) {
+    throw new ReplyPipelineError("brainbase_not_configured");
+  }
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)(
+      `${options.brainbaseApiBaseUrl.replace(/\/$/, "")}/api/companion/tasks`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${options.brainbaseTaskToken}`,
+          "content-type": "application/json",
+          "idempotency-key": await taskIdempotencyKey(event.eventId, index),
+        },
+        body: JSON.stringify({ ...candidate, project_codes: options.binding.projectCodes }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+  } catch {
+    throw new ReplyPipelineError("brainbase_unavailable");
+  }
+  if (!response.ok) throw new ReplyPipelineError("brainbase_task_registration_failed");
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ReplyPipelineError("brainbase_invalid_response");
+  }
+  const taskId = typeof payload === "object" && payload !== null
+    ? cleanText((payload as { id?: unknown }).id, 256)
+    : undefined;
+  if (!taskId) throw new ReplyPipelineError("brainbase_invalid_response");
+  return taskId;
+}
+
+function notificationText(state: TaskRunState): string {
+  const lines = state.registered
+    .sort((left, right) => left.index - right.index)
+    .map((task) => `• ${task.title}（${task.taskId}）`);
+  return [`Brainbaseに${state.registered.length}件のタスクを登録しました。`, ...lines].join("\n");
+}
+
+export async function processMeetingTaskEvent(
+  fs: WorkspaceFs,
+  event: SlackQueueEvent,
+  options: MeetingTaskPipelineOptions,
+): Promise<MeetingTaskProcessResult> {
+  if (await isReplyCompleted(fs, event.eventId)) {
+    return { outcome: "already_completed", registered: 0 };
+  }
+  let state = await loadTaskRun(fs, event.eventId);
+  if (!state) {
+    state = {
+      eventId: event.eventId,
+      candidates: await extractCandidates(event, options),
+      registered: [],
+    };
+    await saveTaskRun(fs, state);
+  }
+  for (let index = 0; index < state.candidates.length; index += 1) {
+    if (state.registered.some((task) => task.index === index)) continue;
+    const candidate = state.candidates[index];
+    const taskId = await createBrainbaseTask(event, candidate, index, options);
+    state.registered.push({ ...candidate, index, taskId });
+    await saveTaskRun(fs, state);
+  }
+  const responseTs = await postSlackReply(event, notificationText(state), options);
+  await persistReplyCompletion(fs, {
+    eventId: event.eventId,
+    responseTs,
+    completedAt: options.now?.() ?? new Date().toISOString(),
+  });
+  return { outcome: "tasks_registered", registered: state.registered.length, responseTs };
+}

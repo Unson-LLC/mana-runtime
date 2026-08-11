@@ -6,7 +6,10 @@ TechKnight専用のCloudflare実行環境です。Slack Events APIで受けた�
 処理し、既存の八雲まなSlack Appから元スレッドへ返信します。Anthropic OAuthとSlack Bot
 tokenはContainerへ保存せず、Worker Secretの境界内でだけ使用します。
 
-既存Lightsail、Slack Socket Mode、Brainbase task pipelineは変更しません。
+既存Lightsail、Slack Socket Modeは変更しません。Cloudflare側では、明示的に
+「議事録」と「タスク」を含むメンションをClaudeで候補化し、設定済みprojectへ
+Brainbaseの正規タスクとして登録します。tenant、workspace、channel、projectの境界は
+Worker設定から決定し、Slack本文やClaude出力からは受け付けません。
 
 ## Local verification
 
@@ -36,6 +39,12 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build
 10. 八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
 11. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
     `techknight_slack_reply`の完了ログを確認する。
+12. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
+    未設定時はタスク登録を行わず`project_binding_missing`で停止する。
+13. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
+    `BRAINBASE_TASK_API_TOKEN` Secretとして設定する。Token値はWrangler設定へ書かない。
+14. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
+    `project_codes`とSlackの同一スレッドへの登録結果を照合する。
 
 WranglerがUnson accountを示す場合はデプロイしません。secret値は設定ファイル、ログ、
 テストfixture、永続Workspaceへ書き込みません。
