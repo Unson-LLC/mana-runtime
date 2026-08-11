@@ -18,6 +18,7 @@ import type { SlackQueueEvent } from "./types.js";
 import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { persistEventOnce } from "./workspace-store.js";
+import { withDisposableResource } from "./disposable-resource.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 
@@ -83,15 +84,19 @@ export default {
         process: async (event) => {
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-          using workspace = await getWorkspace(handle);
-          await persistEventOnce(workspace.fs, event);
-          return processReplyEvent(workspace.fs, event, {
-            expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-            allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
-            slackBotToken: env.SLACK_BOT_TOKEN,
-            oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
-            createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-          });
+          return withDisposableResource(
+            () => getWorkspace(handle),
+            async (workspace) => {
+              await persistEventOnce(workspace.fs, event);
+              return processReplyEvent(workspace.fs, event, {
+                expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
+                slackBotToken: env.SLACK_BOT_TOKEN,
+                oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+              });
+            },
+          );
         },
         log: (entry) => console.log(JSON.stringify(entry)),
         logError: (entry) => console.error(JSON.stringify(entry)),
