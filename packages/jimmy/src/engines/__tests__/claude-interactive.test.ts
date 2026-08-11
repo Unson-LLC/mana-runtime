@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // claude-interactive.ts imports node-pty at the top level. node-pty loads its
 // native module at import time and that fails on Linux CI runners (looks for
@@ -178,6 +181,19 @@ describe("placement spawn boundary key", () => {
     const base = placementBoundaryKey({ disallowedTools: ["a"] });
     expect(placementBoundaryKey({ disallowedTools: ["a", "b"] })).not.toBe(base);
     expect(placementBoundaryKey({ disallowedTools: ["a"], placementBashGuard: true })).not.toBe(base);
+  });
+
+  it("changes when strict MCP config contents change even if server names stay the same", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-boundary-"));
+    try {
+      const config = path.join(dir, "mcp.json");
+      fs.writeFileSync(config, JSON.stringify({ mcpServers: { brainbase: { command: "v1" } } }));
+      const before = placementBoundaryKey({ strictMcpConfig: true, mcpConfigPath: config });
+      fs.writeFileSync(config, JSON.stringify({ mcpServers: { brainbase: { command: "v2" } } }));
+      expect(placementBoundaryKey({ strictMcpConfig: true, mcpConfigPath: config })).not.toBe(before);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

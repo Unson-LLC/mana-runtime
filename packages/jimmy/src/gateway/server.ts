@@ -434,6 +434,7 @@ export async function startGateway(
       config.engines?.claude?.interactiveTurnTimeoutMs ?? 90 * 60 * 1000,
       config.engines?.claude?.interactivePermissionMode ?? "default",
       config.engines?.claude?.interactiveAllowedTools ?? [],
+      config.engines?.claude?.interactiveStartupTimeoutMs ?? 60_000,
     );
     copyHookRelayAsset();
     // Pre-trust JINN_HOME in the real ~/.claude.json so PTY-spawned Claude (cwd =

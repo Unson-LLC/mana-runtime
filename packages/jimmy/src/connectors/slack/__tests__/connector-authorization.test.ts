@@ -43,7 +43,7 @@ const bolt = vi.hoisted(() => {
     conversations: {
       info: vi.fn(async () => ({ channel: { name: "pilot", is_ext_shared: false } })),
       history: vi.fn(async () => ({ messages: [{ text: "approve this" }] })),
-      replies: vi.fn(async (): Promise<{ messages: Array<{ text: string }> }> => ({ messages: [] })),
+      replies: vi.fn(async (): Promise<{ messages: Array<{ ts?: string; text: string; user?: string }>; has_more?: boolean; response_metadata?: { next_cursor?: string } }> => ({ messages: [] })),
     },
     users: {
       info: vi.fn(async ({ user }: { user: string }) => ({
@@ -106,7 +106,51 @@ vi.mock("@slack/bolt", () => ({
   },
 }));
 
-import { SlackConnector } from "../index.js";
+import { formatSlackThreadContext, hydrateSlackThreadContext, SlackConnector } from "../index.js";
+
+describe("Slack thread context hydration", () => {
+  it("follows a cursor after a short page, deduplicates overlap, and preserves chronology", async () => {
+    const replies = vi.fn()
+      .mockResolvedValueOnce({
+        messages: [
+          { ts: "1", user: "U1", text: "root" },
+          { ts: "2", user: "U2", text: "details" },
+        ],
+        response_metadata: { next_cursor: "next" },
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          { ts: "2", user: "U2", text: "details" },
+          { ts: "3", user: "U3", text: "latest" },
+          { ts: "4", user: "U4", text: "trigger" },
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+
+    const context = await hydrateSlackThreadContext(replies, "C1", "1", "4");
+    expect(replies).toHaveBeenCalledTimes(2);
+    expect(replies.mock.calls[1]![0]).toMatchObject({ cursor: "next", limit: 98 });
+    expect(context).toBe("[Slack thread context]\n<@U1>: root\n<@U2>: details\n<@U3>: latest\n\n");
+  });
+
+  it("terminates on a repeated cursor and marks the snapshot incomplete", async () => {
+    const replies = vi.fn()
+      .mockResolvedValueOnce({ messages: [{ ts: "1", text: "root" }], response_metadata: { next_cursor: "same" } })
+      .mockResolvedValueOnce({ messages: [], response_metadata: { next_cursor: "same" } });
+    const context = await hydrateSlackThreadContext(replies, "C1", "1", "9");
+    expect(replies).toHaveBeenCalledTimes(2);
+    expect(context).toContain("[some thread replies omitted due to context limit]");
+  });
+
+  it("never emits more than the exact character budget", () => {
+    const context = formatSlackThreadContext([
+      { ts: "1", user: "U1", text: "x".repeat(30_000) },
+      { ts: "2", user: "U2", text: "newest" },
+    ], "9", true);
+    expect(context.length).toBeLessThanOrEqual(20_000);
+    expect(context).toContain("<@U2>: newest");
+  });
+});
 
 describe("SlackConnector authorization", () => {
   beforeEach(() => {
@@ -725,7 +769,11 @@ describe("SlackConnector authorization", () => {
   it("allows the authorized user to continue an engaged thread without a mention", async () => {
     const { handler } = await setup();
     bolt.client.conversations.replies.mockResolvedValueOnce({
-      messages: [{ text: "the original request" }],
+      messages: [
+        { ts: "THREAD_TS", user: "U_ALLOWED", text: "the original request" },
+        { ts: "200.001", user: "U_COLLEAGUE", text: "recipient and due date details" },
+        { ts: "200.002", user: "U_ALLOWED", text: "continue" },
+      ],
     });
 
     await bolt.state.messageHandler?.({
@@ -742,9 +790,10 @@ describe("SlackConnector authorization", () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({
-      text: "[Slack thread root]\nthe original request\n\ncontinue",
+      text: "[Slack thread context]\n<@U_ALLOWED>: the original request\n<@U_COLLEAGUE>: recipient and due date details\n\ncontinue",
       transportMeta: expect.objectContaining({ team: "T_WORKSPACE" }),
     }));
+    expect(bolt.client.conversations.replies).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }));
   });
 
   it("does not perform any side effect for a reaction while reaction turns are disabled", async () => {

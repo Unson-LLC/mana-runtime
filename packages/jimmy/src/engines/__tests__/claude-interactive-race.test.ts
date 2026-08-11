@@ -14,10 +14,12 @@ interface FakePty {
   resize: (c: number, r: number) => void;
   on: (event: string, cb: (...a: any[]) => void) => void;
   _errorCb?: (err: Error) => void;
+  _dataCb?: (d: string) => void;
   fireExit: () => void;
   /** Fire a PTY-master socket error (e.g. EIO) WITHOUT firing onExit — the
    *  issue #18 failure mode where the transport dies but the proc never exits. */
   fireError: (err?: Error) => void;
+  fireData: (data: string) => void;
 }
 const ptys: FakePty[] = [];
 function makeFakePty(): FakePty {
@@ -25,7 +27,7 @@ function makeFakePty(): FakePty {
     pid: 1000 + ptys.length,
     _exitCode: null,
     _killCalled: false,
-    onData() {},
+    onData(cb) { p._dataCb = cb; },
     onExit(cb) { p._exitCb = cb; },
     kill() { p._killCalled = true; }, // signal sent; real exit is async (fireExit)
     write() {},
@@ -33,6 +35,7 @@ function makeFakePty(): FakePty {
     on(event, cb) { if (event === "error") p._errorCb = cb as (err: Error) => void; },
     fireExit() { p._exitCode = 0; p._exitCb?.({ exitCode: 0 }); },
     fireError(err) { p._errorCb?.(err ?? Object.assign(new Error("read EIO"), { code: "EIO" })); },
+    fireData(data) { p._dataCb?.(data); },
   };
   return p;
 }
@@ -49,8 +52,13 @@ vi.mock("../sse-pty-proxy.js", () => ({
     stop() {}
   },
 }));
-vi.mock("../shared/claude-settings.js", () => ({
+vi.mock("../../shared/claude-settings.js", () => ({
   writeSessionSettings: () => "/tmp/fake-settings.json",
+  resolveMcpApprovalSettings: () => undefined,
+}));
+const writeStartupEvidence = vi.hoisted(() => vi.fn(() => "/tmp/startup-evidence.log"));
+vi.mock("../../shared/claude-startup-evidence.js", () => ({
+  writeClaudeStartupEvidence: writeStartupEvidence,
 }));
 vi.mock("../../shared/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -160,6 +168,83 @@ describe("InteractiveClaudeEngine — kill->respawn race (Item C)", () => {
     // A warning that fires on routine shutdown is worthless as a crash signal.
     expect(mockWarn).not.toHaveBeenCalledWith(expect.stringContaining("PTY death"));
     expect(mockInfo).toHaveBeenCalledWith(expect.stringContaining("PTY death for session s4"));
+  });
+});
+
+describe("InteractiveClaudeEngine — SessionStart startup deadline", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ptys.length = 0;
+  });
+
+  it("captures evidence and releases a cold PTY that never emits SessionStart", async () => {
+    const lifecycle = new PtyLifecycleManager({ maxLivePtys: 10 });
+    const hookRegistry = { register: vi.fn(), unregister: vi.fn() } as any;
+    const engine = new InteractiveClaudeEngine(lifecycle, hookRegistry, undefined, 90_000, "default", [], 25);
+
+    const resultPromise = engine.run({ sessionId: "startup-stall", prompt: "hello", cwd: "/tmp" } as any);
+    await flush();
+    ptys[0]!.fireData("\x1b[31mApprove MCP?\x1b[0m token=secret");
+    const result = await resultPromise;
+
+    expect(result.error).toContain("startup timed out before SessionStart");
+    expect(ptys[0]!._killCalled).toBe(true);
+    expect(writeStartupEvidence).toHaveBeenCalledWith(
+      expect.any(String),
+      "startup-stall",
+      expect.stringContaining("Approve MCP?"),
+    );
+  });
+
+  it("cancels the startup deadline once SessionStart arrives", async () => {
+    const lifecycle = new PtyLifecycleManager({ maxLivePtys: 10 });
+    let hookCb: ((h: any) => void) | undefined;
+    const hookRegistry = {
+      register: (_id: string, cb: (h: any) => void) => { hookCb = cb; },
+      unregister: vi.fn(),
+    } as any;
+    const engine = new InteractiveClaudeEngine(lifecycle, hookRegistry, undefined, 90_000, "default", [], 25);
+    const resultPromise = engine.run({ sessionId: "startup-ok", prompt: "hello", cwd: "/tmp" } as any);
+    await flush();
+    hookCb!({ hook_event_name: "SessionStart", session_id: "claude-ok" });
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    hookCb!({ hook_event_name: "Stop", session_id: "claude-ok", last_assistant_message: "done" });
+    const result = await resultPromise;
+    expect(result.result).toBe("done");
+    expect(ptys[0]!._killCalled).toBe(false);
+  });
+
+  it("captures only the current cold spawn, never prior session scrollback", async () => {
+    const lifecycle = new PtyLifecycleManager({ maxLivePtys: 10 });
+    let hookCb: ((h: any) => void) | undefined;
+    const hookRegistry = {
+      register: (_id: string, cb: (h: any) => void) => { hookCb = cb; },
+      unregister: vi.fn(),
+    } as any;
+    const engine = new InteractiveClaudeEngine(lifecycle, hookRegistry, undefined, 90_000, "default", [], 25);
+
+    const first = engine.run({ sessionId: "evidence-boundary", prompt: "first", systemPrompt: "v1", cwd: "/tmp" } as any);
+    await flush();
+    ptys[0]!.fireData("OLD TURN CONTENT");
+    hookCb!({ hook_event_name: "SessionStart", session_id: "cli-1" });
+    hookCb!({ hook_event_name: "Stop", last_assistant_message: "done" });
+    await first;
+
+    writeStartupEvidence.mockClear();
+    const second = engine.run({
+      sessionId: "evidence-boundary",
+      prompt: "second",
+      systemPrompt: "v2",
+      resumeSessionId: "cli-1",
+      cwd: "/tmp",
+    } as any);
+    await flush();
+    ptys[1]!.fireData("NEW APPROVAL SCREEN");
+    await second;
+
+    const captured = (writeStartupEvidence.mock.calls as unknown as Array<[string, string, string]>)[0]![2];
+    expect(captured).toContain("NEW APPROVAL SCREEN");
+    expect(captured).not.toContain("OLD TURN CONTENT");
   });
 });
 

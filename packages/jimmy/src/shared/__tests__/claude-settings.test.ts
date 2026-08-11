@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildSessionSettings, seedTrust, writePlacementGuardSettings } from "../claude-settings.js";
+import { buildSessionSettings, resolveMcpApprovalSettings, seedTrust, writePlacementGuardSettings } from "../claude-settings.js";
 
 describe("buildSessionSettings", () => {
   it("registers SessionStart/Stop/StopFailure/PreToolUse/PostToolUse hooks", () => {
@@ -56,6 +56,74 @@ describe("buildSessionSettings", () => {
     expect(without.appendSystemPrompt).toBeUndefined();
     const withPrompt = buildSessionSettings({ sessionId: "a", relayScript: "/r.mjs", appendSystemPrompt: "be terse" });
     expect(withPrompt.appendSystemPrompt).toBe("be terse");
+  });
+
+  it("writes deterministic MCP approval arrays into the official settings", () => {
+    const settings = buildSessionSettings({
+      sessionId: "mcp",
+      relayScript: "/r.mjs",
+      enabledMcpjsonServers: ["freee", "brainbase", "freee", " "],
+      disabledMcpjsonServers: ["jibble", "perplexity-ask MCP Server"],
+    });
+    expect(settings.enabledMcpjsonServers).toEqual(["brainbase", "freee"]);
+    expect(settings.disabledMcpjsonServers).toEqual(["jibble", "perplexity-ask MCP Server"]);
+  });
+});
+
+describe("resolveMcpApprovalSettings", () => {
+  it("enables the generated strict config and disables unselected project servers", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-approval-"));
+    try {
+      const explicit = path.join(dir, "placement.json");
+      fs.writeFileSync(explicit, JSON.stringify({ mcpServers: { brainbase: {}, freee: {} } }));
+      fs.writeFileSync(path.join(dir, ".mcp.json"), JSON.stringify({
+        mcpServers: { freee: {}, jibble: {}, "perplexity-ask MCP Server": {} },
+      }));
+      expect(resolveMcpApprovalSettings({ cwd: dir, mcpConfigPath: explicit, strictMcpConfig: true })).toEqual({
+        enabledMcpjsonServers: ["brainbase", "freee"],
+        disabledMcpjsonServers: ["jibble", "perplexity-ask MCP Server"],
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a strict project MCP config is malformed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-approval-bad-"));
+    try {
+      const explicit = path.join(dir, "placement.json");
+      fs.writeFileSync(explicit, JSON.stringify({ mcpServers: {} }));
+      fs.writeFileSync(path.join(dir, ".mcp.json"), "not json");
+      expect(() => resolveMcpApprovalSettings({ cwd: dir, mcpConfigPath: explicit, strictMcpConfig: true })).toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the explicit strict MCP config is missing", () => {
+    expect(() => resolveMcpApprovalSettings({
+      cwd: os.tmpdir(),
+      mcpConfigPath: path.join(os.tmpdir(), "definitely-missing-placement-mcp.json"),
+      strictMcpConfig: true,
+    })).toThrow();
+  });
+
+  it("preserves an explicitly empty strict allow-list", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-approval-empty-"));
+    try {
+      const explicit = path.join(dir, "placement.json");
+      fs.writeFileSync(explicit, JSON.stringify({ mcpServers: {} }));
+      expect(resolveMcpApprovalSettings({ cwd: dir, mcpConfigPath: explicit, strictMcpConfig: true })).toEqual({
+        enabledMcpjsonServers: [],
+        disabledMcpjsonServers: [],
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does nothing outside strict placement mode", () => {
+    expect(resolveMcpApprovalSettings({ cwd: "/definitely/missing", strictMcpConfig: false })).toBeUndefined();
   });
 });
 

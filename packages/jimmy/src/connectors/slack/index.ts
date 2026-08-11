@@ -14,6 +14,124 @@ import type {
   Target,
   SlackGoalExtractionConfig,
 } from "../../shared/types.js";
+
+const SLACK_THREAD_CONTEXT_MAX_MESSAGES = 100;
+const SLACK_THREAD_CONTEXT_MAX_CHARS = 20_000;
+
+interface SlackThreadContextMessage {
+  ts?: string;
+  text?: string;
+  user?: string;
+  bot_id?: string;
+}
+
+interface SlackThreadRepliesPage {
+  messages?: SlackThreadContextMessage[];
+  has_more?: boolean;
+  response_metadata?: { next_cursor?: string };
+}
+
+type SlackThreadReplies = (args: {
+  channel: string;
+  ts: string;
+  inclusive: true;
+  limit: number;
+  cursor?: string;
+}) => Promise<SlackThreadRepliesPage>;
+
+/** Format a bounded chronological thread snapshot, excluding the triggering
+ *  event because its raw text is appended separately. When the character cap is
+ *  hit, keep the root plus the newest replies where actionable detail usually
+ *  lives. */
+export function formatSlackThreadContext(
+  messages: SlackThreadContextMessage[],
+  currentTs: string,
+  hasMore = false,
+): string {
+  const filtered = messages.filter((message) => message.ts !== currentTs && message.text?.trim());
+  const capped = filtered.length > SLACK_THREAD_CONTEXT_MAX_MESSAGES;
+  const candidates = capped
+    ? [filtered[0]!, ...filtered.slice(-(SLACK_THREAD_CONTEXT_MAX_MESSAGES - 1))]
+    : filtered;
+  if (candidates.length === 0) return "";
+  const line = (message: SlackThreadContextMessage) => {
+    const author = message.user ? `<@${message.user}>` : message.bot_id ? `[bot:${message.bot_id}]` : "[unknown]";
+    return `${author}: ${message.text!.trim()}`;
+  };
+  const omittedMarker = "[some thread replies omitted due to context limit]";
+  const rawRoot = line(candidates[0]!);
+  const suffix: string[] = [];
+  const minimumRootBudget = Math.min(rawRoot.length, 8_000);
+  let suffixChars = 0;
+  for (const message of candidates.slice(1).reverse()) {
+    const value = line(message);
+    const fixedBudget = "[Slack thread context]\n".length + omittedMarker.length + 4;
+    if (fixedBudget + minimumRootBudget + suffixChars + value.length + 1 > SLACK_THREAD_CONTEXT_MAX_CHARS) break;
+    suffix.unshift(value);
+    suffixChars += value.length + 1;
+  }
+  const omitted = hasMore || capped || suffix.length < candidates.length - 1;
+  const fixedChars = "[Slack thread context]\n".length
+    + (omitted ? omittedMarker.length + 1 : 0)
+    + suffixChars
+    + 2;
+  const rootBudget = Math.max(1, SLACK_THREAD_CONTEXT_MAX_CHARS - fixedChars);
+  const root = rawRoot.length > rootBudget ? `${rawRoot.slice(0, Math.max(0, rootBudget - 1))}…` : rawRoot;
+  const rendered = [
+    "[Slack thread context]",
+    root,
+    ...(omitted ? [omittedMarker] : []),
+    ...suffix,
+    "",
+    "",
+  ].join("\n");
+  return rendered.length <= SLACK_THREAD_CONTEXT_MAX_CHARS ? rendered : rendered.slice(0, SLACK_THREAD_CONTEXT_MAX_CHARS);
+}
+
+/** Fetch up to the global context cap while following Slack cursor pagination.
+ * Slack may return a short page before the end, so page length is not an EOF
+ * signal. Repeated cursors terminate safely and mark the snapshot incomplete. */
+export async function hydrateSlackThreadContext(
+  replies: SlackThreadReplies,
+  channel: string,
+  threadTs: string,
+  currentTs: string,
+): Promise<string> {
+  const messages: SlackThreadContextMessage[] = [];
+  const seenMessageTs = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let hasMore = false;
+  let pageCount = 0;
+
+  while (messages.length < SLACK_THREAD_CONTEXT_MAX_MESSAGES && pageCount < 10) {
+    pageCount += 1;
+    const page = await replies({
+      channel,
+      ts: threadTs,
+      inclusive: true,
+      limit: SLACK_THREAD_CONTEXT_MAX_MESSAGES - messages.length,
+      ...(cursor ? { cursor } : {}),
+    });
+    for (const message of page.messages ?? []) {
+      const key = message.ts?.trim();
+      if (key && seenMessageTs.has(key)) continue;
+      if (key) seenMessageTs.add(key);
+      messages.push(message);
+      if (messages.length >= SLACK_THREAD_CONTEXT_MAX_MESSAGES) break;
+    }
+
+    const nextCursor = page.response_metadata?.next_cursor?.trim();
+    hasMore = page.has_more === true || Boolean(nextCursor);
+    if (!nextCursor || seenCursors.has(nextCursor) || messages.length >= SLACK_THREAD_CONTEXT_MAX_MESSAGES) break;
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  if (pageCount >= 10 && cursor) hasMore = true;
+
+  return formatSlackThreadContext(messages, currentTs, hasMore);
+}
 import { buildReplyContext, deriveSessionKey, isOldSlackMessage } from "./threads.js";
 import { formatResponse, downloadAttachment } from "./format.js";
 import { normalizeSpeakerInfo, type SpeakerInfo } from "./speaker.js";
@@ -858,22 +976,21 @@ export class SlackConnector implements Connector {
       // DM is never "external"; otherwise trust the Slack Connect flag.
       const channelExternal = channelType !== "im" && channelInfo.isExtShared;
 
-      // A thread can first reach us on a reply, so its root may never have been
-      // persisted by Mana. Hydrate that root once into the user turn. Broader
-      // cross-thread context still comes from the scoped turn-preparation service.
+      // A thread can first reach us on a late reply, so root and intermediate
+      // messages may never have been persisted by OpenRyoko. Hydrate a bounded
+      // chronological snapshot; cross-thread context still comes from the scoped
+      // turn-preparation service.
       let parentContext = "";
       if (threadTs && threadTs !== (event as any).ts) {
         try {
-          const parent = await this.app.client.conversations.replies({
-            channel: (event as any).channel,
-            ts: threadTs,
-            inclusive: true,
-            limit: 1,
-          });
-          const parentText = parent.messages?.[0]?.text?.trim();
-          if (parentText) parentContext = `[Slack thread root]\n${parentText}\n\n`;
+          parentContext = await hydrateSlackThreadContext(
+            (args) => this.app.client.conversations.replies(args),
+            (event as any).channel,
+            threadTs,
+            (event as any).ts,
+          );
         } catch (err) {
-          logger.warn(`[slack] Failed to hydrate thread root: ${this.formatSlackError(err)}`);
+          logger.warn(`[slack] Failed to hydrate thread context: ${this.formatSlackError(err)}`);
         }
       }
       const text = startsWithSlashCommand(rawText) ? rawText : `${parentContext}${rawText}`;

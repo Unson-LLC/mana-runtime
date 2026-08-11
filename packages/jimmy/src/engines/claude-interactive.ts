@@ -5,8 +5,9 @@ import path from "node:path";
 import * as pty from "node-pty";
 import type { InterruptibleEngine, EngineRunOpts, EngineResult, EngineRateLimitInfo, StreamDelta } from "../shared/types.js";
 import { logger } from "../shared/logger.js";
-import { JINN_HOME, CLAUDE_SETTINGS_DIR, HOOK_RELAY_SCRIPT, PLACEMENT_GUARD_SCRIPT } from "../shared/paths.js";
-import { writeSessionSettings } from "../shared/claude-settings.js";
+import { JINN_HOME, CLAUDE_SETTINGS_DIR, CLAUDE_STARTUP_EVIDENCE_DIR, HOOK_RELAY_SCRIPT, PLACEMENT_GUARD_SCRIPT } from "../shared/paths.js";
+import { resolveMcpApprovalSettings, writeSessionSettings } from "../shared/claude-settings.js";
+import { writeClaudeStartupEvidence } from "../shared/claude-startup-evidence.js";
 import { awaitFreshClaudeCredentials } from "../shared/claude-oauth-gate.js";
 import { PtyLifecycleManager, type PtyHandle } from "./pty-lifecycle.js";
 import type { PtyControlEvent, PtyViewEngine, PtyIdleSpawnOpts } from "./pty-view-engine.js";
@@ -298,13 +299,27 @@ export function sseEventToDeltas(e: SseDataEvent): StreamDelta[] {
  *  new turn — this is how a config hot-reload of placement capabilities
  *  reaches a session with a warm PTY. Exported for unit tests. */
 export function placementBoundaryKey(
-  opts: Pick<EngineRunOpts, "allowedTools" | "disallowedTools" | "placementBashGuard">,
+  opts: Pick<EngineRunOpts, "allowedTools" | "disallowedTools" | "placementBashGuard" | "mcpConfigPath" | "strictMcpConfig">,
+  mcpApprovals?: { enabledMcpjsonServers: string[]; disabledMcpjsonServers: string[] },
 ): string {
+  let mcpConfigDigest = "";
+  if (opts.mcpConfigPath) {
+    try {
+      mcpConfigDigest = createHash("sha256").update(fs.readFileSync(opts.mcpConfigPath)).digest("hex");
+    } catch {
+      mcpConfigDigest = "unreadable";
+    }
+  }
   return [
     opts.placementBashGuard ? "bash-guard" : "",
     // "*" sentinel distinguishes "no per-run list" (global) from an empty list.
     opts.allowedTools ? opts.allowedTools.join(",") : "*",
     ...(opts.disallowedTools ?? []),
+    opts.strictMcpConfig ? "strict-mcp" : "",
+    mcpConfigDigest,
+    ...(mcpApprovals?.enabledMcpjsonServers ?? []),
+    "--disabled-mcp--",
+    ...(mcpApprovals?.disabledMcpjsonServers ?? []),
   ].join("\n");
 }
 
@@ -420,6 +435,7 @@ export class TurnResolver {
   /** Claude session id learned so far (for engineSessionId persistence on warm-PTY turns). */
   get sessionId(): string | undefined { return this.claudeSessionId; }
   get isSettled(): boolean { return this.settled; }
+  get hasStarted(): boolean { return this.gotSessionStart; }
   /** The StopFailure payload, if the turn ended in an API error (Task 5.3 maps it to rateLimit). */
   get stopFailure(): HookPayload | undefined { return this.stopFailurePayload; }
   /** transcript_path from whichever hook carried it. */
@@ -625,6 +641,9 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
      *  so their xterm doesn't render the new alt-screen atop the old one's cells. */
     hasSeenPty: boolean;
   }>();
+  /** Output captured only from the current cold spawn until SessionStart. This
+   *  deliberately does not reuse session scrollback, which survives respawns. */
+  private startupCaptures = new Map<string, { chunks: Buffer[]; totalBytes: number }>();
   /** Last terminal geometry reported by the client per session. Used to spawn
    *  follow-up PTYs at the correct dimensions when a turn comes in after the
    *  warm PTY was reaped — otherwise spawn() falls back to 120×40 and the TUI
@@ -662,6 +681,9 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
      *  This is intentionally opt-in and should normally contain only named,
      *  read-only MCP tools required by the deployment. */
     private allowedTools: string[] = [],
+    /** Cold-start deadline for the first SessionStart hook. This deliberately
+     *  ignores SSE busy state: an approval dialog can keep a live PTY wedged. */
+    private startupTimeoutMs = 60_000,
   ) {}
 
   async run(opts: EngineRunOpts): Promise<EngineResult> {
@@ -678,11 +700,19 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       return { sessionId: opts.resumeSessionId ?? "", result: "", error: "Interactive engine: a turn is already running for this session" };
     }
 
+    const mcpApprovals = resolveMcpApprovalSettings({
+      cwd: opts.cwd || JINN_HOME,
+      mcpConfigPath: opts.mcpConfigPath,
+      strictMcpConfig: opts.strictMcpConfig,
+    });
+    const spawnBoundaryKey = placementBoundaryKey(opts, mcpApprovals);
     const settingsPath = writeSessionSettings(CLAUDE_SETTINGS_DIR, jinnSessionId, {
       sessionId: jinnSessionId,
       relayScript: HOOK_RELAY_SCRIPT,
       appendSystemPrompt: opts.systemPrompt,
       placementGuardScript: opts.placementBashGuard ? PLACEMENT_GUARD_SCRIPT : undefined,
+      enabledMcpjsonServers: mcpApprovals?.enabledMcpjsonServers,
+      disabledMcpjsonServers: mcpApprovals?.disabledMcpjsonServers,
     });
 
     let warm = this.lifecycle.getWarm(jinnSessionId);
@@ -697,7 +727,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       // Bash guard hook also bind at spawn. A warm PTY spawned without the
       // requested Placement tool boundary must never serve a turn that requires
       // it — cold-respawn so the boundary actually applies.
-      const boundaryKey = placementBoundaryKey(opts);
+      const boundaryKey = spawnBoundaryKey;
       const instructionKey = instructionPromptKey(opts.systemPrompt);
       // A PTY adopted before this key existed (or by an older build) has no
       // recorded key — treat it as the unbounded default so plain non-placement
@@ -725,9 +755,15 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     const entry: { resolver: TurnResolver; onStream?: (d: StreamDelta) => void; boundProc?: pty.IPty; activeTools: number } = { resolver, onStream: opts.onStream, activeTools: 0 };
     this.active.set(jinnSessionId, entry);
 
+    let startupTimer: NodeJS.Timeout | undefined;
     // Register BEFORE spawning so a fast SessionStart is buffered+drained, not lost.
     this.hookRegistry.register(jinnSessionId, (h) => {
       resolver.onHook(h);
+      if (h.hook_event_name === "SessionStart") this.startupCaptures.delete(jinnSessionId);
+      if (h.hook_event_name === "SessionStart" && startupTimer) {
+        clearTimeout(startupTimer);
+        startupTimer = undefined;
+      }
       // Track local tool executions: lost-Stop recovery must never fire while a
       // tool is mid-run (transcript text exists but the turn isn't done).
       if (h.hook_event_name === "PreToolUse") entry.activeTools += 1;
@@ -769,12 +805,47 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
         if (entry.boundProc) this.handlePtyDeath(jinnSessionId, entry.boundProc, warm, `PTY inject failed (${msg})`);
       }
     } else {
-      const handle = await this.spawn(jinnSessionId, opts, settingsPath);
+      this.startupCaptures.set(jinnSessionId, { chunks: [], totalBytes: 0 });
+      let handle: PtyHandle;
+      try {
+        handle = await this.spawn(jinnSessionId, opts, settingsPath, spawnBoundaryKey);
+      } catch (err) {
+        this.startupCaptures.delete(jinnSessionId);
+        this.hookRegistry.unregister(jinnSessionId);
+        this.active.delete(jinnSessionId);
+        throw err;
+      }
       // Bind the proc before adopt/turnStarted so an early error/exit (before the
       // watchdog arms) still settles the turn via handlePtyDeath's boundProc gate.
       entry.boundProc = (handle as any)._proc as pty.IPty | undefined;
       this.lifecycle.adopt(jinnSessionId, handle);
       this.lifecycle.turnStarted(jinnSessionId);
+      // A fast SessionStart may have arrived while spawn() was resolving. Only
+      // arm after that race is observable through resolver.hasStarted.
+      if (!resolver.hasStarted && this.startupTimeoutMs > 0) {
+        startupTimer = setTimeout(() => {
+          if (resolver.isSettled || resolver.hasStarted) return;
+          let evidencePath: string | undefined;
+          try {
+            const chunks = this.startupCaptures.get(jinnSessionId)?.chunks ?? [];
+            evidencePath = writeClaudeStartupEvidence(
+              CLAUDE_STARTUP_EVIDENCE_DIR,
+              jinnSessionId,
+              Buffer.concat(chunks).toString("utf-8"),
+            );
+          } catch (err) {
+            logger.warn(`InteractiveClaudeEngine: failed to persist startup evidence for ${jinnSessionId}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          logger.warn(
+            `InteractiveClaudeEngine: startup for ${jinnSessionId} produced no SessionStart within ` +
+            `${Math.round(this.startupTimeoutMs / 1000)}s — releasing PTY${evidencePath ? ` (evidence: ${evidencePath})` : ""}`,
+          );
+          resolver.interrupt("Claude startup timed out before SessionStart");
+          this.startupCaptures.delete(jinnSessionId);
+          this.lifecycle.releaseSession(jinnSessionId);
+        }, this.startupTimeoutMs);
+        startupTimer.unref?.();
+      }
     }
 
     // Watchdog: if the bound PTY dies without the resolver settling (e.g. the
@@ -860,6 +931,8 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
     try {
       result = await resolver.promise;
     } finally {
+      if (startupTimer) clearTimeout(startupTimer);
+      this.startupCaptures.delete(jinnSessionId);
       clearInterval(watchdog);
       if (nativeCommandTimer) clearInterval(nativeCommandTimer);
       if (lostStopRecoveryTimer) clearInterval(lostStopRecoveryTimer);
@@ -1077,6 +1150,20 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       this.lastOutputAt.set(jinnSessionId, Date.now());
       // Convert string to Buffer once; push to ring; evict head until under cap.
       const chunk = Buffer.from(d, "utf-8");
+      const startupCapture = this.startupCaptures.get(jinnSessionId);
+      if (startupCapture) {
+        startupCapture.chunks.push(chunk);
+        startupCapture.totalBytes += chunk.length;
+        while (startupCapture.totalBytes > SCROLLBACK_CAP_BYTES && startupCapture.chunks.length > 1) {
+          startupCapture.totalBytes -= startupCapture.chunks.shift()!.length;
+        }
+        if (startupCapture.totalBytes > SCROLLBACK_CAP_BYTES && startupCapture.chunks.length === 1) {
+          const only = startupCapture.chunks[0]!;
+          const sliced = only.subarray(only.length - SCROLLBACK_CAP_BYTES);
+          startupCapture.chunks[0] = sliced;
+          startupCapture.totalBytes = sliced.length;
+        }
+      }
       stream.chunks.push(chunk);
       stream.totalBytes += chunk.length;
       while (stream.totalBytes > SCROLLBACK_CAP_BYTES && stream.chunks.length > 1) {
@@ -1106,7 +1193,7 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
 
   /** node-pty spawn of the genuine claude binary (no -p → cc_entrypoint=cli).
    *  Allocates a per-PTY SSE forward proxy first and points the child at it. */
-  private async spawn(jinnSessionId: string, opts: EngineRunOpts, settingsPath: string): Promise<PtyHandle> {
+  private async spawn(jinnSessionId: string, opts: EngineRunOpts, settingsPath: string, boundaryKey: string): Promise<PtyHandle> {
     const args = buildInteractiveArgs({
       prompt: opts.prompt,
       settingsPath,
@@ -1138,7 +1225,8 @@ export class InteractiveClaudeEngine implements InterruptibleEngine, PtyViewEngi
       cwd: opts.cwd || JINN_HOME,
       env,
     });
-    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, boundaryKey: placementBoundaryKey(opts), instructionKey: instructionPromptKey(opts.systemPrompt) });
+    logger.info(`InteractiveClaudeEngine spawned PID ${proc.pid} for session ${jinnSessionId}`);
+    this.spawnParams.set(jinnSessionId, { model: opts.model, effortLevel: opts.effortLevel, boundaryKey, instructionKey: instructionPromptKey(opts.systemPrompt) });
     return this.wireProcToStream(jinnSessionId, proc, port ? proxy : undefined);
   }
 
