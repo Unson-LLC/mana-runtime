@@ -40,7 +40,7 @@ Google Workspace CLIのJSON応答をそのまま返し、少なくとも要求�
 ## Verification
 
 - Unit: tool公開、入力排他、不正base64、size limit、MIME type既定値
-- Integration: fake Google Workspace CLIに渡るmetadata、upload bytes、成功応答、一時ファイルcleanup
+- Integration: fake Google Workspace CLIに渡るmetadata、upload bytes、成功応答、一時ファイルcleanup、およびbuild済みserverへの`initialize`/`tools/list`
 - Regression:既存Google Drive MCP tests、package typecheck、build
 - Deploy: 通常activationとrollback後に固定MCPパスがactive releaseへ解決されること
 - Production E2E: Slack依頼からDrive実ファイル作成、ID/link取得、同一thread返信
