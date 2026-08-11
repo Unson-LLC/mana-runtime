@@ -8,11 +8,12 @@
  */
 
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -429,7 +430,16 @@ export function startGoogleDriveMcpServer(): void {
   });
 }
 
-const entryPath = process.argv[1];
-if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
+export function isDirectExecution(entryPath = process.argv[1], moduleUrl = import.meta.url): boolean {
+  if (!entryPath) return false;
+
+  try {
+    return realpathSync(entryPath) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectExecution()) {
   startGoogleDriveMcpServer();
 }
