@@ -25,46 +25,31 @@ const EFFORT_MECHANISM: Record<EngineName, EffortMechanism> = {
   gemini: "none",
 };
 
-/** Conservative per-engine defaults used when synthesizing (no `models:` block). */
+/** Per-engine defaults used when synthesizing (no `models:` block). */
 const SYNTH_DEFAULTS: Record<EngineName, { supportsEffort: boolean; effortLevels: string[]; fallbackModel: string }> = {
-  claude: { supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"], fallbackModel: "opus" },
+  claude: { supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh", "max"], fallbackModel: "opus" },
   codex: { supportsEffort: true, effortLevels: ["low", "medium", "high", "xhigh"], fallbackModel: "gpt-5.6-sol" },
   gemini: { supportsEffort: false, effortLevels: [], fallbackModel: "gemini-2.5-pro" },
 };
 
 /**
- * Whether a Claude model supports the `xhigh` effort level. `xhigh` landed on
- * Opus 4.7 and Sonnet 5; Haiku-tier and *older* Opus/Sonnet (Opus ≤4.6,
- * Sonnet ≤4.6) reject it. The bare aliases `opus`/`sonnet` resolve to the
- * latest model, which supports it. Anything unrecognized is treated as
- * unsupported (conservative), so `resolveEffort` clamps it instead of passing
- * a broken `--effort xhigh` to the CLI.
+ * Claude CLI declares one flat effort list without model-specific gates.
+ * Claude Code determines model support at runtime; when effort is rejected, it
+ * follows the `latching unsupported and retrying without it` path and silently
+ * retries without effort instead of surfacing an error.
+ *
+ * Do not duplicate a model-capability table here. Such a table can go stale,
+ * causing `resolveEffort` to reject a newly supported level and silently fall
+ * back to medium. Both failure modes are silent; letting Claude Code probe at
+ * runtime is less harmful than preemptively blocking levels with stale data.
  */
-function claudeSupportsXhigh(modelId: string): boolean {
-  const id = modelId.toLowerCase();
-  if (id.includes("haiku")) return false;
-  if (id === "opus" || id === "sonnet") return true; // aliases → latest model
-  if (/opus-4-(?:[7-9]|\d\d)/.test(id)) return true; // Opus 4.7+ (incl. 4.10+)
-  if (/opus-(?:[5-9]|\d\d)/.test(id)) return true; //  Opus 5+
-  if (/sonnet-(?:[5-9]|\d\d)/.test(id)) return true; // Sonnet 5+
-  return false;
-}
-
-/**
- * Effort levels for a synthesized Claude model. Offering `xhigh` on a model
- * that rejects it would let a config default flow through as `--effort xhigh`
- * and break the run, so narrow by capability.
- */
-function claudeEffortLevels(modelId: string): string[] {
-  const base = ["low", "medium", "high"];
-  return claudeSupportsXhigh(modelId) ? [...base, "xhigh"] : base;
-}
-
-/** Effort levels a synthesized (no `models:` block) entry gives a specific model. */
-function synthEffortLevels(engine: EngineName, modelId: string): string[] {
+function synthEffortLevels(engine: EngineName): string[] {
   const d = SYNTH_DEFAULTS[engine];
+  // `supportsEffort` is the authority: an engine that declares no effort support
+  // yields no levels even if `effortLevels` is non-empty, so the two fields
+  // cannot drift into offering levels for an engine that rejects them.
   if (!d.supportsEffort) return [];
-  return engine === "claude" ? claudeEffortLevels(modelId) : [...d.effortLevels];
+  return [...d.effortLevels];
 }
 
 function isEngineName(engine: string): engine is EngineName {
@@ -97,14 +82,11 @@ export function effortLevelsForModel(config: JinnConfig, engine: string, modelId
   const exact = modelId ? entry.models.find((m) => m.id === modelId) : undefined;
   if (exact) return exact.supportsEffort ? [...exact.effortLevels] : [];
 
-  // modelId not in the registry (e.g. a session overrides the engine model to
-  // one that isn't the config default). For a SYNTHESIZED engine (no explicit
-  // `models:` block) compute levels for THIS model rather than borrowing the
-  // default model's — otherwise a haiku session inherits opus's `xhigh` and
-  // passes an unsupported `--effort xhigh` through. When a `models:` block
-  // exists the user declared exact levels, so keep the default-model fallback.
+  // A session may override a synthesized engine's configured model. Synthesized
+  // effort levels are engine-wide; an explicit `models:` block still owns its
+  // declared per-model levels and uses the default-model fallback below.
   if (modelId && isEngineName(engine) && !config.models?.[engine]) {
-    return synthEffortLevels(engine, modelId);
+    return synthEffortLevels(engine);
   }
 
   const fallback = entry.models.find((m) => m.id === entry.defaultModel) ?? entry.models[0];
@@ -149,7 +131,7 @@ export function synthesizeFromEngineConfig(config: JinnConfig): ModelRegistry {
       id: modelId,
       label: modelId,
       supportsEffort: defaults.supportsEffort,
-      effortLevels: synthEffortLevels(name, modelId),
+      effortLevels: synthEffortLevels(name),
     };
     registry[name] = {
       name,

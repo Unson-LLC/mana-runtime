@@ -27,6 +27,20 @@ describe("interactive Claude runtime instructions", () => {
   });
 });
 
+describe("interactive Claude effort", () => {
+  it("passes max effort to the Claude CLI", () => {
+    const args = buildInteractiveArgs({
+      prompt: "investigate",
+      settingsPath: "/tmp/settings.json",
+      effortLevel: "max",
+    });
+    const index = args.indexOf("--effort");
+
+    expect(index).toBeGreaterThan(-1);
+    expect(args[index + 1]).toBe("max");
+  });
+});
+
 describe("interactive Claude duration", () => {
   it("fills a missing Stop-hook duration from the measured turn boundary", () => {
     const result = applyInteractiveDuration(
