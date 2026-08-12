@@ -124,6 +124,15 @@ describe("Cloudflare meeting task pipeline", () => {
       status: "分析しています…",
     });
     expect(JSON.parse(String((statusCalls[1][1] as RequestInit).body))).toMatchObject({ status: "" });
+    const reactionCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/reactions."));
+    expect(reactionCalls).toHaveLength(2);
+    expect(String(reactionCalls[0][0])).toContain("reactions.add");
+    expect(JSON.parse(String((reactionCalls[0][1] as RequestInit).body))).toEqual({
+      channel: "C_MANA_TEST",
+      timestamp: "1786500001.000001",
+      name: "eyes",
+    });
+    expect(String(reactionCalls[1][0])).toContain("reactions.remove");
     expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(sandbox.exec.mock.invocationCallOrder[0]);
   });
 
@@ -146,7 +155,7 @@ describe("Cloudflare meeting task pipeline", () => {
       registered: 0,
     });
     expect(sandbox.exec).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
   it("resumes from the failed candidate without recreating successful tasks", async () => {
@@ -211,6 +220,8 @@ describe("Cloudflare meeting task pipeline", () => {
     expect(fetchMock.mock.calls.filter(([url]) =>
       String(url).includes("assistant.threads.setStatus")
     )).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/reactions.")))
+      .toHaveLength(2);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/companion/tasks"))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
     expect([...fs.files.keys()]).not.toContain("/task-runs/EvMinutes123.json");
@@ -224,7 +235,7 @@ describe("Cloudflare meeting task pipeline", () => {
           const body = JSON.parse(String(init?.body ?? "{}"));
           return new Response(JSON.stringify({ id: body.title }), { status: 201 });
         }
-        if (String(input).includes("assistant.threads.setStatus")) {
+        if (String(input).includes("assistant.threads.setStatus") || String(input).includes("/reactions.")) {
           return new Response(JSON.stringify({ ok: true }), { status: 200 });
         }
         slackAttempts += 1;

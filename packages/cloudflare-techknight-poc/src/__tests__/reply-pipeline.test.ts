@@ -127,6 +127,20 @@ describe("TechKnight Slack reply pipeline", () => {
       thread_ts: "1786454600.000001",
       status: "",
     });
+    const reactionCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/reactions.")
+    );
+    expect(reactionCalls).toHaveLength(2);
+    expect(String(reactionCalls[0][0])).toContain("reactions.add");
+    expect(JSON.parse(String((reactionCalls[0][1] as RequestInit).body))).toEqual({
+      channel: "C_MANA_TEST",
+      timestamp: "1786454653.386769",
+      name: "eyes",
+    });
+    expect(String(reactionCalls[1][0])).toContain("reactions.remove");
+    expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(
+      sandbox.exec.mock.invocationCallOrder[0],
+    );
 
     const [, request] = fetchMock.mock.calls.find(([url]) =>
       String(url).includes("chat.postMessage")
@@ -155,7 +169,7 @@ describe("TechKnight Slack reply pipeline", () => {
     });
 
     expect(sandbox.exec).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it.each([
@@ -212,6 +226,8 @@ describe("TechKnight Slack reply pipeline", () => {
       expect.objectContaining({ status: "分析しています…" }),
       expect.objectContaining({ status: "" }),
     ]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/reactions.")))
+      .toHaveLength(2);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
     expect([...fs.files.keys()].some((path) => path.startsWith("/replies/"))).toBe(false);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
@@ -255,6 +271,26 @@ describe("TechKnight Slack reply pipeline", () => {
     warnSpy.mockRestore();
   });
 
+  it("keeps replying when Slack rejects the processing reaction", async () => {
+    const fs = new MemoryFs();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockImplementation(async (input: string | URL | Request) => {
+      if (String(input).includes("reactions.add")) {
+        return new Response(JSON.stringify({ ok: false, error: "missing_scope" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, ts: "1786455000.000001" }), { status: 200 });
+    });
+    const { options } = harness({ fetch: fetchMock });
+
+    await expect(processReplyEvent(fs, event(), options)).resolves.toMatchObject({
+      outcome: "replied",
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("reactions.remove"))).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("slack_reaction_failed"));
+    warnSpy.mockRestore();
+  });
+
   it("refreshes the processing status while work is still running", async () => {
     vi.useFakeTimers();
     try {
@@ -277,10 +313,12 @@ describe("TechKnight Slack reply pipeline", () => {
 
       finish("done");
       await expect(running).resolves.toBe("done");
-      const allStatuses = fetchMock.mock.calls.map(([, init]) =>
-        JSON.parse(String((init as RequestInit).body)).status
-      );
+      const allStatuses = fetchMock.mock.calls
+        .filter(([url]) => String(url).includes("assistant.threads.setStatus"))
+        .map(([, init]) => JSON.parse(String((init as RequestInit).body)).status);
       expect(allStatuses).toEqual(["分析しています…", "分析しています…", ""]);
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/reactions.")))
+        .toHaveLength(2);
     } finally {
       vi.useRealTimers();
     }
