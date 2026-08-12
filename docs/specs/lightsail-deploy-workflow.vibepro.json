@@ -26,10 +26,10 @@
       "type": "contract",
       "statement": "The manual deployment workflow resolves an omitted input to origin/main and accepts an explicit input only when it is a full 40-character commit SHA reachable from origin/main.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 0 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-01" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Decision" }],
         "code_refs": [{ "file": "scripts/deploy/resolve-deploy-ref", "anchor": "merge-base --is-ancestor" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "workflow input and main membership contract" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "commit resolution fixtures passed" }]
       }
     },
     {
@@ -37,10 +37,10 @@
       "type": "invariant",
       "statement": "A secretless prepare job resolves and displays immutable target and control-plane outputs before approval; the production Environment deployment job depends only on those outputs, performs no checkout or target resolution after approval, and uses read-only repository permissions, non-cancelling concurrency, pinned host keys, and a commit-pinned checkout action in prepare.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 1 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-02" }],
         "architecture_refs": [{ "file": "docs/adr/0006-restricted-github-actions-lightsail-deploy.md", "section": "Decision" }],
         "code_refs": [{ "file": ".github/workflows/deploy-lightsail.yml", "anchor": "environment: production" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "workflow contract validation" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "deploy workflow semantic contract passed" }]
       }
     },
     {
@@ -48,10 +48,10 @@
       "type": "contract",
       "statement": "The dedicated SSH principal accepts only deploy followed by one full hexadecimal SHA and one control-plane SHA-256 digest, rejects an installed-script digest mismatch before build, and passes the SHA and digest as separate arguments to the root-owned deploy script.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-03" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Trust and secrets" }],
         "code_refs": [{ "file": "scripts/deploy/openryoko-deploy-command", "anchor": "SSH_ORIGINAL_COMMAND" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "forced-command validation" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "sshd account-shell forced-command fixture passed" }]
       }
     },
     {
@@ -59,21 +59,27 @@
       "type": "invariant",
       "statement": "The server independently fetches origin/main and rejects a requested commit that is not reachable from origin/main before creating or activating a release.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 3 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-04" }],
         "architecture_refs": [{ "file": "docs/adr/0006-restricted-github-actions-lightsail-deploy.md", "section": "Decision" }],
         "code_refs": [{ "file": "scripts/deploy/openryoko-pilot-deploy", "anchor": "merge-base --is-ancestor" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "main membership rejection fixture" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "commit resolution fixtures passed" }]
       }
     },
     {
       "id": "LDW-005",
       "type": "scenario",
-      "statement": "Given a valid unbuilt commit, the server builds it in a detached release worktree and changes the active symlink only after the Jimmy entrypoint exists.",
+      "statement": "Given a valid unbuilt commit, the server builds the Lightsail runtime's workspace dependencies and application packages in a detached release worktree and changes the active symlink only after the Jimmy entrypoint exists.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 4 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-05" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Runtime layout" }],
-        "code_refs": [{ "file": "scripts/deploy/openryoko-pilot-deploy", "anchor": "worktree add --detach" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "build failure cleanup and no-restart fixture" }]
+        "code_refs": [
+          { "file": "scripts/deploy/openryoko-pilot-deploy", "anchor": "worktree add --detach" },
+          { "file": "package.json", "anchor": "build:lightsail" }
+        ],
+        "test_refs": [
+          { "file": "scripts/deploy/test-deploy-scripts.sh", "case": "Jimmy build failure propagation fixture passed" },
+          { "file": "scripts/deploy/test-deploy-scripts.sh", "case": "Lightsail build scope fixture" }
+        ]
       }
     },
     {
@@ -81,10 +87,10 @@
       "type": "invariant",
       "statement": "Every service restart waits for the installed development-runner guard and fails without switching the running service when the guard times out.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 5 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-06" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Why this boundary" }],
         "code_refs": [{ "file": "scripts/deploy/openryoko-pilot-deploy", "anchor": "--wait 5400" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "guard timeout leaves current unchanged" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "deploy script, workflow contract, and rollback validation passed" }]
       }
     },
     {
@@ -92,10 +98,10 @@
       "type": "scenario",
       "statement": "Given activation or systemd active-check failure and an existing previous release, the deploy script restores the previous symlink and restarts the service before returning failure.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-07" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Rollback" }],
         "code_refs": [{ "file": "scripts/deploy/openryoko-pilot-deploy", "anchor": "activation failed; rolling back" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "restart active entrypoint and MainPID failure rollback fixtures" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "deploy script, workflow contract, and rollback validation passed" }]
       }
     },
     {
@@ -103,10 +109,10 @@
       "type": "invariant",
       "statement": "The repository and deployment output contain no SSH private key, runtime token, gateway environment value, or disabled host-key checking configuration.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 7 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-08" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Trust and secrets" }],
         "code_refs": [{ "file": ".github/workflows/deploy-lightsail.yml", "anchor": "StrictHostKeyChecking=yes" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "strict host-key and permission mutation rejection" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "deploy workflow semantic contract passed" }]
       }
     },
     {
@@ -114,10 +120,10 @@
       "type": "contract",
       "statement": "A successful workflow reports server-side build, guarded restart, systemd active evidence, control-plane digest, MainPID, and resolved release entrypoint without claiming Slack or Web release outcome completion.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-09" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Consequences" }],
         "code_refs": [{ "file": ".github/workflows/deploy-lightsail.yml", "anchor": "Slack/Web user outcome" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "active entrypoint and MainPID release-pointer evidence" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "deployment evidence output fixtures passed" }]
       }
     },
     {
@@ -125,10 +131,10 @@
       "type": "scenario",
       "statement": "The deploy-script test rejects arbitrary SSH commands and short SHAs, verifies shell syntax, parses the workflow contract, and exercises rollback pointer restoration.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 9 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-10" }],
         "architecture_refs": [],
         "code_refs": [],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "syntax forced-command workflow and rollback validation" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "deploy script, workflow contract, and rollback validation passed" }]
       }
     },
     {
@@ -136,10 +142,10 @@
       "type": "scenario",
       "statement": "After a successful activation, worktree metadata pruning failure emits a warning but does not reverse deployment success.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 9 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-10" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Rollback" }],
         "code_refs": [{ "file": "scripts/deploy/openryoko-pilot-deploy", "anchor": "warning: worktree metadata pruning failed" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "post-activation prune failure preserves success" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "deploy script, workflow contract, and rollback validation passed" }]
       }
     },
     {
@@ -147,10 +153,10 @@
       "type": "invariant",
       "statement": "Reinstalling the control plane preserves an existing active release pointer and seeds it from the source clone only on first installation; application rollback uses the current workflow control plane independently of the target application SHA and never runs an installer from the rollback target.",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 6 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-07" }],
         "architecture_refs": [{ "file": "docs/architecture/story-lightsail-deploy-workflow.md", "section": "Rollback" }],
         "code_refs": [{ "file": "scripts/deploy/lib/deploy-account.sh", "anchor": "seed_release_pointer_if_missing" }],
-        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "installer preserves existing current pointer" }]
+        "test_refs": [{ "file": "scripts/deploy/test-deploy-scripts.sh", "case": "installer artifact fixtures passed" }]
       }
     }
   ],

@@ -44,7 +44,7 @@ sequenceDiagram
 2. production reviewerがprepare summaryの固定値とPR/CIを確認して承認する。承認後のdeploy jobはmainをcheckout・再解決せず、prepare job outputとpinned known_hosts、専用秘密鍵だけを使って`openryoko-deploy`へ`deploy <target-sha> <digest>`を送る。target SHAとcontrol-plane SHAは独立させる。
 3. forced-command wrapperが入力を完全一致で検証し、installed script 2本のdigestが一致した場合だけroot deploy scriptへSHAとdigestを別々のargvとして渡す。root deploy scriptもbuild前にdigestを再検証する。
 4. root deploy scriptがlockを取得し、pilot上のcanonical cloneで`origin/main`をfetchする。
-5. `$HOME/releases/openryoko/<sha>-<run-id>`へsingle-use detached worktreeを作り、frozen installとbuildを実行する。既存成果物は再利用しない。
+5. `$HOME/releases/openryoko/<sha>-<run-id>`へsingle-use detached worktreeを作り、frozen installとbuildを実行する。Lightsail runtimeが参照するworkspace依存を先にbuildし、既存成果物は再利用しない。
 6. development runner guardがidle/staleになるまで待つ。
 7. `/home/ryoko/current`を新releaseへatomicに切り替え、`openryoko.service`をrestartする。
 8. systemd active、active entrypoint、MainPIDのcommand lineがrelease pointerを使うことを確認する。失敗時は直前symlinkへ戻してrestartする。成功時は対象SHA、control-plane digest、MainPID、resolved entrypointをworkflow summaryへ伝播する。
@@ -99,6 +99,7 @@ Trust boundaryはGitHub `production` Environment、restricted SSH principal、ro
 - activation失敗fixtureで直前release pointerへのrollbackと元のfailure status保持を確認する。
 - main外commit、lock競合、build失敗、guard timeout、systemd active-check失敗、entrypoint不一致、MainPID command不一致をcaller経路へ注入し、active pointerがknown-good releaseから変わらないことを確認する。
 - build失敗時に未完成releaseが削除され、service restartが呼ばれないことを確認する。
+- Lightsail用buildがWeb、Jimmy、およびJimmyが実行時に参照する共有Slack文脈packageを含むことを確認する。
 - activation成功後のworktree prune失敗がwarningに留まり、deploy成功を反転しないことを確認する。
 - control-plane再installが既存の`/home/ryoko/current`を保持し、初回install時だけsource cloneへのpointerをseedすることを確認する。
 - 本番導入時はcurrent SHA、installed control-plane digest、deploy account password lock、restricted `authorized_keys`、限定sudoers、arbitrary/short command拒否、systemd MainPID/entrypoint、workflow run URLを記録する。
