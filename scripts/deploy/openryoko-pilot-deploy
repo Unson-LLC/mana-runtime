@@ -121,7 +121,7 @@ cleanup_incomplete_release() {
 }
 trap cleanup_incomplete_release EXIT
 run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" install --frozen-lockfile
-run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" build
+run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" build:lightsail
 [[ -f "$release_dir/packages/jimmy/dist/bin/jimmy.js" ]] || die "build did not create the Jimmy entrypoint"
 [[ -f "$release_dir/packages/jimmy/dist/src/mcp/google-drive-server.js" ]] \
   || die "build did not create the Google Drive MCP adapter"
