@@ -47,13 +47,15 @@ export async function hydrateSlackQueueEventThreadContext(
   const context = await hydrateSlackThreadContext(async (args) => {
     let response: Response;
     try {
-      response = await fetchImpl("https://slack.com/api/conversations.replies", {
-        method: "POST",
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(args)) {
+        if (value !== undefined) query.set(key, String(value));
+      }
+      response = await fetchImpl(`https://slack.com/api/conversations.replies?${query}`, {
+        method: "GET",
         headers: {
           authorization: `Bearer ${options.botToken}`,
-          "content-type": "application/json; charset=utf-8",
         },
-        body: JSON.stringify(args),
         signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
       });
     } catch {
