@@ -4,6 +4,11 @@ import {
   persistReplyCompletion,
   type WorkspaceFs,
 } from "./workspace-store.js";
+import {
+  buildRuntimeClaudeCommand,
+  runtimeClaudePromptPath,
+  type ClaudeRuntimeConfig,
+} from "./claude-runtime-config.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -33,6 +38,7 @@ export interface ReplyPipelineOptions {
   allowedChannelId: string;
   slackBotToken?: string;
   oauthConfigured: boolean;
+  claudeRuntime: ClaudeRuntimeConfig;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -112,16 +118,16 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "createSandbox">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
   const sandbox = options.createSandbox(`techknight-reply-${event.eventId}`);
   try {
-    const promptPath = "/tmp/mana-slack-prompt.txt";
+    const promptPath = runtimeClaudePromptPath("reply");
     await sandbox.writeFile(promptPath, buildPrompt(event));
     const result = await sandbox.exec(
-      `claude --print --permission-mode bypassPermissions "$(cat ${promptPath})"`,
+      buildRuntimeClaudeCommand("reply", options.claudeRuntime),
       {
         timeout: 120_000,
         env: {
