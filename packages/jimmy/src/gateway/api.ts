@@ -46,6 +46,8 @@ import {
   BrainbaseTaskClient,
   BrainbaseTaskError,
   type CreateTaskInput,
+  type ListTasksQuery,
+  type SearchTasksQuery,
   type TransitionTaskInput,
   type UpdateTaskInput,
 } from "../shared/brainbase-tasks.js";
@@ -355,6 +357,7 @@ function gatewayToolMatchesRoute(tool: string, method: string, pathname: string)
   if (tool === "update_board") return method === "PUT" && !!matchRoute("/api/org/departments/:name/board", pathname);
   if (tool === "create_task") return method === "POST" && pathname === "/api/tasks";
   if (tool === "list_tasks") return method === "GET" && pathname === "/api/tasks";
+  if (tool === "search_tasks") return method === "GET" && pathname === "/api/tasks/search";
   if (tool === "update_task") return method === "PATCH" && !!matchRoute("/api/tasks/:id", pathname);
   if (tool === "transition_task") return method === "POST" && !!matchRoute("/api/tasks/:id/transitions", pathname);
   if (tool === "list_cron_jobs") return method === "GET" && pathname === "/api/cron";
@@ -1797,16 +1800,55 @@ Handle this as a priority request from a colleague.`;
 
     // GET /api/tasks
     if (method === "GET" && pathname === "/api/tasks") {
+      const projectCodes = gatewayPlacementId
+        ? placementProjectCodesForPlacement(context.getConfig().placements, gatewayPlacementId)
+        : url.searchParams.getAll("project_code").filter(Boolean);
+      if (gatewayPlacementId && projectCodes.length === 0) {
+        return json(res, {
+          error: "placement has no projects configured",
+          code: "task_project_scope_required",
+        }, 403);
+      }
       try {
         const client = new BrainbaseTaskClient();
-        const result = await client.listTasks({
+        const query: ListTasksQuery = {
           status: url.searchParams.get("status") || undefined,
           priority: url.searchParams.get("priority") || undefined,
           assignee_person_id: url.searchParams.get("assignee_person_id") || undefined,
           limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
           cursor: url.searchParams.get("cursor") || undefined,
-        });
+          project_code: projectCodes.length ? projectCodes : undefined,
+        };
+        const result = await client.listTasks(query);
         return json(res, result);
+      } catch (err) {
+        return brainbaseTaskErrorResponse(res, err);
+      }
+    }
+
+    // GET /api/tasks/search
+    if (method === "GET" && pathname === "/api/tasks/search") {
+      const projectCodes = gatewayPlacementId
+        ? placementProjectCodesForPlacement(context.getConfig().placements, gatewayPlacementId)
+        : url.searchParams.getAll("project_code").filter(Boolean);
+      if (gatewayPlacementId && projectCodes.length === 0) {
+        return json(res, {
+          error: "placement has no projects configured",
+          code: "task_project_scope_required",
+        }, 403);
+      }
+      try {
+        const client = new BrainbaseTaskClient();
+        const query: SearchTasksQuery = {
+          query: url.searchParams.get("query") || "",
+          status: url.searchParams.get("status") || undefined,
+          priority: url.searchParams.get("priority") || undefined,
+          assignee_person_id: url.searchParams.get("assignee_person_id") || undefined,
+          limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+          cursor: url.searchParams.get("cursor") || undefined,
+          project_code: projectCodes.length ? projectCodes : undefined,
+        };
+        return json(res, await client.searchTasks(query));
       } catch (err) {
         return brainbaseTaskErrorResponse(res, err);
       }

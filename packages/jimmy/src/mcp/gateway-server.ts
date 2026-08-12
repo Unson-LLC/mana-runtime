@@ -20,7 +20,13 @@ import {
 } from "./gateway-policy.js";
 import {
   buildCreateTaskRequestBody,
+  buildTaskListPath,
+  buildTaskSearchPath,
+  TASK_LIST_DESCRIPTION,
+  TASK_SEARCH_DESCRIPTION,
   buildUpdateTaskRequestBody,
+  TASK_LIST_QUERY_SCHEMA,
+  TASK_SEARCH_QUERY_SCHEMA,
   withTaskAssigneeNameSchema,
 } from "./task-tool-input.js";
 
@@ -143,15 +149,19 @@ const TOOLS = [
   },
   {
     name: "list_tasks",
-    description:
-      "List tasks from the canonical Brainbase task store. Filter by status or priority.",
+    description: TASK_LIST_DESCRIPTION,
     inputSchema: {
       type: "object" as const,
-      properties: {
-        status: { type: "string", enum: ["pending", "in_progress", "waiting", "completed"], description: "Filter by status" },
-        priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "Filter by priority" },
-        limit: { type: "number", description: "Max items to return (default 20)" },
-      },
+      properties: TASK_LIST_QUERY_SCHEMA,
+    },
+  },
+  {
+    name: "search_tasks",
+    description: TASK_SEARCH_DESCRIPTION,
+    inputSchema: {
+      type: "object" as const,
+      properties: TASK_SEARCH_QUERY_SCHEMA,
+      required: ["query"],
     },
   },
   {
@@ -393,12 +403,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
 
     case "list_tasks": {
-      const params = new URLSearchParams();
-      if (args.status) params.set("status", String(args.status));
-      if (args.priority) params.set("priority", String(args.priority));
-      if (args.limit) params.set("limit", String(args.limit));
-      const suffix = params.size > 0 ? `?${params.toString()}` : "";
-      const result = await apiGet(`/api/tasks${suffix}`, name);
+      const result = await apiGet(buildTaskListPath(args), name);
+      return JSON.stringify(result);
+    }
+
+    case "search_tasks": {
+      const result = await apiGet(buildTaskSearchPath(args), name);
       return JSON.stringify(result);
     }
 

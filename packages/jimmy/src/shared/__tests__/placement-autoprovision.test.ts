@@ -22,6 +22,8 @@ import {
   buildAutoProvisionGreeting,
   disablePlacementOnLeave,
 } from "../placement-autoprovision.js";
+
+// VibePro traceability: story-slack-task-bounded-search:ac:7, story-slack-task-bounded-search:ac:8.
 import { listConfigHistory } from "../config-history.js";
 import type { JinnConfig, PlacementProfile } from "../types.js";
 
@@ -66,7 +68,7 @@ describe("buildAutoProvisionedPlacement", () => {
       agent: { defaultModel: "sonnet", escalationEmployee: "critical-reviewer" },
       capabilities: {
         mcp: ["brainbase", "gateway"],
-        gatewayTools: ["send_message", "create_task", "list_tasks", "update_task", "transition_task"],
+        gatewayTools: ["send_message", "create_task", "list_tasks", "search_tasks", "update_task", "transition_task"],
       },
       dataScopes: { graph: "read-only" },
       monthlyBudgetUsd: 10,

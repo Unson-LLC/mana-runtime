@@ -59,7 +59,7 @@ const STANDARD_CAPABILITIES: NonNullable<PlacementProfile["capabilities"]> = {
   // allowedDelivery is intentionally omitted: placementDeliveryTargets falls
   // back to the placement's own channel, so an auto-provisioned agent can
   // never deliver anywhere else.
-  gatewayTools: ["send_message", "create_task", "list_tasks", "update_task", "transition_task"],
+  gatewayTools: ["send_message", "create_task", "list_tasks", "search_tasks", "update_task", "transition_task"],
 };
 const STANDARD_DATA_SCOPES: Record<string, unknown> = { graph: "read-only" };
 const STANDARD_MONTHLY_BUDGET_USD = 10;

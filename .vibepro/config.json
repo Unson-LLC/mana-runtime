@@ -198,8 +198,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-slack-task-bounded-search",
+        "title": "Slack会話向けCanonical Task境界付き検索",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-cloudflare-primary-runtime"
+    "current_story_id": "story-slack-task-bounded-search"
   }
 }
