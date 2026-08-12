@@ -58,6 +58,7 @@ export interface MeetingTaskPipelineOptions {
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
+  hydrateThreadContext?(event: SlackQueueEvent): Promise<SlackQueueEvent>;
 }
 
 export interface MeetingTaskProcessResult {
@@ -290,11 +291,14 @@ export async function processMeetingTaskEvent(
     return { outcome: "already_completed", registered: 0 };
   }
   return withSlackThreadStatus(event, options, async () => {
+    const hydratedEvent = options.hydrateThreadContext
+      ? await options.hydrateThreadContext(event)
+      : event;
     let state = await loadTaskRun(fs, event.eventId);
     if (!state) {
       state = {
         eventId: event.eventId,
-        candidates: await extractCandidates(event, options),
+        candidates: await extractCandidates(hydratedEvent, options),
         registered: [],
         failures: [],
       };
@@ -304,7 +308,7 @@ export async function processMeetingTaskEvent(
       if (state.registered.some((task) => task.index === index)) continue;
       const candidate = state.candidates[index];
       try {
-        const taskId = await createBrainbaseTask(event, candidate, index, options);
+        const taskId = await createBrainbaseTask(hydratedEvent, candidate, index, options);
         state.registered.push({ ...candidate, index, taskId });
         state.failures = state.failures.filter((failure) => failure.index !== index);
       } catch (error) {
@@ -316,7 +320,7 @@ export async function processMeetingTaskEvent(
       }
       await saveTaskRun(fs, state);
     }
-    const responseTs = await publishNotification(fs, event, state, options);
+    const responseTs = await publishNotification(fs, hydratedEvent, state, options);
     if (state.failures.length > 0) {
       throw new ReplyPipelineError("brainbase_task_registration_partial");
     }

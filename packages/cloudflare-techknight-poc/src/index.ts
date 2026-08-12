@@ -107,19 +107,19 @@ export default {
             () => getWorkspace(handle),
             async (workspace) => {
               await persistEventOnce(workspace.fs, event);
-              const hydratedEvent = await hydrateSlackQueueEventThreadContext(event, {
-                botToken: env.SLACK_BOT_TOKEN,
-              });
-              return routeRuntimeEvent(hydratedEvent, {
+              const hydrateThreadContext = (input: SlackQueueEvent) => (
+                hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN })
+              );
+              return routeRuntimeEvent(event, {
                 meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
                 processMeetingTask: () => {
-                  const binding = resolveRuntimeBinding(hydratedEvent, {
+                  const binding = resolveRuntimeBinding(event, {
                     tenantId: env.TENANT_ID,
                     workspaceId: env.SLACK_EXPECTED_TEAM_ID,
                     channelId: env.SLACK_ALLOWED_CHANNEL_ID,
                     projectCodes: env.RUNTIME_PROJECT_CODES,
                   });
-                  return processMeetingTaskEvent(workspace.fs, hydratedEvent, {
+                  return processMeetingTaskEvent(workspace.fs, event, {
                     binding,
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
@@ -127,9 +127,10 @@ export default {
                     oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
                     claudeRuntime,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                    hydrateThreadContext,
                   });
                 },
-                processReply: () => processReplyEvent(workspace.fs, hydratedEvent, {
+                processReply: () => processReplyEvent(workspace.fs, event, {
                   expectedTenantId: env.TENANT_ID,
                   expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
                   allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
@@ -137,6 +138,7 @@ export default {
                   oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
                   claudeRuntime,
                   createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                  hydrateThreadContext,
                 }),
               });
             },
