@@ -22,6 +22,8 @@ import {
 } from "../../sessions/delegation-auth.js";
 import { logger } from "../../shared/logger.js";
 
+// VibePro traceability: story-slack-task-bounded-search:ac:2, story-slack-task-bounded-search:ac:3, story-slack-task-bounded-search:ac:4, story-slack-task-bounded-search:ac:7, story-slack-task-bounded-search:ac:8.
+
 describe("placement authorization at HTTP derived-session endpoints", () => {
   let baseUrl = "";
   let closeServer: (() => Promise<void>) | undefined;
@@ -336,7 +338,7 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
   });
 
   it("binds canonical task tools to their /api/tasks routes under placement policy", async () => {
-    config.placements![0].capabilities!.gatewayTools = ["list_tasks", "create_task"];
+    config.placements![0].capabilities!.gatewayTools = ["list_tasks", "search_tasks", "create_task"];
     try {
       // Authorized tool + matching route passes the placement gate; the request
       // then reaches the task proxy, which fails loud (503) because the
@@ -350,6 +352,16 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       });
       expect(listed.status).toBe(503);
       expect(((await listed.json()) as { code?: string }).code).toBe("task_store_not_configured");
+
+      const searched = await fetch(`${baseUrl}/api/tasks/search?query=monthly`, {
+        headers: {
+          [SESSION_DELEGATION_HEADER]: getSessionDelegationToken(parentId),
+          [CURRENT_SESSION_HEADER]: parentId,
+          "x-jinn-gateway-tool": "search_tasks",
+        },
+      });
+      expect(searched.status).toBe(503);
+      expect(((await searched.json()) as { code?: string }).code).toBe("task_store_not_configured");
 
       const created = await fetch(`${baseUrl}/api/tasks`, {
         method: "POST",
@@ -390,6 +402,72 @@ describe("placement authorization at HTTP derived-session endpoints", () => {
       expect(mismatched.status).toBe(403);
     } finally {
       config.placements![0].capabilities!.gatewayTools = ["send_message"];
+    }
+  });
+
+  it("forces placement projects onto list and search reads and rejects unscoped placements", async () => {
+    const originalPlacements = config.placements;
+    const originalFetch = globalThis.fetch;
+    const companionUrls: string[] = [];
+    config.placements = [{
+      ...originalPlacements![0],
+      projects: ["back-office", "shared"],
+      capabilities: { ...originalPlacements![0].capabilities, gatewayTools: ["list_tasks", "search_tasks"] },
+    }];
+    process.env.BRAINBASE_TASK_API_BASE_URL = "https://bb.example";
+    process.env.BRAINBASE_TASK_API_TOKEN = "bbsvc_test";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const target = String(input);
+      if (target.startsWith("https://bb.example/api/companion/tasks")) {
+        companionUrls.push(target);
+        const isSearch = target.includes("/tasks/search?");
+        return new Response(JSON.stringify({
+          items: [], total_count: null, count_status: "not_requested",
+          has_more: isSearch, next_cursor: isSearch ? "search-next" : null,
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return originalFetch(input, init);
+    });
+
+    try {
+      const listed = await gatewayGet("/api/tasks?status=pending&cursor=next&project_code=spoofed", "list_tasks");
+      expect(listed.status).toBe(200);
+      const searched = await gatewayGet(
+        "/api/tasks/search?query=monthly&limit=10&project_code=spoofed",
+        "search_tasks",
+      );
+      expect(searched.status).toBe(200);
+      await expect(searched.json()).resolves.toMatchObject({
+        has_more: true,
+        next_cursor: "search-next",
+      });
+      expect(companionUrls).toEqual([
+        "https://bb.example/api/companion/tasks?status=pending&cursor=next&project_code=back-office&project_code=shared",
+        "https://bb.example/api/companion/tasks/search?query=monthly&limit=10&project_code=back-office&project_code=shared",
+      ]);
+
+      const operatorSearch = await fetch(
+        `${baseUrl}/api/tasks/search?query=monthly&project_code=back-office&project_code=shared`,
+        { headers: { "x-openryoko-operator-token": "operator-canary" } },
+      );
+      expect(operatorSearch.status).toBe(200);
+      expect(companionUrls[2]).toBe(
+        "https://bb.example/api/companion/tasks/search?query=monthly&project_code=back-office&project_code=shared",
+      );
+
+      config.placements = [{ ...config.placements[0], projects: [] }];
+      const unscoped = await gatewayGet("/api/tasks/search?query=monthly", "search_tasks");
+      expect(unscoped.status).toBe(403);
+      await expect(unscoped.json()).resolves.toEqual({
+        error: "placement has no projects configured",
+        code: "task_project_scope_required",
+      });
+      expect(companionUrls).toHaveLength(3);
+    } finally {
+      fetchSpy.mockRestore();
+      delete process.env.BRAINBASE_TASK_API_BASE_URL;
+      delete process.env.BRAINBASE_TASK_API_TOKEN;
+      config.placements = originalPlacements;
     }
   });
 

@@ -64,6 +64,19 @@ export interface ListTasksQuery {
   project_code?: string[];
 }
 
+export interface SearchTasksQuery extends ListTasksQuery {
+  query: string;
+}
+
+export interface TaskSearchPage {
+  items: BrainbaseTask[];
+  total_count: null;
+  count_status: "not_requested";
+  has_more: boolean;
+  next_cursor?: string | null;
+  read_status?: string;
+}
+
 export class BrainbaseTaskError extends Error {
   readonly status: number;
   readonly code: string;
@@ -163,6 +176,18 @@ export class BrainbaseTaskClient {
     return this.request<{ items: BrainbaseTask[]; next_cursor?: string | null }>(
       `/api/companion/tasks${suffix}`,
     );
+  }
+
+  async searchTasks(query: SearchTasksQuery): Promise<TaskSearchPage> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (Array.isArray(value)) {
+        for (const item of value) params.append(key, String(item));
+      } else if (value !== undefined && value !== null && value !== "") {
+        params.set(key, String(value));
+      }
+    }
+    return this.request<TaskSearchPage>(`/api/companion/tasks/search?${params.toString()}`);
   }
 
   async getTask(taskId: string): Promise<BrainbaseTask> {

@@ -30,7 +30,7 @@ AIガバナンス責任者として、Slackチャンネルにbotを招待した�
 - bot自身への `member_joined_channel` イベントで、そのチャンネルのplacementが標準プロファイルで自動生成されconfig.yamlへ永続化される。書込は必ずconfig-historyのスナップショット機構（`recordConfigChange`、source: "auto-provision"）を通る（auto-provision on invite）。
 - 同一connector/workspace/channelのplacementが既に存在するチャンネル（enabled: falseを含む）では自動生成も上書きも行われない（idempotent no-op）。
 - `placements:` キーが構成されていない（placement運用外の）インスタンスでは自動生成が発動しない — 初placement追加による他チャンネル全拒否への意図しない切替を防ぐ（placement-mode gate）。
-- 標準プロファイルはコード内デフォルト+config.yamlの `placementDefaults` 上書きで1箇所に定義され、生成時に適用される: audience type "channel-members" / owner=招待者Slack userID / purpose="auto-provisioned (invited by <user>)" / agent.defaultModel sonnet・escalationEmployee critical-reviewer / capabilities.mcp [brainbase, gateway]・gatewayTools [send_message, create_task, list_tasks, update_task, transition_task]・allowedDelivery省略（自チャンネルのみフォールバック） / dataScopes graph read-only / monthlyBudgetUsd 10（standard profile）。
+- 標準プロファイルはコード内デフォルト+config.yamlの `placementDefaults` 上書きで1箇所に定義され、生成時に適用される: audience type "channel-members" / owner=招待者Slack userID / purpose="auto-provisioned (invited by <user>)" / agent.defaultModel sonnet・escalationEmployee critical-reviewer / capabilities.mcp [brainbase, gateway]・gatewayTools [send_message, create_task, list_tasks, search_tasks, update_task, transition_task]・allowedDelivery省略（自チャンネルのみフォールバック） / dataScopes graph read-only / monthlyBudgetUsd 10（standard profile）。
 - audience type "channel-members" が新設され、静的allowedUsersではなくSlack `conversations.members` 照会（TTLキャッシュ付き）で発話者のメンバーシップを判定する。API失敗・判定不能・非対応connectorはfail-closed=拒否となる（channel-members audience）。
 - brainbase MCPを許可する全placementセッション（自動生成に限らない恒常ルール）で `mcp__brainbase__search_personal_kg` が `--disallowedTools` の個別denyに追加される（personal KG deny）。
 - 自動生成成功時にそのチャンネルへ1回だけ挨拶（標準プロファイルで動く旨・owner・できること3行・昇格はownerからoperatorへ依頼）が投稿される（greeting once）。
@@ -47,3 +47,9 @@ AIガバナンス責任者として、Slackチャンネルにbotを招待した�
 
 - 対象: `packages/jimmy` のSlackコネクタ（connectors/slack/index.ts: member_joined_channel / channel_left・group_left ハンドラ、conversations.membersメンバーシップ照会）、placement境界（shared/placement-profile.ts: channel-members audience解決とpersonal KG deny）、自動プロビジョニングモジュール（config.yaml読み書き+config-history、標準プロファイル定義）、routing gate（gateway/server.ts: メンバーシップ判定の受け渡し）、型定義（shared/types.ts: audience拡張・placementDefaults）、台帳表示互換（gateway/placements.ts）。
 - 非対象: 昇格の承認フロー（nocodb・他チャンネル配信・cron・budget増額は既存どおりconfig手編集、HITL型化後に接続）、Slack以外のコネクタでのchannel-members対応（fail-closed拒否のまま）、triage/respondToポリシーの変更（mention既定のまま）、退出後の再招待での自動再有効化（手動re-enable運用）。
+
+## 標準capability追加時の既存placement運用
+
+`STANDARD_CAPABILITIES` の変更は新規自動作成placementにだけ適用され、既存placementは自動更新しない。`search_tasks` のような標準toolを追加する場合は、config-historyのスナップショットを作成し、対象placementの `gatewayTools` へ明示追加する。更新後はoperatorの保護readと対象channelの疎通で許可を確認し、未許可channelおよび無スコープ要求が引き続き拒否されることを確認する。
+
+ロールバックはスナップショットを使って対象placementのtool追加だけを戻し、認可拒否を確認してからruntimeを直前releaseへ戻す。`placements` 全体の削除、空設定、audience拡張をロールバックに使わない。

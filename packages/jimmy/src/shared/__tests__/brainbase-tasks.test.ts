@@ -6,6 +6,8 @@ import {
   isBrainbaseTaskStoreConfigured,
 } from "../brainbase-tasks.js";
 
+// VibePro traceability: story-slack-task-bounded-search:ac:1, story-slack-task-bounded-search:ac:4, story-slack-task-bounded-search:ac:6, story-slack-task-bounded-search:ac:7, story-slack-task-bounded-search:ac:8.
+
 function fakeFetch(handler: (url: string, init: RequestInit) => { status: number; body: unknown }) {
   return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const { status, body } = handler(String(url), init ?? {});
@@ -73,6 +75,33 @@ describe("BrainbaseTaskClient", () => {
     const client = new BrainbaseTaskClient({ ...options, fetchImpl });
     const result = await client.listTasks({ status: "pending", limit: 5, project_code: ["mana", "brainbase"] });
     expect(result.items).toEqual([]);
+  });
+
+  it("searches tasks through the bounded search endpoint", async () => {
+    const fetchImpl = fakeFetch((url, init) => {
+      expect(url).toBe(
+        "https://bb.example/api/companion/tasks/search?query=%E6%9C%88%E6%AC%A1+%E7%B7%A0%E3%82%81&status=pending&limit=20&cursor=next&project_code=back-office",
+      );
+      expect(init.method).toBe("GET");
+      return {
+        status: 200,
+        body: {
+          items: [], total_count: null, count_status: "not_requested",
+          has_more: true, next_cursor: "search-next",
+        },
+      };
+    });
+    const client = new BrainbaseTaskClient({ ...options, fetchImpl });
+    const result = await client.searchTasks({
+      query: "月次 締め",
+      status: "pending",
+      limit: 20,
+      cursor: "next",
+      project_code: ["back-office"],
+    });
+    expect(result).toMatchObject({
+      items: [], total_count: null, has_more: true, next_cursor: "search-next",
+    });
   });
 
   it("transitions a task through the transitions endpoint", async () => {
