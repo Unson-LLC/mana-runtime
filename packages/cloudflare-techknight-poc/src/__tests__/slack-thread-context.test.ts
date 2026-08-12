@@ -42,7 +42,17 @@ describe("Cloudflare Slack thread context adapter", () => {
     expect(hydrated.threadContext).toContain("契約更新について");
     expect(hydrated.threadContext).toContain("月額は5万円");
     expect(hydrated.threadContext).not.toContain("このスレッドを説明して");
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ cursor: "next", limit: 99 });
+    const firstUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "GET" });
+    expect(firstUrl.searchParams).toEqual(new URLSearchParams({
+      channel: "C_BACK_OFFICE",
+      ts: "1",
+      inclusive: "true",
+      limit: "100",
+    }));
+    const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
+    expect(secondUrl.searchParams.get("cursor")).toBe("next");
+    expect(secondUrl.searchParams.get("limit")).toBe("99");
   });
 
   it("does not call Slack for a root mention", async () => {
