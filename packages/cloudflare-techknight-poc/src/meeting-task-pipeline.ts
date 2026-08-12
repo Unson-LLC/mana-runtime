@@ -12,6 +12,11 @@ import {
   persistReplyCompletion,
   type WorkspaceFs,
 } from "./workspace-store.js";
+import {
+  buildRuntimeClaudeCommand,
+  runtimeClaudePromptPath,
+  type ClaudeRuntimeConfig,
+} from "./claude-runtime-config.js";
 
 const MAX_TASKS = 20;
 const MAX_TITLE_CHARS = 200;
@@ -49,6 +54,7 @@ export interface MeetingTaskPipelineOptions {
   brainbaseTaskToken?: string;
   slackBotToken?: string;
   oauthConfigured: boolean;
+  claudeRuntime: ClaudeRuntimeConfig;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -141,17 +147,17 @@ function buildExtractionPrompt(event: SlackQueueEvent): string {
 
 async function extractCandidates(
   event: SlackQueueEvent,
-  options: Pick<MeetingTaskPipelineOptions, "oauthConfigured" | "createSandbox">,
+  options: Pick<MeetingTaskPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox">,
 ): Promise<TaskCandidate[]> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   const sandbox = options.createSandbox(`meeting-tasks-${event.eventId}`);
   try {
-    const promptPath = "/tmp/meeting-task-prompt.txt";
+    const promptPath = runtimeClaudePromptPath("meeting-task");
     await sandbox.writeFile(promptPath, buildExtractionPrompt(event));
     let result;
     try {
       result = await sandbox.exec(
-        `claude --print --permission-mode bypassPermissions "$(cat ${promptPath})"`,
+        buildRuntimeClaudeCommand("meeting-task", options.claudeRuntime),
         {
           timeout: 120_000,
           env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },

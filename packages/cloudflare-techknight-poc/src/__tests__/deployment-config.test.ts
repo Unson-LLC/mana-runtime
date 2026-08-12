@@ -35,7 +35,16 @@ describe("会社別Cloudflare deployment", () => {
       BRAINBASE_TASK_API_BASE_URL: "https://bb.unson.jp",
       RUNTIME_PROJECT_CODES: "back-office",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
+      RUNTIME_CLAUDE_MODEL: "opus",
+      RUNTIME_CLAUDE_EFFORT: "xhigh",
     });
+  });
+
+  it("Claude Codeを検証済みのexact versionへ固定する", () => {
+    const dockerfilePath = fileURLToPath(new URL("../../Dockerfile", import.meta.url));
+    const dockerfile = readFileSync(dockerfilePath, "utf8");
+    expect(dockerfile).toContain("@anthropic-ai/claude-code@2.1.195");
+    expect(dockerfile).not.toMatch(/npm install -g @anthropic-ai\/claude-code\s*(?:\n|$)/);
   });
 
   it("雲孫とTechKnightのWorker、Queue、DLQを共有しない", () => {

@@ -12,7 +12,9 @@
     "SLACK_ALLOWED_CHANNEL_ID": "C0BKS6RL99T",
     "BRAINBASE_TASK_API_BASE_URL": "https://bb.unson.jp",
     "RUNTIME_PROJECT_CODES": "back-office",
-    "RUNTIME_EXECUTION_MODE": "meeting_tasks"
+    "RUNTIME_EXECUTION_MODE": "meeting_tasks",
+    "RUNTIME_CLAUDE_MODEL": "opus",
+    "RUNTIME_CLAUDE_EFFORT": "xhigh"
   },
   "durable_objects": {
     "bindings": [

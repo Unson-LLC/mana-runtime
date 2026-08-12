@@ -24,6 +24,7 @@ import { routeRuntimeEvent } from "./runtime-event-router.js";
 import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { persistEventOnce } from "./workspace-store.js";
 import { withDisposableResource } from "./disposable-resource.js";
+import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 
@@ -37,6 +38,8 @@ interface Env extends SandboxRuntimeEnv {
   BRAINBASE_TASK_API_TOKEN?: string;
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_EXECUTION_MODE?: string;
+  RUNTIME_CLAUDE_MODEL?: string;
+  RUNTIME_CLAUDE_EFFORT?: string;
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent>;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
@@ -96,6 +99,7 @@ export default {
         expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
         expectedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
         process: async (event) => {
+          const claudeRuntime = resolveClaudeRuntimeConfig(env);
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(
@@ -117,6 +121,7 @@ export default {
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
                     slackBotToken: env.SLACK_BOT_TOKEN,
                     oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                    claudeRuntime,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                   });
                 },
@@ -126,6 +131,7 @@ export default {
                   allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
                   slackBotToken: env.SLACK_BOT_TOKEN,
                   oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                  claudeRuntime,
                   createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                 }),
               });

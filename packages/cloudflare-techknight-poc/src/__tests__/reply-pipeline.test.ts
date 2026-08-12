@@ -6,6 +6,7 @@ import {
   type ReplyPipelineOptions,
 } from "../reply-pipeline.js";
 import type { SlackQueueEvent } from "../types.js";
+import { resolveClaudeRuntimeConfig } from "../claude-runtime-config.js";
 
 class MemoryFs {
   readonly files = new Map<string, string>();
@@ -62,6 +63,10 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
     allowedChannelId: "C_MANA_TEST",
     slackBotToken: "xoxb-worker-secret",
     oauthConfigured: true,
+    claudeRuntime: resolveClaudeRuntimeConfig({
+      RUNTIME_CLAUDE_MODEL: "opus",
+      RUNTIME_CLAUDE_EFFORT: "xhigh",
+    }),
     createSandbox: vi.fn(() => sandbox),
     fetch: fetchMock,
     now: () => "2026-08-11T13:30:00.000Z",
@@ -103,7 +108,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("TechKnight");
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
-      expect.stringContaining("/tmp/mana-slack-prompt.txt"),
+      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)"',
       {
         timeout: 120_000,
         env: {

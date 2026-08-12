@@ -6,6 +6,7 @@ import {
 } from "../meeting-task-pipeline.js";
 import type { RuntimeBinding } from "../runtime-config.js";
 import type { SlackQueueEvent } from "../types.js";
+import { resolveClaudeRuntimeConfig } from "../claude-runtime-config.js";
 
 class MemoryFs {
   readonly files = new Map<string, string>();
@@ -74,6 +75,10 @@ function harness(overrides: Partial<MeetingTaskPipelineOptions> = {}) {
     brainbaseTaskToken: "brainbase-secret",
     slackBotToken: "slack-secret",
     oauthConfigured: true,
+    claudeRuntime: resolveClaudeRuntimeConfig({
+      RUNTIME_CLAUDE_MODEL: "opus",
+      RUNTIME_CLAUDE_EFFORT: "xhigh",
+    }),
     createSandbox: vi.fn(() => sandbox),
     fetch: fetchMock,
     now: () => "2026-08-12T00:05:00.000Z",
@@ -134,6 +139,13 @@ describe("Cloudflare meeting task pipeline", () => {
     });
     expect(String(reactionCalls[1][0])).toContain("reactions.remove");
     expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(sandbox.exec.mock.invocationCallOrder[0]);
+    expect(sandbox.exec).toHaveBeenCalledWith(
+      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/meeting-task-prompt.txt)"',
+      {
+        timeout: 120_000,
+        env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      },
+    );
   });
 
   it("uses deterministic task idempotency keys", async () => {

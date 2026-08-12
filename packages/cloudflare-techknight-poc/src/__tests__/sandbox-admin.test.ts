@@ -85,6 +85,9 @@ describe("handleSandboxAdminRequest", () => {
         CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
       },
     });
+    const command = client.exec.mock.calls[0]?.[0] as string;
+    expect(command).not.toContain("--model");
+    expect(command).not.toContain("--effort");
     const body = JSON.stringify(await response.json());
     expect(body).not.toContain("oauth-secret-must-not-leak");
     expect(client.destroy).toHaveBeenCalledOnce();
