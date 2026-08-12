@@ -109,6 +109,32 @@ describe("normalizeSlackEvent", () => {
       ),
     ).toThrowError("slack_team_forbidden");
   });
+
+  it("uses the configured tenant instead of a TechKnight constant", () => {
+    expect(
+      normalizeSlackEvent(
+        {
+          type: "event_callback",
+          team_id: "T_UNSON",
+          event_id: "EvUnson",
+          event: {
+            type: "app_mention",
+            channel: "C_BACK_OFFICE",
+            ts: "1786420000.000100",
+            user: "U123",
+            text: "議事録をタスク化して",
+          },
+        },
+        "T_UNSON",
+        "2026-08-11T04:00:00.000Z",
+        "unson",
+      ),
+    ).toMatchObject({
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      channelId: "C_BACK_OFFICE",
+    });
+  });
 });
 
 describe("handleSlackRequest", () => {
@@ -138,5 +164,45 @@ describe("handleSlackRequest", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ challenge: "challenge-value" });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("queues an event with the configured non-TechKnight tenant", async () => {
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: "T_UNSON",
+      event_id: "EvUnson",
+      event: {
+        type: "app_mention",
+        channel: "C_BACK_OFFICE",
+        ts: "1786420000.000100",
+        user: "U123",
+        text: "議事録をタスク化して",
+      },
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const request = new Request("https://example.com/slack/events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature(nowSeconds, body),
+      },
+      body,
+    });
+
+    const response = await handleSlackRequest(request, {
+      signingSecret,
+      tenantId: "unson",
+      expectedTeamId: "T_UNSON",
+      nowMs: nowSeconds * 1_000,
+      send,
+    });
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      channelId: "C_BACK_OFFICE",
+    }));
   });
 });

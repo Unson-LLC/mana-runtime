@@ -7,15 +7,27 @@ export interface QueueMessageLike<T> {
 }
 
 export interface QueueConsumerOptions {
+  expectedTenantId?: string;
   expectedWorkspaceId: string;
+  expectedChannelId?: string;
   process(event: SlackQueueEvent): Promise<{ outcome: string }>;
   log?(entry: Record<string, string>): void;
   logError?(entry: Record<string, string>): void;
   errorCode?(error: unknown): string;
 }
 
-function isTechKnightEvent(event: SlackQueueEvent, expectedWorkspaceId: string): boolean {
-  return event.tenantId === "techknight" && event.workspaceId === expectedWorkspaceId;
+function boundaryMismatchReason(
+  event: SlackQueueEvent,
+  expectedWorkspaceId: string,
+  expectedTenantId = "techknight",
+  expectedChannelId?: string,
+): string | undefined {
+  if (event.tenantId !== expectedTenantId) return "tenant_mismatch";
+  if (event.workspaceId !== expectedWorkspaceId) return "workspace_mismatch";
+  if (expectedChannelId !== undefined && event.channelId !== expectedChannelId) {
+    return "channel_mismatch";
+  }
+  return undefined;
 }
 
 export async function consumeTechKnightMessage(
@@ -23,7 +35,19 @@ export async function consumeTechKnightMessage(
   options: QueueConsumerOptions,
 ): Promise<void> {
   const event = message.body;
-  if (!isTechKnightEvent(event, options.expectedWorkspaceId)) {
+  const mismatchReason = boundaryMismatchReason(
+    event,
+    options.expectedWorkspaceId,
+    options.expectedTenantId,
+    options.expectedChannelId,
+  );
+  if (mismatchReason) {
+    options.log?.({
+      event: "techknight_slack_reply_ignored",
+      eventId: event.eventId,
+      channelId: event.channelId,
+      reason: mismatchReason,
+    });
     message.ack();
     return;
   }

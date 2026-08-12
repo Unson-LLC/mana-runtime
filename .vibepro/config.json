@@ -187,8 +187,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-cloudflare-primary-runtime",
+        "title": "CloudflareをOpenRyokoの主runtimeに移管する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-techknight-cloudflare-slack-reply"
+    "current_story_id": "story-cloudflare-primary-runtime"
   }
 }

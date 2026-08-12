@@ -15,6 +15,12 @@ class MemoryFs {
     return [...this.files.keys()].filter((path) => path.startsWith(prefix));
   }
 
+  async readFile(path: string): Promise<string> {
+    const value = this.files.get(path);
+    if (value === undefined) throw new Error("ENOENT");
+    return value;
+  }
+
   async writeFile(path: string, value: string): Promise<void> {
     this.files.set(path, value);
   }
@@ -64,6 +70,21 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
+  it("accepts a matching non-TechKnight tenant boundary", () => {
+    const input = event({
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      channelId: "C_BACK_OFFICE",
+    });
+    const { options } = harness({
+      expectedTenantId: "unson",
+      expectedWorkspaceId: "T_UNSON",
+      allowedChannelId: "C_BACK_OFFICE",
+    });
+
+    expect(isReplyEligible(input, options)).toBe(true);
+  });
+
   it("posts a Claude response to the originating Slack thread", async () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();
@@ -78,6 +99,8 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("メンションしてみる");
     expect(prompt).not.toContain("<@U_BOT>");
     expect(prompt).not.toContain("\u0000");
+    expect(prompt).not.toContain("TechKnight");
+    expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
       expect.stringContaining("/tmp/mana-slack-prompt.txt"),
       {

@@ -53,6 +53,29 @@ describe("persistEventOnce", () => {
     });
     expect(fs.files.size).toBe(1);
   });
+
+  it("bounds and sanitizes persisted Slack text without mutating the input", async () => {
+    const fs = new MemoryFs();
+    const originalText = `prefix\u0000${"a".repeat(20_500)}`;
+    const event = {
+      tenantId: "techknight" as const,
+      eventId: "EvBounded",
+      workspaceId: "T_TECHKNIGHT",
+      channelId: "C123",
+      threadTs: "1.0",
+      messageTs: "2.0",
+      eventType: "app_mention" as const,
+      text: originalText,
+      receivedAt: "2026-08-12T04:00:00.000Z",
+    };
+
+    await persistEventOnce(fs, event);
+
+    const persisted = JSON.parse(fs.files.get("/events/EvBounded.json") ?? "{}");
+    expect(persisted.text).toHaveLength(20_000);
+    expect(persisted.text).not.toContain("\u0000");
+    expect(event.text).toBe(originalText);
+  });
 });
 
 describe("reply completion", () => {

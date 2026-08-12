@@ -1,5 +1,5 @@
 export interface SlackQueueEvent {
-  tenantId: "techknight";
+  tenantId: string;
   eventId: string;
   workspaceId: string;
   channelId: string;
