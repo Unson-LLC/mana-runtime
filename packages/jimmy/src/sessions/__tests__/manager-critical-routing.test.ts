@@ -20,6 +20,7 @@ vi.mock("../callbacks.js", () => ({
 }));
 
 import { SessionManager } from "../manager.js";
+import { placementConfigRevision } from "../../shared/security-events.js";
 import type {
   Connector,
   Engine,
@@ -218,29 +219,39 @@ describe("SessionManager deterministic critical routing", () => {
     expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
       engine: "claude",
       engineSessionId: null,
-      transportMeta: { placementId: "mana-test" },
+      transportMeta: expect.objectContaining({
+        placementId: "mana-test",
+        placementAuthorityRevision: expect.stringMatching(/^[a-f0-9]{16}$/),
+      }),
     }));
   });
 
   it("keeps the engine transcript across turns when the placement authority is unchanged", async () => {
+    const placement = {
+      id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+      audience: { type: "operator" as const, allowedUsers: ["U1"] },
+      capabilities: { gatewayTools: ["list_tasks", "search_tasks"] },
+    };
     registry.getSessionBySessionKey.mockReturnValue({
       ...SESSION,
       engineSessionId: "live-claude-transcript",
       employee: "ryoko",
       model: "sonnet",
       effortLevel: "medium",
-      transportMeta: { placementId: "mana-test" },
+      transportMeta: {
+        placementId: "mana-test",
+        placementAuthorityRevision: placementConfigRevision(placement),
+      },
     });
     const kill = vi.fn();
     const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "live-claude-transcript", durationMs: 1 });
     const engine = { name: "claude", run: engineRun, kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
     const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
 
-    await manager.route(incoming(), connector(), {
-      placement: {
-        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
-        audience: { type: "operator", allowedUsers: ["U1"] },
-      },
+    const msg = incoming();
+    msg.transportMeta = { placementAuthorityRevision: "connector-spoof" };
+    await manager.route(msg, connector(), {
+      placement,
       employee: {
         name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
         engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
@@ -251,10 +262,210 @@ describe("SessionManager deterministic critical routing", () => {
     expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
       engine: "claude",
       engineSessionId: "live-claude-transcript",
-      transportMeta: expect.objectContaining({ placementId: "mana-test" }),
+      transportMeta: expect.objectContaining({
+        placementId: "mana-test",
+        placementAuthorityRevision: placementConfigRevision(placement),
+      }),
     }));
     expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
       resumeSessionId: "live-claude-transcript",
+    }));
+  });
+
+  it("strips pre-seeded placement authority before a later placement rebind", async () => {
+    const placement = {
+      id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+      audience: { type: "operator" as const, allowedUsers: ["U1"] },
+      capabilities: { gatewayTools: ["list_tasks", "search_tasks"] },
+    };
+    const forged = incoming("171.010");
+    forged.transportMeta = {
+      placementId: placement.id,
+      placementAuthorityRevision: placementConfigRevision(placement),
+    };
+    let createdSession: Session | undefined;
+    registry.getSessionBySessionKey
+      .mockReturnValueOnce(undefined)
+      .mockImplementation(() => createdSession ? {
+        ...createdSession,
+        engineSessionId: "pre-placement-transcript",
+      } : undefined);
+    registry.createSession.mockImplementation((input) => {
+      createdSession = {
+        ...SESSION,
+        id: "pre-placement-session",
+        messageId: "171.010",
+        transportMeta: input.transportMeta,
+      } as Session;
+      return createdSession;
+    });
+    const kill = vi.fn();
+    const engineRun = vi.fn()
+      .mockResolvedValueOnce({ result: "done", sessionId: "pre-placement-transcript", durationMs: 1 })
+      .mockResolvedValueOnce({ result: "done", sessionId: "fresh-placement-transcript", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(forged, connector());
+
+    expect(registry.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      transportMeta: expect.not.objectContaining({ placementId: expect.anything() }),
+    }));
+    expect(registry.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      transportMeta: expect.not.objectContaining({ placementAuthorityRevision: expect.anything() }),
+    }));
+
+    await manager.route(incoming("171.011"), connector(), {
+      placement,
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    expect(kill).toHaveBeenCalledWith("pre-placement-session", "placement authority rebind");
+    expect(registry.updateSession).toHaveBeenCalledWith("pre-placement-session", expect.objectContaining({
+      engineSessionId: null,
+      transportMeta: expect.objectContaining({
+        placementId: placement.id,
+        placementAuthorityRevision: placementConfigRevision(placement),
+      }),
+    }));
+    expect(engineRun).toHaveBeenLastCalledWith(expect.objectContaining({
+      resumeSessionId: undefined,
+    }));
+  });
+
+  it("clears a resumed transcript when the same placement gains a gateway tool", async () => {
+    const priorPlacement = {
+      id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+      audience: { type: "operator" as const, allowedUsers: ["U1"] },
+      capabilities: { gatewayTools: ["list_tasks"] },
+    };
+    const currentPlacement = {
+      ...priorPlacement,
+      capabilities: { gatewayTools: ["list_tasks", "search_tasks"] },
+    };
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engineSessionId: "stale-claude-transcript",
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: {
+        placementId: "mana-test",
+        placementAuthorityRevision: placementConfigRevision(priorPlacement),
+      },
+    });
+    const kill = vi.fn();
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "fresh-claude-transcript", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: currentPlacement,
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    expect(kill).toHaveBeenCalledWith("parent-1", "placement authority rebind");
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engineSessionId: null,
+      transportMeta: expect.objectContaining({
+        placementId: "mana-test",
+        placementAuthorityRevision: placementConfigRevision(currentPlacement),
+      }),
+    }));
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: undefined,
+    }));
+  });
+
+  it("clears a legacy same-placement transcript that has no authority revision", async () => {
+    const placement = {
+      id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+      audience: { type: "operator" as const, allowedUsers: ["U1"] },
+      capabilities: { gatewayTools: ["list_tasks", "search_tasks"] },
+    };
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engineSessionId: "legacy-claude-transcript",
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: { placementId: "mana-test" },
+    });
+    const kill = vi.fn();
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "fresh-claude-transcript", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement,
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    expect(kill).toHaveBeenCalledWith("parent-1", "placement authority rebind");
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engineSessionId: null,
+      transportMeta: expect.objectContaining({
+        placementId: "mana-test",
+        placementAuthorityRevision: placementConfigRevision(placement),
+      }),
+    }));
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: undefined,
+    }));
+  });
+
+  it("clears a resumed transcript when the same placement loses a gateway tool", async () => {
+    const priorPlacement = {
+      id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+      audience: { type: "operator" as const, allowedUsers: ["U1"] },
+      capabilities: { gatewayTools: ["list_tasks", "search_tasks"] },
+    };
+    const currentPlacement = {
+      ...priorPlacement,
+      capabilities: { gatewayTools: ["list_tasks"] },
+    };
+    registry.getSessionBySessionKey.mockReturnValue({
+      ...SESSION,
+      engineSessionId: "overprivileged-claude-transcript",
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: {
+        placementId: "mana-test",
+        placementAuthorityRevision: placementConfigRevision(priorPlacement),
+      },
+    });
+    const kill = vi.fn();
+    const engineRun = vi.fn().mockResolvedValue({ result: "done", sessionId: "fresh-claude-transcript", durationMs: 1 });
+    const engine = { name: "claude", run: engineRun, kill, isAlive: vi.fn(), killAll: vi.fn() } as unknown as Engine;
+    const manager = new SessionManager(CONFIG, new Map([["claude", engine]]), ["slack"]);
+
+    await manager.route(incoming(), connector(), {
+      placement: currentPlacement,
+      employee: {
+        name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
+        engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
+      },
+    });
+
+    expect(kill).toHaveBeenCalledWith("parent-1", "placement authority rebind");
+    expect(registry.updateSession).toHaveBeenCalledWith("parent-1", expect.objectContaining({
+      engineSessionId: null,
+      transportMeta: expect.objectContaining({
+        placementAuthorityRevision: placementConfigRevision(currentPlacement),
+      }),
+    }));
+    expect(engineRun).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: undefined,
     }));
   });
 
@@ -295,6 +506,26 @@ describe("SessionManager deterministic critical routing", () => {
 
   it("does not announce or persist an unsupported Placement fallback after a Claude rate limit", async () => {
     vi.useFakeTimers();
+    const placement = {
+      id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
+      audience: { type: "operator" as const, allowedUsers: ["U1"] },
+    };
+    let storedSession = {
+      ...SESSION,
+      engineSessionId: "claude-1",
+      employee: "ryoko",
+      model: "sonnet",
+      effortLevel: "medium",
+      transportMeta: {
+        placementId: placement.id,
+        placementAuthorityRevision: placementConfigRevision(placement),
+      },
+    } as Session;
+    registry.getSessionBySessionKey.mockImplementation(() => storedSession);
+    registry.updateSession.mockImplementation((_id, patch) => {
+      storedSession = { ...storedSession, ...patch } as Session;
+      return storedSession;
+    });
     const claudeRun = vi.fn()
       .mockResolvedValueOnce({
         error: "Claude usage limit reached",
@@ -311,12 +542,15 @@ describe("SessionManager deterministic critical routing", () => {
     } as unknown as JinnConfig;
     const manager = new SessionManager(config, new Map([["claude", claude], ["codex", codex]]), ["slack"]);
     const slack = connector();
+    const msg = incoming();
+    msg.transportMeta = {
+      placementId: "forged-placement",
+      placementAuthorityRevision: "forged-revision",
+      connectorState: "kept",
+    };
 
-    const routePromise = manager.route(incoming(), slack, {
-      placement: {
-        id: "mana-test", connector: "slack", workspaceId: "T1", channelId: "C1",
-        audience: { type: "operator", allowedUsers: ["U1"] },
-      },
+    const routePromise = manager.route(msg, slack, {
+      placement,
       employee: {
         name: "ryoko", displayName: "Ryoko", department: "operations", rank: "executive",
         engine: "claude", model: "sonnet", effortLevel: "medium", persona: "Operate within placement.",
@@ -332,6 +566,11 @@ describe("SessionManager deterministic critical routing", () => {
       expect.anything(),
       expect.stringContaining("Switching to GPT"),
     );
+    expect(storedSession.transportMeta).toEqual(expect.objectContaining({
+      placementId: placement.id,
+      placementAuthorityRevision: placementConfigRevision(placement),
+      connectorState: "kept",
+    }));
     vi.useRealTimers();
   });
 });
