@@ -34,7 +34,7 @@ describe("会社別Cloudflare deployment", () => {
       SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       BRAINBASE_TASK_API_BASE_URL: "https://bb.unson.jp",
       RUNTIME_PROJECT_CODES: "back-office",
-      RUNTIME_EXECUTION_MODE: "reply_only",
+      RUNTIME_EXECUTION_MODE: "meeting_tasks",
     });
   });
 

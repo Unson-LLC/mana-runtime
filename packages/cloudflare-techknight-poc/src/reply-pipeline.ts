@@ -88,6 +88,15 @@ function normalizeReply(stdout: string): string {
   return stdout.replace(/\u0000/g, "").trim().slice(0, MAX_OUTPUT_CHARS);
 }
 
+function safeExecutionErrorSummary(stderr: string): string {
+  return stderr
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/(?:Bearer\s+)?(?:sk-ant-|sk-|xox[baprs]-)[A-Za-z0-9._-]+/gi, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{48,}\b/g, "[redacted]")
+    .trim()
+    .slice(0, 300);
+}
+
 async function deterministicClientMessageId(eventId: string): Promise<string> {
   const digest = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`techknight:${eventId}`)),
@@ -118,7 +127,14 @@ export async function generateClaudeReply(
         },
       },
     );
-    if (!result.success) throw new ReplyPipelineError("claude_execution_failed");
+    if (!result.success) {
+      console.error(JSON.stringify({
+        event: "claude_execution_failed_detail",
+        exitCode: result.exitCode,
+        stderr: safeExecutionErrorSummary(result.stderr),
+      }));
+      throw new ReplyPipelineError("claude_execution_failed");
+    }
     const reply = normalizeReply(result.stdout);
     if (!reply) throw new ReplyPipelineError("claude_empty_response");
     return reply;

@@ -171,9 +171,15 @@ describe("TechKnight Slack reply pipeline", () => {
 
   it("leaves the event retryable when Claude fails", async () => {
     const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const sandbox = {
       writeFile: vi.fn().mockResolvedValue(undefined),
-      exec: vi.fn().mockResolvedValue({ success: false, stdout: "", stderr: "failed" }),
+      exec: vi.fn().mockResolvedValue({
+        success: false,
+        stdout: "",
+        stderr: "failed with Bearer sk-ant-secret-value",
+        exitCode: 1,
+      }),
       destroy: vi.fn().mockResolvedValue(undefined),
     };
     const { options, fetchMock } = harness({ createSandbox: () => sandbox });
@@ -184,6 +190,10 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect([...fs.files.keys()].some((path) => path.startsWith("/replies/"))).toBe(false);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("claude_execution_failed_detail"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[redacted]"));
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("sk-ant-secret-value"));
+    errorSpy.mockRestore();
   });
 
   it("leaves the event retryable when Slack rejects the post", async () => {
