@@ -141,7 +141,6 @@ describe("handleSlackRequest", () => {
   it("returns a verified URL challenge without queueing", async () => {
     const body = JSON.stringify({
       type: "url_verification",
-      api_app_id: "A_TECHKNIGHT",
       challenge: "challenge-value",
     });
     const send = vi.fn();
@@ -212,9 +211,17 @@ describe("handleSlackRequest", () => {
 
   it("rejects a signed request from a different Slack App", async () => {
     const body = JSON.stringify({
-      type: "url_verification",
+      type: "event_callback",
       api_app_id: "A_DIFFERENT",
-      challenge: "challenge-value",
+      team_id: "T_UNSON",
+      event_id: "EvDifferentApp",
+      event: {
+        type: "app_mention",
+        channel: "C_BACK_OFFICE",
+        ts: "1786420000.000200",
+        user: "U123",
+        text: "hello",
+      },
     });
     const send = vi.fn();
     const request = new Request("https://example.com/slack/events", {
