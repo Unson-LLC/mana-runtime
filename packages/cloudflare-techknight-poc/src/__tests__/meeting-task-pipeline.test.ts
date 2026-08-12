@@ -93,7 +93,7 @@ describe("Cloudflare meeting task pipeline", () => {
   // story-cloudflare-primary-runtime:AC-3
   it("assigns trusted deployment project codes to every registered task", async () => {
     const fs = new MemoryFs();
-    const { options, fetchMock } = harness();
+    const { options, sandbox, fetchMock } = harness();
 
     await expect(processMeetingTaskEvent(fs, event(), options)).resolves.toEqual({
       outcome: "tasks_registered",
@@ -114,6 +114,17 @@ describe("Cloudflare meeting task pipeline", () => {
       channel: "C_MANA_TEST",
       thread_ts: "1786500000.000001",
     });
+    const statusCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("assistant.threads.setStatus")
+    );
+    expect(statusCalls).toHaveLength(2);
+    expect(JSON.parse(String((statusCalls[0][1] as RequestInit).body))).toMatchObject({
+      channel_id: "C_MANA_TEST",
+      thread_ts: "1786500000.000001",
+      status: "分析しています…",
+    });
+    expect(JSON.parse(String((statusCalls[1][1] as RequestInit).body))).toMatchObject({ status: "" });
+    expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(sandbox.exec.mock.invocationCallOrder[0]);
   });
 
   it("uses deterministic task idempotency keys", async () => {
@@ -135,7 +146,7 @@ describe("Cloudflare meeting task pipeline", () => {
       registered: 0,
     });
     expect(sandbox.exec).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("resumes from the failed candidate without recreating successful tasks", async () => {
@@ -197,7 +208,11 @@ describe("Cloudflare meeting task pipeline", () => {
     await expect(processMeetingTaskEvent(fs, event(), options)).rejects.toMatchObject({
       code: "task_candidates_invalid",
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("assistant.threads.setStatus")
+    )).toHaveLength(2);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/companion/tasks"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
     expect([...fs.files.keys()]).not.toContain("/task-runs/EvMinutes123.json");
   });
 
@@ -208,6 +223,9 @@ describe("Cloudflare meeting task pipeline", () => {
         if (String(input).includes("/api/companion/tasks")) {
           const body = JSON.parse(String(init?.body ?? "{}"));
           return new Response(JSON.stringify({ id: body.title }), { status: 201 });
+        }
+        if (String(input).includes("assistant.threads.setStatus")) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
         }
         slackAttempts += 1;
         return new Response(JSON.stringify(slackAttempts === 1
