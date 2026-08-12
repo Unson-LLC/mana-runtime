@@ -1,0 +1,291 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "HOTRELOAD-PLACEMENT-AUTHORITY",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "ai_synthesis"
+  },
+  "clauses": [
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "既存Claude engine sessionをresumeできるのは、保存済みplacement authority revisionがserver側で解決した現在revisionと一致する場合だけである",
+      "rationale": "placementのツール・権限・システム文脈が変わった後に古いtranscriptの能力一覧を再利用しないため",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/hotreload-placement-authority.md",
+            "section": "再開判定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/manager.ts",
+            "anchor": "placementAuthorityRevision"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "case": "clears a resumed transcript when the same placement gains a gateway tool"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "verifiable_by": {
+        "code_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/manager.ts",
+            "must_contain": "priorMeta[\"placementAuthorityRevision\"] === placementAuthorityRevision"
+          }
+        ],
+        "test_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "must_cover": "gains a gateway tool"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T10:31:09.236Z",
+      "last_revised_at": "2026-08-12T10:59:51.873Z"
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "同一placementへgateway toolを追加または削除した次のturnでは旧engine sessionを終了し、engineSessionIdをnullにしてfresh runを開始する",
+      "rationale": "能力の追加だけでなく削除時もstale vocabularyを残さないため",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/hotreload-placement-authority.md",
+            "section": "再開判定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/manager.ts",
+            "anchor": "samePlacementAuthority"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "case": "clears a resumed transcript when the same placement gains a gateway tool"
+          },
+          {
+            "file": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "case": "clears a resumed transcript when the same placement loses a gateway tool"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "must_cover": "loses a gateway tool"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T10:31:09.236Z",
+      "last_revised_at": "2026-08-12T10:59:51.873Z"
+    },
+    {
+      "id": "S-002",
+      "type": "scenario",
+      "statement": "revisionを持たないlegacy sessionは次のturnで一度だけfresh化し、そのturnの現在revisionをtransport metadataへ保存する",
+      "rationale": "既存の本番セッションを移行処理なしで安全に新契約へ収束させるため",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/hotreload-placement-authority.md",
+            "section": "再開判定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/manager.ts",
+            "anchor": "including a legacy session without a revision"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "case": "clears a legacy same-placement transcript that has no authority revision"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "must_cover": "legacy same-placement transcript"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T10:31:09.236Z",
+      "last_revised_at": "2026-08-12T10:59:51.873Z"
+    },
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "placement authority revisionはincoming transport metadataではなくserver側で解決したplacementから計算した値でcanonical overwriteする",
+      "rationale": "connector入力でtranscript再開境界を偽装できないようにするため",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/hotreload-placement-authority.md",
+            "section": "信頼境界"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/manager.ts",
+            "anchor": "placementAuthorityRevision,"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "case": "keeps the engine transcript across turns when the placement authority is unchanged"
+          }
+        ]
+      },
+      "confidence": 0.98,
+      "verifiable_by": {
+        "code_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/manager.ts",
+            "must_contain": "placementAuthorityRevision,"
+          }
+        ],
+        "test_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "must_cover": "connector-spoof"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T10:31:09.236Z",
+      "last_revised_at": "2026-08-12T10:59:51.873Z"
+    },
+    {
+      "id": "S-003",
+      "type": "scenario",
+      "statement": "placement authority revisionが一致する同一placement、engine、employeeのturnは既存engine sessionをresumeする",
+      "rationale": "権限変更がない通常会話で不要な文脈リセットを起こさないため",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/hotreload-placement-authority.md",
+            "section": "再開判定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/manager.ts",
+            "anchor": "const samePlacementAuthority"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "case": "keeps the engine transcript across turns when the placement authority is unchanged"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "must_cover": "placement authority is unchanged"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T10:31:09.236Z",
+      "last_revised_at": "2026-08-12T10:59:51.873Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "routing、MCP resolver、gateway policyの回帰テストと型検査が成功しなければ本番反映しない",
+      "rationale": "session再開境界の変更で既存routingやGateway認可を壊さないため",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/hotreload-placement-authority.md",
+            "section": "テスト契約"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/manager.ts",
+            "anchor": "samePlacementAuthority"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "case": "passes the fail-closed Placement boundary to the real Slack engine call site"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/jimmy/src/sessions/__tests__/manager-critical-routing.test.ts",
+            "must_cover": "critical routing"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T10:58:39.579Z",
+      "last_revised_at": "2026-08-12T10:59:51.873Z"
+    }
+  ],
+  "open_questions": [],
+  "generated_at": "2026-08-12T10:59:51.870Z",
+  "previous_spec_id": "2026-08-12T10:58:39.576Z"
+}

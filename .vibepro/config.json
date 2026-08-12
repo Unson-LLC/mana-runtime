@@ -209,8 +209,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "HOTRELOAD-PLACEMENT-AUTHORITY",
+        "title": "placement権限変更時に古いClaudeセッションを再開しない",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-slack-task-bounded-search"
+    "current_story_id": "HOTRELOAD-PLACEMENT-AUTHORITY"
   }
 }

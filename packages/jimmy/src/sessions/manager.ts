@@ -134,17 +134,31 @@ function mergeTransportMeta(
   existing: Session["transportMeta"],
   incoming: IncomingMessage["transportMeta"],
 ): Session["transportMeta"] {
+  const internalKeys = [
+    "engineOverride",
+    "engineSessions",
+    "claudeSyncSince",
+    "criticalRouting",
+    "placementId",
+    "placementAuthorityRevision",
+  ];
   const baseExisting = (existing && typeof existing === "object" && !Array.isArray(existing))
     ? (existing as Record<string, unknown>)
     : {};
   const baseIncoming = (incoming && typeof incoming === "object" && !Array.isArray(incoming))
-    ? (incoming as Record<string, unknown>)
+    ? { ...(incoming as Record<string, unknown>) }
     : {};
+
+  // Transport adapters are outside Jinn's session-authority boundary. Never
+  // allow them to introduce internal state, even when no stored value exists
+  // yet; otherwise a prior non-Placement turn could pre-seed the revision used
+  // by a later Placement rebind.
+  for (const key of internalKeys) delete baseIncoming[key];
 
   const merged: Record<string, unknown> = { ...baseExisting, ...baseIncoming };
 
   // Preserve Jinn internal keys from being overwritten by transport adapters.
-  for (const key of ["engineOverride", "engineSessions", "claudeSyncSince", "criticalRouting"]) {
+  for (const key of internalKeys) {
     if (baseExisting[key] !== undefined) merged[key] = baseExisting[key];
   }
 
@@ -287,6 +301,14 @@ export class SessionManager {
   async route(msg: IncomingMessage, connector: Connector, opts: RouteOptions = {}): Promise<{ sessionId: string } | void> {
     if (await this.handleCommand(msg, connector)) return;
 
+    // Claude Code binds its MCP/tool registry when a transcript is created. A
+    // config hot-reload can therefore change the Placement boundary while an
+    // existing Slack thread still points at a transcript created under the old
+    // boundary. Bind the transcript to this Placement revision so the first
+    // turn after any same-Placement authority change starts fresh.
+    const placementAuthorityRevision = opts.placement
+      ? placementConfigRevision(opts.placement)
+      : undefined;
     let session = getSessionBySessionKey(msg.sessionKey);
     if (!session) {
       session = createSession({
@@ -298,8 +320,11 @@ export class SessionManager {
         replyContext: msg.replyContext,
         messageId: msg.messageId,
         transportMeta: {
-          ...(msg.transportMeta ?? {}),
-          ...(opts.placement ? { placementId: opts.placement.id } : {}),
+          ...((mergeTransportMeta(null, msg.transportMeta) || {}) as Record<string, unknown>),
+          ...(opts.placement ? {
+            placementId: opts.placement.id,
+            placementAuthorityRevision,
+          } : {}),
         },
         employee: opts.employee?.name ?? undefined,
         model: opts.model ?? opts.employee?.model ?? undefined,
@@ -313,22 +338,30 @@ export class SessionManager {
         (opts.employee ? ` (employee: ${opts.employee.name})` : ""),
       );
     } else {
-      let mergedMeta = mergeTransportMeta(session.transportMeta, {
-        ...(msg.transportMeta ?? {}),
-        ...(opts.placement ? { placementId: opts.placement.id } : {}),
-      });
+      let mergedMeta = mergeTransportMeta(session.transportMeta, msg.transportMeta);
+      // Canonical server-side authority metadata must win over both the stored
+      // revision and any connector-supplied transport metadata.
+      if (opts.placement) {
+        mergedMeta = {
+          ...((mergedMeta || {}) as Record<string, unknown>),
+          placementId: opts.placement.id,
+          placementAuthorityRevision,
+        } as Session["transportMeta"];
+      }
       const placementEngine = opts.engine ?? opts.employee?.engine ?? this.config.engines.default;
       const placementModel = opts.model ?? opts.employee?.model ?? null;
       const placementEmployee = opts.employee?.name ?? null;
       const placementEffort = opts.employee?.effortLevel ?? null;
       // A placement message may only resume the prior engine transcript when the
-      // session's authority binding is unchanged: same placement, same engine,
-      // same employee, and no stale cross-engine metadata. Anything else is a
-      // rebind — kill the running engine and clear the transcript so context
-      // gained under one authority can never leak into another.
+      // session's authority binding is unchanged: same placement revision,
+      // same engine, same employee, and no stale cross-engine metadata.
+      // Anything else (including a legacy session without a revision) is a
+      // rebind — kill the running engine and clear the transcript so context or
+      // tool definitions gained under one authority cannot leak into another.
       const priorMeta = (session.transportMeta || {}) as Record<string, unknown>;
       const samePlacementAuthority = Boolean(opts.placement) &&
         priorMeta["placementId"] === opts.placement?.id &&
+        priorMeta["placementAuthorityRevision"] === placementAuthorityRevision &&
         session.engine === placementEngine &&
         (session.employee ?? null) === placementEmployee &&
         priorMeta["engineOverride"] === undefined &&
@@ -1347,7 +1380,7 @@ export class SessionManager {
               status: retryResult.error ? "error" : "idle",
               replyContext: msg.replyContext,
               messageId: msg.messageId ?? null,
-              transportMeta: msg.transportMeta ?? null,
+              transportMeta: mergeTransportMeta(currentSession.transportMeta, msg.transportMeta),
               lastActivity: new Date().toISOString(),
               lastError: retryResult.error ?? null,
               ...(typeof retryResult.contextTokens === "number" ? { lastContextTokens: retryResult.contextTokens } : {}),
