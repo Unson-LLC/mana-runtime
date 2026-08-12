@@ -129,11 +129,16 @@ export function isMeetingTaskRequest(event: SlackQueueEvent): boolean {
 }
 
 function buildExtractionPrompt(event: SlackQueueEvent): string {
-  const source = event.text
+  const current = event.text
     .replace(/<@[^>]{1,128}>/g, " ")
-    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .trim()
+    .slice(0, 4_000);
+  const context = event.threadContext
+    ?.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
     .trim()
     .slice(0, 20_000);
+  const source = [context, current].filter(Boolean).join("\n\n");
   return [
     "次の日本語議事録から、実行が明示されたタスクだけを抽出してください。",
     "推測で担当者、期限、projectを補わないでください。",

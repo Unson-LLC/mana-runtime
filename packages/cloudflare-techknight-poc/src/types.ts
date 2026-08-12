@@ -10,5 +10,7 @@ export interface SlackQueueEvent {
   subtype?: string;
   eventType: string;
   text: string;
+  /** Bounded prior thread messages. Never persisted to the Workspace store. */
+  threadContext?: string;
   receivedAt: string;
 }

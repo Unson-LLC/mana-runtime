@@ -100,7 +100,9 @@ describe("Cloudflare meeting task pipeline", () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();
 
-    await expect(processMeetingTaskEvent(fs, event(), options)).resolves.toEqual({
+    await expect(processMeetingTaskEvent(fs, event({
+      threadContext: "[Slack thread context]\n<@U_ROOT>: 7月分請求書を橋本さんが送付する\n",
+    }), options)).resolves.toEqual({
       outcome: "tasks_registered",
       registered: 2,
       responseTs: "1786500010.000001",
@@ -108,6 +110,9 @@ describe("Cloudflare meeting task pipeline", () => {
 
     const taskCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/companion/tasks"));
     expect(taskCalls).toHaveLength(2);
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    expect(prompt).toContain("7月分請求書を橋本さんが送付する");
+    expect(prompt.match(/この議事録をタスク化して/g)).toHaveLength(1);
     for (const [, request] of taskCalls) {
       const body = JSON.parse(String((request as RequestInit).body));
       expect(body.project_codes).toEqual(["back-office", "brainbase"]);
