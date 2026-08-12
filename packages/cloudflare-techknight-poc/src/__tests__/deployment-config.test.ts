@@ -25,6 +25,13 @@ describe("会社別Cloudflare deployment", () => {
   const techKnight = loadConfig("wrangler.jsonc");
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
+  it("TechKnightのClaude Codeをopusかつxhighへ固定する", () => {
+    expect(techKnight.vars).toMatchObject({
+      RUNTIME_CLAUDE_MODEL: "opus",
+      RUNTIME_CLAUDE_EFFORT: "xhigh",
+    });
+  });
+
   it("雲孫事業運営を信頼済みworkspace、channel、projectへ固定する", () => {
     expect(unson.account_id).toBe("788e556343893a7135c29b782c22fb24");
     expect(unson.vars).toMatchObject({
