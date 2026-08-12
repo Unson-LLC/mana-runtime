@@ -1,10 +1,24 @@
-# TechKnight Cloudflare Computer PoC
+# 会社別Cloudflare mana-runtime
 
-TechKnight専用のCloudflare実行環境です。Slack Events APIで受けたイベントを
+会社ごとに独立デプロイするCloudflare実行環境です。Slack Events APIで受けたイベントを
 署名・workspace境界で検証し、Queue、Durable Object、`@cloudflare/computer` Workspaceへ
-冪等に保存します。許可したチャンネルのメンションはTechKnight専用SandboxのClaude Codeで
-処理し、既存の八雲まなSlack Appから元スレッドへ返信します。Anthropic OAuthとSlack Bot
-tokenはContainerへ保存せず、Worker Secretの境界内でだけ使用します。
+冪等に保存します。許可したチャンネルのメンションは会社別SandboxのClaude Codeで
+処理し、各社の八雲まなSlack Appから元スレッドへ返信します。Anthropic OAuthとSlack Bot
+tokenはContainerへ保存せず、会社別Worker Secretの境界内でだけ使用します。
+
+同じ実装を次の完全に分離されたdeploymentで利用します。
+
+- `wrangler.jsonc`: TechKnight
+- `wrangler.unson-business.jsonc`: 雲孫事業運営
+
+Worker、Queue、DLQ、Durable Object、Container、Slack認証、Anthropic OAuth、Brainbase認証は
+deploymentごとに分離します。内部のbinding/class名に残る`TECHKNIGHT_`は後方互換名であり、
+Cloudflare resource自体を共有するものではありません。
+
+Slack Appもdeploymentごとに分離します。LightsailでSocket Modeを使う既存Appの接続方式は
+変更せず、Cloudflareには同じ表示名「八雲まな」の専用Appを新設してHTTP Events APIだけを
+接続します。Slackのイベント配送方式はApp単位なので、同じAppをLightsailとCloudflareで
+共用しません。
 
 既存Lightsail、Slack Socket Modeはこのパッケージから自動変更しません。Cloudflare側では、明示的に
 「議事録」と「タスク」を含むメンションをClaudeで候補化し、設定済みprojectへ
@@ -17,33 +31,45 @@ Worker設定から決定し、Slack本文やClaude出力からは受け付けま
 pnpm --filter @openryoko/cloudflare-techknight-poc test
 pnpm --filter @openryoko/cloudflare-techknight-poc typecheck
 pnpm --filter @openryoko/cloudflare-techknight-poc build
+pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
 ```
 
 `build`は`wrangler deploy --dry-run`であり、Cloudflare resourceを作成しません。
 
-## Deployment gate
+## デプロイ前確認
 
-デプロイ前に、次を実施します。
+最初に対象会社とWrangler設定を固定します。
 
-1. `npx wrangler whoami`でTechKnight所有のCloudflare accountであることを確認する。
-2. `wrangler.jsonc`の`SLACK_EXPECTED_TEAM_ID`をTechKnight Slack team IDに置き換える。
-3. TechKnight accountで`npx wrangler secret put SLACK_SIGNING_SECRET`を実行する。
-4. Queue、Durable Object、WorkerがTechKnight accountに作られることをdry-run出力で確認する。
-5. `npx wrangler deploy`を実行し、Slack URL verificationと重複eventの永続化を確認する。
+| 対象 | Cloudflare account | Wrangler設定 | Anthropic OAuth |
+| --- | --- | --- | --- |
+| TechKnight | TechKnight所有account | `wrangler.jsonc` | TechKnight専用 |
+| 雲孫事業運営 | 雲孫所有account | `wrangler.unson-business.jsonc` | 雲孫専用 |
+
+`npx wrangler whoami`のaccountと上表が一致しない場合はデプロイしません。会社間でSlack、
+Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を実施します。
+
+1. 対象設定の`SLACK_EXPECTED_TEAM_ID`と`SLACK_ALLOWED_CHANNEL_ID`を確認する。
+   雲孫pilotではさらに`SLACK_EXPECTED_APP_ID`を必須とする。既存TechKnight deploymentは
+   後方互換のためこのStoryではApp ID固定の対象外とし、専用App ID確認後に有効化する。
+2. 対象deployment専用Slack AppのSigning Secretを
+   対象のWrangler設定を`--config`で明示した`wrangler secret put`で設定する。
+   既存Socket Mode Appは流用しない。
+3. Queue、Durable Object、Workerが対象会社のaccountに作られることをdry-run出力で確認する。
+4. 対象会社のAnthropic OAuthだけを`CLAUDE_CODE_OAUTH_TOKEN` Secretとして設定する。
+5. 対象のWrangler設定を明示したdeploy scriptを実行し、Slack URL verificationと
+   重複eventの永続化を確認する。
 6. 推測されにくい値を`SANDBOX_PROBE_TOKEN` Secretとして設定する。
-7. TechKnight側で`claude setup-token`を実行して得た値だけを
-   `CLAUDE_CODE_OAUTH_TOKEN` Secretとして設定する。Unson側のTokenは流用しない。
-8. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
-9. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
+7. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
+8. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
    OAuthがWorker Secretから復帰することを確認する。
-10. 八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
-11. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
+9. 対象会社の八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
+10. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
     `techknight_slack_reply`の完了ログを確認する。
-12. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
+11. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
     未設定時はタスク登録を行わず`project_binding_missing`で停止する。
-13. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
+12. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
     `BRAINBASE_TASK_API_TOKEN` Secretとして設定する。Token値はWrangler設定へ書かない。
-14. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
+13. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
     `project_codes`とSlackの同一スレッドへの登録結果を照合する。
 
 ### 議事録タスク処理の所有権切替
@@ -61,8 +87,27 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build
 戻します。両runtimeを同時に有効化しません。現在の`wrangler.jsonc`は安全側の
 `RUNTIME_EXECUTION_MODE=reply_only`なので、コードをデプロイしただけでは議事録タスク登録を開始しません。
 
-WranglerがUnson accountを示す場合はデプロイしません。secret値は設定ファイル、ログ、
+Wranglerが対象設定と異なる会社のaccountを示す場合はデプロイしません。secret値は設定ファイル、ログ、
 テストfixture、永続Workspaceへ書き込みません。
+
+## 雲孫事業運営pilot
+
+雲孫のCloudflare accountで`wrangler.unson-business.jsonc`を使用します。最初のbindingは
+Slack workspace `T0882T8N9UH`、`9960-back-office` (`C0BKS6RL99T`)、Brainbase project
+`back-office`です。初回は`reply_only`でデプロイし、署名検証、Queue、Sandbox、同一スレッド
+返信を確認します。Slack AppはCloudflare専用App `A0BPM2J33SN`を使用し、Lightsailの
+Socket Mode App `A0BLS5WEL2J`には変更を加えません。議事録タスクの所有権はLightsail入口の停止を確認した後だけ
+`meeting_tasks`へ切り替えます。
+
+```bash
+pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
+npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.unson-business.jsonc
+npx wrangler secret put CLAUDE_CODE_OAUTH_TOKEN --config wrangler.unson-business.jsonc
+npx wrangler secret put SANDBOX_PROBE_TOKEN --config wrangler.unson-business.jsonc
+npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.unson-business.jsonc
+npx wrangler secret put BRAINBASE_TASK_API_TOKEN --config wrangler.unson-business.jsonc
+pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
+```
 
 ## Sandbox security boundary
 

@@ -91,7 +91,7 @@ describe("Cloudflare meeting task pipeline", () => {
   });
 
   // story-cloudflare-primary-runtime:AC-3
-  it("uses only trusted deployment project codes", async () => {
+  it("assigns trusted deployment project codes to every registered task", async () => {
     const fs = new MemoryFs();
     const { options, fetchMock } = harness();
 

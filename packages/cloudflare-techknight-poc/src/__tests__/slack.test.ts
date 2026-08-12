@@ -141,6 +141,7 @@ describe("handleSlackRequest", () => {
   it("returns a verified URL challenge without queueing", async () => {
     const body = JSON.stringify({
       type: "url_verification",
+      api_app_id: "A_TECHKNIGHT",
       challenge: "challenge-value",
     });
     const send = vi.fn();
@@ -157,6 +158,7 @@ describe("handleSlackRequest", () => {
     const response = await handleSlackRequest(request, {
       signingSecret,
       expectedTeamId: "T_TECHKNIGHT",
+      expectedAppId: "A_TECHKNIGHT",
       nowMs: nowSeconds * 1_000,
       send,
     });
@@ -169,6 +171,7 @@ describe("handleSlackRequest", () => {
   it("queues an event with the configured non-TechKnight tenant", async () => {
     const body = JSON.stringify({
       type: "event_callback",
+      api_app_id: "A_UNSON",
       team_id: "T_UNSON",
       event_id: "EvUnson",
       event: {
@@ -194,6 +197,7 @@ describe("handleSlackRequest", () => {
       signingSecret,
       tenantId: "unson",
       expectedTeamId: "T_UNSON",
+      expectedAppId: "A_UNSON",
       nowMs: nowSeconds * 1_000,
       send,
     });
@@ -204,5 +208,35 @@ describe("handleSlackRequest", () => {
       workspaceId: "T_UNSON",
       channelId: "C_BACK_OFFICE",
     }));
+  });
+
+  it("rejects a signed request from a different Slack App", async () => {
+    const body = JSON.stringify({
+      type: "url_verification",
+      api_app_id: "A_DIFFERENT",
+      challenge: "challenge-value",
+    });
+    const send = vi.fn();
+    const request = new Request("https://example.com/slack/events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": signature(nowSeconds, body),
+      },
+      body,
+    });
+
+    const response = await handleSlackRequest(request, {
+      signingSecret,
+      expectedTeamId: "T_UNSON",
+      expectedAppId: "A_UNSON",
+      nowMs: nowSeconds * 1_000,
+      send,
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "slack_app_forbidden" });
+    expect(send).not.toHaveBeenCalled();
   });
 });
