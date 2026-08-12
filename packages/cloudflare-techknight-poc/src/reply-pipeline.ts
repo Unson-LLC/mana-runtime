@@ -9,6 +9,7 @@ const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
 const SLACK_STATUS_REFRESH_MS = 90_000;
 const SLACK_STATUS_TIMEOUT_MS = 5_000;
+const SLACK_REACTION_TIMEOUT_MS = 5_000;
 
 interface ExecResult {
   success: boolean;
@@ -195,6 +196,58 @@ function logSlackStatusFailure(code: string): void {
   console.warn(JSON.stringify({ event: "slack_thread_status_failed", code: safeCode }));
 }
 
+function logSlackReactionFailure(action: "add" | "remove", code: string): void {
+  const safeCode = code.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 80) || "unknown";
+  console.warn(JSON.stringify({ event: "slack_reaction_failed", action, code: safeCode }));
+}
+
+async function setSlackProcessingReaction(
+  event: SlackQueueEvent,
+  action: "add" | "remove",
+  options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
+): Promise<boolean> {
+  if (!options.slackBotToken) {
+    logSlackReactionFailure(action, "slack_bot_token_not_configured");
+    return false;
+  }
+
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)(`https://slack.com/api/reactions.${action}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.slackBotToken}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        channel: event.channelId,
+        timestamp: event.messageTs,
+        name: "eyes",
+      }),
+      signal: AbortSignal.timeout(SLACK_REACTION_TIMEOUT_MS),
+    });
+  } catch {
+    logSlackReactionFailure(action, "slack_api_unavailable");
+    return false;
+  }
+  if (!response.ok) {
+    logSlackReactionFailure(action, `slack_http_${response.status}`);
+    return false;
+  }
+
+  try {
+    const payload = await response.json() as { ok?: unknown; error?: unknown };
+    if (payload.ok === true) return true;
+    const code = typeof payload.error === "string" ? payload.error : "slack_reaction_rejected";
+    if (action === "add" && code === "already_reacted") return true;
+    if (action === "remove" && code === "no_reaction") return true;
+    logSlackReactionFailure(action, code);
+  } catch {
+    logSlackReactionFailure(action, "slack_api_invalid_response");
+  }
+  return false;
+}
+
 export async function setSlackThreadStatus(
   event: SlackQueueEvent,
   status: string,
@@ -245,6 +298,7 @@ export async function withSlackThreadStatus<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   const status = "分析しています…";
+  const reacted = await setSlackProcessingReaction(event, "add", options);
   const started = await setSlackThreadStatus(event, status, options);
   let stopped = false;
   let refreshInFlight: Promise<unknown> = Promise.resolve();
@@ -263,6 +317,7 @@ export async function withSlackThreadStatus<T>(
     if (refreshTimer !== undefined) clearInterval(refreshTimer);
     await refreshInFlight;
     if (started) await setSlackThreadStatus(event, "", options);
+    if (reacted) await setSlackProcessingReaction(event, "remove", options);
   }
 }
 
