@@ -2,6 +2,7 @@ import {
   postSlackReply,
   ReplyPipelineError,
   updateSlackReply,
+  withSlackThreadStatus,
   type ReplySandbox,
 } from "./reply-pipeline.js";
 import type { RuntimeBinding } from "./runtime-config.js";
@@ -277,40 +278,42 @@ export async function processMeetingTaskEvent(
   if (await isReplyCompleted(fs, event.eventId)) {
     return { outcome: "already_completed", registered: 0 };
   }
-  let state = await loadTaskRun(fs, event.eventId);
-  if (!state) {
-    state = {
-      eventId: event.eventId,
-      candidates: await extractCandidates(event, options),
-      registered: [],
-      failures: [],
-    };
-    await saveTaskRun(fs, state);
-  }
-  for (let index = 0; index < state.candidates.length; index += 1) {
-    if (state.registered.some((task) => task.index === index)) continue;
-    const candidate = state.candidates[index];
-    try {
-      const taskId = await createBrainbaseTask(event, candidate, index, options);
-      state.registered.push({ ...candidate, index, taskId });
-      state.failures = state.failures.filter((failure) => failure.index !== index);
-    } catch (error) {
-      const code = error instanceof ReplyPipelineError ? error.code : "unexpected_error";
-      state.failures = [
-        ...state.failures.filter((failure) => failure.index !== index),
-        { index, code },
-      ];
+  return withSlackThreadStatus(event, options, async () => {
+    let state = await loadTaskRun(fs, event.eventId);
+    if (!state) {
+      state = {
+        eventId: event.eventId,
+        candidates: await extractCandidates(event, options),
+        registered: [],
+        failures: [],
+      };
+      await saveTaskRun(fs, state);
     }
-    await saveTaskRun(fs, state);
-  }
-  const responseTs = await publishNotification(fs, event, state, options);
-  if (state.failures.length > 0) {
-    throw new ReplyPipelineError("brainbase_task_registration_partial");
-  }
-  await persistReplyCompletion(fs, {
-    eventId: event.eventId,
-    responseTs,
-    completedAt: options.now?.() ?? new Date().toISOString(),
+    for (let index = 0; index < state.candidates.length; index += 1) {
+      if (state.registered.some((task) => task.index === index)) continue;
+      const candidate = state.candidates[index];
+      try {
+        const taskId = await createBrainbaseTask(event, candidate, index, options);
+        state.registered.push({ ...candidate, index, taskId });
+        state.failures = state.failures.filter((failure) => failure.index !== index);
+      } catch (error) {
+        const code = error instanceof ReplyPipelineError ? error.code : "unexpected_error";
+        state.failures = [
+          ...state.failures.filter((failure) => failure.index !== index),
+          { index, code },
+        ];
+      }
+      await saveTaskRun(fs, state);
+    }
+    const responseTs = await publishNotification(fs, event, state, options);
+    if (state.failures.length > 0) {
+      throw new ReplyPipelineError("brainbase_task_registration_partial");
+    }
+    await persistReplyCompletion(fs, {
+      eventId: event.eventId,
+      responseTs,
+      completedAt: options.now?.() ?? new Date().toISOString(),
+    });
+    return { outcome: "tasks_registered", registered: state.registered.length, responseTs };
   });
-  return { outcome: "tasks_registered", registered: state.registered.length, responseTs };
 }

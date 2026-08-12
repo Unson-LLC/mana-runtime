@@ -7,6 +7,8 @@ import {
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
+const SLACK_STATUS_REFRESH_MS = 90_000;
+const SLACK_STATUS_TIMEOUT_MS = 5_000;
 
 interface ExecResult {
   success: boolean;
@@ -188,6 +190,82 @@ export async function postSlackReply(
   return (payload as { ts: string }).ts;
 }
 
+function logSlackStatusFailure(code: string): void {
+  const safeCode = code.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 80) || "unknown";
+  console.warn(JSON.stringify({ event: "slack_thread_status_failed", code: safeCode }));
+}
+
+export async function setSlackThreadStatus(
+  event: SlackQueueEvent,
+  status: string,
+  options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
+): Promise<boolean> {
+  if (!options.slackBotToken) {
+    logSlackStatusFailure("slack_bot_token_not_configured");
+    return false;
+  }
+
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)("https://slack.com/api/assistant.threads.setStatus", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.slackBotToken}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        channel_id: event.channelId,
+        thread_ts: event.threadTs,
+        status,
+      }),
+      signal: AbortSignal.timeout(SLACK_STATUS_TIMEOUT_MS),
+    });
+  } catch {
+    logSlackStatusFailure("slack_api_unavailable");
+    return false;
+  }
+  if (!response.ok) {
+    logSlackStatusFailure(`slack_http_${response.status}`);
+    return false;
+  }
+
+  try {
+    const payload = await response.json() as { ok?: unknown; error?: unknown };
+    if (payload.ok === true) return true;
+    logSlackStatusFailure(typeof payload.error === "string" ? payload.error : "slack_status_rejected");
+  } catch {
+    logSlackStatusFailure("slack_api_invalid_response");
+  }
+  return false;
+}
+
+export async function withSlackThreadStatus<T>(
+  event: SlackQueueEvent,
+  options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const status = "分析しています…";
+  const started = await setSlackThreadStatus(event, status, options);
+  let stopped = false;
+  let refreshInFlight: Promise<unknown> = Promise.resolve();
+  const refreshTimer = started
+    ? setInterval(() => {
+        refreshInFlight = refreshInFlight.then(() => (
+          stopped ? undefined : setSlackThreadStatus(event, status, options)
+        ));
+      }, SLACK_STATUS_REFRESH_MS)
+    : undefined;
+
+  try {
+    return await operation();
+  } finally {
+    stopped = true;
+    if (refreshTimer !== undefined) clearInterval(refreshTimer);
+    await refreshInFlight;
+    if (started) await setSlackThreadStatus(event, "", options);
+  }
+}
+
 export async function updateSlackReply(
   event: SlackQueueEvent,
   responseTs: string,
@@ -227,12 +305,14 @@ export async function processReplyEvent(
   if (!isReplyEligible(event, options)) return { outcome: "ignored" };
   if (await isReplyCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
-  const reply = await generateClaudeReply(event, options);
-  const responseTs = await postSlackReply(event, reply, options);
-  await persistReplyCompletion(fs, {
-    eventId: event.eventId,
-    responseTs,
-    completedAt: options.now?.() ?? new Date().toISOString(),
+  return withSlackThreadStatus(event, options, async () => {
+    const reply = await generateClaudeReply(event, options);
+    const responseTs = await postSlackReply(event, reply, options);
+    await persistReplyCompletion(fs, {
+      eventId: event.eventId,
+      responseTs,
+      completedAt: options.now?.() ?? new Date().toISOString(),
+    });
+    return { outcome: "replied", responseTs };
   });
-  return { outcome: "replied", responseTs };
 }

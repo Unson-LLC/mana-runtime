@@ -2,6 +2,7 @@ import {
   isReplyEligible,
   processReplyEvent,
   ReplyPipelineError,
+  withSlackThreadStatus,
   type ReplyPipelineOptions,
 } from "../reply-pipeline.js";
 import type { SlackQueueEvent } from "../types.js";
@@ -52,10 +53,10 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
     }),
     destroy: vi.fn().mockResolvedValue(undefined),
   };
-  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+  const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
     ok: true,
     ts: "1786455000.000001",
-  }), { status: 200, headers: { "content-type": "application/json" } }));
+  }), { status: 200, headers: { "content-type": "application/json" } })));
   const options: ReplyPipelineOptions = {
     expectedWorkspaceId: "T_TECHKNIGHT",
     allowedChannelId: "C_MANA_TEST",
@@ -112,7 +113,24 @@ describe("TechKnight Slack reply pipeline", () => {
       },
     );
 
-    const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const statusCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("assistant.threads.setStatus")
+    );
+    expect(statusCalls).toHaveLength(2);
+    expect(JSON.parse(String((statusCalls[0][1] as RequestInit).body))).toEqual({
+      channel_id: "C_MANA_TEST",
+      thread_ts: "1786454600.000001",
+      status: "分析しています…",
+    });
+    expect(JSON.parse(String((statusCalls[1][1] as RequestInit).body))).toEqual({
+      channel_id: "C_MANA_TEST",
+      thread_ts: "1786454600.000001",
+      status: "",
+    });
+
+    const [, request] = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("chat.postMessage")
+    ) as [string, RequestInit];
     expect(request.headers).toEqual({
       authorization: "Bearer xoxb-worker-secret",
       "content-type": "application/json; charset=utf-8",
@@ -137,7 +155,7 @@ describe("TechKnight Slack reply pipeline", () => {
     });
 
     expect(sandbox.exec).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -187,7 +205,14 @@ describe("TechKnight Slack reply pipeline", () => {
     await expect(processReplyEvent(fs, event(), options)).rejects.toEqual(
       expect.objectContaining<Partial<ReplyPipelineError>>({ code: "claude_execution_failed" }),
     );
-    expect(fetchMock).not.toHaveBeenCalled();
+    const statusBodies = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes("assistant.threads.setStatus"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+    expect(statusBodies).toEqual([
+      expect.objectContaining({ status: "分析しています…" }),
+      expect.objectContaining({ status: "" }),
+    ]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
     expect([...fs.files.keys()].some((path) => path.startsWith("/replies/"))).toBe(false);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("claude_execution_failed_detail"));
@@ -199,15 +224,65 @@ describe("TechKnight Slack reply pipeline", () => {
   it("leaves the event retryable when Slack rejects the post", async () => {
     const fs = new MemoryFs();
     const { options } = harness({
-      fetch: vi.fn().mockResolvedValue(new Response(
+      fetch: vi.fn().mockImplementation(() => Promise.resolve(new Response(
         JSON.stringify({ ok: false, error: "missing_scope" }),
         { status: 200 },
-      )),
+      ))),
     });
 
     await expect(processReplyEvent(fs, event(), options)).rejects.toEqual(
       expect.objectContaining<Partial<ReplyPipelineError>>({ code: "slack_post_failed" }),
     );
     expect([...fs.files.keys()].some((path) => path.startsWith("/replies/"))).toBe(false);
+  });
+
+  it("keeps replying when Slack rejects the processing status", async () => {
+    const fs = new MemoryFs();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockImplementation(async (input: string | URL | Request) => {
+      if (String(input).includes("assistant.threads.setStatus")) {
+        return new Response(JSON.stringify({ ok: false, error: "missing_scope" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, ts: "1786455000.000001" }), { status: 200 });
+    });
+    const { options } = harness({ fetch: fetchMock });
+
+    await expect(processReplyEvent(fs, event(), options)).resolves.toMatchObject({
+      outcome: "replied",
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("slack_thread_status_failed"));
+    warnSpy.mockRestore();
+  });
+
+  it("refreshes the processing status while work is still running", async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (value: string) => void;
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ));
+      const running = withSlackThreadStatus(
+        event(),
+        { slackBotToken: "xoxb-worker-secret", fetch: fetchMock },
+        () => new Promise<string>((resolve) => { finish = resolve; }),
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(90_000);
+      const runningStatuses = fetchMock.mock.calls
+        .filter(([url]) => String(url).includes("assistant.threads.setStatus"))
+        .map(([, init]) => JSON.parse(String((init as RequestInit).body)).status);
+      expect(runningStatuses).toEqual(["分析しています…", "分析しています…"]);
+
+      finish("done");
+      await expect(running).resolves.toBe("done");
+      const allStatuses = fetchMock.mock.calls.map(([, init]) =>
+        JSON.parse(String((init as RequestInit).body)).status
+      );
+      expect(allStatuses).toEqual(["分析しています…", "分析しています…", ""]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
