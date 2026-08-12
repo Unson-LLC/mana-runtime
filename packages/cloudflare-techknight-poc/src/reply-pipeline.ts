@@ -42,6 +42,7 @@ export interface ReplyPipelineOptions {
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
+  hydrateThreadContext?(event: SlackQueueEvent): Promise<SlackQueueEvent>;
 }
 
 export interface ReplyProcessResult {
@@ -372,8 +373,11 @@ export async function processReplyEvent(
   if (await isReplyCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
   return withSlackThreadStatus(event, options, async () => {
-    const reply = await generateClaudeReply(event, options);
-    const responseTs = await postSlackReply(event, reply, options);
+    const hydratedEvent = options.hydrateThreadContext
+      ? await options.hydrateThreadContext(event)
+      : event;
+    const reply = await generateClaudeReply(hydratedEvent, options);
+    const responseTs = await postSlackReply(hydratedEvent, reply, options);
     await persistReplyCompletion(fs, {
       eventId: event.eventId,
       responseTs,
