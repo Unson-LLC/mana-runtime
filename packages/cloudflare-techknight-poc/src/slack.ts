@@ -14,6 +14,7 @@ interface HandleSlackRequestOptions {
   signingSecret: string;
   tenantId?: string;
   expectedTeamId: string;
+  expectedAppId?: string;
   nowMs?: number;
   send(event: SlackQueueEvent): Promise<unknown>;
 }
@@ -138,6 +139,12 @@ export async function handleSlackRequest(
     payload = JSON.parse(body);
   } catch {
     return jsonResponse({ error: "slack_payload_invalid" }, 400);
+  }
+  if (
+    options.expectedAppId &&
+    (!isRecord(payload) || payload.api_app_id !== options.expectedAppId)
+  ) {
+    return jsonResponse({ error: "slack_app_forbidden" }, 403);
   }
   if (isRecord(payload) && payload.type === "url_verification") {
     const challenge = nonEmptyString(payload.challenge);

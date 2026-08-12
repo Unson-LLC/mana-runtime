@@ -8,10 +8,22 @@
       "type": "invariant",
       "statement": "tenant、workspace、channel、project codesはCloudflare deployment設定から決定し、Slack payloadやAI出力で上書きできない",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "index": 0 }, { "kind": "acceptance_criteria", "index": 2 }],
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 0 }],
         "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "信頼境界" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-config.ts", "anchor": "resolveRuntimeBinding" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "uses only trusted deployment project codes" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "assigns trusted deployment project codes to every registered task" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-PROJECT-CODES",
+      "type": "invariant",
+      "statement": "登録するすべてのタスクのproject_codesはdeployment設定の信頼済み和集合を使用し、AI出力の値を採用しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 2 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "信頼境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-task-pipeline.ts", "anchor": "processMeetingTaskEvent" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "assigns trusted deployment project codes to every registered task" }]
       },
       "confidence": 1
     },
@@ -72,6 +84,36 @@
         "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "責務境界" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-config.ts", "anchor": "RuntimeBinding" }],
         "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts", "case": "resolves independent company deployments with one implementation" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-DEPLOYMENT-ISOLATION",
+      "type": "invariant",
+      "statement": "雲孫事業運営とTechKnightは同じruntime実装を利用してもWorker、Queue、DLQ、workspace identity、secretを共有しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 7 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "会社別deployment" }],
+        "code_refs": [
+          { "file": "packages/cloudflare-techknight-poc/wrangler.jsonc", "anchor": "name" },
+          { "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc", "anchor": "name" }
+        ],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "雲孫とTechKnightのWorker、Queue、DLQを共有しない" }]
+      },
+      "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-SLACK-TRANSPORT",
+      "type": "invariant",
+      "statement": "Cloudflareはdeployment専用Slack AppのHTTP Events APIを使い、LightsailのSocket Mode Appと認証およびイベント配送方式を共有しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "index": 8 }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cloudflare-primary-runtime.md", "section": "信頼境界" }],
+        "code_refs": [
+          { "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc", "anchor": "SLACK_EXPECTED_APP_ID" },
+          { "file": "packages/cloudflare-techknight-poc/src/slack.ts", "anchor": "slack_app_forbidden" }
+        ],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts", "case": "rejects a signed request from a different Slack App" }]
       },
       "confidence": 1
     }

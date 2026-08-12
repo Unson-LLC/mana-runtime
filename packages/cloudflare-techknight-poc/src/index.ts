@@ -30,6 +30,7 @@ export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 interface Env extends SandboxRuntimeEnv {
   SLACK_SIGNING_SECRET: string;
   SLACK_EXPECTED_TEAM_ID: string;
+  SLACK_EXPECTED_APP_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
@@ -83,6 +84,7 @@ export default {
       signingSecret: env.SLACK_SIGNING_SECRET,
       tenantId: env.TENANT_ID,
       expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
+      expectedAppId: env.SLACK_EXPECTED_APP_ID,
       send: (event) => env.TECHKNIGHT_EVENTS.send(event),
     });
   },

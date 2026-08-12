@@ -31,7 +31,7 @@ Cloudflare側を今後の主runtimeとし、会社ごとに分離した実行環
   deployment設定から決定し、Slack本文やAI出力を権限情報として採用しない。
 - 許可されたSlackスレッドで議事録のタスク化を依頼すると、候補がBrainbaseの
   Canonical Taskへ登録され、登録結果が同じスレッドへ通知される。
-- 登録される全タスクへ、チャンネルに設定されたproject codeの和集合が付く。
+- 議事録タスク登録パイプライン（meeting-task-pipeline）で登録される全タスクへ、チャンネルに設定されたproject codeの和集合が付く。
 - 同一Slack eventがQueueから再配送されても、BrainbaseタスクとSlack結果通知を
   重複作成しない。
 - 会社ごとのSlack token、Brainbase token、Anthropic OAuthはCloudflare deploymentの
@@ -40,6 +40,10 @@ Cloudflare側を今後の主runtimeとし、会社ごとに分離した実行環
   同じ議事録タスク処理を二重実行しない。
 - Cloudflare runtimeの業務ロジックはTechKnight固有名に依存せず、別会社deploymentでも
   同じテスト済み実装を設定差だけで利用できる。
+- 雲孫事業運営とTechKnightは同じCloudflare runtime実装を使いながら、Worker、Queue、
+  DLQ、Durable Object、Container、Slack、Anthropic OAuth、Brainbase認証を共有しない。
+- Cloudflareはdeployment専用Slack AppのHTTP Events APIを使い、LightsailでSocket Modeを
+  使用する既存Slack Appを共用または切り替えない。
 
 ## シナリオ
 
@@ -53,6 +57,10 @@ Cloudflare側を今後の主runtimeとし、会社ごとに分離した実行環
   Slack投稿を再実行しない。
 - `CFPRIMARY-S-005`: Brainbase登録が一部失敗した場合、成功・失敗を区別して通知し、
   Queue再試行で成功済みタスクを増殖させない。
+- `CFPRIMARY-S-006`: 雲孫Cloudflare accountへ雲孫事業運営deploymentを`reply_only`で追加しても、
+  TechKnight deploymentのWorker、Queue、DLQ、workspace identityを参照しない。
+- `CFPRIMARY-S-007`: 雲孫Cloudflare専用の八雲まなAppを追加しても、Lightsailの既存Appと
+  イベント配送方式、token、Signing Secretを共有しない。
 
 ## 対象外
 

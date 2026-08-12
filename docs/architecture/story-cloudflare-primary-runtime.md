@@ -42,6 +42,12 @@ flowchart LR
   prompt、Claude JSONに含まれる同名値は捨てる。
 - Slack requestはraw body署名と5分replay windowを検証する。Queue consumerでもdeploymentの
   workspace identityを再検証する。
+- Slackイベント配送方式はApp単位で固定する。Cloudflare deploymentはHTTP Events API専用App、
+  Lightsailは既存Socket Mode Appを使い、同じSlack Appを二つのruntimeへ接続しない。
+- 雲孫pilotのCloudflare Workerは署名とworkspaceだけでなく、設定済み`api_app_id`も一致する
+  イベントだけを受理する。表示名が同じ別Appからの配送はfail closedで拒否する。
+  既存TechKnight deploymentは後方互換のためこのStoryではApp ID固定の対象外とし、専用App IDを
+  確認できた時点で同じ検査を有効化する。
 - Brainbase writeは会社別service tokenで行う。project codesは信頼済みbindingの和集合を
   gatewayで強制し、空なら登録しない。
 - Anthropic OAuth、Slack Bot token、Brainbase tokenはWorker secretのまま扱い、Sandboxへの
@@ -77,6 +83,20 @@ Workspaceには秘密を含まない次の状態だけを置く。
    `RUNTIME_EXECUTION_MODE=meeting_tasks`を有効化する。
 3. 議事録生成、Canvas、通常task toolsの順に同じcoreへ移す。
 4. 観測期間後、該当Lightsail connectorを停止する。全binding移行後にLightsailを廃止する。
+
+## 会社別deployment
+
+同じCloudflare accountを所有主体として利用する場合でも、会社境界はdeploymentとresourceで分ける。
+
+| deployment | tenant | Slack workspace | pilot channel | project | 実行モード |
+|---|---|---|---|---|---|
+| `unson-business-mana-runtime` | `unson-business` | `T0882T8N9UH` | `C0BKS6RL99T` | `back-office` | `reply_only` |
+| `techknight-mana-runtime-poc` | `techknight` | `T07A9J3PEMB` | `C0A1UQNLSBD` | 会社別設定 | `reply_only` |
+
+Worker、Queue、DLQ、Durable Object、Containerは別名・別namespaceとし、各Workerへ会社別secretを
+設定する。Slack Appもdeploymentごとに分離し、表示名が同じでもApp ID、Signing Secret、Bot token、
+イベント配送方式を共有しない。`reply_only`は疎通確認用であり、Lightsailから議事録タスク処理の所有権を移すまでは
+`meeting_tasks`へ変更しない。
 
 ## 非機能条件
 

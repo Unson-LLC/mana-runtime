@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --outdir dist",
+    "build:unson-business": "wrangler deploy --config wrangler.unson-business.jsonc --dry-run --outdir dist/unson-business",
+    "deploy:unson-business": "wrangler deploy --config wrangler.unson-business.jsonc",
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
