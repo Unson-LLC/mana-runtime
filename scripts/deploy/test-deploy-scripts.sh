@@ -208,6 +208,22 @@ grep -Fq 'openryoko deploy: main pid' "$deploy_dir/openryoko-pilot-deploy"
 grep -Fq 'openryoko deploy: entrypoint' "$deploy_dir/openryoko-pilot-deploy"
 echo "deployment evidence output fixtures passed"
 
+grep -Fq 'run_as_runtime_at "$release_dir" "$PNPM_BIN" --dir "$release_dir" build:lightsail' \
+  "$deploy_dir/openryoko-pilot-deploy" \
+  || { echo "pilot deploy does not use the Lightsail-scoped build" >&2; exit 1; }
+node - "$repo_root/package.json" <<'NODE'
+const scripts = require(process.argv[2]).scripts;
+const command = scripts['build:lightsail'];
+if (!command) throw new Error('build:lightsail is missing');
+if (!command.includes('--filter @openryoko/web') || !command.includes('--filter openryoko')) {
+  throw new Error('build:lightsail does not build the web and Jimmy packages');
+}
+if (command.includes('cloudflare-techknight-poc') || /\bturbo build\b/.test(command)) {
+  throw new Error('build:lightsail includes packages outside the Lightsail runtime');
+}
+NODE
+echo "Lightsail build scope fixture passed"
+
 workflow_fixture_root="$(mktemp -d)"
 cp "$workflow" "$workflow_fixture_root/expanded-permissions.yml"
 ruby -e 'p=ARGV.fetch(0); s=File.read(p).sub("  contents: read", "  contents: read\n  issues: write"); File.write(p, s)' "$workflow_fixture_root/expanded-permissions.yml"
@@ -314,7 +330,7 @@ if [[ "${FIXTURE_EXPECT_RELEASE_CWD:-0}" == "1" ]]; then
 fi
 release_dir=""
 if [[ "${1:-}" == "--dir" ]]; then release_dir="$2"; shift 2; fi
-if [[ "${1:-}" == "build" ]]; then
+if [[ "${1:-}" == "build:lightsail" ]]; then
   [[ "${FIXTURE_MODE:-}" != "build-fail" ]] || exit 42
   mkdir -p "$release_dir/packages/jimmy/dist/bin"
   mkdir -p "$release_dir/packages/jimmy/dist/src/mcp"
