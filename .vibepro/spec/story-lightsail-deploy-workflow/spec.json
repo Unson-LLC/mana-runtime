@@ -1,0 +1,468 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-lightsail-deploy-workflow",
+  "diagrams": [
+    {
+      "kind": "flow",
+      "title": "Approved deployment flow",
+      "mermaid": "flowchart LR\n  U[GitHub collaborator] --> P[Prepare exact SHA and digest]\n  P --> E[production Environment approval]\n  E --> A[Deploy immutable outputs]\n  A --> S[restricted SSH forced command]\n  S --> H[server main SHA validation and build]\n  H --> G[development runner guard]\n  G --> R[atomic activation and runtime checks]"
+    },
+    {
+      "kind": "state",
+      "title": "Release activation state",
+      "entities": [
+        "release",
+        "active"
+      ],
+      "mermaid": "stateDiagram-v2\n  [*] --> Requested\n  Requested --> Rejected: invalid or non-main SHA\n  Requested --> Built: isolated build passes\n  Built --> Guarded: runner guard passes\n  Guarded --> Active: restart and runtime checks pass\n  Guarded --> RolledBack: activation check fails\n  Active --> ActiveWithWarning: metadata prune fails"
+    },
+    {
+      "kind": "threat_model",
+      "title": "Deployment trust boundaries",
+      "mermaid": "flowchart LR\n  C[GitHub collaborator] -->|workflow dispatch| P[Prepare immutable SHA and digest]\n  P -->|exact outputs| E[production Environment]\n  E -->|required reviewer approval| A[Deploy job]\n  A -->|full SHA and pinned host key| F[restricted SSH forced command]\n  F -->|validated SHA and digest argv| D[root deploy script]\n  D -->|main ancestry verified| R[single-use release]\n  X[Arbitrary command or malformed SHA] -->|reject| F\n  Y[Main-external commit] -->|reject| D\n  Z[Activation failure] -->|restore previous pointer| K[known-good release]\n  P -. no secrets .-> S[runtime secrets]\n  C -. no shell .-> D"
+    }
+  ],
+  "generated_by": {
+    "caller": "codex",
+    "stage": "ai_synthesis"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "The manual deployment workflow resolves an omitted input to origin/main and accepts an explicit input only when it is a full 40-character commit SHA reachable from origin/main.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-01"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Decision"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/resolve-deploy-ref",
+            "anchor": "merge-base --is-ancestor"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "A secretless prepare job resolves and displays immutable target and control-plane outputs before approval; the production Environment deployment job depends only on those outputs, performs no checkout or target resolution after approval, and uses read-only repository permissions, non-cancelling concurrency, pinned host keys, and a commit-pinned checkout action in prepare.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-02"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/adr/0006-restricted-github-actions-lightsail-deploy.md",
+            "section": "Decision"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": ".github/workflows/deploy-lightsail.yml",
+            "anchor": "environment: production"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "must_contain": "deploy workflow semantic contract passed"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "The dedicated SSH principal accepts only deploy followed by one full hexadecimal SHA and one control-plane SHA-256 digest, rejects an installed-script digest mismatch before build, and passes the SHA and digest as separate arguments to the root-owned deploy script.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-03"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Trust and secrets"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/openryoko-deploy-command",
+            "anchor": "SSH_ORIGINAL_COMMAND"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "The server independently fetches origin/main and rejects a requested commit that is not reachable from origin/main before creating or activating a release.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-04"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/adr/0006-restricted-github-actions-lightsail-deploy.md",
+            "section": "Decision"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/openryoko-pilot-deploy",
+            "anchor": "merge-base --is-ancestor"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "must_contain": "commit resolution fixtures passed"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "Given a valid unbuilt commit, the server builds the Lightsail runtime's workspace dependencies and application packages in a detached release worktree and changes the active symlink only after the Jimmy entrypoint exists.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-05"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Runtime layout"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/openryoko-pilot-deploy",
+            "anchor": "worktree add --detach"
+          },
+          {
+            "file": "package.json",
+            "anchor": "build:lightsail"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          },
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "INV-003",
+      "type": "invariant",
+      "statement": "Every service restart waits for the installed development-runner guard and fails without switching the running service when the guard times out.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-06"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Why this boundary"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/openryoko-pilot-deploy",
+            "anchor": "--wait 5400"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "must_contain": "deploy script, workflow contract, and rollback validation passed"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "S-002",
+      "type": "scenario",
+      "statement": "Given activation or systemd active-check failure and an existing previous release, the deploy script restores the previous symlink and restarts the service before returning failure.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-07"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Rollback"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/openryoko-pilot-deploy",
+            "anchor": "activation failed; rolling back"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "INV-004",
+      "type": "invariant",
+      "statement": "The repository and deployment output contain no SSH private key, runtime token, gateway environment value, or disabled host-key checking configuration.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-08"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Trust and secrets"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": ".github/workflows/deploy-lightsail.yml",
+            "anchor": "StrictHostKeyChecking=yes"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "must_contain": "deploy workflow semantic contract passed"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "A successful workflow reports server-side build, guarded restart, systemd active evidence, control-plane digest, MainPID, and resolved release entrypoint without claiming Slack or Web release outcome completion.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-09"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Consequences"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": ".github/workflows/deploy-lightsail.yml",
+            "anchor": "Slack/Web user outcome"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "S-003",
+      "type": "scenario",
+      "statement": "The deploy-script test rejects arbitrary SSH commands and short SHAs, verifies shell syntax, parses the workflow contract, and exercises rollback pointer restoration.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          }
+        ],
+        "architecture_refs": [],
+        "code_refs": [],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "S-004",
+      "type": "scenario",
+      "statement": "After a successful activation, worktree metadata pruning failure emits a warning but does not reverse deployment success.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Rollback"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/openryoko-pilot-deploy",
+            "anchor": "warning: worktree metadata pruning failed"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    },
+    {
+      "id": "INV-005",
+      "type": "invariant",
+      "statement": "Reinstalling the control plane preserves an existing active release pointer and seeds it from the source clone only on first installation; application rollback uses the current workflow control plane independently of the target application SHA and never runs an installer from the rollback target.",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-07"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-lightsail-deploy-workflow.md",
+            "section": "Rollback"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "scripts/deploy/lib/deploy-account.sh",
+            "anchor": "seed_release_pointer_if_missing"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "case": "S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts",
+            "must_contain": "installer artifact fixtures passed"
+          }
+        ]
+      },
+      "first_seen_at": "2026-08-12T11:09:31.595Z",
+      "last_revised_at": "2026-08-12T11:25:29.915Z"
+    }
+  ],
+  "open_questions": [],
+  "generated_at": "2026-08-12T11:19:21.657Z",
+  "previous_spec_id": "2026-08-12T11:19:21.657Z"
+}

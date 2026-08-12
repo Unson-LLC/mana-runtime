@@ -44,7 +44,7 @@ Mana Runtimeの共同開発者として、個人の端末や汎用SSH/root権限
 - AC-02: secretを持たないprepare jobが対象SHAとcontrol-plane SHA/digestを承認前に固定・表示し、GitHub `production` Environment gateを通過するdeploy jobはその固定値だけを使ってSSH接続する。required reviewerの実設定、表示値を確認できる承認停止、承認待ち中にmainが進んでも対象が変わらないことはマージ後R-01で確認する。
 - AC-03: installerとforced-command wrapperは、Lightsailの専用SSH principalに`deploy FULL_COMMIT_SHA CONTROL_PLANE_SHA256`以外を許さない設定を生成し、installed deployerのdigestがworkflow commit上の実装と一致しなければbuild前に拒否する。アプリのtarget SHAとは独立させる。実機への導入状態はマージ後R-02で確認する。
 - AC-04: サーバー側でも対象SHAが`origin/main`に含まれることを再検証し、GitHub側だけの検証を信頼しない。
-- AC-05: buildは稼働中releaseと別のworktreeで行い、成功後だけactive symlinkを切り替える。
+- AC-05: buildは稼働中releaseと別のworktreeで行い、Lightsail runtimeが参照するworkspace依存を先にbuildし、成功後だけactive symlinkを切り替える。
 - AC-06: restart前にdevelopment runner guardを待ち、実行中のVibePro開発runnerをkillしない。
 - AC-07: serviceがactiveにならなければ、直前releaseへsymlinkを戻してrestartする。
 - AC-08: SSH秘密鍵、host key、runtime secretをrepository、workflow log、引数へ含めない。

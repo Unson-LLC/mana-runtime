@@ -39,7 +39,7 @@ flowchart LR
 - Root deploy script: `/usr/local/sbin/openryoko-pilot-deploy`
 - Forced command: `/usr/local/sbin/openryoko-deploy-command`
 
-初回installerは`current`を現行source cloneへ向け、wrapperをatomicに更新し、systemdの`ExecStart`をstable wrapperへ固定する。serviceはrestartしないため、導入だけでは稼働commitを変えない。次回の承認済みdeployでSHA releaseへ切り替わる。Actionsはworkflow commit上のdeploy script 2本のdigestを送信し、forced-command wrapperとroot deploy scriptがinstalled copyのdigestを二重検証する。アプリのtarget SHAとcontrol-plane SHAを分離するため、古いアプリSHAへのrollbackでも古いinstallerは実行しない。deploy script変更時はworkflow commitからinstallerを再実行するまでfail closedになる。deploy成功前にはMainPIDのcommand lineが`current`配下のentrypointを実行していることも確認し、target SHA・control-plane SHA/digest・MainPID・resolved entrypointをworkflow summaryへ伝播する。
+初回installerは`current`を現行source cloneへ向け、wrapperをatomicに更新し、systemdの`ExecStart`をstable wrapperへ固定する。serviceはrestartしないため、導入だけでは稼働commitを変えない。次回の承認済みdeployでSHA releaseへ切り替わる。release buildはLightsail runtimeのworkspace依存を明示的に先行buildし、Jimmyが未生成の共有packageを参照して失敗しないようにする。Actionsはworkflow commit上のdeploy script 2本のdigestを送信し、forced-command wrapperとroot deploy scriptがinstalled copyのdigestを二重検証する。アプリのtarget SHAとcontrol-plane SHAを分離するため、古いアプリSHAへのrollbackでも古いinstallerは実行しない。deploy script変更時はworkflow commitからinstallerを再実行するまでfail closedになる。deploy成功前にはMainPIDのcommand lineが`current`配下のentrypointを実行していることも確認し、target SHA・control-plane SHA/digest・MainPID・resolved entrypointをworkflow summaryへ伝播する。
 
 ## Trust and secrets
 

@@ -222,6 +222,6 @@
         "due_at": null
       }
     ],
-    "current_story_id": "HOTRELOAD-PLACEMENT-AUTHORITY"
+    "current_story_id": "story-lightsail-deploy-workflow"
   }
 }

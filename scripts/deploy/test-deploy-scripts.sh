@@ -215,8 +215,8 @@ node - "$repo_root/package.json" <<'NODE'
 const scripts = require(process.argv[2]).scripts;
 const command = scripts['build:lightsail'];
 if (!command) throw new Error('build:lightsail is missing');
-if (!command.includes('--filter @openryoko/web') || !command.includes('--filter openryoko')) {
-  throw new Error('build:lightsail does not build the web and Jimmy packages');
+if (!command.includes('--filter @openryoko/web') || !command.includes('--filter openryoko...')) {
+  throw new Error('build:lightsail does not build the web package and Jimmy dependency closure');
 }
 if (command.includes('cloudflare-techknight-poc') || /\bturbo build\b/.test(command)) {
   throw new Error('build:lightsail includes packages outside the Lightsail runtime');
