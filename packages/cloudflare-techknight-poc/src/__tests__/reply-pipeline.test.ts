@@ -95,7 +95,9 @@ describe("TechKnight Slack reply pipeline", () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();
 
-    await expect(processReplyEvent(fs, event(), options)).resolves.toEqual({
+    await expect(processReplyEvent(fs, event({
+      threadContext: "[Slack thread context]\n<@U_ROOT>: 契約更新について\n<@U_MIDDLE>: 月額は5万円\n",
+    }), options)).resolves.toEqual({
       outcome: "replied",
       responseTs: "1786455000.000001",
     });
@@ -103,6 +105,9 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.writeFile).toHaveBeenCalledOnce();
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("メンションしてみる");
+    expect(prompt).toContain("契約更新について");
+    expect(prompt).toContain("月額は5万円");
+    expect(prompt.match(/メンションしてみる/g)).toHaveLength(1);
     expect(prompt).not.toContain("<@U_BOT>");
     expect(prompt).not.toContain("\u0000");
     expect(prompt).not.toContain("TechKnight");

@@ -23,6 +23,7 @@ import { resolveRuntimeBinding } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
 import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { persistEventOnce } from "./workspace-store.js";
+import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 
@@ -106,16 +107,19 @@ export default {
             () => getWorkspace(handle),
             async (workspace) => {
               await persistEventOnce(workspace.fs, event);
-              return routeRuntimeEvent(event, {
+              const hydratedEvent = await hydrateSlackQueueEventThreadContext(event, {
+                botToken: env.SLACK_BOT_TOKEN,
+              });
+              return routeRuntimeEvent(hydratedEvent, {
                 meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
                 processMeetingTask: () => {
-                  const binding = resolveRuntimeBinding(event, {
+                  const binding = resolveRuntimeBinding(hydratedEvent, {
                     tenantId: env.TENANT_ID,
                     workspaceId: env.SLACK_EXPECTED_TEAM_ID,
                     channelId: env.SLACK_ALLOWED_CHANNEL_ID,
                     projectCodes: env.RUNTIME_PROJECT_CODES,
                   });
-                  return processMeetingTaskEvent(workspace.fs, event, {
+                  return processMeetingTaskEvent(workspace.fs, hydratedEvent, {
                     binding,
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
@@ -125,7 +129,7 @@ export default {
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                   });
                 },
-                processReply: () => processReplyEvent(workspace.fs, event, {
+                processReply: () => processReplyEvent(workspace.fs, hydratedEvent, {
                   expectedTenantId: env.TENANT_ID,
                   expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
                   allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,

@@ -30,6 +30,9 @@ importers:
       '@cloudflare/sandbox':
         specifier: 0.12.5
         version: 0.12.5(@xterm/xterm@6.0.0)
+      '@openryoko/slack-thread-context':
+        specifier: workspace:*
+        version: link:../slack-thread-context
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260811.1
@@ -49,6 +52,9 @@ importers:
 
   packages/jimmy:
     dependencies:
+      '@openryoko/slack-thread-context':
+        specifier: workspace:*
+        version: link:../slack-thread-context
       '@slack/bolt':
         specifier: ^4.3.0
         version: 4.6.0(@types/express@5.0.6)
@@ -125,6 +131,18 @@ importers:
       '@types/ws':
         specifier: ^8.5.0
         version: 8.18.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.0(@types/node@22.19.15)(jsdom@29.0.0)(vite@8.0.0(@types/node@22.19.15)(jiti@2.6.1)(yaml@2.9.0))
+
+  packages/slack-thread-context:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.19.15
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
