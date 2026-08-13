@@ -1,4 +1,4 @@
-import type { GeneratedMeetingMinutes } from "./meeting-minutes-contracts.js";
+import type { GeneratedMeetingMinutes, MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
@@ -11,7 +11,22 @@ export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMi
   const title = nonEmpty(record.title, 200); const overview = nonEmpty(record.overview, 3000);
   const body = nonEmpty(record.body, 100_000);
   if (!title || !overview || !body) throw new Error("meeting_minutes_generation_invalid");
-  return { title, overview, body };
+  if (!Array.isArray(record.tasks) || record.tasks.length > 20) throw new Error("meeting_minutes_generation_invalid");
+  const tasks = record.tasks.map((item): MeetingMinutesTaskCandidate | undefined => {
+    const task = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
+    const taskTitle = nonEmpty(task.title, 200); if (!taskTitle) return undefined;
+    const description = nonEmpty(task.description, 4_000);
+    const rawPriority = nonEmpty(task.priority, 16)?.toLowerCase();
+    const priority = rawPriority && ["low", "medium", "high", "urgent"].includes(rawPriority)
+      ? rawPriority as MeetingMinutesTaskCandidate["priority"] : undefined;
+    const rawDueAt = nonEmpty(task.due_at, 64);
+    const due_at = rawDueAt && /^\d{4}-\d{2}-\d{2}$/.test(rawDueAt) ? `${rawDueAt}T00:00:00+09:00`
+      : rawDueAt && !Number.isNaN(Date.parse(rawDueAt)) ? rawDueAt : undefined;
+    return { title: taskTitle, ...(description ? { description } : {}), ...(priority ? { priority } : {}),
+      ...(due_at ? { due_at } : {}) };
+  });
+  if (tasks.some((task) => !task)) throw new Error("meeting_minutes_generation_invalid");
+  return { title, overview, body, tasks: tasks as MeetingMinutesTaskCandidate[] };
 }
 
 export function splitMeetingMinutesForSlack(body: string, maxChars = 2_900): string[] {
@@ -37,9 +52,10 @@ function generationPrompt(transcript: string): string {
     "overviewは会議タイトルに続く2〜4段落で、目的、主要テーマ、決定事項、未解決の論点を具体的に記述してください。",
     "bodyはトピックごとに「------------」だけの行で区切り、具体的な見出しと2〜5段落で背景、議論、重要性、変化、未解決点を記述してください。1〜2文だけで終わらせないでください。",
     "bodyの最後には必ず「*アクションアイテム*」セクションを置き、担当者別に内容と期限を記述してください。期限不明は[TBD]、担当者不明は@未確認としてください。",
+    "tasksには、会議中に実行することが明示されたアクションだけを最大20件入れてください。推測でタスク、担当者、期限を補わないでください。該当がなければ空配列にしてください。",
     "文字起こしにない事実、決定、約束、肩書きを発明しないでください。根拠が薄い場合は不足している根拠を明記してください。",
     "出力はMarkdown fenceを付けず、次のJSONオブジェクトだけにしてください。",
-    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"会議タイトルと2〜4段落の概要","body":"区切り線、トピック別の物語的本文、アクションアイテムを含むSlack mrkdwn"}',
+    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"会議タイトルと2〜4段落の概要","body":"区切り線、トピック別の物語的本文、アクションアイテムを含むSlack mrkdwn","tasks":[{"title":"実行内容","description":"会議で確認できた背景と担当者","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}]}',
     "", "文字起こし:", bounded,
   ].join("\n");
 }

@@ -13,6 +13,7 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
 function resumeOptions(overrides: Record<string, unknown> = {}) {
   return { destinations: [destination], download: vi.fn().mockResolvedValue("transcript"),
     generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
+    createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
       transcriptUrl: "https://github/t", minutesUrl: "https://github/m" }),
     postParent: vi.fn().mockResolvedValue("10.1"), postThreadChunk: vi.fn().mockResolvedValue("10.2"), ...overrides };
@@ -25,6 +26,69 @@ describe("meeting minutes pipeline", () => {
     const second = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", destinations: [destination], requestDestination });
     expect(first[0]).toMatchObject({ runId: "Ev1_F1", status: "awaiting_destination" });
     expect(second[0]?.runId).toBe("Ev1_F1"); expect(requestDestination).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers extracted tasks before Slack with stable idempotency and trusted project scope", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const order: string[] = [];
+    const createTask = vi.fn(async () => { order.push("task"); return { id: "task-42" }; });
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
+        { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20T00:00:00+09:00" },
+      ] }),
+      saveGitHub: vi.fn(async () => { order.push("github"); return { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" }; }),
+      createTask,
+      postParent: vi.fn(async () => { order.push("slack"); return "10.1"; }),
+    });
+    const run = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(order).toEqual(["github", "task", "slack"]);
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "請求書を送る", project_codes: ["mana"] }),
+      expect.stringMatching(/^meeting-minutes-/),
+    );
+    expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42" }]);
+    expect(options.postThreadChunk).toHaveBeenCalledWith(
+      "CDEST", "10.1", expect.stringContaining("Brainbaseタスク自動登録: 1件"), expect.any(String),
+    );
+  });
+
+  it("accepts minutes with no explicit tasks without creating a task", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [] }),
+    });
+    const run = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(run.status).toBe("completed");
+    expect(options.createTask).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalledWith(
+      expect.any(String), expect.any(String), expect.stringContaining("Brainbaseタスク自動登録"), expect.any(String),
+    );
+  });
+
+  it("retries only the unregistered tasks after a partial task API failure", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockResolvedValueOnce({ id: "task-1" })
+      .mockRejectedValueOnce(new Error("task api down"))
+      .mockResolvedValueOnce({ id: "task-2" });
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
+        { title: "資料を更新する" }, { title: "請求書を送る" },
+      ] }),
+      createTask,
+    });
+    await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("task api down");
+    expect(options.postParent).not.toHaveBeenCalled();
+    const retried = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(retried.taskRegistration?.registered.map((task) => task.taskId)).toEqual(["task-1", "task-2"]);
+    expect(createTask).toHaveBeenCalledTimes(3);
+    expect(createTask.mock.calls[0]?.[0]).toMatchObject({ title: "資料を更新する" });
+    expect(createTask.mock.calls[1]?.[0]).toMatchObject({ title: "請求書を送る" });
+    expect(createTask.mock.calls[2]?.[0]).toMatchObject({ title: "請求書を送る" });
+    expect(createTask.mock.calls[1]?.[1]).toBe(createTask.mock.calls[2]?.[1]);
   });
 
   it("saves GitHub before Slack and completes", async () => {

@@ -30,6 +30,7 @@ import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
 import { generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
+import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import {
   processMeetingTaskEvent,
@@ -134,6 +135,12 @@ function meetingMinutesClients(env: Env) {
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
+      createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
+        const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
+          token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
+            fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
+        return client.createTask(input, idempotencyKey);
+      },
       postParent: (channelId: string, text: string, clientMsgId: string) =>
         destinationSlack(channelId).postParent(channelId, text, clientMsgId),
       postThreadChunk: (channelId: string, threadTs: string, text: string, clientMsgId: string) =>
