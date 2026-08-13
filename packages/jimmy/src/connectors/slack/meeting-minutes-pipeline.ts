@@ -10,10 +10,10 @@
  * classification and minutes generation (meeting-minutes-generator.ts).
  *
  * State lives in `${JINN_HOME}/.meeting-minutes-runs.json` with monotonic
- * status transitions (received → routed → posted → tasks_dispatched;
+ * status transitions (received → routed → GitHub保存 → posted → tasks_dispatched;
  * failed:<stage> never regresses a completed stage). The transcript itself is
- * never persisted — only its sha256, which also dedupes re-uploads of the
- * same recording.
+ * persisted only in the selected project's GitHub repository; local state keeps
+ * its sha256, which also dedupes re-uploads of the same recording.
  */
 
 import fs from "node:fs";
@@ -51,6 +51,11 @@ import {
   normalizeMeetingMinutesDestinations,
   type CanonicalMinutesDestination,
 } from "./meeting-minutes-destinations.js";
+import {
+  MeetingMinutesGitHubClient,
+  type SaveMeetingRecordsRequest,
+  type SavedMeetingRecords,
+} from "./meeting-minutes-github.js";
 
 export interface MeetingMinutesPipelineConfig {
   /** Master switch — defaults to false when the block is absent. */
@@ -119,6 +124,8 @@ export interface MinutesRun {
   controlTs?: string;
   /** Persisted so reroute can repost without regenerating. */
   minutes?: GeneratedMinutes;
+  /** Canonical two-layer GitHub record, persisted before any Slack delivery. */
+  github?: SavedMeetingRecords;
   shares?: Record<string, MinutesShareRecord>;
   createdAt: number;
   updatedAt: number;
@@ -335,6 +342,8 @@ export interface MeetingMinutesPipelineDeps {
   fetchTranscript?: (fileId: string) => Promise<TranscriptFile | null>;
   classifyImpl?: typeof classifyMinutesDestination;
   generateImpl?: typeof generateMinutes;
+  /** Injectable GitHub writer. Defaults to the GitHub Contents API client. */
+  saveMeetingRecords?: (request: SaveMeetingRecordsRequest) => Promise<SavedMeetingRecords>;
   graphClient?: GraphEntityClient;
   taskClientFactory?: () => BrainbaseTaskClient;
   approverResolver?: ApproverResolver;
@@ -643,6 +652,27 @@ export class MeetingMinutesPipeline {
     const minutes = run.minutes;
     if (!minutes) return;
 
+    // Stage: canonical storage. GitHub must succeed before Slack can report success.
+    if (!run.inPlace && "github" in destination && destination.github && !run.github) {
+      try {
+        const save = this.deps.saveMeetingRecords ?? ((request: SaveMeetingRecordsRequest) =>
+          new MeetingMinutesGitHubClient({ token: process.env.GITHUB_TOKEN }).save(request));
+        run.github = await save({
+          target: destination.github,
+          transcript: transcript.text,
+          minutes,
+          sourceFileName: run.fileName,
+          sourceTs: run.sourceTs,
+          projectId: destination.projectId,
+        });
+        run.updatedAt = now;
+        if (!saveState(state)) throw new Error("github progress could not be persisted");
+      } catch {
+        await this.failRun(state, key, "github", "GitHubへの議事録保存に失敗しました");
+        return;
+      }
+    }
+
     // Stage: post (parent = overview, thread = 2900-char body chunks).
     if ((STATUS_RANK[run.status] ?? -1) < STATUS_RANK.posted) {
       try {
@@ -762,9 +792,10 @@ export class MeetingMinutesPipeline {
       saveState(state);
     }
 
+    const githubNote = run.github?.minutesUrl ? `\nGitHub: ${run.github.minutesUrl}` : "";
     const summary = run.inPlace
       ? `✅ このチャンネルへ議事録を展開しました\n${minutes.title}${handoffNote}`
-      : `✅ *${destination.name}* <#${destination.channelId}> へ議事録を展開しました\n${minutes.title}${run.routingReason ? `\n_振り分け根拠: ${run.routingReason}_` : ""}${handoffNote}`;
+      : `✅ *${destination.name}* <#${destination.channelId}> へ議事録を展開しました\n${minutes.title}${githubNote}${run.routingReason ? `\n_振り分け根拠: ${run.routingReason}_` : ""}${handoffNote}`;
     await this.updateControl(state, key, {
       text: summary,
       blocks: this.successBlocks(
