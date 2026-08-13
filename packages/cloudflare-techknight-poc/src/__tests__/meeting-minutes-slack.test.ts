@@ -1,6 +1,33 @@
 import { MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
 
 describe("MeetingMinutesSlackClient", () => {
+  it("uses a unique action_id for every destination button", async () => {
+    let body: { blocks?: Array<{ elements?: Array<{ action_id?: string }> }> } = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ ok: true, ts: "1.2" });
+    }) as typeof fetch;
+    const run = { version: 1 as const, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
+      sourceThreadTs: "1.0", sourceMessageTs: "1.0", file: { id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 10 },
+      status: "awaiting_destination" as const, createdAt: "2026-08-13T00:00:00.000Z", updatedAt: "2026-08-13T00:00:00.000Z" };
+    const destinations = [
+      { id: "one", projectId: "p1", name: "One", slackChannelId: "C2", github: { owner: "o", repo: "r", pathPrefix: "meetings" } },
+      { id: "two", projectId: "p2", name: "Two", slackChannelId: "C3", github: { owner: "o", repo: "r", pathPrefix: "meetings" } },
+    ];
+    await new MeetingMinutesSlackClient("token", fetchImpl).requestDestination(run, destinations);
+    const ids = body.blocks?.flatMap((block) => block.elements ?? []).map((element) => element.action_id);
+    expect(ids).toEqual(["mana_meeting_minutes_choose_destination:one", "mana_meeting_minutes_choose_destination:two"]);
+  });
+
+  it("invokes fetch with the Workers global receiver", async () => {
+    const fetchImpl = vi.fn(function (this: unknown) {
+      if (this !== globalThis) throw new Error("illegal receiver");
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, ts: "1.2" }), { status: 200 }));
+    });
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postParent("C1", "test", "receiver-test"))
+      .resolves.toBe("1.2");
+  });
+
   it("refetches the private URL and downloads a bounded text file", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).includes("files.info")
       ? Response.json({ ok: true, file: { name: "meeting.txt", mimetype: "text/plain", size: 5,

@@ -11,7 +11,7 @@ export class MeetingMinutesSlackClient {
   constructor(private readonly token: string, private readonly fetchImpl: typeof fetch = fetch) {}
   private async post(method: string, body: Record<string, unknown>): Promise<SlackApiResponse> {
     if (!this.token.trim()) throw new Error("slack_bot_token_not_configured");
-    const response = await this.fetchImpl(`https://slack.com/api/${method}`, { method: "POST",
+    const response = await this.fetchImpl.call(globalThis, `https://slack.com/api/${method}`, { method: "POST",
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json; charset=utf-8" }, body: JSON.stringify(body) });
     const result = await response.json() as SlackApiResponse;
     if (!response.ok || !result.ok) throw new Error(`slack_api_failed:${method}:${result.error ?? response.status}`);
@@ -19,14 +19,14 @@ export class MeetingMinutesSlackClient {
   }
   async downloadTextFile(fileId: string, maxBytes = 20 * 1024 * 1024): Promise<string> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(fileId)) throw new Error("slack_file_id_invalid");
-    const infoResponse = await this.fetchImpl(`https://slack.com/api/files.info?file=${encodeURIComponent(fileId)}`, {
+    const infoResponse = await this.fetchImpl.call(globalThis, `https://slack.com/api/files.info?file=${encodeURIComponent(fileId)}`, {
       headers: { Authorization: `Bearer ${this.token}` },
     });
     const info = await infoResponse.json() as { ok?: boolean; error?: string; file?: { name?: string; mimetype?: string; size?: number; url_private_download?: string } };
     if (!infoResponse.ok || !info.ok || !info.file?.url_private_download) throw new Error(`slack_file_info_failed:${info.error ?? infoResponse.status}`);
     if (!/\.txt$/i.test(info.file.name ?? "") || (info.file.mimetype && info.file.mimetype !== "text/plain")) throw new Error("slack_file_type_invalid");
     if (typeof info.file.size === "number" && info.file.size > maxBytes) throw new Error("slack_file_size_invalid");
-    const download = await this.fetchImpl(info.file.url_private_download, { headers: { Authorization: `Bearer ${this.token}` } });
+    const download = await this.fetchImpl.call(globalThis, info.file.url_private_download, { headers: { Authorization: `Bearer ${this.token}` } });
     if (!download.ok) throw new Error(`slack_file_download_failed:${download.status}`);
     const bytes = new Uint8Array(await download.arrayBuffer());
     if (bytes.byteLength > maxBytes) throw new Error("slack_file_size_invalid");
@@ -38,7 +38,7 @@ export class MeetingMinutesSlackClient {
       text: `${run.file.name} の保存先プロジェクトを選択してください。`, client_msg_id: await clientMessageId(`${run.runId}-selection`), blocks: [{ type: "section",
         text: { type: "mrkdwn", text: `*${run.file.name}* の保存先プロジェクトを選択してください。` } },
       { type: "actions", elements: destinations.map((destination) => ({ type: "button", text: { type: "plain_text", text: destination.name },
-        action_id: MEETING_MINUTES_CHOOSE_ACTION_ID, value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) })) }] });
+        action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`, value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) })) }] });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
   async postParent(channelId: string, text: string, clientMsgId: string): Promise<string> {

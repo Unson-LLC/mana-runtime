@@ -4,6 +4,18 @@ const destination = { id: "mana", projectId: "mana", name: "mana", slackChannelI
   github: { owner: "Unson-LLC", repo: "mana", branch: "main", pathPrefix: "docs" } };
 
 describe("CloudflareMeetingMinutesGitHubClient", () => {
+  it("invokes fetch with the Workers global receiver", async () => {
+    const fetchImpl = vi.fn(function (this: unknown, input: RequestInfo | URL) {
+      if (this !== globalThis) throw new Error("illegal receiver");
+      return Promise.resolve(String(input).includes("?ref=")
+        ? new Response("not found", { status: 404 })
+        : new Response(JSON.stringify({ content: { html_url: "https://github.test/file" } }), { status: 201 }));
+    });
+    await expect(new CloudflareMeetingMinutesGitHubClient("token", fetchImpl).save({
+      destination, transcript: "x", minutes: { title: "t", overview: "o", body: "b" }, sourceFileName: "a.txt", sourceTs: "1",
+    })).resolves.toBeDefined();
+  });
+
   it("stores transcript then minutes with JST paths and existing SHA", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

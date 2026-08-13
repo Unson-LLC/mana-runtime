@@ -51,10 +51,10 @@ export class CloudflareMeetingMinutesGitHubClient {
     const api = `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/contents/${encodedPath}`;
     const headers = { Accept: "application/vnd.github+json", Authorization: `Bearer ${this.token}`,
       "User-Agent": "mana-runtime-meeting-minutes", "X-GitHub-Api-Version": "2022-11-28" };
-    const current = await this.fetchImpl(`${api}?ref=${encodeURIComponent(branch)}`, { headers }); let sha: string | undefined;
+    const current = await this.fetchImpl.call(globalThis, `${api}?ref=${encodeURIComponent(branch)}`, { headers }); let sha: string | undefined;
     if (current.ok) { sha = ((await current.json()) as { sha?: string }).sha; if (!sha) throw new Error("github_existing_content_invalid"); }
     else if (current.status !== 404) throw new Error(`github_read_failed:${current.status}`);
-    const saved = await this.fetchImpl(api, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" },
+    const saved = await this.fetchImpl.call(globalThis, api, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({ message, content: base64Utf8(content), branch, ...(sha ? { sha } : {}) }) });
     if (!saved.ok) throw new Error(`github_write_failed:${saved.status}`);
     const result = (await saved.json()) as { content?: { html_url?: string }; html_url?: string };

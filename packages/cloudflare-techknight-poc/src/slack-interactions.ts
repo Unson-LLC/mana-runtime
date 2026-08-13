@@ -45,7 +45,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId });
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
-  if (string(action?.action_id) !== MEETING_MINUTES_CHOOSE_ACTION_ID) return response("slack_interaction_invalid", 400);
+  const actionId = string(action?.action_id);
+  if (actionId !== MEETING_MINUTES_CHOOSE_ACTION_ID && !actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)) {
+    return response("slack_interaction_invalid", 400);
+  }
   let value: Record<string, unknown> | undefined;
   try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
