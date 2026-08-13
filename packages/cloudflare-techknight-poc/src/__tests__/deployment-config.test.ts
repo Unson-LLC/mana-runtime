@@ -63,6 +63,7 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_TASK_BOARD_ENABLED: "true",
       MEETING_MINUTES_ENABLED: "false",
       MEETING_MINUTES_ROUTER_CHANNEL_ID: "C0BKTFQ9V38",
+      MEETING_MINUTES_OPERATOR_USER_IDS: "U088D1HBY6L,U0BKP8D3KPD",
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
     });
@@ -158,11 +159,20 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.name).toBe("unson-business-mana-runtime");
   });
 
-  it("keeps Cloudflare meeting minutes off and fail-closed until destination authority is confirmed", () => {
+  it("keeps Cloudflare meeting minutes off while preserving the confirmed cutover authority", () => {
     expect(unson.vars.MEETING_MINUTES_ENABLED).toBe("false");
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
-    expect(unson.vars).not.toHaveProperty("MEETING_MINUTES_DESTINATIONS_JSON");
-    expect(unson.vars).not.toHaveProperty("MEETING_MINUTES_OPERATOR_USER_IDS");
+    expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD");
+    const destinations = JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON);
+    expect(destinations).toHaveLength(12);
+    expect(destinations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "back-office", projectId: "proj_back_office", slackChannelId: "C0BKS6RL99T",
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "back_office", pathPrefix: "meetings/" }) }),
+      expect.objectContaining({ id: "brainbase", projectId: "proj_brainbase", slackChannelId: "C0BKE4D0TK9",
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "brainbase-unson", branch: "develop" }) }),
+      expect.objectContaining({ id: "techknight-board", projectId: "proj_techknight_board", slackChannelId: "C0A2RB6803B",
+        github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "tech-knight-project" }) }),
+    ]));
     expect(unson.migrations).toEqual(expect.arrayContaining([
       expect.objectContaining({ tag: "v4", new_sqlite_classes: ["MeetingMinutesWorkspace"] }),
     ]));
