@@ -1,6 +1,15 @@
 import { MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
 
 describe("MeetingMinutesSlackClient", () => {
+  it("invokes fetch with the Workers global receiver", async () => {
+    const fetchImpl = vi.fn(function (this: unknown) {
+      if (this !== globalThis) throw new Error("illegal receiver");
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, ts: "1.2" }), { status: 200 }));
+    });
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postParent("C1", "test", "receiver-test"))
+      .resolves.toBe("1.2");
+  });
+
   it("refetches the private URL and downloads a bounded text file", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).includes("files.info")
       ? Response.json({ ok: true, file: { name: "meeting.txt", mimetype: "text/plain", size: 5,
