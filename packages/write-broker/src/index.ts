@@ -7,7 +7,7 @@ export interface TaskWriteCapabilityClaims {
   actor: { provider: "slack"; id: string; workspace: string };
   placementId: string;
   projects: string[];
-  operations: TaskWriteOperation[];
+  operations: Array<TaskWriteOperation | "*">;
   expiresAt: number;
   nonce: string;
   budget: number;
@@ -21,6 +21,67 @@ export interface TaskWriteIntent {
   operation: TaskWriteOperation;
   targetId?: string;
   idempotencyKey: string;
+}
+
+export type TaskWritePolicyEffect = "auto" | "approval" | "deny";
+
+export interface TaskWritePolicyRule {
+  effect: TaskWritePolicyEffect;
+  actors: string[];
+  placements: string[];
+  projects: string[];
+  operations: TaskWriteOperation[];
+  targets?: string[];
+  approvers?: string[];
+  ttlSeconds?: number;
+}
+
+export interface TaskWritePolicy {
+  version: string;
+  rules: TaskWritePolicyRule[];
+}
+
+export type TaskWritePolicyDecision =
+  | { effect: "auto"; policyVersion: string }
+  | { effect: "approval"; policyVersion: string; approvers: string[]; ttlSeconds: number }
+  | { effect: "deny"; policyVersion: string; reason: "no_matching_rule" | "rule_denied" };
+
+function validStrings(values: unknown): values is string[] {
+  return Array.isArray(values) && values.length > 0 && values.length <= 100
+    && values.every((value) => typeof value === "string" && value.length > 0 && value.length <= 128);
+}
+
+function validPolicy(policy: TaskWritePolicy): boolean {
+  return typeof policy.version === "string" && policy.version.length > 0 && policy.version.length <= 128
+    && Array.isArray(policy.rules) && policy.rules.length <= 100
+    && policy.rules.every((rule) => {
+      if (!rule || !["auto", "approval", "deny"].includes(rule.effect)
+        || !validStrings(rule.actors) || !validStrings(rule.placements) || !validStrings(rule.projects)
+        || !validStrings(rule.operations)
+        || !rule.operations.every((operation) => ["*", "task.create", "task.update", "task.transition"].includes(operation))) return false;
+      if (rule.targets !== undefined && !validStrings(rule.targets)) return false;
+      if (rule.effect === "approval") {
+        return validStrings(rule.approvers) && Number.isInteger(rule.ttlSeconds)
+          && rule.ttlSeconds! >= 1 && rule.ttlSeconds! <= 300;
+      }
+      return rule.approvers === undefined && rule.ttlSeconds === undefined;
+    });
+}
+
+export function evaluateTaskWritePolicy(policy: TaskWritePolicy, intent: TaskWriteIntent): TaskWritePolicyDecision {
+  if (!validPolicy(policy)) throw new Error("invalid_write_policy");
+  const includes = (values: string[], value: string) => values.includes("*") || values.includes(value);
+  const matches = policy.rules.filter((rule) => includes(rule.actors, intent.actor.id)
+    && includes(rule.placements, intent.placementId) && includes(rule.projects, intent.project)
+    && includes(rule.operations, intent.operation)
+    && (rule.targets === undefined || (intent.targetId !== undefined && rule.targets.includes(intent.targetId))));
+  const denied = matches.find((rule) => rule.effect === "deny");
+  if (denied) return { effect: "deny", policyVersion: policy.version, reason: "rule_denied" };
+  const approval = matches.find((rule) => rule.effect === "approval");
+  if (approval) return { effect: "approval", policyVersion: policy.version,
+    approvers: [...approval.approvers!], ttlSeconds: approval.ttlSeconds! };
+  if (matches.some((rule) => rule.effect === "auto")) return { effect: "auto", policyVersion: policy.version };
+  return { effect: "deny", policyVersion: policy.version, reason: "no_matching_rule" };
 }
 
 const encoder = new TextEncoder();

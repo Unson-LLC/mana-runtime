@@ -25,6 +25,8 @@ import {
 } from "./meeting-minutes-entrypoints.js";
 import type { MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteraction } from "./slack-interactions.js";
+import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
+import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
 import { generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
@@ -54,6 +56,7 @@ import {
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
+export { TaskWriteApproval } from "./task-write-approval.js";
 
 interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
@@ -77,6 +80,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
+  TASK_WRITE_APPROVALS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
   MEETING_MINUTES_WORKSPACE: DurableObjectNamespace<MeetingMinutesWorkspace>;
 }
@@ -158,6 +162,18 @@ export default {
         expectedAppId: env.SLACK_EXPECTED_APP_ID,
         operatorUserIds: config.operatorUserIds,
         send: (selection) => env.TECHKNIGHT_EVENTS.send(selection),
+        approveTaskWrite: async ({ approvalId, payloadHash, approverId, channelId }) => {
+          if (channelId !== env.SLACK_ALLOWED_CHANNEL_ID) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
+          const pending = await peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId);
+          if (pending.payloadHash !== payloadHash) return Response.json({ error: "task_write_approval_payload_mismatch" }, { status: 403 });
+          const approved = await handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", {
+            method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": pending.capability,
+              "x-mana-task-write-approval-id": approvalId, "x-mana-task-write-approver-id": approverId },
+            body: JSON.stringify(pending.body),
+          }), env);
+          if (!approved.ok) return approved;
+          return Response.json({ ok: true, approval_id: approvalId });
+        },
       });
     }
     if (request.method !== "POST" || url.pathname !== "/slack/events") {

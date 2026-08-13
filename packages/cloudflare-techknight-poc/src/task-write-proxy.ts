@@ -1,8 +1,9 @@
 import { TaskApiClient, TaskApiError, type CanonicalTask, type CreateTaskInput, type TransitionTaskInput, type UpdateTaskInput } from "@openryoko/task-runtime-core";
-import { authorizeTaskWriteIntent, verifyTaskWriteCapability, type TaskWriteOperation } from "@openryoko/write-broker";
+import { authorizeTaskWriteIntent, evaluateTaskWritePolicy, verifyTaskWriteCapability, type TaskWriteIntent, type TaskWriteOperation, type TaskWritePolicy } from "@openryoko/write-broker";
 import { parseRuntimeProjectCodes } from "./runtime-config.js";
 import type { TaskBoardRepairEvent } from "./task-board.js";
 import { claimTaskWriteBudgetSlot, type TaskWriteBudgetNamespace } from "./task-write-budget.js";
+import { consumeTaskWriteApproval, createTaskWriteApproval, type TaskWriteApprovalNamespace } from "./task-write-approval.js";
 
 export const TASK_WRITE_PROXY_HOST = "task-write.internal";
 export const TASK_WRITE_PATH = "/api/task-write";
@@ -13,12 +14,42 @@ export interface TaskWriteProxyEnv {
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   TASK_WRITE_CAPABILITY_SECRET?: string;
+  TASK_WRITE_POLICY_JSON?: string;
+  TASK_WRITE_APPROVALS?: TaskWriteApprovalNamespace;
+  SLACK_BOT_TOKEN?: string;
   RUNTIME_PLACEMENT_ID?: string;
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
   TENANT_ID?: string;
-  TASK_BOARD_REPAIRS?: { send(message: TaskBoardRepairEvent): Promise<void> };
+  TASK_BOARD_REPAIRS?: { send(message: TaskBoardRepairEvent): Promise<unknown> };
   TASK_WRITE_BUDGETS?: TaskWriteBudgetNamespace;
+}
+
+function parsePolicy(value: string | undefined): TaskWritePolicy {
+  if (!value) throw new Error("task_write_policy_not_configured");
+  try {
+    const policy = JSON.parse(value) as TaskWritePolicy;
+    if (!policy || typeof policy !== "object") throw new Error();
+    return policy;
+  } catch {
+    throw new Error("task_write_policy_not_configured");
+  }
+}
+
+async function postApprovalRequest(fetchImpl: typeof fetch, env: TaskWriteProxyEnv, input: {
+  approvalId: string; payloadHash: string; requesterId: string; operation: string; project: string; expiresAt: number;
+}): Promise<void> {
+  if (!env.SLACK_BOT_TOKEN || !env.SLACK_ALLOWED_CHANNEL_ID) throw new Error("task_write_approval_not_configured");
+  const response = await fetchImpl("https://slack.com/api/chat.postMessage", { method: "POST",
+    headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ channel: env.SLACK_ALLOWED_CHANNEL_ID,
+      text: `書き込み承認が必要です: ${input.operation} (${input.project})`,
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: `*書き込み承認*\n依頼者: <@${input.requesterId}>\n操作: \`${input.operation}\`\nプロジェクト: \`${input.project}\`` } },
+        { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "承認して実行" },
+          action_id: "mana_task_write_approve", value: JSON.stringify({ approvalId: input.approvalId, payloadHash: input.payloadHash }) }] }] }),
+  });
+  const payload = await response.json().catch(() => null) as { ok?: boolean } | null;
+  if (!response.ok || payload?.ok !== true) throw new Error("task_write_approval_notify_failed");
 }
 
 type WriteRequest = {
@@ -124,7 +155,42 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
       if (!secret || projects.length === 0 || !env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_EXPECTED_TEAM_ID || !env.RUNTIME_PLACEMENT_ID) throw new Error("task_write_not_configured");
       const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId: env.RUNTIME_PLACEMENT_ID });
       const operation = `task.${body.operation}` as TaskWriteOperation;
-      authorizeTaskWriteIntent(claims, { requestId: body.request_id, actor: claims.actor, placementId: claims.placementId, project: body.project, operation, targetId: body.task_id, idempotencyKey: `slack:${body.request_id}:${body.call_index}` });
+      const intent: TaskWriteIntent = { requestId: body.request_id, actor: claims.actor, placementId: claims.placementId,
+        project: body.project, operation, targetId: body.task_id, idempotencyKey: `slack:${body.request_id}:${body.call_index}` };
+      authorizeTaskWriteIntent(claims, intent);
+      const decision = evaluateTaskWritePolicy(parsePolicy(env.TASK_WRITE_POLICY_JSON), intent);
+      const fingerprint = await requestFingerprint(body);
+      let approvedBy: string | undefined;
+      if (decision.effect === "deny") {
+        console.warn(JSON.stringify({ event: "task_write_policy_denied", requestId: body.request_id, actor: claims.actor.id,
+          project: body.project, operation, policyVersion: decision.policyVersion, reason: decision.reason }));
+        return error("task_write_policy_denied", 403);
+      }
+      if (decision.effect === "approval") {
+        const approvalId = request.headers.get("x-mana-task-write-approval-id");
+        const approverId = request.headers.get("x-mana-task-write-approver-id");
+        if (approvalId && approverId && env.TASK_WRITE_APPROVALS) {
+          const approved = await consumeTaskWriteApproval(env.TASK_WRITE_APPROVALS, { approvalId, approverId, payloadHash: fingerprint });
+          if (approved.payloadHash !== fingerprint || approved.capability !== token || JSON.stringify(approved.body) !== JSON.stringify(body)
+            || approved.requesterId !== claims.actor.id || approved.policyVersion !== decision.policyVersion) throw new Error("task_write_approval_payload_mismatch");
+          console.log(JSON.stringify({ event: "task_write_approval_consumed", approvalId, requester: claims.actor.id,
+            approver: approverId, policyVersion: decision.policyVersion, payloadHash: fingerprint }));
+          approvedBy = approverId;
+        } else {
+          if (!env.TASK_WRITE_APPROVALS) throw new Error("task_write_approval_not_configured");
+          const newApprovalId = crypto.randomUUID();
+          const expiresAt = Math.min(claims.expiresAt, Date.now() + decision.ttlSeconds * 1000);
+          await createTaskWriteApproval(env.TASK_WRITE_APPROVALS, { approvalId: newApprovalId, payloadHash: fingerprint,
+            body, capability: token, requesterId: claims.actor.id, approvers: decision.approvers,
+            policyVersion: decision.policyVersion, expiresAt });
+          await postApprovalRequest(fetchImpl, env, { approvalId: newApprovalId, payloadHash: fingerprint,
+            requesterId: claims.actor.id, operation, project: body.project, expiresAt });
+          console.log(JSON.stringify({ event: "task_write_approval_required", approvalId: newApprovalId, requestId: body.request_id,
+            actor: claims.actor.id, project: body.project, operation, policyVersion: decision.policyVersion, payloadHash: fingerprint }));
+          return Response.json({ status: "approval_required", approval_id: newApprovalId,
+            policy_version: decision.policyVersion, expires_at: new Date(expiresAt).toISOString() }, { status: 202 });
+        }
+      }
       if (!projects.includes(body.project) || body.call_index > Math.min(3, claims.budget) || !env.TASK_WRITE_BUDGETS) throw new Error("task_write_denied");
       await claimTaskWriteBudgetSlot(env.TASK_WRITE_BUDGETS, {
         requestId: claims.requestId,
@@ -133,8 +199,9 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
         callIndex: body.call_index,
         budget: Math.min(3, claims.budget),
         expiresAt: claims.expiresAt,
-        fingerprint: await requestFingerprint(body),
+        fingerprint,
       });
+      let beforeVersion: number | undefined;
       const client = new TaskApiClient({
         baseUrl: upstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL),
         token: env.BRAINBASE_TASK_API_TOKEN,
@@ -155,6 +222,7 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
         result = await client.createTask(input, `slack:${body.request_id}:${body.call_index}`);
       } else {
         const before = await client.getTask(body.task_id!);
+        beforeVersion = before.version;
         const beforeProjects = before.project_codes ?? [];
         if (!beforeProjects.includes(body.project) || beforeProjects.some((project) => !projects.includes(project))) throw new Error("task_write_scope_violation");
         if (body.operation === "update") {
@@ -175,7 +243,10 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
           result = await client.transitionTask(body.task_id!, input, `slack:${body.request_id}:${body.call_index}`);
         }
       }
-      console.log(JSON.stringify({ event: "task_write_receipt", requestId: body.request_id, operation, actor: claims.actor.id, project: body.project, taskId: result.id, version: result.version, result: "executed" }));
+      console.log(JSON.stringify({ event: "task_write_receipt", requestId: body.request_id, operation,
+        requester: claims.actor.id, approver: approvedBy ?? null, project: body.project, taskId: result.id,
+        policyVersion: decision.policyVersion, payloadHash: fingerprint, beforeVersion: beforeVersion ?? null,
+        afterVersion: result.version, result: "executed" }));
       if (env.TASK_BOARD_REPAIRS && env.TENANT_ID && env.SLACK_EXPECTED_TEAM_ID && env.SLACK_ALLOWED_CHANNEL_ID) {
         await env.TASK_BOARD_REPAIRS.send({
           eventType: "task_board_repair",
@@ -195,7 +266,8 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
       }
       const code = cause instanceof Error ? cause.message : "task_write_failed";
       if (["invalid_write_capability","expired_write_capability","write_capability_scope_mismatch","write_intent_denied","task_write_denied","task_write_scope_violation","task_write_budget_slot_reused","task_write_budget_exceeded"].includes(code)) return error(code, 403);
-      if (code === "task_write_not_configured" || code === "not_configured") return error("task_write_not_configured", 503);
+      if (code === "task_write_not_configured" || code === "task_write_policy_not_configured" || code === "task_write_approval_not_configured" || code === "invalid_write_policy" || code === "not_configured") return error("task_write_not_configured", 503);
+      if (code.startsWith("task_write_approval_") || code === "task_write_approver_forbidden") return error(code, 403);
       logUpstreamFailure(cause, body);
       return error("task_write_upstream_failed", 502);
     }
