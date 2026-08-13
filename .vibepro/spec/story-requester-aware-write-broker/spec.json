@@ -56,7 +56,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "C-002",
@@ -104,7 +104,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "INV-001",
@@ -152,7 +152,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "S-003",
@@ -235,7 +235,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T08:57:50.558Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "INV-002",
@@ -287,7 +287,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "S-002",
@@ -352,7 +352,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "C-003",
@@ -400,7 +400,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "C-004",
@@ -443,7 +443,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "C-005",
@@ -486,7 +486,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     },
     {
       "id": "C-006",
@@ -529,7 +529,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T08:57:50.558Z"
+      "last_revised_at": "2026-08-13T09:05:44.521Z"
     }
   ],
   "planned_test_suites": [
@@ -579,6 +579,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-13T08:57:50.556Z",
-  "previous_spec_id": "2026-08-13T06:04:27.825Z"
+  "generated_at": "2026-08-13T09:05:44.520Z",
+  "previous_spec_id": "2026-08-13T08:57:50.556Z"
 }

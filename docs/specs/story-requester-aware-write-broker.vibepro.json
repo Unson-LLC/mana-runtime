@@ -43,7 +43,7 @@
       "confidence": 0.99
     },
     {
-      "id": "S-001",
+      "id": "S-003",
       "type": "scenario",
       "statement": "作成はtrusted projectと決定的冪等キーを使う。検索結果は正の整数versionを保持し、更新・状態遷移はexpected_versionを1以上で必須化して対象Taskのprojectとversionを再検証し、409 conflictを非再試行で返す",
       "origin": {
