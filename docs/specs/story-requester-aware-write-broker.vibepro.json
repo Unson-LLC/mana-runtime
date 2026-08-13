@@ -89,9 +89,9 @@
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
         "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "keeps board repair bounded, retryable, and disabled until cutover" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "keeps board repair bounded, retryable, and enabled in the verified cutover config" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "disabled until cutover" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "enabled in the verified cutover config" }] },
       "confidence": 0.98
     },
     {

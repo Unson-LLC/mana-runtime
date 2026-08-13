@@ -374,7 +374,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "keeps board repair bounded, retryable, and disabled until cutover"
+            "case": "keeps board repair bounded, retryable, and enabled in the verified cutover config"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
@@ -386,7 +386,7 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "must_cover": "disabled until cutover"
+            "must_cover": "enabled in the verified cutover config"
           }
         ]
       },
