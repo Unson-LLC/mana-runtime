@@ -17,7 +17,8 @@ describe("Cloudflare bounded task Canvas", () => {
   });
 
   it("uses four bounded Brainbase requests and updates the channel Canvas", async () => {
-    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn().mockImplementation(async function (this: unknown, url: string, init?: RequestInit) {
+      if (this !== undefined) throw new TypeError("Illegal invocation");
       const parsed = new URL(url);
       if (parsed.hostname === "bb.example.test") {
         expect(parsed.searchParams.get("limit")).toBe("21");
