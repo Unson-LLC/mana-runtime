@@ -56,7 +56,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "C-002",
@@ -104,7 +104,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "INV-001",
@@ -152,7 +152,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "S-003",
@@ -227,7 +227,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T08:57:50.558Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "INV-002",
@@ -279,7 +279,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "S-002",
@@ -344,7 +344,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "C-007",
@@ -392,7 +392,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T11:53:46.891Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "C-008",
@@ -421,6 +421,14 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
             "case": "records matching production task mutation and Canvas evidence"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts",
+            "case": "binds the production Slack mutation to the deployed Worker and Container"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts",
+            "case": "binds the Brainbase task to the updated channel Canvas"
           }
         ]
       },
@@ -435,7 +443,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T11:53:46.891Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "C-009",
@@ -464,6 +472,10 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
             "case": "records the disabled Lightsail task surfaces and rollback order"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts",
+            "case": "binds single ownership and keeps meeting minutes out of the task cutover"
           }
         ]
       },
@@ -478,7 +490,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-13T11:53:46.891Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     },
     {
       "id": "C-010",
@@ -507,6 +519,10 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
             "case": "closes task migration while keeping minutes as a separate Lightsail boundary"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts",
+            "case": "binds single ownership and keeps meeting minutes out of the task cutover"
           }
         ]
       },
@@ -521,7 +537,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T11:53:46.891Z",
-      "last_revised_at": "2026-08-13T11:54:11.555Z"
+      "last_revised_at": "2026-08-13T11:58:04.696Z"
     }
   ],
   "planned_test_suites": [
@@ -571,6 +587,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-13T11:54:11.549Z",
-  "previous_spec_id": "2026-08-13T11:53:46.887Z"
+  "generated_at": "2026-08-13T11:58:04.694Z",
+  "previous_spec_id": "2026-08-13T11:54:11.549Z"
 }
