@@ -660,6 +660,12 @@ export interface SlackConnectorConfig {
       channelId: string;
       connectorInstanceId?: string;
       workspaceId?: string;
+      github?: {
+        owner: string;
+        repo: string;
+        branch?: string;
+        pathPrefix?: string;
+      };
     }[];
     /** @deprecated Normalized into pre-post direct destinations for compatibility. */
     shareDestinations?: {

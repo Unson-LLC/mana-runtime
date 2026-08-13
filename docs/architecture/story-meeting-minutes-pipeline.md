@@ -220,6 +220,11 @@ meetingMinutesPipeline:
     - projectId: proj_test
       name: manaテスト
       channelId: C0A2L9FEKEJ
+      github:
+        owner: Unson-LLC
+        repo: mana
+        branch: main
+        pathPrefix: docs/meetings
   # 旧shareDestinationsも投稿前のdirect destinationとして互換読込する
   shareDestinations:
     - shareId: proj-test-business
@@ -233,7 +238,11 @@ meetingMinutesPipeline:
 ```
 
 - gateway MCPツールは増やさないため、3層placementゲートの変更は不要。
-- 環境変数は既存の `BRAINBASE_TASK_API_BASE_URL/_TOKEN` と
+- GitHub保存を有効にする各destinationには `github` を設定し、実行環境へ
+  `GITHUB_TOKEN`（対象repoのContents read/write権限）を渡す。文字起こしは
+  `<pathPrefix>/transcripts/`、議事録は `<pathPrefix>/minutes/` に保存される。
+  保存に失敗した場合はSlackへ成功投稿せず、再試行で同じpathを更新する。
+- そのほかの環境変数は既存の `BRAINBASE_TASK_API_BASE_URL/_TOKEN` と
   `BRAINBASE_GRAPH_API_TOKEN`（統合トークン `openryoko-pilot`、全project scope付き）
   をそのまま使う。**project scopeなしトークンはGraph読取が422/403になる罠**
   （柱4のDone evidence参照）に注意。

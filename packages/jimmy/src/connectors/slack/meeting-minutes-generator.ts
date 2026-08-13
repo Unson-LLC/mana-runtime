@@ -72,6 +72,13 @@ export interface MinutesDestination {
   channelId: string;
   connectorInstanceId?: string;
   workspaceId?: string;
+  /** Canonical repository where the transcript and generated minutes are stored. */
+  github?: {
+    owner: string;
+    repo: string;
+    branch?: string;
+    pathPrefix?: string;
+  };
 }
 
 export function buildRoutingPrompt(
