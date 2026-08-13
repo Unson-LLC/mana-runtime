@@ -64,6 +64,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_EXPECTED_APP_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
+  SLACK_BOT_TOKEN_TECHKNIGHT?: string;
   GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
@@ -116,8 +117,13 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 
 function meetingMinutesClients(env: Env) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
+  const techKnightSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
+  const techKnightChannels = new Set(meetingMinutesRuntimeConfig(env).destinations
+    .filter((destination) => destination.github.owner === "Tech-Knight-inc")
+    .map((destination) => destination.slackChannelId));
+  const destinationSlack = (channelId: string) => techKnightChannels.has(channelId) ? techKnightSlack : slack;
   return {
     slack,
     resume: {
@@ -128,9 +134,10 @@ function meetingMinutesClients(env: Env) {
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
-      postParent: (channelId: string, text: string, clientMsgId: string) => slack.postParent(channelId, text, clientMsgId),
+      postParent: (channelId: string, text: string, clientMsgId: string) =>
+        destinationSlack(channelId).postParent(channelId, text, clientMsgId),
       postThreadChunk: (channelId: string, threadTs: string, text: string, clientMsgId: string) =>
-        slack.postThreadChunk(channelId, threadTs, text, clientMsgId),
+        destinationSlack(channelId).postThreadChunk(channelId, threadTs, text, clientMsgId),
     },
   };
 }
