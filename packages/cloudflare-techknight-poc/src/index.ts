@@ -24,7 +24,7 @@ import {
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
 import type { MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
-import { handleMeetingMinutesInteraction } from "./slack-interactions.js";
+import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
@@ -150,7 +150,7 @@ function meetingMinutesClients(env: Env) {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
       return Response.json({
@@ -170,13 +170,8 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/slack/interactions") {
       const config = meetingMinutesRuntimeConfig(env);
-      return handleMeetingMinutesInteraction(request, {
-        signingSecret: env.SLACK_SIGNING_SECRET,
-        expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
-        expectedAppId: env.SLACK_EXPECTED_APP_ID,
-        operatorUserIds: config.operatorUserIds,
-        send: (selection) => env.TECHKNIGHT_EVENTS.send(selection),
-        approveTaskWrite: async ({ approvalId, payloadHash, approverId, channelId }) => {
+      return handleMeetingMinutesInteractionEntrypoint(request, env, ctx, config.operatorUserIds,
+        async ({ approvalId, payloadHash, approverId, channelId }) => {
           if (channelId !== env.SLACK_ALLOWED_CHANNEL_ID) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
           const pending = await peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId);
           if (pending.payloadHash !== payloadHash) return Response.json({ error: "task_write_approval_payload_mismatch" }, { status: 403 });
@@ -187,8 +182,7 @@ export default {
           }), env);
           if (!approved.ok) return approved;
           return Response.json({ ok: true, approval_id: approvalId });
-        },
-      });
+        });
     }
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
       return Response.json({ error: "not_found" }, { status: 404 });
