@@ -37,6 +37,13 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(run.status).toBe("completed"); expect(order).toEqual(["github", "slack-parent", "slack-chunk"]);
+    expect(options.postParent).toHaveBeenCalledWith("CDEST", "*定例*\n概要", "Ev1_F1-parent");
+    expect(options.postThreadChunk).toHaveBeenCalledWith(
+      "CDEST",
+      "10.1",
+      "*定例*\n概要\n\n------------\n\n本文",
+      "Ev1_F1-chunk-0",
+    );
   });
 
   it("reuses generation and posted parent after partial Slack failure", async () => {
