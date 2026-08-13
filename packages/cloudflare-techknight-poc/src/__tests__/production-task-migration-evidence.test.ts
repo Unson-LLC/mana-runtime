@@ -195,13 +195,13 @@ describe("recorded production task migration evidence contract", () => {
 
   it("binds current Cloudflare ownership to disabled Lightsail task surfaces", () => {
     expect(evidence.cloudflare.current).toMatchObject({
-      worker_version: "40d97f3f-6d24-4f5c-938c-0a1898072682",
+      worker_version: "1ba0353e-223b-40df-a853-578a43d71f32",
       traffic_percent: 100,
       release_tag: null,
-      git_sha: "8f580d0089abaebbe64e4626b85132b8c1c1c632",
+      git_sha: "354c29a",
       git_sha_provenance:
-        "Deployment worktree HEAD and independent source-thread readback; Cloudflare release tag is absent",
-      script_etag: "1516ef0a64c0b0b3e758e36ae646e3b11aa0b793be6f5fff9ecc83442b801b66",
+        "PR #132 merge commit checked out in the deployment worktree; deploy message git-354c29a PR #132; Cloudflare release tag is absent",
+      script_etag: "5476268e7fc900fea625d037de8c5438a13b91b1d8ca19319092de7a8b732344",
       task_search_enabled: true,
       task_write_enabled: true,
       task_board_enabled: true,
