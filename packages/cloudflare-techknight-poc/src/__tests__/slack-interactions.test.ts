@@ -23,4 +23,15 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, send });
     expect(response.status).toBe(403); expect(send).not.toHaveBeenCalled();
   });
+  it("routes a signed task approval with the immutable payload hash", async () => {
+    const approveTaskWrite = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    const approvalPayload = { ...payload, user: { id: "U_APPROVER" }, actions: [{ action_id: "mana_task_write_approve",
+      value: JSON.stringify({ approvalId: "approval-1", payloadHash: "a".repeat(64) }) }] };
+    const response = await handleMeetingMinutesInteraction(request(approvalPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000,
+      send: vi.fn(), approveTaskWrite });
+    expect(response.status).toBe(200);
+    expect(approveTaskWrite).toHaveBeenCalledWith({ approvalId: "approval-1", payloadHash: "a".repeat(64),
+      approverId: "U_APPROVER", channelId: "C1" });
+  });
 });

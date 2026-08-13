@@ -8,6 +8,7 @@ interface InteractionOptions {
   operatorUserIds: ReadonlySet<string>;
   nowMs?: number;
   send(selection: MeetingMinutesSelection): Promise<unknown>;
+  approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string }): Promise<Response>;
 }
 
 function object(value: unknown): Record<string, unknown> | undefined {
@@ -35,12 +36,20 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   if (string(team?.id) !== options.expectedTeamId) return response("slack_team_forbidden", 403);
   if (options.expectedAppId && appId !== options.expectedAppId) return response("slack_app_forbidden", 403);
   const userId = string(user?.id);
+  const channelId = string(channel?.id);
+  if (string(action?.action_id) === "mana_task_write_approve" && options.approveTaskWrite) {
+    let value: Record<string, unknown> | undefined;
+    try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
+    const approvalId = string(value?.approvalId); const payloadHash = string(value?.payloadHash);
+    if (!userId || !channelId || !approvalId || !payloadHash) return response("slack_interaction_invalid", 400);
+    return options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId });
+  }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
   if (string(action?.action_id) !== MEETING_MINUTES_CHOOSE_ACTION_ID) return response("slack_interaction_invalid", 400);
   let value: Record<string, unknown> | undefined;
   try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
-  const channelId = string(channel?.id); const actionTs = string(action?.action_ts);
+  const actionTs = string(action?.action_ts);
   if (!runId || !destinationId || !channelId || !actionTs) return response("slack_interaction_invalid", 400);
   await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
     channelId, userId, actionTs });

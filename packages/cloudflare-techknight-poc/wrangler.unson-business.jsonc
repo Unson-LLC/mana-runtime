@@ -15,6 +15,7 @@
     "RUNTIME_EXECUTION_MODE": "meeting_tasks",
     "RUNTIME_TASK_SEARCH_ENABLED": "true",
     "RUNTIME_TASK_WRITE_ENABLED": "true",
+    "TASK_WRITE_POLICY_JSON": "{\"version\":\"unson-business-v1\",\"rules\":[{\"effect\":\"deny\",\"actors\":[\"*\"],\"placements\":[\"mana-accounting\"],\"projects\":[\"back-office\"],\"operations\":[\"task.transition\"]},{\"effect\":\"auto\",\"actors\":[\"U088D1HBY6L\",\"U0BKP8D3KPD\"],\"placements\":[\"mana-accounting\"],\"projects\":[\"back-office\"],\"operations\":[\"task.create\",\"task.update\"]},{\"effect\":\"approval\",\"actors\":[\"*\"],\"placements\":[\"mana-accounting\"],\"projects\":[\"back-office\"],\"operations\":[\"task.create\",\"task.update\"],\"approvers\":[\"U088D1HBY6L\",\"U0BKP8D3KPD\"],\"ttlSeconds\":120}]}",
     "RUNTIME_TASK_BOARD_ENABLED": "true",
     "MEETING_MINUTES_ENABLED": "true",
     "MEETING_MINUTES_ROUTER_CHANNEL_ID": "C0BKTFQ9V38",
@@ -41,6 +42,10 @@
       {
         "name": "MEETING_MINUTES_WORKSPACE",
         "class_name": "MeetingMinutesWorkspace"
+      },
+      {
+        "name": "TASK_WRITE_APPROVALS",
+        "class_name": "TaskWriteApproval"
       }
     ]
   },
@@ -60,6 +65,10 @@
     {
       "tag": "v4",
       "new_sqlite_classes": ["MeetingMinutesWorkspace"]
+    },
+    {
+      "tag": "v5",
+      "new_sqlite_classes": ["TaskWriteApproval"]
     }
   ],
   "containers": [

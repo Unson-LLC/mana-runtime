@@ -13,11 +13,19 @@ function env(overrides: Record<string, string | undefined> = {}) {
     BRAINBASE_TASK_API_BASE_URL: "https://bb.example.test",
     BRAINBASE_TASK_API_TOKEN: TASK_TOKEN,
     TASK_WRITE_CAPABILITY_SECRET: SECRET,
+    TASK_WRITE_POLICY_JSON: JSON.stringify({ version: "test-v1", rules: [{ effect: "auto", actors: ["U_REQUESTER"], placements: ["mana-accounting"], projects: ["back-office"], operations: ["task.create", "task.update"] }] }),
     SLACK_EXPECTED_TEAM_ID: "T_UNSON",
     SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+    SLACK_BOT_TOKEN: "xoxb-test",
     TASK_WRITE_BUDGETS: budgetNamespace(),
+    TASK_WRITE_APPROVALS: approvalNamespace(),
     ...overrides,
   };
+}
+
+function approvalNamespace() {
+  const fetch = vi.fn(async () => new Response(null, { status: 204 }));
+  return { idFromName: vi.fn((name: string) => name), get: vi.fn(() => ({ fetch })), fetch };
 }
 
 function budgetNamespace() {
@@ -122,7 +130,7 @@ describe("Cloudflare requester-scoped task write proxy", () => {
       task_id: "task-1",
       expected_version: 4,
       to_status: "completed",
-    }), env());
+    }), env({ TASK_WRITE_POLICY_JSON: JSON.stringify({ version: "legacy-transition-test", rules: [{ effect: "auto", actors: ["U_REQUESTER"], placements: ["mana-accounting"], projects: ["back-office"], operations: ["task.transition"] }] }) }));
 
     expect(response.status).toBe(200);
     expect(upstream).toHaveBeenCalledTimes(2);
@@ -241,6 +249,31 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     const forged = await capability({ placementId: "other-placement" });
     const response = await createTaskWriteProxyHandler(upstream)(await request({ operation: "create", title: "x" }, forged), env());
     expect(response.status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when no requester policy is configured", async () => {
+    const upstream = vi.fn();
+    const response = await createTaskWriteProxyHandler(upstream)(await request({ operation: "create", title: "x" }), env({ TASK_WRITE_POLICY_JSON: undefined }));
+    expect(response.status).toBe(503);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("returns approval without mutating when requester policy requires it", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    const policy = JSON.stringify({ version: "test-v2", rules: [{ effect: "approval", actors: ["U_REQUESTER"], placements: ["mana-accounting"], projects: ["back-office"], operations: ["task.create"], approvers: ["U_APPROVER"], ttlSeconds: 120 }] });
+    const response = await createTaskWriteProxyHandler(upstream)(await request({ operation: "create", title: "x" }), env({ TASK_WRITE_POLICY_JSON: policy }));
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ status: "approval_required", policy_version: "test-v2" });
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(upstream.mock.calls[0]?.[0]).toBe("https://slack.com/api/chat.postMessage");
+  });
+
+  it("denies operations outside the requester policy", async () => {
+    const upstream = vi.fn();
+    const response = await createTaskWriteProxyHandler(upstream)(await request({ operation: "transition", task_id: "task-1", expected_version: 4, to_status: "completed" }), env());
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "task_write_policy_denied" });
     expect(upstream).not.toHaveBeenCalled();
   });
 

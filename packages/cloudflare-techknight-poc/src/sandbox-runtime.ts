@@ -18,10 +18,13 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv {
   BRAINBASE_TASK_API_TOKEN?: string;
   RUNTIME_TASK_WRITE_ENABLED?: string;
   TASK_WRITE_CAPABILITY_SECRET?: string;
+  TASK_WRITE_POLICY_JSON?: string;
   RUNTIME_PLACEMENT_ID?: string;
   TENANT_ID?: string;
   TASK_BOARD_REPAIRS?: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS?: DurableObjectNamespace;
+  TASK_WRITE_APPROVALS?: DurableObjectNamespace;
+  SLACK_BOT_TOKEN?: string;
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
 }
