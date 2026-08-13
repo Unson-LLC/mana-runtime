@@ -1,0 +1,190 @@
+{
+  "schema_version": "1.0",
+  "evidence_type": "production_task_migration_readback",
+  "collected_at": "2026-08-13T14:06:48Z",
+  "channel": {
+    "workspace_id": "T0882T8N9UH",
+    "channel_id": "C0BKS6RL99T",
+    "thread_ts": "1786507594.889229",
+    "placement_id": "mana-accounting",
+    "project_codes": [
+      "back-office"
+    ]
+  },
+  "cloudflare": {
+    "worker_name": "unson-business-mana-runtime",
+    "current": {
+      "worker_version": "40d97f3f-6d24-4f5c-938c-0a1898072682",
+      "worker_number": 43,
+      "traffic_percent": 100,
+      "created_at": "2026-08-13T13:52:46.148738Z",
+      "release_tag": null,
+      "git_sha": "8f580d0089abaebbe64e4626b85132b8c1c1c632",
+      "git_sha_provenance": "Deployment worktree HEAD and independent source-thread readback; Cloudflare release tag is absent",
+      "script_etag": "1516ef0a64c0b0b3e758e36ae646e3b11aa0b793be6f5fff9ecc83442b801b66",
+      "task_search_enabled": true,
+      "task_write_enabled": true,
+      "task_board_enabled": true,
+      "handlers": [
+        "fetch",
+        "queue",
+        "scheduled"
+      ],
+      "queue": "unson-business-mana-task-board-repairs",
+      "durable_object": "TASK_WRITE_BUDGETS"
+    },
+    "mutation_e2e_deployment": {
+      "worker_version": "38c2737b-2a91-4ebe-b9bf-714327830441",
+      "release_tag": "git-d295c866",
+      "git_sha": "d295c8660b5bd842125ffe7ce9e46b2ba171b7fa"
+    },
+    "container": {
+      "id": "a0312218-7c5c-447a-a906-4e7e7030399b",
+      "name": "unson-business-mana-runtime-techknightsandbox",
+      "version": 6,
+      "state": "ready",
+      "healthy_instances": 1,
+      "failed_instances": 0,
+      "updated_at": "2026-08-13T09:30:49.996Z",
+      "image_digest": "sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985"
+    },
+    "readback": {
+      "method": "Wrangler deployments list, versions view, containers info, deployment-worktree HEAD and source-thread readback",
+      "secret_values_read": false
+    }
+  },
+  "slack_e2e": {
+    "mutation": {
+      "request_url": "https://unson-ops.slack.com/archives/C0BKS6RL99T/p1786620460252009?thread_ts=1786507594.889229&cid=C0BKS6RL99T",
+      "response_url": "https://unson-ops.slack.com/archives/C0BKS6RL99T/p1786620541481209?thread_ts=1786507594.889229&cid=C0BKS6RL99T",
+      "title": "CF-BOARD-CUTOVER-E2E-2026-08-13-D295C86",
+      "original_task_id": "ecb21497-1378-4807-9ff8-387701c29040",
+      "create": {
+        "version": 1,
+        "status": "pending"
+      },
+      "update": {
+        "version": 2,
+        "description": "cloudflare-board-confirmed"
+      },
+      "transition": {
+        "version": 3,
+        "status": "completed"
+      },
+      "failed_operations": 0
+    },
+    "post_cutover_readback": {
+      "request_url": "https://unson-ops.slack.com/archives/C0BKS6RL99T/p1786621060124339?thread_ts=1786507594.889229&cid=C0BKS6RL99T",
+      "response_url": "https://unson-ops.slack.com/archives/C0BKS6RL99T/p1786621120419909?thread_ts=1786507594.889229&cid=C0BKS6RL99T",
+      "response_count": 1,
+      "read_status": "complete",
+      "has_more": false,
+      "next_cursor": null,
+      "tasks": [
+        {
+          "title": "CF-BOARD-VISIBILITY-2026-08-13-D295C86",
+          "matches": 1,
+          "status": "pending",
+          "version": 1
+        },
+        {
+          "title": "CF-BOARD-CUTOVER-E2E-2026-08-13-D295C86",
+          "matches": 1,
+          "status": "completed",
+          "version": 3
+        }
+      ],
+      "method": "authenticated Slack web UI readback in the original thread"
+    }
+  },
+  "brainbase": {
+    "api_base_url": "https://bb.unson.jp",
+    "endpoint": "/api/companion/tasks/search",
+    "read_status": "complete",
+    "read_at": "2026-08-13T13:37:24Z",
+    "method": "Infisical allowlisted target brainbase-mcp; GET search; output projected to non-secret task fields",
+    "secret_values_read": false,
+    "tasks": [
+      {
+        "task_ref": "ct1.eyJ2IjoiMS4wLjAiLCJzIjoicG9zdGdyZXMiLCJyIjoiZWNiMjE0OTctMTM3OC00ODA3LTlmZjgtMzg3NzAxYzI5MDQwIn0.vddbfJl1CDF_69WrV_wz0PleMTYjPQKN2IJ1qLZTYyY",
+        "title": "CF-BOARD-CUTOVER-E2E-2026-08-13-D295C86",
+        "status": "completed",
+        "priority": "low",
+        "description": "cloudflare-board-confirmed",
+        "project_codes": [
+          "back-office"
+        ],
+        "version": 3,
+        "created_at": "2026-08-13T11:28:28.537Z",
+        "updated_at": "2026-08-13T11:28:47.559Z"
+      },
+      {
+        "task_ref": "ct1.eyJ2IjoiMS4wLjAiLCJzIjoicG9zdGdyZXMiLCJyIjoiZmJjMDZjNWYtZWVjMC00MjRjLTllMmYtNWUwNjg5ZTJlMzM3In0.sfTMy0enYK-Ut_4vAByoyw2t_RCR4qQtQq7SFJ9Scc4",
+        "title": "CF-BOARD-VISIBILITY-2026-08-13-D295C86",
+        "status": "pending",
+        "priority": "low",
+        "description": null,
+        "project_codes": [
+          "back-office"
+        ],
+        "version": 1,
+        "created_at": "2026-08-13T11:33:02.710Z",
+        "updated_at": "2026-08-13T11:33:02.710Z"
+      }
+    ]
+  },
+  "canvas": {
+    "read_at": "2026-08-13T14:06:48Z",
+    "title": "タスクボード",
+    "subtitle": "Brainbase同期（読み取り専用） | 対象project: back-office",
+    "counts": {
+      "pending": 7,
+      "in_progress": 0,
+      "waiting": 0,
+      "completed": 6
+    },
+    "visible_titles": [
+      "CF-BOARD-VISIBILITY-2026-08-13-D295C86"
+    ],
+    "screenshot": {
+      "method": "authenticated Slack web UI task-board tab",
+      "local_path": "/tmp/mana-current-task-board-2026-08-13-v43.jpg",
+      "sha256": "0339eb35a46142fa27105d8ca6fa0f2c0cf643a96e92a8de5e8f304bfed88426",
+      "format": "jpeg",
+      "width": 1680,
+      "height": 918
+    }
+  },
+  "lightsail": {
+    "host": "18.178.86.244",
+    "config_git_sha": "9139b37608b95df16e99cbaceb6bd880b422e12d",
+    "service": {
+      "name": "openryoko.service",
+      "active_state": "active",
+      "sub_state": "running",
+      "main_pid": 1292805,
+      "restart_count": 0,
+      "active_since": "2026-08-13T12:00:32Z"
+    },
+    "task_ownership": {
+      "placement_id": "mana-accounting",
+      "placement_enabled": false,
+      "task_canvas_enabled": false
+    },
+    "readback": {
+      "method": "SSH systemd readback and exact config.yaml ranges",
+      "mutated": false
+    }
+  },
+  "ownership_assertion": {
+    "task_search_owner": "cloudflare",
+    "task_write_owner": "cloudflare",
+    "task_board_owner": "cloudflare",
+    "lightsail_task_owner_enabled": false,
+    "duplicate_slack_response_observed": false
+  },
+  "scope_boundary": {
+    "meeting_minutes": "Separate migration delivered later by PR #128. Current Cloudflare meeting-minutes flag is true and Lightsail meetingMinutesPipeline is false; neither state is used as evidence for this task migration.",
+    "lightsail_service_shutdown": "Out of scope; the shared service remains active for non-task responsibilities."
+  }
+}
