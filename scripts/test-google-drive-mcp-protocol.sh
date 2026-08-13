@@ -5,8 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 server="$repo_root/packages/jimmy/dist/src/mcp/google-drive-server.js"
 
 # Keep this deploy-contract test self-contained in clean CI checkouts.
-pnpm --dir "$repo_root" --filter @openryoko/slack-thread-context build
-pnpm --dir "$repo_root" --filter openryoko build
+pnpm --dir "$repo_root" --filter openryoko... build
 [[ -f "$server" ]]
 
 output_file="$(mktemp)"

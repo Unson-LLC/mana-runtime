@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 deploy_dir="$repo_root/scripts/deploy"
 workflow="$repo_root/.github/workflows/deploy-lightsail.yml"
 runbook="$repo_root/docs/operations/lightsail-deploy-workflow.md"
+protocol_test="$repo_root/scripts/test-google-drive-mcp-protocol.sh"
 workflow_checker="$deploy_dir/check-workflow-contract.rb"
 resolver="$deploy_dir/resolve-deploy-ref"
 renderer="$deploy_dir/render-pilot-deploy-config"
@@ -223,6 +224,10 @@ if (command.includes('cloudflare-techknight-poc') || /\bturbo build\b/.test(comm
 }
 NODE
 echo "Lightsail build scope fixture passed"
+
+grep -Fq 'pnpm --dir "$repo_root" --filter openryoko... build' "$protocol_test" \
+  || { echo "deploy contract protocol test does not build the Jimmy dependency closure" >&2; exit 1; }
+echo "deploy contract dependency closure fixture passed"
 
 workflow_fixture_root="$(mktemp -d)"
 cp "$workflow" "$workflow_fixture_root/expanded-permissions.yml"
