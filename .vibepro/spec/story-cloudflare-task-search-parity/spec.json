@@ -50,7 +50,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     },
     {
       "id": "C-002",
@@ -92,7 +92,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     },
     {
       "id": "INV-001",
@@ -138,7 +138,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     },
     {
       "id": "INV-002",
@@ -184,7 +184,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     },
     {
       "id": "S-001",
@@ -226,7 +226,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     },
     {
       "id": "S-002",
@@ -272,7 +272,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     },
     {
       "id": "C-003",
@@ -318,25 +318,17 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     },
     {
-      "id": "C-004",
+      "id": "C-005",
       "type": "contract",
-      "statement": "単体・統合・型検査・WorkerとContainerのdry-runを通し、デプロイ後のSlack検索結果をBrainbase正本と突合するまで完了扱いにしない",
+      "statement": "単体・統合・型検査・WorkerとContainerのdry-runは実行結果と最終HEADを紐づけて記録する",
       "origin": {
         "story_refs": [
           {
             "kind": "acceptance_criteria",
             "ac_id": "AC-8"
-          },
-          {
-            "kind": "acceptance_criteria",
-            "ac_id": "AC-9"
-          },
-          {
-            "kind": "acceptance_criteria",
-            "ac_id": "AC-10"
           }
         ],
         "architecture_refs": [
@@ -367,11 +359,57 @@
         ]
       },
       "confidence": 0.97,
-      "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:21:40.684Z"
+      "first_seen_at": "2026-08-13T01:45:05.130Z",
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
+    },
+    {
+      "id": "C-006",
+      "type": "contract",
+      "statement": "デプロイversion・image digest・切戻し記録と、本番Slack検索結果のBrainbase正本照合は外部証跡として未実施のまま明示し、ローカルテストで完了扱いにしない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-9"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "段階展開と切戻し"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/README.md",
+            "anchor": "タスク検索の段階展開"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "keeps production task search evidence open until Slack and Brainbase match"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "production task search evidence open"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-13T01:45:05.130Z",
+      "last_revised_at": "2026-08-13T01:45:33.455Z"
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-13T01:21:40.682Z",
-  "previous_spec_id": null
+  "generated_at": "2026-08-13T01:45:33.454Z",
+  "previous_spec_id": "2026-08-13T01:45:05.129Z"
 }

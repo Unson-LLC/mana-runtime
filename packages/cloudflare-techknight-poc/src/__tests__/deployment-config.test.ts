@@ -69,6 +69,15 @@ describe("会社別Cloudflare deployment", () => {
     expect(readme).toContain("Git SHA");
   });
 
+  it("keeps production task search evidence open until Slack and Brainbase match", () => {
+    const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("ON切替後の最初の境界付き`search_tasks` probeを記録");
+    expect(readme).toContain("本番Slackで既知タスク");
+    expect(readme).toContain("Brainbase正本と照合");
+    expect(readme).toContain("テストやContainer healthだけをSlack E2E完了とは扱いません");
+  });
+
   it("does not place task-search credentials in deployment files", () => {
     const configs = [
       readFileSync(fileURLToPath(new URL("../../wrangler.jsonc", import.meta.url)), "utf8"),
