@@ -46,6 +46,21 @@ describe("meeting minutes pipeline", () => {
     );
   });
 
+  it("does not duplicate a leading narrative separator", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "------------\n議題" }),
+    });
+    await resumeMeetingMinutesRun(fs, selection, options);
+    expect(options.postThreadChunk).toHaveBeenCalledWith(
+      "CDEST",
+      "10.1",
+      "*定例*\n概要\n\n------------\n議題",
+      "Ev1_F1-chunk-0",
+    );
+  });
+
   it("reuses generation and posted parent after partial Slack failure", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

@@ -108,7 +108,10 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
-    const narrativeText = `${parentText}\n\n------------\n\n${run.generated!.body}`;
+    const body = run.generated!.body.trimStart();
+    const narrativeText = body.startsWith("------------")
+      ? `${parentText}\n\n${body}`
+      : `${parentText}\n\n------------\n\n${body}`;
     const chunks = splitMeetingMinutesForSlack(narrativeText); run.slack ??= { postedChunkIndexes: [] };
     if (!run.slack.parentTs) {
       run.slack.parentTs = await options.postParent(run.destination.slackChannelId, parentText, `${run.runId}-parent`);
