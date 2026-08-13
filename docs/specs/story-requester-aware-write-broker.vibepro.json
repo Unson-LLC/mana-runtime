@@ -1,0 +1,152 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-requester-aware-write-broker",
+  "generated_by": { "caller": "codex", "stage": "design_only" },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "WriteIntentはactorのprovider・user ID・workspace、Placement、信頼済みproject、正規化operation、target、payload hash、冪等キー、capabilityを保持し、自由文からactorまたはprojectを補完しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "契約案" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-intent.test.ts", "case": "rejects an intent whose actor or project is not bound by trusted runtime context" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-intent.test.ts", "must_cover": "trusted runtime context" }] },
+      "confidence": 0.97
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "署名付きcapabilityは委譲された最大権限だけを表し、policyのauto・approval・denyを内包しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-3" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "決定" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/signed-capability.test.ts", "case": "keeps delegated capability claims independent from policy decisions" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/signed-capability.test.ts", "must_cover": "independent from policy" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "capabilityの署名改ざん、期限切れ、nonce再利用、audience・Placement・project・operation・target不一致をfail closedで拒否する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "signed event capability" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/signed-capability.test.ts", "case": "rejects tampering expiry replay and claim mismatches" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/signed-capability.test.ts", "must_cover": "tampering expiry replay" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "S-002",
+      "type": "scenario",
+      "statement": "policyはactor・Placement・project・operation・targetの表形式規則からauto・approval・denyを返し、規則欠落と不明入力をdenyにする",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "write broker" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-policy.test.ts", "case": "evaluates requester placement project operation and target with default deny" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-policy.test.ts", "must_cover": "default deny" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "budgetは実行前に予約し、成功時commit、非実行時releaseし、承認によって上限超過を迂回しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "重要な不変条件" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-budget.test.ts", "case": "reserves before execution and prevents concurrent oversubscription" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-budget.test.ts", "must_cover": "concurrent oversubscription" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "S-003",
+      "type": "scenario",
+      "statement": "brokerはcapability・policy・budget・idempotencyがすべて許可したtask.createまたはtask.updateだけを一度実行し、再試行では確定済み結果を返す",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "状態遷移" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-broker.test.ts", "case": "executes an authorized idempotent task mutation exactly once" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-broker.test.ts", "must_cover": "exactly once" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "S-004",
+      "type": "scenario",
+      "statement": "Slack承認は保存済みpayload hash、承認者ID、workspace、channel、Placement、TTL、single-useを検証し、期限切れ・権限外・二重クリック・payload差し替えを実行しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "Slack approval adapter" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/jimmy/src/connectors/slack/__tests__/write-approval.test.ts", "case": "rejects unauthorized expired replayed or modified approval actions" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/connectors/slack/__tests__/write-approval.test.ts", "must_cover": "unauthorized expired replayed" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "すべての決定と実行はrequester・approver・policy version・capability hash・budget reservation・before/after参照・結果・時刻を持つ追記専用receiptを残し、secretを記録しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "audit adapter" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/execution-receipt.test.ts", "case": "records append only decision and execution evidence without secrets" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/execution-receipt.test.ts", "must_cover": "without secrets" }] },
+      "confidence": 0.98
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "JimmyとCloudflareは同じadapter contract fixtureを使い、Slack UI・鍵・永続化をtask-runtime-coreへ依存させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-8" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "責務境界" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/adapter-contract.test.ts", "case": "runs the same mutation contract for Jimmy and Cloudflare adapters" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/adapter-contract.test.ts", "must_cover": "Jimmy and Cloudflare" }] },
+      "confidence": 0.96
+    },
+    {
+      "id": "S-005",
+      "type": "scenario",
+      "statement": "初期展開は機能フラグ既定OFF、限定Placementのshadow decisionから開始し、kill switchで副作用なしのread-onlyへ戻せる",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-10" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "段階展開" }],
+        "code_refs": [],
+        "test_refs": [{ "file": "packages/write-broker/src/__tests__/rollout-policy.test.ts", "case": "defaults to shadow mode and disables every mutation with the kill switch" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/rollout-policy.test.ts", "must_cover": "shadow mode" }] },
+      "confidence": 0.99
+    }
+  ],
+  "planned_test_suites": [
+    { "layer": "core unit", "covers": ["WriteIntent正規化", "trusted project scope", "error・conflict", "冪等性"] },
+    { "layer": "capability property", "covers": ["署名改ざん", "expiry", "nonce replay", "claim mismatch"] },
+    { "layer": "budget concurrency", "covers": ["二重reserve", "commit・release", "上限競合"] },
+    { "layer": "broker table-driven", "covers": ["auto・approval・deny", "default deny", "capabilityとpolicyとbudgetの積集合"] },
+    { "layer": "adapter contract", "covers": ["JimmyとCloudflareの同一intent・receipt"] },
+    { "layer": "Slack integration", "covers": ["権限外承認", "期限切れ", "二重クリック", "payload差し替え", "再起動後resume"] },
+    { "layer": "pilot E2E", "covers": ["task.create・task.updateの3 decision", "receiptとBrainbase正本の一致", "kill switch"] }
+  ],
+  "open_questions": [
+    "story-shared-task-runtime-coreが公開するoperation・WriteIntent・MutationResultの最終名称とpackage path",
+    "policy ruleとaudit receiptの永続化先、およびpolicy versionの採番方法",
+    "budgetの初期単位を回数だけにするか、操作別・期間別まで初版へ含めるか",
+    "初期pilot Placementと承認者集合のGraph SSOT解決方法"
+  ]
+}
