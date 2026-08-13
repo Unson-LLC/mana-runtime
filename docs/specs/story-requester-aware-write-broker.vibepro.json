@@ -1,152 +1,145 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-requester-aware-write-broker",
-  "generated_by": { "caller": "codex", "stage": "design_only" },
+  "generated_by": { "caller": "codex", "stage": "implementation" },
   "clauses": [
     {
       "id": "C-001",
       "type": "contract",
-      "statement": "WriteIntentはactorのprovider・user ID・workspace、Placement、信頼済みproject、正規化operation、target、payload hash、冪等キー、capabilityを保持し、自由文からactorまたはprojectを補完しない",
+      "statement": "WorkerはSlack actor、workspace、mana-accounting Placement、trusted project、許可操作、期限、最大3回を署名し、Sandboxへ署名鍵を渡さない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "契約案" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-intent.test.ts", "case": "rejects an intent whose actor or project is not bound by trusted runtime context" }]
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "書き込み経路" }],
+        "code_refs": [{ "file": "packages/write-broker/src/index.ts" }, { "file": "packages/cloudflare-techknight-poc/src/index.ts" }],
+        "test_refs": [{ "file": "packages/write-broker/src/index.test.ts", "case": "signs verifies and authorizes only the trusted actor project and operation" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "configures the requester-scoped write MCP without exposing the signing secret" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-intent.test.ts", "must_cover": "trusted runtime context" }] },
-      "confidence": 0.97
-    },
-    {
-      "id": "INV-001",
-      "type": "invariant",
-      "statement": "署名付きcapabilityは委譲された最大権限だけを表し、policyのauto・approval・denyを内包しない",
-      "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-3" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "決定" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/signed-capability.test.ts", "case": "keeps delegated capability claims independent from policy decisions" }]
-      },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/signed-capability.test.ts", "must_cover": "independent from policy" }] },
-      "confidence": 0.99
-    },
-    {
-      "id": "S-001",
-      "type": "scenario",
-      "statement": "capabilityの署名改ざん、期限切れ、nonce再利用、audience・Placement・project・operation・target不一致をfail closedで拒否する",
-      "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "signed event capability" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/signed-capability.test.ts", "case": "rejects tampering expiry replay and claim mismatches" }]
-      },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/signed-capability.test.ts", "must_cover": "tampering expiry replay" }] },
-      "confidence": 0.99
-    },
-    {
-      "id": "S-002",
-      "type": "scenario",
-      "statement": "policyはactor・Placement・project・operation・targetの表形式規則からauto・approval・denyを返し、規則欠落と不明入力をdenyにする",
-      "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "write broker" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-policy.test.ts", "case": "evaluates requester placement project operation and target with default deny" }]
-      },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-policy.test.ts", "must_cover": "default deny" }] },
-      "confidence": 0.99
-    },
-    {
-      "id": "INV-002",
-      "type": "invariant",
-      "statement": "budgetは実行前に予約し、成功時commit、非実行時releaseし、承認によって上限超過を迂回しない",
-      "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "重要な不変条件" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-budget.test.ts", "case": "reserves before execution and prevents concurrent oversubscription" }]
-      },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-budget.test.ts", "must_cover": "concurrent oversubscription" }] },
-      "confidence": 0.99
-    },
-    {
-      "id": "S-003",
-      "type": "scenario",
-      "statement": "brokerはcapability・policy・budget・idempotencyがすべて許可したtask.createまたはtask.updateだけを一度実行し、再試行では確定済み結果を返す",
-      "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "状態遷移" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/write-broker.test.ts", "case": "executes an authorized idempotent task mutation exactly once" }]
-      },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/write-broker.test.ts", "must_cover": "exactly once" }] },
-      "confidence": 0.99
-    },
-    {
-      "id": "S-004",
-      "type": "scenario",
-      "statement": "Slack承認は保存済みpayload hash、承認者ID、workspace、channel、Placement、TTL、single-useを検証し、期限切れ・権限外・二重クリック・payload差し替えを実行しない",
-      "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "Slack approval adapter" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/jimmy/src/connectors/slack/__tests__/write-approval.test.ts", "case": "rejects unauthorized expired replayed or modified approval actions" }]
-      },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/connectors/slack/__tests__/write-approval.test.ts", "must_cover": "unauthorized expired replayed" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/index.test.ts", "must_cover": "trusted actor project and operation" }] },
       "confidence": 0.99
     },
     {
       "id": "C-002",
       "type": "contract",
-      "statement": "すべての決定と実行はrequester・approver・policy version・capability hash・budget reservation・before/after参照・結果・時刻を持つ追記専用receiptを残し、secretを記録しない",
+      "statement": "一般返信はcreate_task、update_task、transition_taskだけを公開し、request capabilityと上限付きcall index以外のWorker secretを送らない",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "audit adapter" }],
-        "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/execution-receipt.test.ts", "case": "records append only decision and execution evidence without secrets" }]
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "書き込み経路" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/container/task-write-mcp-server.mjs" }, { "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-mcp-jsonrpc.test.ts", "case": "exposes only create, update, and transition with bounded call indexes" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-mcp-jsonrpc.test.ts", "case": "sends only request capability and arguments to the synthetic endpoint" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/execution-receipt.test.ts", "must_cover": "without secrets" }] },
-      "confidence": 0.98
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-write-mcp-jsonrpc.test.ts", "must_cover": "bounded call indexes" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "書き込みproxyは固定合成hostのPOST pathだけを受け、capabilityの改ざん、期限切れ、Placement・project・operation不一致をfail closedで拒否する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "セキュリティ不変条件" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-write-proxy.ts" }, { "file": "packages/cloudflare-techknight-poc/src/sandbox-runtime.ts" }],
+        "test_refs": [{ "file": "packages/write-broker/src/index.test.ts", "case": "rejects tampering expiry and runtime scope mismatch" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts", "case": "rejects a capability bound to another placement" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts", "must_cover": "another placement" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "作成はtrusted projectと決定的冪等キーを使い、更新・状態遷移は対象Taskのprojectとexpected_versionを再検証し、409 conflictを非再試行で返す",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "書き込み経路" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-write-proxy.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts", "case": "creates a task with trusted project scope and deterministic idempotency" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts", "case": "checks the current project before transition and forwards expected_version" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts", "case": "returns a non-retryable conflict distinctly" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts", "must_cover": "expected_version" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "タスクボードは4 statusを各1回だけlimit=21で取得し、cursorを追わず、trusted projectを再検証して最大20件を表示する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "タスクボード経路" }],
+        "code_refs": [{ "file": "packages/task-runtime-core/src/index.ts" }, { "file": "packages/cloudflare-techknight-poc/src/task-board.ts" }],
+        "test_refs": [{ "file": "packages/task-runtime-core/src/task-board.test.ts", "case": "uses four fixed requests without following cursors" }, { "file": "packages/task-runtime-core/src/task-board.test.ts", "case": "fails closed on a projectless or cross-project-only task" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/task-runtime-core/src/task-board.test.ts", "must_cover": "without following cursors" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "S-002",
+      "type": "scenario",
+      "statement": "Canvasは既存なら置換し、なければ作成し、上限超過は正確な総数ではなく下限と続きありを表示する。機能OFFでは副作用を起こさない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "タスクボード経路" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-board.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "case": "renders truncation as a lower bound rather than an exact total" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "case": "uses four bounded Brainbase requests and updates the channel Canvas" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "case": "does nothing while the board feature is disabled" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "must_cover": "lower bound" }] },
+      "confidence": 0.99
     },
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "JimmyとCloudflareは同じadapter contract fixtureを使い、Slack UI・鍵・永続化をtask-runtime-coreへ依存させない",
+      "statement": "Cloudflare本番は書き込みとタスクボードを既定OFFで配備し、専用Queue・DLQ、15分cron、mana-accounting Placement、必要secretを外部から注入する。切替前後にLightsailのGITHUB_TOKENとmeetingMinutesPipeline.destination.githubをreadbackし、PR #120の議事録GitHub保存を維持する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "keeps board repair bounded, retryable, and disabled until cutover" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "disabled until cutover" }] },
+      "confidence": 0.98
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "同一Slackスレッドで検索・作成・更新・状態遷移を実行し、Brainbase正本、Canvas、Worker version、Container image digest、Git SHAの一致を記録する",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-8" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "責務境界" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
         "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/adapter-contract.test.ts", "case": "runs the same mutation contract for Jimmy and Cloudflare adapters" }]
+        "test_refs": []
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/adapter-contract.test.ts", "must_cover": "Jimmy and Cloudflare" }] },
+      "verifiable_by": { "evidence": "production Slack thread, Brainbase readback, Canvas timestamp, Worker and Container deployment records" },
+      "confidence": 0.95
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "Cloudflare E2E成功後にLightsailのmana-accounting PlacementとそのtaskCanvasを同時に無効化し、二重処理と空Canvas上書きがなくrollback可能であることを確認する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-9" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
+        "code_refs": [],
+        "test_refs": []
+      },
+      "verifiable_by": { "evidence": "Lightsail placement readback, taskCanvas readback, Cloudflare logs, rollback record" },
       "confidence": 0.96
     },
     {
-      "id": "S-005",
-      "type": "scenario",
-      "statement": "初期展開は機能フラグ既定OFF、限定Placementのshadow decisionから開始し、kill switchで副作用なしのread-onlyへ戻せる",
+      "id": "C-006",
+      "type": "contract",
+      "statement": "Cloudflareが対象チャンネルのタスク検索・作成・更新・状態遷移・Canvasを単独所有し、Lightsailの同PlacementとtaskCanvasが無効、かつPR #120の議事録GitHub保存pipelineが継続している本番状態だけをタスク運用の完全移行とする",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-10" }],
-        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "段階展開" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
         "code_refs": [],
-        "test_refs": [{ "file": "packages/write-broker/src/__tests__/rollout-policy.test.ts", "case": "defaults to shadow mode and disables every mutation with the kill switch" }]
+        "test_refs": []
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/write-broker/src/__tests__/rollout-policy.test.ts", "must_cover": "shadow mode" }] },
-      "confidence": 0.99
+      "verifiable_by": { "evidence": "production task owner inventory, Slack E2E, Lightsail placement and taskCanvas disabled readback, GITHUB_TOKEN presence and meetingMinutesPipeline.destination.github readback" },
+      "confidence": 0.95
     }
   ],
   "planned_test_suites": [
-    { "layer": "core unit", "covers": ["WriteIntent正規化", "trusted project scope", "error・conflict", "冪等性"] },
-    { "layer": "capability property", "covers": ["署名改ざん", "expiry", "nonce replay", "claim mismatch"] },
-    { "layer": "budget concurrency", "covers": ["二重reserve", "commit・release", "上限競合"] },
-    { "layer": "broker table-driven", "covers": ["auto・approval・deny", "default deny", "capabilityとpolicyとbudgetの積集合"] },
-    { "layer": "adapter contract", "covers": ["JimmyとCloudflareの同一intent・receipt"] },
-    { "layer": "Slack integration", "covers": ["権限外承認", "期限切れ", "二重クリック", "payload差し替え", "再起動後resume"] },
-    { "layer": "pilot E2E", "covers": ["task.create・task.updateの3 decision", "receiptとBrainbase正本の一致", "kill switch"] }
+    { "layer": "capability unit", "covers": ["署名", "expiry", "actor・Placement・project・operation境界"] },
+    { "layer": "Worker proxy", "covers": ["create・update・transition", "冪等性", "409", "越境拒否"] },
+    { "layer": "MCP integration", "covers": ["専用3 tool", "合成host", "secret非露出"] },
+    { "layer": "bounded board", "covers": ["固定4 request", "上限20", "下限表示", "Canvas作成・更新"] },
+    { "layer": "production E2E", "covers": ["同一Slack thread", "Brainbase readback", "Canvas", "GitHub minutes", "所有権切替"] }
   ],
-  "open_questions": [
-    "story-shared-task-runtime-coreが公開するoperation・WriteIntent・MutationResultの最終名称とpackage path",
-    "policy ruleとaudit receiptの永続化先、およびpolicy versionの採番方法",
-    "budgetの初期単位を回数だけにするか、操作別・期間別まで初版へ含めるか",
-    "初期pilot Placementと承認者集合のGraph SSOT解決方法"
-  ]
+  "open_questions": []
 }

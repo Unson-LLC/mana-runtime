@@ -14,6 +14,9 @@
     "RUNTIME_PROJECT_CODES": "back-office",
     "RUNTIME_EXECUTION_MODE": "meeting_tasks",
     "RUNTIME_TASK_SEARCH_ENABLED": "true",
+    "RUNTIME_TASK_WRITE_ENABLED": "false",
+    "RUNTIME_TASK_BOARD_ENABLED": "false",
+    "RUNTIME_PLACEMENT_ID": "mana-accounting",
     "RUNTIME_CLAUDE_MODEL": "opus",
     "RUNTIME_CLAUDE_EFFORT": "xhigh"
   },
@@ -52,6 +55,10 @@
       {
         "binding": "TECHKNIGHT_EVENTS",
         "queue": "unson-business-mana-runtime-events"
+      },
+      {
+        "binding": "TASK_BOARD_REPAIRS",
+        "queue": "unson-business-mana-task-board-repairs"
       }
     ],
     "consumers": [
@@ -62,7 +69,18 @@
         "max_retries": 3,
         "max_concurrency": 1,
         "dead_letter_queue": "unson-business-mana-runtime-events-dlq"
+      },
+      {
+        "queue": "unson-business-mana-task-board-repairs",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "max_concurrency": 1,
+        "dead_letter_queue": "unson-business-mana-task-board-repairs-dlq"
       }
     ]
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
   }
 }

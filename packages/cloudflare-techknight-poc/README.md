@@ -10,6 +10,11 @@ tokenはContainerへ保存せず、会社別Worker Secretの境界内でだけ�
 `task-search.internal`だけを呼び、Workerが固定のBrainbase検索APIへ中継します。
 Brainbase URL、Token、project bindingはSandbox、MCP設定、promptへ渡しません。
 
+一般返信のタスク書き込みは、Sandbox内の専用stdio MCPから合成host
+`task-write.internal`だけを呼びます。WorkerがSlack依頼者、workspace、`mana-accounting`
+Placement、`back-office` project、操作、期限、最大回数を署名し、Brainbase認証と冪等キーを
+再構築します。Sandboxへ署名鍵やBrainbase Tokenは渡しません。
+
 同じ実装を次の完全に分離されたdeploymentで利用します。
 
 - `wrangler.jsonc`: TechKnight
@@ -60,6 +65,21 @@ known-good Worker versionへrollbackします。rollbackが完了するまで以
 [`docs/operations/cloudflare-task-search-rollout-2026-08-13.md`](../../docs/operations/cloudflare-task-search-rollout-2026-08-13.md)
 を参照してください。
 
+## タスク書き込みとCanvasの段階展開
+
+`RUNTIME_TASK_WRITE_ENABLED` と `RUNTIME_TASK_BOARD_ENABLED` は既定OFFです。
+
+1. `unson-business-mana-task-board-repairs` とDLQを作成する。
+2. 32 byte以上のランダム値を `TASK_WRITE_CAPABILITY_SECRET` としてWrangler Secretへ設定する。
+   値は設定ファイル、ログ、Sandboxへ出さない。
+3. 両フラグOFFのままWorkerとContainerを配備し、health、Worker version、Container image digest、Git SHAを記録する。
+4. `RUNTIME_TASK_WRITE_ENABLED=true` だけを先に反映し、同一Slackスレッドで検索、作成、更新、状態遷移を1件ずつ実行する。各結果をBrainbaseのtask ID/versionと照合する。
+5. `RUNTIME_TASK_BOARD_ENABLED=true` を反映し、Queue修復後のCanvasを確認する。20件を超える場合は「20件以上（続きあり）」と表示し、全ページ取得しない。
+6. E2E成功後、Lightsailの `mana-accounting.enabled=false` と同Placementの `taskCanvas.enabled=false` を同じ設定変更で反映する。
+
+異常時はCloudflareの書き込みとCanvasを先にOFFにし、その後LightsailのPlacementとCanvasを
+同時にONへ戻します。CloudflareとLightsailを同時に主系として動かしません。
+
 ## デプロイ前確認
 
 最初に対象会社とWrangler設定を固定します。
@@ -95,6 +115,11 @@ Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を
     `BRAINBASE_TASK_API_TOKEN` Secretとして設定する。Token値はWrangler設定へ書かない。
 13. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
     `project_codes`とSlackの同一スレッドへの登録結果を照合する。
+14. PR #120を含むLightsail releaseでは `GITHUB_TOKEN` をsecretとして設定し、
+    `meetingMinutesPipeline.destination.github` のowner/repo/baseBranch/pathTemplateを確認する。
+    GitHub保存の本番確認が終わるまで議事録pipelineを停止しない。タスク運用の切替では
+    `mana-accounting` Placementとその `taskCanvas` だけを無効化し、議事録pipelineの
+    Cloudflare移植または別所有者への移管は独立した完了証跡で閉じる。
 
 ### 議事録タスク処理の所有権切替
 
@@ -130,6 +155,7 @@ npx wrangler secret put CLAUDE_CODE_OAUTH_TOKEN --config wrangler.unson-business
 npx wrangler secret put SANDBOX_PROBE_TOKEN --config wrangler.unson-business.jsonc
 npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.unson-business.jsonc
 npx wrangler secret put BRAINBASE_TASK_API_TOKEN --config wrangler.unson-business.jsonc
+npx wrangler secret put TASK_WRITE_CAPABILITY_SECRET --config wrangler.unson-business.jsonc
 pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
 ```
 

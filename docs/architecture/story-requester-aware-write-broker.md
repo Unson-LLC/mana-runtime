@@ -1,119 +1,68 @@
 ---
 architecture_id: arch-requester-aware-write-broker
 story_id: story-requester-aware-write-broker
-title: 依頼者別書き込み仲介アーキテクチャ
-status: proposed
+title: Cloudflareタスク運用完全移行アーキテクチャ
+status: accepted
 date: 2026-08-13
 ---
 
-# 依頼者別書き込み仲介アーキテクチャ
+# Cloudflareタスク運用完全移行アーキテクチャ
 
 ## 決定
 
-`task-runtime-core` と書き込み実行adapterの間にwrite brokerを置く。AI、MCP、Slack handlerはBrainbaseの書き込みAPIを直接呼ばず、正規化済みの `WriteIntent` をbrokerへ渡す。brokerは署名付きcapability、write policy、budget、冪等性を実行時に検証し、`auto`、`approval`、`deny` のいずれかを確定する。
+Canonical Taskの型とAPI clientは `@openryoko/task-runtime-core` を共通正本にする。Cloudflare Workerへ、依頼者単位の署名capabilityを検証する書き込みproxyと、上限付きCanvas投影adapterを追加する。Sandboxは合成host以外からBrainbaseへ到達できず、API token・署名鍵・Slack tokenを保持しない。
 
-capabilityは「依頼者へ委譲された最大権限」、policyは「今回の依頼をどう扱うか」、budgetは「現在消費可能か」を表す。三者を同じ設定やtokenへ統合しない。
-
-## 責務境界
-
-### task-runtime-core
-
-- Canonical Task型、API client、query、error、trusted project scope。
-- operation名、`WriteIntent`、`MutationResult`、conflict、冪等性の純粋契約。
-- Node、Cloudflare、Slack、環境変数、secret、Placement設定、永続化を参照しない。
-
-### signed event capability
-
-- issuer、audience、subject、workspace、Placement、project、operation、target、expiry、nonce、budget referenceをcanonical serializationして署名・検証する。
-- 期限切れ、audience不一致、Placement/project/operation/target不一致、nonce再利用を拒否する。
-- `auto / approval / deny` を決定しない。
-
-### write broker
-
-- `actor × Placement × project × operation × target` をpolicyへ入力する。
-- capabilityの許可範囲とpolicy decisionの積集合を取る。
-- budgetを実行前に予約し、成功時commit、非実行時releaseする。
-- 同一冪等キーの再試行では一度だけ実行し、確定済み結果を返す。
-- 書き込みadapterを呼べる唯一のアプリケーション境界とする。
-
-### Slack approval adapter
-
-- pending actionの作成、Block Kit、button、承認者再認可、TTL、single-use、resumeを担当する。
-- Slack user IDとworkspace/team IDをactorの正本にし、表示名を使わない。
-- 承認時は保存済みpayload hashを使い、LLMやSlack本文から操作内容を再生成しない。
-
-### audit adapter
-
-- decisionとexecutionを追記専用receiptとして保存する。
-- requester、approver、policy version、capability hash、budget reservation、before/after参照、result、timestampを記録する。
-- secret、署名鍵、Authorization header、元のcapability tokenを記録しない。
-
-## 契約案
-
-```ts
-type WriteIntent = {
-  requestId: string;
-  actor: { provider: "slack"; id: string; workspace: string };
-  placementId: string;
-  projectId: string;
-  operation: "task.create" | "task.update";
-  target: { type: "task"; id?: string };
-  payloadHash: string;
-  idempotencyKey: string;
-  capability: string;
-};
-
-type PolicyDecision =
-  | { effect: "auto"; decisionId: string }
-  | { effect: "approval"; decisionId: string; approverSet: string; expiresAt: string }
-  | { effect: "deny"; decisionId: string; reasonCode: string };
-
-type ExecutionReceipt = {
-  decisionId: string;
-  policyVersion: string;
-  capabilityHash: string;
-  budgetReservationId?: string;
-  beforeRef?: string;
-  afterRef?: string;
-  result: "executed" | "denied" | "expired" | "failed";
-  timestamps: { requestedAt: string; decidedAt: string; executedAt?: string };
-};
-```
-
-名称と配置は `story-shared-task-runtime-core` の公開契約確定後に合わせる。ここでは意味境界を正本とする。
-
-## 状態遷移
+## 書き込み経路
 
 ```text
-received
-  -> invalid capability ------------------------> denied + receipt
-  -> policy deny -------------------------------> denied + receipt
-  -> budget unavailable ------------------------> denied + receipt
-  -> policy auto -> budget reserve -> execute --> commit/release + receipt
-  -> policy approval -> pending
-       -> expired ------------------------------> release + receipt
-       -> unauthorized approver ----------------> pendingのまま + security event
-       -> approved -> reauthorize -> execute ---> commit/release + receipt
+Slack event
+  -> Workerがactor/workspace/placement/project/operation/budgetを署名
+  -> Claude Sandbox + 専用stdio MCP
+  -> task-write.internal/api/task-write
+  -> Workerがcapabilityを検証しproject/auth/idempotencyを再構築
+  -> TaskApiClientでcreate / update / transition
+  -> 成功時だけCanvas修復Queueへ投入
 ```
 
-## 重要な不変条件
+- `placementId` はSlack channel IDではなく信頼済み設定 `RUNTIME_PLACEMENT_ID=mana-accounting` を使う。
+- capabilityは3分で失効し、Slack actor、workspace、Placement、project、許可操作、最大3回を固定する。
+- 作成のprojectはWorker設定から強制する。更新と状態遷移は対象Taskを先に取得し、projectと `expected_version` を確認する。
+- 合成hostは固定POST pathだけを受ける。実Brainbase hostをSandboxの許可hostへ追加しない。
+- Claudeへ公開する操作は作成・更新・状態遷移だけとし、削除や任意HTTPを公開しない。
 
-- projectはPlacementと対象Taskの正規属性から決め、ユーザー文・LLM出力から拡張しない。
-- 書き込みMCPのwildcardを直接公開せず、書き込みはbroker経由の専用toolに限定する。
-- budget予約は実行前。承認はbudget超過を迂回しない。
-- 承認後もcapability、policy、budget、target versionを再検証する。
-- task更新はbefore versionを用いた楽観ロックを維持する。
-- 同じrequest/idempotency keyから複数の副作用を発生させない。
+## タスクボード経路
 
-## 段階展開
+```text
+書き込み成功 / 15分cron / 手動修復
+  -> Cloudflare Queue
+  -> pending / in_progress / waiting / completed を各1回取得
+  -> 各statusは表示上限+1、cursor追跡なし
+  -> project再検証、重複除去、全体最大20件
+  -> Slack Canvasを作成または置換
+```
 
-1. 機能フラグOFFでdecisionだけを記録するshadow mode。
-2. 限定Placementで `task.create` の低リスク規則だけauto。
-3. `task.update` を追加し、conflictとbefore/after照合を確認。
-4. Slack approvalを有効化する。
+件数が上限を超えた場合は総数を推測せず、「20件以上（続きあり）」と表示する。修復失敗はQueueの再試行とDLQへ委ね、書き込み自体は成功のまま保持する。
 
-異常時はbrokerの実行フラグをOFFにし、read-onlyへ戻す。pending actionは自動実行せず期限切れにする。
+## 本番設定と移行
+
+1. Workerを `RUNTIME_TASK_WRITE_ENABLED=false`、`RUNTIME_TASK_BOARD_ENABLED=false` で配備する。
+2. 専用Queue/DLQを作成し、`TASK_WRITE_CAPABILITY_SECRET` をCloudflare secretとして設定する。
+3. PR #120を含むLightsail releaseの`GITHUB_TOKEN`と`meetingMinutesPipeline.destination.github`をreadbackし、議事録GitHub保存pipelineを維持する。
+4. 限定channelで書き込みとCanvasをONにし、同一Slackスレッドで検索・作成・更新・状態遷移・Canvasを照合する。あわせてLightsailの議事録GitHub保存が継続していることを確認する。
+5. E2E成功後、Lightsailの `mana-accounting.enabled=false` と同Placementの `taskCanvas.enabled=false` を一つの設定変更として反映する。
+6. Worker version、Container image digest、Git SHA、Brainbase task ID/version、Canvas更新時刻、Lightsail release SHA、GitHub保存設定のreadbackを記録する。
+
+rollbackは、まずCloudflareの書き込みとCanvasをOFFにし、次にLightsailのPlacementとCanvasを同時にONへ戻す。保持版に機能がない場合は単純なWorker version rollbackだけに依存せず、現在のreleaseをフラグOFFで再配備する。
+
+## セキュリティ不変条件
+
+- project、actor、Placement、operationはユーザー文やLLM出力から拡張しない。
+- Worker内部のsecretをSandbox入力、MCP応答、ログへ出さない。
+- 外部応答のTaskはprojectを再検証し、projectless/cross-projectなら全体を拒否する。
+- 409 conflictを自動で上書き・再試行しない。
+- feature flagがOFFなら副作用を起こさない。
+- CloudflareとLightsailの同時所有期間をE2E前の限定時間に留め、切替後は一方だけを有効にする。
 
 ## 変更しないもの
 
-本Story設計段階では、既存のPlacement認証、Task Canvas、meeting-task proposal、Brainbase API、本番設定、Slack App設定を変更しない。
+Brainbase Canonical Task API、既存meeting-task proposal、TechKnight tenant、Lightsailの汎用connector設計、PR #120の議事録GitHub保存pipelineは変更しない。

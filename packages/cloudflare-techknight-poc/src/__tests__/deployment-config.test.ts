@@ -34,6 +34,9 @@ describe("会社別Cloudflare deployment", () => {
       expect(packageJson.scripts[scriptName]).toContain(
         "pnpm --filter @openryoko/task-runtime-core build",
       );
+      expect(packageJson.scripts[scriptName]).toContain(
+        "pnpm --filter @openryoko/write-broker build",
+      );
     }
   });
 
@@ -54,6 +57,9 @@ describe("会社別Cloudflare deployment", () => {
       BRAINBASE_TASK_API_BASE_URL: "https://bb.unson.jp",
       RUNTIME_PROJECT_CODES: "back-office",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
+      RUNTIME_PLACEMENT_ID: "mana-accounting",
+      RUNTIME_TASK_WRITE_ENABLED: "false",
+      RUNTIME_TASK_BOARD_ENABLED: "false",
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
     });
@@ -66,6 +72,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(dockerfile).not.toMatch(/npm install -g @anthropic-ai\/claude-code\s*(?:\n|$)/);
     expect(dockerfile).toContain(
       "COPY --chmod=0555 container/task-search-mcp-server.mjs /opt/mana/task-search-mcp-server.mjs",
+    );
+    expect(dockerfile).toContain(
+      "COPY --chmod=0555 container/task-write-mcp-server.mjs /opt/mana/task-write-mcp-server.mjs",
     );
   });
 
@@ -105,8 +114,9 @@ describe("会社別Cloudflare deployment", () => {
     const sandboxPath = fileURLToPath(new URL("../sandbox-runtime.ts", import.meta.url));
     const sandboxRuntime = readFileSync(sandboxPath, "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
-    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST]');
+    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST]');
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest");
+    expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest");
     expect(sandboxRuntime).not.toContain('"bb.unson.jp"');
   });
 
@@ -141,5 +151,35 @@ describe("会社別Cloudflare deployment", () => {
       expect.objectContaining({ class_name: "TechKnightSandbox" }),
     ]);
     expect(unson.name).toBe("unson-business-mana-runtime");
+  });
+
+  it("keeps board repair bounded, retryable, and disabled until cutover", () => {
+    expect(unson.vars.RUNTIME_TASK_BOARD_ENABLED).toBe("false");
+    expect(unson.queues.producers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ queue: "unson-business-mana-task-board-repairs" }),
+    ]));
+    expect(unson.queues.consumers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        queue: "unson-business-mana-task-board-repairs",
+        dead_letter_queue: "unson-business-mana-task-board-repairs-dlq",
+      }),
+    ]));
+    const raw = readFileSync(
+      fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)),
+      "utf8",
+    );
+    expect(raw).toContain('"crons": ["*/15 * * * *"]');
+    expect(raw).not.toContain("TASK_WRITE_CAPABILITY_SECRET");
+    expect(raw).not.toContain("GITHUB_TOKEN");
+  });
+
+  it("documents the task ownership cutover and the remaining GitHub minutes boundary", () => {
+    const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("mana-accounting.enabled=false");
+    expect(readme).toContain("taskCanvas.enabled=false");
+    expect(readme).toContain("GITHUB_TOKEN");
+    expect(readme).toContain("meetingMinutesPipeline.destination.github");
+    expect(readme).toContain("議事録pipelineを停止しない");
   });
 });
