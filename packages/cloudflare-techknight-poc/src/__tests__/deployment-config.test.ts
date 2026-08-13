@@ -9,6 +9,7 @@ interface DeploymentConfig {
   durable_objects: {
     bindings: Array<{ name: string; class_name: string }>;
   };
+  migrations: Array<{ tag: string; new_sqlite_classes: string[] }>;
   containers: Array<{ class_name: string }>;
   queues: {
     producers: Array<{ queue: string }>;
@@ -145,12 +146,29 @@ describe("会社別Cloudflare deployment", () => {
       expect.arrayContaining([
         expect.objectContaining({ name: "TECHKNIGHT_WORKSPACE" }),
         expect.objectContaining({ name: "TECHKNIGHT_SANDBOX" }),
+        expect.objectContaining({ name: "TASK_WRITE_BUDGETS", class_name: "TaskWriteBudget" }),
       ]),
     );
     expect(unson.containers).toEqual([
       expect.objectContaining({ class_name: "TechKnightSandbox" }),
     ]);
     expect(unson.name).toBe("unson-business-mana-runtime");
+  });
+
+  it("binds a durable write budget in every deployment and wires all task runtime entrypoints", () => {
+    for (const config of [techKnight, unson]) {
+      expect(config.durable_objects.bindings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "TASK_WRITE_BUDGETS", class_name: "TaskWriteBudget" }),
+      ]));
+      expect(config.migrations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tag: "v3", new_sqlite_classes: ["TaskWriteBudget"] }),
+      ]));
+    }
+    const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
+    expect(worker).toContain("issueTaskWriteRequestContext(event, env)");
+    expect(worker).toContain("consumeTaskBoardRepair({");
+    expect(worker).toContain("enqueueScheduledTaskBoardRepair(env)");
+    expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');
   });
 
   it("keeps board repair bounded, retryable, and disabled until cutover", () => {
@@ -181,5 +199,36 @@ describe("会社別Cloudflare deployment", () => {
     expect(readme).toContain("GITHUB_TOKEN");
     expect(readme).toContain("meetingMinutesPipeline.destination.github");
     expect(readme).toContain("議事録pipelineを停止しない");
+  });
+
+  it("keeps production task mutation and Canvas evidence open until Slack and Brainbase match", () => {
+    const story = readFileSync(
+      fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
+      "utf8",
+    );
+    expect(story).toContain("- [ ] `AC-8`");
+    expect(story).toContain("Brainbase正本とCanvasの一致");
+    expect(story).toContain("Worker version、Container image digest、Git SHA");
+  });
+
+  it("keeps Lightsail ownership cutover evidence open until both task surfaces are disabled", () => {
+    const story = readFileSync(
+      fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
+      "utf8",
+    );
+    expect(story).toContain("- [ ] `AC-9`");
+    expect(story).toContain("mana-accounting.enabled=false");
+    expect(story).toContain("taskCanvas.enabled=false");
+    expect(story).toContain("rollbackは逆順");
+  });
+
+  it("keeps complete task migration evidence open while minutes remain on Lightsail", () => {
+    const story = readFileSync(
+      fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
+      "utf8",
+    );
+    expect(story).toContain("- [ ] `AC-10`");
+    expect(story).toContain("Cloudflareが対象チャンネル");
+    expect(story).toContain("議事録GitHub保存pipelineが継続");
   });
 });

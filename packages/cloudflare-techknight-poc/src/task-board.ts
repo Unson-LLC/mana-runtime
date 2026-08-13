@@ -97,21 +97,42 @@ async function publishCanvas(
   markdown: string,
   fetchImpl: typeof fetch,
 ): Promise<"created" | "updated"> {
+  const createOrAdopt = async (): Promise<"created" | "updated"> => {
+    try {
+      await slackApi("conversations.canvases.create", token, {
+        channel_id: channelId,
+        title: "タスクボード",
+        document_content: { type: "markdown", markdown },
+      }, fetchImpl);
+      return "created";
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("channel_canvas_already_exists")) throw error;
+      const latestInfo = await slackApi("conversations.info", token, { channel: channelId }, fetchImpl);
+      const adoptedId = canvasIdFromInfo(latestInfo);
+      if (!adoptedId) throw error;
+      await slackApi("canvases.edit", token, {
+        canvas_id: adoptedId,
+        changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }],
+      }, fetchImpl);
+      return "updated";
+    }
+  };
+
   const info = await slackApi("conversations.info", token, { channel: channelId }, fetchImpl);
   const existingId = canvasIdFromInfo(info);
   if (existingId) {
-    await slackApi("canvases.edit", token, {
-      canvas_id: existingId,
-      changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }],
-    }, fetchImpl);
-    return "updated";
+    try {
+      await slackApi("canvases.edit", token, {
+        canvas_id: existingId,
+        changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }],
+      }, fetchImpl);
+      return "updated";
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("canvas_not_found")) throw error;
+      return createOrAdopt();
+    }
   }
-  await slackApi("conversations.canvases.create", token, {
-    channel_id: channelId,
-    title: "タスクボード",
-    document_content: { type: "markdown", markdown },
-  }, fetchImpl);
-  return "created";
+  return createOrAdopt();
 }
 
 export async function refreshTaskBoard(

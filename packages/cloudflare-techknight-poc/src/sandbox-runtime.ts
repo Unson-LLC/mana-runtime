@@ -21,6 +21,7 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv {
   RUNTIME_PLACEMENT_ID?: string;
   TENANT_ID?: string;
   TASK_BOARD_REPAIRS?: Queue<TaskBoardRepairEvent>;
+  TASK_WRITE_BUDGETS?: DurableObjectNamespace;
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
 }

@@ -15,7 +15,19 @@ function env(overrides: Record<string, string | undefined> = {}) {
     TASK_WRITE_CAPABILITY_SECRET: SECRET,
     SLACK_EXPECTED_TEAM_ID: "T_UNSON",
     SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+    TASK_WRITE_BUDGETS: budgetNamespace(),
     ...overrides,
+  };
+}
+
+function budgetNamespace() {
+  const slots = new Map<string, string>();
+  const fetch = vi.fn(async (_request: Request) => new Response(null, { status: 204 }));
+  return {
+    idFromName: vi.fn((name: string) => name),
+    get: vi.fn(() => ({ fetch })),
+    slots,
+    fetch,
   };
 }
 
@@ -151,5 +163,23 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     }), env());
     expect(response.status).toBe(403);
     expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("rejects reuse of one capability call slot for a different mutation", async () => {
+    const budget = budgetNamespace();
+    budget.fetch
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json({ error: "task_write_budget_slot_reused" }, { status: 409 }));
+    const bindings = { ...env(), TASK_WRITE_BUDGETS: budget };
+    const upstream = vi.fn().mockResolvedValue(Response.json(task));
+    const handler = createTaskWriteProxyHandler(upstream);
+
+    const first = await handler(await request({ operation: "create", title: "A", call_index: 1 }), bindings);
+    const second = await handler(await request({ operation: "create", title: "B", call_index: 1 }), bindings);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(403);
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(budget.fetch).toHaveBeenCalledTimes(2);
   });
 });

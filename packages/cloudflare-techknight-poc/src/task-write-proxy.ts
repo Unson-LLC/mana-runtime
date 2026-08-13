@@ -2,6 +2,7 @@ import { TaskApiClient, TaskApiError, type CanonicalTask, type CreateTaskInput, 
 import { authorizeTaskWriteIntent, verifyTaskWriteCapability, type TaskWriteOperation } from "@openryoko/write-broker";
 import { parseRuntimeProjectCodes } from "./runtime-config.js";
 import type { TaskBoardRepairEvent } from "./task-board.js";
+import { claimTaskWriteBudgetSlot, type TaskWriteBudgetNamespace } from "./task-write-budget.js";
 
 export const TASK_WRITE_PROXY_HOST = "task-write.internal";
 export const TASK_WRITE_PATH = "/api/task-write";
@@ -17,6 +18,7 @@ export interface TaskWriteProxyEnv {
   SLACK_ALLOWED_CHANNEL_ID?: string;
   TENANT_ID?: string;
   TASK_BOARD_REPAIRS?: { send(message: TaskBoardRepairEvent): Promise<void> };
+  TASK_WRITE_BUDGETS?: TaskWriteBudgetNamespace;
 }
 
 type WriteRequest = {
@@ -108,7 +110,16 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
       const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId: env.RUNTIME_PLACEMENT_ID });
       const operation = `task.${body.operation}` as TaskWriteOperation;
       authorizeTaskWriteIntent(claims, { requestId: body.request_id, actor: claims.actor, placementId: claims.placementId, project: body.project, operation, targetId: body.task_id, idempotencyKey: `slack:${body.request_id}:${body.call_index}` });
-      if (!projects.includes(body.project) || body.call_index > Math.min(3, claims.budget)) throw new Error("task_write_denied");
+      if (!projects.includes(body.project) || body.call_index > Math.min(3, claims.budget) || !env.TASK_WRITE_BUDGETS) throw new Error("task_write_denied");
+      await claimTaskWriteBudgetSlot(env.TASK_WRITE_BUDGETS, {
+        requestId: claims.requestId,
+        nonce: claims.nonce,
+        placementId: claims.placementId,
+        callIndex: body.call_index,
+        budget: Math.min(3, claims.budget),
+        expiresAt: claims.expiresAt,
+        fingerprint: await requestFingerprint(body),
+      });
       const client = new TaskApiClient({ baseUrl: upstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL), token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl });
       let result: CanonicalTask;
       if (body.operation === "create") {
@@ -160,7 +171,7 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
     } catch (cause) {
       if (cause instanceof TaskApiError && cause.status === 409) return error("task_write_conflict", 409);
       const code = cause instanceof Error ? cause.message : "task_write_failed";
-      if (["invalid_write_capability","expired_write_capability","write_capability_scope_mismatch","write_intent_denied","task_write_denied","task_write_scope_violation"].includes(code)) return error(code, 403);
+      if (["invalid_write_capability","expired_write_capability","write_capability_scope_mismatch","write_intent_denied","task_write_denied","task_write_scope_violation","task_write_budget_slot_reused","task_write_budget_exceeded"].includes(code)) return error(code, 403);
       if (code === "task_write_not_configured" || code === "not_configured") return error("task_write_not_configured", 503);
       return error("task_write_upstream_failed", 502);
     }
@@ -168,3 +179,8 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
 }
 
 export const handleTaskWriteProxyRequest = createTaskWriteProxyHandler();
+
+async function requestFingerprint(body: WriteRequest): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(body))));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}

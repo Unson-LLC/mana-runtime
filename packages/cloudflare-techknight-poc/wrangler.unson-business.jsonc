@@ -29,6 +29,10 @@
       {
         "name": "TECHKNIGHT_SANDBOX",
         "class_name": "TechKnightSandbox"
+      },
+      {
+        "name": "TASK_WRITE_BUDGETS",
+        "class_name": "TaskWriteBudget"
       }
     ]
   },
@@ -40,6 +44,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["TechKnightSandbox"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["TaskWriteBudget"]
     }
   ],
   "containers": [

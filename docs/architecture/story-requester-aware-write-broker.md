@@ -25,7 +25,7 @@ Slack event
 ```
 
 - `placementId` はSlack channel IDではなく信頼済み設定 `RUNTIME_PLACEMENT_ID=mana-accounting` を使う。
-- capabilityは3分で失効し、Slack actor、workspace、Placement、project、許可操作、最大3回を固定する。
+- capabilityは3分で失効し、Slack actor、workspace、Placement、project、許可操作、最大3回を固定する。各call slotは専用Durable Objectへ最初の操作fingerprintとともに保存し、完全一致の再試行だけを許可する。同じslotを別操作へ再利用できない。
 - 作成のprojectはWorker設定から強制する。更新と状態遷移は対象Taskを先に取得し、projectと `expected_version` を確認する。
 - 合成hostは固定POST pathだけを受ける。実Brainbase hostをSandboxの許可hostへ追加しない。
 - Claudeへ公開する操作は作成・更新・状態遷移だけとし、削除や任意HTTPを公開しない。
@@ -38,7 +38,7 @@ Slack event
   -> pending / in_progress / waiting / completed を各1回取得
   -> 各statusは表示上限+1、cursor追跡なし
   -> project再検証、重複除去、全体最大20件
-  -> Slack Canvasを作成または置換
+  -> Slack Canvasを作成または置換（同時作成は既存Canvasを採用し、削除済みIDは再作成）
 ```
 
 件数が上限を超えた場合は総数を推測せず、「20件以上（続きあり）」と表示する。修復失敗はQueueの再試行とDLQへ委ね、書き込み自体は成功のまま保持する。

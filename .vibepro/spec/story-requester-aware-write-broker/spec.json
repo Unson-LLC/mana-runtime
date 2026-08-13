@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-requester-aware-write-broker",
   "generated_by": {
-    "caller": "codex",
+    "caller": "unknown",
     "stage": "implementation"
   },
   "clauses": [
@@ -39,6 +39,10 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
             "case": "configures the requester-scoped write MCP without exposing the signing secret"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-budget.test.ts",
+            "case": "accepts an exact retry but rejects reuse of a slot for another mutation"
           }
         ]
       },
@@ -52,7 +56,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "C-002",
@@ -100,7 +104,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "INV-001",
@@ -148,7 +152,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "S-001",
@@ -197,7 +201,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "INV-002",
@@ -231,6 +235,10 @@
           },
           {
             "file": "packages/task-runtime-core/src/task-board.test.ts",
+            "case": "fails closed when any task project escapes the trusted union"
+          },
+          {
+            "file": "packages/task-runtime-core/src/task-board.test.ts",
             "case": "fails closed on a projectless or cross-project-only task"
           }
         ]
@@ -245,7 +253,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "S-002",
@@ -280,6 +288,22 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts",
+            "case": "creates the channel Canvas when one does not exist"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts",
+            "case": "adopts and edits the channel Canvas created by a concurrent writer"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts",
+            "case": "recreates a Canvas after Slack reports the stored Canvas is gone"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-runtime-entrypoints.test.ts",
+            "case": "retries a failed repair and enqueues the scheduled scoped repair"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts",
             "case": "does nothing while the board feature is disabled"
           }
         ]
@@ -294,7 +318,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "C-003",
@@ -342,12 +366,12 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "C-004",
       "type": "contract",
-      "statement": "同一Slackスレッドで検索・作成・更新・状態遷移を実行し、Brainbase正本、Canvas、Worker version、Container image digest、Git SHAの一致を記録する",
+      "statement": "同一Slackスレッドでの検索・作成・更新・状態遷移、Brainbase正本、Canvas、Worker version、Container image digest、Git SHAの一致は本番証跡として未実施のまま明示し、ローカルテストで完了扱いにしない",
       "origin": {
         "story_refs": [
           {
@@ -361,20 +385,36 @@
             "section": "本番設定と移行"
           }
         ],
-        "code_refs": [],
-        "test_refs": []
+        "code_refs": [
+          {
+            "file": "docs/management/stories/active/story-requester-aware-write-broker.md",
+            "anchor": "受け入れ基準"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "keeps production task mutation and Canvas evidence open until Slack and Brainbase match"
+          }
+        ]
       },
       "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "production task mutation and Canvas evidence open"
+          }
+        ],
         "evidence": "production Slack thread, Brainbase readback, Canvas timestamp, Worker and Container deployment records"
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "C-005",
       "type": "contract",
-      "statement": "Cloudflare E2E成功後にLightsailのmana-accounting PlacementとそのtaskCanvasを同時に無効化し、二重処理と空Canvas上書きがなくrollback可能であることを確認する",
+      "statement": "Cloudflare E2E後のLightsail mana-accounting PlacementとtaskCanvasの同時無効化、二重処理・空Canvas上書きの不在、rollback可能性は本番証跡として未実施のまま明示する",
       "origin": {
         "story_refs": [
           {
@@ -388,20 +428,36 @@
             "section": "本番設定と移行"
           }
         ],
-        "code_refs": [],
-        "test_refs": []
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/README.md",
+            "anchor": "タスク書き込みとCanvasの段階展開"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "keeps Lightsail ownership cutover evidence open until both task surfaces are disabled"
+          }
+        ]
       },
       "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "Lightsail ownership cutover evidence open"
+          }
+        ],
         "evidence": "Lightsail placement readback, taskCanvas readback, Cloudflare logs, rollback record"
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     },
     {
       "id": "C-006",
       "type": "contract",
-      "statement": "Cloudflareが対象チャンネルのタスク検索・作成・更新・状態遷移・Canvasを単独所有し、Lightsailの同PlacementとtaskCanvasが無効、かつPR #120の議事録GitHub保存pipelineが継続している本番状態だけをタスク運用の完全移行とする",
+      "statement": "Cloudflareのタスク単独所有、Lightsailの同PlacementとtaskCanvas無効、PR #120の議事録GitHub保存pipeline継続は本番証跡として未実施のまま明示し、全条件が揃った時だけ完全移行とする",
       "origin": {
         "story_refs": [
           {
@@ -415,15 +471,31 @@
             "section": "本番設定と移行"
           }
         ],
-        "code_refs": [],
-        "test_refs": []
+        "code_refs": [
+          {
+            "file": "docs/management/stories/active/story-requester-aware-write-broker.md",
+            "anchor": "完了条件"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "keeps complete task migration evidence open while minutes remain on Lightsail"
+          }
+        ]
       },
       "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "complete task migration evidence open"
+          }
+        ],
         "evidence": "production task owner inventory, Slack E2E, Lightsail placement and taskCanvas disabled readback, GITHUB_TOKEN presence and meetingMinutesPipeline.destination.github readback"
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T05:21:57.265Z"
+      "last_revised_at": "2026-08-13T06:04:27.826Z"
     }
   ],
   "planned_test_suites": [
@@ -473,6 +545,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-13T05:21:57.262Z",
-  "previous_spec_id": null
+  "generated_at": "2026-08-13T06:04:27.825Z",
+  "previous_spec_id": "2026-08-13T05:21:57.262Z"
 }

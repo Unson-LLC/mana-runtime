@@ -29,15 +29,18 @@ import { persistEventOnce } from "./workspace-store.js";
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
-import { signTaskWriteCapability } from "@openryoko/write-broker";
-import { parseRuntimeProjectCodes } from "./runtime-config.js";
+import {
+  consumeTaskBoardRepair,
+  enqueueScheduledTaskBoardRepair,
+  issueTaskWriteRequestContext,
+} from "./task-runtime-entrypoints.js";
 import {
   isTaskBoardRepairEvent,
-  refreshTaskBoard,
   type TaskBoardRepairEvent,
 } from "./task-board.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
+export { TaskWriteBudget } from "./task-write-budget.js";
 
 interface Env extends SandboxRuntimeEnv {
   SLACK_SIGNING_SECRET: string;
@@ -59,6 +62,7 @@ interface Env extends SandboxRuntimeEnv {
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
+  TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
 }
 
@@ -115,23 +119,11 @@ export default {
   async queue(batch: MessageBatch<SlackQueueEvent | TaskBoardRepairEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       if (isTaskBoardRepairEvent(message.body)) {
-        try {
-          const repair = message.body;
-          if (
-            repair.tenantId !== env.TENANT_ID ||
-            repair.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
-            repair.channelId !== env.SLACK_ALLOWED_CHANNEL_ID
-          ) {
-            console.error(JSON.stringify({ event: "task_board_repair_rejected", reason: "scope_mismatch" }));
-            message.ack();
-            continue;
-          }
-          await refreshTaskBoard(env);
-          message.ack();
-        } catch (error) {
-          console.error(JSON.stringify({ event: "task_board_repair_failed", code: error instanceof Error ? error.message : "unknown" }));
-          message.retry();
-        }
+        await consumeTaskBoardRepair({
+          body: message.body,
+          ack: () => message.ack(),
+          retry: () => message.retry(),
+        }, env);
         continue;
       }
       await consumeTechKnightMessage({
@@ -182,21 +174,7 @@ export default {
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
                   }, async (taskSearch) => {
-                    const taskWriteEnabled = env.RUNTIME_TASK_WRITE_ENABLED === "true";
-                    const taskWriteCapability = taskWriteEnabled && env.TASK_WRITE_CAPABILITY_SECRET
-                      ? await signTaskWriteCapability({
-                          version: 1,
-                          audience: "mana-task-write",
-                          requestId: event.eventId,
-                          actor: { provider: "slack", id: event.userId!, workspace: event.workspaceId },
-                          placementId: env.RUNTIME_PLACEMENT_ID ?? "",
-                          projects: parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES),
-                          operations: ["task.create", "task.update", "task.transition"],
-                          expiresAt: Date.now() + 180_000,
-                          nonce: event.eventId,
-                          budget: 3,
-                        }, env.TASK_WRITE_CAPABILITY_SECRET)
-                      : undefined;
+                    const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(event, env);
                     return processReplyEvent(workspace.fs, event, {
                     expectedTenantId: env.TENANT_ID,
                     expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
@@ -230,14 +208,6 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    if (env.RUNTIME_TASK_BOARD_ENABLED !== "true") return;
-    await env.TASK_BOARD_REPAIRS.send({
-      eventType: "task_board_repair",
-      tenantId: env.TENANT_ID,
-      workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-      channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-      reason: "scheduled",
-      requestedAt: new Date().toISOString(),
-    });
+    await enqueueScheduledTaskBoardRepair(env);
   },
 } satisfies ExportedHandler<Env, SlackQueueEvent | TaskBoardRepairEvent>;

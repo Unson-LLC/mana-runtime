@@ -47,13 +47,13 @@ describe("bounded task board", () => {
     expect(result.observedLowerBound).toBe(21);
   });
 
-  it("deduplicates tasks and trims project metadata to the trusted union", async () => {
+  it("fails closed when any task project escapes the trusted union", async () => {
     const listTasks = vi.fn()
       .mockResolvedValueOnce({ items: [task("1", "in_progress", ["back-office", "outside"])], next_cursor: null })
       .mockResolvedValue({ items: [task("1", "pending", ["back-office", "outside"])], next_cursor: null });
-    const result = await fetchBoundedTaskBoard({ listTasks }, ["back-office"], 20);
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.project_codes).toEqual(["back-office"]);
+    await expect(fetchBoundedTaskBoard({ listTasks }, ["back-office"], 20)).rejects.toMatchObject<Partial<TaskApiError>>({
+      code: "task_board_scope_violation",
+    });
   });
 
   it("fails closed on a projectless or cross-project-only task", async () => {

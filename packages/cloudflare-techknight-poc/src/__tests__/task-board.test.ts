@@ -46,6 +46,73 @@ describe("Cloudflare bounded task Canvas", () => {
     expect(String((edit?.[1] as RequestInit).body)).not.toContain("task-secret");
   });
 
+  it("creates the channel Canvas when one does not exist", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.hostname === "bb.example.test") return Response.json({ items: [], next_cursor: null });
+      if (parsed.pathname.endsWith("conversations.info")) return Response.json({ ok: true, channel: { properties: {} } });
+      if (parsed.pathname.endsWith("conversations.canvases.create")) return Response.json({ ok: true, canvas_id: "F_NEW" });
+      throw new Error(`unexpected ${url}`);
+    });
+    await expect(refreshTaskBoard({
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PROJECT_CODES: "back-office",
+      BRAINBASE_TASK_API_BASE_URL: "https://bb.example.test",
+      BRAINBASE_TASK_API_TOKEN: "task-secret",
+      SLACK_BOT_TOKEN: "slack-secret",
+      SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+    }, { fetch: fetchMock })).resolves.toMatchObject({ outcome: "created" });
+  });
+
+  it("adopts and edits the channel Canvas created by a concurrent writer", async () => {
+    let infoCalls = 0;
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.hostname === "bb.example.test") return Response.json({ items: [], next_cursor: null });
+      if (parsed.pathname.endsWith("conversations.info")) {
+        infoCalls += 1;
+        return Response.json(infoCalls === 1
+          ? { ok: true, channel: { properties: {} } }
+          : { ok: true, channel: { properties: { canvas: { file_id: "F_RACE" } } } });
+      }
+      if (parsed.pathname.endsWith("conversations.canvases.create")) {
+        return Response.json({ ok: false, error: "channel_canvas_already_exists" });
+      }
+      if (parsed.pathname.endsWith("canvases.edit")) return Response.json({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await expect(refreshTaskBoard({
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PROJECT_CODES: "back-office",
+      BRAINBASE_TASK_API_BASE_URL: "https://bb.example.test",
+      BRAINBASE_TASK_API_TOKEN: "task-secret",
+      SLACK_BOT_TOKEN: "slack-secret",
+      SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+    }, { fetch: fetchMock })).resolves.toMatchObject({ outcome: "updated" });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("canvases.edit"))).toBe(true);
+  });
+
+  it("recreates a Canvas after Slack reports the stored Canvas is gone", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.hostname === "bb.example.test") return Response.json({ items: [], next_cursor: null });
+      if (parsed.pathname.endsWith("conversations.info")) {
+        return Response.json({ ok: true, channel: { properties: { canvas: { file_id: "F_STALE" } } } });
+      }
+      if (parsed.pathname.endsWith("canvases.edit")) return Response.json({ ok: false, error: "canvas_not_found" });
+      if (parsed.pathname.endsWith("conversations.canvases.create")) return Response.json({ ok: true, canvas_id: "F_NEW" });
+      throw new Error(`unexpected ${url}`);
+    });
+    await expect(refreshTaskBoard({
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PROJECT_CODES: "back-office",
+      BRAINBASE_TASK_API_BASE_URL: "https://bb.example.test",
+      BRAINBASE_TASK_API_TOKEN: "task-secret",
+      SLACK_BOT_TOKEN: "slack-secret",
+      SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+    }, { fetch: fetchMock })).resolves.toMatchObject({ outcome: "created" });
+  });
+
   it("does nothing while the board feature is disabled", async () => {
     await expect(refreshTaskBoard({ RUNTIME_TASK_BOARD_ENABLED: "false" })).resolves.toEqual({ outcome: "disabled" });
   });

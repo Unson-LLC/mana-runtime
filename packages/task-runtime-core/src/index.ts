@@ -97,11 +97,11 @@ export async function fetchBoundedTaskBoard(
   for (const page of pages) {
     if (page.next_cursor || page.items.length > displayLimit) hasMore = true;
     for (const task of page.items) {
-      const scopedProjects = (task.project_codes ?? []).filter((project) => projects.includes(project));
-      if (scopedProjects.length === 0) {
+      const taskProjects = normalizeProjectCodes(task.project_codes ?? []);
+      if (taskProjects.length === 0 || taskProjects.some((project) => !projects.includes(project))) {
         throw new TaskApiError(502, "task_board_scope_violation", "Canonical task API returned a task outside the trusted project scope");
       }
-      unique.set(task.id, { ...task, project_codes: scopedProjects });
+      unique.set(task.id, { ...task, project_codes: taskProjects });
     }
   }
   const all = [...unique.values()];
