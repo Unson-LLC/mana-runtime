@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { TaskApiClient } from "@openryoko/task-runtime-core";
 
 import {
   BrainbaseTaskClient,
@@ -36,6 +37,16 @@ describe("isBrainbaseTaskStoreConfigured", () => {
 });
 
 describe("BrainbaseTaskClient", () => {
+  it("story-shared-task-runtime-core:ac:2 keeps Jimmy as an environment and idempotency adapter", async () => {
+    const fetchImpl = fakeFetch((_url, init) => {
+      expect((init.headers as Record<string, string>)["Idempotency-Key"]).toMatch(/^openryoko:/);
+      return { status: 201, body: { id: "ct1.shared", version: 1, title: "shared" } };
+    });
+    const client = new BrainbaseTaskClient({ ...options, fetchImpl });
+    expect(client).toBeInstanceOf(TaskApiClient);
+    await expect(client.createTask({ title: "shared" })).resolves.toMatchObject({ id: "ct1.shared" });
+  });
+
   it("fails loud when not configured", () => {
     expect(() => new BrainbaseTaskClient({ baseUrl: "", token: "", fetchImpl: fakeFetch(() => ({ status: 200, body: {} })) }))
       .toThrowError(BrainbaseTaskError);

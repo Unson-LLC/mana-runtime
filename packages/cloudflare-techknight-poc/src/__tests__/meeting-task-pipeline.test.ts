@@ -1,3 +1,4 @@
+import { TaskApiClient } from "@openryoko/task-runtime-core";
 import {
   isMeetingTaskRequest,
   processMeetingTaskEvent,
@@ -95,8 +96,8 @@ describe("Cloudflare meeting task pipeline", () => {
     expect(isMeetingTaskRequest(event({ text: "<@U_BOT> 議事録を要約して" }))).toBe(false);
   });
 
-  // story-cloudflare-primary-runtime:AC-3
   it("assigns trusted deployment project codes to every registered task", async () => {
+    const sharedCreate = vi.spyOn(TaskApiClient.prototype, "createTask");
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();
 
@@ -110,13 +111,27 @@ describe("Cloudflare meeting task pipeline", () => {
 
     const taskCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/companion/tasks"));
     expect(taskCalls).toHaveLength(2);
+    expect(sharedCreate).toHaveBeenCalledTimes(2);
+    expect(sharedCreate).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        title: "請求書を送付",
+        project_codes: ["back-office", "brainbase"],
+      }),
+      await taskIdempotencyKey("EvMinutes123", 0),
+    );
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("7月分請求書を橋本さんが送付する");
     expect(prompt.match(/この議事録をタスク化して/g)).toHaveLength(1);
-    for (const [, request] of taskCalls) {
+    for (const [index, [, request]] of taskCalls.entries()) {
       const body = JSON.parse(String((request as RequestInit).body));
       expect(body.project_codes).toEqual(["back-office", "brainbase"]);
       expect(body.project_codes).not.toContain("attacker");
+      const headers = new Headers((request as RequestInit).headers);
+      expect(headers.get("authorization")).toBe("Bearer brainbase-secret");
+      expect(headers.get("idempotency-key")).toBe(
+        await taskIdempotencyKey("EvMinutes123", index),
+      );
     }
     const slackCall = fetchMock.mock.calls.find(([url]) => String(url).includes("chat.postMessage"));
     expect(slackCall).toBeDefined();
@@ -151,6 +166,7 @@ describe("Cloudflare meeting task pipeline", () => {
         env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
       },
     );
+    sharedCreate.mockRestore();
   });
 
   it("uses deterministic task idempotency keys", async () => {

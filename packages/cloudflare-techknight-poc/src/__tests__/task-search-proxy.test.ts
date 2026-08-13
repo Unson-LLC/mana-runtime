@@ -1,3 +1,4 @@
+import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createTaskSearchProxyHandler } from "../task-search-proxy.js";
 
 const SECRET = "brainbase-secret-canary";
@@ -14,6 +15,7 @@ function env(overrides: Record<string, string | undefined> = {}) {
 
 describe("Cloudflare task search proxy", () => {
   it("rebuilds the upstream request without sandbox credentials and forces the deployment project union", async () => {
+    const sharedSearch = vi.spyOn(TaskApiClient.prototype, "searchTasks");
     const upstream = vi.fn().mockResolvedValue(Response.json({
       items: [{
         id: "task-1",
@@ -47,6 +49,12 @@ describe("Cloudflare task search proxy", () => {
     expect(parsed.searchParams.get("limit")).toBe("1");
     expect(parsed.searchParams.get("cursor")).toBe("opaque+/=");
     expect(parsed.searchParams.getAll("project_code")).toEqual(["back-office", "brainbase"]);
+    expect(sharedSearch).toHaveBeenCalledWith({
+      query: "契約",
+      limit: 1,
+      cursor: "opaque+/=",
+      project_code: ["back-office", "brainbase"],
+    });
     expect(init).toMatchObject({ method: "GET", redirect: "manual" });
     const headers = new Headers(init.headers);
     expect(headers.get("authorization")).toBe(`Bearer ${SECRET}`);
@@ -60,6 +68,7 @@ describe("Cloudflare task search proxy", () => {
       items: [{ project_codes: ["back-office"] }],
     });
     expect(JSON.stringify(payload)).not.toContain(SECRET);
+    sharedSearch.mockRestore();
   });
 
   it.each([
@@ -129,6 +138,19 @@ describe("Cloudflare task search proxy", () => {
   it("rejects an oversized upstream response", async () => {
     const upstream = vi.fn().mockResolvedValue(new Response("x".repeat(262_145), {
       headers: { "content-type": "application/json" },
+    }));
+    const response = await createTaskSearchProxyHandler(upstream)(
+      new Request("https://task-search.internal/api/companion/tasks/search?query=x"),
+      env(),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "task_search_response_too_large" });
+  });
+
+  it("bounds an oversized upstream error before the shared client reads its body", async () => {
+    const upstream = vi.fn().mockResolvedValue(new Response("x".repeat(262_145), {
+      status: 503,
+      headers: { "content-type": "text/plain" },
     }));
     const response = await createTaskSearchProxyHandler(upstream)(
       new Request("https://task-search.internal/api/companion/tasks/search?query=x"),

@@ -1,0 +1,118 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-shared-task-runtime-core",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "design"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "task-runtime-coreはCanonical Taskの型と全HTTP操作を提供し、baseUrl・token・fetch・書き込みのIdempotency-Keyを明示注入として扱う",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }, { "kind": "acceptance_criteria", "ac_id": "AC-2" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "共通コアの責務" }],
+        "code_refs": [{ "file": "packages/task-runtime-core/src/index.ts", "anchor": "TaskApiClient" }],
+        "test_refs": [{ "file": "packages/task-runtime-core/src/__tests__/task-api-client.test.ts", "case": "story-shared-task-runtime-core:ac:1 provides the canonical task HTTP contract without platform defaults" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/task-runtime-core/src/__tests__/task-api-client.test.ts", "must_cover": "canonical task HTTP contract" }] },
+      "confidence": 0.95
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "信頼済みproject scopeは入力側のproject_codesを破棄し、正規化・重複排除したruntime bindingの和集合へ置換する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "信頼境界" }],
+        "code_refs": [{ "file": "packages/task-runtime-core/src/index.ts", "anchor": "applyTrustedProjectScope" }],
+        "test_refs": [{ "file": "packages/task-runtime-core/src/__tests__/project-scope.test.ts", "case": "story-shared-task-runtime-core:ac:5 replaces untrusted project codes with the trusted project union" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/task-runtime-core/src/__tests__/project-scope.test.ts", "must_cover": "trusted project union" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "Jimmy adapterは環境変数とUUIDだけを注入し、既存の作成・一覧・検索・取得・更新・状態遷移・削除を共通clientへ委譲する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-6" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "Jimmy" }],
+        "code_refs": [{ "file": "packages/jimmy/src/shared/brainbase-tasks.ts", "anchor": "BrainbaseTaskClient" }],
+        "test_refs": [{ "file": "packages/jimmy/src/shared/__tests__/brainbase-tasks.test.ts", "case": "story-shared-task-runtime-core:ac:2 keeps Jimmy as an environment and idempotency adapter" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/jimmy/src/shared/__tests__/brainbase-tasks.test.ts", "must_cover": "Jimmy as an environment and idempotency adapter" }] },
+      "confidence": 0.95
+    },
+    {
+      "id": "S-002",
+      "type": "scenario",
+      "statement": "Cloudflare検索は共通clientへ許可queryと信頼済みproject和集合を渡し、境界外task、不正JSON、部分結果、上流障害を既存契約どおり区別する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-5" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "Cloudflare" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-search-proxy.ts", "anchor": "createTaskSearchProxyHandler" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "must_cover": "deployment project union" }] },
+      "confidence": 0.95
+    },
+    {
+      "id": "S-003",
+      "type": "scenario",
+      "statement": "Cloudflare議事録タスク登録は共通clientへbinding projectを強制した候補とSlack event由来の決定的Idempotency-Keyを渡す",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }, { "kind": "acceptance_criteria", "ac_id": "AC-5" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "Cloudflare" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-task-pipeline.ts", "anchor": "createBrainbaseTask" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "assigns trusted deployment project codes to every registered task" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "must_cover": "trusted deployment project codes" }] },
+      "confidence": 0.95
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "Canvas全件取得、Cloudflare汎用write tools、本番deploy、Lightsail停止は本Storyで変更せず、次Storyの安全条件として明示する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-8" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "対象外" }],
+        "code_refs": [{ "file": "docs/management/stories/active/story-shared-task-runtime-core.md", "anchor": "対象外と次Story" }],
+        "test_refs": [{ "file": "packages/task-runtime-core/src/__tests__/package-boundary.test.ts", "case": "story-shared-task-runtime-core:ac:8 keeps platform runtimes outside the shared package" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/task-runtime-core/src/__tests__/package-boundary.test.ts", "must_cover": "platform runtimes outside" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "共有coreとJimmy・Cloudflare adapterの回帰は、workspace unit test・型検査・buildを同じ最終HEADへ結び付けて検証する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "互換性と移行順序" }],
+        "code_refs": [
+          { "file": "package.json", "anchor": "scripts" },
+          { "file": "packages/cloudflare-techknight-poc/package.json", "anchor": "build:unson-business" }
+        ],
+        "test_refs": [
+          { "file": "packages/task-runtime-core/src/__tests__/task-api-client.test.ts", "case": "story-shared-task-runtime-core:ac:1 provides the canonical task HTTP contract without platform defaults" },
+          { "file": "packages/jimmy/src/shared/__tests__/brainbase-tasks.test.ts", "case": "story-shared-task-runtime-core:ac:2 keeps Jimmy as an environment and idempotency adapter" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "assigns trusted deployment project codes to every registered task" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "builds the shared task runtime before every Cloudflare release entrypoint" }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          { "file_glob": "packages/task-runtime-core/src/__tests__/task-api-client.test.ts", "must_cover": "canonical task HTTP contract" },
+          { "file_glob": "packages/jimmy/src/shared/__tests__/brainbase-tasks.test.ts", "must_cover": "Jimmy as an environment and idempotency adapter" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "must_cover": "deployment project union" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "must_cover": "trusted deployment project codes" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "shared task runtime before every Cloudflare release entrypoint" }
+        ]
+      },
+      "confidence": 0.99
+    }
+  ]
+}
