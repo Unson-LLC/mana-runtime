@@ -200,10 +200,6 @@
             "case": "checks the current project before transition and forwards expected_version"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts",
-            "case": "rejects zero expected version before an upstream mutation"
-          },
-          {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-mcp-jsonrpc.test.ts",
             "case": "exposes only create, update, and transition with bounded call indexes"
           },
