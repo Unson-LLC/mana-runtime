@@ -53,4 +53,17 @@ describe("Cloudflare runtime binding", () => {
       projectCodes: configChange.projectCodes ?? "back-office",
     })).toThrow(expect.objectContaining({ code }));
   });
+
+  it.each([
+    "back-office/outside",
+    "back-office?project_code=outside",
+    "back-office\nbrainbase",
+  ])("rejects an unsafe deployment project code: %s", (projectCodes) => {
+    expect(() => resolveRuntimeBinding(event(), {
+      tenantId: "techknight",
+      workspaceId: "T_TECHKNIGHT",
+      channelId: "C_MANA_TEST",
+      projectCodes,
+    })).toThrow(expect.objectContaining({ code: "project_binding_invalid" }));
+  });
 });

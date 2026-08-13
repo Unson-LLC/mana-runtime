@@ -211,6 +211,17 @@
         "due_at": null
       },
       {
+        "story_id": "story-cloudflare-task-search-parity",
+        "title": "Cloudflare版でも境界付きタスク検索を利用できる",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
+      },
+      {
         "story_id": "HOTRELOAD-PLACEMENT-AUTHORITY",
         "title": "placement権限変更時に古いClaudeセッションを再開しない",
         "ssot": "local",
@@ -222,6 +233,6 @@
         "due_at": null
       }
     ],
-    "current_story_id": "story-lightsail-deploy-workflow"
+    "current_story_id": "story-cloudflare-task-search-parity"
   }
 }

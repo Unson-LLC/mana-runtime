@@ -169,6 +169,35 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
+  it("configures only the bounded search MCP when task search is enabled", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({ taskSearchEnabled: true });
+    await processReplyEvent(fs, event({ text: "<@U_BOT> 契約更新タスクの状態と担当者は？" }), options);
+
+    expect(sandbox.writeFile).toHaveBeenCalledTimes(2);
+    const writes = Object.fromEntries(sandbox.writeFile.mock.calls.map(([path, content]) => [path, content]));
+    const prompt = String(writes["/tmp/mana-slack-prompt.txt"]);
+    const mcpConfig = String(writes["/tmp/mana-task-search-mcp.json"]);
+    expect(prompt).toContain("search_tasks");
+    expect(prompt).toContain("has_more");
+    expect(prompt).toContain("API障害");
+    expect(mcpConfig).toBe(JSON.stringify({
+      mcpServers: {
+        "task-search": {
+          command: "node",
+          args: ["/opt/mana/task-search-mcp-server.mjs"],
+        },
+      },
+    }));
+    expect(prompt + "\n" + mcpConfig).not.toContain("brainbase-secret-canary");
+    expect(prompt + "\n" + mcpConfig).not.toContain("bb.example.test");
+    expect(prompt + "\n" + mcpConfig).not.toContain("back-office");
+    expect(sandbox.exec).toHaveBeenCalledWith(
+      expect.stringMatching(/\$\(cat \/tmp\/mana-slack-prompt\.txt\).*--mcp-config \/tmp\/mana-task-search-mcp\.json --strict-mcp-config$/),
+      expect.any(Object),
+    );
+  });
+
   it("does not repeat a completed Slack reply", async () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();

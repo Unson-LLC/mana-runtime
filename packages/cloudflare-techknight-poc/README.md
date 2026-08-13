@@ -6,6 +6,10 @@
 処理し、各社の八雲まなSlack Appから元スレッドへ返信します。Anthropic OAuthとSlack Bot
 tokenはContainerへ保存せず、会社別Worker Secretの境界内でだけ使用します。
 
+一般返信のタスク検索は、Sandbox内の検索専用stdio MCPから合成host
+`task-search.internal`だけを呼び、Workerが固定のBrainbase検索APIへ中継します。
+Brainbase URL、Token、project bindingはSandbox、MCP設定、promptへ渡しません。
+
 同じ実装を次の完全に分離されたdeploymentで利用します。
 
 - `wrangler.jsonc`: TechKnight
@@ -35,6 +39,21 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
 ```
 
 `build`は`wrangler deploy --dry-run`であり、Cloudflare resourceを作成しません。
+
+## タスク検索の段階展開
+
+`RUNTIME_TASK_SEARCH_ENABLED`は未設定または`false`ならOFFです。次の二段階を崩さず、
+Worker version、Container image digest、Git SHAを各段階の記録へ残します。
+
+1. `RUNTIME_TASK_SEARCH_ENABLED=false`のままWorkerと検索MCP入りContainerをデプロイする。
+2. Containerがready/healthyであり、MCPの`initialize`、`tools/list`、
+   境界付き`search_tasks` probeが成功することを確認する。
+3. 対象deploymentだけを`RUNTIME_TASK_SEARCH_ENABLED=true`へ変更して再デプロイする。
+4. 本番Slackで既知タスク、複数project、0件、部分結果をBrainbase正本と照合する。
+
+異常時は最初にフラグを`false`へ戻し、MCPなしの一般返信へ切り戻します。必要なら記録済みの
+known-good Worker versionへrollbackします。rollbackが完了するまで以前のContainer imageを
+削除しません。テストやContainer healthだけをSlack E2E完了とは扱いません。
 
 ## デプロイ前確認
 
@@ -111,6 +130,6 @@ pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
 
 ## Sandbox security boundary
 
-Sandboxの一般インターネット接続は無効で、Anthropic APIだけを許可します。OAuth Tokenと
+Sandboxの一般インターネット接続は無効で、Anthropic APIと固定の検索合成hostだけを許可します。OAuth Tokenと
 検証用TokenはContainerの環境変数・ファイル・応答に出しません。検証APIは固定コマンドだけを
 実行し、任意shellや任意promptは受け付けません。検証のたびにContainerを破棄します。
