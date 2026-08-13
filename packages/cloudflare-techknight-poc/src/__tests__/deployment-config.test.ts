@@ -214,7 +214,7 @@ describe("会社別Cloudflare deployment", () => {
   it("wires signed interactions and meeting-minutes Queue handling without removing task entrypoints", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain('url.pathname === "/slack/interactions"');
-    expect(worker).toContain("handleMeetingMinutesInteraction(request");
+    expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
     expect(worker).toContain("isMeetingMinutesSelection(message.body)");
     expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelection(");
