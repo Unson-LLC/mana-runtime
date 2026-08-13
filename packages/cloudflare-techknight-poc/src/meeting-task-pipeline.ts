@@ -17,6 +17,11 @@ import {
   runtimeClaudePromptPath,
   type ClaudeRuntimeConfig,
 } from "./claude-runtime-config.js";
+import {
+  applyTrustedProjectScope,
+  TaskApiClient,
+  TaskApiError,
+} from "@openryoko/task-runtime-core";
 
 const MAX_TASKS = 20;
 const MAX_TITLE_CHARS = 200;
@@ -26,7 +31,7 @@ const ALLOWED_PRIORITIES = new Set(["low", "medium", "high", "urgent"]);
 interface TaskCandidate {
   title: string;
   description?: string;
-  priority?: string;
+  priority?: "low" | "medium" | "high" | "urgent";
   due_at?: string;
 }
 
@@ -105,7 +110,7 @@ function parseCandidates(stdout: string): TaskCandidate[] {
     const description = cleanText(record.description, MAX_DESCRIPTION_CHARS);
     const priorityValue = cleanText(record.priority, 16)?.toLowerCase();
     const priority = priorityValue && ALLOWED_PRIORITIES.has(priorityValue)
-      ? priorityValue
+      ? priorityValue as TaskCandidate["priority"]
       : undefined;
     const due_at = normalizeDueAt(record.due_at);
     return {
@@ -219,34 +224,32 @@ async function createBrainbaseTask(
   if (!options.brainbaseApiBaseUrl || !options.brainbaseTaskToken) {
     throw new ReplyPipelineError("brainbase_not_configured");
   }
-  let response: Response;
+  let task: Awaited<ReturnType<TaskApiClient["createTask"]>>;
   try {
-    response = await (options.fetch ?? fetch)(
-      `${options.brainbaseApiBaseUrl.replace(/\/$/, "")}/api/companion/tasks`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${options.brainbaseTaskToken}`,
-          "content-type": "application/json",
-          "idempotency-key": await taskIdempotencyKey(event.eventId, index),
-        },
-        body: JSON.stringify({ ...candidate, project_codes: options.binding.projectCodes }),
-        signal: AbortSignal.timeout(15_000),
-      },
+    const client = new TaskApiClient({
+      baseUrl: options.brainbaseApiBaseUrl,
+      token: options.brainbaseTaskToken,
+      fetchImpl: (async (input, init) => {
+        return await (options.fetch ?? fetch)(input, {
+          ...init,
+          signal: AbortSignal.timeout(15_000),
+        });
+      }) as typeof fetch,
+    });
+    task = await client.createTask(
+      applyTrustedProjectScope(candidate, options.binding.projectCodes),
+      await taskIdempotencyKey(event.eventId, index),
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof TaskApiError) {
+      if (error.code === "task_store_invalid_response") {
+        throw new ReplyPipelineError("brainbase_invalid_response");
+      }
+      throw new ReplyPipelineError("brainbase_task_registration_failed");
+    }
     throw new ReplyPipelineError("brainbase_unavailable");
   }
-  if (!response.ok) throw new ReplyPipelineError("brainbase_task_registration_failed");
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ReplyPipelineError("brainbase_invalid_response");
-  }
-  const taskId = typeof payload === "object" && payload !== null
-    ? cleanText((payload as { id?: unknown }).id, 256)
-    : undefined;
+  const taskId = cleanText(task.id, 256);
   if (!taskId) throw new ReplyPipelineError("brainbase_invalid_response");
   return taskId;
 }

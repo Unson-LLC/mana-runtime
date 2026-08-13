@@ -95,8 +95,7 @@ describe("Cloudflare meeting task pipeline", () => {
     expect(isMeetingTaskRequest(event({ text: "<@U_BOT> 議事録を要約して" }))).toBe(false);
   });
 
-  // story-cloudflare-primary-runtime:AC-3
-  it("assigns trusted deployment project codes to every registered task", async () => {
+  it("story-shared-task-runtime-core:ac:4 uses the shared client with trusted projects and deterministic idempotency", async () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();
 
@@ -113,10 +112,15 @@ describe("Cloudflare meeting task pipeline", () => {
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("7月分請求書を橋本さんが送付する");
     expect(prompt.match(/この議事録をタスク化して/g)).toHaveLength(1);
-    for (const [, request] of taskCalls) {
+    for (const [index, [, request]] of taskCalls.entries()) {
       const body = JSON.parse(String((request as RequestInit).body));
       expect(body.project_codes).toEqual(["back-office", "brainbase"]);
       expect(body.project_codes).not.toContain("attacker");
+      const headers = new Headers((request as RequestInit).headers);
+      expect(headers.get("authorization")).toBe("Bearer brainbase-secret");
+      expect(headers.get("idempotency-key")).toBe(
+        await taskIdempotencyKey("EvMinutes123", index),
+      );
     }
     const slackCall = fetchMock.mock.calls.find(([url]) => String(url).includes("chat.postMessage"));
     expect(slackCall).toBeDefined();

@@ -13,7 +13,7 @@ function env(overrides: Record<string, string | undefined> = {}) {
 }
 
 describe("Cloudflare task search proxy", () => {
-  it("rebuilds the upstream request without sandbox credentials and forces the deployment project union", async () => {
+  it("story-shared-task-runtime-core:ac:3 delegates scoped search to the shared task client", async () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({
       items: [{
         id: "task-1",
@@ -129,6 +129,19 @@ describe("Cloudflare task search proxy", () => {
   it("rejects an oversized upstream response", async () => {
     const upstream = vi.fn().mockResolvedValue(new Response("x".repeat(262_145), {
       headers: { "content-type": "application/json" },
+    }));
+    const response = await createTaskSearchProxyHandler(upstream)(
+      new Request("https://task-search.internal/api/companion/tasks/search?query=x"),
+      env(),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "task_search_response_too_large" });
+  });
+
+  it("bounds an oversized upstream error before the shared client reads its body", async () => {
+    const upstream = vi.fn().mockResolvedValue(new Response("x".repeat(262_145), {
+      status: 503,
+      headers: { "content-type": "text/plain" },
     }));
     const response = await createTaskSearchProxyHandler(upstream)(
       new Request("https://task-search.internal/api/companion/tasks/search?query=x"),

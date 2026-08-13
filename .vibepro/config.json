@@ -231,8 +231,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-shared-task-runtime-core",
+        "title": "CloudflareとLightsailでCanonical Task業務コアを共有する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-cloudflare-task-search-parity"
+    "current_story_id": "story-shared-task-runtime-core"
   }
 }

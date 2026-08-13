@@ -1,3 +1,10 @@
+import {
+  applyTrustedProjectFilter,
+  TaskApiClient,
+  TaskApiError,
+  type SearchTasksQuery,
+} from "@openryoko/task-runtime-core";
+
 import { parseRuntimeProjectCodes } from "./runtime-config.js";
 
 export const TASK_SEARCH_PROXY_HOST = "task-search.internal";
@@ -177,9 +184,7 @@ function sanitizePage(payload: unknown, allowedProjects: ReadonlySet<string>): u
   };
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
-  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (contentType !== "application/json") throw new Error("invalid_upstream_response");
+async function enforceBoundedJsonResponse(response: Response): Promise<Response> {
   const declaredLength = Number(response.headers.get("content-length") ?? "0");
   if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
     throw new Error("task_search_response_too_large");
@@ -188,11 +193,20 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   if (buffer.byteLength > MAX_RESPONSE_BYTES) {
     throw new Error("task_search_response_too_large");
   }
-  try {
-    return JSON.parse(new TextDecoder().decode(buffer));
-  } catch {
-    throw new Error("invalid_upstream_response");
+  if (response.ok) {
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "application/json") throw new Error("invalid_upstream_response");
+    try {
+      JSON.parse(new TextDecoder().decode(buffer));
+    } catch {
+      throw new Error("invalid_upstream_response");
+    }
   }
+  return new Response(buffer, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
@@ -222,30 +236,45 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
     } catch {
       return jsonError("task_search_not_configured", 503);
     }
-    for (const projectCode of projectCodes) params.append("project_code", projectCode);
-
-    let upstreamResponse: Response;
+    let payload: unknown;
     try {
-      const upstreamUrl = new URL(TASK_SEARCH_PATH, `${upstreamOrigin}/`);
-      upstreamUrl.search = params.toString();
-      upstreamResponse = await fetchImpl(upstreamUrl, {
-        method: "GET",
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${env.BRAINBASE_TASK_API_TOKEN}`,
-        },
-        redirect: "manual",
-        signal: AbortSignal.timeout(5_000),
+      const query = applyTrustedProjectFilter(
+        Object.fromEntries(params.entries()) as unknown as SearchTasksQuery,
+        projectCodes,
+      );
+      const client = new TaskApiClient({
+        baseUrl: upstreamOrigin,
+        token: env.BRAINBASE_TASK_API_TOKEN!,
+        fetchImpl: (async (input, init) => {
+          const headers = new Headers(init?.headers);
+          headers.set("accept", "application/json");
+          const response = await fetchImpl(input, {
+            ...init,
+            headers,
+            redirect: "manual",
+            signal: AbortSignal.timeout(5_000),
+          });
+          return enforceBoundedJsonResponse(response);
+        }) as typeof fetch,
       });
-    } catch {
+      payload = await client.searchTasks(query);
+    } catch (error) {
+      if (error instanceof TaskApiError) {
+        const code = error.code === "task_store_invalid_response"
+          ? "task_search_upstream_invalid_response"
+          : "task_search_upstream_failed";
+        return jsonError(code, 502);
+      }
+      if (error instanceof Error && error.message === "task_search_response_too_large") {
+        return jsonError(error.message, 502);
+      }
+      if (error instanceof Error && error.message === "invalid_upstream_response") {
+        return jsonError("task_search_upstream_invalid_response", 502);
+      }
       return jsonError("task_search_upstream_unavailable", 502);
     }
-    if (!upstreamResponse.ok || upstreamResponse.status < 200 || upstreamResponse.status >= 300) {
-      return jsonError("task_search_upstream_failed", 502);
-    }
 
     try {
-      const payload = await readBoundedJson(upstreamResponse);
       return Response.json(sanitizePage(payload, new Set(projectCodes)));
     } catch (error) {
       const code = error instanceof Error && [
