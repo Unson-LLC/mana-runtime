@@ -7,6 +7,14 @@ describe("generateMeetingMinutesInSandbox", () => {
     await expect(generateMeetingMinutesInSandbox("transcript", { model: "opus", effort: "xhigh" }, sandbox))
       .resolves.toEqual({ title: "定例", overview: "概要", body: "本文" });
     expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("transcript"));
+    expect(sandbox.writeFile).toHaveBeenCalledWith(
+      "/tmp/meeting-minutes-prompt.txt",
+      expect.stringContaining("narrative_minutes.v1"),
+    );
+    expect(sandbox.writeFile).toHaveBeenCalledWith(
+      "/tmp/meeting-minutes-prompt.txt",
+      expect.stringContaining("アクションアイテム"),
+    );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({ env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" } }));
     expect(sandbox.destroy).toHaveBeenCalled();
