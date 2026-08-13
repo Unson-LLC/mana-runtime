@@ -227,6 +227,7 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     ["untrusted project", env(), { operation: "create", project: "outside", title: "x" }, 403],
     ["budget exceeded", env(), { operation: "create", title: "x", call_index: 4 }, 400],
     ["missing expected version", env(), { operation: "update", task_id: "task-1", title: "x" }, 400],
+    ["zero expected version", env(), { operation: "update", task_id: "task-1", expected_version: 0, title: "x" }, 400],
     ["unknown field", env(), { operation: "create", title: "x", token: "forged" }, 400],
   ])("rejects %s before an upstream mutation", async (_name, bindings, body, status) => {
     const upstream = vi.fn();

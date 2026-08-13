@@ -83,7 +83,7 @@ function parseBody(value: unknown): WriteRequest {
   }
   if (body.assignee_person_id === null) result.assignee_person_id = null;
   else if (body.assignee_person_id !== undefined) result.assignee_person_id = text(body.assignee_person_id, "assignee_person_id", 128);
-  if (body.expected_version !== undefined) result.expected_version = integer(body.expected_version, "expected_version", 0);
+  if (body.expected_version !== undefined) result.expected_version = integer(body.expected_version, "expected_version", 1);
   if (body.priority !== undefined) {
     if (!["low","medium","high","urgent"].includes(String(body.priority))) throw new Error("invalid_priority");
     result.priority = body.priority as WriteRequest["priority"];

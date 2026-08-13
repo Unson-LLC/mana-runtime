@@ -26,7 +26,7 @@ Slack event
 
 - `placementId` はSlack channel IDではなく信頼済み設定 `RUNTIME_PLACEMENT_ID=mana-accounting` を使う。
 - capabilityは3分で失効し、Slack actor、workspace、Placement、project、許可操作、最大3回を固定する。各call slotは専用Durable Objectへ最初の操作fingerprintとともに保存し、完全一致の再試行だけを許可する。同じslotを別操作へ再利用できない。
-- 作成のprojectはWorker設定から強制する。更新と状態遷移は対象Taskを先に取得し、projectと `expected_version` を確認する。
+- 作成のprojectはWorker設定から強制する。検索proxyは正の整数 `version` を保持し、更新と状態遷移のMCP・Worker境界は `expected_version >= 1` を必須にする。更新前に対象Taskを取得し、projectと `expected_version` を確認する。
 - 合成hostは固定POST pathだけを受ける。実Brainbase hostをSandboxの許可hostへ追加しない。
 - Claudeへ公開する操作は作成・更新・状態遷移だけとし、削除や任意HTTPを公開しない。
 

@@ -11,6 +11,12 @@ describe("requester-scoped task-write stdio MCP", () => {
         properties: { call_index: { type: "integer", minimum: 1, maximum: 3 } },
       });
     }
+    for (const toolName of ["update_task", "transition_task"]) {
+      const tool = taskWriteTools.find((candidate) => candidate.name === toolName);
+      expect(tool?.inputSchema).toMatchObject({
+        properties: { expected_version: { type: "integer", minimum: 1 } },
+      });
+    }
   });
 
   it("sends only request capability and arguments to the synthetic endpoint", async () => {
