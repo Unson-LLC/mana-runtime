@@ -22,6 +22,37 @@ function loadConfig(name: string): DeploymentConfig {
   return JSON.parse(readFileSync(path, "utf8")) as DeploymentConfig;
 }
 
+interface ProductionTaskMigrationEvidence {
+  cloudflare: {
+    current: { worker_version: string; git_sha: string; task_board_enabled: boolean };
+    mutation_e2e_deployment: { worker_version: string; git_sha: string };
+    container: { image_digest: string };
+  };
+  slack_e2e: { mutation: { title: string; transition: { version: number; status: string } } };
+  canvas: { visible_titles: string[]; screenshot: { sha256: string } };
+  lightsail: {
+    config_git_sha: string;
+    task_ownership: { placement_enabled: boolean; task_canvas_enabled: boolean };
+  };
+  ownership_assertion: {
+    task_search_owner: string;
+    task_write_owner: string;
+    task_board_owner: string;
+    lightsail_task_owner_enabled: boolean;
+  };
+  scope_boundary: { meeting_minutes: string };
+}
+
+function loadProductionEvidence(): ProductionTaskMigrationEvidence {
+  const path = fileURLToPath(
+    new URL(
+      "../../../../docs/operations/cloudflare-task-migration-evidence-2026-08-13.json",
+      import.meta.url,
+    ),
+  );
+  return JSON.parse(readFileSync(path, "utf8")) as ProductionTaskMigrationEvidence;
+}
+
 describe("会社別Cloudflare deployment", () => {
   const techKnight = loadConfig("wrangler.jsonc");
   const unson = loadConfig("wrangler.unson-business.jsonc");
@@ -243,15 +274,20 @@ describe("会社別Cloudflare deployment", () => {
       fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
       "utf8",
     );
-    const evidence = readFileSync(
-      fileURLToPath(new URL("../../../../docs/operations/cloudflare-task-migration-cutover-2026-08-13.md", import.meta.url)),
-      "utf8",
-    );
+    const evidence = loadProductionEvidence();
     expect(story).toContain("- [x] `AC-8`");
     expect(story).toContain("Brainbase正本とCanvasの一致");
     expect(story).toContain("Worker version、Container image digest、Git SHA");
-    expect(evidence).toContain("38c2737b-2a91-4ebe-b9bf-714327830441");
-    expect(evidence).toContain("sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985");
+    expect(evidence.cloudflare.mutation_e2e_deployment).toMatchObject({
+      worker_version: "38c2737b-2a91-4ebe-b9bf-714327830441",
+      git_sha: "d295c8660b5bd842125ffe7ce9e46b2ba171b7fa",
+    });
+    expect(evidence.cloudflare.container.image_digest).toBe(
+      "sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985",
+    );
+    expect(evidence.slack_e2e.mutation.transition).toEqual({ version: 3, status: "completed" });
+    expect(evidence.canvas.visible_titles).toContain("CF-BOARD-VISIBILITY-2026-08-13-D295C86");
+    expect(evidence.canvas.screenshot.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("records the disabled Lightsail task surfaces and rollback order", () => {
@@ -259,7 +295,8 @@ describe("会社別Cloudflare deployment", () => {
       fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
       "utf8",
     );
-    const evidence = readFileSync(
+    const evidence = loadProductionEvidence();
+    const runbook = readFileSync(
       fileURLToPath(new URL("../../../../docs/operations/cloudflare-task-migration-cutover-2026-08-13.md", import.meta.url)),
       "utf8",
     );
@@ -267,17 +304,31 @@ describe("会社別Cloudflare deployment", () => {
     expect(story).toContain("mana-accounting.enabled=false");
     expect(story).toContain("taskCanvas.enabled=false");
     expect(story).toContain("rollbackは逆順");
-    expect(evidence).toContain("77988b4");
-    expect(evidence).toContain("Cloudflareを先にOFF");
+    expect(evidence.lightsail).toMatchObject({
+      config_git_sha: "9139b37608b95df16e99cbaceb6bd880b422e12d",
+      task_ownership: { placement_enabled: false, task_canvas_enabled: false },
+    });
+    expect(runbook).toContain("Cloudflareを先にOFF");
   });
 
-  it("closes task migration while keeping minutes as a separate Lightsail boundary", () => {
+  it("closes task migration without using the later minutes migration as evidence", () => {
     const story = readFileSync(
       fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
       "utf8",
     );
+    const evidence = loadProductionEvidence();
     expect(story).toContain("- [x] `AC-10`");
     expect(story).toContain("Cloudflareが対象チャンネル");
-    expect(story).toContain("Lightsailの議事録処理は別タスクの所有境界として継続");
+    expect(story).toContain("後続の議事録移行状態は本Storyの完了証拠に使わない");
+    expect(evidence.ownership_assertion).toMatchObject({
+      task_search_owner: "cloudflare",
+      task_write_owner: "cloudflare",
+      task_board_owner: "cloudflare",
+      lightsail_task_owner_enabled: false,
+    });
+    expect(evidence.scope_boundary.meeting_minutes).toContain("PR #128");
+    expect(evidence.scope_boundary.meeting_minutes).toContain(
+      "neither state is used as evidence for this task migration",
+    );
   });
 });

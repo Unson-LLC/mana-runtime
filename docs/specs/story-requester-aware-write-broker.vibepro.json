@@ -84,7 +84,7 @@
     {
       "id": "C-007",
       "type": "contract",
-      "statement": "Cloudflare本番は書き込みとタスクボードを既定OFFで配備し、専用Queue・DLQ、15分cron、mana-accounting Placement、必要secretを外部から注入してから限定チャンネルだけONにする。LightsailのmeetingMinutesPipelineは有効のまま維持し、タスク所有権切替から分離する",
+      "statement": "Cloudflare本番は書き込みとタスクボードを既定OFFで配備し、専用Queue・DLQ、15分cron、mana-accounting Placement、必要secretを外部から注入してから限定チャンネルだけONにする。タスク所有権切替時点ではLightsailのmeetingMinutesPipelineを維持して変更対象から除外し、後続の議事録移行は別Storyとして扱う",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
         "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
@@ -102,7 +102,7 @@
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-8" }],
         "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
         "code_refs": [{ "file": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md", "anchor": "同一Slackスレッドの書き込みE2E" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "records matching production task mutation and Canvas evidence" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts", "case": "binds the production Slack mutation to the deployed Worker and Container" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts", "case": "binds the Brainbase task to the updated channel Canvas" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "records matching production task mutation and Canvas evidence" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration-evidence.test.ts", "case": "binds the production Slack mutation to the exact Worker and Container" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration-evidence.test.ts", "case": "cross-checks the Canonical Task with the current bounded Canvas" }]
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "matching production task mutation and Canvas evidence" }], "evidence": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md" },
       "confidence": 0.95
@@ -115,7 +115,7 @@
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-9" }],
         "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
         "code_refs": [{ "file": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md", "anchor": "Lightsail所有権切替" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "records the disabled Lightsail task surfaces and rollback order" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts", "case": "binds single ownership and keeps meeting minutes out of the task cutover" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "records the disabled Lightsail task surfaces and rollback order" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration-evidence.test.ts", "case": "binds current Cloudflare ownership to disabled Lightsail task surfaces" }]
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "disabled Lightsail task surfaces and rollback order" }], "evidence": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md" },
       "confidence": 0.96
@@ -123,14 +123,14 @@
     {
       "id": "C-010",
       "type": "contract",
-      "statement": "Cloudflareが対象チャンネルのタスク検索・作成・更新・状態遷移・Canvasを単独所有し、Lightsailの同PlacementとtaskCanvasが無効であることを本番証跡で確認して完全移行とする。Lightsailの議事録処理は別タスクの所有境界として継続する",
+      "statement": "Cloudflareが対象チャンネルのタスク検索・作成・更新・状態遷移・Canvasを単独所有し、Lightsailの同PlacementとtaskCanvasが無効であることを本番証跡で確認して完全移行とする。後続の議事録移行状態は本Storyの完了証拠に使わない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-10" }],
         "architecture_refs": [{ "file": "docs/architecture/story-requester-aware-write-broker.md", "section": "本番設定と移行" }],
         "code_refs": [{ "file": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md", "anchor": "結論" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "closes task migration while keeping minutes as a separate Lightsail boundary" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration.e2e.test.ts", "case": "binds single ownership and keeps meeting minutes out of the task cutover" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "closes task migration without using the later minutes migration as evidence" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/production-task-migration-evidence.test.ts", "case": "keeps the later meeting-minutes migration outside task evidence" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "task migration while keeping minutes as a separate Lightsail boundary" }], "evidence": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md" },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "task migration without using the later minutes migration as evidence" }], "evidence": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md" },
       "confidence": 0.95
     }
   ],
@@ -139,7 +139,7 @@
     { "layer": "Worker proxy", "covers": ["create・update・transition", "冪等性", "409", "越境拒否"] },
     { "layer": "MCP integration", "covers": ["専用3 tool", "合成host", "secret非露出"] },
     { "layer": "bounded board", "covers": ["固定4 request", "上限20", "下限表示", "Canvas作成・更新"] },
-    { "layer": "production E2E", "covers": ["同一Slack thread", "Brainbase readback", "Canvas", "所有権切替", "議事録の別タスク境界"] }
+    { "layer": "production readback evidence", "covers": ["同一Slack thread", "Brainbase readback", "Canvas", "所有権切替", "後続の議事録移行との証拠境界"] }
   ],
   "open_questions": []
 }

@@ -17,7 +17,7 @@
     "test:e2e:deploy": "playwright test --config playwright.deploy.config.ts",
     "test:integration": "pnpm --filter openryoko test:integration",
     "integration:cloudflare-task-migration": "pnpm --filter @openryoko/cloudflare-techknight-poc exec vitest run src/__tests__/task-write-mcp-jsonrpc.test.ts src/__tests__/task-board.test.ts",
-    "e2e:cloudflare-task-migration": "pnpm --filter @openryoko/cloudflare-techknight-poc e2e:production-task-migration",
+    "verify:cloudflare-task-migration-evidence": "pnpm --filter @openryoko/cloudflare-techknight-poc verify:production-task-migration-evidence",
     "test:e2e": "node -e \"console.log(JSON.stringify({ node_arch: process.arch, node_version: process.version }))\" && playwright test",
     "typecheck:cloudflare-task-migration": "pnpm --filter @openryoko/write-broker typecheck && pnpm --filter @openryoko/task-runtime-core typecheck && pnpm --filter @openryoko/cloudflare-techknight-poc typecheck",
     "build:cloudflare-task-migration": "pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business",
