@@ -62,11 +62,11 @@ function boundedText(
   return normalized;
 }
 
-function parseLimit(params: URLSearchParams): string {
+function parseLimit(params: URLSearchParams): number {
   const value = singleParam(params, "limit");
-  if (value === undefined) return "20";
+  if (value === undefined) return 20;
   if (!/^(?:[1-9]|1\d|20)$/.test(value)) throw new Error("invalid_limit");
-  return value;
+  return Number(value);
 }
 
 function resolveUpstreamOrigin(value: string | undefined): string {
@@ -86,7 +86,7 @@ function resolveUpstreamOrigin(value: string | undefined): string {
   return url.origin;
 }
 
-function validateRequest(request: Request): URLSearchParams {
+function validateRequest(request: Request): SearchTasksQuery {
   const url = new URL(request.url);
   if (
     url.protocol !== "https:" ||
@@ -111,11 +111,11 @@ function validateRequest(request: Request): URLSearchParams {
   if (status && !STATUS_VALUES.has(status)) throw new Error("invalid_status");
   if (priority && !PRIORITY_VALUES.has(priority)) throw new Error("invalid_priority");
 
-  const result = new URLSearchParams({ query: query!, limit });
-  if (status) result.set("status", status);
-  if (priority) result.set("priority", priority);
-  if (assignee) result.set("assignee_person_id", assignee);
-  if (cursor) result.set("cursor", cursor);
+  const result: SearchTasksQuery = { query: query!, limit };
+  if (status) result.status = status;
+  if (priority) result.priority = priority;
+  if (assignee) result.assignee_person_id = assignee;
+  if (cursor) result.cursor = cursor;
   return result;
 }
 
@@ -215,9 +215,9 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
       return jsonError("task_search_disabled", 503);
     }
 
-    let params: URLSearchParams;
+    let requestedQuery: SearchTasksQuery;
     try {
-      params = validateRequest(request);
+      requestedQuery = validateRequest(request);
     } catch (error) {
       const code = error instanceof Error ? error.message : "invalid_request";
       if (code === "not_found") return jsonError(code, 404);
@@ -238,10 +238,7 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
     }
     let payload: unknown;
     try {
-      const query = applyTrustedProjectFilter(
-        Object.fromEntries(params.entries()) as unknown as SearchTasksQuery,
-        projectCodes,
-      );
+      const query = applyTrustedProjectFilter(requestedQuery, projectCodes);
       const client = new TaskApiClient({
         baseUrl: upstreamOrigin,
         token: env.BRAINBASE_TASK_API_TOKEN!,

@@ -25,6 +25,18 @@ describe("会社別Cloudflare deployment", () => {
   const techKnight = loadConfig("wrangler.jsonc");
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
+  it("builds the shared task runtime before every Cloudflare release entrypoint", () => {
+    const packageJsonPath = fileURLToPath(new URL("../../package.json", import.meta.url));
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    for (const scriptName of ["build", "build:unson-business", "deploy:unson-business"]) {
+      expect(packageJson.scripts[scriptName]).toContain(
+        "pnpm --filter @openryoko/task-runtime-core build",
+      );
+    }
+  });
+
   it("TechKnightのClaude Codeをopusかつxhighへ固定する", () => {
     expect(techKnight.vars).toMatchObject({
       RUNTIME_CLAUDE_MODEL: "opus",

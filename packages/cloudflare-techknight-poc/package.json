@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @openryoko/slack-thread-context build && wrangler deploy --dry-run --outdir dist",
-    "build:unson-business": "pnpm --filter @openryoko/slack-thread-context build && wrangler deploy --config wrangler.unson-business.jsonc --dry-run --outdir dist/unson-business",
-    "deploy:unson-business": "pnpm --filter @openryoko/slack-thread-context build && wrangler deploy --config wrangler.unson-business.jsonc",
+    "build": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && wrangler deploy --dry-run --outdir dist",
+    "build:unson-business": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && wrangler deploy --config wrangler.unson-business.jsonc --dry-run --outdir dist/unson-business",
+    "deploy:unson-business": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && wrangler deploy --config wrangler.unson-business.jsonc",
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

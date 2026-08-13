@@ -53,9 +53,9 @@
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-5" }],
         "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "Cloudflare" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-search-proxy.ts", "anchor": "createTaskSearchProxyHandler" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "case": "story-shared-task-runtime-core:ac:3 delegates scoped search to the shared task client" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "must_cover": "shared task client" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "must_cover": "deployment project union" }] },
       "confidence": 0.95
     },
     {
@@ -66,9 +66,9 @@
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }, { "kind": "acceptance_criteria", "ac_id": "AC-5" }],
         "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "Cloudflare" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-task-pipeline.ts", "anchor": "createBrainbaseTask" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "story-shared-task-runtime-core:ac:4 uses the shared client with trusted projects and deterministic idempotency" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "assigns trusted deployment project codes to every registered task" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "must_cover": "shared client with trusted projects" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "must_cover": "trusted deployment project codes" }] },
       "confidence": 0.95
     },
     {
@@ -82,6 +82,36 @@
         "test_refs": [{ "file": "packages/task-runtime-core/src/__tests__/package-boundary.test.ts", "case": "story-shared-task-runtime-core:ac:8 keeps platform runtimes outside the shared package" }]
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/task-runtime-core/src/__tests__/package-boundary.test.ts", "must_cover": "platform runtimes outside" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "共有coreとJimmy・Cloudflare adapterの回帰は、workspace unit test・型検査・buildを同じ最終HEADへ結び付けて検証する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-shared-task-runtime-core.md", "section": "互換性と移行順序" }],
+        "code_refs": [
+          { "file": "package.json", "anchor": "scripts" },
+          { "file": "packages/cloudflare-techknight-poc/package.json", "anchor": "build:unson-business" }
+        ],
+        "test_refs": [
+          { "file": "packages/task-runtime-core/src/__tests__/task-api-client.test.ts", "case": "story-shared-task-runtime-core:ac:1 provides the canonical task HTTP contract without platform defaults" },
+          { "file": "packages/jimmy/src/shared/__tests__/brainbase-tasks.test.ts", "case": "story-shared-task-runtime-core:ac:2 keeps Jimmy as an environment and idempotency adapter" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "case": "assigns trusted deployment project codes to every registered task" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "builds the shared task runtime before every Cloudflare release entrypoint" }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          { "file_glob": "packages/task-runtime-core/src/__tests__/task-api-client.test.ts", "must_cover": "canonical task HTTP contract" },
+          { "file_glob": "packages/jimmy/src/shared/__tests__/brainbase-tasks.test.ts", "must_cover": "Jimmy as an environment and idempotency adapter" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts", "must_cover": "deployment project union" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-task-pipeline.test.ts", "must_cover": "trusted deployment project codes" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "shared task runtime before every Cloudflare release entrypoint" }
+        ]
+      },
       "confidence": 0.99
     }
   ]

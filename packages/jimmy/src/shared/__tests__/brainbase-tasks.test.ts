@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { TaskApiClient } from "@openryoko/task-runtime-core";
 
 import {
   BrainbaseTaskClient,
@@ -42,6 +43,7 @@ describe("BrainbaseTaskClient", () => {
       return { status: 201, body: { id: "ct1.shared", version: 1, title: "shared" } };
     });
     const client = new BrainbaseTaskClient({ ...options, fetchImpl });
+    expect(client).toBeInstanceOf(TaskApiClient);
     await expect(client.createTask({ title: "shared" })).resolves.toMatchObject({ id: "ct1.shared" });
   });
 

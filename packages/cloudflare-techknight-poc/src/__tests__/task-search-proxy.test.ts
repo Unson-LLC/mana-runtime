@@ -1,3 +1,4 @@
+import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createTaskSearchProxyHandler } from "../task-search-proxy.js";
 
 const SECRET = "brainbase-secret-canary";
@@ -13,7 +14,8 @@ function env(overrides: Record<string, string | undefined> = {}) {
 }
 
 describe("Cloudflare task search proxy", () => {
-  it("story-shared-task-runtime-core:ac:3 delegates scoped search to the shared task client", async () => {
+  it("rebuilds the upstream request without sandbox credentials and forces the deployment project union", async () => {
+    const sharedSearch = vi.spyOn(TaskApiClient.prototype, "searchTasks");
     const upstream = vi.fn().mockResolvedValue(Response.json({
       items: [{
         id: "task-1",
@@ -47,6 +49,12 @@ describe("Cloudflare task search proxy", () => {
     expect(parsed.searchParams.get("limit")).toBe("1");
     expect(parsed.searchParams.get("cursor")).toBe("opaque+/=");
     expect(parsed.searchParams.getAll("project_code")).toEqual(["back-office", "brainbase"]);
+    expect(sharedSearch).toHaveBeenCalledWith({
+      query: "契約",
+      limit: 1,
+      cursor: "opaque+/=",
+      project_code: ["back-office", "brainbase"],
+    });
     expect(init).toMatchObject({ method: "GET", redirect: "manual" });
     const headers = new Headers(init.headers);
     expect(headers.get("authorization")).toBe(`Bearer ${SECRET}`);
@@ -60,6 +68,7 @@ describe("Cloudflare task search proxy", () => {
       items: [{ project_codes: ["back-office"] }],
     });
     expect(JSON.stringify(payload)).not.toContain(SECRET);
+    sharedSearch.mockRestore();
   });
 
   it.each([
