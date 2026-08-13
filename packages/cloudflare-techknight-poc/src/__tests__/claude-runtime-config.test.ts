@@ -1,5 +1,6 @@
 import {
   buildRuntimeClaudeCommand,
+  runtimeTaskSearchMcpConfigPath,
   resolveClaudeRuntimeConfig,
   runtimeClaudePromptPath,
 } from "../claude-runtime-config.js";
@@ -46,5 +47,18 @@ describe("Cloudflare Claude runtime config", () => {
     expect(buildRuntimeClaudeCommand("meeting-task", config)).toBe(
       'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/meeting-task-prompt.txt)"',
     );
+  });
+
+  it("puts the prompt before the variadic MCP option and enables strict config", () => {
+    const config = resolveClaudeRuntimeConfig({
+      RUNTIME_CLAUDE_MODEL: "opus",
+      RUNTIME_CLAUDE_EFFORT: "xhigh",
+    });
+    expect(runtimeTaskSearchMcpConfigPath()).toBe("/tmp/mana-task-search-mcp.json");
+    expect(buildRuntimeClaudeCommand("reply", config, { taskSearchEnabled: true })).toBe(
+      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
+    );
+    expect(buildRuntimeClaudeCommand("meeting-task", config, { taskSearchEnabled: true }))
+      .not.toContain("--mcp-config");
   });
 });

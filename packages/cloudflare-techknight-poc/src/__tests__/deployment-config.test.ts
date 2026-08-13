@@ -52,6 +52,50 @@ describe("会社別Cloudflare deployment", () => {
     const dockerfile = readFileSync(dockerfilePath, "utf8");
     expect(dockerfile).toContain("@anthropic-ai/claude-code@2.1.195");
     expect(dockerfile).not.toMatch(/npm install -g @anthropic-ai\/claude-code\s*(?:\n|$)/);
+    expect(dockerfile).toContain(
+      "COPY --chmod=0555 container/task-search-mcp-server.mjs /opt/mana/task-search-mcp-server.mjs",
+    );
+  });
+
+  it("keeps task search off by default and documents the staged rollout", () => {
+    expect(techKnight.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
+    expect(unson.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
+    const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("RUNTIME_TASK_SEARCH_ENABLED=false");
+    expect(readme).toContain("Container");
+    expect(readme).toContain("image digest");
+    expect(readme).toContain("Worker version");
+    expect(readme).toContain("Git SHA");
+  });
+
+  it("keeps production task search evidence open until Slack and Brainbase match", () => {
+    const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).toContain("ON切替後の最初の境界付き`search_tasks` probeを記録");
+    expect(readme).toContain("本番Slackで既知タスク");
+    expect(readme).toContain("Brainbase正本と照合");
+    expect(readme).toContain("テストやContainer healthだけをSlack E2E完了とは扱いません");
+  });
+
+  it("does not place task-search credentials in deployment files", () => {
+    const configs = [
+      readFileSync(fileURLToPath(new URL("../../wrangler.jsonc", import.meta.url)), "utf8"),
+      readFileSync(fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)), "utf8"),
+      readFileSync(fileURLToPath(new URL("../../Dockerfile", import.meta.url)), "utf8"),
+    ].join("\n");
+    expect(configs).not.toContain("brainbase-secret-canary");
+    expect(configs).not.toMatch(/BRAINBASE_TASK_API_TOKEN\s*[:=]\s*["'][^"']+/);
+    expect(configs).not.toContain("Bearer ");
+  });
+
+  it("keeps Sandbox internet off with only Anthropic and the synthetic search host", () => {
+    const sandboxPath = fileURLToPath(new URL("../sandbox-runtime.ts", import.meta.url));
+    const sandboxRuntime = readFileSync(sandboxPath, "utf8");
+    expect(sandboxRuntime).toContain("enableInternet = false");
+    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST]');
+    expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest");
+    expect(sandboxRuntime).not.toContain('"bb.unson.jp"');
   });
 
   it("雲孫とTechKnightのWorker、Queue、DLQを共有しない", () => {

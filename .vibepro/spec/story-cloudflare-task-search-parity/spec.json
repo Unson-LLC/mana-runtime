@@ -1,0 +1,415 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-cloudflare-task-search-parity",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "ai_synthesis"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "Cloudflare一般返信は機能フラグ有効時だけ検索専用stdio MCPのsearch_tasksをClaudeへ公開し、meeting-task抽出とフラグ無効時の返信経路を変更しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "決定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts",
+            "anchor": "generateClaudeReply"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
+            "case": "configures only the bounded search MCP when task search is enabled"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
+            "must_cover": "bounded search MCP"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-13T01:21:40.684Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "search_tasksはqueryを必須、limitを既定20・最大20とし、status・priority・assignee_person_id・cursorだけを任意入力として受ける",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "検索契約"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/container/task-search-mcp-server.mjs",
+            "anchor": "search_tasks"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-mcp-jsonrpc.test.ts",
+            "case": "exposes only the bounded search_tasks schema"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-mcp-jsonrpc.test.ts",
+            "must_cover": "bounded search_tasks schema"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-13T01:21:40.684Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "複数projectはdeploymentの正規bindingから導出して一回のBrainbase検索へ繰り返しproject_codeとして付与し、Sandbox入力では拡張できない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "認可境界"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/task-search-proxy.ts",
+            "anchor": "createTaskSearchProxyHandler"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
+            "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
+            "must_cover": "deployment project union"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-13T01:21:40.684Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "Sandboxは実Brainbase host・token・projectを保持せず、合成hostだけを通じてWorkerの固定method・path・query・認証再構築へ到達する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "認可境界"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/sandbox-runtime.ts",
+            "anchor": "TASK_SEARCH_PROXY_HOST"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
+            "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
+            "must_cover": "without sandbox credentials"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-13T01:21:40.684Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "検索成功時はtitle・status・assignee・projectとpage metadataを保ち、0件・部分結果・API障害を別状態としてClaudeへ返す",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "検索契約"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/container/task-search-mcp-server.mjs",
+            "anchor": "tools/call"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-mcp-jsonrpc.test.ts",
+            "case": "keeps zero partial and upstream failure distinct"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-mcp-jsonrpc.test.ts",
+            "must_cover": "zero partial and upstream failure"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-13T01:21:40.684Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "S-002",
+      "type": "scenario",
+      "statement": "一般返信は正規runtime bindingをSandbox作成前に解決し、project未設定または検索設定不備ではfail closedする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-8"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "データフロー"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/index.ts",
+            "anchor": "processReply"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-runtime-wiring.test.ts",
+            "case": "fails before creating a sandbox when the task project binding is missing"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-runtime-wiring.test.ts",
+            "must_cover": "before creating a sandbox"
+          }
+        ]
+      },
+      "confidence": 0.98,
+      "first_seen_at": "2026-08-13T01:21:40.684Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "機能フラグは未設定をOFFとし、MCP入りContainerがreadyになった後だけ対象deploymentでONにし、異常時はOFFへ戻せる",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-9"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "段階展開と切戻し"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-config.ts",
+            "anchor": "taskSearchEnabled"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "keeps task search off by default and documents the staged rollout"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "task search off by default"
+          }
+        ]
+      },
+      "confidence": 0.98,
+      "first_seen_at": "2026-08-13T01:21:40.684Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "単体・統合・型検査・WorkerとContainerのdry-runは実行結果と最終HEADを紐づけて記録する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-8"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "段階展開と切戻し"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/package.json",
+            "anchor": "build:unson-business"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-reply.integration.test.ts",
+            "case": "carries one bounded multi-project search through MCP and the Worker proxy"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-reply.integration.test.ts",
+            "must_cover": "bounded multi-project search"
+          }
+        ]
+      },
+      "confidence": 0.97,
+      "first_seen_at": "2026-08-13T01:45:05.130Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    },
+    {
+      "id": "C-006",
+      "type": "contract",
+      "statement": "デプロイversion・image digest・切戻し記録と、本番Slack検索結果のBrainbase正本照合は外部証跡として未実施のまま明示し、ローカルテストで完了扱いにしない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-9"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-task-search-parity.md",
+            "section": "段階展開と切戻し"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/README.md",
+            "anchor": "タスク検索の段階展開"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "keeps production task search evidence open until Slack and Brainbase match"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "production task search evidence open"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-13T01:45:05.130Z",
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
+    }
+  ],
+  "open_questions": [],
+  "generated_at": "2026-08-13T01:52:01.866Z",
+  "previous_spec_id": "2026-08-13T01:45:33.454Z"
+}

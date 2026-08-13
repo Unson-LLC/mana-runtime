@@ -13,6 +13,7 @@
     "BRAINBASE_TASK_API_BASE_URL": "https://bb.unson.jp",
     "RUNTIME_PROJECT_CODES": "back-office",
     "RUNTIME_EXECUTION_MODE": "meeting_tasks",
+    "RUNTIME_TASK_SEARCH_ENABLED": "false",
     "RUNTIME_CLAUDE_MODEL": "opus",
     "RUNTIME_CLAUDE_EFFORT": "xhigh"
   },

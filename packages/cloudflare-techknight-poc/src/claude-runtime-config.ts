@@ -21,6 +21,7 @@ const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.free
   reply: "/tmp/mana-slack-prompt.txt",
   "meeting-task": "/tmp/meeting-task-prompt.txt",
 });
+const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
 
 const RESOLVED_CONFIG: ClaudeRuntimeConfig = Object.freeze({
   model: "opus",
@@ -41,9 +42,14 @@ export function runtimeClaudePromptPath(purpose: RuntimeClaudePurpose): string {
   return PROMPT_PATHS[purpose];
 }
 
+export function runtimeTaskSearchMcpConfigPath(): string {
+  return TASK_SEARCH_MCP_CONFIG_PATH;
+}
+
 export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
+  options: { taskSearchEnabled?: boolean } = {},
 ): string {
   if (config.model !== "opus") {
     throw new ClaudeRuntimeConfigError("runtime_claude_model_invalid");
@@ -52,5 +58,8 @@ export function buildRuntimeClaudeCommand(
     throw new ClaudeRuntimeConfigError("runtime_claude_effort_invalid");
   }
   const promptPath = runtimeClaudePromptPath(purpose);
-  return `claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat ${promptPath})"`;
+  const base = `claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat ${promptPath})"`;
+  return purpose === "reply" && options.taskSearchEnabled
+    ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
+    : base;
 }

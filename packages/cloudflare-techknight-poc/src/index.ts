@@ -19,7 +19,10 @@ import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import {
   processMeetingTaskEvent,
 } from "./meeting-task-pipeline.js";
-import { resolveRuntimeBinding } from "./runtime-config.js";
+import {
+  resolveRuntimeBinding,
+  runWithReplyTaskSearchBinding,
+} from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
 import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { persistEventOnce } from "./workspace-store.js";
@@ -39,6 +42,7 @@ interface Env extends SandboxRuntimeEnv {
   BRAINBASE_TASK_API_TOKEN?: string;
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_EXECUTION_MODE?: string;
+  RUNTIME_TASK_SEARCH_ENABLED?: string;
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
   TENANT_ID: string;
@@ -130,16 +134,25 @@ export default {
                     hydrateThreadContext,
                   });
                 },
-                processReply: () => processReplyEvent(workspace.fs, event, {
-                  expectedTenantId: env.TENANT_ID,
-                  expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                  allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
-                  slackBotToken: env.SLACK_BOT_TOKEN,
-                  oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
-                  claudeRuntime,
-                  createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-                  hydrateThreadContext,
-                }),
+                processReply: () => runWithReplyTaskSearchBinding(event, {
+                    tenantId: env.TENANT_ID,
+                    workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                    channelId: env.SLACK_ALLOWED_CHANNEL_ID,
+                    projectCodes: env.RUNTIME_PROJECT_CODES,
+                    taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
+                    brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+                    brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
+                  }, (taskSearch) => processReplyEvent(workspace.fs, event, {
+                    expectedTenantId: env.TENANT_ID,
+                    expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                    allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
+                    slackBotToken: env.SLACK_BOT_TOKEN,
+                    oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                    claudeRuntime,
+                    taskSearchEnabled: taskSearch.taskSearchEnabled,
+                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                    hydrateThreadContext,
+                  })),
               });
             },
           );
