@@ -156,15 +156,19 @@ function sanitizePage(payload: unknown, allowedProjects: ReadonlySet<string>): u
 
     const id = optionalBoundedString(task.id, 200);
     const title = optionalBoundedString(task.title, 500);
+    const version = task.version;
     const status = optionalBoundedString(task.status, 32);
     const priority = optionalBoundedString(task.priority, 16);
-    if (!id || !title || !status || !priority) throw new Error("invalid_upstream_response");
+    if (!id || !title || !Number.isInteger(version) || (version as number) < 1 || !status || !priority) {
+      throw new Error("invalid_upstream_response");
+    }
     const assigneePersonId = optionalBoundedString(task.assignee_person_id, 128, { nullable: true });
     const assigneeDisplayName = optionalBoundedString(task.assignee_display_name, 200, { nullable: true });
     const dueAt = optionalBoundedString(task.due_at, 64, { nullable: true });
     return {
       id,
       title,
+      version: version as number,
       status,
       priority,
       project_codes: projects,

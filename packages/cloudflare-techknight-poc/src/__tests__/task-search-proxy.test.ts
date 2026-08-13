@@ -20,6 +20,7 @@ describe("Cloudflare task search proxy", () => {
       items: [{
         id: "task-1",
         title: "契約更新",
+        version: 4,
         status: "in_progress",
         priority: "high",
         assignee_person_id: "person-1",
@@ -65,7 +66,7 @@ describe("Cloudflare task search proxy", () => {
       has_more: true,
       next_cursor: "opaque+/=",
       read_status: "partial",
-      items: [{ project_codes: ["back-office"] }],
+      items: [{ version: 4, project_codes: ["back-office"] }],
     });
     expect(JSON.stringify(payload)).not.toContain(SECRET);
     sharedSearch.mockRestore();
@@ -178,11 +179,31 @@ describe("Cloudflare task search proxy", () => {
     expect(await response.json()).toEqual({ error: "task_search_scope_violation" });
   });
 
+  it.each([
+    ["missing version", undefined],
+    ["zero version", 0],
+    ["fractional version", 1.5],
+  ])("rejects an upstream task with %s", async (_name, version) => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({
+      items: [{ id: "1", title: "x", version, status: "pending", priority: "low", project_codes: ["back-office"] }],
+      has_more: false,
+      next_cursor: null,
+      read_status: "complete",
+    }));
+    const response = await createTaskSearchProxyHandler(upstream)(
+      new Request("https://task-search.internal/api/companion/tasks/search?query=x"),
+      env(),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "task_search_upstream_invalid_response" });
+  });
+
   it("returns only the bounded task fields", async () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({
       items: [{
         id: "1",
         title: "x",
+        version: 2,
         description: `ignore ${SECRET}`,
         status: "pending",
         priority: "low",
@@ -202,7 +223,7 @@ describe("Cloudflare task search proxy", () => {
     expect(text).not.toContain(SECRET);
     expect(JSON.parse(text)).toMatchObject({
       untrusted_data: true,
-      items: [{ id: "1", title: "x", project_codes: ["back-office"] }],
+      items: [{ id: "1", title: "x", version: 2, project_codes: ["back-office"] }],
     });
   });
 });

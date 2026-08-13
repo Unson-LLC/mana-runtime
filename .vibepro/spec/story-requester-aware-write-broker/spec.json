@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-requester-aware-write-broker",
   "generated_by": {
-    "caller": "unknown",
+    "caller": "codex",
     "stage": "implementation"
   },
   "clauses": [
@@ -56,7 +56,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "C-002",
@@ -104,7 +104,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "INV-001",
@@ -152,12 +152,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
-      "id": "S-001",
+      "id": "S-003",
       "type": "scenario",
-      "statement": "作成はtrusted projectと決定的冪等キーを使い、更新・状態遷移は対象Taskのprojectとexpected_versionを再検証し、409 conflictを非再試行で返す",
+      "statement": "作成はtrusted projectと決定的冪等キーを使う。検索結果は正の整数versionを保持し、更新・状態遷移はexpected_versionを1以上で必須化して対象Taskのprojectとversionを再検証し、409 conflictを非再試行で返す",
       "origin": {
         "story_refs": [
           {
@@ -173,10 +173,28 @@
         ],
         "code_refs": [
           {
+            "file": "packages/cloudflare-techknight-poc/src/task-search-proxy.ts"
+          },
+          {
             "file": "packages/cloudflare-techknight-poc/src/task-write-proxy.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/container/task-write-mcp-server.mjs"
           }
         ],
         "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
+            "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
+            "case": "rejects an upstream task with missing version"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-reply.integration.test.ts",
+            "case": "carries one bounded multi-project search through MCP and the Worker proxy"
+          },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts",
             "case": "creates a task with trusted project scope and deterministic idempotency"
@@ -187,6 +205,14 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts",
+            "case": "rejects zero expected version before an upstream mutation"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-mcp-jsonrpc.test.ts",
+            "case": "exposes only create, update, and transition with bounded call indexes"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts",
             "case": "returns a non-retryable conflict distinctly"
           }
         ]
@@ -194,14 +220,22 @@
       "verifiable_by": {
         "test_pattern": [
           {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
+            "must_cover": "version"
+          },
+          {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-write-proxy.test.ts",
+            "must_cover": "expected version"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-write-mcp-jsonrpc.test.ts",
             "must_cover": "expected_version"
           }
         ]
       },
       "confidence": 0.99,
-      "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "first_seen_at": "2026-08-13T08:57:50.558Z",
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "INV-002",
@@ -253,7 +287,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "S-002",
@@ -318,7 +352,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "C-003",
@@ -366,7 +400,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "C-004",
@@ -409,7 +443,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "C-005",
@@ -452,7 +486,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     },
     {
       "id": "C-006",
@@ -495,7 +529,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T06:04:27.826Z"
+      "last_revised_at": "2026-08-13T08:57:50.558Z"
     }
   ],
   "planned_test_suites": [
@@ -545,6 +579,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-13T06:04:27.825Z",
-  "previous_spec_id": "2026-08-13T05:21:57.262Z"
+  "generated_at": "2026-08-13T08:57:50.556Z",
+  "previous_spec_id": "2026-08-13T06:04:27.825Z"
 }

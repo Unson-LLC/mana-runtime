@@ -7,6 +7,7 @@ describe("task-search MCP to Worker boundary integration", () => {
       items: [{
         id: "task-1",
         title: "契約更新",
+        version: 7,
         status: "waiting",
         priority: "high",
         assignee_display_name: "梅田さん",
@@ -48,6 +49,7 @@ describe("task-search MCP to Worker boundary integration", () => {
     expect(JSON.parse(resultText)).toMatchObject({
       items: [{
         title: "契約更新",
+        version: 7,
         status: "waiting",
         assignee_display_name: "梅田さん",
         project_codes: ["back-office"],

@@ -31,7 +31,7 @@ Cloudflare版は検索まで移行済みだが、会話からの作成・更新�
 - [x] `AC-1`: WorkerがSlackの依頼者、workspace、`mana-accounting` Placement、`back-office` project、許可操作、期限、最大3回を署名したrequest capabilityを発行し、Sandboxへ署名鍵を渡さない。
 - [x] `AC-2`: 一般返信は `create_task`、`update_task`、`transition_task` の専用MCPだけを公開し、明示依頼だけを書き込み、対象指定と `expected_version` が不足する更新を実行しない。
 - [x] `AC-3`: Worker proxyは合成hostの固定method/pathだけを受け、認証、project、Placement、冪等キーをサーバー側で再構築し、改ざん・期限切れ・越境・回数超過をfail closedで拒否する。
-- [x] `AC-4`: 作成はtrusted projectへ固定し、更新・状態遷移は対象Taskを先に取得してprojectとversionを再検証する。409 conflictは非再試行エラーとして区別する。
+- [x] `AC-4`: 作成はtrusted projectへ固定する。検索結果は正の整数versionを保持し、更新・状態遷移はそのversionを必須の`expected_version`として受け、対象Taskのprojectとversionを再検証する。409 conflictは非再試行エラーとして区別する。
 - [x] `AC-5`: 書き込み成功後はタスクボード修復をQueueへ依頼する。タスクボード取得は4 statusを各1回、表示上限+1件で取得し、cursorを追わず、project越境を拒否して最大20件だけ表示する。
 - [x] `AC-6`: Canvasは既存なら更新、未作成なら作成し、件数超過時は正確な総数ではなく「20件以上・続きあり」と表示する。Queue再試行と15分ごとの修復を備え、機能フラグで停止できる。
 - [ ] `AC-7`: Cloudflare本番は書き込みとタスクボードを既定OFFで配備し、Queue/DLQと`TASK_WRITE_CAPABILITY_SECRET`を揃えてから限定チャンネルだけONにする。切替前後にLightsailの`GITHUB_TOKEN`と`meetingMinutesPipeline.destination.github`をreadbackし、議事録GitHub保存を継続する。
