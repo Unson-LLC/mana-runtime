@@ -27,9 +27,9 @@ Slack利用者として、Cloudflare版の八雲まなにもタスク名・状�
 - [x] Sandbox由来のproject・認証・上流URLを信用せず、Workerが固定host・GET・固定path・許可query・project・Bearer認証を再構築する。
 - [x] Brainbase tokenと実URLをprompt、MCP設定、Sandbox環境、標準出力、Slack、永続化へ露出しない。
 - [x] 0件・部分結果・API障害を区別し、部分結果や障害から「存在しない」と断定しない。
-- [ ] 機能フラグを既定OFFとし、Cloudflare Container更新後に対象deploymentだけONへ切り替え、即時OFFへ戻せる。
+- [x] 機能フラグを既定OFFとし、Cloudflare Container更新後に対象deploymentだけONへ切り替え、即時OFFへ戻せる。
 - [x] MCP JSON-RPC、Worker proxy、一般返信配線、project越境拒否、secret非露出、既存返信の単体・統合テストが通る。
-- [ ] Cloudflare packageの型検査とWorker/Container dry-runが通り、デプロイversion・image digest・切戻し手順を記録する。
+- [x] Cloudflare packageの型検査とWorker/Container dry-runが通り、デプロイversion・image digest・切戻し手順を記録する。
 - [ ] 本番Slackで既知タスクを検索し、title・status・担当者・projectがBrainbase正本と一致するまで完了扱いにしない。
 
 ## スコープ外
