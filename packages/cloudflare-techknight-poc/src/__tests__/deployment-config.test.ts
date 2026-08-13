@@ -61,7 +61,7 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_PLACEMENT_ID: "mana-accounting",
       RUNTIME_TASK_WRITE_ENABLED: "true",
       RUNTIME_TASK_BOARD_ENABLED: "true",
-      MEETING_MINUTES_ENABLED: "false",
+      MEETING_MINUTES_ENABLED: "true",
       MEETING_MINUTES_ROUTER_CHANNEL_ID: "C0BKTFQ9V38",
       MEETING_MINUTES_OPERATOR_USER_IDS: "U088D1HBY6L,U0BKP8D3KPD",
       RUNTIME_CLAUDE_MODEL: "opus",
@@ -159,8 +159,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.name).toBe("unson-business-mana-runtime");
   });
 
-  it("keeps Cloudflare meeting minutes off while preserving the confirmed cutover authority", () => {
-    expect(unson.vars.MEETING_MINUTES_ENABLED).toBe("false");
+  it("enables Cloudflare meeting minutes with the confirmed cutover authority", () => {
+    expect(unson.vars.MEETING_MINUTES_ENABLED).toBe("true");
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD");
     const destinations = JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON);
