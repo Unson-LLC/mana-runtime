@@ -50,7 +50,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "C-002",
@@ -92,7 +92,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "INV-001",
@@ -138,7 +138,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "INV-002",
@@ -184,7 +184,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "S-001",
@@ -226,7 +226,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "S-002",
@@ -272,7 +272,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "C-003",
@@ -318,7 +318,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-13T01:21:40.684Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "C-005",
@@ -360,7 +360,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-13T01:45:05.130Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     },
     {
       "id": "C-006",
@@ -406,10 +406,10 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T01:45:05.130Z",
-      "last_revised_at": "2026-08-13T01:45:33.455Z"
+      "last_revised_at": "2026-08-13T01:52:01.866Z"
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-13T01:45:33.454Z",
-  "previous_spec_id": "2026-08-13T01:45:05.129Z"
+  "generated_at": "2026-08-13T01:52:01.866Z",
+  "previous_spec_id": "2026-08-13T01:45:33.454Z"
 }

@@ -95,7 +95,7 @@
       "confidence": 0.98
     },
     {
-      "id": "C-004",
+      "id": "C-005",
       "type": "contract",
       "statement": "単体・統合・型検査・WorkerとContainerのdry-runは実行結果と最終HEADを紐づけて記録する",
       "origin": {
@@ -108,7 +108,7 @@
       "confidence": 0.97
     },
     {
-      "id": "C-005",
+      "id": "C-006",
       "type": "contract",
       "statement": "デプロイversion・image digest・切戻し記録と、本番Slack検索結果のBrainbase正本照合は外部証跡として未実施のまま明示し、ローカルテストで完了扱いにしない",
       "origin": {
