@@ -132,6 +132,58 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(upstream).toHaveBeenCalledTimes(2);
   });
 
+  it("logs only bounded upstream status and code while keeping the external error generic", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({
+      code: "task_write_scope_missing",
+      message: "must not be copied into Worker logs",
+      token: "must-not-leak",
+    }, { status: 403 }));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await createTaskWriteProxyHandler(upstream)(await request({
+      operation: "create",
+      title: "契約更新",
+    }), env());
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "task_write_upstream_failed" });
+    expect(errorLog).toHaveBeenCalledOnce();
+    const receipt = JSON.parse(String(errorLog.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(receipt).toEqual({
+      event: "task_write_upstream_error",
+      requestId: REQUEST_ID,
+      operation: "task.create",
+      upstreamStatus: 403,
+      upstreamCode: "task_write_scope_missing",
+    });
+    expect(JSON.stringify(receipt)).not.toContain("must not be copied");
+    expect(JSON.stringify(receipt)).not.toContain("must-not-leak");
+    errorLog.mockRestore();
+  });
+
+  it("classifies network failures without logging the exception message", async () => {
+    const upstream = vi.fn().mockRejectedValue(new Error("request carried must-not-leak-token"));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await createTaskWriteProxyHandler(upstream)(await request({
+      operation: "create",
+      title: "契約更新",
+    }), env());
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "task_write_upstream_failed" });
+    const receipt = JSON.parse(String(errorLog.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(receipt).toEqual({
+      event: "task_write_upstream_error",
+      requestId: REQUEST_ID,
+      operation: "task.create",
+      upstreamStatus: null,
+      upstreamCode: "task_write_network_error",
+    });
+    expect(JSON.stringify(receipt)).not.toContain("must-not-leak-token");
+    errorLog.mockRestore();
+  });
+
   it.each([
     ["feature disabled", env({ RUNTIME_TASK_WRITE_ENABLED: "false" }), { operation: "create", title: "x" }, 503],
     ["untrusted project", env(), { operation: "create", project: "outside", title: "x" }, 403],

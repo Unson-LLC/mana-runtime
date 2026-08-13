@@ -39,6 +39,21 @@ type WriteRequest = {
 };
 
 function error(error: string, status: number): Response { return Response.json({ error }, { status }); }
+function boundedUpstreamCode(code: string): string {
+  return /^[a-z0-9_]{1,64}$/.test(code) ? code : "task_store_error";
+}
+
+function logUpstreamFailure(cause: unknown, body: WriteRequest): void {
+  const isTaskApiError = cause instanceof TaskApiError;
+  console.error(JSON.stringify({
+    event: "task_write_upstream_error",
+    requestId: body.request_id,
+    operation: `task.${body.operation}`,
+    upstreamStatus: isTaskApiError ? cause.status : null,
+    upstreamCode: isTaskApiError ? boundedUpstreamCode(cause.code) : "task_write_network_error",
+  }));
+}
+
 function text(value: unknown, name: string, max: number, required = false): string | undefined {
   if (value === undefined && !required) return undefined;
   if (typeof value !== "string" || value.trim().length < (required ? 1 : 0) || value.length > max || /[\u0000-\u001f\u007f]/.test(value)) throw new Error(`invalid_${name}`);
@@ -173,6 +188,7 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
       const code = cause instanceof Error ? cause.message : "task_write_failed";
       if (["invalid_write_capability","expired_write_capability","write_capability_scope_mismatch","write_intent_denied","task_write_denied","task_write_scope_violation","task_write_budget_slot_reused","task_write_budget_exceeded"].includes(code)) return error(code, 403);
       if (code === "task_write_not_configured" || code === "not_configured") return error("task_write_not_configured", 503);
+      logUpstreamFailure(cause, body);
       return error("task_write_upstream_failed", 502);
     }
   };
