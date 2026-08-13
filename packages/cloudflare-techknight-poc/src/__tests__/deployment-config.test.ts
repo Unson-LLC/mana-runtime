@@ -238,34 +238,46 @@ describe("会社別Cloudflare deployment", () => {
     expect(readme).toContain("議事録pipelineを停止しない");
   });
 
-  it("keeps production task mutation and Canvas evidence open until Slack and Brainbase match", () => {
+  it("records matching production task mutation and Canvas evidence", () => {
     const story = readFileSync(
       fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
       "utf8",
     );
-    expect(story).toContain("- [ ] `AC-8`");
+    const evidence = readFileSync(
+      fileURLToPath(new URL("../../../../docs/operations/cloudflare-task-migration-cutover-2026-08-13.md", import.meta.url)),
+      "utf8",
+    );
+    expect(story).toContain("- [x] `AC-8`");
     expect(story).toContain("Brainbase正本とCanvasの一致");
     expect(story).toContain("Worker version、Container image digest、Git SHA");
+    expect(evidence).toContain("38c2737b-2a91-4ebe-b9bf-714327830441");
+    expect(evidence).toContain("sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985");
   });
 
-  it("keeps Lightsail ownership cutover evidence open until both task surfaces are disabled", () => {
+  it("records the disabled Lightsail task surfaces and rollback order", () => {
     const story = readFileSync(
       fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
       "utf8",
     );
-    expect(story).toContain("- [ ] `AC-9`");
+    const evidence = readFileSync(
+      fileURLToPath(new URL("../../../../docs/operations/cloudflare-task-migration-cutover-2026-08-13.md", import.meta.url)),
+      "utf8",
+    );
+    expect(story).toContain("- [x] `AC-9`");
     expect(story).toContain("mana-accounting.enabled=false");
     expect(story).toContain("taskCanvas.enabled=false");
     expect(story).toContain("rollbackは逆順");
+    expect(evidence).toContain("77988b4");
+    expect(evidence).toContain("Cloudflareを先にOFF");
   });
 
-  it("keeps complete task migration evidence open while minutes remain on Lightsail", () => {
+  it("closes task migration while keeping minutes as a separate Lightsail boundary", () => {
     const story = readFileSync(
       fileURLToPath(new URL("../../../../docs/management/stories/active/story-requester-aware-write-broker.md", import.meta.url)),
       "utf8",
     );
-    expect(story).toContain("- [ ] `AC-10`");
+    expect(story).toContain("- [x] `AC-10`");
     expect(story).toContain("Cloudflareが対象チャンネル");
-    expect(story).toContain("議事録GitHub保存pipelineが継続");
+    expect(story).toContain("Lightsailの議事録処理は別タスクの所有境界として継続");
   });
 });

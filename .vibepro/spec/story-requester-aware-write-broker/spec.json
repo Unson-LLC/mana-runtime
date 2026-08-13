@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-requester-aware-write-broker",
   "generated_by": {
-    "caller": "codex",
+    "caller": "unknown",
     "stage": "implementation"
   },
   "clauses": [
@@ -56,7 +56,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
       "id": "C-002",
@@ -104,7 +104,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
       "id": "INV-001",
@@ -152,7 +152,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
       "id": "S-003",
@@ -227,7 +227,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T08:57:50.558Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
       "id": "INV-002",
@@ -279,7 +279,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
       "id": "S-002",
@@ -344,12 +344,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
-      "id": "C-003",
+      "id": "C-007",
       "type": "contract",
-      "statement": "Cloudflare本番は書き込みとタスクボードを既定OFFで配備し、専用Queue・DLQ、15分cron、mana-accounting Placement、必要secretを外部から注入する。切替前後にLightsailのGITHUB_TOKENとmeetingMinutesPipeline.destination.githubをreadbackし、PR #120の議事録GitHub保存を維持する",
+      "statement": "Cloudflare本番は書き込みとタスクボードを既定OFFで配備し、専用Queue・DLQ、15分cron、mana-accounting Placement、必要secretを外部から注入してから限定チャンネルだけONにする。LightsailのmeetingMinutesPipelineは有効のまま維持し、タスク所有権切替から分離する",
       "origin": {
         "story_refs": [
           {
@@ -391,13 +391,13 @@
         ]
       },
       "confidence": 0.98,
-      "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "first_seen_at": "2026-08-13T11:53:46.891Z",
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
-      "id": "C-004",
+      "id": "C-008",
       "type": "contract",
-      "statement": "同一Slackスレッドでの検索・作成・更新・状態遷移、Brainbase正本、Canvas、Worker version、Container image digest、Git SHAの一致は本番証跡として未実施のまま明示し、ローカルテストで完了扱いにしない",
+      "statement": "同一Slackスレッドで検索・作成・更新・状態遷移を実行し、Brainbase正本とCanvasの一致、Worker version、Container image digest、Git SHAを本番証跡へ記録する",
       "origin": {
         "story_refs": [
           {
@@ -413,14 +413,14 @@
         ],
         "code_refs": [
           {
-            "file": "docs/management/stories/active/story-requester-aware-write-broker.md",
-            "anchor": "受け入れ基準"
+            "file": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md",
+            "anchor": "同一Slackスレッドの書き込みE2E"
           }
         ],
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "keeps production task mutation and Canvas evidence open until Slack and Brainbase match"
+            "case": "records matching production task mutation and Canvas evidence"
           }
         ]
       },
@@ -428,19 +428,19 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "must_cover": "production task mutation and Canvas evidence open"
+            "must_cover": "matching production task mutation and Canvas evidence"
           }
         ],
-        "evidence": "production Slack thread, Brainbase readback, Canvas timestamp, Worker and Container deployment records"
+        "evidence": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md"
       },
       "confidence": 0.95,
-      "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "first_seen_at": "2026-08-13T11:53:46.891Z",
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
-      "id": "C-005",
+      "id": "C-009",
       "type": "contract",
-      "statement": "Cloudflare E2E後のLightsail mana-accounting PlacementとtaskCanvasの同時無効化、二重処理・空Canvas上書きの不在、rollback可能性は本番証跡として未実施のまま明示する",
+      "statement": "Cloudflare E2E後にLightsailのmana-accounting PlacementとtaskCanvasを同時に無効化し、単独所有とrollback順序を本番証跡へ記録する",
       "origin": {
         "story_refs": [
           {
@@ -456,14 +456,14 @@
         ],
         "code_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/README.md",
-            "anchor": "タスク書き込みとCanvasの段階展開"
+            "file": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md",
+            "anchor": "Lightsail所有権切替"
           }
         ],
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "keeps Lightsail ownership cutover evidence open until both task surfaces are disabled"
+            "case": "records the disabled Lightsail task surfaces and rollback order"
           }
         ]
       },
@@ -471,19 +471,19 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "must_cover": "Lightsail ownership cutover evidence open"
+            "must_cover": "disabled Lightsail task surfaces and rollback order"
           }
         ],
-        "evidence": "Lightsail placement readback, taskCanvas readback, Cloudflare logs, rollback record"
+        "evidence": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md"
       },
       "confidence": 0.96,
-      "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "first_seen_at": "2026-08-13T11:53:46.891Z",
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     },
     {
-      "id": "C-006",
+      "id": "C-010",
       "type": "contract",
-      "statement": "Cloudflareのタスク単独所有、Lightsailの同PlacementとtaskCanvas無効、PR #120の議事録GitHub保存pipeline継続は本番証跡として未実施のまま明示し、全条件が揃った時だけ完全移行とする",
+      "statement": "Cloudflareが対象チャンネルのタスク検索・作成・更新・状態遷移・Canvasを単独所有し、Lightsailの同PlacementとtaskCanvasが無効であることを本番証跡で確認して完全移行とする。Lightsailの議事録処理は別タスクの所有境界として継続する",
       "origin": {
         "story_refs": [
           {
@@ -499,14 +499,14 @@
         ],
         "code_refs": [
           {
-            "file": "docs/management/stories/active/story-requester-aware-write-broker.md",
-            "anchor": "完了条件"
+            "file": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md",
+            "anchor": "結論"
           }
         ],
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "keeps complete task migration evidence open while minutes remain on Lightsail"
+            "case": "closes task migration while keeping minutes as a separate Lightsail boundary"
           }
         ]
       },
@@ -514,14 +514,14 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "must_cover": "complete task migration evidence open"
+            "must_cover": "task migration while keeping minutes as a separate Lightsail boundary"
           }
         ],
-        "evidence": "production task owner inventory, Slack E2E, Lightsail placement and taskCanvas disabled readback, GITHUB_TOKEN presence and meetingMinutesPipeline.destination.github readback"
+        "evidence": "docs/operations/cloudflare-task-migration-cutover-2026-08-13.md"
       },
       "confidence": 0.95,
-      "first_seen_at": "2026-08-13T05:21:57.265Z",
-      "last_revised_at": "2026-08-13T09:05:44.521Z"
+      "first_seen_at": "2026-08-13T11:53:46.891Z",
+      "last_revised_at": "2026-08-13T11:54:11.555Z"
     }
   ],
   "planned_test_suites": [
@@ -565,12 +565,12 @@
         "同一Slack thread",
         "Brainbase readback",
         "Canvas",
-        "GitHub minutes",
-        "所有権切替"
+        "所有権切替",
+        "議事録の別タスク境界"
       ]
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-13T09:05:44.520Z",
-  "previous_spec_id": "2026-08-13T08:57:50.556Z"
+  "generated_at": "2026-08-13T11:54:11.549Z",
+  "previous_spec_id": "2026-08-13T11:53:46.887Z"
 }

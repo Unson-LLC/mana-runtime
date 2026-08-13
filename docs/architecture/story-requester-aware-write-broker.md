@@ -47,10 +47,10 @@ Slack event
 
 1. Workerを `RUNTIME_TASK_WRITE_ENABLED=false`、`RUNTIME_TASK_BOARD_ENABLED=false` で配備する。
 2. 専用Queue/DLQを作成し、`TASK_WRITE_CAPABILITY_SECRET` をCloudflare secretとして設定する。
-3. PR #120を含むLightsail releaseの`GITHUB_TOKEN`と`meetingMinutesPipeline.destination.github`をreadbackし、議事録GitHub保存pipelineを維持する。
-4. 限定channelで書き込みとCanvasをONにし、同一Slackスレッドで検索・作成・更新・状態遷移・Canvasを照合する。あわせてLightsailの議事録GitHub保存が継続していることを確認する。
+3. Lightsailの`meetingMinutesPipeline`を有効のまま維持し、タスク所有権切替の変更対象から除外する。議事録の本番E2E、GitHub保存先、`GITHUB_TOKEN`の検証は別タスクで扱う。
+4. 限定channelで書き込みとCanvasをONにし、同一Slackスレッドで検索・作成・更新・状態遷移・Canvasを照合する。
 5. E2E成功後、Lightsailの `mana-accounting.enabled=false` と同Placementの `taskCanvas.enabled=false` を一つの設定変更として反映する。
-6. Worker version、Container image digest、Git SHA、Brainbase task ID/version、Canvas更新時刻、Lightsail release SHA、GitHub保存設定のreadbackを記録する。
+6. Worker version、Container image digest、Git SHA、Brainbase task ID/version、Canvas更新、LightsailのPlacementとtaskCanvasのreadbackを記録する。
 
 rollbackは、まずCloudflareの書き込みとCanvasをOFFにし、次にLightsailのPlacementとCanvasを同時にONへ戻す。保持版に機能がない場合は単純なWorker version rollbackだけに依存せず、現在のreleaseをフラグOFFで再配備する。
 
@@ -65,4 +65,4 @@ rollbackは、まずCloudflareの書き込みとCanvasをOFFにし、次にLight
 
 ## 変更しないもの
 
-Brainbase Canonical Task API、既存meeting-task proposal、TechKnight tenant、Lightsailの汎用connector設計、PR #120の議事録GitHub保存pipelineは変更しない。
+Brainbase Canonical Task API、既存meeting-task proposal、TechKnight tenant、Lightsailの汎用connector設計、PR #120の議事録GitHub保存pipelineは変更しない。議事録pipelineの本番E2EとCloudflare移行も別タスクで扱う。
