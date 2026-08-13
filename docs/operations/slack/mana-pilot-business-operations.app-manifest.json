@@ -1,7 +1,7 @@
 {
   "display_information": {
-    "name": "まなPilot",
-    "description": "新しいまなです",
+    "name": "八雲りょうこ",
+    "description": "八雲りょうこです",
     "background_color": "#004492"
   },
   "features": {
@@ -11,7 +11,7 @@
       "messages_tab_read_only_enabled": false
     },
     "bot_user": {
-      "display_name": "OpenRyoko Pilot",
+      "display_name": "yakumo_ryoko",
       "always_online": true
     },
     "slash_commands": [
@@ -22,11 +22,11 @@
       }
     ],
     "assistant_view": {
-      "assistant_description": "OpenRyoko Pilot — your AI assistant",
+      "assistant_description": "八雲りょうこ — AIアシスタント",
       "suggested_prompts": [
         {
-          "title": "What can you do?",
-          "message": "What can you help me with?"
+          "title": "何ができる？",
+          "message": "何を手伝えるか教えて"
         }
       ]
     }
