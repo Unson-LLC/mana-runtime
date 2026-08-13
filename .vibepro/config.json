@@ -6,7 +6,7 @@
     "language": "ja"
   },
   "execution": {
-    "managed_worktree": "preferred"
+    "managed_worktree": "disabled"
   },
   "flow_design": {
     "runtime_probes": [
