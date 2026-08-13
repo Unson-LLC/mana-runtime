@@ -56,6 +56,10 @@ Worker version、Container image digest、Git SHAを各段階の記録へ残し�
 known-good Worker versionへrollbackします。rollbackが完了するまで以前のContainer imageを
 削除しません。テストやContainer healthだけをSlack E2E完了とは扱いません。
 
+2026-08-13の雲孫deployment記録は
+[`docs/operations/cloudflare-task-search-rollout-2026-08-13.md`](../../docs/operations/cloudflare-task-search-rollout-2026-08-13.md)
+を参照してください。
+
 ## デプロイ前確認
 
 最初に対象会社とWrangler設定を固定します。
