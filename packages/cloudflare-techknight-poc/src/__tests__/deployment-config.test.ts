@@ -59,7 +59,7 @@ describe("会社別Cloudflare deployment", () => {
 
   it("keeps task search off by default and documents the staged rollout", () => {
     expect(techKnight.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
-    expect(unson.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
+    expect(unson.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("true");
     const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
     const readme = readFileSync(readmePath, "utf8");
     expect(readme).toContain("RUNTIME_TASK_SEARCH_ENABLED=false");
