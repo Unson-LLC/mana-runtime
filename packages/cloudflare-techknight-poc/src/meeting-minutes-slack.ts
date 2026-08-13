@@ -38,7 +38,7 @@ export class MeetingMinutesSlackClient {
       text: `${run.file.name} の保存先プロジェクトを選択してください。`, client_msg_id: await clientMessageId(`${run.runId}-selection`), blocks: [{ type: "section",
         text: { type: "mrkdwn", text: `*${run.file.name}* の保存先プロジェクトを選択してください。` } },
       { type: "actions", elements: destinations.map((destination) => ({ type: "button", text: { type: "plain_text", text: destination.name },
-        action_id: MEETING_MINUTES_CHOOSE_ACTION_ID, value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) })) }] });
+        action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`, value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) })) }] });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
   async postParent(channelId: string, text: string, clientMsgId: string): Promise<string> {
