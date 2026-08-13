@@ -49,7 +49,7 @@ export function runtimeTaskSearchMcpConfigPath(): string {
 export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
-  options: { taskSearchEnabled?: boolean } = {},
+  options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean } = {},
 ): string {
   if (config.model !== "opus") {
     throw new ClaudeRuntimeConfigError("runtime_claude_model_invalid");
@@ -59,7 +59,7 @@ export function buildRuntimeClaudeCommand(
   }
   const promptPath = runtimeClaudePromptPath(purpose);
   const base = `claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat ${promptPath})"`;
-  return purpose === "reply" && options.taskSearchEnabled
+  return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
     : base;
 }

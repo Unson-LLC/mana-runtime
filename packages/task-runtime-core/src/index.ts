@@ -65,6 +65,56 @@ export interface TaskSearchPage extends TaskListPage {
   read_status?: string;
 }
 
+export const TASK_BOARD_STATUSES = ["in_progress", "waiting", "pending", "completed"] as const;
+
+export interface BoundedTaskBoard {
+  items: CanonicalTask[];
+  hasMore: boolean;
+  observedLowerBound: number;
+  requestCount: number;
+}
+
+export async function fetchBoundedTaskBoard(
+  client: Pick<TaskApiClient, "listTasks">,
+  trustedProjectCodes: readonly string[],
+  displayLimit = 20,
+): Promise<BoundedTaskBoard> {
+  const projects = normalizeProjectCodes(trustedProjectCodes);
+  if (projects.length === 0) {
+    throw new TaskApiError(503, "task_scope_not_configured", "Trusted task project scope is empty");
+  }
+  if (!Number.isInteger(displayLimit) || displayLimit < 1 || displayLimit > 49) {
+    throw new TaskApiError(400, "task_board_limit_invalid", "Task board display limit must be between 1 and 49");
+  }
+
+  const pages = await Promise.all(TASK_BOARD_STATUSES.map((status) => client.listTasks({
+    status,
+    limit: displayLimit + 1,
+    project_code: projects,
+  })));
+  const unique = new Map<string, CanonicalTask>();
+  let hasMore = false;
+  for (const page of pages) {
+    if (page.next_cursor || page.items.length > displayLimit) hasMore = true;
+    for (const task of page.items) {
+      const taskProjects = normalizeProjectCodes(task.project_codes ?? []);
+      if (taskProjects.length === 0 || taskProjects.some((project) => !projects.includes(project))) {
+        throw new TaskApiError(502, "task_board_scope_violation", "Canonical task API returned a task outside the trusted project scope");
+      }
+      unique.set(task.id, { ...task, project_codes: taskProjects });
+    }
+  }
+  const all = [...unique.values()];
+  if (all.length > displayLimit) hasMore = true;
+  const items = all.slice(0, displayLimit);
+  return {
+    items,
+    hasMore,
+    observedLowerBound: items.length + (hasMore ? 1 : 0),
+    requestCount: TASK_BOARD_STATUSES.length,
+  };
+}
+
 export class TaskApiError extends Error {
   readonly status: number;
   readonly code: string;

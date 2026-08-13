@@ -29,8 +29,18 @@ import { persistEventOnce } from "./workspace-store.js";
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import {
+  consumeTaskBoardRepair,
+  enqueueScheduledTaskBoardRepair,
+  issueTaskWriteRequestContext,
+} from "./task-runtime-entrypoints.js";
+import {
+  isTaskBoardRepairEvent,
+  type TaskBoardRepairEvent,
+} from "./task-board.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
+export { TaskWriteBudget } from "./task-write-budget.js";
 
 interface Env extends SandboxRuntimeEnv {
   SLACK_SIGNING_SECRET: string;
@@ -43,10 +53,16 @@ interface Env extends SandboxRuntimeEnv {
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_EXECUTION_MODE?: string;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
+  RUNTIME_TASK_WRITE_ENABLED?: string;
+  TASK_WRITE_CAPABILITY_SECRET?: string;
+  RUNTIME_PLACEMENT_ID?: string;
+  RUNTIME_TASK_BOARD_ENABLED?: string;
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent>;
+  TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
+  TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
 }
 
@@ -78,6 +94,9 @@ export default {
         ok: true,
         tenant: env.TENANT_ID,
         meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
+        taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED === "true",
+        taskWriteEnabled: env.RUNTIME_TASK_WRITE_ENABLED === "true",
+        taskBoardEnabled: env.RUNTIME_TASK_BOARD_ENABLED === "true",
       });
     }
     if (url.pathname.startsWith("/admin/sandbox/")) {
@@ -97,9 +116,21 @@ export default {
     });
   },
 
-  async queue(batch: MessageBatch<SlackQueueEvent>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<SlackQueueEvent | TaskBoardRepairEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
-      await consumeTechKnightMessage(message, {
+      if (isTaskBoardRepairEvent(message.body)) {
+        await consumeTaskBoardRepair({
+          body: message.body,
+          ack: () => message.ack(),
+          retry: () => message.retry(),
+        }, env);
+        continue;
+      }
+      await consumeTechKnightMessage({
+        body: message.body as SlackQueueEvent,
+        ack: () => message.ack(),
+        retry: () => message.retry(),
+      }, {
         expectedTenantId: env.TENANT_ID,
         expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
         expectedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
@@ -134,7 +165,7 @@ export default {
                     hydrateThreadContext,
                   });
                 },
-                processReply: () => runWithReplyTaskSearchBinding(event, {
+                processReply: async () => runWithReplyTaskSearchBinding(event, {
                     tenantId: env.TENANT_ID,
                     workspaceId: env.SLACK_EXPECTED_TEAM_ID,
                     channelId: env.SLACK_ALLOWED_CHANNEL_ID,
@@ -142,7 +173,9 @@ export default {
                     taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
-                  }, (taskSearch) => processReplyEvent(workspace.fs, event, {
+                  }, async (taskSearch) => {
+                    const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(event, env);
+                    return processReplyEvent(workspace.fs, event, {
                     expectedTenantId: env.TENANT_ID,
                     expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
                     allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
@@ -150,9 +183,12 @@ export default {
                     oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
                     claudeRuntime,
                     taskSearchEnabled: taskSearch.taskSearchEnabled,
+                    taskWriteEnabled,
+                    taskWriteCapability,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
-                  })),
+                    });
+                  }),
               });
             },
           );
@@ -170,4 +206,8 @@ export default {
       });
     }
   },
-} satisfies ExportedHandler<Env, SlackQueueEvent>;
+
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await enqueueScheduledTaskBoardRepair(env);
+  },
+} satisfies ExportedHandler<Env, SlackQueueEvent | TaskBoardRepairEvent>;

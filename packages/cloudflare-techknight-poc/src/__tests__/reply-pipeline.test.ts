@@ -198,6 +198,32 @@ describe("TechKnight Slack reply pipeline", () => {
     );
   });
 
+  it("configures the requester-scoped write MCP without exposing the signing secret", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      taskSearchEnabled: true,
+      taskWriteEnabled: true,
+      taskWriteCapability: "signed-request-capability",
+    });
+    await processReplyEvent(fs, event({ text: "<@U_BOT> 契約更新タスクを完了にして" }), options);
+
+    const writes = Object.fromEntries(sandbox.writeFile.mock.calls.map(([path, content]) => [path, content]));
+    expect(String(writes["/tmp/mana-slack-prompt.txt"])).toContain("transition_task");
+    expect(JSON.parse(String(writes["/tmp/mana-task-search-mcp.json"]))).toEqual({
+      mcpServers: {
+        "task-search": { command: "node", args: ["/opt/mana/task-search-mcp-server.mjs"] },
+        "task-write": { command: "node", args: ["/opt/mana/task-write-mcp-server.mjs"] },
+      },
+    });
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      env: expect.objectContaining({
+        MANA_TASK_WRITE_REQUEST_ID: "EvReply123",
+        MANA_TASK_WRITE_CAPABILITY: "signed-request-capability",
+      }),
+    }));
+    expect(JSON.stringify(writes)).not.toContain("TASK_WRITE_CAPABILITY_SECRET");
+  });
+
   it("does not repeat a completed Slack reply", async () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();

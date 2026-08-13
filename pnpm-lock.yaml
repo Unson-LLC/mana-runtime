@@ -36,6 +36,9 @@ importers:
       '@openryoko/task-runtime-core':
         specifier: workspace:*
         version: link:../task-runtime-core
+      '@openryoko/write-broker':
+        specifier: workspace:*
+        version: link:../write-broker
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260811.1
@@ -267,6 +270,15 @@ importers:
       tailwindcss:
         specifier: ^4.1.0
         version: 4.2.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.0(@types/node@22.19.15)(jsdom@29.0.0)(vite@8.0.0(@types/node@22.19.15)(jiti@2.6.1)(yaml@2.9.0))
+
+  packages/write-broker:
+    devDependencies:
       typescript:
         specifier: ^5.8.0
         version: 5.9.3

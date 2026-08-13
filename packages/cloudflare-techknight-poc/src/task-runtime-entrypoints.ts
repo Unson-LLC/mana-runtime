@@ -1,0 +1,94 @@
+import { signTaskWriteCapability } from "@openryoko/write-broker";
+import { parseRuntimeProjectCodes } from "./runtime-config.js";
+import {
+  refreshTaskBoard,
+  type TaskBoardEnv,
+  type TaskBoardRepairEvent,
+} from "./task-board.js";
+import type { SlackQueueEvent } from "./types.js";
+
+interface TaskWriteRuntimeEnv {
+  RUNTIME_TASK_WRITE_ENABLED?: string;
+  TASK_WRITE_CAPABILITY_SECRET?: string;
+  RUNTIME_PLACEMENT_ID?: string;
+  RUNTIME_PROJECT_CODES?: string;
+}
+
+interface TaskBoardRuntimeEnv extends TaskBoardEnv {
+  TENANT_ID: string;
+  SLACK_EXPECTED_TEAM_ID: string;
+  SLACK_ALLOWED_CHANNEL_ID: string;
+  TASK_BOARD_REPAIRS: { send(message: TaskBoardRepairEvent): Promise<unknown> };
+}
+
+interface QueueMessageLike<T> {
+  body: T;
+  ack(): void;
+  retry(): void;
+}
+
+export async function issueTaskWriteRequestContext(
+  event: SlackQueueEvent,
+  env: TaskWriteRuntimeEnv,
+  now = Date.now(),
+): Promise<{ taskWriteEnabled: boolean; taskWriteCapability?: string }> {
+  if (env.RUNTIME_TASK_WRITE_ENABLED !== "true") return { taskWriteEnabled: false };
+  const projects = parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
+  if (!env.TASK_WRITE_CAPABILITY_SECRET || !env.RUNTIME_PLACEMENT_ID || projects.length === 0 || !event.userId) {
+    throw new Error("task_write_not_configured");
+  }
+  return {
+    taskWriteEnabled: true,
+    taskWriteCapability: await signTaskWriteCapability({
+      version: 1,
+      audience: "mana-task-write",
+      requestId: event.eventId,
+      actor: { provider: "slack", id: event.userId, workspace: event.workspaceId },
+      placementId: env.RUNTIME_PLACEMENT_ID,
+      projects,
+      operations: ["task.create", "task.update", "task.transition"],
+      expiresAt: now + 180_000,
+      nonce: event.eventId,
+      budget: 3,
+    }, env.TASK_WRITE_CAPABILITY_SECRET),
+  };
+}
+
+export async function consumeTaskBoardRepair(
+  message: QueueMessageLike<TaskBoardRepairEvent>,
+  env: TaskBoardRuntimeEnv,
+  refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
+): Promise<void> {
+  const repair = message.body;
+  if (
+    repair.tenantId !== env.TENANT_ID ||
+    repair.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
+    repair.channelId !== env.SLACK_ALLOWED_CHANNEL_ID
+  ) {
+    console.error(JSON.stringify({ event: "task_board_repair_rejected", reason: "scope_mismatch" }));
+    message.ack();
+    return;
+  }
+  try {
+    await refresh(env);
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({ event: "task_board_repair_failed", code: error instanceof Error ? error.message : "unknown" }));
+    message.retry();
+  }
+}
+
+export async function enqueueScheduledTaskBoardRepair(
+  env: TaskBoardRuntimeEnv,
+  now = new Date().toISOString(),
+): Promise<void> {
+  if (env.RUNTIME_TASK_BOARD_ENABLED !== "true") return;
+  await env.TASK_BOARD_REPAIRS.send({
+    eventType: "task_board_repair",
+    tenantId: env.TENANT_ID,
+    workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+    channelId: env.SLACK_ALLOWED_CHANNEL_ID,
+    reason: "scheduled",
+    requestedAt: now,
+  });
+}

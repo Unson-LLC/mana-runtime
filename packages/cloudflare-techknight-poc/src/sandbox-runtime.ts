@@ -5,6 +5,8 @@ import {
   handleTaskSearchProxyRequest,
   TASK_SEARCH_PROXY_HOST,
 } from "./task-search-proxy.js";
+import { handleTaskWriteProxyRequest, TASK_WRITE_PROXY_HOST } from "./task-write-proxy.js";
+import type { TaskBoardRepairEvent } from "./task-board.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
 
@@ -14,12 +16,20 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv {
   RUNTIME_PROJECT_CODES?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
+  RUNTIME_TASK_WRITE_ENABLED?: string;
+  TASK_WRITE_CAPABILITY_SECRET?: string;
+  RUNTIME_PLACEMENT_ID?: string;
+  TENANT_ID?: string;
+  TASK_BOARD_REPAIRS?: Queue<TaskBoardRepairEvent>;
+  TASK_WRITE_BUDGETS?: DurableObjectNamespace;
+  SLACK_EXPECTED_TEAM_ID?: string;
+  SLACK_ALLOWED_CHANNEL_ID?: string;
 }
 
 export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
   interceptHttps = true;
   enableInternet = false;
-  allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST];
+  allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST];
 }
 
 TechKnightSandbox.outboundByHost = {
@@ -39,6 +49,7 @@ TechKnightSandbox.outboundByHost = {
     });
   },
   [TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest,
+  [TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest,
 };
 
 export function createTechKnightSandbox(env: SandboxRuntimeEnv, id: string) {
