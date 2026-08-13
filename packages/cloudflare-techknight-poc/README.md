@@ -46,10 +46,11 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
 Worker version、Container image digest、Git SHAを各段階の記録へ残します。
 
 1. `RUNTIME_TASK_SEARCH_ENABLED=false`のままWorkerと検索MCP入りContainerをデプロイする。
-2. Containerがready/healthyであり、MCPの`initialize`、`tools/list`、
-   境界付き`search_tasks` probeが成功することを確認する。
+2. Containerがready/healthyであり、検索MCPを同梱したimageであることを確認する。
+   フラグOFF中はWorker proxyが検索を拒否するため、検索成功を要求しない。
 3. 対象deploymentだけを`RUNTIME_TASK_SEARCH_ENABLED=true`へ変更して再デプロイする。
-4. 本番Slackで既知タスク、複数project、0件、部分結果をBrainbase正本と照合する。
+4. ON切替後の最初の境界付き`search_tasks` probeを記録し、本番Slackで既知タスク、
+   複数project、0件、部分結果をBrainbase正本と照合する。
 
 異常時は最初にフラグを`false`へ戻し、MCPなしの一般返信へ切り戻します。必要なら記録済みの
 known-good Worker versionへrollbackします。rollbackが完了するまで以前のContainer imageを

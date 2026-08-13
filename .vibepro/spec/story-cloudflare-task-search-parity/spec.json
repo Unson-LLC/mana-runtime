@@ -14,11 +14,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 0
+            "ac_id": "AC-1"
           },
           {
             "kind": "acceptance_criteria",
-            "index": 6
+            "ac_id": "AC-7"
           }
         ],
         "architecture_refs": [
@@ -60,7 +60,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 1
+            "ac_id": "AC-2"
           }
         ],
         "architecture_refs": [
@@ -102,11 +102,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 2
+            "ac_id": "AC-3"
           },
           {
             "kind": "acceptance_criteria",
-            "index": 3
+            "ac_id": "AC-4"
           }
         ],
         "architecture_refs": [
@@ -124,7 +124,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
-            "case": "forces the deployment project union in one upstream request"
+            "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union"
           }
         ]
       },
@@ -148,11 +148,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 3
+            "ac_id": "AC-4"
           },
           {
             "kind": "acceptance_criteria",
-            "index": 4
+            "ac_id": "AC-5"
           }
         ],
         "architecture_refs": [
@@ -194,7 +194,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 5
+            "ac_id": "AC-6"
           }
         ],
         "architecture_refs": [
@@ -236,11 +236,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 2
+            "ac_id": "AC-3"
           },
           {
             "kind": "acceptance_criteria",
-            "index": 7
+            "ac_id": "AC-8"
           }
         ],
         "architecture_refs": [
@@ -282,11 +282,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 6
+            "ac_id": "AC-7"
           },
           {
             "kind": "acceptance_criteria",
-            "index": 8
+            "ac_id": "AC-9"
           }
         ],
         "architecture_refs": [
@@ -328,15 +328,15 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "index": 7
+            "ac_id": "AC-8"
           },
           {
             "kind": "acceptance_criteria",
-            "index": 8
+            "ac_id": "AC-9"
           },
           {
             "kind": "acceptance_criteria",
-            "index": 9
+            "ac_id": "AC-10"
           }
         ],
         "architecture_refs": [
