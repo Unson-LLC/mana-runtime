@@ -72,6 +72,7 @@ function makePipeline(overrides: {
   handoff?: ReturnType<typeof vi.fn> | null;
   share?: ReturnType<typeof vi.fn>;
   update?: ReturnType<typeof vi.fn>;
+  saveMeetingRecords?: ReturnType<typeof vi.fn>;
   settingsWebBaseUrl?: string;
   workspaceId?: string;
   /** Test-only convenience: emulate the operator selecting the LLM suggestion. */
@@ -100,6 +101,7 @@ function makePipeline(overrides: {
       fetchTranscript: fetchTranscript as any,
       classifyImpl: classify as any,
       generateImpl: generate as any,
+      saveMeetingRecords: overrides.saveMeetingRecords as any,
       graphClient: makeGraphClient(),
       taskClientFactory: () => makeTaskClient(),
       taskProposalNotifier: handoff ? { processMinutesText: handoff as any } : null,
@@ -741,6 +743,82 @@ describe("routing fallback", () => {
 });
 
 describe("failures and retry", () => {
+  it("stores transcript and minutes in GitHub before posting to Slack", async () => {
+    const saveMeetingRecords = vi.fn().mockResolvedValue({
+      transcriptPath: "docs/transcripts/2026-08-13_meeting.txt",
+      minutesPath: "docs/minutes/2026-08-13_meeting.md",
+      transcriptUrl: "https://github.example/transcript",
+      minutesUrl: "https://github.example/minutes",
+      savedAt: 123,
+    });
+    const { pipeline, apiCall } = makePipeline({
+      saveMeetingRecords,
+      config: {
+        destinations: [{
+          ...DESTINATIONS[0],
+          github: { owner: "Unson-LLC", repo: "salestailor", pathPrefix: "docs/meetings" },
+        }],
+      },
+    });
+
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    expect(saveMeetingRecords).toHaveBeenCalledWith(expect.objectContaining({
+      transcript: TRANSCRIPT,
+      minutes: MINUTES,
+      sourceFileName: "meeting.txt",
+      projectId: "proj_salestailor",
+      target: expect.objectContaining({ repo: "salestailor" }),
+    }));
+    const run = Object.values(readState().runs)[0];
+    expect(run.github?.minutesUrl).toBe("https://github.example/minutes");
+    const destinationPostIndex = apiCall.mock.calls.findIndex((call: unknown[]) =>
+      call[0] === "chat.postMessage" && (call[1] as any).channel === "C_ST",
+    );
+    expect(saveMeetingRecords.mock.invocationCallOrder[0]).toBeLessThan(
+      apiCall.mock.invocationCallOrder[destinationPostIndex],
+    );
+    expect(apiCall.mock.calls.some((call: unknown[]) =>
+      call[0] === "chat.update" && JSON.stringify(call[1]).includes("https://github.example/minutes"),
+    )).toBe(true);
+  });
+
+  it("fails closed before Slack delivery when GitHub storage fails and resumes without regenerating", async () => {
+    const saveMeetingRecords = vi.fn()
+      .mockRejectedValueOnce(new Error("github_write_failed:500"))
+      .mockResolvedValueOnce({
+        transcriptPath: "docs/transcripts/meeting.txt",
+        minutesPath: "docs/minutes/meeting.md",
+        transcriptUrl: "https://github.example/transcript",
+        minutesUrl: "https://github.example/minutes",
+        savedAt: 123,
+      });
+    const { pipeline, apiCall, generate } = makePipeline({
+      saveMeetingRecords,
+      config: {
+        destinations: [{
+          ...DESTINATIONS[0],
+          github: { owner: "Unson-LLC", repo: "salestailor" },
+        }],
+      },
+    });
+    const event = fileEvent();
+    await pipeline.maybeHandleFileMessage(event);
+    const [key, failed] = Object.entries(readState().runs)[0];
+    expect(failed.status).toBe("failed:github");
+    expect(postedMessages(apiCall).some((post) => post.channel === "C_ST")).toBe(false);
+
+    await pipeline.handleRetry(
+      { user: { id: OPERATOR }, channel: { id: ROUTER } },
+      { value: JSON.stringify({ key }) },
+    );
+
+    expect(saveMeetingRecords).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(Object.values(readState().runs)[0].status).toBe("tasks_dispatched");
+    expect(postedMessages(apiCall).some((post) => post.channel === "C_ST")).toBe(true);
+  });
+
   it("never writes raw exception secrets to application logs", async () => {
     const secret = "xoxb-must-not-appear-in-logs";
     const generate = vi.fn().mockRejectedValue(new Error(`provider rejected ${secret}`));
