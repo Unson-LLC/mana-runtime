@@ -1,4 +1,4 @@
-import { isMeetingMinutesSlackEvent, meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
+import { isMeetingMinutesSelection, isMeetingMinutesSlackEvent, meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
 
 const destinations = JSON.stringify([{ id: "mana", projectId: "mana", name: "mana", slackChannelId: "CDEST",
   github: { owner: "Unson-LLC", repo: "mana", pathPrefix: "docs" } }]);
@@ -19,5 +19,10 @@ describe("meeting minutes entrypoints", () => {
     expect(isMeetingMinutesSlackEvent({ tenantId: "unson", eventId: "E2", workspaceId: "T1", channelId: "COTHER",
       threadTs: "1", messageTs: "1", eventType: "message", subtype: "file_share", text: "", receivedAt: "now",
       files: [{ id: "F1", name: "meeting.txt" }] }, config)).toBe(false);
+  });
+  it("recognizes only a complete selection Queue message", () => {
+    expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1", destinationId: "mana",
+      workspaceId: "T1", channelId: "C1", userId: "U1", actionTs: "2.1" })).toBe(true);
+    expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1" })).toBe(false);
   });
 });

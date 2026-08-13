@@ -15,6 +15,19 @@ import {
   type SandboxRuntimeEnv,
 } from "./sandbox-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
+import {
+  isMeetingMinutesSelection,
+  isMeetingMinutesSlackEvent,
+  meetingMinutesRuntimeConfig,
+  processMeetingMinutesSelection,
+  processMeetingMinutesSlackEvent,
+  type MeetingMinutesEnvironment,
+} from "./meeting-minutes-entrypoints.js";
+import type { MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { handleMeetingMinutesInteraction } from "./slack-interactions.js";
+import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
+import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
+import { generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import {
   processMeetingTaskEvent,
@@ -42,12 +55,13 @@ import {
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
 
-interface Env extends SandboxRuntimeEnv {
+interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
+  GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   RUNTIME_PROJECT_CODES?: string;
@@ -60,10 +74,11 @@ interface Env extends SandboxRuntimeEnv {
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
   TENANT_ID: string;
-  TECHKNIGHT_EVENTS: Queue<SlackQueueEvent>;
+  TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
+  MEETING_MINUTES_WORKSPACE: DurableObjectNamespace<MeetingMinutesWorkspace>;
 }
 
 interface WorkspaceEnv {}
@@ -82,8 +97,38 @@ export class TechKnightWorkspace extends withWorkspace(
   }),
 ) {}
 
+export class MeetingMinutesWorkspace extends withWorkspace(
+  WorkspaceBase,
+  (self) => ({ storage: self.workspaceStorage as unknown as DurableObjectStorageLike }),
+) {}
+
 function workspaceName(event: SlackQueueEvent): string {
   return [event.tenantId, event.workspaceId, event.channelId, event.threadTs].join(":");
+}
+
+function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runId: string): string {
+  return [tenantId, workspaceId, "meeting-minutes", runId].join(":");
+}
+
+function meetingMinutesClients(env: Env) {
+  const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
+  const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
+  const claudeRuntime = resolveClaudeRuntimeConfig(env);
+  return {
+    slack,
+    resume: {
+      download: (fileId: string) => slack.downloadTextFile(fileId),
+      generate: (transcript: string) => {
+        if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("oauth_not_configured");
+        return generateMeetingMinutesInSandbox(transcript, claudeRuntime,
+          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
+      },
+      saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
+      postParent: (channelId: string, text: string, clientMsgId: string) => slack.postParent(channelId, text, clientMsgId),
+      postThreadChunk: (channelId: string, threadTs: string, text: string, clientMsgId: string) =>
+        slack.postThreadChunk(channelId, threadTs, text, clientMsgId),
+    },
+  };
 }
 
 export default {
@@ -97,11 +142,22 @@ export default {
         taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED === "true",
         taskWriteEnabled: env.RUNTIME_TASK_WRITE_ENABLED === "true",
         taskBoardEnabled: env.RUNTIME_TASK_BOARD_ENABLED === "true",
+        meetingMinutesEnabled: env.MEETING_MINUTES_ENABLED === "true",
       });
     }
     if (url.pathname.startsWith("/admin/sandbox/")) {
       return handleSandboxAdminRequest(request, env, {
         createSandbox: (id) => createTechKnightSandbox(env, id),
+      });
+    }
+    if (request.method === "POST" && url.pathname === "/slack/interactions") {
+      const config = meetingMinutesRuntimeConfig(env);
+      return handleMeetingMinutesInteraction(request, {
+        signingSecret: env.SLACK_SIGNING_SECRET,
+        expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
+        expectedAppId: env.SLACK_EXPECTED_APP_ID,
+        operatorUserIds: config.operatorUserIds,
+        send: (selection) => env.TECHKNIGHT_EVENTS.send(selection),
       });
     }
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
@@ -116,7 +172,7 @@ export default {
     });
   },
 
-  async queue(batch: MessageBatch<SlackQueueEvent | TaskBoardRepairEvent>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | TaskBoardRepairEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       if (isTaskBoardRepairEvent(message.body)) {
         await consumeTaskBoardRepair({
@@ -124,6 +180,64 @@ export default {
           ack: () => message.ack(),
           retry: () => message.retry(),
         }, env);
+        continue;
+      }
+      const meetingMinutesConfig = meetingMinutesRuntimeConfig(env);
+      if (isMeetingMinutesSelection(message.body)) {
+        const selection = message.body;
+        if (selection.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
+          selection.channelId !== meetingMinutesConfig.routerChannelId) {
+          console.error(JSON.stringify({ event: "meeting_minutes_selection_boundary_mismatch", runId: selection.runId }));
+          message.ack();
+          continue;
+        }
+        try {
+          const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+            env.TENANT_ID, selection.workspaceId, selection.runId,
+          ));
+          const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+          await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+            const clients = meetingMinutesClients(env);
+            await processMeetingMinutesSelection(workspace.fs, selection, meetingMinutesConfig, clients.resume);
+          });
+          message.ack();
+        } catch (error) {
+          console.error(JSON.stringify({ event: "meeting_minutes_selection_failed", runId: selection.runId,
+            error: error instanceof Error ? error.message : "unexpected_error" }));
+          message.retry();
+        }
+        continue;
+      }
+      if (isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)) {
+        await consumeTechKnightMessage({
+          body: message.body,
+          ack: () => message.ack(),
+          retry: () => message.retry(),
+        }, {
+          expectedTenantId: env.TENANT_ID,
+          expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+          expectedChannelId: meetingMinutesConfig.routerChannelId,
+          process: async (event) => {
+            for (const file of event.files ?? []) {
+              if (!/\.txt$/i.test(file.name)) continue;
+              const runId = `${event.eventId}_${file.id}`;
+              const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+                env.TENANT_ID, event.workspaceId, runId,
+              ));
+              const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+              await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+                const clients = meetingMinutesClients(env);
+                await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
+                  requestDestination: (run, destinations) => clients.slack.requestDestination(run, destinations),
+                });
+              });
+            }
+            return { outcome: "awaiting_destination" };
+          },
+          log: (entry) => console.log(JSON.stringify(entry)),
+          logError: (entry) => console.error(JSON.stringify(entry)),
+          errorCode: (error) => error instanceof Error ? error.message : "unexpected_error",
+        });
         continue;
       }
       await consumeTechKnightMessage({
@@ -210,4 +324,4 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await enqueueScheduledTaskBoardRepair(env);
   },
-} satisfies ExportedHandler<Env, SlackQueueEvent | TaskBoardRepairEvent>;
+} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | TaskBoardRepairEvent>;

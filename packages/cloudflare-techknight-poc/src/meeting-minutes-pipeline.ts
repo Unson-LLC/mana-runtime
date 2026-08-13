@@ -87,6 +87,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   if (run.destination && !sameDestination(run.destination, configured)) {
     throw new Error("meeting_minutes_destination_changed");
   }
+  if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
   run.destination ??= structuredClone(configured); run.approvedBy ??= selection.userId;
   run.status = run.status === "awaiting_destination" ? "routed" : run.status; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);

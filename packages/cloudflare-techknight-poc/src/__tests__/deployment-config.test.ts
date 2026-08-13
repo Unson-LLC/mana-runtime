@@ -61,6 +61,8 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_PLACEMENT_ID: "mana-accounting",
       RUNTIME_TASK_WRITE_ENABLED: "false",
       RUNTIME_TASK_BOARD_ENABLED: "false",
+      MEETING_MINUTES_ENABLED: "false",
+      MEETING_MINUTES_ROUTER_CHANNEL_ID: "C0BKTFQ9V38",
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
     });
@@ -147,12 +149,37 @@ describe("会社別Cloudflare deployment", () => {
         expect.objectContaining({ name: "TECHKNIGHT_WORKSPACE" }),
         expect.objectContaining({ name: "TECHKNIGHT_SANDBOX" }),
         expect.objectContaining({ name: "TASK_WRITE_BUDGETS", class_name: "TaskWriteBudget" }),
+        expect.objectContaining({ name: "MEETING_MINUTES_WORKSPACE", class_name: "MeetingMinutesWorkspace" }),
       ]),
     );
     expect(unson.containers).toEqual([
       expect.objectContaining({ class_name: "TechKnightSandbox" }),
     ]);
     expect(unson.name).toBe("unson-business-mana-runtime");
+  });
+
+  it("keeps Cloudflare meeting minutes off and fail-closed until destination authority is confirmed", () => {
+    expect(unson.vars.MEETING_MINUTES_ENABLED).toBe("false");
+    expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
+    expect(unson.vars).not.toHaveProperty("MEETING_MINUTES_DESTINATIONS_JSON");
+    expect(unson.vars).not.toHaveProperty("MEETING_MINUTES_OPERATOR_USER_IDS");
+    expect(unson.migrations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tag: "v4", new_sqlite_classes: ["MeetingMinutesWorkspace"] }),
+    ]));
+    const raw = readFileSync(fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)), "utf8");
+    expect(raw).not.toContain('"GITHUB_TOKEN":');
+  });
+
+  it("wires signed interactions and meeting-minutes Queue handling without removing task entrypoints", () => {
+    const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
+    expect(worker).toContain('url.pathname === "/slack/interactions"');
+    expect(worker).toContain("handleMeetingMinutesInteraction(request");
+    expect(worker).toContain("isMeetingMinutesSelection(message.body)");
+    expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
+    expect(worker).toContain("processMeetingMinutesSelection(");
+    expect(worker).toContain("processMeetingMinutesSlackEvent(");
+    expect(worker).toContain("issueTaskWriteRequestContext(event, env)");
+    expect(worker).toContain("consumeTaskBoardRepair({");
   });
 
   it("binds a durable write budget in every deployment and wires all task runtime entrypoints", () => {

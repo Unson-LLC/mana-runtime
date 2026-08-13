@@ -71,4 +71,13 @@ describe("meeting minutes pipeline", () => {
     await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("meeting_minutes_transcript_changed");
     expect(generate).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects a selection from a different operator after approval", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const options = resumeOptions({ postThreadChunk: vi.fn().mockRejectedValue(new Error("slack down")) });
+    await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("slack down");
+    await expect(resumeMeetingMinutesRun(fs, { ...selection, userId: "U2" }, options))
+      .rejects.toThrow("meeting_minutes_approver_changed");
+  });
 });

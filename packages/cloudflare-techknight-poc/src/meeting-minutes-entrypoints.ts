@@ -37,6 +37,17 @@ export function isMeetingMinutesSlackEvent(event: SlackQueueEvent, config: Meeti
     event.subtype === "file_share" && (event.files?.some((file) => /\.txt$/i.test(file.name)) ?? false);
 }
 
+export function isMeetingMinutesSelection(value: unknown): value is MeetingMinutesSelection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<MeetingMinutesSelection>;
+  return candidate.kind === "meeting_minutes_selection" &&
+    typeof candidate.runId === "string" && /^[A-Za-z0-9_-]{3,260}$/.test(candidate.runId) &&
+    typeof candidate.destinationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate.destinationId) &&
+    [candidate.workspaceId, candidate.channelId, candidate.userId].every((item) =>
+      typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
+    typeof candidate.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.actionTs);
+}
+
 export async function processMeetingMinutesSlackEvent(fs: WorkspaceFs, event: SlackQueueEvent,
   config: MeetingMinutesRuntimeConfig, options: Pick<StartMeetingMinutesOptions, "requestDestination" | "now">) {
   if (!isMeetingMinutesSlackEvent(event, config)) return [];
