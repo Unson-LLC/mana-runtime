@@ -59,8 +59,8 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_PROJECT_CODES: "back-office",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
       RUNTIME_PLACEMENT_ID: "mana-accounting",
-      RUNTIME_TASK_WRITE_ENABLED: "false",
-      RUNTIME_TASK_BOARD_ENABLED: "false",
+      RUNTIME_TASK_WRITE_ENABLED: "true",
+      RUNTIME_TASK_BOARD_ENABLED: "true",
       MEETING_MINUTES_ENABLED: "false",
       MEETING_MINUTES_ROUTER_CHANNEL_ID: "C0BKTFQ9V38",
       RUNTIME_CLAUDE_MODEL: "opus",
@@ -198,8 +198,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');
   });
 
-  it("keeps board repair bounded, retryable, and disabled until cutover", () => {
-    expect(unson.vars.RUNTIME_TASK_BOARD_ENABLED).toBe("false");
+  it("keeps board repair bounded, retryable, and enabled in the verified cutover config", () => {
+    expect(unson.vars.RUNTIME_TASK_BOARD_ENABLED).toBe("true");
     expect(unson.queues.producers).toEqual(expect.arrayContaining([
       expect.objectContaining({ queue: "unson-business-mana-task-board-repairs" }),
     ]));
