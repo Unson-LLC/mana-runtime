@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "evidence_type": "production_task_migration_readback",
-  "collected_at": "2026-08-13T13:38:56Z",
+  "collected_at": "2026-08-13T14:06:48Z",
   "channel": {
     "workspace_id": "T0882T8N9UH",
     "channel_id": "C0BKS6RL99T",
@@ -14,12 +14,14 @@
   "cloudflare": {
     "worker_name": "unson-business-mana-runtime",
     "current": {
-      "worker_version": "cfe9ab6e-74a3-4046-8159-8f330f834236",
-      "worker_number": 41,
+      "worker_version": "40d97f3f-6d24-4f5c-938c-0a1898072682",
+      "worker_number": 43,
       "traffic_percent": 100,
-      "created_at": "2026-08-13T12:01:40.240Z",
-      "release_tag": "git-b2d4613",
-      "git_sha": "b2d461303332a96920d82dce68c60eb39832c02d",
+      "created_at": "2026-08-13T13:52:46.148738Z",
+      "release_tag": null,
+      "git_sha": "8f580d0089abaebbe64e4626b85132b8c1c1c632",
+      "git_sha_provenance": "Deployment worktree HEAD and independent source-thread readback; Cloudflare release tag is absent",
+      "script_etag": "1516ef0a64c0b0b3e758e36ae646e3b11aa0b793be6f5fff9ecc83442b801b66",
       "task_search_enabled": true,
       "task_write_enabled": true,
       "task_board_enabled": true,
@@ -47,7 +49,7 @@
       "image_digest": "sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985"
     },
     "readback": {
-      "method": "Wrangler deployments status, versions view, containers list and containers info",
+      "method": "Wrangler deployments list, versions view, containers info, deployment-worktree HEAD and source-thread readback",
       "secret_values_read": false
     }
   },
@@ -132,7 +134,7 @@
     ]
   },
   "canvas": {
-    "read_at": "2026-08-13T13:36:00Z",
+    "read_at": "2026-08-13T14:06:48Z",
     "title": "タスクボード",
     "subtitle": "Brainbase同期（読み取り専用） | 対象project: back-office",
     "counts": {
@@ -146,11 +148,11 @@
     ],
     "screenshot": {
       "method": "authenticated Slack web UI task-board tab",
-      "local_path": "/tmp/mana-current-task-board-2026-08-13.png",
-      "sha256": "5c8a3b3494986ae5720b485d073f411076dbe6629eb91b9b912db2e5d62cd674",
+      "local_path": "/tmp/mana-current-task-board-2026-08-13-v43.jpg",
+      "sha256": "0339eb35a46142fa27105d8ca6fa0f2c0cf643a96e92a8de5e8f304bfed88426",
       "format": "jpeg",
-      "width": 1529,
-      "height": 768
+      "width": 1680,
+      "height": 918
     }
   },
   "lightsail": {

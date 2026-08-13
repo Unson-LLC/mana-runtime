@@ -10,9 +10,10 @@ Slackチャンネル `C0BKS6RL99T` のタスク検索・作成・更新・状態
 
 ## 現在のCloudflare配備
 
-- Git SHA: `b2d461303332a96920d82dce68c60eb39832c02d`（PR #128までを含む現在のmain）
-- Worker version: `cfe9ab6e-74a3-4046-8159-8f330f834236`、配分100%
-- Worker設定のrelease tag: `git-b2d4613`
+- Git SHA: `8f580d0089abaebbe64e4626b85132b8c1c1c632`
+- Worker version: `40d97f3f-6d24-4f5c-938c-0a1898072682`（#43）、配分100%
+- Worker設定のrelease tag: 未設定
+- Script etag: `1516ef0a64c0b0b3e758e36ae646e3b11aa0b793be6f5fff9ecc83442b801b66`
 - Worker handlers: `fetch`、`queue`、`scheduled`
 - 設定: search=`true`、write=`true`、board=`true`
 - 所有境界: Placement=`mana-accounting`、project=`back-office`、channel=`C0BKS6RL99T`
@@ -21,7 +22,9 @@ Slackチャンネル `C0BKS6RL99T` のタスク検索・作成・更新・状態
 - Container ID: `a0312218-7c5c-447a-a906-4e7e7030399b`、state=`ready`、healthy=1、failed=0
 - Container digest: `sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985`
 
-Workerのversion、bindings、Queue、cron、Durable Object、secret名、Containerのhealthとdigestを2026-08-13 22:38 JSTに読み戻した。secret値は表示していない。
+Workerのversion、bindings、Queue、cron、Durable Object、secret名、Containerのhealthとdigestを2026-08-13 23:07 JSTに読み戻した。secret値は表示していない。
+
+このWorkerは、別タスクの議事録修正用worktreeのexact HEADとデプロイ担当タスクのreadbackにより上記Git SHAとの対応を確認した。Cloudflare側にrelease tagがないため、タグによる独立照合ではない。#43では議事録コードだけが後続更新され、タスクのsearch/write/board、Placement、project、channel、Queue、Durable Objectの設定は維持されている。
 
 ## 切替時の同一Slackスレッド書き込みE2E
 
@@ -67,9 +70,9 @@ API tokenは実行時注入だけに使い、値を出力・保存していな�
 - subtitle: `Brainbase同期（読み取り専用） | 対象project: back-office`
 - pending 7件、in_progress 0件、waiting 0件、completed 6件
 - `CF-BOARD-VISIBILITY-2026-08-13-D295C86` を現在のCanvasで確認
-- 画面readback: 2026-08-13 22:36 JST
-- ローカル画面証跡: `/tmp/mana-current-task-board-2026-08-13.png`
-- SHA-256: `5c8a3b3494986ae5720b485d073f411076dbe6629eb91b9b912db2e5d62cd674`
+- 画面readback: 2026-08-13 23:06 JST（Worker #43配備後）
+- ローカル画面証跡: `/tmp/mana-current-task-board-2026-08-13-v43.jpg`
+- SHA-256: `0339eb35a46142fa27105d8ca6fa0f2c0cf643a96e92a8de5e8f304bfed88426`
 
 タスクボードは4 statusの上限付き取得を使い、全ページ取得には戻していない。CanvasはBrainbaseの可視性確認用Taskと一致する。
 

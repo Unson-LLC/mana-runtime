@@ -16,8 +16,10 @@ interface ProductionTaskMigrationEvidence {
     current: {
       worker_version: string;
       traffic_percent: number;
-      release_tag: string;
+      release_tag: string | null;
       git_sha: string;
+      git_sha_provenance: string;
+      script_etag: string;
       task_search_enabled: boolean;
       task_write_enabled: boolean;
       task_board_enabled: boolean;
@@ -193,10 +195,13 @@ describe("recorded production task migration evidence contract", () => {
 
   it("binds current Cloudflare ownership to disabled Lightsail task surfaces", () => {
     expect(evidence.cloudflare.current).toMatchObject({
-      worker_version: "cfe9ab6e-74a3-4046-8159-8f330f834236",
+      worker_version: "40d97f3f-6d24-4f5c-938c-0a1898072682",
       traffic_percent: 100,
-      release_tag: "git-b2d4613",
-      git_sha: "b2d461303332a96920d82dce68c60eb39832c02d",
+      release_tag: null,
+      git_sha: "8f580d0089abaebbe64e4626b85132b8c1c1c632",
+      git_sha_provenance:
+        "Deployment worktree HEAD and independent source-thread readback; Cloudflare release tag is absent",
+      script_etag: "1516ef0a64c0b0b3e758e36ae646e3b11aa0b793be6f5fff9ecc83442b801b66",
       task_search_enabled: true,
       task_write_enabled: true,
       task_board_enabled: true,
