@@ -161,6 +161,29 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     errorLog.mockRestore();
   });
 
+  it("does not confuse an upstream error message with a local authorization failure", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({
+      code: "task_store_forbidden",
+      message: "task_write_denied",
+    }, { status: 403 }));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await createTaskWriteProxyHandler(upstream)(await request({
+      operation: "create",
+      title: "契約更新",
+    }), env());
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "task_write_upstream_failed" });
+    expect(errorLog).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(errorLog.mock.calls[0]?.[0]))).toMatchObject({
+      event: "task_write_upstream_error",
+      upstreamStatus: 403,
+      upstreamCode: "task_store_forbidden",
+    });
+    errorLog.mockRestore();
+  });
+
   it("classifies network failures without logging the exception message", async () => {
     const upstream = vi.fn().mockRejectedValue(new Error("request carried must-not-leak-token"));
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
