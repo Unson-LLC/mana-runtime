@@ -60,6 +60,21 @@ describe("TaskApiClient", () => {
     expect(params.get("limit")).toBe("20");
   });
 
+  it("invokes a receiver-sensitive fetch as a standalone function", async () => {
+    const fetchImpl = vi.fn(async function (this: unknown) {
+      if (this !== undefined) throw new TypeError("Illegal invocation");
+      return jsonResponse({ id: "task-1", version: 1, title: "確認する" });
+    });
+    const client = new TaskApiClient({
+      baseUrl: "https://brainbase.example",
+      token: "token",
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    await expect(client.getTask("task-1")).resolves.toMatchObject({ id: "task-1" });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it("normalizes Brainbase failures and invalid successful JSON", async () => {
     const failedFetch = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(
       { code: "version_conflict", message: "stale task" },

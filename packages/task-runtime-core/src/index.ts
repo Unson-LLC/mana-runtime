@@ -203,7 +203,11 @@ export class TaskApiClient {
     if (options.body !== undefined) headers["Content-Type"] = "application/json";
     if (options.idempotencyKey !== undefined) headers["Idempotency-Key"] = options.idempotencyKey;
 
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+    // Some runtimes expose fetch as a receiver-sensitive host function. Calling
+    // a function stored on the client through `this` would bind TaskApiClient as
+    // its receiver and can fail before the request leaves the runtime.
+    const fetchImpl = this.fetchImpl;
+    const response = await fetchImpl(`${this.baseUrl}${path}`, {
       method: options.method ?? "GET",
       headers,
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),

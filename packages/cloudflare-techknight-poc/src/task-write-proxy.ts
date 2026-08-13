@@ -135,7 +135,11 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
         expiresAt: claims.expiresAt,
         fingerprint: await requestFingerprint(body),
       });
-      const client = new TaskApiClient({ baseUrl: upstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL), token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl });
+      const client = new TaskApiClient({
+        baseUrl: upstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL),
+        token: env.BRAINBASE_TASK_API_TOKEN,
+        fetchImpl,
+      });
       let result: CanonicalTask;
       if (body.operation === "create") {
         const input: CreateTaskInput = {

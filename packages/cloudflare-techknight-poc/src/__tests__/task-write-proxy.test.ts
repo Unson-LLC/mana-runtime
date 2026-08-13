@@ -98,6 +98,21 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(JSON.stringify(payload)).not.toContain(TASK_TOKEN);
   });
 
+  it("calls the injected fetch without binding TaskApiClient as its receiver", async () => {
+    const upstream = vi.fn(async function (this: unknown) {
+      if (this !== undefined) throw new TypeError("Illegal invocation");
+      return Response.json(task);
+    });
+
+    const response = await createTaskWriteProxyHandler(upstream as typeof fetch)(await request({
+      operation: "create",
+      title: "契約更新",
+    }), env());
+
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
   it("checks the current project before transition and forwards expected_version", async () => {
     const upstream = vi.fn()
       .mockResolvedValueOnce(Response.json(task))
