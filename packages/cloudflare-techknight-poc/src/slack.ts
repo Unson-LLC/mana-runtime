@@ -1,6 +1,8 @@
-import type { SlackQueueEvent } from "./types.js";
+import type { SlackFileReference, SlackQueueEvent } from "./types.js";
 
 const SLACK_REPLAY_WINDOW_SECONDS = 300;
+const MAX_SLACK_FILES = 10;
+const MAX_SLACK_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 interface VerifySlackRequestOptions {
   body: string;
@@ -27,6 +29,28 @@ function nonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeSlackFiles(value: unknown): SlackFileReference[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (value.length > MAX_SLACK_FILES) throw new Error("slack_files_too_many");
+  const files = value.map((candidate) => {
+    if (!isRecord(candidate)) throw new Error("slack_file_invalid");
+    const id = nonEmptyString(candidate.id);
+    const name = nonEmptyString(candidate.name);
+    const mimetype = nonEmptyString(candidate.mimetype);
+    const size = candidate.size;
+    if (!id || !name || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
+      throw new Error("slack_file_invalid");
+    }
+    if (typeof size === "number" &&
+      (!Number.isSafeInteger(size) || size < 0 || size > MAX_SLACK_FILE_SIZE_BYTES)) {
+      throw new Error("slack_file_size_invalid");
+    }
+    return { id, name: name.slice(0, 255), ...(mimetype ? { mimetype } : {}),
+      ...(typeof size === "number" ? { size } : {}) };
+  });
+  return files.length > 0 ? files : undefined;
 }
 
 function bytesToHex(bytes: ArrayBuffer): string {
@@ -100,6 +124,7 @@ export function normalizeSlackEvent(
   const userId = nonEmptyString(payload.event.user);
   const botId = nonEmptyString(payload.event.bot_id);
   const subtype = nonEmptyString(payload.event.subtype);
+  const files = normalizeSlackFiles(payload.event.files);
   return {
     tenantId,
     eventId,
@@ -113,6 +138,7 @@ export function normalizeSlackEvent(
     eventType,
     text: typeof payload.event.text === "string" ? payload.event.text : "",
     receivedAt,
+    ...(files ? { files } : {}),
   };
 }
 

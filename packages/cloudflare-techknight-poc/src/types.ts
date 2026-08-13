@@ -13,4 +13,13 @@ export interface SlackQueueEvent {
   /** Bounded prior thread messages. Never persisted to the Workspace store. */
   threadContext?: string;
   receivedAt: string;
+  /** Bounded Slack file identities. Download URLs are intentionally excluded. */
+  files?: SlackFileReference[];
+}
+
+export interface SlackFileReference {
+  id: string;
+  name: string;
+  mimetype?: string;
+  size?: number;
 }

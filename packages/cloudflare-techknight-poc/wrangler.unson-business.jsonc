@@ -16,6 +16,8 @@
     "RUNTIME_TASK_SEARCH_ENABLED": "true",
     "RUNTIME_TASK_WRITE_ENABLED": "false",
     "RUNTIME_TASK_BOARD_ENABLED": "false",
+    "MEETING_MINUTES_ENABLED": "false",
+    "MEETING_MINUTES_ROUTER_CHANNEL_ID": "C0BKTFQ9V38",
     "RUNTIME_PLACEMENT_ID": "mana-accounting",
     "RUNTIME_CLAUDE_MODEL": "opus",
     "RUNTIME_CLAUDE_EFFORT": "xhigh"
@@ -33,6 +35,10 @@
       {
         "name": "TASK_WRITE_BUDGETS",
         "class_name": "TaskWriteBudget"
+      },
+      {
+        "name": "MEETING_MINUTES_WORKSPACE",
+        "class_name": "MeetingMinutesWorkspace"
       }
     ]
   },
@@ -48,6 +54,10 @@
     {
       "tag": "v3",
       "new_sqlite_classes": ["TaskWriteBudget"]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["MeetingMinutesWorkspace"]
     }
   ],
   "containers": [

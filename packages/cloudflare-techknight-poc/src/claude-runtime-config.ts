@@ -8,7 +8,7 @@ export interface ClaudeRuntimeConfig {
   readonly effort: "xhigh";
 }
 
-export type RuntimeClaudePurpose = "reply" | "meeting-task";
+export type RuntimeClaudePurpose = "reply" | "meeting-task" | "meeting-minutes";
 
 export class ClaudeRuntimeConfigError extends Error {
   constructor(readonly code: string) {
@@ -20,6 +20,7 @@ export class ClaudeRuntimeConfigError extends Error {
 const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.freeze({
   reply: "/tmp/mana-slack-prompt.txt",
   "meeting-task": "/tmp/meeting-task-prompt.txt",
+  "meeting-minutes": "/tmp/meeting-minutes-prompt.txt",
 });
 const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
 
@@ -58,7 +59,9 @@ export function buildRuntimeClaudeCommand(
     throw new ClaudeRuntimeConfigError("runtime_claude_effort_invalid");
   }
   const promptPath = runtimeClaudePromptPath(purpose);
-  const base = `claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat ${promptPath})"`;
+  const base = purpose === "meeting-minutes"
+    ? `claude --print --model opus --effort xhigh --permission-mode bypassPermissions < ${promptPath}`
+    : `claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
     : base;

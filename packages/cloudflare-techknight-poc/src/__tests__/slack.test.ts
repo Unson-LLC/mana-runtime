@@ -57,6 +57,27 @@ describe("verifySlackRequest", () => {
 });
 
 describe("normalizeSlackEvent", () => {
+  it("keeps bounded file identities without persisting download URLs", () => {
+    const event = normalizeSlackEvent({
+      type: "event_callback", team_id: "T_UNSON", event_id: "EvFile",
+      event: { type: "message", subtype: "file_share", channel: "C_ROUTER", ts: "1.1",
+        files: [{ id: "F123", name: "meeting.txt", mimetype: "text/plain", size: 42,
+          url_private_download: "https://files.slack.com/secret" }] },
+    }, "T_UNSON", "2026-08-13T00:00:00.000Z", "unson");
+
+    expect(event.files).toEqual([{ id: "F123", name: "meeting.txt", mimetype: "text/plain", size: 42 }]);
+    expect(JSON.stringify(event)).not.toContain("files.slack.com");
+  });
+
+  it("rejects oversized file metadata before queueing", () => {
+    expect(() => normalizeSlackEvent({
+      type: "event_callback", team_id: "T_UNSON", event_id: "EvFile",
+      event: { type: "message", channel: "C_ROUTER", ts: "1.1",
+        files: [{ id: "F123", name: "meeting.txt", size: 20 * 1024 * 1024 + 1 }] },
+    }, "T_UNSON", "2026-08-13T00:00:00.000Z", "unson"))
+      .toThrowError("slack_file_size_invalid");
+  });
+
   it("normalizes a TechKnight event without trusting tenant input", () => {
     expect(
       normalizeSlackEvent(
