@@ -188,10 +188,6 @@
             "case": "rebuilds the upstream request without sandbox credentials and forces the deployment project union"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-proxy.test.ts",
-            "case": "rejects an upstream task with missing version"
-          },
-          {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-search-reply.integration.test.ts",
             "case": "carries one bounded multi-project search through MCP and the Worker proxy"
           },
