@@ -1,5 +1,7 @@
 import { isMeetingMinutesFile, meetingMinutesRunId, type GeneratedMeetingMinutes,
-  type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+  type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
+  type MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
+import type { CreateTaskInput } from "@openryoko/task-runtime-core";
 import { splitMeetingMinutesForSlack } from "./meeting-minutes-generator.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import type { SavedMeetingMinutesRecords } from "./meeting-minutes-github.js";
@@ -16,6 +18,7 @@ export interface ResumeMeetingMinutesOptions {
   generate(transcript: string, destination: MeetingMinutesDestination): Promise<GeneratedMeetingMinutes>;
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
+  createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string }>;
   postParent(channelId: string, text: string, clientMsgId: string): Promise<string>;
   postThreadChunk(channelId: string, threadTs: string, text: string, clientMsgId: string): Promise<string>;
 }
@@ -73,6 +76,32 @@ async function digest(value: string): Promise<string> {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function taskIdempotencyKey(runId: string, index: number): Promise<string> {
+  return `meeting-minutes-${await digest(`${runId}:task:${index}`)}`;
+}
+
+function taskSummary(run: MeetingMinutesRun): string {
+  const registered = run.taskRegistration?.registered ?? [];
+  if (!registered.length) return "";
+  return ["*Brainbaseタスク自動登録*", `Brainbaseタスク自動登録: ${registered.length}件`,
+    ...[...registered].sort((left, right) => left.index - right.index).map((task) => `• ${task.title}（${task.taskId}）`)].join("\n");
+}
+
+async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
+  options: ResumeMeetingMinutesOptions): Promise<void> {
+  const tasks: MeetingMinutesTaskCandidate[] = run.generated?.tasks ?? [];
+  run.taskRegistration ??= { registered: [] };
+  for (let index = 0; index < tasks.length; index += 1) {
+    if (run.taskRegistration.registered.some((item) => item.index === index)) continue;
+    const candidate = tasks[index]!;
+    const task = await options.createTask({ ...candidate, project_codes: [run.destination!.projectId] },
+      await taskIdempotencyKey(run.runId, index));
+    if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
+    run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim() });
+    run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+  }
+}
+
 export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: MeetingMinutesSelection,
   options: ResumeMeetingMinutesOptions): Promise<MeetingMinutesRun> {
   validateMeetingMinutesDestinations(options.destinations);
@@ -107,12 +136,15 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
+    await registerGeneratedTasks(fs, run, options);
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = run.generated!.body.trimStart();
     const narrativeText = body.startsWith("------------")
       ? `${parentText}\n\n${body}`
       : `${parentText}\n\n------------\n\n${body}`;
-    const chunks = splitMeetingMinutesForSlack(narrativeText); run.slack ??= { postedChunkIndexes: [] };
+    const summary = taskSummary(run);
+    const chunks = splitMeetingMinutesForSlack(summary ? `${narrativeText}\n\n------------\n\n${summary}` : narrativeText);
+    run.slack ??= { postedChunkIndexes: [] };
     if (!run.slack.parentTs) {
       run.slack.parentTs = await options.postParent(run.destination.slackChannelId, parentText, `${run.runId}-parent`);
       run.status = "posting"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);

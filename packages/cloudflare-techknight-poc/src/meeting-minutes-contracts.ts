@@ -14,6 +14,14 @@ export interface GeneratedMeetingMinutes {
   title: string;
   overview: string;
   body: string;
+  tasks?: MeetingMinutesTaskCandidate[];
+}
+
+export interface MeetingMinutesTaskCandidate {
+  title: string;
+  description?: string;
+  priority?: "low" | "medium" | "high" | "urgent";
+  due_at?: string;
 }
 
 export type MeetingMinutesRunStatus =
@@ -40,6 +48,7 @@ export interface MeetingMinutesRun {
   transcriptSha256?: string;
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
+  taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string }> };
   slack?: { selectionTs?: string; parentTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   createdAt: string;
