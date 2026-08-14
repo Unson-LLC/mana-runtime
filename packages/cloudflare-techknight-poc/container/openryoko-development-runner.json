@@ -1,0 +1,10 @@
+{
+  "runnerVersion": "2026-07-31.5",
+  "repository": "/srv/openryoko-development/repository",
+  "worktreesRoot": "/srv/openryoko-development/worktrees",
+  "baseRef": "origin/main",
+  "vibeproBin": "/usr/local/bin/vibepro",
+  "maxDurationMs": 4800000,
+  "claudeBin": "/usr/local/bin/claude",
+  "resultsSpoolDir": "/srv/openryoko-development/results"
+}

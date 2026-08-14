@@ -32,12 +32,17 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
   TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
+  GITHUB_TOKEN?: string;
+  DEVELOPMENT_CALLBACK_BASE_URL?: string;
+  DEVELOPMENT_CALLBACK_TOKEN?: string;
 }
+
+export const DEVELOPMENT_CALLBACK_PROXY_HOST = "development-callback.internal";
 
 export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
   interceptHttps = true;
   enableInternet = false;
-  allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST];
+  allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST];
 }
 
 TechKnightSandbox.outboundByHost = {
@@ -56,6 +61,29 @@ TechKnightSandbox.outboundByHost = {
       body: request.body,
     });
   },
+  "github.com": async (request: Request, env: SandboxRuntimeEnv) => {
+    if (!env.GITHUB_TOKEN) return new Response("github_not_configured", { status: 503 });
+    const url = new URL(request.url);
+    const headers = new Headers(request.headers);
+    headers.set("Authorization", `Bearer ${env.GITHUB_TOKEN}`);
+    return fetch(`https://github.com${url.pathname}${url.search}`, { method: request.method, headers, body: request.body });
+  },
+  [DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv) => {
+    if (!env.DEVELOPMENT_CALLBACK_BASE_URL || !env.DEVELOPMENT_CALLBACK_TOKEN) {
+      return new Response("development_callback_not_configured", { status: 503 });
+    }
+    const base = new URL(env.DEVELOPMENT_CALLBACK_BASE_URL);
+    if (base.protocol !== "https:" || base.username || base.password) {
+      return new Response("development_callback_not_configured", { status: 503 });
+    }
+    const headers = new Headers(request.headers);
+    headers.set("Authorization", `Bearer ${env.DEVELOPMENT_CALLBACK_TOKEN}`);
+    return fetch(`${base.origin}${base.pathname.replace(/\/$/, "")}/development/callback`, {
+      method: request.method,
+      headers,
+      body: request.body,
+    });
+  },
   [TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest,
   [TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest,
   [NOCODB_PROXY_HOST]: (request, env) => handleNocodbProxyRequest(request, env),
@@ -64,9 +92,9 @@ TechKnightSandbox.outboundByHost = {
   [RUNTIME_GATEWAY_PROXY_HOST]: (request, env) => handleRuntimeGatewayProxyRequest(request, env),
 };
 
-export function createTechKnightSandbox(env: SandboxRuntimeEnv, id: string) {
+export function createTechKnightSandbox(env: SandboxRuntimeEnv, id: string, sleepAfter = "1m") {
   return getSandbox(env.TECHKNIGHT_SANDBOX, id, {
     enableDefaultSession: false,
-    sleepAfter: "1m",
+    sleepAfter,
   });
 }

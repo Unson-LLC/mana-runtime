@@ -1,15 +1,74 @@
 import { describe, expect, it, vi } from "vitest";
-import { runRemoteDevelopmentRequest } from "../development-runner-client.js";
-describe("remote development runner", () => {
-  it("submits bounded provenance without waiting for the long-running result", async () => {
-    const fetchImpl = vi.fn(async (_url, init) => { expect(init?.headers).toEqual(expect.objectContaining({ authorization: "Bearer secret" })); expect(JSON.parse(String(init?.body))).toEqual({ request: "修正して", placement_id: "mana-dev-biz", requester_id: "U1", event_id: "Ev1", workspace_id: "T1", channel_id: "C1", thread_ts: "1.0", callback_url: "https://worker.example.com/development/callback" }); return Response.json({ status: "accepted", job_id: "job_1" }, { status: 202 }); });
-    await expect(runRemoteDevelopmentRequest({ request: "修正して", placementId: "mana-dev-biz", requesterId: "U1", eventId: "Ev1", workspaceId: "T1", channelId: "C1", threadTs: "1.0", callbackBaseUrl: "https://worker.example.com", baseUrl: "https://runner.example.com/runtime", token: "secret", fetchImpl: fetchImpl as typeof fetch })).resolves.toContain("job_1");
-    expect(fetchImpl).toHaveBeenCalledWith("https://runner.example.com/runtime/run", expect.anything());
+import { runCloudflareDevelopmentRequest } from "../development-runner-client.js";
+
+function input(overrides: Record<string, unknown> = {}) {
+  return {
+    request: "修正して",
+    placementId: "mana-dev-biz",
+    requesterId: "U1",
+    eventId: "Ev1",
+    workspaceId: "T1",
+    channelId: "C1",
+    threadTs: "1.0",
+    callbackBaseUrl: "https://worker.example.com",
+    createSandbox: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe("runCloudflareDevelopmentRequest", () => {
+  it("stores a bounded job and starts the bundled runner asynchronously", async () => {
+    const writeFile = vi.fn(async (_path: string, _content: string) => undefined);
+    const startProcess = vi.fn(async (_command: string, _options: Record<string, unknown>) => ({ id: "development-Ev1" }));
+    const createSandbox = vi.fn(() => ({ writeFile, startProcess }));
+
+    await expect(runCloudflareDevelopmentRequest(input({ createSandbox }))).resolves.toContain("development-Ev1");
+
+    expect(createSandbox).toHaveBeenCalledWith("development-Ev1");
+    expect(writeFile).toHaveBeenCalledOnce();
+    expect(JSON.parse(writeFile.mock.calls[0]![1])).toEqual(expect.objectContaining({
+      request: "修正して",
+      placement_id: "mana-dev-biz",
+      callback_url: "https://worker.example.com/development/callback",
+    }));
+    expect(startProcess).toHaveBeenCalledWith(
+      "node /opt/mana/cloudflare-development-runner.mjs /tmp/development-Ev1.json",
+      expect.objectContaining({ processId: "development-Ev1", autoCleanup: false }),
+    );
   });
-  it("fails closed without a configured authenticated endpoint", async () => {
-    await expect(runRemoteDevelopmentRequest({ request: "x", placementId: "p", requesterId: "u", eventId: "e", workspaceId: "t", channelId: "c", threadTs: "1" })).rejects.toThrow("development_runner_not_configured");
+
+  it("never interpolates request text into the shell command", async () => {
+    const dangerous = "fix '$(touch /tmp/pwned)'\nthen";
+    const startProcess = vi.fn(async (_command: string, _options: Record<string, unknown>) => ({ id: "development-Ev1" }));
+    const writeFile = vi.fn(async (_path: string, _content: string) => undefined);
+    const createSandbox = vi.fn(() => ({ writeFile, startProcess }));
+
+    await runCloudflareDevelopmentRequest(input({ request: dangerous, createSandbox }));
+
+    expect(startProcess.mock.calls[0]![0]).not.toContain(dangerous);
+    expect(JSON.parse(writeFile.mock.calls[0]![1]).request).toBe(dangerous);
   });
-  it("rejects a synchronous completion response", async () => {
-    await expect(runRemoteDevelopmentRequest({ request: "x", placementId: "p", requesterId: "u", eventId: "e", workspaceId: "t", channelId: "c", threadTs: "1", callbackBaseUrl: "https://worker.example.com", baseUrl: "https://runner.example.com", token: "s", fetchImpl: async () => Response.json({ status: "completed", summary: "done" }) })).rejects.toThrow("development_runner_failed");
+
+  it("fails closed before starting when callback configuration is missing", async () => {
+    const createSandbox = vi.fn();
+    await expect(runCloudflareDevelopmentRequest(input({ callbackBaseUrl: undefined, createSandbox })))
+      .rejects.toThrow("development_runner_not_configured");
+    expect(createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe event identifiers instead of building a command", async () => {
+    const createSandbox = vi.fn();
+    await expect(runCloudflareDevelopmentRequest(input({ eventId: "Ev1; rm -rf x", createSandbox })))
+      .rejects.toThrow("development_runner_invalid_event_id");
+    expect(createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("maps sandbox startup failures without leaking their message", async () => {
+    const createSandbox = vi.fn(() => ({
+      writeFile: vi.fn(async () => undefined),
+      startProcess: vi.fn(async () => { throw new Error("secret internal failure"); }),
+    }));
+    await expect(runCloudflareDevelopmentRequest(input({ createSandbox })))
+      .rejects.toThrow(/^development_runner_failed$/);
   });
 });

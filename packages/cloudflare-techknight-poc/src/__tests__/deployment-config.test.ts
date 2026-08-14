@@ -111,7 +111,6 @@ describe("会社別Cloudflare deployment", () => {
       MEETING_MINUTES_OPERATOR_USER_IDS: "U088D1HBY6L,U0BKP8D3KPD,U07B19N048G",
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
-      DEVELOPMENT_RUNNER_BASE_URL: "https://mana.unson.jp/runtime-development",
       DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
@@ -196,11 +195,12 @@ describe("会社別Cloudflare deployment", () => {
     expect(configs).not.toContain("Bearer ");
   });
 
-  it("keeps Sandbox internet off with only Anthropic and the synthetic search host", () => {
+  it("keeps Sandbox internet off with only explicit runtime proxy hosts", () => {
     const sandboxPath = fileURLToPath(new URL("../sandbox-runtime.ts", import.meta.url));
     const sandboxRuntime = readFileSync(sandboxPath, "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
-    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST]');
+    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST');
+    expect(sandboxRuntime).toContain('[DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv)');
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest");
     expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env) => handleRuntimeGatewayProxyRequest(request, env)");

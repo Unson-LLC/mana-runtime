@@ -60,7 +60,7 @@ import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { createManualCronEvent } from "./runtime-cron-event.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
-import { runRemoteDevelopmentRequest } from "./development-runner-client.js";
+import { runCloudflareDevelopmentRequest } from "./development-runner-client.js";
 import { handleDevelopmentCallback } from "./development-callback.js";
 import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
 import { hydrateSlackAttachments } from "./slack-attachments.js";
@@ -90,8 +90,6 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_EXPECTED_APP_ID?: string;
   MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON?: string;
   RUNTIME_CRON_JOBS_JSON?: string;
-  DEVELOPMENT_RUNNER_BASE_URL?: string;
-  DEVELOPMENT_RUNNER_TOKEN?: string;
   DEVELOPMENT_CALLBACK_BASE_URL?: string;
   DEVELOPMENT_CALLBACK_TOKEN?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
@@ -602,10 +600,10 @@ export default {
                       );
                     },
                   }),
-                  develop: (request) => runRemoteDevelopmentRequest({ request, placementId: placement.placementId,
+                  develop: (request) => runCloudflareDevelopmentRequest({ request, placementId: placement.placementId,
                     requesterId: event.userId!, eventId: event.eventId, workspaceId: event.workspaceId,
                     channelId: event.channelId, threadTs: event.threadTs, callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
-                    baseUrl: env.DEVELOPMENT_RUNNER_BASE_URL, token: env.DEVELOPMENT_RUNNER_TOKEN }),
+                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h") }),
                 });
                 const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
                 await persistReplyCompletion(workspace.fs, {
