@@ -41,8 +41,16 @@ export class MeetingMinutesSlackClient {
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`, value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) })) }] });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
+  async postProcessingStatus(run: MeetingMinutesRun): Promise<string> {
+    if (!run.destination) throw new Error("meeting_minutes_destination_missing");
+    const text = `${run.file.name} の議事録を作成中です。`;
+    const result = await this.post("chat.postMessage", { channel: run.sourceChannelId, thread_ts: run.sourceThreadTs,
+      text, client_msg_id: await clientMessageId(`${run.runId}-processing`), blocks: [{ type: "section",
+        text: { type: "mrkdwn", text: `:hourglass_flowing_sand: *議事録を作成中…*\n保存先: ${run.destination.name}\n完了すると共有先へ投稿します。` } }] });
+    if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
+  }
   async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void> {
-    if (!run.slack?.selectionTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
+    if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
     const completed = outcome === "completed";
     const text = completed
       ? `${run.file.name} の議事録を作成しました。`
@@ -59,7 +67,7 @@ export class MeetingMinutesSlackClient {
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id }) }] });
     }
-    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.selectionTs, text, blocks });
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text, blocks });
   }
   async postParent(channelId: string, text: string, clientMsgId: string): Promise<string> {
     const result = await this.post("chat.postMessage", { channel: channelId, text, client_msg_id: await clientMessageId(clientMsgId), unfurl_links: false });

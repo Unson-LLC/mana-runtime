@@ -24,7 +24,7 @@ describe("handleMeetingMinutesInteraction", () => {
     await Promise.all(background.work);
     expect(result.status).toBe(200);
     expect(send).toHaveBeenCalledOnce();
-    expect(updateOriginal).toHaveBeenCalledOnce();
+    expect(updateOriginal).not.toHaveBeenCalled();
   });
 
   it("verifies and queues an authorized selection", async () => {
@@ -33,20 +33,16 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, send, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({ runId: "Ev1_F1", destinationId: "mana" }));
-    expect(updateOriginal).toHaveBeenCalledWith("https://hooks.slack.com/actions/T1/B1/token", {
-      replace_original: true,
-      text: "議事録を作成中です。",
-      blocks: [{ type: "section", text: { type: "mrkdwn",
-        text: ":hourglass_flowing_sand: *保存先を受け付けました*\n議事録を作成中です。完了すると共有先へ投稿します。" } }],
-    });
+    expect(updateOriginal).not.toHaveBeenCalled();
     expect(await response.json()).toEqual({ ok: true });
   });
-  it("fails closed when Slack did not provide a safe response URL", async () => {
+  it("queues even when Slack did not provide a response URL", async () => {
     const invalid = { ...payload, response_url: "https://example.com/actions/token" };
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(invalid), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, send, updateOriginal, defer: background.defer });
-    expect(response.status).toBe(400); expect(send).not.toHaveBeenCalled(); expect(updateOriginal).not.toHaveBeenCalled();
+    await Promise.all(background.work);
+    expect(response.status).toBe(200); expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).not.toHaveBeenCalled();
   });
   it("does not show processing when the queue rejects the selection", async () => {
     const send = vi.fn().mockRejectedValue(new Error("queue unavailable")); const updateOriginal = vi.fn(); const background = deferred();

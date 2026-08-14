@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { handleMeetingMinutesInteractionEntrypoint } from "../slack-interactions.js";
 
 describe("meeting minutes interaction Worker entrypoint", () => {
-  it("acknowledges immediately and defers Queue plus source-message feedback", async () => {
+  it("acknowledges immediately and defers Queue without replacing the selector", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "secret";
     const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },
       response_url: "https://hooks.slack.com/actions/T1/B1/token", actions: [{
@@ -23,9 +23,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(response.status).toBe(200);
     expect(deferred).toHaveLength(1); await Promise.all(deferred);
     expect(send).toHaveBeenCalledOnce();
-    expect(slackUpdate).toHaveBeenCalledWith("https://hooks.slack.com/actions/T1/B1/token", expect.objectContaining({
-      method: "POST", redirect: "manual",
-    }));
+    expect(slackUpdate).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 });

@@ -105,19 +105,12 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
   const actionTs = string(action?.action_ts);
-  const responseUrl = slackResponseUrl(payload?.response_url);
-  if (!runId || !destinationId || !channelId || !actionTs || !responseUrl || !options.updateOriginal || !options.defer) {
+  if (!runId || !destinationId || !channelId || !actionTs || !options.defer) {
     return response("slack_interaction_invalid", 400);
   }
   options.defer((async () => {
     await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
       channelId, userId, actionTs });
-    await options.updateOriginal!(responseUrl, {
-      replace_original: true,
-      text: "議事録を作成中です。",
-      blocks: [{ type: "section", text: { type: "mrkdwn",
-        text: ":hourglass_flowing_sand: *保存先を受け付けました*\n議事録を作成中です。完了すると共有先へ投稿します。" } }],
-    });
   })());
   return Response.json({ ok: true });
 }

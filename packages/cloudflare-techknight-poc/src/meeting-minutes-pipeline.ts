@@ -14,6 +14,7 @@ export interface StartMeetingMinutesOptions {
 }
 export interface ResumeMeetingMinutesOptions {
   destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
+  postProcessingStatus(run: MeetingMinutesRun): Promise<string>;
   download(fileId: string): Promise<string>;
   generate(transcript: string, destination: MeetingMinutesDestination): Promise<GeneratedMeetingMinutes>;
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
@@ -120,6 +121,11 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   run.destination ??= structuredClone(configured); run.approvedBy ??= selection.userId;
   run.status = run.status === "awaiting_destination" ? "routed" : run.status; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
+  run.slack ??= { postedChunkIndexes: [] };
+  if (!run.slack.processingTs) {
+    run.slack.processingTs = await options.postProcessingStatus(run);
+    run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+  }
   let transcript = "";
   try {
     if (!run.github) {

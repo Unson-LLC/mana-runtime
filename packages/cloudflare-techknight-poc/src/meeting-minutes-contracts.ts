@@ -49,7 +49,7 @@ export interface MeetingMinutesRun {
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
   taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string }> };
-  slack?: { selectionTs?: string; parentTs?: string; postedChunkIndexes: number[] };
+  slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   createdAt: string;
   updatedAt: string;
