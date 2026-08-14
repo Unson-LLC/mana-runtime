@@ -4,6 +4,7 @@ export interface DevelopmentSandbox {
     processId: string;
     autoCleanup: boolean;
     timeout: number;
+    env?: Record<string, string | undefined>;
   }): Promise<{ id: string }>;
 }
 
@@ -54,7 +55,15 @@ export async function runCloudflareDevelopmentRequest(input: {
     await sandbox.writeFile(jobPath, JSON.stringify(payload));
     await sandbox.startProcess(
       `node /opt/mana/cloudflare-development-runner.mjs ${jobPath}`,
-      { processId: jobId, autoCleanup: false, timeout: 4_800_000 },
+      {
+        processId: jobId,
+        autoCleanup: false,
+        timeout: 4_800_000,
+        env: {
+          IS_SANDBOX: "1",
+          CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+        },
+      },
     );
   } catch {
     throw new Error("development_runner_failed");
