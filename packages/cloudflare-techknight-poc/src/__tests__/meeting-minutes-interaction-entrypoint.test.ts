@@ -24,7 +24,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(deferred).toHaveLength(1); await Promise.all(deferred);
     expect(send).toHaveBeenCalledOnce();
     expect(slackUpdate).toHaveBeenCalledWith("https://hooks.slack.com/actions/T1/B1/token", expect.objectContaining({
-      method: "POST", redirect: "error",
+      method: "POST", redirect: "manual",
     }));
     vi.unstubAllGlobals();
   });
