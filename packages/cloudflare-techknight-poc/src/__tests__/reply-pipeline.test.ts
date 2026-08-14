@@ -181,6 +181,21 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("requester_person_id: per_umeda");
     expect(prompt).toContain("私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください");
     expect(prompt).not.toContain("名前またはperson IDを確認してください");
+    expect(sandbox.exec.mock.calls[0][1]?.env).toMatchObject({
+      MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID: "per_umeda",
+    });
+  });
+
+  it("does not bind task searches that are not self-task requests", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      requesterIdentity: { slackUserId: "U_UMEDA", personId: "per_umeda" },
+      taskSearchEnabled: true,
+    });
+
+    await processReplyEvent(fs, event({ text: "<@U_BOT> 契約更新タスクを検索して" }), options);
+
+    expect(sandbox.exec.mock.calls[0][1]?.env).not.toHaveProperty("MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID");
   });
 
   it.each([

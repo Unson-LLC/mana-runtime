@@ -71,11 +71,19 @@ function traceHeaders(callIndex) {
 
 async function callSearch(args, fetchImpl, callIndex) {
   const input = validateArgs(args);
+  const forcedAssigneePersonId = process.env.MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID?.trim();
+  if (forcedAssigneePersonId !== undefined && (
+    !forcedAssigneePersonId ||
+    forcedAssigneePersonId.length > 128 ||
+    /[\u0000-\u001f\u007f]/.test(forcedAssigneePersonId)
+  )) throw new Error("invalid_forced_assignee_person_id");
   const params = new URLSearchParams();
   params.set("query", input.query);
   if (input.status) params.set("status", input.status);
   if (input.priority) params.set("priority", input.priority);
-  if (input.assignee_person_id) params.set("assignee_person_id", input.assignee_person_id);
+  if (forcedAssigneePersonId || input.assignee_person_id) {
+    params.set("assignee_person_id", forcedAssigneePersonId ?? input.assignee_person_id);
+  }
   if (input.cursor) params.set("cursor", input.cursor);
   params.set("limit", String(input.limit));
   let response;
