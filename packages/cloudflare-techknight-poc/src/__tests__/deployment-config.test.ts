@@ -176,6 +176,13 @@ describe("会社別Cloudflare deployment", () => {
     expect(dockerfile).toContain('git config --system user.email "mana-development-runner@unson.jp"');
   });
 
+  it("開発ランナーは秘密値を返さず停止コマンドと終了コードだけを診断に残す", () => {
+    const runner = readFileSync(fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url)), "utf8");
+    expect(runner).toContain("safeRunnerFailureReason(result.stderr, result.code)");
+    expect(runner).toContain("/^[a-z0-9._/-]+ exited with code [0-9]+$/i");
+    expect(runner).not.toContain("summary: result.stderr");
+  });
+
   it("keeps task search off by default and documents the staged rollout", () => {
     expect(techKnight.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
     expect(unson.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("true");
