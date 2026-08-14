@@ -58,6 +58,7 @@ import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runt
 import { markClaudeSessionStarted, markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
+import { createManualCronEvent } from "./runtime-cron-event.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
 import { runRemoteDevelopmentRequest } from "./development-runner-client.js";
 import { handleDevelopmentCallback } from "./development-callback.js";
@@ -578,7 +579,11 @@ export default {
                     jobs: parsePlacementCronJobs(env.RUNTIME_CRON_JOBS_JSON, placement.channelId),
                     action,
                     ...(target ? { target } : {}),
-                    run: async () => { throw new Error("cron_runner_not_configured"); },
+                    run: async (job) => {
+                      await env.TECHKNIGHT_EVENTS.send(
+                        createManualCronEvent(event, job, new Date().toISOString()),
+                      );
+                    },
                   }),
                   develop: (request) => runRemoteDevelopmentRequest({ request, placementId: placement.placementId,
                     requesterId: event.userId!, eventId: event.eventId, workspaceId: event.workspaceId,
