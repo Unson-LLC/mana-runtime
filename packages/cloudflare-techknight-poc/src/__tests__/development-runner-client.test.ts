@@ -33,7 +33,14 @@ describe("runCloudflareDevelopmentRequest", () => {
     }));
     expect(startProcess).toHaveBeenCalledWith(
       "node /opt/mana/cloudflare-development-runner.mjs /tmp/development-Ev1.json",
-      expect.objectContaining({ processId: "development-Ev1", autoCleanup: false }),
+      expect.objectContaining({
+        processId: "development-Ev1",
+        autoCleanup: false,
+        env: {
+          IS_SANDBOX: "1",
+          CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+        },
+      }),
     );
   });
 
