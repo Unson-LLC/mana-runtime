@@ -213,7 +213,6 @@ function meetingMinutesDeploymentGate(env: Env): DurableObjectStub<MeetingMinute
 
 function meetingMinutesClients(env: Env) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
-  const unsonSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_UNSON ?? "");
   const techKnightSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
@@ -225,7 +224,10 @@ function meetingMinutesClients(env: Env) {
     .filter((destination) => destination.organization.id === "tech-knight")
     .map((destination) => destination.slackChannelId));
   const destinationSlack = (channelId: string) => {
-    if (unsonChannels.has(channelId)) return unsonSlack;
+    // Unson destinations are in the same Slack workspace as this Worker. The
+    // Cloudflare app behind SLACK_BOT_TOKEN is the channel member; the legacy
+    // cross-app token cannot see private channels in this workspace.
+    if (unsonChannels.has(channelId)) return slack;
     if (techKnightChannels.has(channelId)) return techKnightSlack;
     return slack;
   };
@@ -251,7 +253,10 @@ function meetingMinutesClients(env: Env) {
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
         return taskClient().createTask(input, idempotencyKey);
       },
-      resolveAssignee: (name: string, projectId: string) => resolveGraphPersonByName(name, projectId, {
+      // Destination project IDs belong to the task destination contract and are
+      // not Graph person scopes. Resolve globally, then let non-unique names
+      // fail closed in resolveGraphPersonByName.
+      resolveAssignee: (name: string, _projectId: string) => resolveGraphPersonByName(name, undefined, {
         baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
         token: env.BRAINBASE_GRAPH_API_TOKEN,
       }),
@@ -381,12 +386,11 @@ export default {
             updateCard: async (run) => { const slack = meetingMinutesClients(env);
               const client = run.destination!.organization.id === "tech-knight"
                 ? new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "")
-                : run.destination!.organization.id === "unson"
-                  ? new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_UNSON ?? "") : clients.slack;
+                : clients.slack;
               await client.updateTaskCard(run); },
             openView: async (organizationId, triggerId, view) => {
               const token = organizationId === "tech-knight"
-                ? env.SLACK_BOT_TOKEN_TECHKNIGHT : organizationId === "unson" ? env.SLACK_BOT_TOKEN_UNSON : env.SLACK_BOT_TOKEN;
+                ? env.SLACK_BOT_TOKEN_TECHKNIGHT : env.SLACK_BOT_TOKEN;
               await new MeetingMinutesSlackClient(token ?? "").openTaskEditView(triggerId, view);
             }, listPeople: () => listGraphPeople(undefined, {
               baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,

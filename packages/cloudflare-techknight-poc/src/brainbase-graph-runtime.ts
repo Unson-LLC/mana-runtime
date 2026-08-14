@@ -94,14 +94,14 @@ function normalizedPersonName(value: string): string {
 
 export async function resolveGraphPersonByName(
   name: string,
-  projectCode: string,
+  projectCode: string | undefined,
   options: BrainbaseGraphRuntimeOptions,
 ): Promise<GraphPersonNameResolution> {
   if (!configured(options) || !name.trim()) return { status: "unavailable" };
   const url = new URL("/api/info/graph/entities", options.baseUrl);
   url.searchParams.set("type", "person");
   url.searchParams.set("limit", "500");
-  url.searchParams.set("project", projectCode);
+  if (projectCode?.trim()) url.searchParams.set("project", projectCode.trim());
   const response = await graphGet(url, options);
   if (!response?.ok) return { status: "unavailable" };
   let body: unknown;

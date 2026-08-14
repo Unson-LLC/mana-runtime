@@ -54,6 +54,16 @@ describe("Brainbase Graph runtime", () => {
       .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
   });
 
+  it("does not confuse a task destination ID with a Graph person project scope", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_umeda", payload: { name: "梅田 遼", aliases: [] } },
+    ] }));
+    await expect(resolveGraphPersonByName("梅田 遼", undefined, { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
+    const url = fetchImpl.mock.calls[0][0] as URL;
+    expect(url.searchParams.has("project")).toBe(false);
+  });
+
   it("lists bounded Graph SSOT people for task assignee selection", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
       { id: "per_umeda", payload: { name: "梅田 遼", aliases: ["Haruka Umeda"] } },
