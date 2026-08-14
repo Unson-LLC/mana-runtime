@@ -71,7 +71,7 @@ import {
   type TaskBoardRepairEvent,
 } from "./task-board.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
-import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent } from "./runtime-event-claim.js";
+import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -436,7 +436,8 @@ export default {
           });
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const workspaceStub = env.TECHKNIGHT_WORKSPACE.get(id);
-          if (!await workspaceStub.claimRuntimeEvent(event.eventId)) {
+          const deliveryId = runtimeDeliveryId(event);
+          if (!await workspaceStub.claimRuntimeEvent(deliveryId)) {
             return { outcome: "already_processing" as const };
           }
           const handle = workspaceStub as unknown as WorkspaceHandle;
@@ -588,11 +589,11 @@ export default {
               });
               },
             );
-            await workspaceStub.completeRuntimeEvent(event.eventId,
+            await workspaceStub.completeRuntimeEvent(deliveryId,
               "responseTs" in result && typeof result.responseTs === "string" ? result.responseTs : undefined);
             return result;
           } catch (error) {
-            await workspaceStub.releaseRuntimeEvent(event.eventId);
+            await workspaceStub.releaseRuntimeEvent(deliveryId);
             throw error;
           }
         },
