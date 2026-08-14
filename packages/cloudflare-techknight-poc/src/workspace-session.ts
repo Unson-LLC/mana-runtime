@@ -16,10 +16,13 @@ export interface WorkspaceSessionState {
 
 const SESSION_PATH = "/session/state.json";
 
+async function readText(value: string | ReadableStream<Uint8Array>): Promise<string> {
+  return typeof value === "string" ? value : await new Response(value).text();
+}
+
 export async function readWorkspaceSession(fs: WorkspaceSessionFs): Promise<WorkspaceSessionState> {
   try {
-    const raw = await fs.readFile(SESSION_PATH);
-    if (typeof raw !== "string") return { generation: 1 };
+    const raw = await readText(await fs.readFile(SESSION_PATH));
     const value = JSON.parse(raw) as Partial<WorkspaceSessionState>;
     return Number.isSafeInteger(value.generation) && (value.generation ?? 0) >= 1
       ? { generation: value.generation!, ...(value.lastNewCommandId ? { lastNewCommandId: value.lastNewCommandId } : {}),
