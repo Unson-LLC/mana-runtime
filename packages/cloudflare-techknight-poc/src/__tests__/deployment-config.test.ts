@@ -268,6 +268,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.queues.consumers[0]?.max_concurrency).toBeGreaterThanOrEqual(2);
   });
 
+  it("通常返信と議事録の実行中も開発コマンド用Containerを確保できる", () => {
+    expect(unson.containers[0]?.max_instances).toBeGreaterThanOrEqual(3);
+  });
+
   it("雲孫deploymentが専用Worker namespace内にDurable ObjectとContainerを持つ", () => {
     expect(unson.durable_objects.bindings).toEqual(
       expect.arrayContaining([
