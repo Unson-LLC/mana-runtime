@@ -83,9 +83,40 @@ async function slackApi(
   return payload;
 }
 
+async function slackApiGet(
+  method: string,
+  token: string,
+  query: Record<string, string>,
+  fetchImpl: typeof fetch,
+): Promise<Record<string, unknown>> {
+  const url = new URL(`https://slack.com/api/${method}`);
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+  const response = await fetchImpl(url.toString(), {
+    method: "GET",
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !payload || payload.ok !== true) {
+    const code = typeof payload?.error === "string" ? payload.error : "slack_api_failed";
+    throw new Error(`task_board_${code.replace(/[^a-z0-9_-]/gi, "_")}`);
+  }
+  return payload;
+}
+
 function canvasIdFromInfo(payload: Record<string, unknown>): string | null {
   const channel = payload.channel as Record<string, unknown> | undefined;
   const properties = channel?.properties as Record<string, unknown> | undefined;
+  for (const key of ["tabs", "tabz"] as const) {
+    const tabs = properties?.[key];
+    if (!Array.isArray(tabs)) continue;
+    for (const tab of tabs) {
+      if (!tab || typeof tab !== "object" || (tab as Record<string, unknown>).type !== "canvas") continue;
+      const data = (tab as Record<string, unknown>).data;
+      const id = data && typeof data === "object" ? (data as Record<string, unknown>).file_id : null;
+      if (typeof id === "string" && id) return id;
+    }
+  }
   const canvas = properties?.canvas as Record<string, unknown> | undefined;
   const id = canvas?.file_id ?? canvas?.id;
   return typeof id === "string" && id ? id : null;
@@ -107,7 +138,7 @@ async function publishCanvas(
       return "created";
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("channel_canvas_already_exists")) throw error;
-      const latestInfo = await slackApi("conversations.info", token, { channel: channelId }, fetchImpl);
+      const latestInfo = await slackApiGet("conversations.info", token, { channel: channelId }, fetchImpl);
       const adoptedId = canvasIdFromInfo(latestInfo);
       if (!adoptedId) throw error;
       await slackApi("canvases.edit", token, {
@@ -118,7 +149,7 @@ async function publishCanvas(
     }
   };
 
-  const info = await slackApi("conversations.info", token, { channel: channelId }, fetchImpl);
+  const info = await slackApiGet("conversations.info", token, { channel: channelId }, fetchImpl);
   const existingId = canvasIdFromInfo(info);
   if (existingId) {
     try {
