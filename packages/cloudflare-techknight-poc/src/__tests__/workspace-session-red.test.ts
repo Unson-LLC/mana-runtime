@@ -1,6 +1,7 @@
 import {
   applyNewSessionCommand,
   markClaudeSessionStarted,
+  markWorkspaceEngaged,
   reconcilePermissionRevision,
   readWorkspaceSession,
   type WorkspaceSessionFs,
@@ -27,6 +28,22 @@ class MemoryFs implements WorkspaceSessionFs {
 }
 
 describe("workspace session control commands", () => {
+  it("reads persisted session state when the workspace returns a stream", async () => {
+    const fs = new MemoryFs();
+    await markWorkspaceEngaged(fs, "2026-08-14T09:00:00Z");
+    const streamFs: WorkspaceSessionFs = {
+      mkdir: async () => undefined,
+      writeFile: (...args) => fs.writeFile(...args),
+      readFile: async (path) => new Response(await fs.readFile(path)).body!,
+    };
+
+    await expect(readWorkspaceSession(streamFs)).resolves.toMatchObject({
+      generation: 1,
+      engaged: true,
+      updatedAt: "2026-08-14T09:00:00Z",
+    });
+  });
+
   it("increments /new generation exactly once for the same command id", async () => {
     const fs = new MemoryFs();
 
