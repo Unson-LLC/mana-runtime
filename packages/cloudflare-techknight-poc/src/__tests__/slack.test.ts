@@ -57,6 +57,43 @@ describe("verifySlackRequest", () => {
 });
 
 describe("normalizeSlackEvent", () => {
+  it("normalizes an authorized bot mention delivered as a message event", () => {
+    const event = normalizeSlackEvent({
+      type: "event_callback",
+      team_id: "T_UNSON",
+      event_id: "EvMention",
+      authorizations: [{ user_id: "U_MANA", is_bot: true }],
+      event: {
+        type: "message",
+        channel: "C_ROUTER",
+        ts: "1786688096.218849",
+        user: "U_REQUESTER",
+        text: "<@U_MANA> Taskを作成してください",
+      },
+    }, "T_UNSON", "2026-08-14T06:25:00.000Z", "unson");
+
+    expect(event.eventType).toBe("app_mention");
+    expect(event.userId).toBe("U_REQUESTER");
+  });
+
+  it("does not promote a message that mentions another user", () => {
+    const event = normalizeSlackEvent({
+      type: "event_callback",
+      team_id: "T_UNSON",
+      event_id: "EvOtherMention",
+      authorizations: [{ user_id: "U_MANA", is_bot: true }],
+      event: {
+        type: "message",
+        channel: "C_ROUTER",
+        ts: "1786688097.218849",
+        user: "U_REQUESTER",
+        text: "<@U_OTHER> Taskを作成してください",
+      },
+    }, "T_UNSON", "2026-08-14T06:25:00.000Z", "unson");
+
+    expect(event.eventType).toBe("message");
+  });
+
   it("keeps bounded file identities without persisting download URLs", () => {
     const event = normalizeSlackEvent({
       type: "event_callback", team_id: "T_UNSON", event_id: "EvFile",
