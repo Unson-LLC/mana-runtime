@@ -46,10 +46,10 @@ import { isReplyCompleted, persistEventOnce, persistReplyCompletion } from "./wo
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
-import { parseRequesterIdentityBindings } from "./requester-identity.js";
 import { resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
+import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import {
   consumeTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
@@ -85,6 +85,8 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
   BRAINBASE_SLACK_PERSON_MAP_JSON?: string;
+  BRAINBASE_GRAPH_API_BASE_URL?: string;
+  BRAINBASE_GRAPH_API_TOKEN?: string;
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
@@ -363,6 +365,20 @@ export default {
                       throw new ReplyPipelineError(profileResolution.status === "rejected"
                         ? "requester_profile_rejected" : "requester_profile_unavailable");
                     }
+                    const graphOptions = {
+                      baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
+                      token: env.BRAINBASE_GRAPH_API_TOKEN,
+                    };
+                    const requesterResolution = await resolveGraphRequester(
+                      event.workspaceId, event.userId ?? "", graphOptions,
+                    );
+                    if (requesterResolution.status !== "resolved") {
+                      throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
+                    }
+                    const graphContext = await hydrateGraphContext(event, placement.projectCodes[0], graphOptions);
+                    if (graphContext.status === "unavailable") {
+                      throw new ReplyPipelineError("graph_context_unavailable");
+                    }
                     return processReplyEvent(workspace.fs, event, {
                     expectedTenantId: env.TENANT_ID,
                     expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
@@ -373,8 +389,9 @@ export default {
                     taskSearchEnabled: taskSearch.taskSearchEnabled,
                     taskWriteEnabled,
                     taskWriteCapability,
-                    requesterIdentityBindings: parseRequesterIdentityBindings(env.BRAINBASE_SLACK_PERSON_MAP_JSON),
+                    requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
                     requesterProfile: profileResolution.profile,
+                    graphContext: graphContext.content,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     });

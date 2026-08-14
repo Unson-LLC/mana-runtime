@@ -53,6 +53,7 @@ export interface ReplyPipelineOptions {
   requesterIdentityBindings?: RequesterIdentityBindings;
   requesterIdentity?: RequesterIdentity;
   requesterProfile?: SlackUserProfile;
+  graphContext?: string;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -101,6 +102,7 @@ function buildPrompt(
   taskWriteEnabled = false,
   requesterIdentity?: RequesterIdentity,
   requesterProfile?: SlackUserProfile,
+  graphContext?: string,
 ): string {
   const request = normalizePromptText(event.text);
   const context = event.threadContext
@@ -131,6 +133,7 @@ function buildPrompt(
       `requester_timezone: ${requesterProfile.timezone ?? "unknown"}`,
       "上記はSlack APIで確認した発話者情報です。表示名だけで別人を推測しないでください。",
     ] : []),
+    ...(graphContext ? ["", "Brainbase Graph正本文脈:", graphContext] : []),
     ...(taskWriteEnabled ? [
       "タスクの作成・更新・状態変更を明示的に依頼された場合だけ、create_task、update_task、transition_taskを使ってください。",
       "更新・状態変更の前にはsearch_tasksで対象を特定し、返されたidとversionをexpected_versionに使ってください。対象が一意でない場合は実行せず質問してください。",
@@ -169,7 +172,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
@@ -182,6 +185,7 @@ export async function generateClaudeReply(
       options.taskWriteEnabled,
       options.requesterIdentity,
       options.requesterProfile,
+      options.graphContext,
     ));
     if (options.taskSearchEnabled || options.taskWriteEnabled) {
       await sandbox.writeFile(runtimeTaskSearchMcpConfigPath(), JSON.stringify({
@@ -445,7 +449,7 @@ export async function processReplyEvent(
   if (await isReplyCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
   const requesterIdentity = options.taskSearchEnabled && requestsOwnTasks(event.text)
-    ? resolveRequesterIdentity(event, options.requesterIdentityBindings)
+    ? options.requesterIdentity ?? resolveRequesterIdentity(event, options.requesterIdentityBindings)
     : undefined;
 
   return withSlackThreadStatus(event, options, async () => {
