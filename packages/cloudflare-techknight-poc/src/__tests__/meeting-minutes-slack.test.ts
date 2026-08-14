@@ -25,16 +25,17 @@ describe("MeetingMinutesSlackClient", () => {
   });
 
   it("shows processing feedback with the Slack assistant thread status", async () => {
-    let call: { url: string; body: Record<string, unknown> } | undefined;
+    let call: { url: string; body: Record<string, unknown>; signal?: AbortSignal | null } | undefined;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      call = { url: String(input), body: JSON.parse(String(init?.body)) }; return Response.json({ ok: true });
+      call = { url: String(input), body: JSON.parse(String(init?.body)), signal: init?.signal };
+      return Response.json({ ok: true });
     }) as typeof fetch;
-    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postProcessingStatus(routedRun()))
-      .resolves.toBe("2.1");
+    await new MeetingMinutesSlackClient("token", fetchImpl).showProcessingStatus("C1", "1.0", "PMS");
     expect(call?.url).toBe("https://slack.com/api/assistant.threads.setStatus");
     expect(call?.body).toMatchObject({ channel_id: "C1", thread_ts: "1.0" });
     expect(JSON.stringify(call?.body)).toContain("議事録を作成しています");
-    expect(JSON.stringify(call?.body)).toContain("mana");
+    expect(JSON.stringify(call?.body)).toContain("PMS");
+    expect(call?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("does not stop minutes processing when the optional assistant status is unavailable", async () => {

@@ -67,10 +67,11 @@ async function clientMessageId(seed: string): Promise<string> {
 }
 export class MeetingMinutesSlackClient {
   constructor(private readonly token: string, private readonly fetchImpl: typeof fetch = fetch) {}
-  private async post(method: string, body: Record<string, unknown>): Promise<SlackApiResponse> {
+  private async post(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<SlackApiResponse> {
     if (!this.token.trim()) throw new Error("slack_bot_token_not_configured");
     const response = await this.fetchImpl.call(globalThis, `https://slack.com/api/${method}`, { method: "POST",
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json; charset=utf-8" }, body: JSON.stringify(body) });
+      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(body), signal });
     const result = await response.json() as SlackApiResponse;
     if (!response.ok || !result.ok) throw new Error(`slack_api_failed:${method}:${result.error ?? response.status}`);
     return result;
@@ -103,6 +104,17 @@ export class MeetingMinutesSlackClient {
     if (!run.slack?.selectionTs) throw new Error("meeting_minutes_selection_coordinates_missing");
     await this.setThreadStatus(run, `議事録を作成しています…（${run.destination.name}）`);
     return run.slack.selectionTs;
+  }
+  async showProcessingStatus(channelId: string, threadTs: string, destinationName: string): Promise<void> {
+    await this.post("assistant.threads.setStatus", {
+      channel_id: channelId,
+      thread_ts: threadTs,
+      status: `議事録を作成しています…（${destinationName}）`,
+    }, AbortSignal.timeout(1_500));
+  }
+  async clearProcessingStatus(channelId: string, threadTs: string): Promise<void> {
+    await this.post("assistant.threads.setStatus", { channel_id: channelId, thread_ts: threadTs, status: "" },
+      AbortSignal.timeout(1_500));
   }
   async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void> {
     if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");

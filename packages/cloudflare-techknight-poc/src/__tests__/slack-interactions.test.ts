@@ -9,6 +9,7 @@ function request(payload: unknown): Request {
     headers: { "content-type": "application/x-www-form-urlencoded", "x-slack-request-timestamp": String(now), "x-slack-signature": signature } });
 }
 const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },
+  message: { ts: "1.1", thread_ts: "1.0" },
   response_url: "https://hooks.slack.com/actions/T1/B1/token",
   actions: [{ action_id: "mana_meeting_minutes_choose_destination", action_ts: "1.2",
     value: JSON.stringify({ runId: "Ev1_F1", destinationId: "mana" }) }] };
@@ -34,12 +35,15 @@ describe("handleMeetingMinutesInteraction", () => {
   });
 
   it("verifies and queues an authorized selection", async () => {
-    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const send = vi.fn(); const updateOriginal = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, send, updateOriginal, defer: background.defer });
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, showProcessing, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({ runId: "Ev1_F1", destinationId: "mana" }));
     expect(updateOriginal).not.toHaveBeenCalled();
+    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
     expect(await response.json()).toEqual({ ok: true });
   });
   it("replaces the selector with projects for the chosen organization without queueing", async () => {
@@ -102,19 +106,48 @@ describe("handleMeetingMinutesInteraction", () => {
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).not.toHaveBeenCalled();
   });
-  it("does not show processing when the queue rejects the selection", async () => {
-    const send = vi.fn().mockRejectedValue(new Error("queue unavailable")); const updateOriginal = vi.fn(); const background = deferred();
+  it("clears processing when the queue rejects the selection", async () => {
+    const send = vi.fn().mockRejectedValue(new Error("queue unavailable")); const updateOriginal = vi.fn();
+    const showProcessing = vi.fn(); const clearProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
-      send, updateOriginal, defer: background.defer });
+      destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).rejects.toThrow("queue unavailable");
     expect(updateOriginal).not.toHaveBeenCalled();
+    expect(showProcessing).toHaveBeenCalledOnce(); expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" });
+  });
+  it("still queues when immediate Slack feedback fails", async () => {
+    const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("Slack unavailable"));
+    const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, showProcessing, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).toHaveBeenCalledOnce(); expect(showProcessing).toHaveBeenCalledOnce();
+  });
+  it("queues without immediate feedback when Slack omitted a valid thread timestamp", async () => {
+    const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;
+    const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(missingThread), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, showProcessing, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).toHaveBeenCalledOnce(); expect(showProcessing).not.toHaveBeenCalled();
   });
   it("fails closed for a non-operator", async () => {
     const send = vi.fn(); const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, send });
     expect(response.status).toBe(403); expect(send).not.toHaveBeenCalled();
+  });
+  it("rejects selections outside the configured router channel before feedback or queueing", async () => {
+    const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", expectedChannelId: "C_ROUTER",
+      operatorUserIds: new Set(["U1"]), nowMs: now * 1000, destinations, send, showProcessing,
+      defer: background.defer });
+    expect(response.status).toBe(403); expect(background.work).toHaveLength(0);
+    expect(showProcessing).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
   it("routes a signed task approval with the immutable payload hash", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn();

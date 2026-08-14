@@ -5,17 +5,20 @@ describe("meeting minutes interaction Worker entrypoint", () => {
   it("acknowledges immediately and defers Queue without replacing the selector", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "secret";
     const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },
-      response_url: "https://hooks.slack.com/actions/T1/B1/token", actions: [{
+      response_url: "https://hooks.slack.com/actions/T1/B1/token", message: { ts: "1.1", thread_ts: "1.0" }, actions: [{
         action_id: "mana_meeting_minutes_choose_destination:techknight-board", action_ts: "1.2",
         value: JSON.stringify({ runId: "Ev1_F1", destinationId: "techknight-board" }),
       }] };
     const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
     const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
-    const send = vi.fn().mockResolvedValue(undefined); const slackUpdate = vi.fn().mockResolvedValue(new Response("ok"));
+    const send = vi.fn().mockResolvedValue(undefined); const slackUpdate = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
+      headers: { "content-type": "application/json" },
+    }));
     vi.stubGlobal("fetch", slackUpdate);
     const deferred: Promise<unknown>[] = [];
     const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T1", SLACK_EXPECTED_APP_ID: "A1",
       MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C1", MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
+      SLACK_BOT_TOKEN: "xoxb-test",
       MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1", name: "ボード定例",
         organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2",
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } }]), TECHKNIGHT_EVENTS: { send } };
@@ -25,7 +28,10 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(response.status).toBe(200);
     expect(deferred).toHaveLength(1); await Promise.all(deferred);
     expect(send).toHaveBeenCalledOnce();
-    expect(slackUpdate).not.toHaveBeenCalled();
+    expect(slackUpdate).toHaveBeenCalledWith("https://slack.com/api/assistant.threads.setStatus", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ channel_id: "C1", thread_ts: "1.0",
+        status: "議事録を作成しています…（ボード定例）" }),
+    }));
     vi.unstubAllGlobals();
   });
 
