@@ -120,15 +120,30 @@ describe("meeting minutes pipeline", () => {
     expect(createTask.mock.calls[0]?.[0]).not.toHaveProperty("assignee_name");
   });
 
-  it.each(["unknown", "ambiguous", "unavailable"])("fails closed when named assignee is %s", async (status) => {
+  it.each(["unknown", "ambiguous"])("registers the task without guessing when named assignee is %s", async (status) => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn().mockResolvedValue({ id: "task-42" });
+    const run = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
+        { title: "請求書を送る", assignee_name: "梅田 遼" },
+      ] }), createTask, resolveAssignee: vi.fn().mockResolvedValue({ status }),
+    }));
+    expect(run.status).toBe("completed");
+    expect(createTask).toHaveBeenCalledWith(expect.not.objectContaining({
+      assignee_name: expect.anything(), assignee_person_id: expect.anything(),
+    }), expect.any(String));
+  });
+
+  it("fails closed when the assignee graph is unavailable", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn();
     await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", assignee_name: "梅田 遼" },
-      ] }), createTask, resolveAssignee: vi.fn().mockResolvedValue({ status }),
-    }))).rejects.toThrow(`meeting_minutes_assignee_${status}`);
+      ] }), createTask, resolveAssignee: vi.fn().mockResolvedValue({ status: "unavailable" }),
+    }))).rejects.toThrow("meeting_minutes_assignee_unavailable");
     expect(createTask).not.toHaveBeenCalled();
   });
 
