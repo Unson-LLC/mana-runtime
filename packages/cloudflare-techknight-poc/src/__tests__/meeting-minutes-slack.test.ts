@@ -56,6 +56,22 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(body)).toContain('\\"sourceThreadTs\\":\\"1.0\\"');
   });
 
+  it("explains how to recover when the destination Slack channel is unavailable", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "posting" as const,
+      failure: { stage: "slack_parent", message: "slack_api_failed:chat.postMessage:channel_not_found" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("保存先チャンネルへ投稿できませんでした");
+    expect(serialized).toContain("Manaアプリが「mana」のチャンネルに参加しているか確認してください");
+    expect(serialized).toContain("参加させた後、下のボタンから再実行できます");
+    expect(serialized).toContain("再実行");
+    expect(serialized).not.toContain("channel_not_found");
+  });
+
   it("shows only unique organizations in the initial selector", async () => {
     let body: { blocks?: Array<{ elements?: Array<{ action_id?: string }> }> } = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
