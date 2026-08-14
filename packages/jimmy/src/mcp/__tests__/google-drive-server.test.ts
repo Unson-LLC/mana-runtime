@@ -43,6 +43,11 @@ describe("google-drive-server", () => {
     ]);
   });
 
+  it("documents valid Drive query syntax for model callers", () => {
+    const listFiles = GOOGLE_DRIVE_TOOLS.find((tool) => tool.name === "list_files");
+    expect(JSON.stringify(listFiles)).toContain("name contains 'mana'");
+  });
+
   it("accepts Sheets scalar values and preserves row structure", () => {
     expect(normalizeSheetValues([
       ["契約名", "金額", "有効"],
