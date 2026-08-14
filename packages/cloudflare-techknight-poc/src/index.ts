@@ -795,6 +795,7 @@ export default {
                         speakerName: requesterProfile.displayName ?? requesterProfile.realName ?? requesterProfile.handle ?? "Slack user",
                         channelType: triageEvent.channelType ?? "channel",
                         messageText: triageEvent.text,
+                        attachmentNames: triageEvent.files?.map((file) => file.name),
                         recentThread,
                       }, {
                         model: claudeRuntime.model,
