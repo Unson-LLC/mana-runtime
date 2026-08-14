@@ -2,6 +2,48 @@ import { createHmac } from "node:crypto";
 import { handleMeetingMinutesInteractionEntrypoint } from "../slack-interactions.js";
 
 describe("meeting minutes interaction Worker entrypoint", () => {
+  it("accepts a Tech Knight task edit signed by the destination Slack app", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "tech-knight-secret";
+    const payload = { api_app_id: "A-TECHKNIGHT", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },
+      channel: { id: "CDEST" }, trigger_id: "trigger", actions: [{
+        action_id: "mana_meeting_minutes_task_edit",
+        value: JSON.stringify({ runId: "Ev1_F1", index: 0, organizationId: "tech-knight",
+          channelId: "CDEST", title: "旧題", due: "2026-08-20" }),
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const handleMeetingTaskAction = vi.fn(async () => Response.json({ ok: true }));
+    const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
+      SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
+      TECHKNIGHT_EVENTS: { send: vi.fn() } };
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
+    handleMeetingTaskAction);
+    expect(response.status).toBe(200);
+    expect(handleMeetingTaskAction).toHaveBeenCalledWith(expect.objectContaining({ team: { id: "T-TECHKNIGHT" } }));
+  });
+
+  it("does not accept a destination-team payload signed by the source Slack app", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "unson-secret";
+    const payload = { api_app_id: "A-UNSON", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },
+      channel: { id: "CDEST" }, trigger_id: "trigger", actions: [{ action_id: "mana_meeting_minutes_task_edit", value: "{}" }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const handleMeetingTaskAction = vi.fn(async () => Response.json({ ok: true }));
+    const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_SIGNING_SECRET_TECHKNIGHT: "tech-knight-secret",
+      SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
+      TECHKNIGHT_EVENTS: { send: vi.fn() } };
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
+    handleMeetingTaskAction);
+    expect(response.status).toBe(403);
+    expect(handleMeetingTaskAction).not.toHaveBeenCalled();
+  });
+
   it("acknowledges immediately and defers Queue without replacing the selector", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "secret";
     const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },

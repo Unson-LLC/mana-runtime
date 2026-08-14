@@ -84,6 +84,7 @@ export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
 
 interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
+  SLACK_SIGNING_SECRET_TECHKNIGHT?: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
   MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON?: string;
