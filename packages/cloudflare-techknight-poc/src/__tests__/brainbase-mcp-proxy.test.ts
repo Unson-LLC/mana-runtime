@@ -24,6 +24,21 @@ describe("Brainbase MCP proxy", () => {
     expect(response.status).toBe(502);
   });
 
+  it("story-meeting-minutes-brainbase-judgment:ac:5 forwards the judgment Hook with a trusted project binding", async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer secret-token");
+      expect(headers.get("x-brainbase-project-code")).toBe("mana-runtime");
+      return Response.json({ decision: "allow" });
+    }) as unknown as typeof fetch;
+    const response = await handleBrainbaseMcpProxyRequest(new Request(
+      "https://brainbase-mcp.internal/host/judgment/hook",
+      { method: "POST", headers: { "x-brainbase-project-code": "attacker" }, body: "{}" },
+    ), { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token" }, fetchImpl);
+    expect(response.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledWith("https://bb.unson.jp/runtime-mcp/host/judgment/hook", expect.anything());
+  });
+
   it("fails closed for missing credentials and paths outside /mcp", async () => {
     expect((await handleBrainbaseMcpProxyRequest(new Request("https://brainbase-mcp.internal/mcp", { method: "POST" }), {})).status).toBe(503);
     expect((await handleBrainbaseMcpProxyRequest(new Request("https://brainbase-mcp.internal/health"), {})).status).toBe(404);

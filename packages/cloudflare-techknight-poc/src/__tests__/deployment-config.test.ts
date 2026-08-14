@@ -156,6 +156,12 @@ describe("会社別Cloudflare deployment", () => {
     expect(dockerfile).toContain(
       "COPY --chmod=0555 container/task-write-mcp-server.mjs /opt/mana/task-write-mcp-server.mjs",
     );
+    expect(dockerfile).toContain(
+      "COPY --chmod=0555 container/brainbase-judgment-hook.mjs /opt/mana/brainbase-judgment-hook.mjs",
+    );
+    expect(dockerfile).toContain(
+      "COPY --chmod=0444 container/meeting-minutes-claude-settings.json /opt/mana/meeting-minutes-claude-settings.json",
+    );
   });
 
   it("keeps task search off by default and documents the staged rollout", () => {

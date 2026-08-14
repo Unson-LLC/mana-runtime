@@ -1,6 +1,7 @@
 import {
   buildRuntimeClaudeCommand,
   runtimeTaskSearchMcpConfigPath,
+  runtimeMeetingMinutesMcpConfigPath,
   resolveClaudeRuntimeConfig,
   runtimeClaudePromptPath,
 } from "../claude-runtime-config.js";
@@ -69,6 +70,14 @@ describe("Cloudflare Claude runtime config", () => {
     );
     expect(buildRuntimeClaudeCommand("meeting-task", config, { taskSearchEnabled: true }))
       .not.toContain("--mcp-config");
+  });
+
+  it("story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 always enables Brainbase MCP and command Hooks for meeting-minutes", () => {
+    const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
+    expect(runtimeMeetingMinutesMcpConfigPath()).toBe("/tmp/mana-meeting-minutes-mcp.json");
+    expect(buildRuntimeClaudeCommand("meeting-minutes", config)).toBe(
+      "claude --print --model opus --effort xhigh --permission-mode bypassPermissions --settings /opt/mana/meeting-minutes-claude-settings.json --mcp-config /tmp/mana-meeting-minutes-mcp.json --strict-mcp-config < /tmp/meeting-minutes-prompt.txt",
+    );
   });
 
   it("starts then resumes the same validated Claude session", () => {

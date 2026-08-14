@@ -1,6 +1,7 @@
 import type { GeneratedMeetingMinutes, MeetingMinutesDestination,
   MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
-import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinutesMcpConfigPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
@@ -8,6 +9,14 @@ const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
 const MEETING_MINUTES_ROUTING_HEAD_CHARS = 4_000;
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
+const MEETING_MINUTES_MCP_CONFIG = JSON.stringify(buildRuntimeMcpConfig({
+  mcp: ["brainbase"], gatewayTools: [],
+}));
+
+async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
+  await sandbox.writeFile(runtimeClaudePromptPath("meeting-minutes"), prompt);
+  await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), MEETING_MINUTES_MCP_CONFIG);
+}
 
 function nonEmpty(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
@@ -100,8 +109,7 @@ export async function classifyMeetingMinutesDestinationInSandbox(
   sandbox: ReplySandbox,
 ): Promise<{ destinationId: string; reason: string } | null> {
   try {
-    const promptPath = runtimeClaudePromptPath("meeting-minutes");
-    await sandbox.writeFile(promptPath, routingPrompt(transcript, destinations));
+    await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations));
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime), {
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
@@ -172,8 +180,7 @@ export async function generateMeetingMinutesInSandbox(
   sandbox: ReplySandbox,
 ): Promise<GeneratedMeetingMinutes> {
   try {
-    const promptPath = runtimeClaudePromptPath("meeting-minutes");
-    await sandbox.writeFile(promptPath, generationPrompt(transcript));
+    await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript));
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
