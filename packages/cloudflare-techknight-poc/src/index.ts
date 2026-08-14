@@ -19,12 +19,12 @@ import {
   isMeetingMinutesSelection,
   isMeetingMinutesSlackEvent,
   meetingMinutesRuntimeConfig,
-  processMeetingMinutesSelection,
   processMeetingMinutesSlackEvent,
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
 import type { MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
+import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
@@ -224,7 +224,10 @@ export default {
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
             const clients = meetingMinutesClients(env);
-            await processMeetingMinutesSelection(workspace.fs, selection, meetingMinutesConfig, clients.resume);
+            await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, meetingMinutesConfig, clients.resume, {
+              updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
+              logProjectionError: (entry) => console.warn(JSON.stringify({ event: "meeting_minutes_status_projection_failed", ...entry })),
+            });
           });
           message.ack();
         } catch (error) {
