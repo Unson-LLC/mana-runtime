@@ -53,6 +53,7 @@ import { readWorkspaceSession } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
+import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
   consumeTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
@@ -66,6 +67,7 @@ import {
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
 export { TaskWriteApproval } from "./task-write-approval.js";
+export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
 
 interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
@@ -98,6 +100,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
   MEETING_MINUTES_WORKSPACE: DurableObjectNamespace<MeetingMinutesWorkspace>;
+  RUNTIME_SESSION_REGISTRY: DurableObjectNamespace<RuntimeSessionRegistry>;
 }
 
 interface WorkspaceEnv {}
@@ -301,6 +304,11 @@ export default {
             placements: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON),
           });
           const placementClaudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
+          await upsertRuntimeSession(env.RUNTIME_SESSION_REGISTRY, {
+            sessionId: workspaceName(event), placementId: placement.placementId, workspaceId: event.workspaceId,
+            channelId: event.channelId, threadTs: event.threadTs, ...(event.userId ? { requesterId: event.userId } : {}),
+            status: "active", updatedAt: event.receivedAt,
+          });
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(

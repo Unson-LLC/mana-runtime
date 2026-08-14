@@ -29,7 +29,8 @@
     "RUNTIME_PLACEMENTS_JSON": "[{\"placementId\":\"mana-accounting\",\"channelId\":\"C0BKS6RL99T\",\"projectCodes\":[\"back-office\"],\"taskWriteEnabled\":true},{\"placementId\":\"biz-meeting-router\",\"channelId\":\"C0BKTFQ9V38\",\"projectCodes\":[\"unson\"],\"taskWriteEnabled\":false},{\"placementId\":\"mana-dev-biz\",\"channelId\":\"C0BMNSP6C80\",\"projectCodes\":[\"mana\"],\"taskWriteEnabled\":true,\"audience\":{\"type\":\"operator\",\"allowedUserIds\":[\"U088D1HBY6L\",\"U0BKP8D3KPD\"]},\"agent\":{\"model\":\"sonnet\",\"escalationEmployee\":\"critical-reviewer\"},\"capabilities\":{\"mcp\":[\"brainbase\",\"nocodb\",\"gateway\",\"google-drive\"],\"gatewayTools\":[\"send_message\",\"create_task\",\"list_tasks\",\"update_task\",\"transition_task\",\"list_sessions\",\"get_session\",\"list_employees\",\"get_employee\"]},\"dataScopes\":{\"graph\":{\"mode\":\"read-only\",\"scopes\":[\"org:unson\"]}},\"deliveryScopes\":[{\"connector\":\"slack\",\"channelId\":\"C0BMNSP6C80\"}]}]",
     "RUNTIME_CLAUDE_MODEL": "opus",
     "RUNTIME_CLAUDE_EFFORT": "xhigh",
-    "RUNTIME_CRON_JOBS_JSON": "[]"
+    "RUNTIME_CRON_JOBS_JSON": "[]",
+    "RUNTIME_EMPLOYEES_JSON": "[{\"name\":\"critical-reviewer\",\"displayName\":\"Critical Reviewer\",\"department\":\"executive\",\"rank\":\"senior\",\"engine\":\"claude\",\"model\":\"opus\",\"effortLevel\":\"xhigh\",\"emoji\":\"🔬\",\"alwaysNotify\":true,\"persona\":\"You handle only high-impact work where the additional latency and Max usage are justified: architecture decisions, security or privacy analysis, irreversible operational changes, and final review of important deliverables. Separate confirmed facts, evidence, inference, and unresolved items. Do not make external changes unless the parent task explicitly authorizes them.\",\"provides\":[{\"name\":\"critical-analysis\",\"description\":\"重要な設計・セキュリティ・不可逆変更をOpus/xhighで精査する\"},{\"name\":\"final-critical-review\",\"description\":\"重要成果物をOpus/xhighで最終レビューする\"}]}]"
   },
   "durable_objects": {
     "bindings": [
@@ -52,6 +53,10 @@
       {
         "name": "TASK_WRITE_APPROVALS",
         "class_name": "TaskWriteApproval"
+      },
+      {
+        "name": "RUNTIME_SESSION_REGISTRY",
+        "class_name": "RuntimeSessionRegistry"
       }
     ]
   },
@@ -75,6 +80,10 @@
     {
       "tag": "v5",
       "new_sqlite_classes": ["TaskWriteApproval"]
+    },
+    {
+      "tag": "v6",
+      "new_sqlite_classes": ["RuntimeSessionRegistry"]
     }
   ],
   "containers": [

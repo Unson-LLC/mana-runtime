@@ -171,9 +171,10 @@ describe("会社別Cloudflare deployment", () => {
     const sandboxPath = fileURLToPath(new URL("../sandbox-runtime.ts", import.meta.url));
     const sandboxRuntime = readFileSync(sandboxPath, "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
-    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST]');
+    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST]');
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest");
+    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env) => handleRuntimeGatewayProxyRequest(request, env)");
     expect(sandboxRuntime).not.toContain('"bb.unson.jp"');
   });
 
