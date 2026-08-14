@@ -46,7 +46,7 @@ export function runtimeTaskSearchMcpConfigPath(): string {
 export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
-  options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean } = {},
+  options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean; mcpEnabled?: boolean } = {},
 ): string {
   if (config.model !== "opus" && config.model !== "sonnet") {
     throw new ClaudeRuntimeConfigError("runtime_claude_model_invalid");
@@ -59,7 +59,7 @@ export function buildRuntimeClaudeCommand(
   const base = purpose === "meeting-minutes"
     ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions < ${promptPath}`
     : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions "$(cat ${promptPath})"`;
-  return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled)
+  return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
     : base;
 }

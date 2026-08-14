@@ -30,16 +30,38 @@ export function applyModelCommand(
 export type RuntimeControlCommand =
   | { name: "new" }
   | { name: "status" }
-  | { name: "model"; model: string };
+  | { name: "model"; model: string }
+  | { name: "doctor" }
+  | { name: "cron"; action: "list" | "run" | "enable" | "disable"; target?: string }
+  | { name: "develop"; request: string };
 
 export function parseRuntimeControlCommand(text: string): RuntimeControlCommand | undefined {
   const normalized = text.replace(/<@[^>]{1,128}>/g, " ").trim();
   if (normalized === "/new") return { name: "new" };
   if (normalized === "/status") return { name: "status" };
+  if (normalized === "/doctor") return { name: "doctor" };
   const model = normalized.match(/^\/model(?:\s+([^\s]+))?$/);
   if (model) {
     if (!model[1]) throw new RuntimeControlCommandError("model_required");
     return { name: "model", model: model[1] };
+  }
+  if (normalized.startsWith("/cron")) {
+    const match = normalized.match(/^\/cron\s+(list|run|enable|disable)(?:\s+(.+))?$/);
+    if (!match || (match[1] !== "list" && !match[2]?.trim()) || (match[1] === "list" && match[2])) {
+      throw new RuntimeControlCommandError("command_invalid");
+    }
+    return {
+      name: "cron",
+      action: match[1] as "list" | "run" | "enable" | "disable",
+      ...(match[2]?.trim() ? { target: match[2].trim() } : {}),
+    };
+  }
+  for (const prefix of ["/develop", "/vibepro", "/ryoko-develop"] as const) {
+    if (normalized === prefix || normalized.startsWith(`${prefix} `)) {
+      const request = normalized.slice(prefix.length).trim();
+      if (!request) throw new RuntimeControlCommandError("command_invalid");
+      return { name: "develop", request };
+    }
   }
   return undefined;
 }
@@ -55,6 +77,9 @@ export async function executeRuntimeControlCommand(input: {
   allowedModels: readonly string[];
   taskSearchEnabled: boolean;
   taskWriteEnabled: boolean;
+  doctor?: () => Promise<string>;
+  cron?: (action: "list" | "run" | "enable" | "disable", target?: string) => Promise<string>;
+  develop?: (request: string) => Promise<string>;
 }): Promise<string> {
   if (input.command.name === "new") {
     const state = await applyNewSessionCommand(input.fs, { commandId: input.commandId, requestedAt: input.requestedAt });
@@ -70,6 +95,18 @@ export async function executeRuntimeControlCommand(input: {
     taskSearchEnabled: input.taskSearchEnabled,
     taskWriteEnabled: input.taskWriteEnabled,
   });
+  if (input.command.name === "doctor") {
+    if (!input.doctor) throw new RuntimeControlCommandError("doctor_not_configured");
+    return input.doctor();
+  }
+  if (input.command.name === "cron") {
+    if (!input.cron) throw new RuntimeControlCommandError("cron_not_configured");
+    return input.cron(input.command.action, input.command.target);
+  }
+  if (input.command.name === "develop") {
+    if (!input.develop) throw new RuntimeControlCommandError("development_runner_not_configured");
+    return input.develop(input.command.request);
+  }
   const next = applyModelCommand(state, input.command.model, {
     placementId: input.placementId,
     allowedModels: input.allowedModels,

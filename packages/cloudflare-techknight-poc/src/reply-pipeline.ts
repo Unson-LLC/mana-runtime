@@ -17,6 +17,7 @@ import {
   type RequesterIdentityBindings,
 } from "./requester-identity.js";
 import type { SlackUserProfile } from "./slack-user-profile.js";
+import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -54,6 +55,7 @@ export interface ReplyPipelineOptions {
   requesterIdentity?: RequesterIdentity;
   requesterProfile?: SlackUserProfile;
   graphContext?: string;
+  capabilities?: { mcp: readonly string[]; gatewayTools: readonly string[] };
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -172,7 +174,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "capabilities">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
@@ -187,9 +189,11 @@ export async function generateClaudeReply(
       options.requesterProfile,
       options.graphContext,
     ));
-    if (options.taskSearchEnabled || options.taskWriteEnabled) {
+    if (options.taskSearchEnabled || options.taskWriteEnabled || options.capabilities?.mcp.length) {
+      const placementMcp = options.capabilities ? buildRuntimeMcpConfig(options.capabilities).mcpServers : {};
       await sandbox.writeFile(runtimeTaskSearchMcpConfigPath(), JSON.stringify({
         mcpServers: {
+          ...placementMcp,
           ...(options.taskSearchEnabled ? { "task-search": {
             command: "node",
             args: ["/opt/mana/task-search-mcp-server.mjs"],
@@ -205,6 +209,7 @@ export async function generateClaudeReply(
       buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
+        mcpEnabled: Boolean(options.capabilities?.mcp.length),
       }),
       {
         timeout: 120_000,

@@ -1,5 +1,6 @@
 import {
   applyModelCommand,
+  parseRuntimeControlCommand,
   renderRuntimeStatus,
 } from "../runtime-control-command.js";
 
@@ -42,4 +43,20 @@ describe("runtime control command policy", () => {
       placement,
     )).toThrow(expect.objectContaining({ code: "model_not_allowed" }));
   });
+
+  it.each([
+    ["/doctor", { name: "doctor" }],
+    ["/cron list", { name: "cron", action: "list" }],
+    ["/cron run nightly", { name: "cron", action: "run", target: "nightly" }],
+    ["/develop READMEを改善する", { name: "develop", request: "READMEを改善する" }],
+    ["/vibepro READMEを改善する", { name: "develop", request: "READMEを改善する" }],
+    ["/ryoko-develop READMEを改善する", { name: "develop", request: "READMEを改善する" }],
+  ])("parses the migrated deterministic command %s", (text, expected) => {
+    expect(parseRuntimeControlCommand(text)).toEqual(expected);
+  });
+
+  it.each(["/cron", "/cron delete nightly", "/develop", "/vibepro", "/ryoko-develop"])(
+    "rejects an incomplete or unsupported deterministic command: %s",
+    (text) => expect(() => parseRuntimeControlCommand(text)).toThrow(expect.objectContaining({ code: "command_invalid" })),
+  );
 });

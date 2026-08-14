@@ -392,6 +392,7 @@ export default {
                     requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
                     requesterProfile: profileResolution.profile,
                     graphContext: graphContext.content,
+                    capabilities: placement.capabilities,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     });
