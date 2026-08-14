@@ -65,6 +65,10 @@
         "class_name": "MeetingMinutesWorkspace"
       },
       {
+        "name": "MEETING_MINUTES_DEPLOYMENT_GATE",
+        "class_name": "MeetingMinutesDeploymentGate"
+      },
+      {
         "name": "TASK_WRITE_APPROVALS",
         "class_name": "TaskWriteApproval"
       },
@@ -98,6 +102,10 @@
     {
       "tag": "v6",
       "new_sqlite_classes": ["RuntimeSessionRegistry"]
+    },
+    {
+      "tag": "v7",
+      "new_sqlite_classes": ["MeetingMinutesDeploymentGate"]
     }
   ],
   "containers": [

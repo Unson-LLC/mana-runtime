@@ -1,7 +1,7 @@
 import type { MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import type { MeetingMinutesRuntimeConfig } from "./meeting-minutes-entrypoints.js";
 import { processMeetingMinutesSelection } from "./meeting-minutes-entrypoints.js";
-import { loadMeetingMinutesRun } from "./meeting-minutes-state.js";
+import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import type { ResumeMeetingMinutesOptions } from "./meeting-minutes-pipeline.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
@@ -26,12 +26,14 @@ async function projectCompleted(run: MeetingMinutesRun, options: MeetingMinutesS
   }
 }
 
-async function projectFailed(run: MeetingMinutesRun | undefined, options: MeetingMinutesStatusProjectionOptions): Promise<void> {
-  if (!run) return;
+async function projectFailed(run: MeetingMinutesRun | undefined, options: MeetingMinutesStatusProjectionOptions): Promise<boolean> {
+  if (!run) return false;
   try {
     await options.updateStatus(run, "failed");
+    return true;
   } catch (error) {
     logProjectionError(run, "failed", error, options);
+    return false;
   }
 }
 
@@ -42,7 +44,12 @@ export async function processMeetingMinutesSelectionWithStatus(fs: WorkspaceFs, 
   try {
     run = await processMeetingMinutesSelection(fs, selection, config, resume);
   } catch (error) {
-    await projectFailed(await loadMeetingMinutesRun(fs, selection.runId), projection);
+    const failed = await loadMeetingMinutesRun(fs, selection.runId);
+    if (await projectFailed(failed, projection) && failed?.lifecycle) {
+      failed.lifecycle.recoveryProjectedAt = new Date().toISOString();
+      failed.updatedAt = failed.lifecycle.recoveryProjectedAt;
+      await saveMeetingMinutesRun(fs, failed);
+    }
     throw error;
   }
   await projectCompleted(run, projection);

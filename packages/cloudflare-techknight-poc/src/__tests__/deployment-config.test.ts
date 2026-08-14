@@ -268,6 +268,7 @@ describe("会社別Cloudflare deployment", () => {
         expect.objectContaining({ name: "TECHKNIGHT_SANDBOX" }),
         expect.objectContaining({ name: "TASK_WRITE_BUDGETS", class_name: "TaskWriteBudget" }),
         expect.objectContaining({ name: "MEETING_MINUTES_WORKSPACE", class_name: "MeetingMinutesWorkspace" }),
+        expect.objectContaining({ name: "MEETING_MINUTES_DEPLOYMENT_GATE", class_name: "MeetingMinutesDeploymentGate" }),
       ]),
     );
     expect(unson.containers).toEqual([
@@ -328,6 +329,7 @@ describe("会社別Cloudflare deployment", () => {
     ]));
     expect(unson.migrations).toEqual(expect.arrayContaining([
       expect.objectContaining({ tag: "v4", new_sqlite_classes: ["MeetingMinutesWorkspace"] }),
+      expect.objectContaining({ tag: "v7", new_sqlite_classes: ["MeetingMinutesDeploymentGate"] }),
     ]));
     const raw = readFileSync(fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)), "utf8");
     expect(raw).not.toContain('"GITHUB_TOKEN":');
@@ -338,6 +340,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('url.pathname === "/slack/interactions"');
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
     expect(worker).toContain("isMeetingMinutesSelection(message.body)");
+    expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
+    expect(worker).toContain("armMeetingMinutesRecovery(");
+    expect(worker).toContain("recoverStaleMeetingMinutesRun(");
     expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
@@ -350,6 +355,17 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('destination.organization.id === "unson"');
     expect(worker).toContain('destination.organization.id === "tech-knight"');
     expect(worker).toContain("consumeTaskBoardRepair({");
+  });
+
+  it("fails deployment closed behind the authenticated meeting-minutes drain gate", () => {
+    const packageJson = JSON.parse(readFileSync(
+      fileURLToPath(new URL("../../package.json", import.meta.url)),
+      "utf8",
+    )) as { scripts: Record<string, string> };
+    expect(packageJson.scripts["deploy:unson-business"]).toContain("node scripts/deploy-unson-business.mjs");
+    const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
+    expect(worker).toContain('url.pathname === "/admin/meeting-minutes/deploy-gate"');
+    expect(worker).toContain("isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN)");
   });
 
   it("binds a durable write budget in every deployment and wires all task runtime entrypoints", () => {

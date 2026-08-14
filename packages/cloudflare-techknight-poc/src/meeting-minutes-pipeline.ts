@@ -159,6 +159,10 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     }
     return run;
   }
+  if (run.status === "failed") {
+    run.status = run.github ? (run.slack?.parentTs ? "posting" : "github_saved") :
+      run.generated ? "generated" : "routed";
+  }
   run.destination ??= structuredClone(configured); run.approvedBy ??= selection.userId;
   run.status = run.status === "awaiting_destination" ? "routed" : run.status; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
@@ -206,7 +210,9 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     }
     run.status = "completed"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); return run;
   } catch (error) {
-    run.failure = { stage: run.status, message: error instanceof Error ? error.message : "meeting_minutes_failed" };
+    const failedStage = run.status;
+    run.status = "failed";
+    run.failure = { stage: failedStage, message: error instanceof Error ? error.message : "meeting_minutes_failed" };
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); throw error;
   }
 }
