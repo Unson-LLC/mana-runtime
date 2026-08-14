@@ -23,7 +23,11 @@ async function checkMcp(
   try {
     const response = await fetchImpl(`${baseUrl.replace(/\/$/, "")}/mcp`, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ jsonrpc: "2.0", id: "doctor", method: "tools/list" }),
       signal: AbortSignal.timeout(10_000),
       redirect: "manual",

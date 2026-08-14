@@ -4,7 +4,9 @@ import { runRuntimeDoctor } from "../runtime-doctor.js";
 describe("runtime doctor", () => {
   it("checks each placement MCP without exposing credentials", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get("authorization")).toMatch(/^Bearer /);
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toMatch(/^Bearer /);
+      expect(headers.get("accept")).toBe("application/json, text/event-stream");
       return Response.json({ jsonrpc: "2.0", result: { tools: [] } });
     }) as unknown as typeof fetch;
     const text = await runRuntimeDoctor({
