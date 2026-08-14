@@ -163,6 +163,13 @@ describe("会社別Cloudflare deployment", () => {
     );
   });
 
+  it("開発ランナーはコンテナ内で実在するNode実行ファイルを継承する", () => {
+    const runnerPath = fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url));
+    const runner = readFileSync(runnerPath, "utf8");
+    expect(runner).toContain('run(process.execPath, ["/opt/mana/openryoko-development-runner.mjs"]');
+    expect(runner).not.toContain('run("/usr/bin/node"');
+  });
+
   it("keeps task search off by default and documents the staged rollout", () => {
     expect(techKnight.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
     expect(unson.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("true");
