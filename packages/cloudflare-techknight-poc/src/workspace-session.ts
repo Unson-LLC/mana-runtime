@@ -10,6 +10,7 @@ export interface WorkspaceSessionState {
   modelOverride?: string;
   engaged?: boolean;
   permissionRevision?: string;
+  claudeSessionStartedGeneration?: number;
   updatedAt?: string;
 }
 
@@ -25,6 +26,7 @@ export async function readWorkspaceSession(fs: WorkspaceSessionFs): Promise<Work
           ...(value.modelOverride ? { modelOverride: value.modelOverride } : {}),
           ...(value.engaged === true ? { engaged: true } : {}),
           ...(value.permissionRevision ? { permissionRevision: value.permissionRevision } : {}),
+          ...(Number.isSafeInteger(value.claudeSessionStartedGeneration) ? { claudeSessionStartedGeneration: value.claudeSessionStartedGeneration } : {}),
           ...(value.updatedAt ? { updatedAt: value.updatedAt } : {}) }
       : { generation: 1 };
   } catch {
@@ -50,6 +52,12 @@ export async function writeWorkspaceSession(fs: WorkspaceSessionFs, state: Works
 export async function markWorkspaceEngaged(fs: WorkspaceSessionFs, updatedAt: string): Promise<void> {
   const current = await readWorkspaceSession(fs);
   await writeWorkspaceSession(fs, { ...current, engaged: true, updatedAt });
+}
+
+export async function markClaudeSessionStarted(fs: WorkspaceSessionFs, generation: number, updatedAt: string): Promise<void> {
+  const current = await readWorkspaceSession(fs);
+  if (current.generation !== generation) return;
+  await writeWorkspaceSession(fs, { ...current, claudeSessionStartedGeneration: generation, updatedAt });
 }
 
 export async function applyNewSessionCommand(fs: WorkspaceSessionFs, input: { commandId: string; requestedAt: string }) {

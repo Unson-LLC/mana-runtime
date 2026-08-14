@@ -70,4 +70,15 @@ describe("Cloudflare Claude runtime config", () => {
     expect(buildRuntimeClaudeCommand("meeting-task", config, { taskSearchEnabled: true }))
       .not.toContain("--mcp-config");
   });
+
+  it("starts then resumes the same validated Claude session", () => {
+    const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "sonnet" });
+    const sessionId = "12345678-1234-4123-8123-123456789abc";
+    expect(buildRuntimeClaudeCommand("reply", config, { sessionId }))
+      .toContain(`--session-id ${sessionId}`);
+    expect(buildRuntimeClaudeCommand("reply", config, { sessionId, resumeSession: true }))
+      .toContain(`--resume ${sessionId}`);
+    expect(() => buildRuntimeClaudeCommand("reply", config, { sessionId: "$(unsafe)" }))
+      .toThrow("runtime_claude_session_id_invalid");
+  });
 });
