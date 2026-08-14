@@ -4,6 +4,18 @@ export class RuntimeControlCommandError extends Error {
   constructor(readonly code: string) { super(code); this.name = "RuntimeControlCommandError"; }
 }
 
+export function renderRuntimeControlCommandError(error: RuntimeControlCommandError): string {
+  const messages: Record<string, string> = {
+    command_invalid: "コマンドの形式が正しくありません。`/status`、`/new`、`/model sonnet|opus`、`/doctor`、`/cron [list|run <job>]`、`/develop <依頼>` を使ってください。",
+    model_required: "モデルを指定してください。`/model sonnet` または `/model opus` を使えます。",
+    model_not_allowed: "この配置では指定したモデルを利用できません。",
+    doctor_not_configured: "診断機能はこの配置で利用できません。",
+    cron_not_configured: "定期処理機能はこの配置で利用できません。",
+    development_runner_not_configured: "開発実行機能はこの配置で利用できません。",
+  };
+  return messages[error.code] ?? "コマンドを処理できませんでした。";
+}
+
 export function renderRuntimeStatus(input: {
   placementId: string; projectCodes: string[]; generation: number; model: string;
   taskSearchEnabled: boolean; taskWriteEnabled: boolean; [key: string]: unknown;

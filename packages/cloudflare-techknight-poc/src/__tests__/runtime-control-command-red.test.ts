@@ -1,10 +1,16 @@
 import {
   applyModelCommand,
   parseRuntimeControlCommand,
+  renderRuntimeControlCommandError,
   renderRuntimeStatus,
+  RuntimeControlCommandError,
 } from "../runtime-control-command.js";
 
 describe("runtime control command policy", () => {
+  it("renders deterministic command errors as a user-facing response", () => {
+    expect(renderRuntimeControlCommandError(new RuntimeControlCommandError("command_invalid")))
+      .toContain("/cron [list|run <job>]");
+  });
   it("renders /status without exposing secrets or capabilities", () => {
     const status = renderRuntimeStatus({
       placementId: "mana-dev-biz",
