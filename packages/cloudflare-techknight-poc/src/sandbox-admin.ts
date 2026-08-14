@@ -1,7 +1,10 @@
+import { hasAnthropicCredential } from "./anthropic-auth.js";
+
 const OAUTH_OK_MARKER = "TECHKNIGHT_OAUTH_OK";
 
 export interface SandboxAdminEnv {
   SANDBOX_PROBE_TOKEN?: string;
+  ANTHROPIC_API_KEY?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
 }
 
@@ -71,13 +74,13 @@ export async function handleSandboxAdminRequest(
         tenant: "techknight",
         runtime: "claude-code",
         version: result.success ? boundedVersion(result.stdout) : undefined,
-        oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+        oauthConfigured: hasAnthropicCredential(env),
         credentialLocation: "worker-secret",
       });
     }
 
     if (pathname === "/admin/sandbox/oauth-probe") {
-      if (!env.CLAUDE_CODE_OAUTH_TOKEN) {
+      if (!hasAnthropicCredential(env)) {
         return Response.json({ error: "oauth_not_configured" }, { status: 503 });
       }
       const result = await sandbox.exec(
