@@ -23,6 +23,8 @@ interface SlackThreadContextOptions {
   botToken: string | undefined;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /** Exclude messages at or before a /new boundary. Slack timestamps compare numerically. */
+  contextAfterTs?: string;
 }
 
 interface SlackRepliesResponse extends SlackThreadRepliesPage {
@@ -73,7 +75,15 @@ export async function hydrateSlackQueueEventThreadContext(
     if (!response.ok || payload.ok !== true) {
       throw new SlackThreadContextError("slack_thread_history_unavailable");
     }
-    return payload;
+    if (!options.contextAfterTs) return payload;
+    const boundary = Number(options.contextAfterTs);
+    return {
+      ...payload,
+      messages: payload.messages?.filter((message) => {
+        const timestamp = Number(message.ts);
+        return Number.isFinite(boundary) && Number.isFinite(timestamp) && timestamp > boundary;
+      }),
+    };
   }, event.channelId, event.threadTs, event.messageTs);
 
   return context ? { ...event, threadContext: context } : event;

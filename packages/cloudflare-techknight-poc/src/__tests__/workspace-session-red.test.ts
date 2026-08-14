@@ -50,16 +50,19 @@ describe("workspace session control commands", () => {
     await expect(applyNewSessionCommand(fs, {
       commandId: "cmd-1786677816.307859-U_UMEDA",
       requestedAt: "2026-08-14T09:00:00.000Z",
+      messageTs: "1786677816.307859",
     })).resolves.toMatchObject({ generation: 2, applied: true });
 
     await expect(applyNewSessionCommand(fs, {
       commandId: "cmd-1786677816.307859-U_UMEDA",
       requestedAt: "2026-08-14T09:00:01.000Z",
+      messageTs: "1786677816.307859",
     })).resolves.toMatchObject({ generation: 2, applied: false });
 
     await expect(readWorkspaceSession(fs)).resolves.toMatchObject({
       generation: 2,
       lastNewCommandId: "cmd-1786677816.307859-U_UMEDA",
+      contextAfterTs: "1786677816.307859",
     });
   });
 

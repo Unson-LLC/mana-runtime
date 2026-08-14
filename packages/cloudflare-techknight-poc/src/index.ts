@@ -643,6 +643,7 @@ export default {
                   command: controlCommand,
                   commandId: event.eventId,
                   requestedAt: event.receivedAt,
+                  messageTs: event.messageTs,
                   placementId: placement.placementId,
                   projectCodes: placement.projectCodes,
                   currentModel: claudeRuntime.model,
@@ -676,7 +677,8 @@ export default {
                 return { outcome: "replied" as const, responseTs };
               }
               const hydrateThreadContext = async (input: SlackQueueEvent) => {
-                const hydrated = await hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN });
+                const hydrated = await hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN,
+                  contextAfterTs: workspaceSession.contextAfterTs });
                 const withParticipants = { ...hydrated,
                   threadContext: await appendSlackThreadParticipantProfiles(hydrated.threadContext,
                     { botToken: env.SLACK_BOT_TOKEN }) };

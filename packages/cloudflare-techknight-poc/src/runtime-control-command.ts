@@ -84,6 +84,7 @@ export async function executeRuntimeControlCommand(input: {
   command: RuntimeControlCommand;
   commandId: string;
   requestedAt: string;
+  messageTs?: string;
   placementId: string;
   projectCodes: string[];
   currentModel: string;
@@ -95,7 +96,8 @@ export async function executeRuntimeControlCommand(input: {
   develop?: (request: string) => Promise<string>;
 }): Promise<string> {
   if (input.command.name === "new") {
-    const state = await applyNewSessionCommand(input.fs, { commandId: input.commandId, requestedAt: input.requestedAt });
+    const state = await applyNewSessionCommand(input.fs, { commandId: input.commandId, requestedAt: input.requestedAt,
+      ...(input.messageTs ? { messageTs: input.messageTs } : {}) });
     return state.applied ? `新しい会話を開始しました。session generation: ${state.generation}`
       : `この会話はすでに初期化済みです。session generation: ${state.generation}`;
   }

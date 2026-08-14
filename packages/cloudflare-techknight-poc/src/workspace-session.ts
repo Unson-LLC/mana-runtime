@@ -11,6 +11,8 @@ export interface WorkspaceSessionState {
   engaged?: boolean;
   permissionRevision?: string;
   claudeSessionStartedGeneration?: number;
+  /** Slack message timestamp after which thread context belongs to this generation. */
+  contextAfterTs?: string;
   updatedAt?: string;
 }
 
@@ -30,6 +32,7 @@ export async function readWorkspaceSession(fs: WorkspaceSessionFs): Promise<Work
           ...(value.engaged === true ? { engaged: true } : {}),
           ...(value.permissionRevision ? { permissionRevision: value.permissionRevision } : {}),
           ...(Number.isSafeInteger(value.claudeSessionStartedGeneration) ? { claudeSessionStartedGeneration: value.claudeSessionStartedGeneration } : {}),
+          ...(value.contextAfterTs ? { contextAfterTs: value.contextAfterTs } : {}),
           ...(value.updatedAt ? { updatedAt: value.updatedAt } : {}) }
       : { generation: 1 };
   } catch {
@@ -63,10 +66,11 @@ export async function markClaudeSessionStarted(fs: WorkspaceSessionFs, generatio
   await writeWorkspaceSession(fs, { ...current, claudeSessionStartedGeneration: generation, updatedAt });
 }
 
-export async function applyNewSessionCommand(fs: WorkspaceSessionFs, input: { commandId: string; requestedAt: string }) {
+export async function applyNewSessionCommand(fs: WorkspaceSessionFs, input: { commandId: string; requestedAt: string; messageTs?: string }) {
   const current = await readWorkspaceSession(fs);
   if (current.lastNewCommandId === input.commandId) return { ...current, applied: false };
-  const next = { generation: current.generation + 1, lastNewCommandId: input.commandId, updatedAt: input.requestedAt };
+  const next = { generation: current.generation + 1, lastNewCommandId: input.commandId,
+    ...(input.messageTs ? { contextAfterTs: input.messageTs } : {}), updatedAt: input.requestedAt };
   await writeWorkspaceSession(fs, next);
   return { ...next, applied: true };
 }
