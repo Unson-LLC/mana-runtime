@@ -51,6 +51,7 @@ import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
 import { readWorkspaceSession } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
+import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import {
   consumeTaskBoardRepair,
@@ -70,6 +71,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
+  RUNTIME_CRON_JOBS_JSON?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
@@ -332,6 +334,13 @@ export default {
                   taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED === "true",
                   taskWriteEnabled: placement.taskWriteEnabled,
                   doctor: () => runRuntimeDoctor(env, placement.capabilities?.mcp ?? []),
+                  cron: (action, target) => executeRuntimeCron({
+                    fs: workspace.fs,
+                    jobs: parsePlacementCronJobs(env.RUNTIME_CRON_JOBS_JSON, placement.channelId),
+                    action,
+                    ...(target ? { target } : {}),
+                    run: async () => { throw new Error("cron_runner_not_configured"); },
+                  }),
                 });
                 const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
                 await persistReplyCompletion(workspace.fs, {
