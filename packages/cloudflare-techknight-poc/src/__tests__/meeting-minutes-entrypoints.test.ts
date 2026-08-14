@@ -1,4 +1,5 @@
-import { isMeetingMinutesSelection, isMeetingMinutesSlackEvent, meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
+import { isMeetingMinutesRedo, isMeetingMinutesSelection, isMeetingMinutesSlackEvent,
+  meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
 
 const destinations = JSON.stringify([{ id: "mana", projectId: "mana", name: "mana",
   organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
@@ -34,5 +35,10 @@ describe("meeting minutes entrypoints", () => {
     expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1", destinationId: "mana",
       workspaceId: "T1", channelId: "C1", userId: "U1", actionTs: "2.1" })).toBe(true);
     expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1" })).toBe(false);
+  });
+  it("recognizes only a complete redo Queue message", () => {
+    expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1", workspaceId: "T1",
+      channelId: "C1", userId: "U1", actionTs: "2.1" })).toBe(true);
+    expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1" })).toBe(false);
   });
 });

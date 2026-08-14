@@ -46,6 +46,25 @@ export class CloudflareMeetingMinutesGitHubClient {
       `Save meeting minutes: ${date} ${base}`);
     return { transcriptPath, minutesPath, transcriptUrl, minutesUrl };
   }
+  async delete(target: MeetingMinutesDestination["github"], paths: readonly string[]): Promise<void> {
+    if (!this.token.trim()) throw new Error("github_token_not_configured");
+    const branch = target.branch?.trim() || "main";
+    const headers = { Accept: "application/vnd.github+json", Authorization: `Bearer ${this.token}`,
+      "User-Agent": "mana-runtime-meeting-minutes", "X-GitHub-Api-Version": "2022-11-28" };
+    for (const path of paths) {
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      const api = `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/contents/${encodedPath}`;
+      const current = await this.fetchImpl.call(globalThis, `${api}?ref=${encodeURIComponent(branch)}`, { headers });
+      if (current.status === 404) continue;
+      if (!current.ok) throw new Error(`github_read_failed:${current.status}`);
+      const sha = ((await current.json()) as { sha?: string }).sha;
+      if (!sha) throw new Error("github_existing_content_invalid");
+      const deleted = await this.fetchImpl.call(globalThis, api, { method: "DELETE",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ message: `Remove misplaced meeting record: ${path}`, sha, branch }) });
+      if (!deleted.ok && deleted.status !== 404) throw new Error(`github_delete_failed:${deleted.status}`);
+    }
+  }
   private async put(target: MeetingMinutesDestination["github"], path: string, content: string, message: string): Promise<string> {
     const branch = target.branch?.trim() || "main"; const encodedPath = path.split("/").map(encodeURIComponent).join("/");
     const api = `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/contents/${encodedPath}`;

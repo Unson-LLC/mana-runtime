@@ -1,5 +1,5 @@
 import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
-  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, type MeetingMinutesDestination,
+  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
   type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 
 export interface SlackSelectionMessage {
@@ -34,9 +34,26 @@ export function projectSelectionMessage(runId: string, fileName: string, organiz
     { type: "section", text: { type: "mrkdwn", text: `*${fileName}* の保存先プロジェクトを選択してください。\n組織: *${organization.name}*` } },
     { type: "actions", elements: projects.map((destination) => ({ type: "button",
       text: { type: "plain_text", text: destination.name }, action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`,
-      value: JSON.stringify({ runId, destinationId: destination.id }) })) },
+      value: JSON.stringify({ runId, destinationId: destination.id, fileName }) })) },
     { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "← 組織選択に戻る" },
       action_id: MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, value: JSON.stringify({ runId, fileName }) }] },
+  ] };
+}
+
+export function destinationSelectedMessage(runId: string, fileName: string,
+  destination: MeetingMinutesDestination): SlackSelectionMessage {
+  return { replace_original: true, text: `${fileName} の保存先に ${destination.name} を選択しました。`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*✅ 保存先を選択しました*\n保存先: ${destination.name}` } },
+  ] };
+}
+
+export function redoConfirmationMessage(runId: string, fileName: string): SlackSelectionMessage {
+  return { replace_original: true, text: `${fileName} の保存先をやり直しますか？`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*保存先をやり直しますか？*\nGitHubの議事録・文字起こしと自動登録タスクを取り消します。旧共有投稿は「取り消し済み」にし、保存先選択へ戻します。` } },
+    { type: "actions", elements: [
+      { type: "button", style: "danger", text: { type: "plain_text", text: "取り消して選び直す" },
+        action_id: "mana_meeting_minutes_confirm_redo", value: JSON.stringify({ runId, fileName }) },
+    ] },
   ] };
 }
 
@@ -50,7 +67,7 @@ export function suggestedDestinationMessage(run: MeetingMinutesRun,
     { type: "actions", elements: [
       { type: "button", style: "primary", text: { type: "plain_text", text: "この候補で進める" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`,
-        value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) },
+        value: JSON.stringify({ runId: run.runId, destinationId: destination.id, fileName: run.file.name }) },
       { type: "button", text: { type: "plain_text", text: "別の保存先を選ぶ" },
         action_id: MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID,
         value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) },
@@ -112,7 +129,11 @@ export class MeetingMinutesSlackClient {
     if (!run.destination) throw new Error("meeting_minutes_destination_missing");
     if (!run.slack?.selectionTs) throw new Error("meeting_minutes_selection_coordinates_missing");
     await this.setThreadStatus(run, `議事録を作成しています…（${run.destination.name}）`);
-    return run.slack.selectionTs;
+    const result = await this.post("chat.postMessage", { channel: run.sourceChannelId, thread_ts: run.sourceThreadTs,
+      text: `${run.file.name} の議事録を作成しています。`, client_msg_id: await clientMessageId(`${run.runId}-processing`),
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: `*⏳ 議事録を作成中…*\n保存先: ${run.destination.name}\n完了すると共有先へ投稿します。` } }] });
+    if (!result.ts) throw new Error("slack_response_ts_missing");
+    return result.ts;
   }
   async showProcessingStatus(channelId: string, threadTs: string, destinationName: string): Promise<void> {
     await this.post("assistant.threads.setStatus", {
@@ -138,7 +159,11 @@ export class MeetingMinutesSlackClient {
         `共有先: <#${run.destination.slackChannelId}>`].filter(Boolean).join("\n")
       : failedRunDetails(run).join("\n");
     const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn", text: details } }];
-    if (!completed) {
+    if (completed) {
+      blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "保存先をやり直す" },
+        action_id: MEETING_MINUTES_REDO_ACTION_ID,
+        value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) }] });
+    } else {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,
@@ -187,5 +212,19 @@ export class MeetingMinutesSlackClient {
     const result = await this.post("chat.postMessage", { channel: channelId, thread_ts: threadTs, text, blocks,
       client_msg_id: await clientMessageId(clientMsgId),
       unfurl_links: false }); if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
+  }
+  async retractSharedMinutes(channelId: string, parentTs: string, fileName: string): Promise<void> {
+    await this.post("chat.update", { channel: channelId, ts: parentTs,
+      text: `${fileName} の議事録は保存先変更のため取り消されました。`,
+      blocks: [{ type: "section", text: { type: "mrkdwn",
+        text: `*⚠️ この議事録は取り消されました*\n保存先を変更して再作成しています。` } }] });
+  }
+  async showDestinationSelection(run: MeetingMinutesRun,
+    destinations: readonly MeetingMinutesDestination[]): Promise<string> {
+    if (!run.slack?.processingTs) throw new Error("meeting_minutes_status_coordinates_missing");
+    const message = organizationSelectionMessage(run.runId, run.file.name, destinations);
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
+      text: message.text, blocks: message.blocks });
+    return run.slack.processingTs;
   }
 }

@@ -43,4 +43,28 @@ describe("CloudflareMeetingMinutesGitHubClient", () => {
       .rejects.toThrow("github_write_failed:500");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
+
+  it("deletes only the persisted record paths with their current SHA", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return init?.method === "DELETE" ? new Response(null, { status: 200 }) : Response.json({ sha: "sha-1" });
+    }) as typeof fetch;
+    await new CloudflareMeetingMinutesGitHubClient("token", fetchImpl)
+      .delete(destination.github, ["docs/transcripts/a.txt", "docs/minutes/a.md"]);
+    const deletes = calls.filter((call) => call.init?.method === "DELETE");
+    expect(deletes).toHaveLength(2);
+    expect(deletes.map((call) => call.url)).toEqual([
+      "https://api.github.com/repos/Unson-LLC/mana/contents/docs/transcripts/a.txt",
+      "https://api.github.com/repos/Unson-LLC/mana/contents/docs/minutes/a.md",
+    ]);
+    expect(JSON.parse(String(deletes[0]?.init?.body))).toMatchObject({ sha: "sha-1", branch: "main" });
+  });
+
+  it("treats already missing GitHub records as a completed deletion", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 404 })) as typeof fetch;
+    await expect(new CloudflareMeetingMinutesGitHubClient("token", fetchImpl)
+      .delete(destination.github, ["docs/minutes/a.md"])).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
 });

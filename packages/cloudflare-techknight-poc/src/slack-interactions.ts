@@ -1,8 +1,9 @@
 import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
-  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, type MeetingMinutesDestination,
-  type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
+  MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
+  type MeetingMinutesRedo, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
-import { organizationSelectionMessage, projectSelectionMessage,
+import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
   MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { verifySlackRequest } from "./slack.js";
 
@@ -15,7 +16,7 @@ interface InteractionOptions {
   destinations?: readonly MeetingMinutesDestination[];
   resolveDestinations?(): readonly MeetingMinutesDestination[];
   nowMs?: number;
-  send(selection: MeetingMinutesSelection): Promise<unknown>;
+  send(selection: MeetingMinutesSelection | MeetingMinutesRedo): Promise<unknown>;
   showProcessing?(input: { channelId: string; threadTs: string; destinationName: string }): Promise<void>;
   clearProcessing?(input: { channelId: string; threadTs: string }): Promise<void>;
   resolveThreadTs?(runId: string): Promise<string | undefined>;
@@ -30,7 +31,7 @@ export interface MeetingMinutesInteractionEnvironment extends MeetingMinutesEnvi
   SLACK_SIGNING_SECRET: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
-  TECHKNIGHT_EVENTS: { send(selection: MeetingMinutesSelection): Promise<unknown> };
+  TECHKNIGHT_EVENTS: { send(selection: MeetingMinutesSelection | MeetingMinutesRedo): Promise<unknown> };
   SLACK_BOT_TOKEN?: string;
 }
 
@@ -119,7 +120,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const destinationAction = actionId === MEETING_MINUTES_CHOOSE_ACTION_ID || actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`);
   const organizationAction = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`);
   const backAction = actionId === MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID;
-  if (!destinationAction && !organizationAction && !backAction) {
+  const redoAction = actionId === MEETING_MINUTES_REDO_ACTION_ID;
+  const confirmRedoAction = actionId === MEETING_MINUTES_CONFIRM_REDO_ACTION_ID;
+  if (!destinationAction && !organizationAction && !backAction && !redoAction && !confirmRedoAction) {
     return response("slack_interaction_invalid", 400);
   }
   let value: Record<string, unknown> | undefined;
@@ -137,6 +140,20 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   let destinations: readonly MeetingMinutesDestination[] | undefined;
   try { destinations = options.destinations ?? options.resolveDestinations?.(); }
   catch { return response("slack_interaction_invalid", 400); }
+  if (redoAction) {
+    const responseUrl = string(payload?.response_url);
+    if (!runId || !fileName || !responseUrl || !options.updateOriginal || !options.defer) {
+      return response("slack_interaction_invalid", 400);
+    }
+    options.defer(options.updateOriginal(responseUrl, redoConfirmationMessage(runId, fileName)));
+    return Response.json({ ok: true });
+  }
+  if (confirmRedoAction) {
+    if (!runId || !channelId || !actionTs || !options.defer) return response("slack_interaction_invalid", 400);
+    options.defer(options.send({ kind: "meeting_minutes_redo", runId, workspaceId: options.expectedTeamId,
+      channelId, userId, actionTs }).then(() => undefined));
+    return Response.json({ ok: true });
+  }
   if ((organizationAction || backAction)) {
     const responseUrl = string(payload?.response_url);
     const actionOrganizationId = organizationAction
@@ -186,6 +203,14 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       }
     }
     try {
+      const responseUrl = string(payload?.response_url);
+      if (responseUrl && options.updateOriginal && destination && fileName) {
+        try { await options.updateOriginal(responseUrl, destinationSelectedMessage(runId, fileName, destination)); }
+        catch (error) {
+          console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
+            error: error instanceof Error ? error.message : "unexpected_error" }));
+        }
+      }
       await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
         channelId, userId, actionTs });
     } catch (error) {
