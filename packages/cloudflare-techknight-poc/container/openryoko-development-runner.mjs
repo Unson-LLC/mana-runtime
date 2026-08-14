@@ -661,7 +661,7 @@ export function buildContinueGatesAgentPrompt(storyId, baseBranch) {
 }
 
 export function buildAgentArgs(prompt, model) {
-  return ["-p", "--model", model, "--dangerously-skip-permissions", prompt];
+  return ["--print", "--model", model, "--permission-mode", "bypassPermissions", prompt];
 }
 
 export function buildPrShipArgs(storyId, branch, baseBranch) {

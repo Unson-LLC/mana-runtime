@@ -191,7 +191,8 @@ describe("会社別Cloudflare deployment", () => {
     const runner = readFileSync(runnerPath, "utf8");
     const config = JSON.parse(readFileSync(configPath, "utf8")) as { claudeModel?: string };
     expect(config.claudeModel).toBe("sonnet");
-    expect(runner).toContain('return ["-p", "--model", model, "--dangerously-skip-permissions", prompt]');
+    expect(runner).toContain('return ["--print", "--model", model, "--permission-mode", "bypassPermissions", prompt]');
+    expect(runner).not.toContain("--dangerously-skip-permissions");
     expect(runner).toContain("buildAgentArgs(buildAgentPrompt(storyId, request, baseBranch), config.claudeModel)");
     expect(runner).toContain("safeCommandDiagnostic(stderr || stdout)");
     expect(runner).toContain('Bearer [REDACTED]');
