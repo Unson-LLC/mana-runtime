@@ -20,8 +20,9 @@ export interface ResumeMeetingMinutesOptions {
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string }>;
-  postParent(channelId: string, text: string, clientMsgId: string): Promise<string>;
-  postThreadChunk(channelId: string, threadTs: string, text: string, clientMsgId: string): Promise<string>;
+  postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string>;
+  postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
+    index: number, total: number, clientMsgId: string): Promise<string>;
 }
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
@@ -145,19 +146,18 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     await registerGeneratedTasks(fs, run, options);
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = run.generated!.body.trimStart();
-    const narrativeText = body.startsWith("------------")
-      ? `${parentText}\n\n${body}`
-      : `${parentText}\n\n------------\n\n${body}`;
+    const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
     const summary = taskSummary(run);
     const chunks = splitMeetingMinutesForSlack(summary ? `${narrativeText}\n\n------------\n\n${summary}` : narrativeText);
     run.slack ??= { postedChunkIndexes: [] };
     if (!run.slack.parentTs) {
-      run.slack.parentTs = await options.postParent(run.destination.slackChannelId, parentText, `${run.runId}-parent`);
+      run.slack.parentTs = await options.postParent(run.destination.slackChannelId, run.file.name, parentText, `${run.runId}-parent`);
       run.status = "posting"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     for (let index = 0; index < chunks.length; index += 1) {
       if (run.slack.postedChunkIndexes.includes(index)) continue;
-      await options.postThreadChunk(run.destination.slackChannelId, run.slack.parentTs, chunks[index]!, `${run.runId}-chunk-${index}`);
+      await options.postThreadChunk(run.destination.slackChannelId, run.slack.parentTs, run.file.name, chunks[index]!,
+        index, chunks.length, `${run.runId}-chunk-${index}`);
       run.slack.postedChunkIndexes.push(index); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     run.status = "completed"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); return run;

@@ -69,12 +69,34 @@ export class MeetingMinutesSlackClient {
     }
     await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text, blocks });
   }
-  async postParent(channelId: string, text: string, clientMsgId: string): Promise<string> {
-    const result = await this.post("chat.postMessage", { channel: channelId, text, client_msg_id: await clientMessageId(clientMsgId), unfurl_links: false });
+  async postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string> {
+    const text = `📝 会議要約: ${fileName}`;
+    const blocks = [
+      { type: "section", text: { type: "mrkdwn", text: `📝 *会議要約: ${fileName}*\n\n_AI生成による要約です_` } },
+      { type: "divider" },
+      { type: "section", text: { type: "mrkdwn", text: summary } },
+      { type: "divider" },
+      { type: "context", elements: [{ type: "mrkdwn", text: "💬 _詳細な議事録はこの投稿のスレッドに投稿されます_" }] },
+    ];
+    const result = await this.post("chat.postMessage", { channel: channelId, text, blocks,
+      client_msg_id: await clientMessageId(clientMsgId), unfurl_links: false });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
-  async postThreadChunk(channelId: string, threadTs: string, text: string, clientMsgId: string): Promise<string> {
-    const result = await this.post("chat.postMessage", { channel: channelId, thread_ts: threadTs, text, client_msg_id: await clientMessageId(clientMsgId),
+  async postThreadChunk(channelId: string, threadTs: string, fileName: string, minutes: string,
+    index: number, total: number, clientMsgId: string): Promise<string> {
+    const first = index === 0; const last = index === total - 1;
+    const text = first ? `📄 詳細議事録: ${fileName}` : `📄 詳細議事録（続き ${index + 1}/${total}）`;
+    const blocks: Array<Record<string, unknown>> = [];
+    if (first) blocks.push(
+      { type: "section", text: { type: "mrkdwn", text: `📄 *詳細議事録: ${fileName}*\n\n_AI生成による詳細な議事録です_` } },
+      { type: "divider" },
+    );
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: minutes } });
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: last
+      ? "🤖 _この議事録はAIにより自動生成されました。必要に応じて内容をご確認ください。_"
+      : `📜 _続きがあります（${total}件中 ${index + 1}件目）_` }] });
+    const result = await this.post("chat.postMessage", { channel: channelId, thread_ts: threadTs, text, blocks,
+      client_msg_id: await clientMessageId(clientMsgId),
       unfurl_links: false }); if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
 }

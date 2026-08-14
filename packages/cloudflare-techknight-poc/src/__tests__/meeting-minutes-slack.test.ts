@@ -67,7 +67,7 @@ describe("MeetingMinutesSlackClient", () => {
       if (this !== globalThis) throw new Error("illegal receiver");
       return Promise.resolve(new Response(JSON.stringify({ ok: true, ts: "1.2" }), { status: 200 }));
     });
-    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postParent("C1", "test", "receiver-test"))
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postParent("C1", "meeting.txt", "test", "receiver-test"))
       .resolves.toBe("1.2");
   });
 
@@ -87,9 +87,26 @@ describe("MeetingMinutesSlackClient", () => {
       bodies.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: "1.2" });
     }) as typeof fetch;
     const client = new MeetingMinutesSlackClient("token", fetchImpl);
-    await client.postParent("C1", "text", "run-parent"); await client.postParent("C1", "text", "run-parent");
+    await client.postParent("C1", "meeting.txt", "text", "run-parent");
+    await client.postParent("C1", "meeting.txt", "text", "run-parent");
     const ids = bodies.map((body) => (body as { client_msg_id: string }).client_msg_id);
     expect(ids[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(ids[0]).toBe(ids[1]);
+  });
+
+  it("posts the legacy summary card and detailed thread contract", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: `${bodies.length}.1` });
+    }) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+    const parentTs = await client.postParent("C1", "定例.txt", "*定例*\n概要", "run-parent");
+    await client.postThreadChunk("C1", parentTs, "定例.txt", "議題1", 0, 2, "run-chunk-0");
+    await client.postThreadChunk("C1", parentTs, "定例.txt", "議題2", 1, 2, "run-chunk-1");
+    expect(bodies[0]).toMatchObject({ channel: "C1", text: "📝 会議要約: 定例.txt" });
+    expect(JSON.stringify(bodies[0]?.blocks)).toContain("詳細な議事録はこの投稿のスレッド");
+    expect(JSON.stringify(bodies[1]?.blocks)).toContain("詳細議事録: 定例.txt");
+    expect(JSON.stringify(bodies[1]?.blocks)).toContain("続きがあります（2件中 1件目）");
+    expect(JSON.stringify(bodies[2]?.blocks)).toContain("この議事録はAIにより自動生成されました");
   });
 });
