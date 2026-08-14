@@ -252,6 +252,25 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it("uses the signed placement scope when one worker serves multiple placements", async () => {
+    const upstream = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockResolvedValueOnce(Response.json({ ...task, project_codes: ["unson"] }));
+    const token = await capability({ placementId: "biz-meeting-router", projects: ["unson"] });
+    const policy = JSON.stringify({ version: "test-v2", rules: [{ effect: "approval", actors: ["U_REQUESTER"], placements: ["biz-meeting-router"], projects: ["unson"], operations: ["task.create"], approvers: ["U_APPROVER"], ttlSeconds: 120 }] });
+    const placements = JSON.stringify([
+      { placementId: "mana-accounting", channelId: "C_BACK_OFFICE", projectCodes: ["back-office"], taskWriteEnabled: true },
+      { placementId: "biz-meeting-router", channelId: "C_ROUTER", projectCodes: ["unson"], taskWriteEnabled: true },
+    ]);
+    const response = await createTaskWriteProxyHandler(upstream)(await request({
+      operation: "create", project: "unson", title: "Router task",
+    }, token), env({ RUNTIME_PLACEMENTS_JSON: placements, TASK_WRITE_POLICY_JSON: policy }));
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ status: "approval_required", policy_version: "test-v2" });
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when no requester policy is configured", async () => {
     const upstream = vi.fn();
     const response = await createTaskWriteProxyHandler(upstream)(await request({ operation: "create", title: "x" }), env({ TASK_WRITE_POLICY_JSON: undefined }));

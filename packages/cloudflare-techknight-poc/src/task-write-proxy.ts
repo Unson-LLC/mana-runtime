@@ -1,6 +1,6 @@
 import { TaskApiClient, TaskApiError, type CanonicalTask, type CreateTaskInput, type TransitionTaskInput, type UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { authorizeTaskWriteIntent, evaluateTaskWritePolicy, verifyTaskWriteCapability, type TaskWriteIntent, type TaskWriteOperation, type TaskWritePolicy } from "@openryoko/write-broker";
-import { parseRuntimeProjectCodes } from "./runtime-config.js";
+import { parseRuntimePlacements, parseRuntimeProjectCodes } from "./runtime-config.js";
 import type { TaskBoardRepairEvent } from "./task-board.js";
 import { claimTaskWriteBudgetSlot, type TaskWriteBudgetNamespace } from "./task-write-budget.js";
 import { consumeTaskWriteApproval, createTaskWriteApproval, type TaskWriteApprovalNamespace } from "./task-write-approval.js";
@@ -11,6 +11,7 @@ export const TASK_WRITE_PATH = "/api/task-write";
 export interface TaskWriteProxyEnv {
   RUNTIME_TASK_WRITE_ENABLED?: string;
   RUNTIME_PROJECT_CODES?: string;
+  RUNTIME_PLACEMENTS_JSON?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   TASK_WRITE_CAPABILITY_SECRET?: string;
@@ -142,6 +143,19 @@ function upstreamOrigin(value: string | undefined): string {
   return url.origin;
 }
 
+function capabilityPlacementId(token: string): string {
+  const encoded = token.split(".")[0];
+  if (!encoded) throw new Error("invalid_write_capability");
+  try {
+    const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const claims = JSON.parse(atob(normalized + "=".repeat((4 - normalized.length % 4) % 4))) as { placementId?: unknown };
+    if (typeof claims.placementId !== "string" || !claims.placementId) throw new Error();
+    return claims.placementId;
+  } catch {
+    throw new Error("invalid_write_capability");
+  }
+}
+
 export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
   return async (request: Request, env: TaskWriteProxyEnv): Promise<Response> => {
     if (env.RUNTIME_TASK_WRITE_ENABLED !== "true") return error("task_write_disabled", 503);
@@ -151,11 +165,16 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
     let body: WriteRequest;
     try { body = parseBody(await request.json()); } catch (cause) { return error(cause instanceof Error ? cause.message : "task_write_invalid_request", 400); }
     try {
-      const projects = parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
       const secret = env.TASK_WRITE_CAPABILITY_SECRET;
       const token = request.headers.get("x-mana-task-write-capability") ?? "";
-      if (!secret || projects.length === 0 || !env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_EXPECTED_TEAM_ID || !env.RUNTIME_PLACEMENT_ID) throw new Error("task_write_not_configured");
-      const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId: env.RUNTIME_PLACEMENT_ID });
+      const placement = env.RUNTIME_PLACEMENTS_JSON
+        ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).find((candidate) => candidate.placementId === capabilityPlacementId(token))
+        : undefined;
+      const projects = placement?.projectCodes ?? parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
+      const placementId = placement?.placementId ?? env.RUNTIME_PLACEMENT_ID;
+      const writeChannelId = placement?.channelId ?? env.SLACK_ALLOWED_CHANNEL_ID;
+      if (!secret || projects.length === 0 || !env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_EXPECTED_TEAM_ID || !placementId) throw new Error("task_write_not_configured");
+      const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId });
       const operation = `task.${body.operation}` as TaskWriteOperation;
       const intent: TaskWriteIntent = { requestId: body.request_id, actor: claims.actor, placementId: claims.placementId,
         project: body.project, operation, targetId: body.task_id, idempotencyKey: `slack:${body.request_id}:${body.call_index}` };
@@ -249,12 +268,12 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
         requester: claims.actor.id, approver: approvedBy ?? null, project: body.project, taskId: result.id,
         policyVersion: decision.policyVersion, payloadHash: fingerprint, beforeVersion: beforeVersion ?? null,
         afterVersion: result.version, result: "executed" }));
-      if (env.TASK_BOARD_REPAIRS && env.TENANT_ID && env.SLACK_EXPECTED_TEAM_ID && env.SLACK_ALLOWED_CHANNEL_ID) {
+      if (env.TASK_BOARD_REPAIRS && env.TENANT_ID && env.SLACK_EXPECTED_TEAM_ID && writeChannelId) {
         await env.TASK_BOARD_REPAIRS.send({
           eventType: "task_board_repair",
           tenantId: env.TENANT_ID,
           workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-          channelId: env.SLACK_ALLOWED_CHANNEL_ID,
+          channelId: writeChannelId,
           reason: "task_write",
           requestedAt: new Date().toISOString(),
         }).catch(() => console.warn(JSON.stringify({ event: "task_board_repair_enqueue_failed", requestId: body.request_id })));
