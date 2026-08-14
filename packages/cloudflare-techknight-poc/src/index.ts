@@ -373,7 +373,7 @@ export default {
               const token = organizationId === "tech-knight"
                 ? env.SLACK_BOT_TOKEN_TECHKNIGHT : organizationId === "unson" ? env.SLACK_BOT_TOKEN_UNSON : env.SLACK_BOT_TOKEN;
               await new MeetingMinutesSlackClient(token ?? "").openTaskEditView(triggerId, view);
-            }, listPeople: (projectId) => listGraphPeople(projectId, {
+            }, listPeople: () => listGraphPeople(undefined, {
               baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
               token: env.BRAINBASE_GRAPH_API_TOKEN,
             }), repairTaskBoard: async () => {

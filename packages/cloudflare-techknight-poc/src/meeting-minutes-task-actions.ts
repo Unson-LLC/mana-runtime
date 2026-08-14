@@ -27,7 +27,7 @@ export interface MeetingMinutesTaskActionDependencies {
   deleteTask(taskId: string, expectedVersion: number, idempotencyKey: string): Promise<unknown>;
   updateCard(run: MeetingMinutesRun): Promise<void>;
   openView(organizationId: string, triggerId: string, view: Record<string, unknown>): Promise<void>;
-  listPeople(projectId?: string): Promise<GraphPersonOption[] | undefined>;
+  listPeople(): Promise<GraphPersonOption[] | undefined>;
   repairTaskBoard(): Promise<void>;
   defer(work: Promise<void>): void;
 }
@@ -51,7 +51,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     const teamId = text(object(payload.team)?.id); const expectedTeam = value?.organizationId && deps.destinationTeamIds[value.organizationId];
     if (!value || !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam)
       return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
-    const people = await deps.listPeople(value.projectId);
+    const people = await deps.listPeople();
     if (!people) return Response.json({ error: "meeting_minutes_graph_unavailable" }, { status: 503 });
     const query = (text(action?.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
     const matches = people.filter((person) => !query || [person.name, ...person.aliases]
