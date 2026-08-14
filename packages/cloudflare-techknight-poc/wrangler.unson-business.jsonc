@@ -105,7 +105,7 @@
       "class_name": "TechKnightSandbox",
       "image": "./Dockerfile",
       "instance_type": "basic",
-      "max_instances": 1
+      "max_instances": 2
     }
   ],
   "queues": {
@@ -125,7 +125,7 @@
         "max_batch_size": 1,
         "max_batch_timeout": 5,
         "max_retries": 3,
-        "max_concurrency": 1,
+        "max_concurrency": 2,
         "dead_letter_queue": "unson-business-mana-runtime-events-dlq"
       },
       {
