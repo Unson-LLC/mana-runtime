@@ -12,6 +12,7 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
   workspaceId: "T1", channelId: "CROUTER", userId: "U1", actionTs: "2.1" };
 function resumeOptions(overrides: Record<string, unknown> = {}) {
   return { destinations: [destination], download: vi.fn().mockResolvedValue("transcript"),
+    postProcessingStatus: vi.fn().mockResolvedValue("3.1"),
     generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
@@ -20,6 +21,22 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("meeting minutes pipeline", () => {
+  it("persists one processing reply before generation and reuses it on retry", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const postProcessingStatus = vi.fn().mockResolvedValue("3.1");
+    const generate = vi.fn().mockRejectedValueOnce(new Error("generator down"))
+      .mockResolvedValueOnce({ title: "定例", overview: "概要", body: "本文" });
+    const options = resumeOptions({ postProcessingStatus, generate });
+    await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("generator down");
+    const retried = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(retried.slack?.processingTs).toBe("3.1");
+    expect(postProcessingStatus).toHaveBeenCalledTimes(1);
+    expect(postProcessingStatus).toHaveBeenCalledWith(expect.objectContaining({
+      sourceChannelId: "CROUTER", sourceThreadTs: "1.1", destination: expect.objectContaining({ id: "mana" }),
+    }));
+  });
+
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
     const fs = new MemoryFs(); const requestDestination = vi.fn().mockResolvedValue("2.1");
     const first = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", destinations: [destination], requestDestination });

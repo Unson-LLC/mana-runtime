@@ -22,7 +22,7 @@ import {
   processMeetingMinutesSlackEvent,
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
-import type { MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import type { MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
@@ -130,6 +130,7 @@ function meetingMinutesClients(env: Env) {
   return {
     slack,
     resume: {
+      postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
       download: (fileId: string) => slack.downloadTextFile(fileId),
       generate: (transcript: string) => {
         if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("oauth_not_configured");
