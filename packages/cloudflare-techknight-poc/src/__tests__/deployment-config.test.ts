@@ -185,6 +185,19 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).toContain("extraEnv: sandboxAgentEnv");
   });
 
+  it("開発エージェントもplacement既定と同じsonnetを明示して起動する", () => {
+    const runnerPath = fileURLToPath(new URL("../../container/openryoko-development-runner.mjs", import.meta.url));
+    const configPath = fileURLToPath(new URL("../../container/openryoko-development-runner.json", import.meta.url));
+    const runner = readFileSync(runnerPath, "utf8");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as { claudeModel?: string };
+    expect(config.claudeModel).toBe("sonnet");
+    expect(runner).toContain('return ["--print", "--model", model, "--permission-mode", "bypassPermissions", prompt]');
+    expect(runner).not.toContain("--dangerously-skip-permissions");
+    expect(runner).toContain("buildAgentArgs(buildAgentPrompt(storyId, request, baseBranch), config.claudeModel)");
+    expect(runner).toContain("safeCommandDiagnostic(stderr || stdout)");
+    expect(runner).toContain('Bearer [REDACTED]');
+  });
+
   it("開発ランナーの検証用commitに固定の非個人Git identityを設定する", () => {
     const dockerfile = readFileSync(fileURLToPath(new URL("../../Dockerfile", import.meta.url)), "utf8");
     expect(dockerfile).toContain('git config --system user.name "Mana Development Runner"');
