@@ -31,6 +31,12 @@ function parseRunnerResult(stdout) {
   return { status: "failed", summary: "Cloudflare development runner produced no valid result." };
 }
 
+function safeRunnerFailureReason(stderr, code) {
+  const lines = String(stderr ?? "").trim().split("\n").reverse();
+  const commandFailure = lines.find((line) => /^[a-z0-9._/-]+ exited with code [0-9]+$/i.test(line.trim()));
+  return commandFailure?.trim() ?? `runner_exit_${Number.isInteger(code) ? code : "unknown"}`;
+}
+
 async function ensureRepository() {
   await mkdir("/srv/openryoko-development", { recursive: true });
   const probe = await run("/usr/bin/git", ["-C", "/srv/openryoko-development/repository", "rev-parse", "--git-dir"]);
@@ -77,6 +83,9 @@ async function main() {
       stdin: JSON.stringify({ mode: "new", request: job.request }),
     });
     runner = parseRunnerResult(result.stdout);
+    if (runner.status === "failed" && runner.summary === "The isolated development runner stopped safely. No PR or deployment was performed.") {
+      runner = { ...runner, summary: `The isolated development runner stopped safely (${safeRunnerFailureReason(result.stderr, result.code)}). No PR or deployment was performed.` };
+    }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "development_runner_failed";
     runner = { status: "failed", summary: `Cloudflare development runner stopped safely (${reason}). No PR or deployment was performed.` };
