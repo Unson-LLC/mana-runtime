@@ -1,6 +1,7 @@
 import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
   MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
   type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
 
 export interface SlackSelectionMessage {
   replace_original: true;
@@ -211,7 +212,22 @@ export class MeetingMinutesSlackClient {
       : `📜 _続きがあります（${total}件中 ${index + 1}件目）_` }] });
     const result = await this.post("chat.postMessage", { channel: channelId, thread_ts: threadTs, text, blocks,
       client_msg_id: await clientMessageId(clientMsgId),
-      unfurl_links: false }); if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
+    unfurl_links: false }); if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
+  }
+  async postTaskCard(run: MeetingMinutesRun): Promise<string> {
+    if (!run.destination || !run.slack?.parentTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
+    const result = await this.post("chat.postMessage", { channel: run.destination.slackChannelId,
+      thread_ts: run.slack.parentTs, ...meetingMinutesTaskCard(run),
+      client_msg_id: await clientMessageId(`${run.runId}-task-card`) });
+    if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
+  }
+  async updateTaskCard(run: MeetingMinutesRun): Promise<void> {
+    if (!run.destination || !run.slack?.taskCardTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
+    await this.post("chat.update", { channel: run.destination.slackChannelId, ts: run.slack.taskCardTs,
+      ...meetingMinutesTaskCard(run) });
+  }
+  async openTaskEditView(triggerId: string, view: Record<string, unknown>): Promise<void> {
+    await this.post("views.open", { trigger_id: triggerId, view }, AbortSignal.timeout(2_000));
   }
   async retractSharedMinutes(channelId: string, parentTs: string, fileName: string): Promise<void> {
     await this.post("chat.update", { channel: channelId, ts: parentTs,

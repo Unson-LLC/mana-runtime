@@ -23,6 +23,7 @@ interface InteractionOptions {
   updateOriginal?(responseUrl: string, message: SlackInteractionMessage): Promise<void>;
   defer?(work: Promise<void>): void;
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string }): Promise<Response>;
+  handleMeetingTaskAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
 }
 
 export type SlackInteractionMessage = SlackSelectionMessage;
@@ -73,6 +74,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
   operatorUserIds: ReadonlySet<string>,
   approveTaskWrite?: InteractionOptions["approveTaskWrite"],
   resolveThreadTs?: InteractionOptions["resolveThreadTs"],
+  handleMeetingTaskAction?: InteractionOptions["handleMeetingTaskAction"],
 ): Promise<Response> {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   return handleMeetingMinutesInteraction(request, { signingSecret: env.SLACK_SIGNING_SECRET,
@@ -84,7 +86,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
     clearProcessing: (input) => slack.clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
     updateOriginal: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
-    defer: (work) => ctx.waitUntil(work), approveTaskWrite });
+    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction });
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
@@ -103,8 +105,12 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const sourceContainer = object(payload?.container);
   const actions = Array.isArray(payload?.actions) ? payload.actions : [];
   const action = actions.length === 1 ? object(actions[0]) : undefined;
-  if (string(team?.id) !== options.expectedTeamId) return response("slack_team_forbidden", 403);
   if (options.expectedAppId && appId !== options.expectedAppId) return response("slack_app_forbidden", 403);
+  if (options.handleMeetingTaskAction) {
+    const taskResponse = await options.handleMeetingTaskAction(payload!);
+    if (taskResponse) return taskResponse;
+  }
+  if (string(team?.id) !== options.expectedTeamId) return response("slack_team_forbidden", 403);
   const userId = string(user?.id);
   const channelId = string(channel?.id);
   if (string(action?.action_id) === "mana_task_write_approve" && options.approveTaskWrite) {

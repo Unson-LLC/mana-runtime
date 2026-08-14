@@ -27,6 +27,7 @@ export interface ResumeMeetingMinutesOptions {
     { status: "resolved"; personId: string } | { status: "unknown" | "ambiguous" | "unavailable" }
   >;
   postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string>;
+  postTaskCard?(run: MeetingMinutesRun): Promise<string>;
   postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
     index: number, total: number, clientMsgId: string): Promise<string>;
 }
@@ -110,14 +111,6 @@ async function taskIdempotencyKey(runId: string, revision: number, index: number
   return `meeting-minutes-${await digest(`${runId}:revision:${revision}:task:${index}`)}`;
 }
 
-function taskSummary(run: MeetingMinutesRun): string {
-  const registered = run.taskRegistration?.registered ?? [];
-  if (!registered.length) return "";
-  return [`*✅ Brainbaseへタスクを${registered.length}件登録しました*`,
-    ...[...registered].sort((left, right) => left.index - right.index)
-      .map((task, index) => `${index + 1}. ${task.title}`)].join("\n");
-}
-
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
   options: ResumeMeetingMinutesOptions): Promise<void> {
   const tasks: MeetingMinutesTaskCandidate[] = run.generated?.tasks ?? [];
@@ -150,13 +143,19 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   if (run.workspaceId !== selection.workspaceId || run.sourceChannelId !== selection.channelId) {
     throw new Error("meeting_minutes_selection_boundary_mismatch");
   }
-  if (run.status === "completed") return run;
   const configured = options.destinations.find((item) => item.id === selection.destinationId);
   if (!configured) throw new Error("meeting_minutes_destination_forbidden");
   if (run.destination && !sameDestination(run.destination, configured)) {
     throw new Error("meeting_minutes_destination_changed");
   }
   if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
+  if (run.status === "completed") {
+    if (run.taskRegistration?.registered.length && run.slack?.parentTs && !run.slack.taskCardTs && options.postTaskCard) {
+      run.slack.taskCardTs = await options.postTaskCard(run);
+      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    return run;
+  }
   run.destination ??= structuredClone(configured); run.approvedBy ??= selection.userId;
   run.status = run.status === "awaiting_destination" ? "routed" : run.status; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
@@ -185,13 +184,16 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = run.generated!.body.trimStart();
     const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
-    const summary = taskSummary(run);
-    const chunks = splitMeetingMinutesForSlack(summary ? `${narrativeText}\n\n------------\n\n${summary}` : narrativeText);
+    const chunks = splitMeetingMinutesForSlack(narrativeText);
     run.slack ??= { postedChunkIndexes: [] };
     if (!run.slack.parentTs) {
       run.slack.parentTs = await options.postParent(run.destination.slackChannelId, run.file.name, parentText,
         `${run.runId}-revision-${run.revision ?? 0}-parent`);
       run.status = "posting"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    if (run.taskRegistration?.registered.length && !run.slack.taskCardTs && options.postTaskCard) {
+      run.slack.taskCardTs = await options.postTaskCard(run);
+      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     for (let index = 0; index < chunks.length; index += 1) {
       if (run.slack.postedChunkIndexes.includes(index)) continue;
