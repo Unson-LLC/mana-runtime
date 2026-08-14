@@ -313,7 +313,9 @@ export async function generateClaudeReply(
       // A session lock belongs to the container that owns its Claude process.
       // Run the hydrated one-turn fallback in an isolated sandbox so the same
       // stale process cannot also reject the recovery command.
-      const recoverySandbox = options.createSandbox(`techknight-recovery-${event.eventId}-${crypto.randomUUID()}`);
+      // Sandbox IDs are capped at 63 characters by the Containers runtime.
+      // Keep recovery isolation unique without embedding the unbounded Slack event ID.
+      const recoverySandbox = options.createSandbox(`tkr-${crypto.randomUUID()}`);
       try {
         await prepareSandbox(recoverySandbox);
         result = await recoverySandbox.exec(
