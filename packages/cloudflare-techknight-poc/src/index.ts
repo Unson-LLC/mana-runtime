@@ -54,7 +54,7 @@ import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { requesterProfileOrFallback, resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
-import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
+import { executeRuntimeControlCommand, parseRuntimeControlCommand, renderRuntimeControlCommandError, RuntimeControlCommandError } from "./runtime-control-command.js";
 import { markClaudeSessionStarted, markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
@@ -560,7 +560,20 @@ export default {
                   ? sessionModel
                   : placementClaudeRuntime.model,
               );
-              const controlCommand = parseRuntimeControlCommand(event.text);
+              let controlCommand;
+              try {
+                controlCommand = parseRuntimeControlCommand(event.text);
+              } catch (error) {
+                if (!(error instanceof RuntimeControlCommandError)) throw error;
+                const responseTs = await postSlackReply(event, renderRuntimeControlCommandError(error), { slackBotToken: env.SLACK_BOT_TOKEN });
+                await persistReplyCompletion(workspace.fs, {
+                  eventId: event.eventId,
+                  responseTs,
+                  completedAt: new Date().toISOString(),
+                });
+                await markWorkspaceEngaged(workspace.fs, new Date().toISOString());
+                return { outcome: "replied" as const, responseTs };
+              }
               if (controlCommand) {
                 if (await isReplyCompleted(workspace.fs, event.eventId)) return { outcome: "already_completed" as const };
                 const text = await executeRuntimeControlCommand({
