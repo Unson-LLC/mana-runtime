@@ -28,17 +28,21 @@ export interface ResumeMeetingMinutesOptions {
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
 function destinationIsValid(value: MeetingMinutesDestination): boolean {
   return /^[A-Za-z0-9_-]{1,128}$/.test(value.id) && !!value.projectId.trim() && !!value.name.trim() &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(value.organization?.id ?? "") && !!value.organization?.name.trim() &&
     /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim();
 }
 export function validateMeetingMinutesDestinations(destinations: readonly MeetingMinutesDestination[]): void {
   if (!destinations.length || destinations.length > 25 || destinations.some((item) => !destinationIsValid(item)) ||
-    new Set(destinations.map((item) => item.id)).size !== destinations.length) {
+    new Set(destinations.map((item) => item.id)).size !== destinations.length ||
+    destinations.some((item) => destinations.some((candidate) => candidate.organization.id === item.organization.id &&
+      candidate.organization.name !== item.organization.name))) {
     throw new Error("meeting_minutes_destinations_invalid");
   }
 }
 
 function sameDestination(left: MeetingMinutesDestination, right: MeetingMinutesDestination): boolean {
   return left.id === right.id && left.projectId === right.projectId && left.name === right.name &&
+    (!left.organization || (left.organization.id === right.organization.id && left.organization.name === right.organization.name)) &&
     left.slackChannelId === right.slackChannelId && left.github.owner === right.github.owner &&
     left.github.repo === right.github.repo && (left.github.branch ?? "main") === (right.github.branch ?? "main") &&
     (left.github.pathPrefix ?? "") === (right.github.pathPrefix ?? "");
