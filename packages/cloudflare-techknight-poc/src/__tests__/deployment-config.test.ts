@@ -102,6 +102,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: false },
+      { placementId: "mana-dev-biz", channelId: "C0BMNSP6C80", projectCodes: ["unson"], taskWriteEnabled: false },
     ]);
   });
 
