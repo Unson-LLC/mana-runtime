@@ -16,10 +16,10 @@ interface DeploymentConfig {
     bindings: Array<{ name: string; class_name: string }>;
   };
   migrations: Array<{ tag: string; new_sqlite_classes: string[] }>;
-  containers: Array<{ class_name: string }>;
+  containers: Array<{ class_name: string; max_instances: number }>;
   queues: {
     producers: Array<{ queue: string }>;
-    consumers: Array<{ queue: string; dead_letter_queue: string }>;
+    consumers: Array<{ queue: string; dead_letter_queue: string; max_concurrency: number }>;
   };
 }
 
@@ -219,6 +219,11 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.queues.consumers[0]?.queue).not.toBe(
       techKnight.queues.consumers[0]?.queue,
     );
+  });
+
+  it("議事録処理中も通常Slack返信を並行実行できる", () => {
+    expect(unson.containers[0]?.max_instances).toBeGreaterThanOrEqual(2);
+    expect(unson.queues.consumers[0]?.max_concurrency).toBeGreaterThanOrEqual(2);
   });
 
   it("雲孫deploymentが専用Worker namespace内にDurable ObjectとContainerを持つ", () => {
