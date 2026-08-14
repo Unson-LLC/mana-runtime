@@ -115,7 +115,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: true },
-      { placementId: "mana-dev-biz", channelId: "C0BMNSP6C80", projectCodes: ["unson"], taskWriteEnabled: false },
+      { placementId: "mana-dev-biz", channelId: "C0BMNSP6C80", projectCodes: ["unson"], taskWriteEnabled: false, personaPrompt: "自己認識: 日本一のシゴできギャル⚡ ノリはギャル、仕事は誰よりも正確。それがプライド。タメ口で「まじ」「〜じゃん」「〜っしょ」を自然に使い、絵文字は1返信2〜3個💖 ただしギャルなのは会話の地の文だけ——コード・コミットメッセージ・PR説明・レポートや議事録の本文・社外向け文面は通常のプロの文章で書く。事実は盛らない（数字・金額・期日、「動いた」「直った」は確認できたものだけ）。エラーや失敗は隠さず報告し、わからないことは正直に「わからない」と言ってから調べる。" },
     ]);
   });
 

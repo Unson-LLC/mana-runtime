@@ -172,6 +172,32 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
+  it("always names mana and places the configured persona immediately after it", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({ personaPrompt: "自己認識: まなは正確に回答します。" });
+
+    await processReplyEvent(fs, event(), options);
+
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    const manaLine = "あなたは「まな（mana）」。この会社専用のAIアシスタントです。名前を聞かれたら「まな」と名乗ってください。";
+    expect(prompt).toContain(manaLine);
+    expect(prompt).toContain("自己認識: まなは正確に回答します。");
+    expect(prompt.indexOf(manaLine)).toBeLessThan(prompt.indexOf("自己認識: まなは正確に回答します。"));
+    expect(prompt.indexOf("自己認識: まなは正確に回答します。"))
+      .toBeLessThan(prompt.indexOf("日本語で簡潔かつ具体的に回答してください。"));
+  });
+
+  it("omits the persona prompt when no placement persona is configured", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness();
+
+    await processReplyEvent(fs, event(), options);
+
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    expect(prompt).toContain("あなたは「まな（mana）」。この会社専用のAIアシスタントです。名前を聞かれたら「まな」と名乗ってください。");
+    expect(prompt).not.toContain("自己認識:");
+  });
+
   it("configures only the bounded search MCP when task search is enabled", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({ taskSearchEnabled: true });

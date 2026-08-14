@@ -379,6 +379,7 @@ export default {
                       taskSearchEnabled: taskSearch.taskSearchEnabled,
                       taskWriteEnabled,
                       taskWriteCapability,
+                      personaPrompt: placement.personaPrompt,
                       resolveActorIdentity: resolveActorIdentityResolverFromEnv(env),
                       createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                       hydrateThreadContext,

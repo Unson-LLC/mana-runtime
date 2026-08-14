@@ -12,6 +12,7 @@ export interface RuntimePlacement {
   channelId: string;
   projectCodes: string[];
   taskWriteEnabled: boolean;
+  personaPrompt?: string;
 }
 
 export interface ResolvedRuntimePlacement extends RuntimeBinding, RuntimePlacement {}
@@ -75,6 +76,14 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         candidate.projectCodes.some((code) => typeof code !== "string") ||
         (candidate.taskWriteEnabled !== undefined && typeof candidate.taskWriteEnabled !== "boolean")
       ) throw new Error("invalid");
+      const personaPrompt = candidate.personaPrompt;
+      if (
+        personaPrompt !== undefined &&
+        (typeof personaPrompt !== "string" ||
+          personaPrompt.trim().length === 0 ||
+          personaPrompt.trim().length > 1000 ||
+          /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(personaPrompt))
+      ) throw new Error("invalid");
       const projectCodes = parseRuntimeProjectCodes(candidate.projectCodes.join(","));
       if (projectCodes.length !== candidate.projectCodes.length) throw new Error("invalid");
       return {
@@ -82,6 +91,7 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         channelId: candidate.channelId,
         projectCodes,
         taskWriteEnabled: candidate.taskWriteEnabled === true,
+        ...(personaPrompt !== undefined ? { personaPrompt: personaPrompt.trim() } : {}),
       };
     });
     if (

@@ -45,6 +45,11 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
 
 `build`は`wrangler deploy --dry-run`であり、Cloudflare resourceを作成しません。
 
+`RUNTIME_PLACEMENTS_JSON`はplacement設定のJSON配列です。各要素は`placementId`、`channelId`、
+`projectCodes`、`taskWriteEnabled`を持ち、`personaPrompt`は任意のペルソナ指示文です。`personaPrompt`は
+返信生成時の口調・自己認識の補助にだけ使われ、trim後に空でない文字列、1000文字以下、制御文字なしである必要があります。
+未指定のplacementには注入されません。
+
 ## 一般返信の追跡ログ
 
 雲孫deploymentはWorkers Logsを100%保存し、一般返信の各工程を構造化JSONで記録します。

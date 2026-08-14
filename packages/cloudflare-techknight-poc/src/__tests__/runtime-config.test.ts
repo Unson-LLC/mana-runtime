@@ -48,6 +48,36 @@ describe("Cloudflare runtime binding", () => {
     })).toThrow(expect.objectContaining({ code: "channel_not_allowed" }));
   });
 
+  it("keeps a valid trimmed persona prompt on the resolved placement", () => {
+    const placements = parseRuntimePlacements(JSON.stringify([{
+      placementId: "mana-dev-biz",
+      channelId: "C_PERSONA",
+      projectCodes: ["unson"],
+      personaPrompt: "  まなとして、簡潔に回答する。  ",
+    }]));
+
+    expect(placements[0].personaPrompt).toBe("まなとして、簡潔に回答する。");
+    expect(resolveRuntimePlacement(event({ tenantId: "unson", workspaceId: "T_UNSON", channelId: "C_PERSONA" }), {
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      placements,
+    }).personaPrompt).toBe("まなとして、簡潔に回答する。");
+  });
+
+  it.each([
+    ["non-string", 123],
+    ["empty", "   "],
+    ["too long", "a".repeat(1001)],
+    ["control character", "safe\u0000text"],
+  ])("rejects an invalid persona prompt: %s", (_name, personaPrompt) => {
+    expect(() => parseRuntimePlacements(JSON.stringify([{
+      placementId: "mana-dev-biz",
+      channelId: "C_PERSONA",
+      projectCodes: ["unson"],
+      personaPrompt,
+    }]))).toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+  });
+
   it.each([
     ["techknight", "T_TECHKNIGHT", "C_MANA_TEST", "techknight, shared,techknight"],
     ["unson", "T_UNSON", "C_BACK_OFFICE", "back-office, brainbase"],
