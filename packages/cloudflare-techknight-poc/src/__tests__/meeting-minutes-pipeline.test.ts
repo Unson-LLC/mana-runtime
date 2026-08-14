@@ -66,7 +66,8 @@ describe("meeting minutes pipeline", () => {
     );
     expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42" }]);
     expect(options.postThreadChunk).toHaveBeenCalledWith(
-      "CDEST", "10.1", expect.stringContaining("Brainbaseタスク自動登録: 1件"), expect.any(String),
+      "CDEST", "10.1", "meeting.txt", expect.stringContaining("Brainbaseタスク自動登録: 1件"),
+      expect.any(Number), expect.any(Number), expect.any(String),
     );
   });
 
@@ -118,11 +119,14 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(run.status).toBe("completed"); expect(order).toEqual(["github", "slack-parent", "slack-chunk"]);
-    expect(options.postParent).toHaveBeenCalledWith("CDEST", "*定例*\n概要", "Ev1_F1-parent");
+    expect(options.postParent).toHaveBeenCalledWith("CDEST", "meeting.txt", "*定例*\n概要", "Ev1_F1-parent");
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST",
       "10.1",
-      "*定例*\n概要\n\n------------\n\n本文",
+      "meeting.txt",
+      "------------\n\n本文",
+      0,
+      1,
       "Ev1_F1-chunk-0",
     );
   });
@@ -137,7 +141,10 @@ describe("meeting minutes pipeline", () => {
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST",
       "10.1",
-      "*定例*\n概要\n\n------------\n議題",
+      "meeting.txt",
+      "------------\n議題",
+      0,
+      1,
       "Ev1_F1-chunk-0",
     );
   });

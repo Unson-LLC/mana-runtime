@@ -144,10 +144,11 @@ function meetingMinutesClients(env: Env) {
             fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
         return client.createTask(input, idempotencyKey);
       },
-      postParent: (channelId: string, text: string, clientMsgId: string) =>
-        destinationSlack(channelId).postParent(channelId, text, clientMsgId),
-      postThreadChunk: (channelId: string, threadTs: string, text: string, clientMsgId: string) =>
-        destinationSlack(channelId).postThreadChunk(channelId, threadTs, text, clientMsgId),
+      postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
+        destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
+      postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
+        index: number, total: number, clientMsgId: string) =>
+        destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
     },
   };
 }
