@@ -110,7 +110,9 @@ export async function classifyMeetingMinutesDestinationInSandbox(
 ): Promise<{ destinationId: string; reason: string } | null> {
   try {
     await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations));
-    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime), {
+    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
+      structuredOutput: "meeting-minutes-routing",
+    }), {
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
     });
@@ -181,7 +183,9 @@ export async function generateMeetingMinutesInSandbox(
 ): Promise<GeneratedMeetingMinutes> {
   try {
     await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript));
-    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime), {
+    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
+      structuredOutput: "meeting-minutes",
+    }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
     });

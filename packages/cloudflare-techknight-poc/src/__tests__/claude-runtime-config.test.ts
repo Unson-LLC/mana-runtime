@@ -80,6 +80,17 @@ describe("Cloudflare Claude runtime config", () => {
     );
   });
 
+  it("forces schema-validated JSON for meeting-minutes structured outputs", () => {
+    const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
+    const minutes = buildRuntimeClaudeCommand("meeting-minutes", config, { structuredOutput: "meeting-minutes" });
+    const routing = buildRuntimeClaudeCommand("meeting-minutes", config, { structuredOutput: "meeting-minutes-routing" });
+    expect(minutes).toContain("--output-format json --json-schema '");
+    expect(minutes).toContain('"required":["title","overview","body","tasks"]');
+    expect(routing).toContain('"required":["projectId","reason"]');
+    expect(() => buildRuntimeClaudeCommand("reply", config, { structuredOutput: "meeting-minutes" }))
+      .toThrow("runtime_claude_structured_output_invalid");
+  });
+
   it("starts then resumes the same validated Claude session", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "sonnet" });
     const sessionId = "12345678-1234-4123-8123-123456789abc";
