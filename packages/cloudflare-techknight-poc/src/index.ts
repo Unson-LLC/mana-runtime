@@ -64,7 +64,7 @@ import { runRemoteDevelopmentRequest } from "./development-runner-client.js";
 import { handleDevelopmentCallback } from "./development-callback.js";
 import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
 import { hydrateSlackAttachments } from "./slack-attachments.js";
-import { hydrateGraphContext, resolveGraphPersonByName, resolveGraphRequester } from "./brainbase-graph-runtime.js";
+import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
   consumeTaskBoardRepair,
@@ -373,7 +373,10 @@ export default {
               const token = organizationId === "tech-knight"
                 ? env.SLACK_BOT_TOKEN_TECHKNIGHT : organizationId === "unson" ? env.SLACK_BOT_TOKEN_UNSON : env.SLACK_BOT_TOKEN;
               await new MeetingMinutesSlackClient(token ?? "").openTaskEditView(triggerId, view);
-            }, repairTaskBoard: async () => {
+            }, listPeople: (projectId) => listGraphPeople(projectId, {
+              baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
+              token: env.BRAINBASE_GRAPH_API_TOKEN,
+            }), repairTaskBoard: async () => {
               try { await env.TASK_BOARD_REPAIRS.send({ eventType: "task_board_repair", tenantId: env.TENANT_ID,
                 workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: env.SLACK_ALLOWED_CHANNEL_ID,
                 reason: "task_write", requestedAt: new Date().toISOString() }); }

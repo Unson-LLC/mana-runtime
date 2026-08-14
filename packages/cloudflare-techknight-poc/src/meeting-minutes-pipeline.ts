@@ -22,7 +22,8 @@ export interface ResumeMeetingMinutesOptions {
   generate(transcript: string, destination: MeetingMinutesDestination): Promise<GeneratedMeetingMinutes>;
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
-  createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string }>;
+  createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string; assignee_person_id?: string | null;
+    assignee_display_name?: string | null }>;
   resolveAssignee?(name: string, projectId: string): Promise<
     { status: "resolved"; personId: string } | { status: "unknown" | "ambiguous" | "unavailable" }
   >;
@@ -130,7 +131,9 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       project_codes: [run.destination!.projectId] },
       await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
     if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
-    run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim() });
+    run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
+      ...(task.assignee_person_id ? { assigneePersonId: task.assignee_person_id } : {}),
+      ...(task.assignee_display_name ? { assigneeDisplayName: task.assignee_display_name } : {}) });
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
   }
 }

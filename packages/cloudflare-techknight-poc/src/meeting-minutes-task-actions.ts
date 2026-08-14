@@ -1,16 +1,20 @@
 import type { CanonicalTask, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { MEETING_MINUTES_TASK_CANCEL_ACTION_ID, MEETING_MINUTES_TASK_EDIT_ACTION_ID,
-  MEETING_MINUTES_TASK_EDIT_VIEW_ID, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
-import { meetingMinutesTaskEditViewFromAction } from "./meeting-minutes-task-cards.js";
+  MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+import { MEETING_MINUTES_ASSIGNEE_NONE, meetingMinutesTaskEditViewFromAction } from "./meeting-minutes-task-cards.js";
+import type { GraphPersonOption } from "./brainbase-graph-runtime.js";
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as ObjectValue : undefined; }
 function text(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined; }
-type ActionMetadata = { runId: string; index: number; organizationId?: string; channelId?: string; title?: string; due?: string };
+type ActionMetadata = { runId: string; index: number; organizationId?: string; channelId?: string; projectId?: string;
+  title?: string; due?: string; assigneePersonId?: string; assigneeDisplayName?: string };
 function metadata(value: unknown): ActionMetadata | undefined {
   try { const parsed = object(JSON.parse(text(value) ?? "")); const runId = text(parsed?.runId); const index = parsed?.index;
     return runId && Number.isInteger(index) && Number(index) >= 0 ? { runId, index: Number(index),
-      organizationId: text(parsed?.organizationId), channelId: text(parsed?.channelId), title: text(parsed?.title), due: text(parsed?.due) } : undefined; }
+      organizationId: text(parsed?.organizationId), channelId: text(parsed?.channelId), projectId: text(parsed?.projectId),
+      title: text(parsed?.title), due: text(parsed?.due), assigneePersonId: text(parsed?.assigneePersonId),
+      assigneeDisplayName: text(parsed?.assigneeDisplayName) } : undefined; }
   catch { return undefined; }
 }
 export interface MeetingMinutesTaskActionDependencies {
@@ -23,6 +27,7 @@ export interface MeetingMinutesTaskActionDependencies {
   deleteTask(taskId: string, expectedVersion: number, idempotencyKey: string): Promise<unknown>;
   updateCard(run: MeetingMinutesRun): Promise<void>;
   openView(organizationId: string, triggerId: string, view: Record<string, unknown>): Promise<void>;
+  listPeople(projectId?: string): Promise<GraphPersonOption[] | undefined>;
   repairTaskBoard(): Promise<void>;
   defer(work: Promise<void>): void;
 }
@@ -41,6 +46,21 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const action = actions.length === 1 ? object(actions[0]) : undefined;
   const actionId = text(action?.action_id); const view = object(payload.view);
   const callbackId = text(view?.callback_id);
+  if (payload.type === "block_suggestion" && actionId === MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID) {
+    const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
+    const teamId = text(object(payload.team)?.id); const expectedTeam = value?.organizationId && deps.destinationTeamIds[value.organizationId];
+    if (!value || !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam)
+      return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
+    const people = await deps.listPeople(value.projectId);
+    if (!people) return Response.json({ error: "meeting_minutes_graph_unavailable" }, { status: 503 });
+    const query = (text(action?.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
+    const matches = people.filter((person) => !query || [person.name, ...person.aliases]
+      .some((name) => name.normalize("NFKC").toLocaleLowerCase("ja").includes(query))).slice(0, 99);
+    return Response.json({ options: [
+      { text: { type: "plain_text", text: "（担当なし）" }, value: MEETING_MINUTES_ASSIGNEE_NONE },
+      ...matches.map((person) => ({ text: { type: "plain_text", text: person.name.slice(0, 75) }, value: person.id })),
+    ].slice(0, 100) });
+  }
   if (actionId !== MEETING_MINUTES_TASK_EDIT_ACTION_ID && actionId !== MEETING_MINUTES_TASK_CANCEL_ACTION_ID &&
     callbackId !== MEETING_MINUTES_TASK_EDIT_VIEW_ID) return undefined;
   const value = callbackId ? metadata(view?.private_metadata) : metadata(action?.value);
@@ -53,7 +73,9 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     if (!triggerId || !value.organizationId || !value.channelId || !value.title || teamId !== expectedTeam || channelId !== value.channelId)
       return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
     deps.defer(deps.openView(value.organizationId, triggerId, meetingMinutesTaskEditViewFromAction({ runId: value.runId,
-      index: value.index, title: value.title, due: value.due })));
+      index: value.index, title: value.title, due: value.due, organizationId: value.organizationId,
+      channelId: value.channelId, projectId: value.projectId, assigneePersonId: value.assigneePersonId,
+      assigneeDisplayName: value.assigneeDisplayName })));
     return Response.json({ ok: true });
   }
   const run = await deps.loadRun(value.runId); const item = run && candidate(run, value.index);
@@ -74,16 +96,24 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   }
   const values = object(object(view?.state)?.values); const title = text(object(object(values?.title)?.value)?.value);
   const due = text(object(object(values?.due)?.value)?.selected_date);
+  const assigneeState = object(object(values?.assignee)?.[MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID]);
+  const assigneeSelection = text(object(assigneeState?.selected_option)?.value);
   if (!title || title.length > 120) return Response.json({ response_action: "errors", errors: { title: "タイトルを入力してください" } });
   deps.defer((async () => { const current = await deps.getTask(item.taskId);
     if (current.project_codes?.length !== 1 || current.project_codes[0] !== run.destination!.projectId) throw new Error("meeting_minutes_task_scope_mismatch");
-    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${title}\n${due ?? ""}`))))
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${title}\n${due ?? ""}\n${assigneeSelection ?? "unchanged"}`))))
       .map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 24);
-    await deps.updateTask(item.taskId, { expected_version: current.version, title,
-      ...(due ? { due_at: `${due}T00:00:00+09:00` } : {}) },
+    const updated = await deps.updateTask(item.taskId, { expected_version: current.version, title,
+      ...(due ? { due_at: `${due}T00:00:00+09:00` } : {}),
+      ...(assigneeSelection === MEETING_MINUTES_ASSIGNEE_NONE ? { assignee_person_id: null }
+        : assigneeSelection ? { assignee_person_id: assigneeSelection } : {}) },
       `meeting-minutes-${run.runId}-edit-${value.index}-${digest}`);
-    item.title = title; const generated = run.generated?.tasks?.[value.index];
-    if (generated) { generated.title = title; if (due) generated.due_at = `${due}T00:00:00+09:00`; }
+    item.title = title;
+    if (assigneeSelection) { item.assigneePersonId = updated.assignee_person_id ?? undefined;
+      item.assigneeDisplayName = updated.assignee_display_name ?? undefined; }
+    const generated = run.generated?.tasks?.[value.index];
+    if (generated) { generated.title = title; if (due) generated.due_at = `${due}T00:00:00+09:00`;
+      if (assigneeSelection) generated.assignee_name = updated.assignee_display_name ?? undefined; }
     run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run); await deps.repairTaskBoard(); })());
   return Response.json({ ok: true });
 }
