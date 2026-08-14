@@ -84,7 +84,9 @@ export async function consumeTaskBoardRepair(
     return;
   }
   try {
-    await refresh(placement ? { ...env, SLACK_ALLOWED_CHANNEL_ID: placement.channelId,
+    await refresh(placement ? { ...env,
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      SLACK_ALLOWED_CHANNEL_ID: placement.channelId,
       RUNTIME_PROJECT_CODES: placement.projectCodes.join(",") } : env);
     message.ack();
   } catch (error) {
@@ -97,10 +99,11 @@ export async function enqueueScheduledTaskBoardRepair(
   env: TaskBoardRuntimeEnv,
   now = new Date().toISOString(),
 ): Promise<void> {
-  if (env.RUNTIME_TASK_BOARD_ENABLED !== "true") return;
   const placements = env.RUNTIME_PLACEMENTS_JSON
     ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).filter((placement) => placement.taskBoardEnabled)
-    : [{ channelId: env.SLACK_ALLOWED_CHANNEL_ID }];
+    : env.RUNTIME_TASK_BOARD_ENABLED === "true"
+      ? [{ channelId: env.SLACK_ALLOWED_CHANNEL_ID }]
+      : [];
   for (const placement of placements) {
     await env.TASK_BOARD_REPAIRS.send({
       eventType: "task_board_repair",
