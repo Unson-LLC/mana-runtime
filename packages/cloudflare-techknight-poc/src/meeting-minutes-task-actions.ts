@@ -44,7 +44,8 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   deps: MeetingMinutesTaskActionDependencies): Promise<Response | undefined> {
   const actions = Array.isArray(payload.actions) ? payload.actions : [];
   const action = actions.length === 1 ? object(actions[0]) : undefined;
-  const actionId = text(action?.action_id); const view = object(payload.view);
+  const isBlockSuggestion = payload.type === "block_suggestion";
+  const actionId = isBlockSuggestion ? text(payload.action_id) : text(action?.action_id); const view = object(payload.view);
   const callbackId = text(view?.callback_id);
   if (payload.type === "block_suggestion" && actionId === MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID) {
     const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
@@ -53,7 +54,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
       return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
     const people = await deps.listPeople();
     if (!people) return Response.json({ error: "meeting_minutes_graph_unavailable" }, { status: 503 });
-    const query = (text(action?.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
+    const query = (text(payload.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
     const matches = people.filter((person) => !query || [person.name, ...person.aliases]
       .some((name) => name.normalize("NFKC").toLocaleLowerCase("ja").includes(query))).slice(0, 99);
     return Response.json({ options: [
