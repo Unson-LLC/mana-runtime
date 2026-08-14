@@ -52,6 +52,9 @@ import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runt
 import { readWorkspaceSession } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
+import { handleSlackCommandRequest } from "./slack-command.js";
+import { runRemoteDevelopmentRequest } from "./development-runner-client.js";
+import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
 import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
@@ -74,6 +77,8 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
   RUNTIME_CRON_JOBS_JSON?: string;
+  DEVELOPMENT_RUNNER_BASE_URL?: string;
+  DEVELOPMENT_RUNNER_TOKEN?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
@@ -199,6 +204,14 @@ export default {
           if (!approved.ok) return approved;
           return Response.json({ ok: true, approval_id: approvalId });
         });
+    }
+    if (request.method === "POST" && url.pathname === "/slack/commands") {
+      const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      const developmentPlacements = placements.filter((placement) => placement.capabilities?.gatewayTools.length);
+      return handleSlackCommandRequest(request, { signingSecret: env.SLACK_SIGNING_SECRET, tenantId: env.TENANT_ID,
+        expectedTeamId: env.SLACK_EXPECTED_TEAM_ID, allowedChannelIds: developmentPlacements.map((placement) => placement.channelId),
+        allowedUserIds: [...new Set(developmentPlacements.flatMap((placement) => placement.audience?.allowedUserIds ?? []))],
+        send: (event) => env.TECHKNIGHT_EVENTS.send(event) });
     }
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -349,6 +362,8 @@ export default {
                     ...(target ? { target } : {}),
                     run: async () => { throw new Error("cron_runner_not_configured"); },
                   }),
+                  develop: (request) => runRemoteDevelopmentRequest({ request, placementId: placement.placementId,
+                    requesterId: event.userId!, baseUrl: env.DEVELOPMENT_RUNNER_BASE_URL, token: env.DEVELOPMENT_RUNNER_TOKEN }),
                 });
                 const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
                 await persistReplyCompletion(workspace.fs, {
@@ -358,9 +373,11 @@ export default {
                 });
                 return { outcome: "replied" as const, responseTs };
               }
-              const hydrateThreadContext = (input: SlackQueueEvent) => (
-                hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN })
-              );
+              const hydrateThreadContext = async (input: SlackQueueEvent) => {
+                const hydrated = await hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN });
+                return { ...hydrated, threadContext: await appendSlackThreadParticipantProfiles(hydrated.threadContext,
+                  { botToken: env.SLACK_BOT_TOKEN }) };
+              };
               return routeRuntimeEvent(event, {
                 meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
                 processMeetingTask: () => {
