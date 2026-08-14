@@ -83,7 +83,7 @@ async function main() {
       stdin: JSON.stringify({ mode: "new", request: job.request }),
     });
     runner = parseRunnerResult(result.stdout);
-    if (runner.status === "failed" && runner.summary === "The isolated development runner stopped safely. No PR or deployment was performed.") {
+    if (runner.status === "failed") {
       runner = { ...runner, summary: `The isolated development runner stopped safely (${safeRunnerFailureReason(result.stderr, result.code)}). No PR or deployment was performed.` };
     }
   } catch (error) {
