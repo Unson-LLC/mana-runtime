@@ -11,6 +11,11 @@ interface InteractionOptions {
   signingSecret: string;
   expectedTeamId: string;
   expectedAppId?: string;
+  additionalAuthenticators?: readonly {
+    signingSecret: string;
+    expectedTeamId: string;
+    expectedAppId?: string;
+  }[];
   expectedChannelId?: string;
   operatorUserIds: ReadonlySet<string>;
   destinations?: readonly MeetingMinutesDestination[];
@@ -30,8 +35,10 @@ export type SlackInteractionMessage = SlackSelectionMessage;
 
 export interface MeetingMinutesInteractionEnvironment extends MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
+  SLACK_SIGNING_SECRET_TECHKNIGHT?: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
+  MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON?: string;
   TECHKNIGHT_EVENTS: { send(selection: MeetingMinutesSelection | MeetingMinutesRedo): Promise<unknown> };
   SLACK_BOT_TOKEN?: string;
 }
@@ -77,8 +84,17 @@ export function handleMeetingMinutesInteractionEntrypoint(
   handleMeetingTaskAction?: InteractionOptions["handleMeetingTaskAction"],
 ): Promise<Response> {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
+  const destinationTeamIds = (() => {
+    try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
+    catch { return {}; }
+  })();
+  const techKnightTeamId = destinationTeamIds["tech-knight"]?.trim();
   return handleMeetingMinutesInteraction(request, { signingSecret: env.SLACK_SIGNING_SECRET,
     expectedTeamId: env.SLACK_EXPECTED_TEAM_ID, expectedAppId: env.SLACK_EXPECTED_APP_ID, operatorUserIds,
+    additionalAuthenticators: env.SLACK_SIGNING_SECRET_TECHKNIGHT && techKnightTeamId ? [{
+      signingSecret: env.SLACK_SIGNING_SECRET_TECHKNIGHT,
+      expectedTeamId: techKnightTeamId,
+    }] : [],
     expectedChannelId: env.MEETING_MINUTES_ROUTER_CHANNEL_ID?.trim(),
     resolveDestinations: () => meetingMinutesRuntimeConfig(env).destinations,
     send: (selection) => env.TECHKNIGHT_EVENTS.send(selection),
@@ -91,8 +107,18 @@ export function handleMeetingMinutesInteractionEntrypoint(
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
   const body = await request.text();
-  if (!await verifySlackRequest({ body, timestamp: request.headers.get("x-slack-request-timestamp") ?? "",
-    signature: request.headers.get("x-slack-signature") ?? "", signingSecret: options.signingSecret, nowMs: options.nowMs })) {
+  const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
+  const signature = request.headers.get("x-slack-signature") ?? "";
+  const authenticators = [{ signingSecret: options.signingSecret, expectedTeamId: options.expectedTeamId,
+    expectedAppId: options.expectedAppId }, ...(options.additionalAuthenticators ?? [])];
+  const verifiedAuthenticators = (await Promise.all(authenticators.map(async (authenticator) => ({ authenticator,
+    verified: await verifySlackRequest({ body, timestamp, signature, signingSecret: authenticator.signingSecret,
+      nowMs: options.nowMs }) })))).filter((result) => result.verified).map((result) => result.authenticator);
+  if (verifiedAuthenticators.length === 0) {
+    console.warn(JSON.stringify({ event: "slack_interaction_signature_invalid",
+      authenticatorCount: authenticators.length,
+      authenticators: authenticators.map((authenticator) => ({ expectedTeamId: authenticator.expectedTeamId,
+        signingSecretLength: authenticator.signingSecret.length })) }));
     return response("slack_signature_invalid", 401);
   }
   const encoded = new URLSearchParams(body).get("payload");
@@ -105,7 +131,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const sourceContainer = object(payload?.container);
   const actions = Array.isArray(payload?.actions) ? payload.actions : [];
   const action = actions.length === 1 ? object(actions[0]) : undefined;
-  if (options.expectedAppId && appId !== options.expectedAppId) return response("slack_app_forbidden", 403);
+  const verifiedAuthenticator = verifiedAuthenticators.find((authenticator) =>
+    string(team?.id) === authenticator.expectedTeamId &&
+    (!authenticator.expectedAppId || appId === authenticator.expectedAppId));
+  if (!verifiedAuthenticator) return response("slack_app_or_team_forbidden", 403);
   if (options.handleMeetingTaskAction) {
     const taskResponse = await options.handleMeetingTaskAction(payload!);
     if (taskResponse) return taskResponse;
