@@ -36,11 +36,11 @@ async function ensureRepository() {
   const probe = await run("/usr/bin/git", ["-C", "/srv/openryoko-development/repository", "rev-parse", "--git-dir"]);
   if (probe.code === 0) {
     const fetched = await run("/usr/bin/git", ["-C", "/srv/openryoko-development/repository", "fetch", "origin", "main"]);
-    if (fetched.code !== 0) throw new Error("repository_fetch_failed");
+    if (fetched.code !== 0) throw new Error(`repository_fetch_failed:${fetched.code}`);
     return;
   }
   const cloned = await run("/usr/bin/git", ["clone", "https://github.com/Unson-LLC/mana-runtime.git", "/srv/openryoko-development/repository"]);
-  if (cloned.code !== 0) throw new Error("repository_clone_failed");
+  if (cloned.code !== 0) throw new Error(`repository_clone_failed:${cloned.code}`);
 }
 
 async function postResult(job, runner) {
@@ -77,8 +77,9 @@ async function main() {
       stdin: JSON.stringify({ mode: "new", request: job.request }),
     });
     runner = parseRunnerResult(result.stdout);
-  } catch {
-    runner = { status: "failed", summary: "Cloudflare development runner stopped safely. No PR or deployment was performed." };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "development_runner_failed";
+    runner = { status: "failed", summary: `Cloudflare development runner stopped safely (${reason}). No PR or deployment was performed.` };
   }
   await postResult(job, runner);
 }
