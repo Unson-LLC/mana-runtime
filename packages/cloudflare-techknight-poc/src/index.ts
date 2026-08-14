@@ -32,6 +32,7 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
   processMeetingTaskEvent,
 } from "./meeting-task-pipeline.js";
@@ -540,6 +541,7 @@ export default {
                     runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
                       escalationEmployee: placement.agent?.escalationEmployee } : undefined,
                     capabilities: placement.capabilities,
+                    resolveActorIdentity: resolveActorIdentityResolverFromEnv(env),
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     respondPolicy: placement.respondTo,
                     isEngagedThread: workspaceSession.engaged === true,

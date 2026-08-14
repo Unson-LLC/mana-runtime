@@ -21,6 +21,7 @@ import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import { emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { evaluateRuntimeRespondPolicy, type RuntimeRespondPolicy } from "./runtime-respond-policy.js";
 import { markWorkspaceEngaged } from "./workspace-session.js";
+import { resolveTurnActorIdentity, type ActorIdentityResolver } from "./actor-identity.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -63,6 +64,7 @@ export interface ReplyPipelineOptions {
   respondPolicy?: RuntimeRespondPolicy;
   isEngagedThread?: boolean;
   runtimeContext?: { persona: string; instructions: readonly string[]; skills: readonly string[]; escalationEmployee?: string };
+  resolveActorIdentity?: ActorIdentityResolver;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -148,6 +150,7 @@ function buildPrompt(
     ...(requesterIdentity ? [
       `requester_slack_user_id: ${requesterIdentity.slackUserId}`,
       `requester_person_id: ${requesterIdentity.personId}`,
+      `依頼者は認証済みで、Brainbase person_id "${requesterIdentity.personId}"です。`,
       "私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください。",
     ] : []),
     ...(requesterProfile ? [
@@ -197,12 +200,19 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "trace">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
   const startedAt = Date.now();
   const trace = { ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort };
+  const identityOutcome = options.requesterIdentity
+    ? { outcome: "resolved" as const, identity: { personId: options.requesterIdentity.personId } }
+    : await resolveTurnActorIdentity(event, options);
+  emitTurnLog("log", "mana_identity_context", event, trace, {
+    outcome: identityOutcome.outcome,
+    ...(identityOutcome.outcome === "unavailable" ? { reasonCode: identityOutcome.reasonCode } : {}),
+  });
   emitTurnLog("log", "mana_claude_started", event, trace, {
     taskSearchEnabled: options.taskSearchEnabled === true,
     taskWriteEnabled: options.taskWriteEnabled === true,
@@ -214,7 +224,9 @@ export async function generateClaudeReply(
       event,
       options.taskSearchEnabled,
       options.taskWriteEnabled,
-      options.requesterIdentity,
+      options.requesterIdentity ?? (identityOutcome.outcome === "resolved"
+        ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
+        : undefined),
       options.requesterProfile,
       options.graphContext,
       options.runtimeContext,
@@ -494,7 +506,9 @@ export async function processReplyEvent(
   if (await isReplyCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
   const requesterIdentity = options.taskSearchEnabled && requestsOwnTasks(event.text)
-    ? options.requesterIdentity ?? resolveRequesterIdentity(event, options.requesterIdentityBindings)
+    ? options.requesterIdentity ?? (options.requesterIdentityBindings
+      ? resolveRequesterIdentity(event, options.requesterIdentityBindings)
+      : undefined)
     : undefined;
 
   return withSlackThreadStatus(event, options, async () => {
