@@ -19,6 +19,16 @@ export class SlackUserProfileError extends Error {
   }
 }
 
+export function requesterProfileOrFallback(
+  userId: string,
+  resolution: SlackUserProfileResolution,
+): SlackUserProfile {
+  if (resolution.status === "rejected") {
+    throw new SlackUserProfileError("requester_profile_rejected");
+  }
+  return resolution.status === "resolved" ? resolution.profile : { userId, name: userId };
+}
+
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
