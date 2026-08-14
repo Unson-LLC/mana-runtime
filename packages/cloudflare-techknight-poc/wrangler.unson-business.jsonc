@@ -11,6 +11,7 @@
     "SLACK_EXPECTED_APP_ID": "A0BPM2J33SN",
     "SLACK_ALLOWED_CHANNEL_ID": "C0BKS6RL99T",
     "BRAINBASE_TASK_API_BASE_URL": "https://bb.unson.jp",
+    "BRAINBASE_GRAPH_API_BASE_URL": "https://bb.unson.jp",
     "RUNTIME_PROJECT_CODES": "back-office",
     "RUNTIME_EXECUTION_MODE": "meeting_tasks",
     "RUNTIME_TASK_SEARCH_ENABLED": "true",
