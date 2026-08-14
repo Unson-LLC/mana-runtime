@@ -70,6 +70,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
+  TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
   GITHUB_TOKEN?: string;
@@ -191,7 +192,8 @@ export default {
       const config = meetingMinutesRuntimeConfig(env);
       return handleMeetingMinutesInteractionEntrypoint(request, env, ctx, config.operatorUserIds,
         async ({ approvalId, payloadHash, approverId, channelId }) => {
-          if (channelId !== env.SLACK_ALLOWED_CHANNEL_ID) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
+          const approvalChannelId = env.TASK_WRITE_APPROVAL_CHANNEL_ID ?? env.SLACK_ALLOWED_CHANNEL_ID;
+          if (channelId !== approvalChannelId) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
           const pending = await peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId);
           if (pending.payloadHash !== payloadHash) return Response.json({ error: "task_write_approval_payload_mismatch" }, { status: 403 });
           const approved = await handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", {

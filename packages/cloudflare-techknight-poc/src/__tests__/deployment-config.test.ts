@@ -98,8 +98,9 @@ describe("会社別Cloudflare deployment", () => {
       SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
       SLACK_EXPECTED_APP_ID: "A0BPM2J33SN",
       SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
+      TASK_WRITE_APPROVAL_CHANNEL_ID: "C0BMNSP6C80",
       BRAINBASE_TASK_API_BASE_URL: "https://bb.unson.jp",
-      RUNTIME_PROJECT_CODES: "back-office",
+      RUNTIME_PROJECT_CODES: "back-office,unson",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
       RUNTIME_PLACEMENT_ID: "mana-accounting",
       RUNTIME_PLACEMENTS_JSON: expect.any(String),
@@ -113,7 +114,7 @@ describe("会社別Cloudflare deployment", () => {
     });
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true },
-      { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: false },
+      { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: true },
       { placementId: "mana-dev-biz", channelId: "C0BMNSP6C80", projectCodes: ["unson"], taskWriteEnabled: false },
     ]);
   });

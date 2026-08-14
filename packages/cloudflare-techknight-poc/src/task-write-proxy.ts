@@ -20,6 +20,7 @@ export interface TaskWriteProxyEnv {
   RUNTIME_PLACEMENT_ID?: string;
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
+  TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
   TENANT_ID?: string;
   TASK_BOARD_REPAIRS?: { send(message: TaskBoardRepairEvent): Promise<unknown> };
   TASK_WRITE_BUDGETS?: TaskWriteBudgetNamespace;
@@ -39,10 +40,11 @@ function parsePolicy(value: string | undefined): TaskWritePolicy {
 async function postApprovalRequest(fetchImpl: typeof fetch, env: TaskWriteProxyEnv, input: {
   approvalId: string; payloadHash: string; requesterId: string; operation: string; project: string; expiresAt: number;
 }): Promise<void> {
-  if (!env.SLACK_BOT_TOKEN || !env.SLACK_ALLOWED_CHANNEL_ID) throw new Error("task_write_approval_not_configured");
+  const approvalChannelId = env.TASK_WRITE_APPROVAL_CHANNEL_ID ?? env.SLACK_ALLOWED_CHANNEL_ID;
+  if (!env.SLACK_BOT_TOKEN || !approvalChannelId) throw new Error("task_write_approval_not_configured");
   const response = await fetchImpl("https://slack.com/api/chat.postMessage", { method: "POST",
     headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ channel: env.SLACK_ALLOWED_CHANNEL_ID,
+    body: JSON.stringify({ channel: approvalChannelId,
       text: `書き込み承認が必要です: ${input.operation} (${input.project})`,
       blocks: [{ type: "section", text: { type: "mrkdwn", text: `*書き込み承認*\n依頼者: <@${input.requesterId}>\n操作: \`${input.operation}\`\nプロジェクト: \`${input.project}\`` } },
         { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "承認して実行" },
