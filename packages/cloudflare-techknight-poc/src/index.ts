@@ -71,6 +71,7 @@ import {
   type TaskBoardRepairEvent,
 } from "./task-board.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
+import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent } from "./runtime-event-claim.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -133,6 +134,18 @@ export class TechKnightWorkspace extends withWorkspace(
     storage: self.workspaceStorage as unknown as DurableObjectStorageLike,
   }),
 ) {
+  async claimRuntimeEvent(eventId: string): Promise<boolean> {
+    return claimRuntimeEvent(this.ctx.storage, eventId);
+  }
+
+  async completeRuntimeEvent(eventId: string, responseTs?: string): Promise<void> {
+    await completeRuntimeEvent(this.ctx.storage, eventId, responseTs);
+  }
+
+  async releaseRuntimeEvent(eventId: string): Promise<void> {
+    await releaseRuntimeEvent(this.ctx.storage, eventId);
+  }
+
   async claimDevelopmentCallback(eventId: string): Promise<boolean> {
     if (!/^[A-Za-z0-9:_-]{1,160}$/.test(eventId)) throw new Error("event_id_invalid");
     const key = `development-callback:${eventId}`;
@@ -422,10 +435,15 @@ export default {
             status: "active", updatedAt: event.receivedAt,
           });
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
-          const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-          return withDisposableResource(
-            () => getWorkspace(handle),
-            async (workspace) => {
+          const workspaceStub = env.TECHKNIGHT_WORKSPACE.get(id);
+          if (!await workspaceStub.claimRuntimeEvent(event.eventId)) {
+            return { outcome: "already_processing" as const };
+          }
+          const handle = workspaceStub as unknown as WorkspaceHandle;
+          try {
+            const result = await withDisposableResource(
+              () => getWorkspace(handle),
+              async (workspace) => {
               await persistEventOnce(workspace.fs, event);
                await reconcilePermissionRevision(workspace.fs, placement.permissionRevision ?? "legacy-v1", event.receivedAt);
                const workspaceSession = await readWorkspaceSession(workspace.fs);
@@ -568,8 +586,15 @@ export default {
                     });
                   }),
               });
-            },
-          );
+              },
+            );
+            await workspaceStub.completeRuntimeEvent(event.eventId,
+              "responseTs" in result && typeof result.responseTs === "string" ? result.responseTs : undefined);
+            return result;
+          } catch (error) {
+            await workspaceStub.releaseRuntimeEvent(event.eventId);
+            throw error;
+          }
         },
         log: (entry) => console.log(JSON.stringify(entry)),
         logError: (entry) => console.error(JSON.stringify(entry)),

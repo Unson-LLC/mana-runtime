@@ -1,0 +1,36 @@
+import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent } from "../runtime-event-claim.js";
+
+function storage() {
+  const values = new Map<string, unknown>();
+  const transaction = async <T>(fn: (tx: {
+    get<V>(key: string): Promise<V | undefined>;
+    put(key: string, value: unknown): Promise<void>;
+    delete(key: string): Promise<void>;
+  }) => Promise<T>) => fn({
+    get: async <V>(key: string) => values.get(key) as V | undefined,
+    put: async (key, value) => { values.set(key, value); },
+    delete: async (key) => { values.delete(key); },
+  });
+  return { transaction, values };
+}
+
+describe("runtime event claim", () => {
+  it("allows only one concurrent delivery to own an event", async () => {
+    const db = storage();
+    expect(await claimRuntimeEvent(db, "Ev_same", 1_000)).toBe(true);
+    expect(await claimRuntimeEvent(db, "Ev_same", 1_001)).toBe(false);
+    await completeRuntimeEvent(db, "Ev_same", "1700.1", 1_100);
+    expect(await claimRuntimeEvent(db, "Ev_same", 9_999_999)).toBe(false);
+  });
+
+  it("releases a failed event so a queue retry can process it", async () => {
+    const db = storage();
+    expect(await claimRuntimeEvent(db, "Ev_retry", 1_000)).toBe(true);
+    await releaseRuntimeEvent(db, "Ev_retry");
+    expect(await claimRuntimeEvent(db, "Ev_retry", 1_001)).toBe(true);
+  });
+
+  it("rejects invalid event ids", async () => {
+    await expect(claimRuntimeEvent(storage(), "../bad", 1_000)).rejects.toThrow("event_id_invalid");
+  });
+});
