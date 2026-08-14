@@ -1,8 +1,13 @@
-import type { GeneratedMeetingMinutes, MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
+import type { GeneratedMeetingMinutes, MeetingMinutesDestination,
+  MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
+const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
+const MEETING_MINUTES_ROUTING_HEAD_CHARS = 4_000;
+const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
+const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
 
 function nonEmpty(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
@@ -53,6 +58,61 @@ function balancedJsonObjects(text: string): string[] {
     }
   }
   return objects;
+}
+
+function routingPrompt(transcript: string, destinations: readonly MeetingMinutesDestination[]): string {
+  const head = transcript.replace(/\u0000/g, "").slice(0, MEETING_MINUTES_ROUTING_HEAD_CHARS);
+  const candidates = destinations.map((item) => `- ${item.projectId}: ${item.name}（${item.organization.name}）`).join("\n");
+  return [
+    "あなたは会議の文字起こしを、どのプロジェクトの会議かに分類する係です。",
+    "# プロジェクト候補（この中からのみ選ぶ）", candidates,
+    "# 文字起こし（冒頭）", '"""', head, '"""',
+    "# 出力（厳守）",
+    "JSONオブジェクトを1つだけ出力する。markdown・コードフェンス・前後の文章は禁止。",
+    '{"projectId":"<候補のprojectId or 不明>","reason":"<判断根拠1文>"}',
+    '候補のどれとも確信を持って一致しない場合は "不明" とする。推測で選ばない。',
+  ].join("\n\n");
+}
+
+function sanitizeRoutingReason(value: string): string {
+  return value.replace(CONTROL_CHARACTERS_RE, " ").replace(SLACK_ACTIVE_CONSTRUCT_RE, "&lt;$1");
+}
+
+export function parseMeetingMinutesRoutingOutput(raw: string,
+  destinations: readonly MeetingMinutesDestination[]): { destinationId: string; reason: string } | null {
+  for (const candidate of [raw.trim(), ...balancedJsonObjects(raw)]) {
+    try {
+      const value = JSON.parse(candidate) as unknown;
+      const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+      const projectId = nonEmpty(record?.projectId, 128); const reason = nonEmpty(record?.reason, 500);
+      if (!projectId || projectId === "不明" || !reason) continue;
+      const destination = destinations.find((item) => item.projectId === projectId);
+      if (destination) return { destinationId: destination.id, reason: sanitizeRoutingReason(reason) };
+    } catch { /* try next candidate */ }
+  }
+  return null;
+}
+
+export async function classifyMeetingMinutesDestinationInSandbox(
+  transcript: string,
+  destinations: readonly MeetingMinutesDestination[],
+  claudeRuntime: ClaudeRuntimeConfig,
+  sandbox: ReplySandbox,
+): Promise<{ destinationId: string; reason: string } | null> {
+  try {
+    const promptPath = runtimeClaudePromptPath("meeting-minutes");
+    await sandbox.writeFile(promptPath, routingPrompt(transcript, destinations));
+    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime), {
+      timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
+      env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+    });
+    if (!result.success) return null;
+    return parseMeetingMinutesRoutingOutput(result.stdout, destinations);
+  } catch {
+    return null;
+  } finally {
+    await sandbox.destroy().catch(() => undefined);
+  }
 }
 
 export function parseGeneratedMeetingMinutesOutput(stdout: string): GeneratedMeetingMinutes {

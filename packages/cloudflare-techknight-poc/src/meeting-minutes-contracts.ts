@@ -47,6 +47,7 @@ export interface MeetingMinutesRun {
   sourceMessageTs: string;
   file: SlackFileReference;
   status: MeetingMinutesRunStatus;
+  routing?: { evaluated: true; suggestedDestinationId?: string; reason?: string };
   destination?: MeetingMinutesDestination;
   approvedBy?: string;
   transcriptSha256?: string;

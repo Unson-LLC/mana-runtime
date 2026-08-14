@@ -40,6 +40,24 @@ export function projectSelectionMessage(runId: string, fileName: string, organiz
   ] };
 }
 
+export function suggestedDestinationMessage(run: MeetingMinutesRun,
+  destinations: readonly MeetingMinutesDestination[]): SlackSelectionMessage | undefined {
+  const destination = destinations.find((item) => item.id === run.routing?.suggestedDestinationId);
+  if (!destination) return undefined;
+  const reason = run.routing?.reason ? `\n推定根拠: ${run.routing.reason}` : "";
+  return { replace_original: true, text: `${run.file.name} の保存先候補は ${destination.name} です。`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*${run.file.name}* の保存先候補です。\n候補は *${destination.name}* です。${reason}` } },
+    { type: "actions", elements: [
+      { type: "button", style: "primary", text: { type: "plain_text", text: "この候補で進める" },
+        action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`,
+        value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) },
+      { type: "button", text: { type: "plain_text", text: "別の保存先を選ぶ" },
+        action_id: MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID,
+        value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) },
+    ] },
+  ] };
+}
+
 interface SlackApiResponse { ok?: boolean; error?: string; ts?: string }
 async function clientMessageId(seed: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`meeting-minutes:${seed}`))).slice(0, 16);
@@ -74,7 +92,8 @@ export class MeetingMinutesSlackClient {
   }
   async requestDestination(run: MeetingMinutesRun, destinations: readonly MeetingMinutesDestination[]): Promise<string> {
     if (!destinations.length) throw new Error("meeting_minutes_destinations_empty");
-    const message = organizationSelectionMessage(run.runId, run.file.name, destinations);
+    const message = suggestedDestinationMessage(run, destinations) ??
+      organizationSelectionMessage(run.runId, run.file.name, destinations);
     const result = await this.post("chat.postMessage", { channel: run.sourceChannelId, thread_ts: run.sourceThreadTs,
       text: message.text, client_msg_id: await clientMessageId(`${run.runId}-selection`), blocks: message.blocks });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;

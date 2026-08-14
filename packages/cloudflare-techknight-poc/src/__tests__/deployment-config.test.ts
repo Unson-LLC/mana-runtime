@@ -290,6 +290,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
+    expect(worker).toContain("classifyMeetingMinutesDestinationInSandbox(");
+    expect(worker).toContain("download: (fileId) => clients.slack.downloadTextFile(fileId)");
+    expect(worker).toContain("classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations)");
     expect(worker).toContain("env.SLACK_BOT_TOKEN_UNSON");
     expect(worker).toContain('destination.organization.id === "unson"');
     expect(worker).toContain('destination.organization.id === "tech-knight"');

@@ -75,6 +75,27 @@ describe("MeetingMinutesSlackClient", () => {
       "mana_meeting_minutes_choose_organization:tech-knight"]);
   });
 
+  it("shows the automatically suggested project with confirmation and a manual-change path", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true, ts: "1.2" });
+    }) as typeof fetch;
+    const run = { version: 1 as const, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
+      sourceThreadTs: "1.0", sourceMessageTs: "1.0", file: { id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 10 },
+      status: "awaiting_destination" as const,
+      routing: { evaluated: true as const, suggestedDestinationId: "one", reason: "案件名が一致" },
+      createdAt: "2026-08-13T00:00:00.000Z", updatedAt: "2026-08-13T00:00:00.000Z" };
+    const destinations = [{ id: "one", projectId: "p1", name: "SalesTailor",
+      organization: { id: "unson", name: "雲孫" }, slackChannelId: "C2", github: { owner: "o", repo: "r" } }];
+    await new MeetingMinutesSlackClient("token", fetchImpl).requestDestination(run, destinations);
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("候補は *SalesTailor*");
+    expect(serialized).toContain("案件名が一致");
+    expect(serialized).toContain("mana_meeting_minutes_choose_destination:one");
+    expect(serialized).toContain("この候補で進める");
+    expect(serialized).toContain("別の保存先を選ぶ");
+  });
+
   it("invokes fetch with the Workers global receiver", async () => {
     const fetchImpl = vi.fn(function (this: unknown) {
       if (this !== globalThis) throw new Error("illegal receiver");
