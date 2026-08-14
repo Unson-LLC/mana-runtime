@@ -65,7 +65,10 @@ TechKnightSandbox.outboundByHost = {
     if (!env.GITHUB_TOKEN) return new Response("github_not_configured", { status: 503 });
     const url = new URL(request.url);
     const headers = new Headers(request.headers);
-    headers.set("Authorization", `Bearer ${env.GITHUB_TOKEN}`);
+    // Git smart-HTTP authenticates a PAT as the HTTPS password. Keep the
+    // credential outside the container and translate the intercepted request
+    // at the Worker boundary.
+    headers.set("Authorization", `Basic ${btoa(`x-access-token:${env.GITHUB_TOKEN}`)}`);
     return fetch(`https://github.com${url.pathname}${url.search}`, { method: request.method, headers, body: request.body });
   },
   [DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv) => {
