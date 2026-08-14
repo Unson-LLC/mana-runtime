@@ -865,9 +865,18 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     // Fail silent: progress reporting is best-effort, never blocks the run.
   }
   const stopProgress = startAgentProgressReporting(worktree, baselineSha, startedAt);
+  const sandboxAgentEnv = {
+    ...agentEnv,
+    IS_SANDBOX: "1",
+    CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+  };
 
   try {
-    await runCommand(config.claudeBin, agentArgv, { cwd: worktree, timeoutMs: config.maxDurationMs, extraEnv: agentEnv });
+    await runCommand(config.claudeBin, agentArgv, {
+      cwd: worktree,
+      timeoutMs: config.maxDurationMs,
+      extraEnv: sandboxAgentEnv,
+    });
   } catch (error) {
     stopProgress();
     const reason = (error instanceof Error ? error.message : "unknown agent error").replace(/\s+/g, " ").slice(0, 200);
