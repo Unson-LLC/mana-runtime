@@ -522,6 +522,9 @@ export function validateConfig(config) {
   for (const key of ["repository", "worktreesRoot", "vibeproBin", "claudeBin"]) {
     if (typeof config[key] !== "string" || !path.isAbsolute(config[key])) throw new Error(`invalid ${key}`);
   }
+  if (typeof config.claudeModel !== "string" || !/^[a-z0-9._-]{1,64}$/i.test(config.claudeModel)) {
+    throw new Error("invalid claudeModel");
+  }
   if (config.agentEnvFile !== undefined && (typeof config.agentEnvFile !== "string" || !path.isAbsolute(config.agentEnvFile))) {
     throw new Error("invalid agentEnvFile");
   }
@@ -644,8 +647,8 @@ export function buildContinueGatesAgentPrompt(storyId, baseBranch) {
   ].join("\n");
 }
 
-export function buildAgentArgs(prompt) {
-  return ["-p", "--dangerously-skip-permissions", prompt];
+export function buildAgentArgs(prompt, model) {
+  return ["-p", "--model", model, "--dangerously-skip-permissions", prompt];
 }
 
 export function buildPrShipArgs(storyId, branch, baseBranch) {
@@ -960,7 +963,7 @@ async function runNewStory(request, config) {
     storyId,
     branch,
     baseBranch,
-    buildAgentArgs(buildAgentPrompt(storyId, request, baseBranch)),
+    buildAgentArgs(buildAgentPrompt(storyId, request, baseBranch), config.claudeModel),
     agentEnv,
     config,
   );
@@ -985,7 +988,7 @@ async function resumeStory(storyId, answers, config) {
     storyId,
     branch,
     baseBranch,
-    buildAgentArgs(buildResumeAgentPrompt(storyId, baseBranch)),
+    buildAgentArgs(buildResumeAgentPrompt(storyId, baseBranch), config.claudeModel),
     agentEnv,
     config,
   );
@@ -1010,7 +1013,7 @@ async function continueGatesStory(storyId, config) {
     storyId,
     branch,
     baseBranch,
-    buildAgentArgs(buildContinueGatesAgentPrompt(storyId, baseBranch)),
+    buildAgentArgs(buildContinueGatesAgentPrompt(storyId, baseBranch), config.claudeModel),
     agentEnv,
     config,
   );

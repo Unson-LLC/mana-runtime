@@ -6,5 +6,6 @@
   "vibeproBin": "/usr/local/bin/vibepro",
   "maxDurationMs": 4800000,
   "claudeBin": "/usr/local/bin/claude",
+  "claudeModel": "sonnet",
   "resultsSpoolDir": "/srv/openryoko-development/results"
 }
