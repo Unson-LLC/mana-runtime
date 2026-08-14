@@ -46,6 +46,32 @@ describe("meeting minutes pipeline", () => {
     expect(second[0]?.runId).toBe("Ev1_F1"); expect(requestDestination).toHaveBeenCalledTimes(1);
   });
 
+  it("classifies once, persists the suggestion, and reuses it on event retry", async () => {
+    const fs = new MemoryFs();
+    const download = vi.fn().mockResolvedValue("SalesTailorの定例です");
+    const classifyDestination = vi.fn().mockResolvedValue({ destinationId: "mana", reason: "案件名が一致" });
+    const requestDestination = vi.fn().mockResolvedValue("2.1");
+    const options = { enabled: true, routerChannelId: "CROUTER", destinations: [destination],
+      download, classifyDestination, requestDestination };
+    const first = await startMeetingMinutesRuns(fs, event, options);
+    const second = await startMeetingMinutesRuns(fs, event, options);
+    expect(first[0]?.routing).toEqual({ evaluated: true, suggestedDestinationId: "mana", reason: "案件名が一致" });
+    expect(requestDestination).toHaveBeenCalledWith(expect.objectContaining({ routing: first[0]?.routing }), [destination]);
+    expect(second[0]?.routing).toEqual(first[0]?.routing);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(classifyDestination).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the manual selector when classification cannot decide", async () => {
+    const fs = new MemoryFs(); const requestDestination = vi.fn().mockResolvedValue("2.1");
+    const run = (await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], download: vi.fn().mockResolvedValue("曖昧な会議"),
+      classifyDestination: vi.fn().mockResolvedValue(null), requestDestination }))[0];
+    expect(run?.routing).toEqual({ evaluated: true });
+    expect(requestDestination).toHaveBeenCalledWith(expect.objectContaining({ routing: { evaluated: true } }), [destination]);
+    expect(run?.status).toBe("awaiting_destination");
+  });
+
   it("registers extracted tasks before Slack with stable idempotency and trusted project scope", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

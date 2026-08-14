@@ -10,6 +10,9 @@ import type { WorkspaceFs } from "./workspace-store.js";
 
 export interface StartMeetingMinutesOptions {
   enabled: boolean; routerChannelId: string; destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
+  download?(fileId: string): Promise<string>;
+  classifyDestination?(transcript: string, destinations: readonly MeetingMinutesDestination[]):
+    Promise<{ destinationId: string; reason: string } | null>;
   requestDestination(run: MeetingMinutesRun, destinations: readonly MeetingMinutesDestination[]): Promise<string>;
 }
 export interface ResumeMeetingMinutesOptions {
@@ -73,6 +76,17 @@ export async function startMeetingMinutesRuns(fs: WorkspaceFs, event: SlackQueue
       sourceMessageTs: event.messageTs, file, status: "awaiting_destination", slack: { postedChunkIndexes: [] },
       createdAt: timestamp, updatedAt: timestamp };
     await saveMeetingMinutesRun(fs, run);
+    if (options.download && options.classifyDestination && !run.routing?.evaluated) {
+      try {
+        const routed = await options.classifyDestination(await options.download(file.id), options.destinations);
+        run.routing = { evaluated: true, ...(routed ? {
+          suggestedDestinationId: routed.destinationId, reason: routed.reason,
+        } : {}) };
+      } catch {
+        run.routing = { evaluated: true };
+      }
+      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
     run.slack!.selectionTs = await options.requestDestination(run, options.destinations);
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     runs.push(run);

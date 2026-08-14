@@ -55,7 +55,8 @@ export function isMeetingMinutesSelection(value: unknown): value is MeetingMinut
 }
 
 export async function processMeetingMinutesSlackEvent(fs: WorkspaceFs, event: SlackQueueEvent,
-  config: MeetingMinutesRuntimeConfig, options: Pick<StartMeetingMinutesOptions, "requestDestination" | "now">) {
+  config: MeetingMinutesRuntimeConfig, options: Pick<StartMeetingMinutesOptions,
+    "download" | "classifyDestination" | "requestDestination" | "now">) {
   if (!isMeetingMinutesSlackEvent(event, config)) return [];
   return startMeetingMinutesRuns(fs, event, { ...options, enabled: config.enabled, routerChannelId: config.routerChannelId,
     destinations: config.destinations });

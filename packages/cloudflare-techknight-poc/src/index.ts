@@ -29,7 +29,8 @@ import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
-import { generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
+import { classifyMeetingMinutesDestinationInSandbox,
+  generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
@@ -201,6 +202,11 @@ function meetingMinutesClients(env: Env) {
   };
   return {
     slack,
+    classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
+      if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("oauth_not_configured");
+      return classifyMeetingMinutesDestinationInSandbox(transcript, candidates, claudeRuntime,
+        createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`));
+    },
     resume: {
       postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
       download: (fileId: string) => slack.downloadTextFile(fileId),
@@ -370,6 +376,8 @@ export default {
               await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
                 const clients = meetingMinutesClients(env);
                 await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
+                  download: (fileId) => clients.slack.downloadTextFile(fileId),
+                  classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations),
                   requestDestination: (run, destinations) => clients.slack.requestDestination(run, destinations),
                 });
               });
