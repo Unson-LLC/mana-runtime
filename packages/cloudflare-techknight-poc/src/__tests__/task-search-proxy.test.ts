@@ -7,6 +7,12 @@ function env(overrides: Record<string, string | undefined> = {}) {
   return {
     RUNTIME_TASK_SEARCH_ENABLED: "true",
     RUNTIME_PROJECT_CODES: "back-office,brainbase,back-office",
+    RUNTIME_PLACEMENTS_JSON: JSON.stringify([{
+      placementId: "mana-dev-biz",
+      channelId: "C_MANA_DEV",
+      projectCodes: ["mana"],
+      taskWriteEnabled: true,
+    }]),
     BRAINBASE_TASK_API_BASE_URL: "https://bb.example.test",
     BRAINBASE_TASK_API_TOKEN: SECRET,
     ...overrides,
@@ -14,6 +20,54 @@ function env(overrides: Record<string, string | undefined> = {}) {
 }
 
 describe("Cloudflare task search proxy", () => {
+  it("uses the trusted placement project scope instead of the deployment-wide fallback", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({
+      items: [{
+        id: "task-mana-1",
+        title: "Mana task",
+        version: 1,
+        status: "pending",
+        priority: "high",
+        project_codes: ["mana"],
+      }],
+      has_more: false,
+      next_cursor: null,
+      read_status: "complete",
+    }));
+    const response = await createTaskSearchProxyHandler(upstream)(new Request(
+      "https://task-search.internal/api/companion/tasks/search?query=mana",
+      { headers: {
+        "x-mana-trace-placement-id": "mana-dev-biz",
+        "x-mana-trace-project-codes": "mana",
+      } },
+    ), env());
+
+    expect(response.status).toBe(200);
+    const [url] = upstream.mock.calls[0] as [string];
+    expect(new URL(url).searchParams.getAll("project_code")).toEqual(["mana"]);
+    expect(await response.json()).toMatchObject({
+      items: [{ id: "task-mana-1", project_codes: ["mana"] }],
+    });
+  });
+
+  it.each([
+    ["unknown placement", "unknown-placement", "mana"],
+    ["mismatched project scope", "mana-dev-biz", "back-office"],
+  ])("fails closed for %s", async (_name, placementId, projectCodes) => {
+    const upstream = vi.fn();
+    const response = await createTaskSearchProxyHandler(upstream)(new Request(
+      "https://task-search.internal/api/companion/tasks/search?query=mana",
+      { headers: {
+        "x-mana-trace-placement-id": placementId,
+        "x-mana-trace-project-codes": projectCodes,
+      } },
+    ), env());
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "task_search_scope_mismatch" });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("rebuilds the upstream request without sandbox credentials and forces the deployment project union", async () => {
     const sharedSearch = vi.spyOn(TaskApiClient.prototype, "searchTasks");
     const upstream = vi.fn().mockResolvedValue(Response.json({
@@ -149,7 +203,7 @@ describe("Cloudflare task search proxy", () => {
       { headers: {
         "x-mana-trace-id": "EvTrace123",
         "x-mana-trace-placement-id": "mana-dev-biz",
-        "x-mana-trace-project-codes": "unson",
+        "x-mana-trace-project-codes": "mana",
         "x-mana-trace-call-index": "1",
       } },
     ), env());
@@ -161,9 +215,9 @@ describe("Cloudflare task search proxy", () => {
       event: "mana_task_search_completed",
       traceId: "EvTrace123",
       placementId: "mana-dev-biz",
-      expectedProjectCodes: ["unson"],
-      effectiveProjectCodes: ["back-office", "brainbase"],
-      scopeMatches: false,
+      expectedProjectCodes: ["mana"],
+      effectiveProjectCodes: ["mana"],
+      scopeMatches: true,
       resultCount: 0,
       readStatus: "complete",
     }));

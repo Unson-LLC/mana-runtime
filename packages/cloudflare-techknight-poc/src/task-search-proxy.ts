@@ -5,7 +5,7 @@ import {
   type SearchTasksQuery,
 } from "@openryoko/task-runtime-core";
 
-import { parseRuntimeProjectCodes } from "./runtime-config.js";
+import { parseRuntimePlacements, parseRuntimeProjectCodes } from "./runtime-config.js";
 import {
   emitStructuredLog,
   safeTraceId,
@@ -30,6 +30,7 @@ const PRIORITY_VALUES = new Set(["low", "medium", "high", "urgent"]);
 export interface TaskSearchProxyEnv {
   RUNTIME_TASK_SEARCH_ENABLED?: string;
   RUNTIME_PROJECT_CODES?: string;
+  RUNTIME_PLACEMENTS_JSON?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
 }
@@ -78,6 +79,23 @@ function logTaskSearch(
 
 function jsonError(error: string, status: number): Response {
   return Response.json({ error }, { status });
+}
+
+function sameProjectScope(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((code) => right.includes(code));
+}
+
+function resolveTaskSearchProjectCodes(
+  env: TaskSearchProxyEnv,
+  trace: TaskSearchTrace,
+): string[] {
+  if (!trace.placementId) return parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
+  const placement = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
+    .find((candidate) => candidate.placementId === trace.placementId);
+  if (!placement || !sameProjectScope(trace.expectedProjectCodes, placement.projectCodes)) {
+    throw new Error("task_search_scope_mismatch");
+  }
+  return placement.projectCodes;
 }
 
 function singleParam(params: URLSearchParams, key: string): string | undefined {
@@ -287,12 +305,23 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
     let projectCodes: string[];
     let upstreamOrigin: string;
     try {
-      projectCodes = parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
+      projectCodes = resolveTaskSearchProjectCodes(env, trace);
       if (projectCodes.length === 0 || !env.BRAINBASE_TASK_API_TOKEN) {
         throw new Error("task_search_not_configured");
       }
       upstreamOrigin = resolveUpstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL);
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && (
+        error.message === "task_search_scope_mismatch" ||
+        (trace.placementId && error.name === "RuntimeBindingError")
+      )) {
+        logTaskSearch("warn", "mana_task_search_failed", trace, {
+          outcome: "rejected",
+          reasonCode: "task_search_scope_mismatch",
+          durationMs: Date.now() - startedAt,
+        });
+        return jsonError("task_search_scope_mismatch", 403);
+      }
       logTaskSearch("error", "mana_task_search_failed", trace, {
         outcome: "error",
         reasonCode: "task_search_not_configured",
@@ -300,10 +329,8 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
       });
       return jsonError("task_search_not_configured", 503);
     }
-    const scopeMatches = trace.expectedProjectCodes.length === 0 || (
-      trace.expectedProjectCodes.length === projectCodes.length &&
-      trace.expectedProjectCodes.every((code) => projectCodes.includes(code))
-    );
+    const scopeMatches = trace.expectedProjectCodes.length === 0 ||
+      sameProjectScope(trace.expectedProjectCodes, projectCodes);
     const searchFields = {
       queryChars: requestedQuery.query.length,
       assigneeFilterPresent: Boolean(requestedQuery.assignee_person_id),
