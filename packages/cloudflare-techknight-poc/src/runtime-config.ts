@@ -1,4 +1,5 @@
 import type { SlackQueueEvent } from "./types.js";
+import type { RuntimeRespondPolicy } from "./runtime-respond-policy.js";
 
 export interface RuntimeBinding {
   tenantId: string;
@@ -18,6 +19,7 @@ export interface RuntimePlacement {
   capabilities?: { mcp: string[]; gatewayTools: string[] };
   dataScopes?: { graph: { mode: "read-only"; scopes: string[] } };
   deliveryScopes?: Array<{ connector: "slack"; channelId: string }>;
+  respondTo?: RuntimeRespondPolicy;
 }
 
 export interface ResolvedRuntimePlacement extends RuntimeBinding, RuntimePlacement {}
@@ -112,6 +114,13 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         !Array.isArray(deliveryScopes) || deliveryScopes.length === 0 ||
         deliveryScopes.some((scope) => scope?.connector !== "slack" || typeof scope.channelId !== "string")
       )) throw new Error("invalid");
+      const respondTo = candidate.respondTo as Record<string, unknown> | undefined;
+      const respondModes = new Set<unknown>(["always", "mention", "never"]);
+      if (respondTo !== undefined && (
+        typeof respondTo !== "object" || respondTo === null ||
+        !respondModes.has(respondTo.im) || !respondModes.has(respondTo.mpim) ||
+        !respondModes.has(respondTo.channel) || typeof respondTo.engagedThreads !== "boolean"
+      )) throw new Error("invalid");
       return {
         placementId: candidate.placementId,
         channelId: candidate.channelId,
@@ -123,6 +132,7 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         ...(capabilities ? { capabilities: { mcp: [...capabilities.mcp as string[]], gatewayTools: [...capabilities.gatewayTools as string[]] } } : {}),
         ...(dataScopes ? { dataScopes } : {}),
         ...(deliveryScopes ? { deliveryScopes } : {}),
+        ...(respondTo ? { respondTo: respondTo as unknown as RuntimeRespondPolicy } : {}),
       };
     });
     if (

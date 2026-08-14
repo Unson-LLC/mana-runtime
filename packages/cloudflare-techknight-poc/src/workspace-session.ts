@@ -8,6 +8,7 @@ export interface WorkspaceSessionState {
   generation: number;
   lastNewCommandId?: string;
   modelOverride?: string;
+  engaged?: boolean;
   updatedAt?: string;
 }
 
@@ -20,7 +21,8 @@ export async function readWorkspaceSession(fs: WorkspaceSessionFs): Promise<Work
     const value = JSON.parse(raw) as Partial<WorkspaceSessionState>;
     return Number.isSafeInteger(value.generation) && (value.generation ?? 0) >= 1
       ? { generation: value.generation!, ...(value.lastNewCommandId ? { lastNewCommandId: value.lastNewCommandId } : {}),
-          ...(value.modelOverride ? { modelOverride: value.modelOverride } : {}), ...(value.updatedAt ? { updatedAt: value.updatedAt } : {}) }
+          ...(value.modelOverride ? { modelOverride: value.modelOverride } : {}),
+          ...(value.engaged === true ? { engaged: true } : {}), ...(value.updatedAt ? { updatedAt: value.updatedAt } : {}) }
       : { generation: 1 };
   } catch {
     return { generation: 1 };
@@ -30,6 +32,11 @@ export async function readWorkspaceSession(fs: WorkspaceSessionFs): Promise<Work
 export async function writeWorkspaceSession(fs: WorkspaceSessionFs, state: WorkspaceSessionState): Promise<void> {
   await fs.mkdir("/session", { recursive: true });
   await fs.writeFile(SESSION_PATH, JSON.stringify(state));
+}
+
+export async function markWorkspaceEngaged(fs: WorkspaceSessionFs, updatedAt: string): Promise<void> {
+  const current = await readWorkspaceSession(fs);
+  await writeWorkspaceSession(fs, { ...current, engaged: true, updatedAt });
 }
 
 export async function applyNewSessionCommand(fs: WorkspaceSessionFs, input: { commandId: string; requestedAt: string }) {

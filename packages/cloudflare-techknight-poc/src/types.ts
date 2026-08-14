@@ -3,6 +3,7 @@ export interface SlackQueueEvent {
   eventId: string;
   workspaceId: string;
   channelId: string;
+  channelType?: string;
   threadTs: string;
   messageTs: string;
   userId?: string;

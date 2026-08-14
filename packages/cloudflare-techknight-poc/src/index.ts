@@ -49,7 +49,7 @@ import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
-import { readWorkspaceSession } from "./workspace-session.js";
+import { markWorkspaceEngaged, readWorkspaceSession } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
@@ -390,6 +390,8 @@ export default {
                 expectedTenantId: env.TENANT_ID,
                 expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
                 allowedChannelId: placement.channelId,
+                respondPolicy: placement.respondTo,
+                isEngagedThread: workspaceSession.engaged === true,
               })) {
                 if (await isReplyCompleted(workspace.fs, event.eventId)) return { outcome: "already_completed" as const };
                 const text = await executeRuntimeControlCommand({
@@ -422,6 +424,7 @@ export default {
                   responseTs,
                   completedAt: new Date().toISOString(),
                 });
+                await markWorkspaceEngaged(workspace.fs, new Date().toISOString());
                 return { outcome: "replied" as const, responseTs };
               }
               const hydrateThreadContext = async (input: SlackQueueEvent) => {
@@ -492,6 +495,8 @@ export default {
                     graphContext: graphContext.content,
                     capabilities: placement.capabilities,
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
+                    respondPolicy: placement.respondTo,
+                    isEngagedThread: workspaceSession.engaged === true,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     });

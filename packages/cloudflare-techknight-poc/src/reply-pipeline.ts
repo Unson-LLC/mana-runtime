@@ -19,6 +19,8 @@ import {
 import type { SlackUserProfile } from "./slack-user-profile.js";
 import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import { emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
+import { evaluateRuntimeRespondPolicy, type RuntimeRespondPolicy } from "./runtime-respond-policy.js";
+import { markWorkspaceEngaged } from "./workspace-session.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -58,6 +60,8 @@ export interface ReplyPipelineOptions {
   graphContext?: string;
   capabilities?: { mcp: readonly string[]; gatewayTools: readonly string[] };
   trace?: TurnRuntimeTrace;
+  respondPolicy?: RuntimeRespondPolicy;
+  isEngagedThread?: boolean;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -78,17 +82,21 @@ export class ReplyPipelineError extends Error {
 
 export function isReplyEligible(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId">,
+  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId" | "respondPolicy" | "isEngagedThread">,
 ): boolean {
-  return (
+  const boundaryAllowed = (
     event.tenantId === (options.expectedTenantId ?? "techknight") &&
     event.workspaceId === options.expectedWorkspaceId &&
     event.channelId === options.allowedChannelId &&
-    event.eventType === "app_mention" &&
     !event.botId &&
     event.subtype !== "bot_message" &&
     Boolean(event.userId)
   );
+  if (!boundaryAllowed) return false;
+  if (!options.respondPolicy) return event.eventType === "app_mention";
+  if (event.eventType !== "app_mention" && event.eventType !== "message") return false;
+  return evaluateRuntimeRespondPolicy({ config: options.respondPolicy, channelType: event.channelType,
+    wasMentioned: event.eventType === "app_mention", isEngagedThread: options.isEngagedThread === true }).allow;
 }
 
 function normalizePromptText(text: string): string {
@@ -498,6 +506,7 @@ export async function processReplyEvent(
       responseTs,
       completedAt: options.now?.() ?? new Date().toISOString(),
     });
+    await markWorkspaceEngaged(fs, options.now?.() ?? new Date().toISOString());
     return { outcome: "replied", responseTs };
   });
 }
