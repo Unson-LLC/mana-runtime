@@ -55,6 +55,12 @@ describe("runtime control command policy", () => {
     expect(parseRuntimeControlCommand(text)).toEqual(expected);
   });
 
+  it("accepts the model names used by the Cloudflare runtime", () => {
+    const placement = { placementId: "mana-dev-biz", allowedModels: ["sonnet", "opus"] };
+    expect(applyModelCommand({ generation: 1 }, "opus", placement).modelOverride).toBe("opus");
+    expect(applyModelCommand({ generation: 1 }, "sonnet", placement).modelOverride).toBe("sonnet");
+  });
+
   it.each(["/cron", "/cron delete nightly", "/develop", "/vibepro", "/ryoko-develop"])(
     "rejects an incomplete or unsupported deterministic command: %s",
     (text) => expect(() => parseRuntimeControlCommand(text)).toThrow(expect.objectContaining({ code: "command_invalid" })),

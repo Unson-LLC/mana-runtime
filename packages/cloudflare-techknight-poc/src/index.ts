@@ -49,6 +49,8 @@ import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
+import { readWorkspaceSession } from "./workspace-session.js";
+import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import {
   consumeTaskBoardRepair,
@@ -296,13 +298,21 @@ export default {
             workspaceId: env.SLACK_EXPECTED_TEAM_ID,
             placements: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON),
           });
-          const claudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
+          const placementClaudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(
             () => getWorkspace(handle),
             async (workspace) => {
               await persistEventOnce(workspace.fs, event);
+              const workspaceSession = await readWorkspaceSession(workspace.fs);
+              const sessionModel = workspaceSession.modelOverride;
+              const claudeRuntime = resolveClaudeRuntimeConfig(
+                env,
+                sessionModel === "opus" || sessionModel === "sonnet"
+                  ? sessionModel
+                  : placementClaudeRuntime.model,
+              );
               const controlCommand = parseRuntimeControlCommand(event.text);
               if (controlCommand && isReplyEligible(event, {
                 expectedTenantId: env.TENANT_ID,
@@ -317,10 +327,11 @@ export default {
                   requestedAt: event.receivedAt,
                   placementId: placement.placementId,
                   projectCodes: placement.projectCodes,
-                  currentModel: placement.agent?.model ?? claudeRuntime.model,
-                  allowedModels: [placement.agent?.model ?? claudeRuntime.model],
+                  currentModel: claudeRuntime.model,
+                  allowedModels: ["sonnet", "opus"],
                   taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED === "true",
                   taskWriteEnabled: placement.taskWriteEnabled,
+                  doctor: () => runRuntimeDoctor(env, placement.capabilities?.mcp ?? []),
                 });
                 const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
                 await persistReplyCompletion(workspace.fs, {
