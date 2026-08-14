@@ -22,6 +22,7 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(calls[1]?.body)).toContain("議事録を作成しました");
     expect(JSON.stringify(calls[1]?.body)).toContain("https://github.test/minutes");
     expect(JSON.stringify(calls[1]?.body)).not.toContain("再実行");
+    expect(JSON.stringify(calls[1]?.body)).toContain("保存先をやり直す");
   });
 
   it("shows processing feedback with the Slack assistant thread status", async () => {
@@ -39,9 +40,36 @@ describe("MeetingMinutesSlackClient", () => {
   });
 
   it("does not stop minutes processing when the optional assistant status is unavailable", async () => {
-    const fetchImpl = vi.fn(async () => Response.json({ ok: false, error: "not_allowed" })) as typeof fetch;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).includes("assistant.threads.setStatus")
+      ? Response.json({ ok: false, error: "not_allowed" })
+      : Response.json({ ok: true, ts: "3.1" })) as typeof fetch;
     await expect(new MeetingMinutesSlackClient("token", fetchImpl).postProcessingStatus(routedRun()))
-      .resolves.toBe("2.1");
+      .resolves.toBe("3.1");
+  });
+
+  it("posts processing as a second reply after the selector reply", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: "3.1" });
+    }) as typeof fetch;
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postProcessingStatus(routedRun()))
+      .resolves.toBe("3.1");
+    expect(bodies[1]).toMatchObject({ channel: "C1", thread_ts: "1.0" });
+    expect(JSON.stringify(bodies[1])).toContain("議事録を作成中");
+  });
+
+  it("marks the old destination post as withdrawn and reopens the selector in the status reply", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body))); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+    await client.retractSharedMinutes("C2", "10.1", "meeting.txt");
+    await expect(client.showDestinationSelection(routedRun(), [routedRun().destination])).resolves.toBe("3.1");
+    expect(calls[0]).toMatchObject({ channel: "C2", ts: "10.1" });
+    expect(JSON.stringify(calls[0])).toContain("取り消されました");
+    expect(calls[1]).toMatchObject({ channel: "C1", ts: "3.1" });
+    expect(JSON.stringify(calls[1])).toContain("組織を選択");
   });
 
   it("replaces a failed result with a retry button for the selected destination", async () => {

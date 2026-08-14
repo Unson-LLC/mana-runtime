@@ -3,6 +3,8 @@ import type { SlackFileReference } from "./types.js";
 export const MEETING_MINUTES_CHOOSE_ACTION_ID = "mana_meeting_minutes_choose_destination";
 export const MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID = "mana_meeting_minutes_choose_organization";
 export const MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID = "mana_meeting_minutes_back_to_organizations";
+export const MEETING_MINUTES_REDO_ACTION_ID = "mana_meeting_minutes_redo";
+export const MEETING_MINUTES_CONFIRM_REDO_ACTION_ID = "mana_meeting_minutes_confirm_redo";
 
 export interface MeetingMinutesDestination {
   id: string;
@@ -56,6 +58,8 @@ export interface MeetingMinutesRun {
   taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string }> };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
+  /** Increments after each completed-run redo so external idempotency keys remain unique. */
+  revision?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,6 +68,15 @@ export interface MeetingMinutesSelection {
   kind: "meeting_minutes_selection";
   runId: string;
   destinationId: string;
+  workspaceId: string;
+  channelId: string;
+  userId: string;
+  actionTs: string;
+}
+
+export interface MeetingMinutesRedo {
+  kind: "meeting_minutes_redo";
+  runId: string;
   workspaceId: string;
   channelId: string;
   userId: string;
