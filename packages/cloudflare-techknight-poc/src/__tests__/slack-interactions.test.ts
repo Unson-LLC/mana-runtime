@@ -135,6 +135,48 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledOnce(); expect(showProcessing).not.toHaveBeenCalled();
   });
+  it("shows immediate feedback for an existing retry button using the signed container thread", async () => {
+    const retryPayload = structuredClone(payload);
+    delete (retryPayload as { message?: unknown }).message;
+    (retryPayload as typeof retryPayload & { container: { thread_ts: string } }).container = { thread_ts: "1.0" };
+    const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(retryPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, showProcessing, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+    expect(send).toHaveBeenCalledOnce();
+  });
+  it("loads the durable thread coordinate for legacy retry buttons", async () => {
+    const retryPayload = structuredClone(payload); delete (retryPayload as { message?: unknown }).message;
+    const send = vi.fn(); const showProcessing = vi.fn(); const resolveThreadTs = vi.fn().mockResolvedValue("1.0");
+    const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(retryPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, showProcessing, resolveThreadTs, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(resolveThreadTs).toHaveBeenCalledWith("Ev1_F1");
+    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
+  });
+  it("uses the durable retry thread coordinate and rejects conflicting signed coordinates", async () => {
+    const retryPayload = structuredClone(payload);
+    delete (retryPayload as { message?: unknown }).message;
+    retryPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", sourceThreadTs: "1.0" });
+    const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(retryPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, showProcessing, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+
+    const conflicting = structuredClone(payload);
+    conflicting.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", sourceThreadTs: "2.0" });
+    const rejected = await handleMeetingMinutesInteraction(request(conflicting), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, showProcessing, defer: background.defer });
+    expect(rejected.status).toBe(400);
+  });
   it("fails closed for a non-operator", async () => {
     const send = vi.fn(); const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, send });

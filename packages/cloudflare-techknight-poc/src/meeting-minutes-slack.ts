@@ -133,7 +133,8 @@ export class MeetingMinutesSlackClient {
     if (!completed) {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
-        value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id }) }] });
+        value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,
+          sourceThreadTs: run.sourceThreadTs }) }] });
     }
     await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text, blocks });
   }

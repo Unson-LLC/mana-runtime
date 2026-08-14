@@ -25,6 +25,7 @@ import {
 import type { MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
+import { loadMeetingMinutesRun } from "./meeting-minutes-state.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
@@ -307,6 +308,13 @@ export default {
           }), env);
           if (!approved.ok) return approved;
           return Response.json({ ok: true, approval_id: approvalId });
+        }, async (runId) => {
+          const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+            env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId,
+          ));
+          const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+          return withDisposableResource(() => getWorkspace(handle), async (workspace) =>
+            (await loadMeetingMinutesRun(workspace.fs, runId))?.sourceThreadTs);
         });
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
