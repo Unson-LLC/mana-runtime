@@ -25,7 +25,8 @@ import {
 import type { MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
-import { loadMeetingMinutesRun } from "./meeting-minutes-state.js";
+import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
+import { handleMeetingMinutesTaskAction } from "./meeting-minutes-task-actions.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
@@ -83,6 +84,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
+  MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON?: string;
   RUNTIME_CRON_JOBS_JSON?: string;
   DEVELOPMENT_RUNNER_BASE_URL?: string;
   DEVELOPMENT_RUNNER_TOKEN?: string;
@@ -242,6 +244,7 @@ function meetingMinutesClients(env: Env) {
       }),
       postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
         destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
+      postTaskCard: (run: MeetingMinutesRun) => destinationSlack(run.destination!.slackChannelId).postTaskCard(run),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
@@ -315,6 +318,45 @@ export default {
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(() => getWorkspace(handle), async (workspace) =>
             (await loadMeetingMinutesRun(workspace.fs, runId))?.sourceThreadTs);
+        }, async (payload) => {
+          const parsedTeamIds = (() => { try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
+            catch { return {}; } })();
+          const loadWorkspace = async <T>(runId: string, operation: (workspace: { fs: Parameters<typeof loadMeetingMinutesRun>[0] }) => Promise<T>) => {
+            const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+              env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId));
+            const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+            return withDisposableResource(() => getWorkspace(handle), operation);
+          };
+          const taskClient = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
+            token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
+              fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
+          let cachedRun: MeetingMinutesRun | undefined;
+          const clients = meetingMinutesClients(env);
+          return handleMeetingMinutesTaskAction(payload, { sourceTeamId: env.SLACK_EXPECTED_TEAM_ID,
+            destinationTeamIds: parsedTeamIds,
+            operatorUserIds: config.operatorUserIds,
+            loadRun: async (runId) => { cachedRun = await loadWorkspace(runId, (workspace) => loadMeetingMinutesRun(workspace.fs, runId)); return cachedRun; },
+            saveRun: (run) => loadWorkspace(run.runId, async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); }),
+            getTask: (taskId) => taskClient.getTask(taskId),
+            updateTask: (taskId, input, key) => taskClient.updateTask(taskId, input, key),
+            deleteTask: (taskId, version, key) => taskClient.deleteTask(taskId, version, key),
+            updateCard: async (run) => { const slack = meetingMinutesClients(env);
+              const client = run.destination!.organization.id === "tech-knight"
+                ? new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "")
+                : run.destination!.organization.id === "unson"
+                  ? new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_UNSON ?? "") : clients.slack;
+              await client.updateTaskCard(run); },
+            openView: async (organizationId, triggerId, view) => {
+              const token = organizationId === "tech-knight"
+                ? env.SLACK_BOT_TOKEN_TECHKNIGHT : organizationId === "unson" ? env.SLACK_BOT_TOKEN_UNSON : env.SLACK_BOT_TOKEN;
+              await new MeetingMinutesSlackClient(token ?? "").openTaskEditView(triggerId, view);
+            }, repairTaskBoard: async () => {
+              try { await env.TASK_BOARD_REPAIRS.send({ eventType: "task_board_repair", tenantId: env.TENANT_ID,
+                workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: env.SLACK_ALLOWED_CHANNEL_ID,
+                reason: "task_write", requestedAt: new Date().toISOString() }); }
+              catch (error) { console.error("meeting_minutes_task_board_repair_failed", error); }
+            }, defer: (work) => ctx.waitUntil(work),
+          });
         });
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {

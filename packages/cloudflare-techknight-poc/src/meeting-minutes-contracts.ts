@@ -3,6 +3,9 @@ import type { SlackFileReference } from "./types.js";
 export const MEETING_MINUTES_CHOOSE_ACTION_ID = "mana_meeting_minutes_choose_destination";
 export const MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID = "mana_meeting_minutes_choose_organization";
 export const MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID = "mana_meeting_minutes_back_to_organizations";
+export const MEETING_MINUTES_TASK_EDIT_ACTION_ID = "mana_meeting_minutes_task_edit";
+export const MEETING_MINUTES_TASK_CANCEL_ACTION_ID = "mana_meeting_minutes_task_cancel";
+export const MEETING_MINUTES_TASK_EDIT_VIEW_ID = "mana_meeting_minutes_task_edit_submit";
 
 export interface MeetingMinutesDestination {
   id: string;
@@ -53,8 +56,8 @@ export interface MeetingMinutesRun {
   transcriptSha256?: string;
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
-  taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string }> };
-  slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; postedChunkIndexes: number[] };
+  taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "removed" }> };
+  slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   createdAt: string;
   updatedAt: string;
