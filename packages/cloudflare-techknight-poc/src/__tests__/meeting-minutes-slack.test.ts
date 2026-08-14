@@ -53,6 +53,7 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(body)).toContain("議事録の作成に失敗しました");
     expect(JSON.stringify(body)).toContain("mana_meeting_minutes_choose_destination:mana");
     expect(JSON.stringify(body)).toContain("再実行");
+    expect(JSON.stringify(body)).toContain('\\"sourceThreadTs\\":\\"1.0\\"');
   });
 
   it("shows only unique organizations in the initial selector", async () => {
