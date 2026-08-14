@@ -114,16 +114,22 @@ describe("会社別Cloudflare deployment", () => {
       DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
-      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true },
+      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: false },
       {
         placementId: "mana-dev-biz",
         channelId: "C0BMNSP6C80",
         projectCodes: ["mana"],
         taskWriteEnabled: true,
+        taskBoardEnabled: true,
         developmentEnabled: true,
         audience: { type: "operator", allowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
         agent: { model: "sonnet", escalationEmployee: "critical-reviewer" },
+        runtimeContext: {
+          persona: "Ryoko（佐藤圭吾のパーソナルAIアシスタント兼AI組織のCOO）",
+          instructions: ["結論を先に日本語で簡潔かつ具体的に答える", "確認できないことは推測せず不確実性を正直に伝える", "利用者の意図を先読みして次の行動を提案する"],
+          skills: ["cron-manager", "find-and-install", "management", "migrate", "new", "onboarding", "self-heal", "skill-creator", "status", "sync"],
+        },
         respondTo: { im: "never", mpim: "never", channel: "mention", engagedThreads: true },
         capabilities: {
           mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
@@ -262,7 +268,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
-    expect(worker).toContain("issueTaskWriteRequestContext(event, env, Date.now(), placement)");
+    expect(worker).toContain("issueTaskWriteRequestContext(");
+    expect(worker).toContain("placement, requesterResolution.personId");
     expect(worker).toContain("consumeTaskBoardRepair({");
   });
 
@@ -276,7 +283,8 @@ describe("会社別Cloudflare deployment", () => {
       ]));
     }
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
-    expect(worker).toContain("issueTaskWriteRequestContext(event, env, Date.now(), placement)");
+    expect(worker).toContain("issueTaskWriteRequestContext(");
+    expect(worker).toContain("placement, requesterResolution.personId");
     expect(worker).toContain("consumeTaskBoardRepair({");
     expect(worker).toContain("enqueueScheduledTaskBoardRepair(env)");
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');

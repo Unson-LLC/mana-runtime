@@ -483,7 +483,6 @@ export default {
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
                   }, async (taskSearch) => {
-                    const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(event, env, Date.now(), placement);
                     const profileResolution = await resolveSlackUserProfile({ userId: event.userId ?? "",
                       botToken: env.SLACK_BOT_TOKEN,
                     });
@@ -501,6 +500,9 @@ export default {
                     if (requesterResolution.status !== "resolved") {
                       throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
                     }
+                    const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
+                      event, env, Date.now(), placement, requesterResolution.personId,
+                    );
                     const graphContext = await hydrateGraphContext(event, placement.projectCodes[0], graphOptions);
                     if (graphContext.status === "unavailable") {
                       throw new ReplyPipelineError("graph_context_unavailable");

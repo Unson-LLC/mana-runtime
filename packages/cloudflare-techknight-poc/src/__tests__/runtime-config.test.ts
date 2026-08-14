@@ -55,6 +55,13 @@ describe("Cloudflare runtime binding", () => {
       .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
   });
 
+  it("retains a placement-specific task board boundary", () => {
+    expect(parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true }])))
+      .toMatchObject([{ taskBoardEnabled: true }]);
+    expect(() => parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: "true" }])))
+      .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+  });
+
   it("retains bounded persona, runtime instructions, and visible skills", () => {
     const [placement] = parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"],
       runtimeContext: { persona: "Ryoko", instructions: ["結論を先に述べる"], skills: ["status", "management"] } }]));

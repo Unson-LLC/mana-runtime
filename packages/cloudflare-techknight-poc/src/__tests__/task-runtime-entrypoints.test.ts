@@ -32,7 +32,7 @@ const repair = {
 
 describe("Cloudflare task runtime entrypoints", () => {
   it("issues a requester, placement, and project scoped write capability", async () => {
-    const result = await issueTaskWriteRequestContext(event, runtime, 1_000);
+    const result = await issueTaskWriteRequestContext(event, runtime, 1_000, undefined, "per_requester");
     expect(result.taskWriteEnabled).toBe(true);
     const claims = await verifyTaskWriteCapability(result.taskWriteCapability!, runtime.TASK_WRITE_CAPABILITY_SECRET, {
       requestId: "Ev123",
@@ -40,7 +40,7 @@ describe("Cloudflare task runtime entrypoints", () => {
       placementId: "mana-accounting",
       now: 1_001,
     });
-    expect(claims).toMatchObject({ projects: ["back-office"], budget: 3, nonce: "Ev123" });
+    expect(claims).toMatchObject({ actor: { id: "U_REQUESTER", personId: "per_requester" }, projects: ["back-office"], budget: 3, nonce: "Ev123" });
   });
 
   it("fails closed when writes are enabled without trusted authority", async () => {
@@ -80,5 +80,23 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(failed.retry).toHaveBeenCalledOnce();
     await enqueueScheduledTaskBoardRepair(env, "2026-08-13T01:00:00.000Z");
     expect(send).toHaveBeenCalledWith({ ...repair, requestedAt: "2026-08-13T01:00:00.000Z" });
+  });
+
+  it("enqueues and refreshes each task-board-enabled placement with only its own projects", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const env = { TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+      RUNTIME_TASK_BOARD_ENABLED: "true", RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "C_BACK_OFFICE", projectCodes: ["back-office"], taskBoardEnabled: true },
+        { placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true },
+        { placementId: "router", channelId: "C_ROUTER", projectCodes: ["unson"] },
+      ]), TASK_BOARD_REPAIRS: { send } };
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-13T02:00:00.000Z");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ channelId: "C_DEV" }));
+
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const message = { body: { ...repair, channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
+    await consumeTaskBoardRepair(message, env, refresh);
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C_DEV", RUNTIME_PROJECT_CODES: "mana" }));
   });
 });
