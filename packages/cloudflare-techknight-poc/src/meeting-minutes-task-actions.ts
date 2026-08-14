@@ -45,18 +45,30 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const actions = Array.isArray(payload.actions) ? payload.actions : [];
   const action = actions.length === 1 ? object(actions[0]) : undefined;
   const isBlockSuggestion = payload.type === "block_suggestion";
-  const actionId = isBlockSuggestion ? text(payload.action_id) : text(action?.action_id); const view = object(payload.view);
+  const actionId = text(payload.action_id) ?? text(action?.action_id); const view = object(payload.view);
   const callbackId = text(view?.callback_id);
+  if (isBlockSuggestion) console.info("meeting_minutes_block_suggestion_received", {
+    actionId: actionId ?? "missing", hasTopLevelValue: Boolean(text(payload.value)), hasActionValue: Boolean(text(action?.value)),
+  });
   if (payload.type === "block_suggestion" && actionId === MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID) {
     const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
     const teamId = text(object(payload.team)?.id); const expectedTeam = value?.organizationId && deps.destinationTeamIds[value.organizationId];
-    if (!value || !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam)
+    if (!value || !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam) {
+      console.warn("meeting_minutes_assignee_suggestion_forbidden", {
+        hasMetadata: Boolean(value), hasUserId: Boolean(userId), operatorAllowed: Boolean(userId && deps.operatorUserIds.has(userId)),
+        teamMatched: Boolean(teamId && expectedTeam && teamId === expectedTeam),
+      });
       return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
+    }
     const people = await deps.listPeople();
-    if (!people) return Response.json({ error: "meeting_minutes_graph_unavailable" }, { status: 503 });
-    const query = (text(payload.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
+    if (!people) {
+      console.error("meeting_minutes_assignee_graph_unavailable");
+      return Response.json({ error: "meeting_minutes_graph_unavailable" }, { status: 503 });
+    }
+    const query = (text(payload.value) ?? text(action?.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
     const matches = people.filter((person) => !query || [person.name, ...person.aliases]
       .some((name) => name.normalize("NFKC").toLocaleLowerCase("ja").includes(query))).slice(0, 99);
+    console.info("meeting_minutes_assignee_suggestion_ready", { peopleCount: people.length, matchCount: matches.length });
     return Response.json({ options: [
       { text: { type: "plain_text", text: "（担当なし）" }, value: MEETING_MINUTES_ASSIGNEE_NONE },
       ...matches.map((person) => ({ text: { type: "plain_text", text: person.name.slice(0, 75) }, value: person.id })),

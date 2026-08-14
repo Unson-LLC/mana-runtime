@@ -79,6 +79,17 @@ describe("meeting minutes task cards", () => {
     ] });
     expect(options.listPeople).toHaveBeenCalledWith();
   });
+  it("accepts Slack block suggestions that carry action_id and value in actions", async () => {
+    const options = deps(run());
+    const response = await handleMeetingMinutesTaskAction({ type: "block_suggestion", team: { id: "TTK" }, user: { id: "U1" },
+      view: { private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0, organizationId: "tech-knight",
+        channelId: "CDEST", projectId: "proj_pms" }) },
+      actions: [{ action_id: "mana_meeting_minutes_task_assignee", value: "梅田" }] }, options);
+    expect(response?.status).toBe(200); expect(await response?.json()).toEqual({ options: [
+      { text: { type: "plain_text", text: "（担当なし）" }, value: "__none__" },
+      { text: { type: "plain_text", text: "梅田 遼" }, value: "per_umeda" },
+    ] });
+  });
   it("updates the canonical Graph assignee and redraws the task card", async () => {
     const current = run(); const options = deps(current);
     options.updateTask.mockResolvedValue({ id: "task-1", version: 4, title: "新題", description: null,
