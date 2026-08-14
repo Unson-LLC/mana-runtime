@@ -32,6 +32,7 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
   processMeetingTaskEvent,
 } from "./meeting-task-pipeline.js";
@@ -77,6 +78,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
+  BRAINBASE_SLACK_PERSON_MAP_JSON?: string;
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_EXECUTION_MODE?: string;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
@@ -332,10 +334,6 @@ export default {
             outcome: "resolved",
             taskWriteEnabled: placement.taskWriteEnabled,
           });
-          emitTurnLog("log", "mana_identity_context", event, trace, {
-            outcome: event.userId ? "not_injected" : "missing_actor",
-            reasonCode: event.userId ? "actor_context_not_injected" : "slack_user_id_missing",
-          });
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(
@@ -381,6 +379,7 @@ export default {
                       taskSearchEnabled: taskSearch.taskSearchEnabled,
                       taskWriteEnabled,
                       taskWriteCapability,
+                      resolveActorIdentity: resolveActorIdentityResolverFromEnv(env),
                       createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                       hydrateThreadContext,
                       trace,

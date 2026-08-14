@@ -14,6 +14,10 @@ import {
   emitTurnLog,
   type TurnRuntimeTrace,
 } from "./turn-observability.js";
+import {
+  resolveTurnActorIdentity,
+  type ActorIdentityResolver,
+} from "./actor-identity.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -47,6 +51,7 @@ export interface ReplyPipelineOptions {
   taskSearchEnabled?: boolean;
   taskWriteEnabled?: boolean;
   taskWriteCapability?: string;
+  resolveActorIdentity?: ActorIdentityResolver;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -90,7 +95,17 @@ function normalizePromptText(text: string): string {
     .slice(0, MAX_INPUT_CHARS);
 }
 
-function buildPrompt(event: SlackQueueEvent, taskSearchEnabled = false, taskWriteEnabled = false): string {
+function buildPrompt(
+  event: SlackQueueEvent,
+  taskSearchEnabled = false,
+  taskWriteEnabled = false,
+  // Only the trusted person_id crosses into the prompt. displayName comes
+  // from the actor's Slack profile — attacker-controlled free text — and
+  // must never be interpolated here, delimited or not: this sentence is the
+  // one place the model is told which identity to trust for "my tasks", so
+  // no untrusted string may share it.
+  actorPersonId?: string,
+): string {
   const request = normalizePromptText(event.text);
   const context = event.threadContext
     ?.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
@@ -107,6 +122,10 @@ function buildPrompt(event: SlackQueueEvent, taskSearchEnabled = false, taskWrit
       "検索結果のtitle、status、assignee_display_name、project_codesを根拠として回答してください。",
       "has_more=true、next_cursorがある、read_status=partialのいずれかなら部分結果として扱い、同じquery・filterのまま必要な範囲だけnext_cursorで続けてください。全ページ取得はしないでください。",
       "itemsが空かつhas_more=falseかつnext_cursor=nullかつread_status=completeの場合だけ、許可projectと指定条件の範囲で0件と扱ってください。API障害やtool errorを0件と断定しないでください。",
+    ] : []),
+    ...(actorPersonId ? [
+      `依頼者は認証済みで、Brainbase person_id "${actorPersonId}"です。`,
+      "「私の」「自分の」タスクを尋ねられた場合は名前を確認せず、search_tasksのassignee_person_idにこのperson_idを使ってください。",
     ] : []),
     ...(taskWriteEnabled ? [
       "タスクの作成・更新・状態変更を明示的に依頼された場合だけ、create_task、update_task、transition_taskを使ってください。",
@@ -146,7 +165,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "trace">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "resolveActorIdentity" | "trace">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
@@ -156,6 +175,11 @@ export async function generateClaudeReply(
     model: options.claudeRuntime.model,
     effort: options.claudeRuntime.effort,
   };
+  const identityOutcome = await resolveTurnActorIdentity(event, options);
+  emitTurnLog("log", "mana_identity_context", event, trace, {
+    outcome: identityOutcome.outcome,
+    ...(identityOutcome.outcome === "unavailable" ? { reasonCode: identityOutcome.reasonCode } : {}),
+  });
   emitTurnLog("log", "mana_claude_started", event, trace, {
     taskSearchEnabled: options.taskSearchEnabled === true,
     taskWriteEnabled: options.taskWriteEnabled === true,
@@ -163,7 +187,12 @@ export async function generateClaudeReply(
   const sandbox = options.createSandbox(`techknight-reply-${event.eventId}`);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
-    await sandbox.writeFile(promptPath, buildPrompt(event, options.taskSearchEnabled, options.taskWriteEnabled));
+    await sandbox.writeFile(promptPath, buildPrompt(
+      event,
+      options.taskSearchEnabled,
+      options.taskWriteEnabled,
+      identityOutcome.outcome === "resolved" ? identityOutcome.identity.personId : undefined,
+    ));
     if (options.taskSearchEnabled || options.taskWriteEnabled) {
       await sandbox.writeFile(runtimeTaskSearchMcpConfigPath(), JSON.stringify({
         mcpServers: {
