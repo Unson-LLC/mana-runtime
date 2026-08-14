@@ -12,7 +12,16 @@ describe("Brainbase MCP proxy", () => {
       { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token" }, fetchImpl,
     );
     expect(response.status).toBe(200);
-    expect(fetchImpl).toHaveBeenCalledWith("https://bb.unson.jp/runtime-mcp/mcp", expect.objectContaining({ method: "POST" }));
+    expect(fetchImpl).toHaveBeenCalledWith("https://bb.unson.jp/runtime-mcp/mcp", expect.objectContaining({ method: "POST", redirect: "manual" }));
+  });
+
+  it("rejects upstream redirects without following them", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 302, headers: { location: "https://evil.example" } })) as unknown as typeof fetch;
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: "{}" }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token" }, fetchImpl,
+    );
+    expect(response.status).toBe(502);
   });
 
   it("fails closed for missing credentials and paths outside /mcp", async () => {

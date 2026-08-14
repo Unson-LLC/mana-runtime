@@ -17,7 +17,10 @@ export async function handleBrainbaseMcpProxyRequest(request: Request, env: Brai
   const headers = new Headers(request.headers);
   headers.set("authorization", `Bearer ${env.BRAINBASE_MCP_TOKEN}`);
   headers.delete("cookie");
-  return fetchImpl(`${env.BRAINBASE_MCP_BASE_URL.replace(/\/$/, "")}${BRAINBASE_MCP_PROXY_PATH}`, {
-    method: "POST", headers, body: request.body, redirect: "error", signal: AbortSignal.timeout(30_000),
+  const response = await fetchImpl(`${env.BRAINBASE_MCP_BASE_URL.replace(/\/$/, "")}${BRAINBASE_MCP_PROXY_PATH}`, {
+    method: "POST", headers, body: request.body, redirect: "manual", signal: AbortSignal.timeout(30_000),
   });
+  return response.status >= 300 && response.status < 400
+    ? Response.json({ error: "brainbase_mcp_redirect_rejected" }, { status: 502 })
+    : response;
 }

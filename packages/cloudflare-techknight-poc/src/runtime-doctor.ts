@@ -26,8 +26,11 @@ async function checkMcp(
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: "doctor", method: "tools/list" }),
       signal: AbortSignal.timeout(10_000),
-      redirect: "error",
+      redirect: "manual",
     });
+    if (response.status >= 300 && response.status < 400) {
+      return { name, status: "failed", detail: "リダイレクト拒否" };
+    }
     return response.ok ? { name, status: "ok" } : { name, status: "failed", detail: `HTTP ${response.status}` };
   } catch {
     return { name, status: "failed", detail: "接続失敗" };
