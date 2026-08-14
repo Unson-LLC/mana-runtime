@@ -294,6 +294,24 @@ export async function generateClaudeReply(
         execOptions,
       );
     }
+    if (!result.success && options.claudeSession
+      && /Session ID .* is already in use\./i.test(result.stderr)) {
+      emitTurnLog("log", "mana_claude_session_recovered", event, trace, {
+        outcome: "fresh_turn",
+        reasonCode: "claude_session_busy",
+      });
+      // The Slack thread is already hydrated into the prompt, so a one-turn
+      // execution preserves user-visible continuity without racing the locked
+      // Claude transcript. Later turns continue to use the persisted session.
+      result = await sandbox.exec(
+        buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
+          taskSearchEnabled: options.taskSearchEnabled,
+          taskWriteEnabled: options.taskWriteEnabled,
+          mcpEnabled: Boolean(options.capabilities?.mcp.length),
+        }),
+        execOptions,
+      );
+    }
     if (!result.success) {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
         outcome: "error",
