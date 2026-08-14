@@ -13,6 +13,10 @@ describe("placement-scoped runtime MCP config", () => {
       args: ["/opt/mana/gateway-mcp-server.mjs"],
       env: { MANA_ALLOWED_GATEWAY_TOOLS: JSON.stringify(["list_tasks", "get_employee"]) },
     });
+    expect(config.mcpServers["google-drive"]).toEqual({
+      type: "http",
+      url: "https://google-drive-mcp.internal/mcp",
+    });
   });
 
   it("does not expose undeclared servers or gateway tools", () => {

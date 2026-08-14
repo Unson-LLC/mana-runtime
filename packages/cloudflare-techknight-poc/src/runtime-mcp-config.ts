@@ -20,7 +20,6 @@ export class RuntimeMcpConfigError extends Error {
 const SERVER_PATHS = Object.freeze({
   nocodb: "/opt/mana/nocodb-mcp-server.mjs",
   gateway: "/opt/mana/gateway-mcp-server.mjs",
-  "google-drive": "/opt/mana/google-drive-mcp-server.mjs",
 });
 
 export function buildRuntimeMcpConfig(capabilities: {
@@ -32,8 +31,13 @@ export function buildRuntimeMcpConfig(capabilities: {
   }
   const mcpServers: Record<string, RuntimeMcpServerConfig> = {};
   for (const name of capabilities.mcp) {
-    if (name === "brainbase") {
-      mcpServers[name] = { type: "http", url: "https://brainbase-mcp.internal/mcp" };
+    if (name === "brainbase" || name === "google-drive") {
+      mcpServers[name] = {
+        type: "http",
+        url: name === "brainbase"
+          ? "https://brainbase-mcp.internal/mcp"
+          : "https://google-drive-mcp.internal/mcp",
+      };
       continue;
     }
     const path = SERVER_PATHS[name as keyof typeof SERVER_PATHS];

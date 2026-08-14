@@ -9,10 +9,11 @@ import { handleTaskWriteProxyRequest, TASK_WRITE_PROXY_HOST } from "./task-write
 import type { TaskBoardRepairEvent } from "./task-board.js";
 import { handleNocodbProxyRequest, NOCODB_PROXY_HOST, type NocodbProxyEnv } from "./nocodb-proxy.js";
 import { BRAINBASE_MCP_PROXY_HOST, handleBrainbaseMcpProxyRequest, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
+import { GOOGLE_DRIVE_MCP_PROXY_HOST, handleGoogleDriveMcpProxyRequest, type GoogleDriveMcpProxyEnv } from "./google-drive-mcp-proxy.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
 
-export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv {
+export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv, GoogleDriveMcpProxyEnv {
   TECHKNIGHT_SANDBOX: DurableObjectNamespace<TechKnightSandbox>;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
   RUNTIME_PROJECT_CODES?: string;
@@ -34,7 +35,7 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
 export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
   interceptHttps = true;
   enableInternet = false;
-  allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST];
+  allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST];
 }
 
 TechKnightSandbox.outboundByHost = {
@@ -57,6 +58,7 @@ TechKnightSandbox.outboundByHost = {
   [TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest,
   [NOCODB_PROXY_HOST]: (request, env) => handleNocodbProxyRequest(request, env),
   [BRAINBASE_MCP_PROXY_HOST]: (request, env) => handleBrainbaseMcpProxyRequest(request, env),
+  [GOOGLE_DRIVE_MCP_PROXY_HOST]: (request, env) => handleGoogleDriveMcpProxyRequest(request, env),
 };
 
 export function createTechKnightSandbox(env: SandboxRuntimeEnv, id: string) {
