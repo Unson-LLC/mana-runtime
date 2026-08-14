@@ -47,6 +47,9 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const isBlockSuggestion = payload.type === "block_suggestion";
   const actionId = text(payload.action_id) ?? text(action?.action_id); const view = object(payload.view);
   const callbackId = text(view?.callback_id);
+  if (isBlockSuggestion) console.info("meeting_minutes_block_suggestion_received", {
+    actionId: actionId ?? "missing", hasTopLevelValue: Boolean(text(payload.value)), hasActionValue: Boolean(text(action?.value)),
+  });
   if (payload.type === "block_suggestion" && actionId === MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID) {
     const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
     const teamId = text(object(payload.team)?.id); const expectedTeam = value?.organizationId && deps.destinationTeamIds[value.organizationId];
