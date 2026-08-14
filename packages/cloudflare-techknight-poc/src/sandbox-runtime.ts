@@ -31,6 +31,7 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
   SLACK_BOT_TOKEN?: string;
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
+  TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
 }
 
 export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {

@@ -269,6 +269,18 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(upstream.mock.calls[0]?.[0]).toBe("https://slack.com/api/chat.postMessage");
   });
 
+  it("routes approval cards to the dedicated validation channel", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    const policy = JSON.stringify({ version: "test-v2", rules: [{ effect: "approval", actors: ["U_REQUESTER"], placements: ["mana-accounting"], projects: ["back-office"], operations: ["task.create"], approvers: ["U_APPROVER"], ttlSeconds: 120 }] });
+    const response = await createTaskWriteProxyHandler(upstream)(await request({ operation: "create", title: "x" }), env({
+      TASK_WRITE_POLICY_JSON: policy,
+      TASK_WRITE_APPROVAL_CHANNEL_ID: "C_MANA_DEV",
+    }));
+    expect(response.status).toBe(202);
+    const init = upstream.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({ channel: "C_MANA_DEV" });
+  });
+
   it("denies operations outside the requester policy", async () => {
     const upstream = vi.fn();
     const response = await createTaskWriteProxyHandler(upstream)(await request({ operation: "transition", task_id: "task-1", expected_version: 4, to_status: "completed" }), env());

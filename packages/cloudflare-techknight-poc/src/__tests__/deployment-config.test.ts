@@ -98,8 +98,9 @@ describe("会社別Cloudflare deployment", () => {
       SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
       SLACK_EXPECTED_APP_ID: "A0BPM2J33SN",
       SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
+      TASK_WRITE_APPROVAL_CHANNEL_ID: "C0BMNSP6C80",
       BRAINBASE_TASK_API_BASE_URL: "https://bb.unson.jp",
-      RUNTIME_PROJECT_CODES: "back-office",
+      RUNTIME_PROJECT_CODES: "back-office,unson",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
       RUNTIME_PLACEMENT_ID: "mana-accounting",
       RUNTIME_PLACEMENTS_JSON: expect.any(String),
@@ -115,7 +116,7 @@ describe("会社別Cloudflare deployment", () => {
     });
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true },
-      { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: false },
+      { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: true },
       {
         placementId: "mana-dev-biz",
         channelId: "C0BMNSP6C80",
@@ -239,12 +240,15 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.vars.MEETING_MINUTES_ENABLED).toBe("true");
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD");
-    const destinations = JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON);
+    const destinations = [
+      ...JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON),
+      ...JSON.parse(unson.vars.MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON),
+    ];
     expect([...new Map(destinations.map((item: { organization: { id: string; name: string } }) =>
       [item.organization.id, item.organization.name])).entries()]).toEqual([
       ["unson-business", "雲孫 事業運営"], ["unson", "雲孫"], ["tech-knight", "Tech Knight"],
     ]);
-    expect(destinations).toHaveLength(12);
+    expect(destinations).toHaveLength(18);
     expect(destinations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "back-office", projectId: "proj_back_office", slackChannelId: "C0BKS6RL99T",
         github: expect.objectContaining({ owner: "Unson-LLC", repo: "back_office", pathPrefix: "meetings/" }) }),
@@ -252,6 +256,22 @@ describe("会社別Cloudflare deployment", () => {
         github: expect.objectContaining({ owner: "Unson-LLC", repo: "brainbase-unson", branch: "develop" }) }),
       expect.objectContaining({ id: "techknight-board", projectId: "proj_techknight_board", slackChannelId: "C0A2RB6803B",
         github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "tech-knight-project" }) }),
+      expect.objectContaining({ id: "salestailor", projectId: "proj_salestailor", slackChannelId: "C0A9ESC81UZ",
+        organization: { id: "unson", name: "雲孫" },
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "salestailor-project", pathPrefix: "meetings/" }) }),
+      expect.objectContaining({ id: "baao", projectId: "proj_baao", slackChannelId: "C08K58SUQ7N",
+        organization: { id: "unson", name: "雲孫" },
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "baao-project", pathPrefix: "meetings/" }) }),
+      expect.objectContaining({ id: "yakumokai", projectId: "proj_yakumokai", slackChannelId: "C08FSSHHAU9",
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "Drive", pathPrefix: "meetings/yakumokai/" }) }),
+      expect.objectContaining({ id: "other-meetings", projectId: "proj_other", slackChannelId: "C0A2L9FEKEJ",
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "Drive", pathPrefix: "meetings/other/" }) }),
+      expect.objectContaining({ id: "cursorvers", projectId: "proj_otawara_cursorvers", slackChannelId: "C0BHVFJGFK3",
+        organization: { id: "unson-business", name: "雲孫 事業運営" },
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "Drive", pathPrefix: "meetings/cursorvers/" }) }),
+      expect.objectContaining({ id: "united", projectId: "proj_united", slackChannelId: "C0A4RB7739D",
+        organization: { id: "tech-knight", name: "Tech Knight" },
+        github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "HotelUnitedGAS", pathPrefix: "meetings/" }) }),
     ]));
     expect(unson.migrations).toEqual(expect.arrayContaining([
       expect.objectContaining({ tag: "v4", new_sqlite_classes: ["MeetingMinutesWorkspace"] }),
@@ -270,6 +290,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
+    expect(worker).toContain("env.SLACK_BOT_TOKEN_UNSON");
+    expect(worker).toContain('destination.organization.id === "unson"');
+    expect(worker).toContain('destination.organization.id === "tech-knight"');
     expect(worker).toContain("consumeTaskBoardRepair({");
   });
 

@@ -85,7 +85,9 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   DEVELOPMENT_CALLBACK_BASE_URL?: string;
   DEVELOPMENT_CALLBACK_TOKEN?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
+  TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
   SLACK_BOT_TOKEN?: string;
+  SLACK_BOT_TOKEN_UNSON?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
   GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
@@ -180,13 +182,22 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 
 function meetingMinutesClients(env: Env) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
+  const unsonSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_UNSON ?? "");
   const techKnightSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
-  const techKnightChannels = new Set(meetingMinutesRuntimeConfig(env).destinations
-    .filter((destination) => destination.github.owner === "Tech-Knight-inc")
+  const destinations = meetingMinutesRuntimeConfig(env).destinations;
+  const unsonChannels = new Set(destinations
+    .filter((destination) => destination.organization.id === "unson")
     .map((destination) => destination.slackChannelId));
-  const destinationSlack = (channelId: string) => techKnightChannels.has(channelId) ? techKnightSlack : slack;
+  const techKnightChannels = new Set(destinations
+    .filter((destination) => destination.organization.id === "tech-knight")
+    .map((destination) => destination.slackChannelId));
+  const destinationSlack = (channelId: string) => {
+    if (unsonChannels.has(channelId)) return unsonSlack;
+    if (techKnightChannels.has(channelId)) return techKnightSlack;
+    return slack;
+  };
   return {
     slack,
     resume: {
@@ -265,7 +276,8 @@ export default {
       const config = meetingMinutesRuntimeConfig(env);
       return handleMeetingMinutesInteractionEntrypoint(request, env, ctx, config.operatorUserIds,
         async ({ approvalId, payloadHash, approverId, channelId }) => {
-          if (channelId !== env.SLACK_ALLOWED_CHANNEL_ID) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
+          const approvalChannelId = env.TASK_WRITE_APPROVAL_CHANNEL_ID ?? env.SLACK_ALLOWED_CHANNEL_ID;
+          if (channelId !== approvalChannelId) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
           const pending = await peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId);
           if (pending.payloadHash !== payloadHash) return Response.json({ error: "task_write_approval_payload_mismatch" }, { status: 403 });
           const approved = await handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", {
