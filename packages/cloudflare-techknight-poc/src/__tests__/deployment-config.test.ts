@@ -170,6 +170,12 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).not.toContain('run("/usr/bin/node"');
   });
 
+  it("開発ランナーの検証用commitに固定の非個人Git identityを設定する", () => {
+    const dockerfile = readFileSync(fileURLToPath(new URL("../../Dockerfile", import.meta.url)), "utf8");
+    expect(dockerfile).toContain('git config --system user.name "Mana Development Runner"');
+    expect(dockerfile).toContain('git config --system user.email "mana-development-runner@unson.jp"');
+  });
+
   it("keeps task search off by default and documents the staged rollout", () => {
     expect(techKnight.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
     expect(unson.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("true");
