@@ -335,7 +335,7 @@ export async function generateClaudeReply(
         outcome: "error",
         reasonCode: "claude_execution_failed",
         exitCode: result.exitCode,
-        errorSummary: safeExecutionErrorSummary(result.stderr),
+        errorSummary: safeExecutionErrorSummary(result.stderr || result.stdout),
         durationMs: Date.now() - startedAt,
       });
       throw new ReplyPipelineError("claude_execution_failed");

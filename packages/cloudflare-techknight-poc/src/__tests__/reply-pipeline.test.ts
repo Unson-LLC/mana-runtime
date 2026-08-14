@@ -628,6 +628,33 @@ describe("TechKnight Slack reply pipeline", () => {
     errorSpy.mockRestore();
   });
 
+  it("records a redacted Claude stdout diagnostic when stderr is empty", async () => {
+    const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sandbox = {
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      exec: vi.fn().mockResolvedValue({
+        success: false,
+        stdout: "Hook failed with Bearer sk-ant-secret-value",
+        stderr: "",
+        exitCode: 1,
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    const { options } = harness({ createSandbox: () => sandbox });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toEqual(
+      expect.objectContaining<Partial<ReplyPipelineError>>({ code: "claude_execution_failed" }),
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_claude_failed",
+      errorSummary: "Hook failed with [redacted]",
+    }));
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("sk-ant-secret-value");
+    errorSpy.mockRestore();
+  });
+
   it("leaves the event retryable when Slack rejects the post", async () => {
     const fs = new MemoryFs();
     const { options } = harness({
