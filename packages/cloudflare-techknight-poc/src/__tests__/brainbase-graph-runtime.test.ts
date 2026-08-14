@@ -46,6 +46,14 @@ describe("Brainbase Graph runtime", () => {
     expect(url.searchParams.get("project")).toBe("mana");
   });
 
+  it("resolves a meeting assignee when the extracted Japanese name includes a polite suffix", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_umeda", payload: { name: "梅田 恵伍", aliases: [] } },
+    ] }));
+    await expect(resolveGraphPersonByName("梅田恵伍さん", "mana", { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
+  });
+
   it("lists bounded Graph SSOT people for task assignee selection", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
       { id: "per_umeda", payload: { name: "梅田 遼", aliases: ["Haruka Umeda"] } },

@@ -85,7 +85,11 @@ export async function resolveGraphRequester(
 }
 
 function normalizedPersonName(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase("ja").replace(/[\s　]+/g, "");
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("ja")
+    .replace(/[\s　]+/g, "")
+    .replace(/(?:さん|さま|様|氏)$/u, "");
 }
 
 export async function resolveGraphPersonByName(
