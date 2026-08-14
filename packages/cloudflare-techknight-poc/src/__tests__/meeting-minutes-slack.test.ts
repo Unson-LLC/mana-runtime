@@ -8,29 +8,38 @@ describe("MeetingMinutesSlackClient", () => {
       minutesUrl: "https://github.test/minutes" }, slack: { selectionTs: "2.1", processingTs: "3.1", postedChunkIndexes: [] },
     createdAt: "2026-08-13T00:00:00.000Z", updatedAt: "2026-08-13T00:00:00.000Z" });
 
-  it("updates the separate processing reply with a durable completed result", async () => {
-    let body: Record<string, unknown> = {};
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+  it("clears the assistant status and updates the selector with a durable completed result", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) }); return Response.json({ ok: true });
     }) as typeof fetch;
     await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(routedRun(), "completed");
-    expect(fetchImpl).toHaveBeenCalledWith("https://slack.com/api/chat.update", expect.any(Object));
-    expect(body).toMatchObject({ channel: "C1", ts: "3.1" });
-    expect(JSON.stringify(body)).toContain("議事録を作成しました");
-    expect(JSON.stringify(body)).toContain("https://github.test/minutes");
-    expect(JSON.stringify(body)).not.toContain("再実行");
+    expect(calls[0]).toEqual({ url: "https://slack.com/api/assistant.threads.setStatus",
+      body: { channel_id: "C1", thread_ts: "1.0", status: "" } });
+    expect(calls[1]?.url).toBe("https://slack.com/api/chat.update");
+    expect(calls[1]?.body).toMatchObject({ channel: "C1", ts: "3.1" });
+    expect(JSON.stringify(calls[1]?.body)).toContain("議事録を作成しました");
+    expect(JSON.stringify(calls[1]?.body)).toContain("https://github.test/minutes");
+    expect(JSON.stringify(calls[1]?.body)).not.toContain("再実行");
   });
 
-  it("posts processing feedback as a separate reply in the source thread", async () => {
-    let body: Record<string, unknown> = {};
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      body = JSON.parse(String(init?.body)); return Response.json({ ok: true, ts: "3.1" });
+  it("shows processing feedback with the Slack assistant thread status", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) }; return Response.json({ ok: true });
     }) as typeof fetch;
     await expect(new MeetingMinutesSlackClient("token", fetchImpl).postProcessingStatus(routedRun()))
-      .resolves.toBe("3.1");
-    expect(body).toMatchObject({ channel: "C1", thread_ts: "1.0" });
-    expect(JSON.stringify(body)).toContain("議事録を作成中");
-    expect(JSON.stringify(body)).toContain("mana");
+      .resolves.toBe("2.1");
+    expect(call?.url).toBe("https://slack.com/api/assistant.threads.setStatus");
+    expect(call?.body).toMatchObject({ channel_id: "C1", thread_ts: "1.0" });
+    expect(JSON.stringify(call?.body)).toContain("議事録を作成しています");
+    expect(JSON.stringify(call?.body)).toContain("mana");
+  });
+
+  it("does not stop minutes processing when the optional assistant status is unavailable", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ ok: false, error: "not_allowed" })) as typeof fetch;
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postProcessingStatus(routedRun()))
+      .resolves.toBe("2.1");
   });
 
   it("replaces a failed result with a retry button for the selected destination", async () => {

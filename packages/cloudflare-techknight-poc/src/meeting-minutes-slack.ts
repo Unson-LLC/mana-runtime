@@ -43,14 +43,13 @@ export class MeetingMinutesSlackClient {
   }
   async postProcessingStatus(run: MeetingMinutesRun): Promise<string> {
     if (!run.destination) throw new Error("meeting_minutes_destination_missing");
-    const text = `${run.file.name} の議事録を作成中です。`;
-    const result = await this.post("chat.postMessage", { channel: run.sourceChannelId, thread_ts: run.sourceThreadTs,
-      text, client_msg_id: await clientMessageId(`${run.runId}-processing`), blocks: [{ type: "section",
-        text: { type: "mrkdwn", text: `:hourglass_flowing_sand: *議事録を作成中…*\n保存先: ${run.destination.name}\n完了すると共有先へ投稿します。` } }] });
-    if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
+    if (!run.slack?.selectionTs) throw new Error("meeting_minutes_selection_coordinates_missing");
+    await this.setThreadStatus(run, `議事録を作成しています…（${run.destination.name}）`);
+    return run.slack.selectionTs;
   }
   async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void> {
     if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
+    await this.setThreadStatus(run, "");
     const completed = outcome === "completed";
     const text = completed
       ? `${run.file.name} の議事録を作成しました。`
@@ -68,6 +67,18 @@ export class MeetingMinutesSlackClient {
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id }) }] });
     }
     await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text, blocks });
+  }
+  private async setThreadStatus(run: MeetingMinutesRun, status: string): Promise<void> {
+    try {
+      await this.post("assistant.threads.setStatus", {
+        channel_id: run.sourceChannelId,
+        thread_ts: run.sourceThreadTs,
+        status,
+      });
+    } catch (error) {
+      console.error(JSON.stringify({ event: "meeting_minutes_thread_status_failed", runId: run.runId,
+        message: error instanceof Error ? error.message : String(error) }));
+    }
   }
   async postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string> {
     const text = `📝 会議要約: ${fileName}`;
