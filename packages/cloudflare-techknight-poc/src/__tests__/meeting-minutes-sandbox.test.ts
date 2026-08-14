@@ -24,7 +24,10 @@ describe("generateMeetingMinutesInSandbox", () => {
       expect.stringContaining('"tasks"'),
     );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
-      expect.objectContaining({ env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" } }));
+      expect.objectContaining({
+        timeout: 600_000,
+        env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      }));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
   it("destroys the Sandbox and rejects invalid model output", async () => {
