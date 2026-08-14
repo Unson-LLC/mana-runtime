@@ -1,6 +1,8 @@
 FROM docker.io/cloudflare/sandbox:0.12.5
 
 RUN npm install -g @anthropic-ai/claude-code@2.1.195 vibepro@0.2.0-beta.8 \
+  && git config --system user.name "Mana Development Runner" \
+  && git config --system user.email "mana-development-runner@unson.jp" \
   && mkdir -p /home/ryoko-dev /srv/openryoko-development
 
 COPY --chmod=0555 container/task-search-mcp-server.mjs /opt/mana/task-search-mcp-server.mjs
