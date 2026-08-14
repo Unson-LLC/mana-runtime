@@ -99,4 +99,30 @@ describe("TechKnight queue consumer", () => {
     expect(input.ack).toHaveBeenCalledOnce();
     expect(input.retry).not.toHaveBeenCalled();
   });
+
+  it("processes either explicitly allowed placement channel", async () => {
+    const input = message(event({ channelId: "C_ROUTER" }));
+    const process = vi.fn().mockResolvedValue({ outcome: "replied" });
+
+    await consumeTechKnightMessage(input, {
+      expectedWorkspaceId: "T_TECHKNIGHT",
+      expectedChannelIds: ["C_MANA_TEST", "C_ROUTER"],
+      process,
+    });
+
+    expect(process).toHaveBeenCalledWith(input.body);
+    expect(input.ack).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a channel outside every explicit placement", async () => {
+    const input = message(event({ channelId: "C_OTHER" }));
+    const process = vi.fn();
+    await consumeTechKnightMessage(input, {
+      expectedWorkspaceId: "T_TECHKNIGHT",
+      expectedChannelIds: ["C_MANA_TEST", "C_ROUTER"],
+      process,
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(input.ack).toHaveBeenCalledOnce();
+  });
 });

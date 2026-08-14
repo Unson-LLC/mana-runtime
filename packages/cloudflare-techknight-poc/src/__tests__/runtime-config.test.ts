@@ -1,4 +1,4 @@
-import { resolveRuntimeBinding } from "../runtime-config.js";
+import { parseRuntimePlacements, resolveRuntimeBinding, resolveRuntimePlacement } from "../runtime-config.js";
 import type { SlackQueueEvent } from "../types.js";
 
 function event(overrides: Partial<SlackQueueEvent> = {}): SlackQueueEvent {
@@ -18,6 +18,36 @@ function event(overrides: Partial<SlackQueueEvent> = {}): SlackQueueEvent {
 }
 
 describe("Cloudflare runtime binding", () => {
+  it("resolves the router channel as an independent runtime placement", () => {
+    const placements = parseRuntimePlacements(JSON.stringify([
+      { placementId: "mana-accounting", channelId: "C_BACK_OFFICE", projectCodes: ["back-office"], taskWriteEnabled: true },
+      { placementId: "biz-meeting-router", channelId: "C_ROUTER", projectCodes: ["unson"] },
+    ]));
+
+    expect(resolveRuntimePlacement(event({ tenantId: "unson", workspaceId: "T_UNSON", channelId: "C_ROUTER" }), {
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      placements,
+    })).toMatchObject({
+      placementId: "biz-meeting-router",
+      channelId: "C_ROUTER",
+      projectCodes: ["unson"],
+      taskWriteEnabled: false,
+    });
+  });
+
+  it("fails closed for duplicate and unknown placement channels", () => {
+    expect(() => parseRuntimePlacements(JSON.stringify([
+      { placementId: "one", channelId: "C_DUP", projectCodes: ["one"] },
+      { placementId: "two", channelId: "C_DUP", projectCodes: ["two"] },
+    ]))).toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+    expect(() => resolveRuntimePlacement(event({ channelId: "C_OTHER" }), {
+      tenantId: "techknight",
+      workspaceId: "T_TECHKNIGHT",
+      placements: [{ placementId: "mana", channelId: "C_MANA_TEST", projectCodes: ["back-office"], taskWriteEnabled: false }],
+    })).toThrow(expect.objectContaining({ code: "channel_not_allowed" }));
+  });
+
   it.each([
     ["techknight", "T_TECHKNIGHT", "C_MANA_TEST", "techknight, shared,techknight"],
     ["unson", "T_UNSON", "C_BACK_OFFICE", "back-office, brainbase"],

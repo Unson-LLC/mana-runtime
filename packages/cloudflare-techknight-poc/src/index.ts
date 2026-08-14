@@ -36,7 +36,8 @@ import {
   processMeetingTaskEvent,
 } from "./meeting-task-pipeline.js";
 import {
-  resolveRuntimeBinding,
+  parseRuntimePlacements,
+  resolveRuntimePlacement,
   runWithReplyTaskSearchBinding,
 } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
@@ -75,6 +76,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   RUNTIME_TASK_WRITE_ENABLED?: string;
   TASK_WRITE_CAPABILITY_SECRET?: string;
   RUNTIME_PLACEMENT_ID?: string;
+  RUNTIME_PLACEMENTS_JSON?: string;
   RUNTIME_TASK_BOARD_ENABLED?: string;
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
@@ -269,10 +271,18 @@ export default {
         ack: () => message.ack(),
         retry: () => message.retry(),
       }, {
+        // Every ordinary reply must belong to an explicit placement. The
+        // meeting-minutes router is also a normal Lightsail placement.
         expectedTenantId: env.TENANT_ID,
         expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-        expectedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
+        expectedChannelIds: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
+          .map((placement) => placement.channelId),
         process: async (event) => {
+          const placement = resolveRuntimePlacement(event, {
+            tenantId: env.TENANT_ID,
+            workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+            placements: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON),
+          });
           const claudeRuntime = resolveClaudeRuntimeConfig(env);
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
@@ -286,12 +296,7 @@ export default {
               return routeRuntimeEvent(event, {
                 meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
                 processMeetingTask: () => {
-                  const binding = resolveRuntimeBinding(event, {
-                    tenantId: env.TENANT_ID,
-                    workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                    channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-                    projectCodes: env.RUNTIME_PROJECT_CODES,
-                  });
+                  const binding = placement;
                   return processMeetingTaskEvent(workspace.fs, event, {
                     binding,
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
@@ -306,17 +311,17 @@ export default {
                 processReply: async () => runWithReplyTaskSearchBinding(event, {
                     tenantId: env.TENANT_ID,
                     workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                    channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-                    projectCodes: env.RUNTIME_PROJECT_CODES,
+                    channelId: placement.channelId,
+                    projectCodes: placement.projectCodes.join(","),
                     taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
                   }, async (taskSearch) => {
-                    const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(event, env);
+                    const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(event, env, Date.now(), placement);
                     return processReplyEvent(workspace.fs, event, {
                     expectedTenantId: env.TENANT_ID,
                     expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                    allowedChannelId: env.SLACK_ALLOWED_CHANNEL_ID,
+                    allowedChannelId: placement.channelId,
                     slackBotToken: env.SLACK_BOT_TOKEN,
                     oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
                     claudeRuntime,

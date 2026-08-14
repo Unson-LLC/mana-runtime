@@ -10,6 +10,7 @@ export interface QueueConsumerOptions {
   expectedTenantId?: string;
   expectedWorkspaceId: string;
   expectedChannelId?: string;
+  expectedChannelIds?: readonly string[];
   process(event: SlackQueueEvent): Promise<{ outcome: string }>;
   log?(entry: Record<string, string>): void;
   logError?(entry: Record<string, string>): void;
@@ -21,10 +22,14 @@ function boundaryMismatchReason(
   expectedWorkspaceId: string,
   expectedTenantId = "techknight",
   expectedChannelId?: string,
+  expectedChannelIds?: readonly string[],
 ): string | undefined {
   if (event.tenantId !== expectedTenantId) return "tenant_mismatch";
   if (event.workspaceId !== expectedWorkspaceId) return "workspace_mismatch";
   if (expectedChannelId !== undefined && event.channelId !== expectedChannelId) {
+    return "channel_mismatch";
+  }
+  if (expectedChannelIds !== undefined && !expectedChannelIds.includes(event.channelId)) {
     return "channel_mismatch";
   }
   return undefined;
@@ -40,6 +45,7 @@ export async function consumeTechKnightMessage(
     options.expectedWorkspaceId,
     options.expectedTenantId,
     options.expectedChannelId,
+    options.expectedChannelIds,
   );
   if (mismatchReason) {
     options.log?.({
