@@ -99,4 +99,32 @@ describe("Cloudflare task runtime entrypoints", () => {
     await consumeTaskBoardRepair(message, env, refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C_DEV", RUNTIME_PROJECT_CODES: "mana" }));
   });
+
+  it("uses placement task-board flags even when the legacy global flag is off", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const env = {
+      TENANT_ID: "unson-business",
+      SLACK_EXPECTED_TEAM_ID: "T_UNSON",
+      SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
+      RUNTIME_TASK_BOARD_ENABLED: "false",
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true },
+        { placementId: "router", channelId: "C_ROUTER", projectCodes: ["unson"], taskBoardEnabled: false },
+      ]),
+      TASK_BOARD_REPAIRS: { send },
+    };
+
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-14T00:00:00.000Z");
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ channelId: "C_DEV" }));
+
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const message = { body: { ...repair, channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
+    await consumeTaskBoardRepair(message, env, refresh);
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      SLACK_ALLOWED_CHANNEL_ID: "C_DEV",
+      RUNTIME_PROJECT_CODES: "mana",
+    }));
+  });
 });
