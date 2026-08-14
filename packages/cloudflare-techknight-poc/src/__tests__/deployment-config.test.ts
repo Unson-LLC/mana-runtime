@@ -170,6 +170,13 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).not.toContain('run("/usr/bin/node"');
   });
 
+  it("開発ランナーは内側ランナーの厳格な新規Story入力契約だけを渡す", () => {
+    const runnerPath = fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url));
+    const runner = readFileSync(runnerPath, "utf8");
+    expect(runner).toContain('stdin: JSON.stringify({ request: job.request })');
+    expect(runner).not.toContain('stdin: JSON.stringify({ mode: "new", request: job.request })');
+  });
+
   it("開発エージェントへCloudflare認証プロキシ用の非秘密プレースホルダーを渡す", () => {
     const runnerPath = fileURLToPath(new URL("../../container/openryoko-development-runner.mjs", import.meta.url));
     const runner = readFileSync(runnerPath, "utf8");
