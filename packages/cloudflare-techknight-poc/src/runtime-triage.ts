@@ -4,6 +4,7 @@ export interface RuntimeTriageInput {
   speakerName: string;
   channelType: string;
   messageText: string;
+  attachmentNames?: string[];
   recentThread: Array<{ speaker: string; text: string }>;
 }
 
@@ -38,6 +39,9 @@ Message:
 """
 ${input.messageText.trim().slice(0, 2000)}
 """
+Attached files: ${input.attachmentNames?.length
+    ? `${input.attachmentNames.slice(0, 10).map((name) => name.slice(0, 120)).join(", ")} (attached files are available to the reply pipeline)`
+    : "(none)"}
 
 Rules, in order:
 1. A short acknowledgment or thanks directed at the assistant -> react.

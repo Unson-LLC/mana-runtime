@@ -33,6 +33,7 @@ describe("runtime Slack triage", () => {
       speakerName: "梅田 遼",
       channelType: "channel",
       messageText: "この案件の次の打ち手どうしよう",
+      attachmentNames: ["requirements.txt"],
       recentThread: [{ speaker: "佐藤", text: "現状を整理しよう" }],
     });
     expect(prompt).toContain("silent");
@@ -40,6 +41,8 @@ describe("runtime Slack triage", () => {
     expect(prompt).toContain("reply");
     expect(prompt).toContain("この案件の次の打ち手どうしよう");
     expect(prompt).toContain("梅田 遼");
+    expect(prompt).toContain("requirements.txt");
+    expect(prompt).toContain("attached files are available");
   });
 
   it("parses strict and fenced decisions and defaults a reaction emoji", () => {
