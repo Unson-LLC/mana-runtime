@@ -16,6 +16,7 @@ import {
   type RequesterIdentity,
   type RequesterIdentityBindings,
 } from "./requester-identity.js";
+import type { SlackUserProfile } from "./slack-user-profile.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -51,6 +52,7 @@ export interface ReplyPipelineOptions {
   taskWriteCapability?: string;
   requesterIdentityBindings?: RequesterIdentityBindings;
   requesterIdentity?: RequesterIdentity;
+  requesterProfile?: SlackUserProfile;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -98,6 +100,7 @@ function buildPrompt(
   taskSearchEnabled = false,
   taskWriteEnabled = false,
   requesterIdentity?: RequesterIdentity,
+  requesterProfile?: SlackUserProfile,
 ): string {
   const request = normalizePromptText(event.text);
   const context = event.threadContext
@@ -120,6 +123,13 @@ function buildPrompt(
       `requester_slack_user_id: ${requesterIdentity.slackUserId}`,
       `requester_person_id: ${requesterIdentity.personId}`,
       "私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください。",
+    ] : []),
+    ...(requesterProfile ? [
+      `requester_display_name: ${requesterProfile.displayName ?? "unknown"}`,
+      `requester_real_name: ${requesterProfile.realName ?? "unknown"}`,
+      `requester_handle: ${requesterProfile.handle ?? "unknown"}`,
+      `requester_timezone: ${requesterProfile.timezone ?? "unknown"}`,
+      "上記はSlack APIで確認した発話者情報です。表示名だけで別人を推測しないでください。",
     ] : []),
     ...(taskWriteEnabled ? [
       "タスクの作成・更新・状態変更を明示的に依頼された場合だけ、create_task、update_task、transition_taskを使ってください。",
@@ -159,7 +169,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
@@ -171,6 +181,7 @@ export async function generateClaudeReply(
       options.taskSearchEnabled,
       options.taskWriteEnabled,
       options.requesterIdentity,
+      options.requesterProfile,
     ));
     if (options.taskSearchEnabled || options.taskWriteEnabled) {
       await sandbox.writeFile(runtimeTaskSearchMcpConfigPath(), JSON.stringify({

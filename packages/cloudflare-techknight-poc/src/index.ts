@@ -31,7 +31,7 @@ import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
 import { generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
-import { processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import {
   processMeetingTaskEvent,
 } from "./meeting-task-pipeline.js";
@@ -42,11 +42,14 @@ import {
 } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
 import { consumeTechKnightMessage } from "./queue-consumer.js";
-import { persistEventOnce } from "./workspace-store.js";
+import { isReplyCompleted, persistEventOnce, persistReplyCompletion } from "./workspace-store.js";
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { parseRequesterIdentityBindings } from "./requester-identity.js";
+import { resolveSlackUserProfile } from "./slack-user-profile.js";
+import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
+import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
 import {
   consumeTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
@@ -113,7 +116,7 @@ export class MeetingMinutesWorkspace extends withWorkspace(
 ) {}
 
 function workspaceName(event: SlackQueueEvent): string {
-  return [event.tenantId, event.workspaceId, event.channelId, event.threadTs].join(":");
+  return runtimeWorkspaceName(event);
 }
 
 function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runId: string): string {
@@ -298,6 +301,33 @@ export default {
             () => getWorkspace(handle),
             async (workspace) => {
               await persistEventOnce(workspace.fs, event);
+              const controlCommand = parseRuntimeControlCommand(event.text);
+              if (controlCommand && isReplyEligible(event, {
+                expectedTenantId: env.TENANT_ID,
+                expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                allowedChannelId: placement.channelId,
+              })) {
+                if (await isReplyCompleted(workspace.fs, event.eventId)) return { outcome: "already_completed" as const };
+                const text = await executeRuntimeControlCommand({
+                  fs: workspace.fs,
+                  command: controlCommand,
+                  commandId: event.eventId,
+                  requestedAt: event.receivedAt,
+                  placementId: placement.placementId,
+                  projectCodes: placement.projectCodes,
+                  currentModel: placement.agent?.model ?? claudeRuntime.model,
+                  allowedModels: [placement.agent?.model ?? claudeRuntime.model],
+                  taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED === "true",
+                  taskWriteEnabled: placement.taskWriteEnabled,
+                });
+                const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
+                await persistReplyCompletion(workspace.fs, {
+                  eventId: event.eventId,
+                  responseTs,
+                  completedAt: new Date().toISOString(),
+                });
+                return { outcome: "replied" as const, responseTs };
+              }
               const hydrateThreadContext = (input: SlackQueueEvent) => (
                 hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN })
               );
@@ -326,6 +356,13 @@ export default {
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
                   }, async (taskSearch) => {
                     const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(event, env, Date.now(), placement);
+                    const profileResolution = await resolveSlackUserProfile({ userId: event.userId ?? "",
+                      botToken: env.SLACK_BOT_TOKEN,
+                    });
+                    if (profileResolution.status !== "resolved") {
+                      throw new ReplyPipelineError(profileResolution.status === "rejected"
+                        ? "requester_profile_rejected" : "requester_profile_unavailable");
+                    }
                     return processReplyEvent(workspace.fs, event, {
                     expectedTenantId: env.TENANT_ID,
                     expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
@@ -337,6 +374,7 @@ export default {
                     taskWriteEnabled,
                     taskWriteCapability,
                     requesterIdentityBindings: parseRequesterIdentityBindings(env.BRAINBASE_SLACK_PERSON_MAP_JSON),
+                    requesterProfile: profileResolution.profile,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     });

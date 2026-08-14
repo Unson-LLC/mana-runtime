@@ -1,0 +1,41 @@
+export interface WorkspaceSessionFs {
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
+  readFile(path: string): Promise<string | ReadableStream<Uint8Array>>;
+  writeFile(path: string, value: string): Promise<unknown>;
+}
+
+export interface WorkspaceSessionState {
+  generation: number;
+  lastNewCommandId?: string;
+  modelOverride?: string;
+  updatedAt?: string;
+}
+
+const SESSION_PATH = "/session/state.json";
+
+export async function readWorkspaceSession(fs: WorkspaceSessionFs): Promise<WorkspaceSessionState> {
+  try {
+    const raw = await fs.readFile(SESSION_PATH);
+    if (typeof raw !== "string") return { generation: 1 };
+    const value = JSON.parse(raw) as Partial<WorkspaceSessionState>;
+    return Number.isSafeInteger(value.generation) && (value.generation ?? 0) >= 1
+      ? { generation: value.generation!, ...(value.lastNewCommandId ? { lastNewCommandId: value.lastNewCommandId } : {}),
+          ...(value.modelOverride ? { modelOverride: value.modelOverride } : {}), ...(value.updatedAt ? { updatedAt: value.updatedAt } : {}) }
+      : { generation: 1 };
+  } catch {
+    return { generation: 1 };
+  }
+}
+
+export async function writeWorkspaceSession(fs: WorkspaceSessionFs, state: WorkspaceSessionState): Promise<void> {
+  await fs.mkdir("/session", { recursive: true });
+  await fs.writeFile(SESSION_PATH, JSON.stringify(state));
+}
+
+export async function applyNewSessionCommand(fs: WorkspaceSessionFs, input: { commandId: string; requestedAt: string }) {
+  const current = await readWorkspaceSession(fs);
+  if (current.lastNewCommandId === input.commandId) return { ...current, applied: false };
+  const next = { generation: current.generation + 1, lastNewCommandId: input.commandId, updatedAt: input.requestedAt };
+  await writeWorkspaceSession(fs, next);
+  return { ...next, applied: true };
+}
