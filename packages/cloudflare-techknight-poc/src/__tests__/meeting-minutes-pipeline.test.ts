@@ -105,6 +105,43 @@ describe("meeting minutes pipeline", () => {
     );
   });
 
+  it("posts the parent summary, narrative chunks, then the task card last", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const visibleOrder: string[] = [];
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [{ title: "確認する" }] }),
+      postParent: vi.fn(async () => { visibleOrder.push("parent"); return "10.1"; }),
+      postThreadChunk: vi.fn(async () => { visibleOrder.push("chunk"); return "10.2"; }),
+      postTaskCard: vi.fn(async () => { visibleOrder.push("task-card"); return "10.3"; }),
+    });
+    const run = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(visibleOrder).toEqual(["parent", "chunk", "task-card"]);
+    expect(run.slack?.taskCardTs).toBe("10.3");
+  });
+
+  it("retries only the task card after it fails without duplicating narrative chunks", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const postParent = vi.fn().mockResolvedValue("10.1");
+    const postThreadChunk = vi.fn().mockResolvedValue("10.2");
+    const postTaskCard = vi.fn().mockRejectedValueOnce(new Error("task card down")).mockResolvedValueOnce("10.3");
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [{ title: "確認する" }] }),
+      postParent, postThreadChunk, postTaskCard,
+    });
+    await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("task card down");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      status: "failed", slack: { parentTs: "10.1", postedChunkIndexes: [0] },
+    });
+
+    const retried = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(retried).toMatchObject({ status: "completed", slack: { taskCardTs: "10.3", postedChunkIndexes: [0] } });
+    expect(postParent).toHaveBeenCalledTimes(1);
+    expect(postThreadChunk).toHaveBeenCalledTimes(1);
+    expect(postTaskCard).toHaveBeenCalledTimes(2);
+  });
+
   it("resolves a named assignee to the canonical person id before task creation", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

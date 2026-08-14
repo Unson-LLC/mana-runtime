@@ -2,7 +2,7 @@ import { isMeetingMinutesFile, meetingMinutesRunId, type GeneratedMeetingMinutes
   type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
-import { splitMeetingMinutesForSlack } from "./meeting-minutes-generator.js";
+import { splitMeetingMinutesForSlack, stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import type { SavedMeetingMinutesRecords } from "./meeting-minutes-github.js";
 import type { SlackQueueEvent } from "./types.js";
@@ -192,7 +192,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     }
     await registerGeneratedTasks(fs, run, options);
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
-    const body = run.generated!.body.trimStart();
+    const body = stripMeetingMinutesActionItems(run.generated!.body).trimStart();
     const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
     const chunks = splitMeetingMinutesForSlack(narrativeText);
     run.slack ??= { postedChunkIndexes: [] };
@@ -201,15 +201,15 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         `${run.runId}-revision-${run.revision ?? 0}-parent`);
       run.status = "posting"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
-    if (run.taskRegistration?.registered.length && !run.slack.taskCardTs && options.postTaskCard) {
-      run.slack.taskCardTs = await options.postTaskCard(run);
-      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
-    }
     for (let index = 0; index < chunks.length; index += 1) {
       if (run.slack.postedChunkIndexes.includes(index)) continue;
       await options.postThreadChunk(run.destination.slackChannelId, run.slack.parentTs, run.file.name, chunks[index]!,
         index, chunks.length, `${run.runId}-revision-${run.revision ?? 0}-chunk-${index}`);
       run.slack.postedChunkIndexes.push(index); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    if (run.taskRegistration?.registered.length && !run.slack.taskCardTs && options.postTaskCard) {
+      run.slack.taskCardTs = await options.postTaskCard(run);
+      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     run.status = "completed"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); return run;
   } catch (error) {

@@ -1,4 +1,4 @@
-import { CloudflareMeetingMinutesGitHubClient } from "../meeting-minutes-github.js";
+import { CloudflareMeetingMinutesGitHubClient, formatCloudflareMeetingMinutesMarkdown } from "../meeting-minutes-github.js";
 
 const destination = { id: "mana", projectId: "mana", name: "mana", organization: { id: "unson", name: "雲孫" }, slackChannelId: "C1",
   github: { owner: "Unson-LLC", repo: "mana", branch: "main", pathPrefix: "docs" } };
@@ -33,6 +33,24 @@ describe("CloudflareMeetingMinutesGitHubClient", () => {
     expect(JSON.parse(String(puts[0]!.init!.body))).toMatchObject({ sha: "existing", branch: "main" });
     const markdown = Buffer.from(JSON.parse(String(puts[1]!.init!.body)).content, "base64").toString("utf8");
     expect(markdown).toContain(`transcript_ref: "${result.transcriptPath}"`);
+  });
+
+  it("renders exactly one deterministic action-item section from tasks", () => {
+    const markdown = formatCloudflareMeetingMinutesMarkdown({ destination, transcript: "x", sourceFileName: "a.txt", sourceTs: "1",
+      minutes: { title: "定例", overview: "概要", body: "本文\n\n*アクションアイテム*\n- 古い重複内容", tasks: [
+        { title: "資料を送る", description: "会議で合意", assignee_name: "梅田 遼", priority: "high",
+          due_at: "2026-08-20T00:00:00+09:00" },
+      ] } }, "docs/transcripts/a.txt", "2026-08-14");
+    expect(markdown.match(/## アクションアイテム/g)).toHaveLength(1);
+    expect(markdown).not.toContain("古い重複内容");
+    expect(markdown).toContain("- [ ] 資料を送る（担当: 梅田 遼 / 期限: 2026-08-20 / 優先度: high）");
+    expect(markdown).toContain("  - 背景: 会議で合意");
+  });
+
+  it("renders an explicit empty action-item section when tasks are empty", () => {
+    const markdown = formatCloudflareMeetingMinutesMarkdown({ destination, transcript: "x", sourceFileName: "a.txt", sourceTs: "1",
+      minutes: { title: "定例", overview: "概要", body: "本文", tasks: [] } }, "docs/transcripts/a.txt", "2026-08-14");
+    expect(markdown).toContain("## アクションアイテム\n\n- なし");
   });
 
   it("does not write minutes when transcript save fails", async () => {
