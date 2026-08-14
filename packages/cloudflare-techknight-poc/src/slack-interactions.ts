@@ -52,7 +52,7 @@ export async function updateSlackInteractionMessage(
 ): Promise<void> {
   const safeUrl = slackResponseUrl(responseUrl);
   if (!safeUrl) throw new Error("slack_response_url_invalid");
-  const result = await fetchImpl(safeUrl, { method: "POST", redirect: "error",
+  const result = await fetchImpl(safeUrl, { method: "POST", redirect: "manual",
     headers: { "content-type": "application/json" }, body: JSON.stringify(message), signal: AbortSignal.timeout(1_500) });
   if (!result.ok) throw new Error(`slack_interaction_update_failed:${result.status}`);
 }

@@ -93,13 +93,19 @@ describe("updateSlackInteractionMessage", () => {
       { replace_original: true, text: "processing", blocks: [] }, fetchImpl)).rejects.toThrow("slack_response_url_invalid");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
-  it("rejects non-standard ports and disables redirects", async () => {
+  it("rejects non-standard ports and does not follow redirects", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response("ok"));
     await expect(updateSlackInteractionMessage("https://hooks.slack.com:8443/actions/T1/B1/token",
       { replace_original: true, text: "processing", blocks: [] }, fetchImpl)).rejects.toThrow("slack_response_url_invalid");
     expect(fetchImpl).not.toHaveBeenCalled();
     await updateSlackInteractionMessage("https://hooks.slack.com/actions/T1/B1/token",
       { replace_original: true, text: "processing", blocks: [] }, fetchImpl);
-    expect(fetchImpl).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ redirect: "error" }));
+    expect(fetchImpl).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ redirect: "manual" }));
+  });
+  it("fails closed when Slack's response URL redirects", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 302,
+      headers: { location: "https://example.com/collect" } }));
+    await expect(updateSlackInteractionMessage("https://hooks.slack.com/actions/T1/B1/token",
+      { replace_original: true, text: "processing", blocks: [] }, fetchImpl)).rejects.toThrow("slack_interaction_update_failed:302");
   });
 });
