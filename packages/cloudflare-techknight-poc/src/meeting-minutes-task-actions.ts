@@ -45,7 +45,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const actions = Array.isArray(payload.actions) ? payload.actions : [];
   const action = actions.length === 1 ? object(actions[0]) : undefined;
   const isBlockSuggestion = payload.type === "block_suggestion";
-  const actionId = isBlockSuggestion ? text(payload.action_id) : text(action?.action_id); const view = object(payload.view);
+  const actionId = text(payload.action_id) ?? text(action?.action_id); const view = object(payload.view);
   const callbackId = text(view?.callback_id);
   if (payload.type === "block_suggestion" && actionId === MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID) {
     const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
@@ -62,7 +62,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
       console.error("meeting_minutes_assignee_graph_unavailable");
       return Response.json({ error: "meeting_minutes_graph_unavailable" }, { status: 503 });
     }
-    const query = (text(payload.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
+    const query = (text(payload.value) ?? text(action?.value) ?? "").normalize("NFKC").toLocaleLowerCase("ja");
     const matches = people.filter((person) => !query || [person.name, ...person.aliases]
       .some((name) => name.normalize("NFKC").toLocaleLowerCase("ja").includes(query))).slice(0, 99);
     console.info("meeting_minutes_assignee_suggestion_ready", { peopleCount: people.length, matchCount: matches.length });
