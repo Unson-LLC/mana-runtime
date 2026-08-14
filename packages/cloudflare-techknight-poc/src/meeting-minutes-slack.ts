@@ -59,6 +59,15 @@ export function suggestedDestinationMessage(run: MeetingMinutesRun,
 }
 
 interface SlackApiResponse { ok?: boolean; error?: string; ts?: string }
+function failedRunDetails(run: MeetingMinutesRun): string[] {
+  const destination = `保存先: ${run.destination!.name}`;
+  if (/slack_api_failed:chat\.postMessage:(?:channel_not_found|not_in_channel)/.test(run.failure?.message ?? "")) {
+    return ["*⚠️ 保存先チャンネルへ投稿できませんでした*", destination,
+      `Manaアプリが「${run.destination!.name}」のチャンネルに参加しているか確認してください。`,
+      "参加させた後、下のボタンから再実行できます。"];
+  }
+  return ["*⚠️ 議事録の作成に失敗しました*", destination, "下のボタンから再実行できます。"];
+}
 async function clientMessageId(seed: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`meeting-minutes:${seed}`))).slice(0, 16);
   digest[6] = (digest[6]! & 0x0f) | 0x40; digest[8] = (digest[8]! & 0x3f) | 0x80;
@@ -127,8 +136,7 @@ export class MeetingMinutesSlackClient {
       ? [`*✅ 議事録を作成しました*`, `保存先: ${run.destination.name}`,
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
         `共有先: <#${run.destination.slackChannelId}>`].filter(Boolean).join("\n")
-      : [`*⚠️ 議事録の作成に失敗しました*`, `保存先: ${run.destination.name}`,
-        "下のボタンから再実行できます。"].join("\n");
+      : failedRunDetails(run).join("\n");
     const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn", text: details } }];
     if (!completed) {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
