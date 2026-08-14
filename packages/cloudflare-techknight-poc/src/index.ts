@@ -80,6 +80,7 @@ import {
 } from "./task-board.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
+import { runRuntimeTriage } from "./runtime-triage.js";
 import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, MEETING_MINUTES_RECOVERY_DELAY_SECONDS,
   recoverStaleMeetingMinutesRun } from "./meeting-minutes-recovery.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
@@ -624,7 +625,12 @@ export default {
               // Slack may emit an ordinary message before the app_mention for the
               // same post. An ineligible variant must never claim the shared
               // message delivery id and suppress the eligible variant.
-              if (!replyEligible) return { outcome: "ignored" as const };
+              const ambientTriageCandidate = event.eventType === "message"
+                && event.channelType !== "im"
+                && Boolean(event.userId)
+                && !event.botId
+                && event.subtype !== "bot_message";
+              if (!replyEligible && !ambientTriageCandidate) return { outcome: "ignored" as const };
               if (!await workspaceStub.claimRuntimeEvent(deliveryId)) {
                 return { outcome: "already_processing" as const };
               }
@@ -779,6 +785,28 @@ export default {
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     respondPolicy: placement.respondTo,
                     isEngagedThread: workspaceSession.engaged === true,
+                    triage: async (triageEvent) => {
+                      const hydrated = await hydrateThreadContext(triageEvent);
+                      const recentThread = (hydrated.threadContext ?? "").split("\n").filter(Boolean).slice(-10)
+                        .map((text) => ({ speaker: "thread", text }));
+                      const decision = await runRuntimeTriage({
+                        botName: "まな",
+                        persona: placement.runtimeContext?.persona,
+                        speakerName: requesterProfile.displayName ?? requesterProfile.realName ?? requesterProfile.handle ?? "Slack user",
+                        channelType: triageEvent.channelType ?? "channel",
+                        messageText: triageEvent.text,
+                        recentThread,
+                      }, {
+                        model: claudeRuntime.model,
+                        effort: claudeRuntime.effort,
+                        createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                      });
+                      emitTurnLog("log", "mana_triage_decided", triageEvent, trace, {
+                        outcome: decision.action,
+                        reasonCode: decision.reason,
+                      });
+                      return decision;
+                    },
                     claudeSession: {
                       id: claudeSessionId,
                       sandboxId: `techknight-session-${claudeSessionId}`,
@@ -799,6 +827,14 @@ export default {
               "responseTs" in result && typeof result.responseTs === "string" ? result.responseTs : undefined);
             return result;
           } catch (error) {
+            const replyPersisted = deliveryClaimed && await withDisposableResource(
+              () => getWorkspace(handle),
+              (currentWorkspace) => isReplyCompleted(currentWorkspace.fs, event.eventId),
+            ).catch(() => false);
+            if (replyPersisted) {
+              await workspaceStub.completeRuntimeEvent(deliveryId).catch(() => undefined);
+              return { outcome: "already_completed" as const };
+            }
             if (deliveryClaimed) await workspaceStub.releaseRuntimeEvent(deliveryId);
             throw error;
           }
