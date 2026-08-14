@@ -46,7 +46,8 @@ export function runtimeTaskSearchMcpConfigPath(): string {
 export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
-  options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean; mcpEnabled?: boolean } = {},
+  options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean; mcpEnabled?: boolean;
+    sessionId?: string; resumeSession?: boolean } = {},
 ): string {
   if (config.model !== "opus" && config.model !== "sonnet") {
     throw new ClaudeRuntimeConfigError("runtime_claude_model_invalid");
@@ -56,9 +57,15 @@ export function buildRuntimeClaudeCommand(
   }
   const promptPath = runtimeClaudePromptPath(purpose);
   const effortArg = config.effort ? ` --effort ${config.effort}` : "";
+  if (options.sessionId && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.sessionId)) {
+    throw new ClaudeRuntimeConfigError("runtime_claude_session_id_invalid");
+  }
+  const sessionArg = options.sessionId
+    ? options.resumeSession ? ` --resume ${options.sessionId}` : ` --session-id ${options.sessionId}`
+    : "";
   const base = purpose === "meeting-minutes"
     ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions < ${promptPath}`
-    : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions "$(cat ${promptPath})"`;
+    : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
     : base;

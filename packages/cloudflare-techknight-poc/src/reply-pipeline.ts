@@ -64,6 +64,7 @@ export interface ReplyPipelineOptions {
   respondPolicy?: RuntimeRespondPolicy;
   isEngagedThread?: boolean;
   runtimeContext?: { persona: string; instructions: readonly string[]; skills: readonly string[]; escalationEmployee?: string };
+  claudeSession?: { id: string; sandboxId: string; resume: boolean };
   resolveActorIdentity?: ActorIdentityResolver;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
@@ -152,6 +153,7 @@ function buildPrompt(
       `requester_person_id: ${requesterIdentity.personId}`,
       `依頼者は認証済みで、Brainbase person_id "${requesterIdentity.personId}"です。`,
       "私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください。",
+      "requester_person_idは内部の検索条件です。利用者向け本文には表示せず、入力も要求しないでください。",
     ] : []),
     ...(requesterProfile ? [
       `requester_display_name: ${requesterProfile.displayName ?? "unknown"}`,
@@ -188,9 +190,9 @@ function safeExecutionErrorSummary(stderr: string): string {
     .slice(0, 300);
 }
 
-async function deterministicClientMessageId(eventId: string): Promise<string> {
+export async function deterministicRuntimeUuid(seed: string): Promise<string> {
   const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`techknight:${eventId}`)),
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`techknight:${seed}`)),
   ).slice(0, 16);
   digest[6] = (digest[6] & 0x0f) | 0x40;
   digest[8] = (digest[8] & 0x3f) | 0x80;
@@ -198,9 +200,13 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+async function deterministicClientMessageId(eventId: string): Promise<string> {
+  return deterministicRuntimeUuid(`message:${eventId}`);
+}
+
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
@@ -217,7 +223,7 @@ export async function generateClaudeReply(
     taskSearchEnabled: options.taskSearchEnabled === true,
     taskWriteEnabled: options.taskWriteEnabled === true,
   });
-  const sandbox = options.createSandbox(`techknight-reply-${event.eventId}`);
+  const sandbox = options.createSandbox(options.claudeSession?.sandboxId ?? `techknight-reply-${event.eventId}`);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
     await sandbox.writeFile(promptPath, buildPrompt(
@@ -252,6 +258,8 @@ export async function generateClaudeReply(
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
         mcpEnabled: Boolean(options.capabilities?.mcp.length),
+        sessionId: options.claudeSession?.id,
+        resumeSession: options.claudeSession?.resume,
       }),
       {
         timeout: 120_000,
@@ -287,7 +295,11 @@ export async function generateClaudeReply(
     });
     return reply;
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    // A thread-generation sandbox owns the Claude transcript used by --resume.
+    // Cloudflare suspends it after inactivity; destroying it would silently turn
+    // every turn back into a fresh conversation. Ephemeral event sandboxes keep
+    // the previous cleanup behavior.
+    if (!options.claudeSession) await sandbox.destroy().catch(() => undefined);
   }
 }
 

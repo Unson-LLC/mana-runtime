@@ -32,7 +32,7 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
-import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { deterministicRuntimeUuid, isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
   processMeetingTaskEvent,
@@ -51,7 +51,7 @@ import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { requesterProfileOrFallback, resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
-import { markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
+import { markClaudeSessionStarted, markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
@@ -437,9 +437,7 @@ export default {
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const workspaceStub = env.TECHKNIGHT_WORKSPACE.get(id);
           const deliveryId = runtimeDeliveryId(event);
-          if (!await workspaceStub.claimRuntimeEvent(deliveryId)) {
-            return { outcome: "already_processing" as const };
-          }
+          let deliveryClaimed = false;
           const handle = workspaceStub as unknown as WorkspaceHandle;
           try {
             const result = await withDisposableResource(
@@ -448,6 +446,21 @@ export default {
               await persistEventOnce(workspace.fs, event);
                await reconcilePermissionRevision(workspace.fs, placement.permissionRevision ?? "legacy-v1", event.receivedAt);
                const workspaceSession = await readWorkspaceSession(workspace.fs);
+              const replyEligible = isReplyEligible(event, {
+                expectedTenantId: env.TENANT_ID,
+                expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                allowedChannelId: placement.channelId,
+                respondPolicy: placement.respondTo,
+                isEngagedThread: workspaceSession.engaged === true,
+              });
+              // Slack may emit an ordinary message before the app_mention for the
+              // same post. An ineligible variant must never claim the shared
+              // message delivery id and suppress the eligible variant.
+              if (!replyEligible) return { outcome: "ignored" as const };
+              if (!await workspaceStub.claimRuntimeEvent(deliveryId)) {
+                return { outcome: "already_processing" as const };
+              }
+              deliveryClaimed = true;
               const sessionModel = workspaceSession.modelOverride;
               const claudeRuntime = resolveClaudeRuntimeConfig(
                 env,
@@ -456,13 +469,7 @@ export default {
                   : placementClaudeRuntime.model,
               );
               const controlCommand = parseRuntimeControlCommand(event.text);
-              if (controlCommand && isReplyEligible(event, {
-                expectedTenantId: env.TENANT_ID,
-                expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                allowedChannelId: placement.channelId,
-                respondPolicy: placement.respondTo,
-                isEngagedThread: workspaceSession.engaged === true,
-              })) {
+              if (controlCommand) {
                 if (await isReplyCompleted(workspace.fs, event.eventId)) return { outcome: "already_completed" as const };
                 const text = await executeRuntimeControlCommand({
                   fs: workspace.fs,
@@ -562,7 +569,10 @@ export default {
                     if (graphContext.status === "unavailable") {
                       throw new ReplyPipelineError("graph_context_unavailable");
                     }
-                    return processReplyEvent(workspace.fs, event, {
+                    const claudeSessionId = await deterministicRuntimeUuid(
+                      `${workspaceName(event)}:generation:${workspaceSession.generation}`,
+                    );
+                    const replyResult = await processReplyEvent(workspace.fs, event, {
                     expectedTenantId: env.TENANT_ID,
                     expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
                     allowedChannelId: placement.channelId,
@@ -582,18 +592,27 @@ export default {
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     respondPolicy: placement.respondTo,
                     isEngagedThread: workspaceSession.engaged === true,
+                    claudeSession: {
+                      id: claudeSessionId,
+                      sandboxId: `techknight-session-${claudeSessionId}`,
+                      resume: workspaceSession.claudeSessionStartedGeneration === workspaceSession.generation,
+                    },
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     });
+                    if (replyResult.outcome === "replied") {
+                      await markClaudeSessionStarted(workspace.fs, workspaceSession.generation, new Date().toISOString());
+                    }
+                    return replyResult;
                   }),
               });
               },
             );
-            await workspaceStub.completeRuntimeEvent(deliveryId,
+            if (deliveryClaimed) await workspaceStub.completeRuntimeEvent(deliveryId,
               "responseTs" in result && typeof result.responseTs === "string" ? result.responseTs : undefined);
             return result;
           } catch (error) {
-            await workspaceStub.releaseRuntimeEvent(deliveryId);
+            if (deliveryClaimed) await workspaceStub.releaseRuntimeEvent(deliveryId);
             throw error;
           }
         },

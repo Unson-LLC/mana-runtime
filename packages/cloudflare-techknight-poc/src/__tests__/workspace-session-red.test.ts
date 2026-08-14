@@ -1,5 +1,6 @@
 import {
   applyNewSessionCommand,
+  markClaudeSessionStarted,
   reconcilePermissionRevision,
   readWorkspaceSession,
   type WorkspaceSessionFs,
@@ -53,5 +54,15 @@ describe("workspace session control commands", () => {
       .resolves.toMatchObject({ generation: 1, changed: false });
     await expect(reconcilePermissionRevision(fs, "permissions-v2", "2026-08-14T09:02:00Z"))
       .resolves.toMatchObject({ generation: 2, changed: true });
+  });
+
+  it("records Claude startup only for the active generation and /new clears it", async () => {
+    const fs = new MemoryFs();
+    await markClaudeSessionStarted(fs, 1, "2026-08-14T09:00:00Z");
+    await expect(readWorkspaceSession(fs)).resolves.toMatchObject({ claudeSessionStartedGeneration: 1 });
+    await applyNewSessionCommand(fs, { commandId: "new-1", requestedAt: "2026-08-14T09:01:00Z" });
+    await expect(readWorkspaceSession(fs)).resolves.not.toHaveProperty("claudeSessionStartedGeneration");
+    await markClaudeSessionStarted(fs, 1, "2026-08-14T09:02:00Z");
+    await expect(readWorkspaceSession(fs)).resolves.not.toHaveProperty("claudeSessionStartedGeneration");
   });
 });

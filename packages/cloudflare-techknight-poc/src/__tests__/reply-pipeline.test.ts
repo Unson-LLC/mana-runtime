@@ -76,6 +76,23 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
+  it("reuses the thread-generation sandbox and resumes its Claude session", async () => {
+    const fs = new MemoryFs();
+    const createSandbox = vi.fn();
+    const { options, sandbox } = harness();
+    createSandbox.mockReturnValue(sandbox);
+    options.createSandbox = createSandbox;
+    options.claudeSession = {
+      id: "12345678-1234-4123-8123-123456789abc",
+      sandboxId: "techknight-session-stable",
+      resume: true,
+    };
+    await processReplyEvent(fs, event(), options);
+    expect(createSandbox).toHaveBeenCalledWith("techknight-session-stable");
+    expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
+    expect(sandbox.destroy).not.toHaveBeenCalled();
+  });
+
   it("injects only the placement persona, instructions, skills, and escalation employee", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({ runtimeContext: { persona: "Ryoko（AI組織のCOO）",
