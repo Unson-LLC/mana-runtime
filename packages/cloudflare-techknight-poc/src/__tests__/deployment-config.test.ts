@@ -269,7 +269,9 @@ describe("会社別Cloudflare deployment", () => {
   });
 
   it("通常返信と議事録の実行中も開発コマンド用Containerを確保できる", () => {
-    expect(unson.containers[0]?.max_instances).toBeGreaterThanOrEqual(3);
+    // 議事録と開発処理が各1台を保持したまま通常返信が開始する。
+    // Cloudflareが旧版の実体も一時保持するため、新旧両世代の枠を確保する。
+    expect(unson.containers[0]?.max_instances).toBeGreaterThanOrEqual(6);
   });
 
   it("雲孫deploymentが専用Worker namespace内にDurable ObjectとContainerを持つ", () => {
