@@ -370,7 +370,7 @@ export default {
                       token: env.BRAINBASE_GRAPH_API_TOKEN,
                     };
                     const requesterResolution = await resolveGraphRequester(
-                      event.workspaceId, event.userId ?? "", graphOptions,
+                      event.workspaceId, event.userId ?? "", placement.projectCodes[0], graphOptions,
                     );
                     if (requesterResolution.status !== "resolved") {
                       throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);

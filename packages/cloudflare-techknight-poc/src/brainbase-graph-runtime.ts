@@ -34,12 +34,14 @@ async function graphGet(url: URL, options: BrainbaseGraphRuntimeOptions): Promis
 export async function resolveGraphRequester(
   workspaceId: string,
   slackUserId: string,
+  projectCode: string,
   options: BrainbaseGraphRuntimeOptions,
 ): Promise<GraphRequesterResolution> {
   if (!configured(options)) return { status: "unavailable" };
   const url = new URL("/api/info/person/by-slack", options.baseUrl);
   url.searchParams.set("workspaceId", workspaceId);
   url.searchParams.set("slackUserId", slackUserId);
+  url.searchParams.set("project", projectCode);
   const response = await graphGet(url, options);
   if (!response) return { status: "unavailable" };
   if (response.status === 404) return { status: "not_found" };

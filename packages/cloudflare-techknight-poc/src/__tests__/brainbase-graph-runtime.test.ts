@@ -5,17 +5,18 @@ const options = { baseUrl: "https://brainbase.example", token: "secret" };
 describe("Brainbase Graph runtime", () => {
   it("resolves a requester using exact workspace and Slack user IDs", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({ person: { id: "per_umeda", name: "梅田" } }));
-    await expect(resolveGraphRequester("T1", "U1", { ...options, fetch: fetchImpl })).resolves.toEqual({
+    await expect(resolveGraphRequester("T1", "U1", "mana", { ...options, fetch: fetchImpl })).resolves.toEqual({
       status: "resolved", personId: "per_umeda", personName: "梅田",
     });
     expect(fetchImpl.mock.calls[0][0].searchParams.get("workspaceId")).toBe("T1");
     expect(fetchImpl.mock.calls[0][0].searchParams.get("slackUserId")).toBe("U1");
+    expect(fetchImpl.mock.calls[0][0].searchParams.get("project")).toBe("mana");
   });
 
   it.each([[404, "not_found"], [409, "ambiguous"], [503, "unavailable"]])(
     "fails closed for HTTP %s", async (status, expected) => {
       const fetchImpl = vi.fn().mockResolvedValue(new Response("", { status: status as number }));
-      await expect(resolveGraphRequester("T1", "U1", { ...options, fetch: fetchImpl })).resolves.toEqual({ status: expected });
+      await expect(resolveGraphRequester("T1", "U1", "mana", { ...options, fetch: fetchImpl })).resolves.toEqual({ status: expected });
     });
 
   it("hydrates philosophy, report, and scoped memory for the exact placement context", async () => {
