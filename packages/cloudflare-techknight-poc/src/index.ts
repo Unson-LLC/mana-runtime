@@ -71,6 +71,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_EXPECTED_APP_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
+  SLACK_BOT_TOKEN_UNSON?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
   GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
@@ -135,13 +136,22 @@ function runtimeErrorCode(error: unknown): string {
 
 function meetingMinutesClients(env: Env) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
+  const unsonSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_UNSON ?? "");
   const techKnightSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
-  const techKnightChannels = new Set(meetingMinutesRuntimeConfig(env).destinations
-    .filter((destination) => destination.github.owner === "Tech-Knight-inc")
+  const destinations = meetingMinutesRuntimeConfig(env).destinations;
+  const unsonChannels = new Set(destinations
+    .filter((destination) => destination.organization.id === "unson")
     .map((destination) => destination.slackChannelId));
-  const destinationSlack = (channelId: string) => techKnightChannels.has(channelId) ? techKnightSlack : slack;
+  const techKnightChannels = new Set(destinations
+    .filter((destination) => destination.organization.id === "tech-knight")
+    .map((destination) => destination.slackChannelId));
+  const destinationSlack = (channelId: string) => {
+    if (unsonChannels.has(channelId)) return unsonSlack;
+    if (techKnightChannels.has(channelId)) return techKnightSlack;
+    return slack;
+  };
   return {
     slack,
     resume: {
