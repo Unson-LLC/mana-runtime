@@ -78,10 +78,10 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
       `claude --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
       { timeout: 30_000, env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" } },
     );
-    if (!result.success) return { action: "silent", reason: "triage_error" };
-    return parseRuntimeTriageDecision(result.stdout) ?? { action: "silent", reason: "parse_failed" };
+    if (!result.success) return { action: "reply", reason: "triage_error" };
+    return parseRuntimeTriageDecision(result.stdout) ?? { action: "reply", reason: "parse_failed" };
   } catch {
-    return { action: "silent", reason: "triage_error" };
+    return { action: "reply", reason: "triage_error" };
   } finally {
     await sandbox.destroy().catch(() => undefined);
   }
