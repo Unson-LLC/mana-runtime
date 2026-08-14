@@ -20,6 +20,9 @@ export interface ResumeMeetingMinutesOptions {
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string }>;
+  resolveAssignee?(name: string, projectId: string): Promise<
+    { status: "resolved"; personId: string } | { status: "unknown" | "ambiguous" | "unavailable" }
+  >;
   postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string>;
   postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
     index: number, total: number, clientMsgId: string): Promise<string>;
@@ -101,7 +104,16 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
   for (let index = 0; index < tasks.length; index += 1) {
     if (run.taskRegistration.registered.some((item) => item.index === index)) continue;
     const candidate = tasks[index]!;
-    const task = await options.createTask({ ...candidate, project_codes: [run.destination!.projectId] },
+    let assignee_person_id: string | undefined;
+    if (candidate.assignee_name) {
+      if (!options.resolveAssignee) throw new Error("meeting_minutes_assignee_resolver_unconfigured");
+      const resolution = await options.resolveAssignee(candidate.assignee_name, run.destination!.projectId);
+      if (resolution.status !== "resolved") throw new Error(`meeting_minutes_assignee_${resolution.status}`);
+      assignee_person_id = resolution.personId;
+    }
+    const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
+    const task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
+      project_codes: [run.destination!.projectId] },
       await taskIdempotencyKey(run.runId, index));
     if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
     run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim() });

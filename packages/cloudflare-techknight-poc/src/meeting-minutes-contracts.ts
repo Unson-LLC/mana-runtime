@@ -23,6 +23,7 @@ export interface GeneratedMeetingMinutes {
 export interface MeetingMinutesTaskCandidate {
   title: string;
   description?: string;
+  assignee_name?: string;
   priority?: "low" | "medium" | "high" | "urgent";
   due_at?: string;
 }

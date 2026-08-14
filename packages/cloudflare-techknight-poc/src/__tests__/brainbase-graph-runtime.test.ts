@@ -1,4 +1,4 @@
-import { hydrateGraphContext, resolveGraphRequester } from "../brainbase-graph-runtime.js";
+import { hydrateGraphContext, resolveGraphPersonByName, resolveGraphRequester } from "../brainbase-graph-runtime.js";
 
 const options = { baseUrl: "https://brainbase.example", token: "secret" };
 
@@ -33,5 +33,25 @@ describe("Brainbase Graph runtime", () => {
     expect(url.searchParams.get("workspace")).toBe("T1");
     expect(url.searchParams.get("channelId")).toBe("C1");
     expect(url.searchParams.get("sessionId")).toBe("1.0");
+  });
+
+  it("resolves a meeting assignee by exact canonical name or alias", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_umeda", payload: { name: "梅田 遼", aliases: ["Haruka Umeda"] } },
+    ] }));
+    await expect(resolveGraphPersonByName("梅田遼", "mana", { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
+    const url = fetchImpl.mock.calls[0][0] as URL;
+    expect(url.searchParams.get("type")).toBe("person");
+    expect(url.searchParams.get("project")).toBe("mana");
+  });
+
+  it.each([
+    [[], "unknown"],
+    [[{ id: "p1", payload: { name: "梅田 遼" } }, { id: "p2", payload: { name: "梅田遼" } }], "ambiguous"],
+  ])("fails closed for non-unique meeting assignee records", async (records, status) => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records }));
+    await expect(resolveGraphPersonByName("梅田 遼", "mana", { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status });
   });
 });

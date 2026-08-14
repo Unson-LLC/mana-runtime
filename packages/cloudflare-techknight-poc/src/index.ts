@@ -57,7 +57,7 @@ import { runRemoteDevelopmentRequest } from "./development-runner-client.js";
 import { handleDevelopmentCallback } from "./development-callback.js";
 import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
 import { hydrateSlackAttachments } from "./slack-attachments.js";
-import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
+import { hydrateGraphContext, resolveGraphPersonByName, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
   consumeTaskBoardRepair,
@@ -204,6 +204,10 @@ function meetingMinutesClients(env: Env) {
             fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
         return client.createTask(input, idempotencyKey);
       },
+      resolveAssignee: (name: string, projectId: string) => resolveGraphPersonByName(name, projectId, {
+        baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
+        token: env.BRAINBASE_GRAPH_API_TOKEN,
+      }),
       postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
         destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
