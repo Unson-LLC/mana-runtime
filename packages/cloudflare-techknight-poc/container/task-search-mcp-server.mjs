@@ -54,7 +54,22 @@ function validateArgs(input) {
   };
 }
 
-async function callSearch(args, fetchImpl) {
+function traceHeaders(callIndex) {
+  const headers = { accept: "application/json" };
+  if (/^[A-Za-z0-9._:-]{1,128}$/.test(process.env.MANA_TRACE_ID ?? "")) {
+    headers["x-mana-trace-id"] = process.env.MANA_TRACE_ID;
+  }
+  if (/^[A-Za-z0-9._-]{1,100}$/.test(process.env.MANA_TRACE_PLACEMENT_ID ?? "")) {
+    headers["x-mana-trace-placement-id"] = process.env.MANA_TRACE_PLACEMENT_ID;
+  }
+  if (/^[A-Za-z0-9._,-]{1,500}$/.test(process.env.MANA_TRACE_PROJECT_CODES ?? "")) {
+    headers["x-mana-trace-project-codes"] = process.env.MANA_TRACE_PROJECT_CODES;
+  }
+  headers["x-mana-trace-call-index"] = String(callIndex);
+  return headers;
+}
+
+async function callSearch(args, fetchImpl, callIndex) {
   const input = validateArgs(args);
   const params = new URLSearchParams();
   params.set("query", input.query);
@@ -67,7 +82,7 @@ async function callSearch(args, fetchImpl) {
   try {
     response = await fetchImpl(`${ENDPOINT}?${params.toString()}`, {
       method: "GET",
-      headers: { accept: "application/json" },
+      headers: traceHeaders(callIndex),
       redirect: "manual",
       signal: AbortSignal.timeout(20_000),
     });
@@ -128,7 +143,7 @@ export async function processTaskSearchRpcMessage(message, fetchImpl = fetch, st
       return {
         jsonrpc: "2.0",
         id: message.id ?? null,
-        result: await callSearch(params.arguments, fetchImpl),
+        result: await callSearch(params.arguments, fetchImpl, state.searchCalls),
       };
     } catch {
       return rpcError(message.id, -32602, "Invalid params");

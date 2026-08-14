@@ -55,6 +55,11 @@ import {
   isTaskBoardRepairEvent,
   type TaskBoardRepairEvent,
 } from "./task-board.js";
+import {
+  actorIdHash,
+  emitTurnLog,
+  type TurnRuntimeTrace,
+} from "./turn-observability.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -80,6 +85,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   RUNTIME_TASK_BOARD_ENABLED?: string;
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
+  CF_VERSION_METADATA?: { id: string; tag?: string };
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
@@ -116,6 +122,15 @@ function workspaceName(event: SlackQueueEvent): string {
 
 function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runId: string): string {
   return [tenantId, workspaceId, "meeting-minutes", runId].join(":");
+}
+
+function runtimeErrorCode(error: unknown): string {
+  if (error instanceof ReplyPipelineError) return error.code;
+  if (
+    typeof error === "object" && error !== null &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) return (error as { code: string }).code;
+  return "unexpected_error";
 }
 
 function meetingMinutesClients(env: Env) {
@@ -265,8 +280,8 @@ export default {
             }
             return { outcome: "awaiting_destination" };
           },
-          log: (entry) => console.log(JSON.stringify(entry)),
-          logError: (entry) => console.error(JSON.stringify(entry)),
+          log: (entry) => console.log(entry),
+          logError: (entry) => console.error(entry),
           errorCode: (error) => error instanceof Error ? error.message : "unexpected_error",
         });
         continue;
@@ -289,6 +304,26 @@ export default {
             placements: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON),
           });
           const claudeRuntime = resolveClaudeRuntimeConfig(env);
+          const trace: TurnRuntimeTrace = {
+            placementId: placement.placementId,
+            projectCodes: placement.projectCodes,
+            actorIdHash: await actorIdHash(event),
+            workerVersion: env.CF_VERSION_METADATA?.id,
+            model: claudeRuntime.model,
+            effort: claudeRuntime.effort,
+          };
+          emitTurnLog("log", "mana_turn_received", event, trace, {
+            outcome: "accepted",
+            eventType: event.eventType,
+          });
+          emitTurnLog("log", "mana_placement_resolved", event, trace, {
+            outcome: "resolved",
+            taskWriteEnabled: placement.taskWriteEnabled,
+          });
+          emitTurnLog("log", "mana_identity_context", event, trace, {
+            outcome: event.userId ? "not_injected" : "missing_actor",
+            reasonCode: event.userId ? "actor_context_not_injected" : "slack_user_id_missing",
+          });
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(
@@ -298,22 +333,23 @@ export default {
               const hydrateThreadContext = (input: SlackQueueEvent) => (
                 hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN })
               );
-              return routeRuntimeEvent(event, {
-                meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
-                processMeetingTask: () => {
-                  const binding = placement;
-                  return processMeetingTaskEvent(workspace.fs, event, {
-                    binding,
-                    brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
-                    brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
-                    slackBotToken: env.SLACK_BOT_TOKEN,
-                    oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
-                    claudeRuntime,
-                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-                    hydrateThreadContext,
-                  });
-                },
-                processReply: async () => runWithReplyTaskSearchBinding(event, {
+              try {
+                const result = await routeRuntimeEvent(event, {
+                  meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
+                  processMeetingTask: () => {
+                    const binding = placement;
+                    return processMeetingTaskEvent(workspace.fs, event, {
+                      binding,
+                      brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+                      brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
+                      slackBotToken: env.SLACK_BOT_TOKEN,
+                      oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                      claudeRuntime,
+                      createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                      hydrateThreadContext,
+                    });
+                  },
+                  processReply: async () => runWithReplyTaskSearchBinding(event, {
                     tenantId: env.TENANT_ID,
                     workspaceId: env.SLACK_EXPECTED_TEAM_ID,
                     channelId: placement.channelId,
@@ -324,33 +360,38 @@ export default {
                   }, async (taskSearch) => {
                     const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(event, env, Date.now(), placement);
                     return processReplyEvent(workspace.fs, event, {
-                    expectedTenantId: env.TENANT_ID,
-                    expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-                    allowedChannelId: placement.channelId,
-                    slackBotToken: env.SLACK_BOT_TOKEN,
-                    oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
-                    claudeRuntime,
-                    taskSearchEnabled: taskSearch.taskSearchEnabled,
-                    taskWriteEnabled,
-                    taskWriteCapability,
-                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-                    hydrateThreadContext,
+                      expectedTenantId: env.TENANT_ID,
+                      expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                      allowedChannelId: placement.channelId,
+                      slackBotToken: env.SLACK_BOT_TOKEN,
+                      oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                      claudeRuntime,
+                      taskSearchEnabled: taskSearch.taskSearchEnabled,
+                      taskWriteEnabled,
+                      taskWriteCapability,
+                      createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                      hydrateThreadContext,
+                      trace,
                     });
                   }),
-              });
+                });
+                emitTurnLog("log", "mana_turn_completed", event, trace, {
+                  outcome: result.outcome,
+                });
+                return result;
+              } catch (error) {
+                emitTurnLog("error", "mana_turn_failed", event, trace, {
+                  outcome: "error",
+                  reasonCode: runtimeErrorCode(error),
+                });
+                throw error;
+              }
             },
           );
         },
-        log: (entry) => console.log(JSON.stringify(entry)),
-        logError: (entry) => console.error(JSON.stringify(entry)),
-        errorCode: (error) => {
-          if (error instanceof ReplyPipelineError) return error.code;
-          if (
-            typeof error === "object" && error !== null &&
-            typeof (error as { code?: unknown }).code === "string"
-          ) return (error as { code: string }).code;
-          return "unexpected_error";
-        },
+        log: (entry) => console.log(entry),
+        logError: (entry) => console.error(entry),
+        errorCode: runtimeErrorCode,
       });
     }
   },

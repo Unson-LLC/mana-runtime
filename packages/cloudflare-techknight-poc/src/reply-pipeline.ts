@@ -10,6 +10,10 @@ import {
   runtimeTaskSearchMcpConfigPath,
   type ClaudeRuntimeConfig,
 } from "./claude-runtime-config.js";
+import {
+  emitTurnLog,
+  type TurnRuntimeTrace,
+} from "./turn-observability.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -47,6 +51,7 @@ export interface ReplyPipelineOptions {
   fetch?: typeof fetch;
   now?: () => string;
   hydrateThreadContext?(event: SlackQueueEvent): Promise<SlackQueueEvent>;
+  trace?: TurnRuntimeTrace;
 }
 
 export interface ReplyProcessResult {
@@ -141,10 +146,20 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "trace">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
+  const startedAt = Date.now();
+  const trace = {
+    ...options.trace,
+    model: options.claudeRuntime.model,
+    effort: options.claudeRuntime.effort,
+  };
+  emitTurnLog("log", "mana_claude_started", event, trace, {
+    taskSearchEnabled: options.taskSearchEnabled === true,
+    taskWriteEnabled: options.taskWriteEnabled === true,
+  });
   const sandbox = options.createSandbox(`techknight-reply-${event.eventId}`);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
@@ -173,6 +188,9 @@ export async function generateClaudeReply(
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+          MANA_TRACE_ID: event.eventId,
+          MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
+          MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
           ...(options.taskWriteEnabled ? {
             MANA_TASK_WRITE_REQUEST_ID: event.eventId,
             MANA_TASK_WRITE_CAPABILITY: options.taskWriteCapability,
@@ -181,15 +199,22 @@ export async function generateClaudeReply(
       },
     );
     if (!result.success) {
-      console.error(JSON.stringify({
-        event: "claude_execution_failed_detail",
+      emitTurnLog("error", "mana_claude_failed", event, trace, {
+        outcome: "error",
+        reasonCode: "claude_execution_failed",
         exitCode: result.exitCode,
-        stderr: safeExecutionErrorSummary(result.stderr),
-      }));
+        errorSummary: safeExecutionErrorSummary(result.stderr),
+        durationMs: Date.now() - startedAt,
+      });
       throw new ReplyPipelineError("claude_execution_failed");
     }
     const reply = normalizeReply(result.stdout);
     if (!reply) throw new ReplyPipelineError("claude_empty_response");
+    emitTurnLog("log", "mana_claude_completed", event, trace, {
+      outcome: "success",
+      durationMs: Date.now() - startedAt,
+      outputChars: reply.length,
+    });
     return reply;
   } finally {
     await sandbox.destroy().catch(() => undefined);
@@ -414,8 +439,25 @@ export async function processReplyEvent(
     const hydratedEvent = options.hydrateThreadContext
       ? await options.hydrateThreadContext(event)
       : event;
+    emitTurnLog("log", "mana_thread_context_hydrated", event, {
+      ...options.trace,
+      model: options.claudeRuntime.model,
+      effort: options.claudeRuntime.effort,
+    }, {
+      outcome: "success",
+      contextPresent: Boolean(hydratedEvent.threadContext),
+      contextChars: hydratedEvent.threadContext?.length ?? 0,
+    });
     const reply = await generateClaudeReply(hydratedEvent, options);
     const responseTs = await postSlackReply(hydratedEvent, reply, options);
+    emitTurnLog("log", "mana_slack_reply_posted", event, {
+      ...options.trace,
+      model: options.claudeRuntime.model,
+      effort: options.claudeRuntime.effort,
+    }, {
+      outcome: "success",
+      responseTs,
+    });
     await persistReplyCompletion(fs, {
       eventId: event.eventId,
       responseTs,

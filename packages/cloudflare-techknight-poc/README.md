@@ -45,6 +45,37 @@ pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
 
 `build`は`wrangler deploy --dry-run`であり、Cloudflare resourceを作成しません。
 
+## 一般返信の追跡ログ
+
+雲孫deploymentはWorkers Logsを100%保存し、一般返信の各工程を構造化JSONで記録します。
+Slack本文、thread context、検索語、人名、task本文、token、認証headerは記録しません。
+
+最初にSlack URLから`channelId`と`messageTs`を取り、CloudflareのObservabilityで検索します。
+
+```text
+channelId = "<SLACK_CHANNEL_ID>" AND messageTs = "<SLACK_MESSAGE_TS>"
+```
+
+見つかった`traceId`（Slackのevent ID）で絞ると、同じターンの次のeventを確認できます。
+
+- `mana_turn_received`: Workerが受理した実行version、model、effort
+- `mana_placement_resolved`: placement、許可project、書き込み可否
+- `mana_identity_context`: Slack actorをClaudeへ渡したかどうか
+- `mana_thread_context_hydrated`: thread contextの有無と文字数
+- `mana_claude_started` / `mana_claude_completed` / `mana_claude_failed`: 実効model、effort、所要時間、結果
+- `mana_task_search_started` / `mana_task_search_completed` / `mana_task_search_failed`: 検索回数、件数、完全性、実効project範囲
+- `mana_slack_reply_posted`: Slack返信timestamp
+- `mana_turn_completed` / `mana_turn_failed`: ターン全体の最終結果
+
+```text
+traceId = "Ev..."
+```
+
+`mana_task_search_*`の`scopeMatches=false`は、placementが期待したproject範囲とWorker proxyが
+実際に検索したproject範囲が一致していないことを示します。0件応答の調査では
+`resultCount`だけでなく、`expectedProjectCodes`、`effectiveProjectCodes`、`readStatus`を
+必ず一緒に確認します。
+
 ## タスク検索の段階展開
 
 `RUNTIME_TASK_SEARCH_ENABLED`は未設定または`false`ならOFFです。次の二段階を崩さず、
