@@ -170,6 +170,14 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).not.toContain('run("/usr/bin/node"');
   });
 
+  it("開発エージェントへCloudflare認証プロキシ用の非秘密プレースホルダーを渡す", () => {
+    const runnerPath = fileURLToPath(new URL("../../container/openryoko-development-runner.mjs", import.meta.url));
+    const runner = readFileSync(runnerPath, "utf8");
+    expect(runner).toContain('IS_SANDBOX: "1"');
+    expect(runner).toContain('CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected"');
+    expect(runner).toContain("extraEnv: sandboxAgentEnv");
+  });
+
   it("開発ランナーの検証用commitに固定の非個人Git identityを設定する", () => {
     const dockerfile = readFileSync(fileURLToPath(new URL("../../Dockerfile", import.meta.url)), "utf8");
     expect(dockerfile).toContain('git config --system user.name "Mana Development Runner"');
