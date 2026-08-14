@@ -113,7 +113,7 @@
       "class_name": "TechKnightSandbox",
       "image": "./Dockerfile",
       "instance_type": "basic",
-      "max_instances": 2
+      "max_instances": 3
     }
   ],
   "queues": {
