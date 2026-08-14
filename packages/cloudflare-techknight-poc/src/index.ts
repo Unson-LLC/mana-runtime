@@ -47,7 +47,7 @@ import { isReplyCompleted, persistEventOnce, persistReplyCompletion } from "./wo
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
-import { resolveSlackUserProfile } from "./slack-user-profile.js";
+import { requesterProfileOrFallback, resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
 import { markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
@@ -504,9 +504,15 @@ export default {
                     const profileResolution = await resolveSlackUserProfile({ userId: event.userId ?? "",
                       botToken: env.SLACK_BOT_TOKEN,
                     });
-                    if (profileResolution.status !== "resolved") {
-                      throw new ReplyPipelineError(profileResolution.status === "rejected"
-                        ? "requester_profile_rejected" : "requester_profile_unavailable");
+                    // users.info is enrichment, not the authorization boundary. Some Slack
+                    // installations intentionally omit users:read. Canonical Graph identity
+                    // resolution below remains mandatory and fail-closed; a profile outage must
+                    // not prevent an otherwise authorized requester from using the runtime.
+                    let requesterProfile;
+                    try {
+                      requesterProfile = requesterProfileOrFallback(event.userId ?? "", profileResolution);
+                    } catch {
+                      throw new ReplyPipelineError("requester_profile_rejected");
                     }
                     const graphOptions = {
                       baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
@@ -536,7 +542,7 @@ export default {
                     taskWriteEnabled,
                     taskWriteCapability,
                     requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
-                    requesterProfile: profileResolution.profile,
+                    requesterProfile,
                     graphContext: graphContext.content,
                     runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
                       escalationEmployee: placement.agent?.escalationEmployee } : undefined,

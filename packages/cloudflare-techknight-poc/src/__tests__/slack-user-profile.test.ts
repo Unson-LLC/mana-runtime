@@ -1,8 +1,21 @@
-import { resolveSlackUserProfile } from "../slack-user-profile.js";
+import { requesterProfileOrFallback, resolveSlackUserProfile } from "../slack-user-profile.js";
 
 const botToken = "xoxb-super-secret-test-token";
 
 describe("resolveSlackUserProfile", () => {
+  it("uses a non-authoritative Slack ID profile when users.info is unavailable", () => {
+    expect(requesterProfileOrFallback("U_REQUESTER", {
+      status: "unavailable",
+      reason: "slack_api_error",
+    })).toEqual({ userId: "U_REQUESTER", name: "U_REQUESTER" });
+  });
+
+  it("still rejects deleted and bot users", () => {
+    expect(() => requesterProfileOrFallback("U_REQUESTER", {
+      status: "rejected",
+      reason: "deleted_user",
+    })).toThrow("requester_profile_rejected");
+  });
   it("normalizes display_name, real_name, name, and timezone from users.info", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({
       ok: true,
