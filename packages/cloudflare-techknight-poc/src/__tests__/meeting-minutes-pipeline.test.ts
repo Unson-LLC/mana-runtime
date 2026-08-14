@@ -66,9 +66,13 @@ describe("meeting minutes pipeline", () => {
     );
     expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42" }]);
     expect(options.postThreadChunk).toHaveBeenCalledWith(
-      "CDEST", "10.1", "meeting.txt", expect.stringContaining("Brainbaseタスク自動登録: 1件"),
+      "CDEST", "10.1", "meeting.txt", expect.stringContaining("Brainbaseへタスクを1件登録しました"),
       expect.any(Number), expect.any(Number), expect.any(String),
     );
+    const taskSummary = options.postThreadChunk.mock.calls.find((call: unknown[]) =>
+      String(call[3]).includes("Brainbaseへタスクを"))?.[3];
+    expect(taskSummary).toContain("1. 請求書を送る");
+    expect(taskSummary).not.toContain("task-42");
   });
 
   it("accepts minutes with no explicit tasks without creating a task", async () => {

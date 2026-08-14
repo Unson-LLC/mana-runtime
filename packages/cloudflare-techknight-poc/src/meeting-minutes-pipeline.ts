@@ -85,8 +85,9 @@ async function taskIdempotencyKey(runId: string, index: number): Promise<string>
 function taskSummary(run: MeetingMinutesRun): string {
   const registered = run.taskRegistration?.registered ?? [];
   if (!registered.length) return "";
-  return ["*Brainbaseタスク自動登録*", `Brainbaseタスク自動登録: ${registered.length}件`,
-    ...[...registered].sort((left, right) => left.index - right.index).map((task) => `• ${task.title}（${task.taskId}）`)].join("\n");
+  return [`*✅ Brainbaseへタスクを${registered.length}件登録しました*`,
+    ...[...registered].sort((left, right) => left.index - right.index)
+      .map((task, index) => `${index + 1}. ${task.title}`)].join("\n");
 }
 
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
