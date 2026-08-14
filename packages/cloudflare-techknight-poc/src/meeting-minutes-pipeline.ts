@@ -123,8 +123,11 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
     if (candidate.assignee_name) {
       if (!options.resolveAssignee) throw new Error("meeting_minutes_assignee_resolver_unconfigured");
       const resolution = await options.resolveAssignee(candidate.assignee_name, run.destination!.projectId);
-      if (resolution.status !== "resolved") throw new Error(`meeting_minutes_assignee_${resolution.status}`);
-      assignee_person_id = resolution.personId;
+      if (resolution.status === "unavailable") throw new Error("meeting_minutes_assignee_unavailable");
+      if (resolution.status === "resolved") assignee_person_id = resolution.personId;
+      else console.warn("meeting_minutes_assignee_unresolved", {
+        runId: run.runId, taskIndex: index, status: resolution.status,
+      });
     }
     const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
     const task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
