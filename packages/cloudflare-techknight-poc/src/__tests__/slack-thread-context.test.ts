@@ -65,6 +65,28 @@ describe("Cloudflare Slack thread context adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("excludes Slack history at or before the persisted /new boundary", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      messages: [
+        { ts: "1", user: "U1", text: "old root" },
+        { ts: "2", user: "U1", text: "/new" },
+        { ts: "2.5", bot_id: "B1", text: "new session started" },
+        { ts: "3", user: "U3", text: "current" },
+      ],
+    }), { status: 200 }));
+
+    const hydrated = await hydrateSlackQueueEventThreadContext(event(), {
+      botToken: "xoxb-secret",
+      fetch: fetchMock,
+      contextAfterTs: "2",
+    });
+
+    expect(hydrated.threadContext).not.toContain("old root");
+    expect(hydrated.threadContext).not.toContain("/new");
+    expect(hydrated.threadContext).toContain("new session started");
+  });
+
   it("fails closed when Slack rejects history access", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ok: false,
