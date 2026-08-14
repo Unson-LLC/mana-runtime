@@ -196,6 +196,12 @@ npx wrangler secret put TASK_WRITE_CAPABILITY_SECRET --config wrangler.unson-bus
 pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
 ```
 
+`deploy:unson-business`は、現在稼働中のWorkerへ認証付きで問い合わせ、処理中の議事録が0件の
+場合だけ配備します。実行前に`UNSON_BUSINESS_WORKER_URL`と、Worker Secretと同じ
+`SANDBOX_PROBE_TOKEN`を実行環境へ渡します。応答不能、10秒超過、認証失敗、処理中ありは
+すべて配備を停止します。ゲートを初めて導入する1回だけは、処理中がないことを別途確認したうえで
+`MEETING_MINUTES_DEPLOY_GATE_BOOTSTRAP=true`を指定できます。導入後は指定しません。
+
 ## Sandbox security boundary
 
 Sandboxの一般インターネット接続は無効で、Anthropic APIと固定の検索合成hostだけを許可します。OAuth Tokenと

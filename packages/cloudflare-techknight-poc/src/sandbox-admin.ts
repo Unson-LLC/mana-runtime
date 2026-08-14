@@ -37,7 +37,7 @@ async function secureEqual(actual: string | null, expected: string): Promise<boo
   return left.every((value, index) => value === right[index]);
 }
 
-async function isAuthorized(request: Request, token?: string): Promise<boolean> {
+export async function isSandboxAdminAuthorized(request: Request, token?: string): Promise<boolean> {
   if (!token) return false;
   return secureEqual(request.headers.get("authorization"), `Bearer ${token}`);
 }
@@ -51,7 +51,7 @@ export async function handleSandboxAdminRequest(
   env: SandboxAdminEnv,
   dependencies: ProbeDependencies,
 ): Promise<Response> {
-  if (!(await isAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+  if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
   if (request.method !== "POST") {

@@ -63,6 +63,12 @@ export interface MeetingMinutesRun {
     assigneePersonId?: string; assigneeDisplayName?: string }> };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
+  lifecycle?: {
+    actionTs: string;
+    deadlineAt: string;
+    recoveredAt?: string;
+    recoveryProjectedAt?: string;
+  };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */
   revision?: number;
   createdAt: string;
@@ -85,6 +91,13 @@ export interface MeetingMinutesRedo {
   workspaceId: string;
   channelId: string;
   userId: string;
+  actionTs: string;
+}
+
+export interface MeetingMinutesRecovery {
+  kind: "meeting_minutes_recovery";
+  runId: string;
+  workspaceId: string;
   actionTs: string;
 }
 

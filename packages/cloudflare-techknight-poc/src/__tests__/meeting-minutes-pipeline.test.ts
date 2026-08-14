@@ -2,6 +2,7 @@ import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns
 import type { MeetingMinutesDestination, MeetingMinutesRedo, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
+import { loadMeetingMinutesRun } from "../meeting-minutes-state.js";
 
 const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana",
   organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
@@ -32,6 +33,10 @@ describe("meeting minutes pipeline", () => {
       .mockResolvedValueOnce({ title: "定例", overview: "概要", body: "本文" });
     const options = resumeOptions({ postProcessingStatus, generate });
     await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("generator down");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      status: "failed",
+      failure: { stage: "routed", message: "generator down" },
+    });
     const retried = await resumeMeetingMinutesRun(fs, selection, options);
     expect(retried.slack?.processingTs).toBe("3.1");
     expect(postProcessingStatus).toHaveBeenCalledTimes(1);

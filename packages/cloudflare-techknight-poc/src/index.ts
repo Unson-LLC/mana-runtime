@@ -9,6 +9,7 @@ import { DurableObject } from "cloudflare:workers";
 import { handleSlackRequest } from "./slack.js";
 import {
   handleSandboxAdminRequest,
+  isSandboxAdminAuthorized,
 } from "./sandbox-admin.js";
 import {
   createTechKnightSandbox,
@@ -24,7 +25,7 @@ import {
   processMeetingMinutesRedo,
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
-import type { MeetingMinutesDestination, MeetingMinutesRedo, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import type { MeetingMinutesDestination, MeetingMinutesRecovery, MeetingMinutesRedo, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -77,11 +78,15 @@ import {
 } from "./task-board.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
+import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, MEETING_MINUTES_RECOVERY_DELAY_SECONDS,
+  recoverStaleMeetingMinutesRun } from "./meeting-minutes-recovery.js";
+import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
 export { TaskWriteApproval } from "./task-write-approval.js";
 export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
+export { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 
 interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
@@ -115,12 +120,13 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_GRAPH_API_TOKEN?: string;
   CF_VERSION_METADATA?: { id: string; tag?: string };
   TENANT_ID: string;
-  TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo>;
+  TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
   MEETING_MINUTES_WORKSPACE: DurableObjectNamespace<MeetingMinutesWorkspace>;
+  MEETING_MINUTES_DEPLOYMENT_GATE: DurableObjectNamespace<MeetingMinutesDeploymentGate>;
   RUNTIME_SESSION_REGISTRY: DurableObjectNamespace<RuntimeSessionRegistry>;
 }
 
@@ -198,6 +204,10 @@ function runtimeErrorCode(error: unknown): string {
 
 function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runId: string): string {
   return [tenantId, workspaceId, "meeting-minutes", runId].join(":");
+}
+
+function meetingMinutesDeploymentGate(env: Env): DurableObjectStub<MeetingMinutesDeploymentGate> {
+  return env.MEETING_MINUTES_DEPLOYMENT_GATE.get(env.MEETING_MINUTES_DEPLOYMENT_GATE.idFromName(env.TENANT_ID));
 }
 
 function meetingMinutesClients(env: Env) {
@@ -291,6 +301,12 @@ export default {
       return handleSandboxAdminRequest(request, env, {
         createSandbox: (id) => createTechKnightSandbox(env, id),
       });
+    }
+    if (request.method === "GET" && url.pathname === "/admin/meeting-minutes/deploy-gate") {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      return Response.json(await meetingMinutesDeploymentGate(env).status());
     }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
@@ -404,7 +420,7 @@ export default {
     });
   },
 
-  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | TaskBoardRepairEvent>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       if (isTaskBoardRepairEvent(message.body)) {
         await consumeTaskBoardRepair({
@@ -434,6 +450,32 @@ export default {
         }
         continue;
       }
+      if (isMeetingMinutesRecovery(message.body)) {
+        const recovery = message.body;
+        try {
+          const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+            env.TENANT_ID, recovery.workspaceId, recovery.runId,
+          ));
+          const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+          const outcome = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+            const clients = meetingMinutesClients(env);
+            return recoverStaleMeetingMinutesRun(workspace.fs, recovery, {
+              updateStatus: (run, status) => clients.slack.updateRunStatus(run, status),
+            });
+          });
+          if (outcome === "not_due") {
+            await env.TECHKNIGHT_EVENTS.send(recovery, { delaySeconds: 60 });
+          } else if (outcome !== "superseded") {
+            await meetingMinutesDeploymentGate(env).markTerminal(recovery.runId);
+          }
+          message.ack();
+        } catch (error) {
+          console.error(JSON.stringify({ event: "meeting_minutes_recovery_failed", runId: recovery.runId,
+            error: error instanceof Error ? error.message : "unexpected_error" }));
+          message.retry();
+        }
+        continue;
+      }
       if (isMeetingMinutesSelection(message.body)) {
         const selection = message.body;
         if (selection.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
@@ -449,11 +491,29 @@ export default {
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
             const clients = meetingMinutesClients(env);
-            await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, meetingMinutesConfig, clients.resume, {
-              updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
-              logProjectionError: (entry) => console.warn(JSON.stringify({ event: "meeting_minutes_status_projection_failed", ...entry })),
-            });
+            const armed = await armMeetingMinutesRecovery(workspace.fs, selection);
+            if (!armed.terminal) {
+              await meetingMinutesDeploymentGate(env).markActive({ runId: selection.runId,
+                startedAt: new Date().toISOString(),
+                deadlineAt: new Date(Date.now() + armed.delaySeconds * 1_000).toISOString() });
+              await env.TECHKNIGHT_EVENTS.send(armed.event, {
+                delaySeconds: Math.min(armed.delaySeconds, MEETING_MINUTES_RECOVERY_DELAY_SECONDS),
+              });
+            }
+            try {
+              await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, meetingMinutesConfig, clients.resume, {
+                updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
+                logProjectionError: (entry) => console.warn(JSON.stringify({ event: "meeting_minutes_status_projection_failed", ...entry })),
+              });
+            } catch (error) {
+              const persisted = await loadMeetingMinutesRun(workspace.fs, selection.runId);
+              if (persisted?.status === "completed" || persisted?.lifecycle?.recoveryProjectedAt) {
+                await meetingMinutesDeploymentGate(env).markTerminal(selection.runId);
+              }
+              throw error;
+            }
           });
+          await meetingMinutesDeploymentGate(env).markTerminal(selection.runId);
           message.ack();
         } catch (error) {
           console.error(JSON.stringify({ event: "meeting_minutes_selection_failed", runId: selection.runId,
@@ -508,7 +568,7 @@ export default {
         expectedChannelIds: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
           .map((placement) => placement.channelId),
         operatorUserIds: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
-          .find((placement) => placement.channelId === message.body.channelId)
+          .find((placement) => placement.channelId === (message.body as SlackQueueEvent).channelId)
           ?.audience?.allowedUserIds,
         process: async (event) => {
           const placement = resolveRuntimePlacement(event, {
@@ -736,4 +796,4 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await enqueueScheduledTaskBoardRepair(env);
   },
-} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | TaskBoardRepairEvent>;
+} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;
