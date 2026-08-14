@@ -1,5 +1,6 @@
 import {
   applyNewSessionCommand,
+  reconcilePermissionRevision,
   readWorkspaceSession,
   type WorkspaceSessionFs,
 } from "../workspace-session.js";
@@ -42,5 +43,15 @@ describe("workspace session control commands", () => {
       generation: 2,
       lastNewCommandId: "cmd-1786677816.307859-U_UMEDA",
     });
+  });
+
+  it("regenerates the session only when the placement permission revision changes", async () => {
+    const fs = new MemoryFs();
+    await expect(reconcilePermissionRevision(fs, "permissions-v1", "2026-08-14T09:00:00Z"))
+      .resolves.toMatchObject({ generation: 1, changed: false });
+    await expect(reconcilePermissionRevision(fs, "permissions-v1", "2026-08-14T09:01:00Z"))
+      .resolves.toMatchObject({ generation: 1, changed: false });
+    await expect(reconcilePermissionRevision(fs, "permissions-v2", "2026-08-14T09:02:00Z"))
+      .resolves.toMatchObject({ generation: 2, changed: true });
   });
 });

@@ -9,6 +9,7 @@ export interface WorkspaceSessionState {
   lastNewCommandId?: string;
   modelOverride?: string;
   engaged?: boolean;
+  permissionRevision?: string;
   updatedAt?: string;
 }
 
@@ -22,11 +23,23 @@ export async function readWorkspaceSession(fs: WorkspaceSessionFs): Promise<Work
     return Number.isSafeInteger(value.generation) && (value.generation ?? 0) >= 1
       ? { generation: value.generation!, ...(value.lastNewCommandId ? { lastNewCommandId: value.lastNewCommandId } : {}),
           ...(value.modelOverride ? { modelOverride: value.modelOverride } : {}),
-          ...(value.engaged === true ? { engaged: true } : {}), ...(value.updatedAt ? { updatedAt: value.updatedAt } : {}) }
+          ...(value.engaged === true ? { engaged: true } : {}),
+          ...(value.permissionRevision ? { permissionRevision: value.permissionRevision } : {}),
+          ...(value.updatedAt ? { updatedAt: value.updatedAt } : {}) }
       : { generation: 1 };
   } catch {
     return { generation: 1 };
   }
+}
+
+export async function reconcilePermissionRevision(fs: WorkspaceSessionFs, revision: string, updatedAt: string) {
+  const current = await readWorkspaceSession(fs);
+  if (current.permissionRevision === revision) return { ...current, changed: false };
+  const next = { ...current, generation: current.permissionRevision ? current.generation + 1 : current.generation,
+    permissionRevision: revision, updatedAt };
+  delete next.modelOverride;
+  await writeWorkspaceSession(fs, next);
+  return { ...next, changed: Boolean(current.permissionRevision) };
 }
 
 export async function writeWorkspaceSession(fs: WorkspaceSessionFs, state: WorkspaceSessionState): Promise<void> {

@@ -15,6 +15,7 @@ export interface RuntimePlacement {
   taskWriteEnabled: boolean;
   developmentEnabled?: boolean;
   taskBoardEnabled?: boolean;
+  permissionRevision?: string;
   audience?: { type: "operator"; allowedUserIds: string[] };
   agent?: { model: "opus" | "sonnet"; escalationEmployee?: string };
   capabilities?: { mcp: string[]; gatewayTools: string[] };
@@ -85,7 +86,9 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         candidate.projectCodes.some((code) => typeof code !== "string") ||
         (candidate.taskWriteEnabled !== undefined && typeof candidate.taskWriteEnabled !== "boolean") ||
         (candidate.developmentEnabled !== undefined && typeof candidate.developmentEnabled !== "boolean") ||
-        (candidate.taskBoardEnabled !== undefined && typeof candidate.taskBoardEnabled !== "boolean")
+        (candidate.taskBoardEnabled !== undefined && typeof candidate.taskBoardEnabled !== "boolean") ||
+        (candidate.permissionRevision !== undefined &&
+          (typeof candidate.permissionRevision !== "string" || !/^[A-Za-z0-9._-]{1,100}$/.test(candidate.permissionRevision)))
       ) throw new Error("invalid");
       const projectCodes = parseRuntimeProjectCodes(candidate.projectCodes.join(","));
       if (projectCodes.length !== candidate.projectCodes.length) throw new Error("invalid");
@@ -140,6 +143,7 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         taskWriteEnabled: candidate.taskWriteEnabled === true,
         ...(candidate.developmentEnabled === true ? { developmentEnabled: true } : {}),
         ...(candidate.taskBoardEnabled === true ? { taskBoardEnabled: true } : {}),
+        ...(candidate.permissionRevision ? { permissionRevision: candidate.permissionRevision as string } : {}),
         ...(audience ? { audience: { type: "operator", allowedUserIds: [...audience.allowedUserIds as string[]] } } : {}),
         ...(agent ? { agent: { model: agent.model as "opus" | "sonnet", ...(agent.escalationEmployee ? { escalationEmployee: agent.escalationEmployee as string } : {}) } } : {}),
         ...(capabilities ? { capabilities: { mcp: [...capabilities.mcp as string[]], gatewayTools: [...capabilities.gatewayTools as string[]] } } : {}),

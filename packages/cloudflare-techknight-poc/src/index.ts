@@ -49,7 +49,7 @@ import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand } from "./runtime-control-command.js";
-import { markWorkspaceEngaged, readWorkspaceSession } from "./workspace-session.js";
+import { markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
@@ -406,7 +406,8 @@ export default {
             () => getWorkspace(handle),
             async (workspace) => {
               await persistEventOnce(workspace.fs, event);
-              const workspaceSession = await readWorkspaceSession(workspace.fs);
+               await reconcilePermissionRevision(workspace.fs, placement.permissionRevision ?? "legacy-v1", event.receivedAt);
+               const workspaceSession = await readWorkspaceSession(workspace.fs);
               const sessionModel = workspaceSession.modelOverride;
               const claudeRuntime = resolveClaudeRuntimeConfig(
                 env,
