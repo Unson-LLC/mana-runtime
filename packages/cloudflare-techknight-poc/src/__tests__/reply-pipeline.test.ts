@@ -121,6 +121,15 @@ describe("TechKnight Slack reply pipeline", () => {
   it("falls back to the hydrated thread context when the persisted Claude session is busy", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness();
+    const recoverySandbox = {
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      exec: vi.fn().mockResolvedValue({ success: true, stdout: "本人のタスクです。", stderr: "", exitCode: 0 }),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    const createSandbox = vi.fn()
+      .mockReturnValueOnce(sandbox)
+      .mockReturnValueOnce(recoverySandbox);
+    options.createSandbox = createSandbox;
     options.claudeSession = {
       id: "12345678-1234-4123-8123-123456789abc",
       sandboxId: "techknight-session-stable",
@@ -132,15 +141,18 @@ describe("TechKnight Slack reply pipeline", () => {
         stdout: "",
         stderr: "Error: Session ID 12345678-1234-4123-8123-123456789abc is already in use.",
         exitCode: 1,
-      })
-      .mockResolvedValueOnce({ success: true, stdout: "本人のタスクです。", stderr: "", exitCode: 0 });
+      });
 
     await processReplyEvent(fs, event({ threadContext: "直前までのSlackスレッド本文" }), options);
 
-    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    expect(sandbox.exec).toHaveBeenCalledOnce();
     expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
-    expect(sandbox.exec.mock.calls[1][0]).not.toContain("--resume");
-    expect(sandbox.exec.mock.calls[1][0]).not.toContain("--session-id");
+    expect(createSandbox).toHaveBeenCalledTimes(2);
+    expect(createSandbox.mock.calls[1][0]).toMatch(/^techknight-recovery-EvReply123-/);
+    expect(recoverySandbox.writeFile).toHaveBeenCalledOnce();
+    expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--resume");
+    expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--session-id");
+    expect(recoverySandbox.destroy).toHaveBeenCalledOnce();
   });
 
   it("injects only the placement persona, instructions, skills, and escalation employee", async () => {
