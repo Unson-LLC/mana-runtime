@@ -1,4 +1,44 @@
-import { MEETING_MINUTES_CHOOSE_ACTION_ID, type MeetingMinutesDestination, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
+  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, type MeetingMinutesDestination,
+  type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+
+export interface SlackSelectionMessage {
+  replace_original: true;
+  text: string;
+  blocks: Array<Record<string, unknown>>;
+}
+
+export function organizationSelectionMessage(runId: string, fileName: string,
+  destinations: readonly MeetingMinutesDestination[]): SlackSelectionMessage {
+  const preferredOrder = ["unson", "unson-business", "tech-knight"];
+  const organizations = [...new Map(destinations.map((item) => [item.organization.id, item.organization])).values()]
+    .sort((left, right) => {
+      const leftIndex = preferredOrder.indexOf(left.id); const rightIndex = preferredOrder.indexOf(right.id);
+      return (leftIndex < 0 ? preferredOrder.length : leftIndex) - (rightIndex < 0 ? preferredOrder.length : rightIndex);
+    });
+  return { replace_original: true, text: `${fileName} の保存先組織を選択してください。`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*${fileName}* の保存先組織を選択してください。` } },
+    { type: "actions", elements: organizations.map((organization) => ({ type: "button",
+      text: { type: "plain_text", text: organization.name },
+      action_id: `${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:${organization.id}`,
+      value: JSON.stringify({ runId, organizationId: organization.id, fileName }) })) },
+  ] };
+}
+
+export function projectSelectionMessage(runId: string, fileName: string, organizationId: string,
+  destinations: readonly MeetingMinutesDestination[]): SlackSelectionMessage {
+  const projects = destinations.filter((item) => item.organization.id === organizationId);
+  if (!projects.length) throw new Error("meeting_minutes_organization_invalid");
+  const organization = projects[0]!.organization;
+  return { replace_original: true, text: `${fileName} の保存先プロジェクトを選択してください。`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*${fileName}* の保存先プロジェクトを選択してください。\n組織: *${organization.name}*` } },
+    { type: "actions", elements: projects.map((destination) => ({ type: "button",
+      text: { type: "plain_text", text: destination.name }, action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`,
+      value: JSON.stringify({ runId, destinationId: destination.id }) })) },
+    { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "← 組織選択に戻る" },
+      action_id: MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, value: JSON.stringify({ runId, fileName }) }] },
+  ] };
+}
 
 interface SlackApiResponse { ok?: boolean; error?: string; ts?: string }
 async function clientMessageId(seed: string): Promise<string> {
@@ -34,15 +74,20 @@ export class MeetingMinutesSlackClient {
   }
   async requestDestination(run: MeetingMinutesRun, destinations: readonly MeetingMinutesDestination[]): Promise<string> {
     if (!destinations.length) throw new Error("meeting_minutes_destinations_empty");
+    const message = organizationSelectionMessage(run.runId, run.file.name, destinations);
     const result = await this.post("chat.postMessage", { channel: run.sourceChannelId, thread_ts: run.sourceThreadTs,
-      text: `${run.file.name} の保存先プロジェクトを選択してください。`, client_msg_id: await clientMessageId(`${run.runId}-selection`), blocks: [{ type: "section",
-        text: { type: "mrkdwn", text: `*${run.file.name}* の保存先プロジェクトを選択してください。` } },
-      { type: "actions", elements: destinations.map((destination) => ({ type: "button", text: { type: "plain_text", text: destination.name },
-        action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`, value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) })) }] });
+      text: message.text, client_msg_id: await clientMessageId(`${run.runId}-selection`), blocks: message.blocks });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
+  async postProcessingStatus(run: MeetingMinutesRun): Promise<string> {
+    if (!run.destination) throw new Error("meeting_minutes_destination_missing");
+    if (!run.slack?.selectionTs) throw new Error("meeting_minutes_selection_coordinates_missing");
+    await this.setThreadStatus(run, `議事録を作成しています…（${run.destination.name}）`);
+    return run.slack.selectionTs;
+  }
   async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void> {
-    if (!run.slack?.selectionTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
+    if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
+    await this.setThreadStatus(run, "");
     const completed = outcome === "completed";
     const text = completed
       ? `${run.file.name} の議事録を作成しました。`
@@ -59,14 +104,48 @@ export class MeetingMinutesSlackClient {
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id }) }] });
     }
-    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.selectionTs, text, blocks });
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text, blocks });
   }
-  async postParent(channelId: string, text: string, clientMsgId: string): Promise<string> {
-    const result = await this.post("chat.postMessage", { channel: channelId, text, client_msg_id: await clientMessageId(clientMsgId), unfurl_links: false });
+  private async setThreadStatus(run: MeetingMinutesRun, status: string): Promise<void> {
+    try {
+      await this.post("assistant.threads.setStatus", {
+        channel_id: run.sourceChannelId,
+        thread_ts: run.sourceThreadTs,
+        status,
+      });
+    } catch (error) {
+      console.error(JSON.stringify({ event: "meeting_minutes_thread_status_failed", runId: run.runId,
+        message: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+  async postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string> {
+    const text = `📝 会議要約: ${fileName}`;
+    const blocks = [
+      { type: "section", text: { type: "mrkdwn", text: `📝 *会議要約: ${fileName}*\n\n_AI生成による要約です_` } },
+      { type: "divider" },
+      { type: "section", text: { type: "mrkdwn", text: summary } },
+      { type: "divider" },
+      { type: "context", elements: [{ type: "mrkdwn", text: "💬 _詳細な議事録はこの投稿のスレッドに投稿されます_" }] },
+    ];
+    const result = await this.post("chat.postMessage", { channel: channelId, text, blocks,
+      client_msg_id: await clientMessageId(clientMsgId), unfurl_links: false });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
-  async postThreadChunk(channelId: string, threadTs: string, text: string, clientMsgId: string): Promise<string> {
-    const result = await this.post("chat.postMessage", { channel: channelId, thread_ts: threadTs, text, client_msg_id: await clientMessageId(clientMsgId),
+  async postThreadChunk(channelId: string, threadTs: string, fileName: string, minutes: string,
+    index: number, total: number, clientMsgId: string): Promise<string> {
+    const first = index === 0; const last = index === total - 1;
+    const text = first ? `📄 詳細議事録: ${fileName}` : `📄 詳細議事録（続き ${index + 1}/${total}）`;
+    const blocks: Array<Record<string, unknown>> = [];
+    if (first) blocks.push(
+      { type: "section", text: { type: "mrkdwn", text: `📄 *詳細議事録: ${fileName}*\n\n_AI生成による詳細な議事録です_` } },
+      { type: "divider" },
+    );
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: minutes } });
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: last
+      ? "🤖 _この議事録はAIにより自動生成されました。必要に応じて内容をご確認ください。_"
+      : `📜 _続きがあります（${total}件中 ${index + 1}件目）_` }] });
+    const result = await this.post("chat.postMessage", { channel: channelId, thread_ts: threadTs, text, blocks,
+      client_msg_id: await clientMessageId(clientMsgId),
       unfurl_links: false }); if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
 }

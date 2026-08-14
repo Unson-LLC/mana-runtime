@@ -3,7 +3,8 @@ import type { MeetingMinutesDestination, MeetingMinutesSelection } from "../meet
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
-const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana", slackChannelId: "CDEST",
+const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana",
+  organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
   github: { owner: "Unson-LLC", repo: "mana", pathPrefix: "docs" } };
 const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId: "T1", channelId: "CROUTER",
   threadTs: "1.1", messageTs: "1.1", eventType: "message", subtype: "file_share", text: "", receivedAt: "now",
@@ -12,6 +13,7 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
   workspaceId: "T1", channelId: "CROUTER", userId: "U1", actionTs: "2.1" };
 function resumeOptions(overrides: Record<string, unknown> = {}) {
   return { destinations: [destination], download: vi.fn().mockResolvedValue("transcript"),
+    postProcessingStatus: vi.fn().mockResolvedValue("3.1"),
     generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
@@ -20,6 +22,22 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("meeting minutes pipeline", () => {
+  it("persists one processing reply before generation and reuses it on retry", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const postProcessingStatus = vi.fn().mockResolvedValue("3.1");
+    const generate = vi.fn().mockRejectedValueOnce(new Error("generator down"))
+      .mockResolvedValueOnce({ title: "定例", overview: "概要", body: "本文" });
+    const options = resumeOptions({ postProcessingStatus, generate });
+    await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("generator down");
+    const retried = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(retried.slack?.processingTs).toBe("3.1");
+    expect(postProcessingStatus).toHaveBeenCalledTimes(1);
+    expect(postProcessingStatus).toHaveBeenCalledWith(expect.objectContaining({
+      sourceChannelId: "CROUTER", sourceThreadTs: "1.1", destination: expect.objectContaining({ id: "mana" }),
+    }));
+  });
+
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
     const fs = new MemoryFs(); const requestDestination = vi.fn().mockResolvedValue("2.1");
     const first = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", destinations: [destination], requestDestination });
@@ -49,8 +67,13 @@ describe("meeting minutes pipeline", () => {
     );
     expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42" }]);
     expect(options.postThreadChunk).toHaveBeenCalledWith(
-      "CDEST", "10.1", expect.stringContaining("Brainbaseタスク自動登録: 1件"), expect.any(String),
+      "CDEST", "10.1", "meeting.txt", expect.stringContaining("Brainbaseへタスクを1件登録しました"),
+      expect.any(Number), expect.any(Number), expect.any(String),
     );
+    const taskSummary = options.postThreadChunk.mock.calls.find((call: unknown[]) =>
+      String(call[3]).includes("Brainbaseへタスクを"))?.[3];
+    expect(taskSummary).toContain("1. 請求書を送る");
+    expect(taskSummary).not.toContain("task-42");
   });
 
   it("accepts minutes with no explicit tasks without creating a task", async () => {
@@ -101,11 +124,14 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(run.status).toBe("completed"); expect(order).toEqual(["github", "slack-parent", "slack-chunk"]);
-    expect(options.postParent).toHaveBeenCalledWith("CDEST", "*定例*\n概要", "Ev1_F1-parent");
+    expect(options.postParent).toHaveBeenCalledWith("CDEST", "meeting.txt", "*定例*\n概要", "Ev1_F1-parent");
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST",
       "10.1",
-      "*定例*\n概要\n\n------------\n\n本文",
+      "meeting.txt",
+      "------------\n\n本文",
+      0,
+      1,
       "Ev1_F1-chunk-0",
     );
   });
@@ -120,7 +146,10 @@ describe("meeting minutes pipeline", () => {
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST",
       "10.1",
-      "*定例*\n概要\n\n------------\n議題",
+      "meeting.txt",
+      "------------\n議題",
+      0,
+      1,
       "Ev1_F1-chunk-0",
     );
   });

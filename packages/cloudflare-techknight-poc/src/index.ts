@@ -22,7 +22,7 @@ import {
   processMeetingMinutesSlackEvent,
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
-import type { MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import type { MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
@@ -67,6 +67,7 @@ import {
   isTaskBoardRepairEvent,
   type TaskBoardRepairEvent,
 } from "./task-board.js";
+import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -101,6 +102,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_SLACK_PERSON_MAP_JSON?: string;
   BRAINBASE_GRAPH_API_BASE_URL?: string;
   BRAINBASE_GRAPH_API_TOKEN?: string;
+  CF_VERSION_METADATA?: { id: string; tag?: string };
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
@@ -136,6 +138,14 @@ function workspaceName(event: SlackQueueEvent): string {
   return runtimeWorkspaceName(event);
 }
 
+function runtimeErrorCode(error: unknown): string {
+  if (error instanceof ReplyPipelineError) return error.code;
+  if (typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
+  return "unexpected_error";
+}
+
 function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runId: string): string {
   return [tenantId, workspaceId, "meeting-minutes", runId].join(":");
 }
@@ -152,6 +162,7 @@ function meetingMinutesClients(env: Env) {
   return {
     slack,
     resume: {
+      postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
       download: (fileId: string) => slack.downloadTextFile(fileId),
       generate: (transcript: string) => {
         if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("oauth_not_configured");
@@ -165,10 +176,11 @@ function meetingMinutesClients(env: Env) {
             fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
         return client.createTask(input, idempotencyKey);
       },
-      postParent: (channelId: string, text: string, clientMsgId: string) =>
-        destinationSlack(channelId).postParent(channelId, text, clientMsgId),
-      postThreadChunk: (channelId: string, threadTs: string, text: string, clientMsgId: string) =>
-        destinationSlack(channelId).postThreadChunk(channelId, threadTs, text, clientMsgId),
+      postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
+        destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
+      postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
+        index: number, total: number, clientMsgId: string) =>
+        destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
     },
   };
 }
@@ -348,6 +360,11 @@ export default {
             placements: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON),
           });
           const placementClaudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
+          const trace: TurnRuntimeTrace = { placementId: placement.placementId, projectCodes: placement.projectCodes,
+            actorIdHash: await actorIdHash(event), workerVersion: env.CF_VERSION_METADATA?.id,
+            model: placementClaudeRuntime.model, effort: placementClaudeRuntime.effort };
+          emitTurnLog("log", "mana_turn_received", event, trace, { outcome: "accepted", eventType: event.eventType });
+          emitTurnLog("log", "mana_placement_resolved", event, trace, { outcome: "resolved", taskWriteEnabled: placement.taskWriteEnabled });
           await upsertRuntimeSession(env.RUNTIME_SESSION_REGISTRY, {
             sessionId: workspaceName(event), placementId: placement.placementId, workspaceId: event.workspaceId,
             channelId: event.channelId, threadTs: event.threadTs, ...(event.userId ? { requesterId: event.userId } : {}),
@@ -471,6 +488,7 @@ export default {
                     requesterProfile: profileResolution.profile,
                     graphContext: graphContext.content,
                     capabilities: placement.capabilities,
+                    trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     });
@@ -481,14 +499,7 @@ export default {
         },
         log: (entry) => console.log(JSON.stringify(entry)),
         logError: (entry) => console.error(JSON.stringify(entry)),
-        errorCode: (error) => {
-          if (error instanceof ReplyPipelineError) return error.code;
-          if (
-            typeof error === "object" && error !== null &&
-            typeof (error as { code?: unknown }).code === "string"
-          ) return (error as { code: string }).code;
-          return "unexpected_error";
-        },
+        errorCode: runtimeErrorCode,
       });
     }
   },

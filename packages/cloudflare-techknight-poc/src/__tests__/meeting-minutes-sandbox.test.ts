@@ -1,4 +1,4 @@
-import { generateMeetingMinutesInSandbox } from "../meeting-minutes-generator.js";
+import { generateMeetingMinutesInSandbox, parseGeneratedMeetingMinutesOutput } from "../meeting-minutes-generator.js";
 
 describe("generateMeetingMinutesInSandbox", () => {
   it("uses the isolated prompt file and validates strict JSON", async () => {
@@ -35,5 +35,22 @@ describe("generateMeetingMinutesInSandbox", () => {
     await expect(generateMeetingMinutesInSandbox("transcript", { model: "opus", effort: "xhigh" }, sandbox))
       .rejects.toThrow("meeting_minutes_generation_invalid");
     expect(sandbox.destroy).toHaveBeenCalled();
+  });
+
+  it("recovers JSON from Claude prose and a markdown fence", () => {
+    expect(parseGeneratedMeetingMinutesOutput([
+      "議事録を作成しました。", "```json",
+      JSON.stringify({ title: "定例", overview: "概要", body: "本文", tasks: [] }),
+      "```",
+    ].join("\n"))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
+  });
+
+  it("accepts Claude JSON envelopes and omitted empty tasks", () => {
+    expect(parseGeneratedMeetingMinutesOutput(JSON.stringify({
+      type: "result", result: JSON.stringify({ title: "定例", overview: "概要", body: "本文" }),
+    }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
+    expect(parseGeneratedMeetingMinutesOutput(JSON.stringify({
+      structured_output: { title: "定例", overview: "概要", body: "本文", tasks: [] },
+    }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
   });
 });

@@ -4,7 +4,8 @@ import type { MeetingMinutesDestination, MeetingMinutesSelection } from "../meet
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
-const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana", slackChannelId: "CDEST",
+const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana",
+  organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
   github: { owner: "Unson-LLC", repo: "mana", pathPrefix: "docs" } };
 const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId: "T1", channelId: "CROUTER",
   threadTs: "1.1", messageTs: "1.1", eventType: "message", subtype: "file_share", text: "", receivedAt: "now",
@@ -19,7 +20,7 @@ async function setup() {
   return fs;
 }
 function resume(overrides: Record<string, unknown> = {}) {
-  return { download: vi.fn().mockResolvedValue("transcript"),
+  return { postProcessingStatus: vi.fn().mockResolvedValue("3.1"), download: vi.fn().mockResolvedValue("transcript"),
     generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" }),

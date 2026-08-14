@@ -1,11 +1,14 @@
 import type { SlackFileReference } from "./types.js";
 
 export const MEETING_MINUTES_CHOOSE_ACTION_ID = "mana_meeting_minutes_choose_destination";
+export const MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID = "mana_meeting_minutes_choose_organization";
+export const MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID = "mana_meeting_minutes_back_to_organizations";
 
 export interface MeetingMinutesDestination {
   id: string;
   projectId: string;
   name: string;
+  organization: { id: string; name: string };
   slackChannelId: string;
   github: { owner: string; repo: string; branch?: string; pathPrefix?: string };
 }
@@ -49,7 +52,7 @@ export interface MeetingMinutesRun {
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
   taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string }> };
-  slack?: { selectionTs?: string; parentTs?: string; postedChunkIndexes: number[] };
+  slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   createdAt: string;
   updatedAt: string;

@@ -1,4 +1,9 @@
-import { MEETING_MINUTES_CHOOSE_ACTION_ID, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
+  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, type MeetingMinutesDestination,
+  type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
+import { organizationSelectionMessage, projectSelectionMessage,
+  type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { verifySlackRequest } from "./slack.js";
 
 interface InteractionOptions {
@@ -6,6 +11,8 @@ interface InteractionOptions {
   expectedTeamId: string;
   expectedAppId?: string;
   operatorUserIds: ReadonlySet<string>;
+  destinations?: readonly MeetingMinutesDestination[];
+  resolveDestinations?(): readonly MeetingMinutesDestination[];
   nowMs?: number;
   send(selection: MeetingMinutesSelection): Promise<unknown>;
   updateOriginal?(responseUrl: string, message: SlackInteractionMessage): Promise<void>;
@@ -13,13 +20,9 @@ interface InteractionOptions {
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string }): Promise<Response>;
 }
 
-export interface SlackInteractionMessage {
-  replace_original: true;
-  text: string;
-  blocks: Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
-}
+export type SlackInteractionMessage = SlackSelectionMessage;
 
-export interface MeetingMinutesInteractionEnvironment {
+export interface MeetingMinutesInteractionEnvironment extends MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
@@ -66,6 +69,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
 ): Promise<Response> {
   return handleMeetingMinutesInteraction(request, { signingSecret: env.SLACK_SIGNING_SECRET,
     expectedTeamId: env.SLACK_EXPECTED_TEAM_ID, expectedAppId: env.SLACK_EXPECTED_APP_ID, operatorUserIds,
+    resolveDestinations: () => meetingMinutesRuntimeConfig(env).destinations,
     send: (selection) => env.TECHKNIGHT_EVENTS.send(selection),
     updateOriginal: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
     defer: (work) => ctx.waitUntil(work), approveTaskWrite });
@@ -98,26 +102,51 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
   const actionId = string(action?.action_id);
-  if (actionId !== MEETING_MINUTES_CHOOSE_ACTION_ID && !actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)) {
+  const destinationAction = actionId === MEETING_MINUTES_CHOOSE_ACTION_ID || actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`);
+  const organizationAction = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`);
+  const backAction = actionId === MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID;
+  if (!destinationAction && !organizationAction && !backAction) {
     return response("slack_interaction_invalid", 400);
   }
   let value: Record<string, unknown> | undefined;
   try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
+  const organizationId = string(value?.organizationId); const fileName = string(value?.fileName);
   const actionTs = string(action?.action_ts);
-  const responseUrl = slackResponseUrl(payload?.response_url);
-  if (!runId || !destinationId || !channelId || !actionTs || !responseUrl || !options.updateOriginal || !options.defer) {
+  let destinations: readonly MeetingMinutesDestination[] | undefined;
+  try { destinations = options.destinations ?? options.resolveDestinations?.(); }
+  catch { return response("slack_interaction_invalid", 400); }
+  if ((organizationAction || backAction)) {
+    const responseUrl = string(payload?.response_url);
+    const actionOrganizationId = organizationAction
+      ? actionId?.slice(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`.length)
+      : undefined;
+    if (!runId || !fileName || !responseUrl || !options.updateOriginal || !options.defer || !destinations ||
+      (organizationAction && actionOrganizationId !== organizationId)) {
+      return response("slack_interaction_invalid", 400);
+    }
+    let message: SlackInteractionMessage;
+    try {
+      message = organizationAction
+        ? projectSelectionMessage(runId, fileName, organizationId ?? "", destinations)
+        : organizationSelectionMessage(runId, fileName, destinations);
+    } catch { return response("slack_interaction_invalid", 400); }
+    options.defer(options.updateOriginal(responseUrl, message));
+    return Response.json({ ok: true });
+  }
+  if (!runId || !destinationId || !channelId || !actionTs || !options.defer) {
+    return response("slack_interaction_invalid", 400);
+  }
+  const qualifiedDestinationId = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)
+    ? actionId.slice(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`.length)
+    : undefined;
+  if ((qualifiedDestinationId && qualifiedDestinationId !== destinationId) ||
+    (destinations && !destinations.some((item) => item.id === destinationId))) {
     return response("slack_interaction_invalid", 400);
   }
   options.defer((async () => {
     await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
       channelId, userId, actionTs });
-    await options.updateOriginal!(responseUrl, {
-      replace_original: true,
-      text: "議事録を作成中です。",
-      blocks: [{ type: "section", text: { type: "mrkdwn",
-        text: ":hourglass_flowing_sand: *保存先を受け付けました*\n議事録を作成中です。完了すると共有先へ投稿します。" } }],
-    });
   })());
   return Response.json({ ok: true });
 }

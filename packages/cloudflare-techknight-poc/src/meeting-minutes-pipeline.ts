@@ -14,29 +14,35 @@ export interface StartMeetingMinutesOptions {
 }
 export interface ResumeMeetingMinutesOptions {
   destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
+  postProcessingStatus(run: MeetingMinutesRun): Promise<string>;
   download(fileId: string): Promise<string>;
   generate(transcript: string, destination: MeetingMinutesDestination): Promise<GeneratedMeetingMinutes>;
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string }>;
-  postParent(channelId: string, text: string, clientMsgId: string): Promise<string>;
-  postThreadChunk(channelId: string, threadTs: string, text: string, clientMsgId: string): Promise<string>;
+  postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string>;
+  postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
+    index: number, total: number, clientMsgId: string): Promise<string>;
 }
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
 function destinationIsValid(value: MeetingMinutesDestination): boolean {
   return /^[A-Za-z0-9_-]{1,128}$/.test(value.id) && !!value.projectId.trim() && !!value.name.trim() &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(value.organization?.id ?? "") && !!value.organization?.name.trim() &&
     /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim();
 }
 export function validateMeetingMinutesDestinations(destinations: readonly MeetingMinutesDestination[]): void {
   if (!destinations.length || destinations.length > 25 || destinations.some((item) => !destinationIsValid(item)) ||
-    new Set(destinations.map((item) => item.id)).size !== destinations.length) {
+    new Set(destinations.map((item) => item.id)).size !== destinations.length ||
+    destinations.some((item) => destinations.some((candidate) => candidate.organization.id === item.organization.id &&
+      candidate.organization.name !== item.organization.name))) {
     throw new Error("meeting_minutes_destinations_invalid");
   }
 }
 
 function sameDestination(left: MeetingMinutesDestination, right: MeetingMinutesDestination): boolean {
   return left.id === right.id && left.projectId === right.projectId && left.name === right.name &&
+    (!left.organization || (left.organization.id === right.organization.id && left.organization.name === right.organization.name)) &&
     left.slackChannelId === right.slackChannelId && left.github.owner === right.github.owner &&
     left.github.repo === right.github.repo && (left.github.branch ?? "main") === (right.github.branch ?? "main") &&
     (left.github.pathPrefix ?? "") === (right.github.pathPrefix ?? "");
@@ -83,8 +89,9 @@ async function taskIdempotencyKey(runId: string, index: number): Promise<string>
 function taskSummary(run: MeetingMinutesRun): string {
   const registered = run.taskRegistration?.registered ?? [];
   if (!registered.length) return "";
-  return ["*Brainbaseタスク自動登録*", `Brainbaseタスク自動登録: ${registered.length}件`,
-    ...[...registered].sort((left, right) => left.index - right.index).map((task) => `• ${task.title}（${task.taskId}）`)].join("\n");
+  return [`*✅ Brainbaseへタスクを${registered.length}件登録しました*`,
+    ...[...registered].sort((left, right) => left.index - right.index)
+      .map((task, index) => `${index + 1}. ${task.title}`)].join("\n");
 }
 
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
@@ -120,6 +127,11 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   run.destination ??= structuredClone(configured); run.approvedBy ??= selection.userId;
   run.status = run.status === "awaiting_destination" ? "routed" : run.status; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
+  run.slack ??= { postedChunkIndexes: [] };
+  if (!run.slack.processingTs) {
+    run.slack.processingTs = await options.postProcessingStatus(run);
+    run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+  }
   let transcript = "";
   try {
     if (!run.github) {
@@ -139,19 +151,18 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     await registerGeneratedTasks(fs, run, options);
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = run.generated!.body.trimStart();
-    const narrativeText = body.startsWith("------------")
-      ? `${parentText}\n\n${body}`
-      : `${parentText}\n\n------------\n\n${body}`;
+    const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
     const summary = taskSummary(run);
     const chunks = splitMeetingMinutesForSlack(summary ? `${narrativeText}\n\n------------\n\n${summary}` : narrativeText);
     run.slack ??= { postedChunkIndexes: [] };
     if (!run.slack.parentTs) {
-      run.slack.parentTs = await options.postParent(run.destination.slackChannelId, parentText, `${run.runId}-parent`);
+      run.slack.parentTs = await options.postParent(run.destination.slackChannelId, run.file.name, parentText, `${run.runId}-parent`);
       run.status = "posting"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     for (let index = 0; index < chunks.length; index += 1) {
       if (run.slack.postedChunkIndexes.includes(index)) continue;
-      await options.postThreadChunk(run.destination.slackChannelId, run.slack.parentTs, chunks[index]!, `${run.runId}-chunk-${index}`);
+      await options.postThreadChunk(run.destination.slackChannelId, run.slack.parentTs, run.file.name, chunks[index]!,
+        index, chunks.length, `${run.runId}-chunk-${index}`);
       run.slack.postedChunkIndexes.push(index); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     run.status = "completed"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); return run;

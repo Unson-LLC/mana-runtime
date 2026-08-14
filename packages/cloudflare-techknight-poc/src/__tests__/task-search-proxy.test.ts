@@ -136,6 +136,42 @@ describe("Cloudflare task search proxy", () => {
     });
   });
 
+  it("logs the effective search scope and zero result without raw names or secrets", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const upstream = vi.fn().mockResolvedValue(Response.json({
+      items: [],
+      has_more: false,
+      next_cursor: null,
+      read_status: "complete",
+    }));
+    const response = await createTaskSearchProxyHandler(upstream)(new Request(
+      "https://task-search.internal/api/companion/tasks/search?query=SYNTHETIC_PERSON_QUERY",
+      { headers: {
+        "x-mana-trace-id": "EvTrace123",
+        "x-mana-trace-placement-id": "mana-dev-biz",
+        "x-mana-trace-project-codes": "unson",
+        "x-mana-trace-call-index": "1",
+      } },
+    ), env());
+
+    expect(response.status).toBe(200);
+    const entries = logSpy.mock.calls.map(([entry]) => entry as Record<string, unknown>);
+    expect(entries).toContainEqual(expect.objectContaining({
+      schemaVersion: "mana.turn.v1",
+      event: "mana_task_search_completed",
+      traceId: "EvTrace123",
+      placementId: "mana-dev-biz",
+      expectedProjectCodes: ["unson"],
+      effectiveProjectCodes: ["back-office", "brainbase"],
+      scopeMatches: false,
+      resultCount: 0,
+      readStatus: "complete",
+    }));
+    expect(JSON.stringify(entries)).not.toContain("SYNTHETIC_PERSON_QUERY");
+    expect(JSON.stringify(entries)).not.toContain(SECRET);
+    logSpy.mockRestore();
+  });
+
   it("rejects an oversized upstream response", async () => {
     const upstream = vi.fn().mockResolvedValue(new Response("x".repeat(262_145), {
       headers: { "content-type": "application/json" },

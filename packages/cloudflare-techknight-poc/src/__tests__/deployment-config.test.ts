@@ -5,6 +5,12 @@ import { describe, expect, it } from "vitest";
 interface DeploymentConfig {
   account_id?: string;
   name: string;
+  observability?: {
+    enabled: boolean;
+    head_sampling_rate: number;
+    logs: { invocation_logs: boolean };
+  };
+  version_metadata?: { binding: string };
   vars: Record<string, string>;
   durable_objects: {
     bindings: Array<{ name: string; class_name: string }>;
@@ -81,6 +87,12 @@ describe("会社別Cloudflare deployment", () => {
 
   it("雲孫事業運営を信頼済みworkspace、channel、projectへ固定する", () => {
     expect(unson.account_id).toBe("788e556343893a7135c29b782c22fb24");
+    expect(unson.observability).toEqual({
+      enabled: true,
+      head_sampling_rate: 1,
+      logs: { invocation_logs: true },
+    });
+    expect(unson.version_metadata).toEqual({ binding: "CF_VERSION_METADATA" });
     expect(unson.vars).toMatchObject({
       TENANT_ID: "unson-business",
       SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
@@ -221,6 +233,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD");
     const destinations = JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON);
+    expect([...new Map(destinations.map((item: { organization: { id: string; name: string } }) =>
+      [item.organization.id, item.organization.name])).entries()]).toEqual([
+      ["unson-business", "雲孫 事業運営"], ["unson", "雲孫"], ["tech-knight", "Tech Knight"],
+    ]);
     expect(destinations).toHaveLength(12);
     expect(destinations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "back-office", projectId: "proj_back_office", slackChannelId: "C0BKS6RL99T",

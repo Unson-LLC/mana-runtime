@@ -6,6 +6,11 @@ import {
 } from "@openryoko/task-runtime-core";
 
 import { parseRuntimeProjectCodes } from "./runtime-config.js";
+import {
+  emitStructuredLog,
+  safeTraceId,
+  type TurnLogLevel,
+} from "./turn-observability.js";
 
 export const TASK_SEARCH_PROXY_HOST = "task-search.internal";
 export const TASK_SEARCH_PATH = "/api/companion/tasks/search";
@@ -30,6 +35,46 @@ export interface TaskSearchProxyEnv {
 }
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+interface TaskSearchTrace {
+  traceId: string;
+  placementId?: string;
+  expectedProjectCodes: string[];
+  callIndex?: number;
+}
+
+function taskSearchTrace(request: Request): TaskSearchTrace {
+  const placement = request.headers.get("x-mana-trace-placement-id") ?? "";
+  const expectedProjectCodes = (request.headers.get("x-mana-trace-project-codes") ?? "")
+    .split(",")
+    .filter((code) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(code));
+  const callIndexValue = request.headers.get("x-mana-trace-call-index") ?? "";
+  const callIndex = /^[1-3]$/.test(callIndexValue) ? Number(callIndexValue) : undefined;
+  return {
+    traceId: safeTraceId(request.headers.get("x-mana-trace-id")) ?? "untracked",
+    ...(placement && /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(placement)
+      ? { placementId: placement }
+      : {}),
+    expectedProjectCodes,
+    ...(callIndex ? { callIndex } : {}),
+  };
+}
+
+function logTaskSearch(
+  level: TurnLogLevel,
+  event: string,
+  trace: TaskSearchTrace,
+  fields: Record<string, unknown>,
+): void {
+  emitStructuredLog(level, {
+    ...fields,
+    event,
+    traceId: trace.traceId,
+    ...(trace.placementId ? { placementId: trace.placementId } : {}),
+    expectedProjectCodes: trace.expectedProjectCodes,
+    ...(trace.callIndex ? { callIndex: trace.callIndex } : {}),
+  });
+}
 
 function jsonError(error: string, status: number): Response {
   return Response.json({ error }, { status });
@@ -215,7 +260,13 @@ async function enforceBoundedJsonResponse(response: Response): Promise<Response>
 
 export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
   return async (request: Request, env: TaskSearchProxyEnv): Promise<Response> => {
+    const trace = taskSearchTrace(request);
+    const startedAt = Date.now();
     if (env.RUNTIME_TASK_SEARCH_ENABLED !== "true") {
+      logTaskSearch("warn", "mana_task_search_failed", trace, {
+        outcome: "disabled",
+        reasonCode: "task_search_disabled",
+      });
       return jsonError("task_search_disabled", 503);
     }
 
@@ -224,11 +275,15 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
       requestedQuery = validateRequest(request);
     } catch (error) {
       const code = error instanceof Error ? error.message : "invalid_request";
+      logTaskSearch("warn", "mana_task_search_failed", trace, {
+        outcome: "rejected",
+        reasonCode: code,
+        durationMs: Date.now() - startedAt,
+      });
       if (code === "not_found") return jsonError(code, 404);
       if (code === "method_not_allowed") return jsonError(code, 405);
       return jsonError("task_search_invalid_request", 400);
     }
-
     let projectCodes: string[];
     let upstreamOrigin: string;
     try {
@@ -238,8 +293,26 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
       }
       upstreamOrigin = resolveUpstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL);
     } catch {
+      logTaskSearch("error", "mana_task_search_failed", trace, {
+        outcome: "error",
+        reasonCode: "task_search_not_configured",
+        durationMs: Date.now() - startedAt,
+      });
       return jsonError("task_search_not_configured", 503);
     }
+    const scopeMatches = trace.expectedProjectCodes.length === 0 || (
+      trace.expectedProjectCodes.length === projectCodes.length &&
+      trace.expectedProjectCodes.every((code) => projectCodes.includes(code))
+    );
+    const searchFields = {
+      queryChars: requestedQuery.query.length,
+      assigneeFilterPresent: Boolean(requestedQuery.assignee_person_id),
+      cursorPresent: Boolean(requestedQuery.cursor),
+      limit: requestedQuery.limit,
+      effectiveProjectCodes: projectCodes,
+      scopeMatches,
+    };
+    logTaskSearch("log", "mana_task_search_started", trace, searchFields);
     let payload: unknown;
     try {
       const query = applyTrustedProjectFilter(requestedQuery, projectCodes);
@@ -264,19 +337,56 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
         const code = error.code === "task_store_invalid_response"
           ? "task_search_upstream_invalid_response"
           : "task_search_upstream_failed";
+        logTaskSearch("error", "mana_task_search_failed", trace, {
+          ...searchFields,
+          outcome: "error",
+          reasonCode: code,
+          durationMs: Date.now() - startedAt,
+        });
         return jsonError(code, 502);
       }
       if (error instanceof Error && error.message === "task_search_response_too_large") {
+        logTaskSearch("error", "mana_task_search_failed", trace, {
+          ...searchFields,
+          outcome: "error",
+          reasonCode: error.message,
+          durationMs: Date.now() - startedAt,
+        });
         return jsonError(error.message, 502);
       }
       if (error instanceof Error && error.message === "invalid_upstream_response") {
+        logTaskSearch("error", "mana_task_search_failed", trace, {
+          ...searchFields,
+          outcome: "error",
+          reasonCode: "task_search_upstream_invalid_response",
+          durationMs: Date.now() - startedAt,
+        });
         return jsonError("task_search_upstream_invalid_response", 502);
       }
+      logTaskSearch("error", "mana_task_search_failed", trace, {
+        ...searchFields,
+        outcome: "error",
+        reasonCode: "task_search_upstream_unavailable",
+        durationMs: Date.now() - startedAt,
+      });
       return jsonError("task_search_upstream_unavailable", 502);
     }
 
     try {
-      return Response.json(sanitizePage(payload, new Set(projectCodes)));
+      const sanitized = sanitizePage(payload, new Set(projectCodes)) as {
+        items: unknown[];
+        has_more: boolean;
+        read_status?: string;
+      };
+      logTaskSearch("log", "mana_task_search_completed", trace, {
+        ...searchFields,
+        outcome: "success",
+        resultCount: sanitized.items.length,
+        hasMore: sanitized.has_more,
+        readStatus: sanitized.read_status ?? "unspecified",
+        durationMs: Date.now() - startedAt,
+      });
+      return Response.json(sanitized);
     } catch (error) {
       const code = error instanceof Error && [
         "task_search_response_too_large",
@@ -284,6 +394,12 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
       ].includes(error.message)
         ? error.message
         : "task_search_upstream_invalid_response";
+      logTaskSearch("error", "mana_task_search_failed", trace, {
+        ...searchFields,
+        outcome: "error",
+        reasonCode: code,
+        durationMs: Date.now() - startedAt,
+      });
       return jsonError(code, 502);
     }
   };

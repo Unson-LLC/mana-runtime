@@ -87,6 +87,30 @@ describe("task-search stdio MCP", () => {
     expect(url).not.toContain("project_code");
   });
 
+  it("propagates only bounded trace metadata to the Worker proxy", async () => {
+    vi.stubEnv("MANA_TRACE_ID", "EvTrace123");
+    vi.stubEnv("MANA_TRACE_PLACEMENT_ID", "mana-dev-biz");
+    vi.stubEnv("MANA_TRACE_PROJECT_CODES", "unson");
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [], has_more: false }));
+      await processTaskSearchRpcMessage({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "search_tasks", arguments: { query: "SYNTHETIC_PERSON_QUERY" } },
+      }, fetchMock);
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const headers = new Headers(init.headers);
+      expect(headers.get("x-mana-trace-id")).toBe("EvTrace123");
+      expect(headers.get("x-mana-trace-placement-id")).toBe("mana-dev-biz");
+      expect(headers.get("x-mana-trace-project-codes")).toBe("unson");
+      expect(headers.get("x-mana-trace-call-index")).toBe("1");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("limits one MCP process to three bounded searches", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [], has_more: false }));
     const state = { searchCalls: 0 };
