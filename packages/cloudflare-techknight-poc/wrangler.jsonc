@@ -26,6 +26,10 @@
       {
         "name": "TASK_WRITE_BUDGETS",
         "class_name": "TaskWriteBudget"
+      },
+      {
+        "name": "RUNTIME_SESSION_REGISTRY",
+        "class_name": "RuntimeSessionRegistry"
       }
     ]
   },
@@ -41,6 +45,10 @@
     {
       "tag": "v3",
       "new_sqlite_classes": ["TaskWriteBudget"]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["RuntimeSessionRegistry"]
     }
   ],
   "containers": [

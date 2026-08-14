@@ -19,13 +19,14 @@ export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMi
     const task = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
     const taskTitle = nonEmpty(task.title, 200); if (!taskTitle) return undefined;
     const description = nonEmpty(task.description, 4_000);
+    const assignee_name = nonEmpty(task.assignee_name, 200);
     const rawPriority = nonEmpty(task.priority, 16)?.toLowerCase();
     const priority = rawPriority && ["low", "medium", "high", "urgent"].includes(rawPriority)
       ? rawPriority as MeetingMinutesTaskCandidate["priority"] : undefined;
     const rawDueAt = nonEmpty(task.due_at, 64);
     const due_at = rawDueAt && /^\d{4}-\d{2}-\d{2}$/.test(rawDueAt) ? `${rawDueAt}T00:00:00+09:00`
       : rawDueAt && !Number.isNaN(Date.parse(rawDueAt)) ? rawDueAt : undefined;
-    return { title: taskTitle, ...(description ? { description } : {}), ...(priority ? { priority } : {}),
+    return { title: taskTitle, ...(description ? { description } : {}), ...(assignee_name ? { assignee_name } : {}), ...(priority ? { priority } : {}),
       ...(due_at ? { due_at } : {}) };
   });
   if (tasks.some((task) => !task)) throw new Error("meeting_minutes_generation_invalid");
@@ -100,7 +101,7 @@ function generationPrompt(transcript: string): string {
     "tasksには、会議中に実行することが明示されたアクションだけを最大20件入れてください。推測でタスク、担当者、期限を補わないでください。該当がなければ空配列にしてください。",
     "文字起こしにない事実、決定、約束、肩書きを発明しないでください。根拠が薄い場合は不足している根拠を明記してください。",
     "出力はMarkdown fenceを付けず、次のJSONオブジェクトだけにしてください。",
-    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"会議タイトルと2〜4段落の概要","body":"区切り線、トピック別の物語的本文、アクションアイテムを含むSlack mrkdwn","tasks":[{"title":"実行内容","description":"会議で確認できた背景と担当者","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}]}',
+    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"会議タイトルと2〜4段落の概要","body":"区切り線、トピック別の物語的本文、アクションアイテムを含むSlack mrkdwn","tasks":[{"title":"実行内容","description":"会議で確認できた背景","assignee_name":"文字起こしで明示された担当者名。未確認なら省略","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}]}',
     "", "文字起こし:", bounded,
   ].join("\n");
 }

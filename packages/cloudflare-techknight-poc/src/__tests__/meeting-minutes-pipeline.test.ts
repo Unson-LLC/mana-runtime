@@ -76,6 +76,33 @@ describe("meeting minutes pipeline", () => {
     expect(taskSummary).not.toContain("task-42");
   });
 
+  it("resolves a named assignee to the canonical person id before task creation", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn().mockResolvedValue({ id: "task-42" });
+    const resolveAssignee = vi.fn().mockResolvedValue({ status: "resolved", personId: "per_umeda" });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
+        { title: "請求書を送る", assignee_name: "梅田 遼" },
+      ] }), createTask, resolveAssignee,
+    }));
+    expect(resolveAssignee).toHaveBeenCalledWith("梅田 遼", "mana");
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ assignee_person_id: "per_umeda" }), expect.any(String));
+    expect(createTask.mock.calls[0]?.[0]).not.toHaveProperty("assignee_name");
+  });
+
+  it.each(["unknown", "ambiguous", "unavailable"])("fails closed when named assignee is %s", async (status) => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn();
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
+        { title: "請求書を送る", assignee_name: "梅田 遼" },
+      ] }), createTask, resolveAssignee: vi.fn().mockResolvedValue({ status }),
+    }))).rejects.toThrow(`meeting_minutes_assignee_${status}`);
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
   it("accepts minutes with no explicit tasks without creating a task", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

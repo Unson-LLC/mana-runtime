@@ -1,4 +1,5 @@
 import type { SlackQueueEvent } from "./types.js";
+import type { RuntimeRespondPolicy } from "./runtime-respond-policy.js";
 
 export interface RuntimeBinding {
   tenantId: string;
@@ -12,6 +13,16 @@ export interface RuntimePlacement {
   channelId: string;
   projectCodes: string[];
   taskWriteEnabled: boolean;
+  developmentEnabled?: boolean;
+  taskBoardEnabled?: boolean;
+  permissionRevision?: string;
+  audience?: { type: "operator"; allowedUserIds: string[] };
+  agent?: { model: "opus" | "sonnet"; escalationEmployee?: string };
+  capabilities?: { mcp: string[]; gatewayTools: string[] };
+  dataScopes?: { graph: { mode: "read-only"; scopes: string[] } };
+  deliveryScopes?: Array<{ connector: "slack"; channelId: string }>;
+  respondTo?: RuntimeRespondPolicy;
+  runtimeContext?: { persona: string; instructions: string[]; skills: string[] };
 }
 
 export interface ResolvedRuntimePlacement extends RuntimeBinding, RuntimePlacement {}
@@ -73,15 +84,74 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         !Array.isArray(candidate.projectCodes) ||
         candidate.projectCodes.length === 0 ||
         candidate.projectCodes.some((code) => typeof code !== "string") ||
-        (candidate.taskWriteEnabled !== undefined && typeof candidate.taskWriteEnabled !== "boolean")
+        (candidate.taskWriteEnabled !== undefined && typeof candidate.taskWriteEnabled !== "boolean") ||
+        (candidate.developmentEnabled !== undefined && typeof candidate.developmentEnabled !== "boolean") ||
+        (candidate.taskBoardEnabled !== undefined && typeof candidate.taskBoardEnabled !== "boolean") ||
+        (candidate.permissionRevision !== undefined &&
+          (typeof candidate.permissionRevision !== "string" || !/^[A-Za-z0-9._-]{1,100}$/.test(candidate.permissionRevision)))
       ) throw new Error("invalid");
       const projectCodes = parseRuntimeProjectCodes(candidate.projectCodes.join(","));
       if (projectCodes.length !== candidate.projectCodes.length) throw new Error("invalid");
+      const audience = candidate.audience as Record<string, unknown> | undefined;
+      if (audience !== undefined && (
+        typeof audience !== "object" || audience === null || audience.type !== "operator" ||
+        !Array.isArray(audience.allowedUserIds) || audience.allowedUserIds.length === 0 ||
+        audience.allowedUserIds.some((id) => typeof id !== "string" || !/^U[A-Z0-9]{2,31}$/.test(id))
+      )) throw new Error("invalid");
+      const agent = candidate.agent as Record<string, unknown> | undefined;
+      if (agent !== undefined && (
+        typeof agent !== "object" || agent === null ||
+        (agent.model !== "opus" && agent.model !== "sonnet") ||
+        (agent.escalationEmployee !== undefined && typeof agent.escalationEmployee !== "string")
+      )) throw new Error("invalid");
+      const capabilities = candidate.capabilities as Record<string, unknown> | undefined;
+      if (capabilities !== undefined && (
+        typeof capabilities !== "object" || capabilities === null ||
+        !Array.isArray(capabilities.mcp) || capabilities.mcp.some((v) => typeof v !== "string") ||
+        !Array.isArray(capabilities.gatewayTools) || capabilities.gatewayTools.some((v) => typeof v !== "string")
+      )) throw new Error("invalid");
+      const dataScopes = candidate.dataScopes as RuntimePlacement["dataScopes"] | undefined;
+      if (dataScopes !== undefined && (
+        dataScopes?.graph?.mode !== "read-only" || !Array.isArray(dataScopes.graph.scopes) ||
+        dataScopes.graph.scopes.some((v) => typeof v !== "string")
+      )) throw new Error("invalid");
+      const deliveryScopes = candidate.deliveryScopes as RuntimePlacement["deliveryScopes"] | undefined;
+      if (deliveryScopes !== undefined && (
+        !Array.isArray(deliveryScopes) || deliveryScopes.length === 0 ||
+        deliveryScopes.some((scope) => scope?.connector !== "slack" || typeof scope.channelId !== "string")
+      )) throw new Error("invalid");
+      const respondTo = candidate.respondTo as Record<string, unknown> | undefined;
+      const respondModes = new Set<unknown>(["always", "mention", "never"]);
+      if (respondTo !== undefined && (
+        typeof respondTo !== "object" || respondTo === null ||
+        !respondModes.has(respondTo.im) || !respondModes.has(respondTo.mpim) ||
+        !respondModes.has(respondTo.channel) || typeof respondTo.engagedThreads !== "boolean"
+      )) throw new Error("invalid");
+      const runtimeContext = candidate.runtimeContext as Record<string, unknown> | undefined;
+      if (runtimeContext !== undefined && (
+        typeof runtimeContext !== "object" || runtimeContext === null ||
+        typeof runtimeContext.persona !== "string" || runtimeContext.persona.trim().length === 0 || runtimeContext.persona.length > 500 ||
+        !Array.isArray(runtimeContext.instructions) || runtimeContext.instructions.length === 0 ||
+        runtimeContext.instructions.some((value) => typeof value !== "string" || value.trim().length === 0 || value.length > 500) ||
+        !Array.isArray(runtimeContext.skills) || runtimeContext.skills.length === 0 ||
+        runtimeContext.skills.some((value) => typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(value))
+      )) throw new Error("invalid");
       return {
         placementId: candidate.placementId,
         channelId: candidate.channelId,
         projectCodes,
         taskWriteEnabled: candidate.taskWriteEnabled === true,
+        ...(candidate.developmentEnabled === true ? { developmentEnabled: true } : {}),
+        ...(candidate.taskBoardEnabled === true ? { taskBoardEnabled: true } : {}),
+        ...(candidate.permissionRevision ? { permissionRevision: candidate.permissionRevision as string } : {}),
+        ...(audience ? { audience: { type: "operator", allowedUserIds: [...audience.allowedUserIds as string[]] } } : {}),
+        ...(agent ? { agent: { model: agent.model as "opus" | "sonnet", ...(agent.escalationEmployee ? { escalationEmployee: agent.escalationEmployee as string } : {}) } } : {}),
+        ...(capabilities ? { capabilities: { mcp: [...capabilities.mcp as string[]], gatewayTools: [...capabilities.gatewayTools as string[]] } } : {}),
+        ...(dataScopes ? { dataScopes } : {}),
+        ...(deliveryScopes ? { deliveryScopes } : {}),
+        ...(respondTo ? { respondTo: respondTo as unknown as RuntimeRespondPolicy } : {}),
+        ...(runtimeContext ? { runtimeContext: { persona: runtimeContext.persona as string,
+          instructions: [...runtimeContext.instructions as string[]], skills: [...runtimeContext.skills as string[]] } } : {}),
       };
     });
     if (

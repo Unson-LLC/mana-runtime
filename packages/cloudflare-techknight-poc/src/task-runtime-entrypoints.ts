@@ -1,5 +1,5 @@
 import { signTaskWriteCapability } from "@openryoko/write-broker";
-import { parseRuntimeProjectCodes } from "./runtime-config.js";
+import { parseRuntimePlacements, parseRuntimeProjectCodes } from "./runtime-config.js";
 import {
   refreshTaskBoard,
   type TaskBoardEnv,
@@ -25,6 +25,7 @@ interface TaskBoardRuntimeEnv extends TaskBoardEnv {
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   TASK_BOARD_REPAIRS: { send(message: TaskBoardRepairEvent): Promise<unknown> };
+  RUNTIME_PLACEMENTS_JSON?: string;
 }
 
 interface QueueMessageLike<T> {
@@ -38,6 +39,7 @@ export async function issueTaskWriteRequestContext(
   env: TaskWriteRuntimeEnv,
   now = Date.now(),
   placement?: TaskWritePlacement,
+  requesterPersonId?: string,
 ): Promise<{ taskWriteEnabled: boolean; taskWriteCapability?: string }> {
   if (env.RUNTIME_TASK_WRITE_ENABLED !== "true" || placement?.taskWriteEnabled === false) return { taskWriteEnabled: false };
   const projects = placement?.projectCodes ?? parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
@@ -51,7 +53,8 @@ export async function issueTaskWriteRequestContext(
       version: 1,
       audience: "mana-task-write",
       requestId: event.eventId,
-      actor: { provider: "slack", id: event.userId, workspace: event.workspaceId },
+      actor: { provider: "slack", id: event.userId, workspace: event.workspaceId,
+        ...(requesterPersonId ? { personId: requesterPersonId } : {}) },
       placementId,
       projects,
       operations: ["task.create", "task.update", "task.transition"],
@@ -68,17 +71,21 @@ export async function consumeTaskBoardRepair(
   refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
 ): Promise<void> {
   const repair = message.body;
+  const placement = env.RUNTIME_PLACEMENTS_JSON
+    ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).find((candidate) => candidate.channelId === repair.channelId && candidate.taskBoardEnabled)
+    : undefined;
   if (
     repair.tenantId !== env.TENANT_ID ||
     repair.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
-    repair.channelId !== env.SLACK_ALLOWED_CHANNEL_ID
+    (env.RUNTIME_PLACEMENTS_JSON ? !placement : repair.channelId !== env.SLACK_ALLOWED_CHANNEL_ID)
   ) {
     console.error(JSON.stringify({ event: "task_board_repair_rejected", reason: "scope_mismatch" }));
     message.ack();
     return;
   }
   try {
-    await refresh(env);
+    await refresh(placement ? { ...env, SLACK_ALLOWED_CHANNEL_ID: placement.channelId,
+      RUNTIME_PROJECT_CODES: placement.projectCodes.join(",") } : env);
     message.ack();
   } catch (error) {
     console.error(JSON.stringify({ event: "task_board_repair_failed", code: error instanceof Error ? error.message : "unknown" }));
@@ -91,12 +98,17 @@ export async function enqueueScheduledTaskBoardRepair(
   now = new Date().toISOString(),
 ): Promise<void> {
   if (env.RUNTIME_TASK_BOARD_ENABLED !== "true") return;
-  await env.TASK_BOARD_REPAIRS.send({
-    eventType: "task_board_repair",
-    tenantId: env.TENANT_ID,
-    workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-    channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-    reason: "scheduled",
-    requestedAt: now,
-  });
+  const placements = env.RUNTIME_PLACEMENTS_JSON
+    ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).filter((placement) => placement.taskBoardEnabled)
+    : [{ channelId: env.SLACK_ALLOWED_CHANNEL_ID }];
+  for (const placement of placements) {
+    await env.TASK_BOARD_REPAIRS.send({
+      eventType: "task_board_repair",
+      tenantId: env.TENANT_ID,
+      workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+      channelId: placement.channelId,
+      reason: "scheduled",
+      requestedAt: now,
+    });
+  }
 }

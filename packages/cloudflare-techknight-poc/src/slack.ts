@@ -124,12 +124,14 @@ export function normalizeSlackEvent(
   const userId = nonEmptyString(payload.event.user);
   const botId = nonEmptyString(payload.event.bot_id);
   const subtype = nonEmptyString(payload.event.subtype);
+  const channelType = nonEmptyString(payload.event.channel_type);
   const files = normalizeSlackFiles(payload.event.files);
   return {
     tenantId,
     eventId,
     workspaceId: expectedTeamId,
     channelId,
+    ...(channelType ? { channelType } : {}),
     threadTs: nonEmptyString(payload.event.thread_ts) ?? messageTs,
     messageTs,
     ...(userId ? { userId } : {}),

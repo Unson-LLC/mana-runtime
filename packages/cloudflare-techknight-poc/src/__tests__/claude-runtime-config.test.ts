@@ -21,7 +21,6 @@ describe("Cloudflare Claude runtime config", () => {
     [{ RUNTIME_CLAUDE_MODEL: "", RUNTIME_CLAUDE_EFFORT: "xhigh" }, "runtime_claude_model_invalid"],
     [{ RUNTIME_CLAUDE_MODEL: " opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }, "runtime_claude_model_invalid"],
     [{ RUNTIME_CLAUDE_MODEL: "OPUS", RUNTIME_CLAUDE_EFFORT: "xhigh" }, "runtime_claude_model_invalid"],
-    [{ RUNTIME_CLAUDE_MODEL: "sonnet", RUNTIME_CLAUDE_EFFORT: "xhigh" }, "runtime_claude_model_invalid"],
     [{ RUNTIME_CLAUDE_MODEL: "opus; touch /tmp/pwned", RUNTIME_CLAUDE_EFFORT: "xhigh" }, "runtime_claude_model_invalid"],
     [{ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "" }, "runtime_claude_effort_invalid"],
     [{ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh " }, "runtime_claude_effort_invalid"],
@@ -32,6 +31,16 @@ describe("Cloudflare Claude runtime config", () => {
     expect(() => resolveClaudeRuntimeConfig(bindings)).toThrow(
       expect.objectContaining({ code }),
     );
+  });
+
+  it("uses the Lightsail-compatible sonnet placement model without inheriting opus effort", () => {
+    const config = resolveClaudeRuntimeConfig({
+      RUNTIME_CLAUDE_MODEL: "opus",
+      RUNTIME_CLAUDE_EFFORT: "xhigh",
+    }, "sonnet");
+    expect(config).toEqual({ model: "sonnet" });
+    expect(buildRuntimeClaudeCommand("reply", config)).toContain("--model sonnet --permission-mode");
+    expect(buildRuntimeClaudeCommand("reply", config)).not.toContain("--effort");
   });
 
   it("builds commands exclusively from finite validated tokens", () => {

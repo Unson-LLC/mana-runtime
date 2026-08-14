@@ -26,6 +26,47 @@ function message(body = event()) {
 }
 
 describe("TechKnight queue consumer", () => {
+  it("acknowledges a non-operator without invoking the reply pipeline", async () => {
+    const input = message(event({ userId: "U_OUTSIDE" }));
+    const process = vi.fn();
+    const log = vi.fn();
+
+    await consumeTechKnightMessage(input, {
+      expectedWorkspaceId: "T_TECHKNIGHT",
+      expectedChannelId: "C_MANA_TEST",
+      operatorUserIds: ["U_OPERATOR", "U_UMEDA"],
+      process,
+      log,
+    } as Parameters<typeof consumeTechKnightMessage>[1]);
+
+    expect(process).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith({
+      event: "techknight_slack_reply_ignored",
+      eventId: input.body.eventId,
+      channelId: input.body.channelId,
+      reason: "operator_not_allowed",
+    });
+    expect(input.ack).toHaveBeenCalledOnce();
+    expect(input.retry).not.toHaveBeenCalled();
+  });
+
+  it("processes a requester present in the operator allowlist", async () => {
+    const input = message(event({ userId: "U_UMEDA" }));
+    const process = vi.fn().mockResolvedValue({ outcome: "replied" });
+
+    await consumeTechKnightMessage(input, {
+      expectedWorkspaceId: "T_TECHKNIGHT",
+      expectedChannelId: "C_MANA_TEST",
+      operatorUserIds: ["U_OPERATOR", "U_UMEDA"],
+      process,
+    } as Parameters<typeof consumeTechKnightMessage>[1]);
+
+    expect(process).toHaveBeenCalledOnce();
+    expect(process).toHaveBeenCalledWith(input.body);
+    expect(input.ack).toHaveBeenCalledOnce();
+    expect(input.retry).not.toHaveBeenCalled();
+  });
+
   it("acknowledges a successfully processed event", async () => {
     const input = message();
     const process = vi.fn().mockResolvedValue({ outcome: "replied" });

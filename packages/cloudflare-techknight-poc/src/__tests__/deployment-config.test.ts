@@ -111,11 +111,37 @@ describe("会社別Cloudflare deployment", () => {
       MEETING_MINUTES_OPERATOR_USER_IDS: "U088D1HBY6L,U0BKP8D3KPD",
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
+      DEVELOPMENT_RUNNER_BASE_URL: "https://mana.unson.jp/runtime-development",
+      DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
-      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true },
+      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: true },
-      { placementId: "mana-dev-biz", channelId: "C0BMNSP6C80", projectCodes: ["unson"], taskWriteEnabled: false },
+      {
+        placementId: "mana-dev-biz",
+        channelId: "C0BMNSP6C80",
+        projectCodes: ["mana"],
+        taskWriteEnabled: true,
+        taskBoardEnabled: true,
+        developmentEnabled: true,
+        audience: { type: "operator", allowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
+        agent: { model: "sonnet", escalationEmployee: "critical-reviewer" },
+        runtimeContext: {
+          persona: "Ryoko（佐藤圭吾のパーソナルAIアシスタント兼AI組織のCOO）",
+          instructions: ["結論を先に日本語で簡潔かつ具体的に答える", "確認できないことは推測せず不確実性を正直に伝える", "利用者の意図を先読みして次の行動を提案する"],
+          skills: ["cron-manager", "find-and-install", "management", "migrate", "new", "onboarding", "self-heal", "skill-creator", "status", "sync"],
+        },
+        respondTo: { im: "never", mpim: "never", channel: "mention", engagedThreads: true },
+        capabilities: {
+          mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
+          gatewayTools: [
+            "send_message", "create_task", "list_tasks", "update_task", "transition_task",
+            "list_sessions", "get_session", "list_employees", "get_employee",
+          ],
+        },
+        dataScopes: { graph: { mode: "read-only", scopes: ["org:unson"] } },
+        deliveryScopes: [{ connector: "slack", channelId: "C0BMNSP6C80" }],
+      },
     ]);
   });
 
@@ -168,9 +194,10 @@ describe("会社別Cloudflare deployment", () => {
     const sandboxPath = fileURLToPath(new URL("../sandbox-runtime.ts", import.meta.url));
     const sandboxRuntime = readFileSync(sandboxPath, "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
-    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST]');
+    expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST]');
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest");
+    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env) => handleRuntimeGatewayProxyRequest(request, env)");
     expect(sandboxRuntime).not.toContain('"bb.unson.jp"');
   });
 
@@ -261,10 +288,11 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
+    expect(worker).toContain("issueTaskWriteRequestContext(");
+    expect(worker).toContain("placement, requesterResolution.personId");
     expect(worker).toContain("env.SLACK_BOT_TOKEN_UNSON");
     expect(worker).toContain('destination.organization.id === "unson"');
     expect(worker).toContain('destination.organization.id === "tech-knight"');
-    expect(worker).toContain("issueTaskWriteRequestContext(event, env, Date.now(), placement)");
     expect(worker).toContain("consumeTaskBoardRepair({");
   });
 
@@ -278,7 +306,8 @@ describe("会社別Cloudflare deployment", () => {
       ]));
     }
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
-    expect(worker).toContain("issueTaskWriteRequestContext(event, env, Date.now(), placement)");
+    expect(worker).toContain("issueTaskWriteRequestContext(");
+    expect(worker).toContain("placement, requesterResolution.personId");
     expect(worker).toContain("consumeTaskBoardRepair({");
     expect(worker).toContain("enqueueScheduledTaskBoardRepair(env)");
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');

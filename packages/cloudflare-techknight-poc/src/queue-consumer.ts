@@ -11,6 +11,7 @@ export interface QueueConsumerOptions {
   expectedWorkspaceId: string;
   expectedChannelId?: string;
   expectedChannelIds?: readonly string[];
+  operatorUserIds?: readonly string[];
   process(event: SlackQueueEvent): Promise<{ outcome: string }>;
   log?(entry: Record<string, string>): void;
   logError?(entry: Record<string, string>): void;
@@ -47,12 +48,18 @@ export async function consumeTechKnightMessage(
     options.expectedChannelId,
     options.expectedChannelIds,
   );
-  if (mismatchReason) {
+  const rejectionReason = mismatchReason ?? (
+    options.operatorUserIds !== undefined &&
+    (!event.userId || !options.operatorUserIds.includes(event.userId))
+      ? "operator_not_allowed"
+      : undefined
+  );
+  if (rejectionReason) {
     options.log?.({
       event: "techknight_slack_reply_ignored",
       eventId: event.eventId,
       channelId: event.channelId,
-      reason: mismatchReason,
+      reason: rejectionReason,
     });
     message.ack();
     return;
