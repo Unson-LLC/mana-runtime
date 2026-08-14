@@ -1,4 +1,5 @@
 const LEASE_MS = 15 * 60 * 1_000;
+import type { SlackQueueEvent } from "./types.js";
 
 interface Transaction {
   get<T>(key: string): Promise<T | undefined>;
@@ -20,6 +21,13 @@ interface EventClaim {
 function key(eventId: string): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(eventId)) throw new Error("event_id_invalid");
   return `runtime-event:${eventId}`;
+}
+
+export function runtimeDeliveryId(event: Pick<SlackQueueEvent, "eventId" | "messageTs" | "eventType">): string {
+  if (/^\d{10,16}\.\d{1,12}$/.test(event.messageTs)) {
+    return `message_${event.messageTs.replace(".", "_")}`;
+  }
+  return event.eventId;
 }
 
 export async function claimRuntimeEvent(storage: TransactionalStorage, eventId: string, now = Date.now()): Promise<boolean> {
