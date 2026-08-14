@@ -130,7 +130,7 @@ describe("会社別Cloudflare deployment", () => {
           instructions: ["結論を先に日本語で簡潔かつ具体的に答える", "確認できないことは推測せず不確実性を正直に伝える", "利用者の意図を先読みして次の行動を提案する"],
           skills: ["cron-manager", "find-and-install", "management", "migrate", "new", "onboarding", "self-heal", "skill-creator", "status", "sync"],
         },
-        respondTo: { im: "never", mpim: "never", channel: "mention", engagedThreads: true },
+        respondTo: { im: "always", mpim: "mention", channel: "mention", engagedThreads: true },
         capabilities: {
           mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
           gatewayTools: [

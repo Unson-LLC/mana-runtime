@@ -171,9 +171,18 @@ export function resolveRuntimePlacement(
 ): ResolvedRuntimePlacement {
   if (event.tenantId !== config.tenantId) throw new RuntimeBindingError("tenant_not_allowed");
   if (event.workspaceId !== config.workspaceId) throw new RuntimeBindingError("workspace_not_allowed");
-  const placement = config.placements.find((candidate) => candidate.channelId === event.channelId);
-  if (!placement) throw new RuntimeBindingError("channel_not_allowed");
-  return { tenantId: config.tenantId, workspaceId: config.workspaceId, ...placement };
+  const channelPlacement = config.placements.find((candidate) => candidate.channelId === event.channelId);
+  if (channelPlacement) return { tenantId: config.tenantId, workspaceId: config.workspaceId, ...channelPlacement };
+
+  // Slack DM channel IDs are created per conversation and cannot be listed as a
+  // static placement channel. Bind only an explicitly enabled, unique placement
+  // whose audience contains the actor.
+  const dmScope = event.channelType === "im" ? "im" : event.channelType === "mpim" ? "mpim" : undefined;
+  const dmPlacements = dmScope ? config.placements.filter((candidate) =>
+    candidate.respondTo?.[dmScope] !== undefined && candidate.respondTo[dmScope] !== "never" &&
+    candidate.audience?.allowedUserIds.includes(event.userId ?? "") === true) : [];
+  if (dmPlacements.length !== 1) throw new RuntimeBindingError("channel_not_allowed");
+  return { tenantId: config.tenantId, workspaceId: config.workspaceId, ...dmPlacements[0], channelId: event.channelId };
 }
 
 export function resolveRuntimeBinding(

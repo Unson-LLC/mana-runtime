@@ -48,6 +48,32 @@ describe("Cloudflare runtime binding", () => {
     })).toThrow(expect.objectContaining({ code: "channel_not_allowed" }));
   });
 
+  it("binds an operator DM to the single placement that explicitly enables IM replies", () => {
+    const placements = parseRuntimePlacements(JSON.stringify([
+      { placementId: "mana-dev-biz", channelId: "C_DEV", projectCodes: ["mana"],
+        audience: { type: "operator", allowedUserIds: ["U123"] },
+        respondTo: { im: "always", mpim: "never", channel: "mention", engagedThreads: true } },
+      { placementId: "other", channelId: "C_OTHER", projectCodes: ["other"],
+        respondTo: { im: "never", mpim: "never", channel: "mention", engagedThreads: false } },
+    ]));
+    expect(resolveRuntimePlacement(event({ channelId: "D_DM", channelType: "im", eventType: "message", userId: "U123" }), {
+      tenantId: "techknight", workspaceId: "T_TECHKNIGHT", placements,
+    })).toMatchObject({ placementId: "mana-dev-biz", channelId: "D_DM", projectCodes: ["mana"] });
+  });
+
+  it("fails closed when a DM placement is unauthorized, missing, or ambiguous", () => {
+    const base = { placementId: "mana", channelId: "C_MANA", projectCodes: ["mana"], taskWriteEnabled: false,
+      audience: { type: "operator" as const, allowedUserIds: ["U_USER"] },
+      respondTo: { im: "always" as const, mpim: "never" as const, channel: "mention" as const, engagedThreads: true } };
+    const dm = event({ channelId: "D_DM", channelType: "im", eventType: "message" });
+    expect(() => resolveRuntimePlacement({ ...dm, userId: "U_OUTSIDE" }, {
+      tenantId: "techknight", workspaceId: "T_TECHKNIGHT", placements: [base],
+    })).toThrow(expect.objectContaining({ code: "channel_not_allowed" }));
+    expect(() => resolveRuntimePlacement(dm, {
+      tenantId: "techknight", workspaceId: "T_TECHKNIGHT", placements: [base, { ...base, placementId: "second", channelId: "C_SECOND" }],
+    })).toThrow(expect.objectContaining({ code: "channel_not_allowed" }));
+  });
+
   it("retains an explicit development boundary and rejects non-boolean values", () => {
     expect(parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], developmentEnabled: true }])))
       .toMatchObject([{ placementId: "dev", developmentEnabled: true }]);
