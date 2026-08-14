@@ -13,8 +13,9 @@ export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMi
   const title = nonEmpty(record.title, 200); const overview = nonEmpty(record.overview, 3000);
   const body = nonEmpty(record.body, 100_000);
   if (!title || !overview || !body) throw new Error("meeting_minutes_generation_invalid");
-  if (!Array.isArray(record.tasks) || record.tasks.length > 20) throw new Error("meeting_minutes_generation_invalid");
-  const tasks = record.tasks.map((item): MeetingMinutesTaskCandidate | undefined => {
+  const rawTasks = record.tasks === undefined ? [] : record.tasks;
+  if (!Array.isArray(rawTasks) || rawTasks.length > 20) throw new Error("meeting_minutes_generation_invalid");
+  const tasks = rawTasks.map((item): MeetingMinutesTaskCandidate | undefined => {
     const task = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
     const taskTitle = nonEmpty(task.title, 200); if (!taskTitle) return undefined;
     const description = nonEmpty(task.description, 4_000);
@@ -29,6 +30,48 @@ export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMi
   });
   if (tasks.some((task) => !task)) throw new Error("meeting_minutes_generation_invalid");
   return { title, overview, body, tasks: tasks as MeetingMinutesTaskCandidate[] };
+}
+
+function balancedJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
+    let depth = 0; let inString = false; let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "{") depth += 1;
+      else if (character === "}" && --depth === 0) {
+        objects.push(text.slice(start, index + 1)); break;
+      }
+    }
+  }
+  return objects;
+}
+
+export function parseGeneratedMeetingMinutesOutput(stdout: string): GeneratedMeetingMinutes {
+  const candidates = [stdout.trim(), ...balancedJsonObjects(stdout)];
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate) as unknown;
+      const wrapper = value && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown> : undefined;
+      const unwrapped = wrapper?.structured_output ?? wrapper?.structuredOutput ?? value;
+      try { return parseGeneratedMeetingMinutes(unwrapped); } catch {
+        if (typeof wrapper?.result === "string") {
+          for (const nested of [wrapper.result.trim(), ...balancedJsonObjects(wrapper.result)]) {
+            try { return parseGeneratedMeetingMinutes(JSON.parse(nested)); } catch { /* try next candidate */ }
+          }
+        }
+      }
+    } catch { /* try next candidate */ }
+  }
+  throw new Error("meeting_minutes_generation_invalid");
 }
 
 export function splitMeetingMinutesForSlack(body: string, maxChars = 2_900): string[] {
@@ -75,9 +118,7 @@ export async function generateMeetingMinutesInSandbox(
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
     });
     if (!result.success) throw new Error("meeting_minutes_generation_failed");
-    let value: unknown;
-    try { value = JSON.parse(result.stdout.trim()); } catch { throw new Error("meeting_minutes_generation_invalid"); }
-    return parseGeneratedMeetingMinutes(value);
+    return parseGeneratedMeetingMinutesOutput(result.stdout);
   } finally {
     await sandbox.destroy().catch(() => undefined);
   }
