@@ -45,6 +45,7 @@ import {
 } from "./meeting-task-pipeline.js";
 import {
   parseRuntimePlacements,
+  RuntimeBindingError,
   resolveRuntimePlacement,
   runWithReplyTaskSearchBinding,
 } from "./runtime-config.js";
@@ -561,6 +562,22 @@ export default {
         });
         continue;
       }
+      const ordinaryEvent = message.body as SlackQueueEvent;
+      const ordinaryPlacements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      let resolvedPlacement;
+      try {
+        resolvedPlacement = resolveRuntimePlacement(ordinaryEvent, {
+          tenantId: env.TENANT_ID,
+          workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+          placements: ordinaryPlacements,
+        });
+      } catch (error) {
+        console.log(JSON.stringify({ event: "techknight_slack_reply_ignored", eventId: ordinaryEvent.eventId,
+          channelId: ordinaryEvent.channelId,
+          reason: error instanceof RuntimeBindingError ? error.code : "placement_not_allowed" }));
+        message.ack();
+        continue;
+      }
       await consumeTechKnightMessage({
         body: message.body as SlackQueueEvent,
         ack: () => message.ack(),
@@ -570,17 +587,10 @@ export default {
         // meeting-minutes router is also a normal Lightsail placement.
         expectedTenantId: env.TENANT_ID,
         expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-        expectedChannelIds: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
-          .map((placement) => placement.channelId),
-        operatorUserIds: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
-          .find((placement) => placement.channelId === (message.body as SlackQueueEvent).channelId)
-          ?.audience?.allowedUserIds,
+        expectedChannelIds: [resolvedPlacement.channelId],
+        operatorUserIds: resolvedPlacement.audience?.allowedUserIds,
         process: async (event) => {
-          const placement = resolveRuntimePlacement(event, {
-            tenantId: env.TENANT_ID,
-            workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-            placements: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON),
-          });
+          const placement = resolvedPlacement;
           const placementClaudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
           const trace: TurnRuntimeTrace = { placementId: placement.placementId, projectCodes: placement.projectCodes,
             actorIdHash: await actorIdHash(event), workerVersion: env.CF_VERSION_METADATA?.id,
