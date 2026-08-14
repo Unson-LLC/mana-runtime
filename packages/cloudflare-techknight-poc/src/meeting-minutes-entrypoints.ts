@@ -8,6 +8,7 @@ export interface MeetingMinutesEnvironment {
   MEETING_MINUTES_ENABLED?: string;
   MEETING_MINUTES_ROUTER_CHANNEL_ID?: string;
   MEETING_MINUTES_DESTINATIONS_JSON?: string;
+  MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON?: string;
   MEETING_MINUTES_OPERATOR_USER_IDS?: string;
 }
 export interface MeetingMinutesRuntimeConfig {
@@ -29,7 +30,12 @@ export function meetingMinutesRuntimeConfig(env: MeetingMinutesEnvironment): Mee
   if (!/^[A-Z0-9]+$/.test(routerChannelId) || !operatorUserIds.size || !env.MEETING_MINUTES_DESTINATIONS_JSON) {
     throw new Error("meeting_minutes_config_incomplete");
   }
-  return { enabled, routerChannelId, destinations: parseDestinations(env.MEETING_MINUTES_DESTINATIONS_JSON), operatorUserIds };
+  const destinations = parseDestinations(env.MEETING_MINUTES_DESTINATIONS_JSON);
+  if (env.MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON) {
+    destinations.push(...parseDestinations(env.MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON));
+    validateMeetingMinutesDestinations(destinations);
+  }
+  return { enabled, routerChannelId, destinations, operatorUserIds };
 }
 
 export function isMeetingMinutesSlackEvent(event: SlackQueueEvent, config: MeetingMinutesRuntimeConfig): boolean {
