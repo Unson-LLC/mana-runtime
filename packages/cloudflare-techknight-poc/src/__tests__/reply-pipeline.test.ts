@@ -119,6 +119,9 @@ describe("TechKnight Slack reply pipeline", () => {
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+          MANA_TRACE_ID: "EvReply123",
+          MANA_TRACE_PLACEMENT_ID: undefined,
+          MANA_TRACE_PROJECT_CODES: undefined,
         },
       },
     );
@@ -266,6 +269,48 @@ describe("TechKnight Slack reply pipeline", () => {
     expect([...fs.files.values()].join("\n")).not.toContain("proxy-injected");
   });
 
+  it("emits searchable turn logs with the effective Claude model and effort", async () => {
+    const fs = new MemoryFs();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { options } = harness({
+      trace: {
+        placementId: "mana-dev-biz",
+        projectCodes: ["unson"],
+        actorIdHash: "actor-hash",
+        workerVersion: "worker-version-1",
+      },
+    });
+
+    await processReplyEvent(fs, event({ text: "<@U_BOT> 私のタスクは？" }), options);
+
+    const entries = logSpy.mock.calls
+      .map(([entry]) => entry)
+      .filter((entry): entry is Record<string, unknown> => (
+        typeof entry === "object" && entry !== null &&
+        (entry as Record<string, unknown>).schemaVersion === "mana.turn.v1"
+      ));
+    expect(entries.map((entry) => entry.event)).toEqual([
+      "mana_thread_context_hydrated",
+      "mana_claude_started",
+      "mana_claude_completed",
+      "mana_slack_reply_posted",
+    ]);
+    for (const entry of entries) {
+      expect(entry).toMatchObject({
+        traceId: "EvReply123",
+        placementId: "mana-dev-biz",
+        projectCodes: ["unson"],
+        actorIdHash: "actor-hash",
+        workerVersion: "worker-version-1",
+        model: "opus",
+        effort: "xhigh",
+      });
+    }
+    expect(JSON.stringify(entries)).not.toContain("私のタスク");
+    expect(JSON.stringify(entries)).not.toContain("xoxb-worker-secret");
+    logSpy.mockRestore();
+  });
+
   it("leaves the event retryable when Claude fails", async () => {
     const fs = new MemoryFs();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -296,9 +341,15 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
     expect([...fs.files.keys()].some((path) => path.startsWith("/replies/"))).toBe(false);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("claude_execution_failed_detail"));
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("[redacted]"));
-    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("sk-ant-secret-value"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_claude_failed",
+      traceId: "EvReply123",
+      model: "opus",
+      effort: "xhigh",
+      reasonCode: "claude_execution_failed",
+      errorSummary: "failed with [redacted]",
+    }));
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("sk-ant-secret-value");
     errorSpy.mockRestore();
   });
 

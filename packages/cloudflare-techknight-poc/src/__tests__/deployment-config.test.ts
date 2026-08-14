@@ -5,6 +5,12 @@ import { describe, expect, it } from "vitest";
 interface DeploymentConfig {
   account_id?: string;
   name: string;
+  observability?: {
+    enabled: boolean;
+    head_sampling_rate: number;
+    logs: { invocation_logs: boolean };
+  };
+  version_metadata?: { binding: string };
   vars: Record<string, string>;
   durable_objects: {
     bindings: Array<{ name: string; class_name: string }>;
@@ -81,6 +87,12 @@ describe("会社別Cloudflare deployment", () => {
 
   it("雲孫事業運営を信頼済みworkspace、channel、projectへ固定する", () => {
     expect(unson.account_id).toBe("788e556343893a7135c29b782c22fb24");
+    expect(unson.observability).toEqual({
+      enabled: true,
+      head_sampling_rate: 1,
+      logs: { invocation_logs: true },
+    });
+    expect(unson.version_metadata).toEqual({ binding: "CF_VERSION_METADATA" });
     expect(unson.vars).toMatchObject({
       TENANT_ID: "unson-business",
       SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
