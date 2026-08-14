@@ -42,6 +42,10 @@ function allowed(payload: ObjectValue, run: MeetingMinutesRun, deps: MeetingMinu
 }
 export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   deps: MeetingMinutesTaskActionDependencies): Promise<Response | undefined> {
+  console.info("meeting_minutes_task_interaction_received", {
+    payloadType: text(payload.type) ?? "missing",
+    payloadKeys: Object.keys(payload).sort(),
+  });
   const actions = Array.isArray(payload.actions) ? payload.actions : [];
   const action = actions.length === 1 ? object(actions[0]) : undefined;
   const isBlockSuggestion = payload.type === "block_suggestion";
