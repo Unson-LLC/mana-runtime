@@ -115,6 +115,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     verified: await verifySlackRequest({ body, timestamp, signature, signingSecret: authenticator.signingSecret,
       nowMs: options.nowMs }) })))).filter((result) => result.verified).map((result) => result.authenticator);
   if (verifiedAuthenticators.length === 0) {
+    console.warn(JSON.stringify({ event: "slack_interaction_signature_invalid",
+      authenticatorCount: authenticators.length,
+      authenticators: authenticators.map((authenticator) => ({ expectedTeamId: authenticator.expectedTeamId,
+        signingSecretLength: authenticator.signingSecret.length })) }));
     return response("slack_signature_invalid", 401);
   }
   const encoded = new URLSearchParams(body).get("payload");
