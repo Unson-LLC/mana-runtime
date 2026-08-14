@@ -518,9 +518,13 @@ export default {
                       baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
                       token: env.BRAINBASE_GRAPH_API_TOKEN,
                     };
-                    const requesterResolution = await resolveGraphRequester(
-                      event.workspaceId, event.userId ?? "", placement.projectCodes[0], graphOptions,
-                    );
+                    const actorIdentityResolver = resolveActorIdentityResolverFromEnv(env);
+                    const mappedActor = await actorIdentityResolver?.(event);
+                    const requesterResolution = mappedActor
+                      ? { status: "resolved" as const, personId: mappedActor.personId }
+                      : await resolveGraphRequester(
+                          event.workspaceId, event.userId ?? "", placement.projectCodes[0], graphOptions,
+                        );
                     if (requesterResolution.status !== "resolved") {
                       throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
                     }
@@ -547,7 +551,7 @@ export default {
                     runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
                       escalationEmployee: placement.agent?.escalationEmployee } : undefined,
                     capabilities: placement.capabilities,
-                    resolveActorIdentity: resolveActorIdentityResolverFromEnv(env),
+                    resolveActorIdentity: actorIdentityResolver,
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     respondPolicy: placement.respondTo,
                     isEngagedThread: workspaceSession.engaged === true,
