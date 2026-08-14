@@ -87,6 +87,28 @@ describe("task-search stdio MCP", () => {
     expect(url).not.toContain("project_code");
   });
 
+  it.each([
+    ["missing", { query: "私のタスク" }],
+    ["different", { query: "私のタスク", assignee_person_id: "per_other" }],
+  ])("forces the authenticated requester for self-task searches when the model assignee is %s", async (_case, args) => {
+    vi.stubEnv("MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID", "per_umeda");
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [], has_more: false }));
+      await processTaskSearchRpcMessage({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "search_tasks", arguments: args },
+      }, fetchMock);
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(new URL(url).searchParams.get("assignee_person_id")).toBe("per_umeda");
+      expect(url).not.toContain("per_other");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("propagates only bounded trace metadata to the Worker proxy", async () => {
     vi.stubEnv("MANA_TRACE_ID", "EvTrace123");
     vi.stubEnv("MANA_TRACE_PLACEMENT_ID", "mana-dev-biz");

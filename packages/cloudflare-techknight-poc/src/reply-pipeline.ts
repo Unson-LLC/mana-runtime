@@ -223,6 +223,9 @@ export async function generateClaudeReply(
     taskSearchEnabled: options.taskSearchEnabled === true,
     taskWriteEnabled: options.taskWriteEnabled === true,
   });
+  const requesterIdentity = options.requesterIdentity ?? (identityOutcome.outcome === "resolved"
+    ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
+    : undefined);
   const sandbox = options.createSandbox(options.claudeSession?.sandboxId ?? `techknight-reply-${event.eventId}`);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
@@ -230,9 +233,7 @@ export async function generateClaudeReply(
       event,
       options.taskSearchEnabled,
       options.taskWriteEnabled,
-      options.requesterIdentity ?? (identityOutcome.outcome === "resolved"
-        ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
-        : undefined),
+      requesterIdentity,
       options.requesterProfile,
       options.graphContext,
       options.runtimeContext,
@@ -261,6 +262,9 @@ export async function generateClaudeReply(
         MANA_TRACE_ID: event.eventId,
         MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
         MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
+        ...(options.taskSearchEnabled && requestsOwnTasks(event.text) && requesterIdentity ? {
+          MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID: requesterIdentity.personId,
+        } : {}),
         ...(options.taskWriteEnabled ? {
           MANA_TASK_WRITE_REQUEST_ID: event.eventId,
           MANA_TASK_WRITE_CAPABILITY: options.taskWriteCapability,
