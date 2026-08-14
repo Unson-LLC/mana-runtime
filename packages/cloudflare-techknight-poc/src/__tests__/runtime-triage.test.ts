@@ -1,6 +1,31 @@
-import { buildRuntimeTriagePrompt, parseRuntimeTriageDecision } from "../runtime-triage.js";
+import { buildRuntimeTriagePrompt, parseRuntimeTriageDecision, runRuntimeTriage } from "../runtime-triage.js";
 
 describe("runtime Slack triage", () => {
+  it.each([
+    { success: false, stdout: "", stderr: "upstream failed" },
+    new Error("sandbox unavailable"),
+  ])("fails open to a full reply when triage is unavailable", async (execution) => {
+    const destroy = vi.fn().mockResolvedValue(undefined);
+    const exec = execution instanceof Error
+      ? vi.fn().mockRejectedValue(execution)
+      : vi.fn().mockResolvedValue(execution);
+
+    await expect(runRuntimeTriage({
+      botName: "八雲まな",
+      speakerName: "佐藤圭吾",
+      channelType: "channel",
+      messageText: "添付を読んでください",
+      recentThread: [],
+    }, {
+      model: "sonnet",
+      createSandbox: () => ({
+        writeFile: vi.fn().mockResolvedValue(undefined),
+        exec,
+        destroy,
+      }),
+    })).resolves.toEqual({ action: "reply", reason: "triage_error" });
+    expect(destroy).toHaveBeenCalledOnce();
+  });
   it("builds a bounded placement-aware prompt for an ambient channel message", () => {
     const prompt = buildRuntimeTriagePrompt({
       botName: "まな",
