@@ -44,6 +44,8 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   deps: MeetingMinutesTaskActionDependencies): Promise<Response | undefined> {
   console.info("meeting_minutes_task_interaction_received", {
     payloadType: text(payload.type) ?? "missing",
+    appId: text(payload.api_app_id) ?? "missing",
+    teamId: text(object(payload.team)?.id) ?? "missing",
     payloadKeys: Object.keys(payload).sort(),
   });
   const actions = Array.isArray(payload.actions) ? payload.actions : [];
