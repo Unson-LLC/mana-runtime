@@ -60,8 +60,8 @@ channelId = "<SLACK_CHANNEL_ID>" AND messageTs = "<SLACK_MESSAGE_TS>"
 
 - `mana_turn_received`: Workerが受理した実行version、model、effort
 - `mana_placement_resolved`: placement、許可project、書き込み可否
-- `mana_identity_context`: Slack actorをClaudeへ渡したかどうか
 - `mana_thread_context_hydrated`: thread contextの有無と文字数
+- `mana_identity_context`: actor identity解決の結果（`resolved` / `unavailable`）とreasonCode。person_id・表示名・生Slack IDは記録しない
 - `mana_claude_started` / `mana_claude_completed` / `mana_claude_failed`: 実効model、effort、所要時間、結果
 - `mana_task_search_started` / `mana_task_search_completed` / `mana_task_search_failed`: 検索回数、件数、完全性、実効project範囲
 - `mana_slack_reply_posted`: Slack返信timestamp
@@ -144,9 +144,15 @@ Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を
     未設定時はタスク登録を行わず`project_binding_missing`で停止する。
 12. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
     `BRAINBASE_TASK_API_TOKEN` Secretとして設定する。Token値はWrangler設定へ書かない。
-13. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
+13. 「私の」「自分の」タスク検索を有効にする場合は、`workspaceId:SlackUserId`から
+    Brainbase正規`person_id`への対応表(JSON)を`BRAINBASE_SLACK_PERSON_MAP_JSON` Secretとして
+    設定する。レガシーAWS/Jimmy実装の静的対応表と同じ直接bridgeであり、対応表の内容・実際の
+    person_id・Slack IDは設定ファイル、ログ、テストfixtureへ書かない。identity解決はこの
+    Secretだけに依存し、Slack APIは呼ばない。未設定の間はidentity解決が無効のまま
+    一般返信を継続する。
+14. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
     `project_codes`とSlackの同一スレッドへの登録結果を照合する。
-14. PR #120を含むLightsail releaseでは `GITHUB_TOKEN` をsecretとして設定し、
+15. PR #120を含むLightsail releaseでは `GITHUB_TOKEN` をsecretとして設定し、
     `meetingMinutesPipeline.destination.github` のowner/repo/baseBranch/pathTemplateを確認する。
     GitHub保存の本番確認が終わるまで議事録pipelineを停止しない。タスク運用の切替では
     `mana-accounting` Placementとその `taskCanvas` だけを無効化し、議事録pipelineの
