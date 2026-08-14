@@ -6,6 +6,7 @@ export const MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID = "mana_meeting_min
 export const MEETING_MINUTES_TASK_EDIT_ACTION_ID = "mana_meeting_minutes_task_edit";
 export const MEETING_MINUTES_TASK_CANCEL_ACTION_ID = "mana_meeting_minutes_task_cancel";
 export const MEETING_MINUTES_TASK_EDIT_VIEW_ID = "mana_meeting_minutes_task_edit_submit";
+export const MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID = "mana_meeting_minutes_task_assignee";
 export const MEETING_MINUTES_REDO_ACTION_ID = "mana_meeting_minutes_redo";
 export const MEETING_MINUTES_CONFIRM_REDO_ACTION_ID = "mana_meeting_minutes_confirm_redo";
 
@@ -58,7 +59,8 @@ export interface MeetingMinutesRun {
   transcriptSha256?: string;
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
-  taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "removed" }> };
+  taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "removed";
+    assigneePersonId?: string; assigneeDisplayName?: string }> };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */

@@ -19,6 +19,29 @@ export interface BrainbaseGraphRuntimeOptions {
   fetch?: typeof fetch;
 }
 
+export interface GraphPersonOption { id: string; name: string; aliases: string[] }
+
+export async function listGraphPeople(projectCode: string | undefined, options: BrainbaseGraphRuntimeOptions): Promise<GraphPersonOption[] | undefined> {
+  if (!configured(options)) return undefined;
+  const url = new URL("/api/info/graph/entities", options.baseUrl);
+  url.searchParams.set("type", "person"); url.searchParams.set("limit", "500");
+  if (projectCode?.trim()) url.searchParams.set("project", projectCode.trim());
+  const response = await graphGet(url, options);
+  if (!response?.ok) return undefined;
+  let body: unknown; try { body = await response.json(); } catch { return undefined; }
+  const records = body && typeof body === "object" && Array.isArray((body as { records?: unknown }).records)
+    ? (body as { records: unknown[] }).records : undefined;
+  if (!records || records.length >= 500) return undefined;
+  return records.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as { id?: unknown; payload?: { name?: unknown; aliases?: unknown } };
+    if (typeof record.id !== "string" || typeof record.payload?.name !== "string") return [];
+    const aliases = Array.isArray(record.payload.aliases)
+      ? record.payload.aliases.filter((alias): alias is string => typeof alias === "string") : [];
+    return [{ id: record.id, name: record.payload.name, aliases }];
+  });
+}
+
 function configured(options: BrainbaseGraphRuntimeOptions): options is BrainbaseGraphRuntimeOptions & { baseUrl: string; token: string } {
   return Boolean(options.baseUrl?.trim() && options.token?.trim());
 }

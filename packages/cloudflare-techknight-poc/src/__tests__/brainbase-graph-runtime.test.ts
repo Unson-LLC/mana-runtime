@@ -1,4 +1,4 @@
-import { hydrateGraphContext, resolveGraphPersonByName, resolveGraphRequester } from "../brainbase-graph-runtime.js";
+import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolveGraphRequester } from "../brainbase-graph-runtime.js";
 
 const options = { baseUrl: "https://brainbase.example", token: "secret" };
 
@@ -44,6 +44,17 @@ describe("Brainbase Graph runtime", () => {
     const url = fetchImpl.mock.calls[0][0] as URL;
     expect(url.searchParams.get("type")).toBe("person");
     expect(url.searchParams.get("project")).toBe("mana");
+  });
+
+  it("lists bounded Graph SSOT people for task assignee selection", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_umeda", payload: { name: "梅田 遼", aliases: ["Haruka Umeda"] } },
+    ] }));
+    await expect(listGraphPeople("proj_pms", { ...options, fetch: fetchImpl })).resolves.toEqual([
+      { id: "per_umeda", name: "梅田 遼", aliases: ["Haruka Umeda"] },
+    ]);
+    const url = fetchImpl.mock.calls[0][0] as URL;
+    expect(url.searchParams.get("project")).toBe("proj_pms");
   });
 
   it.each([
