@@ -26,7 +26,7 @@ function deps(current: MeetingMinutesRun) { return { sourceTeamId: "TU", destina
     due_at: null, waiting_on: null, completed_at: null })), deleteTask: vi.fn(async () => ({})),
   updateCard: vi.fn(async (_run: MeetingMinutesRun) => {}),
   openView: vi.fn(async (_organizationId: string, _triggerId: string, _view: Record<string, unknown>) => {}),
-  listPeople: vi.fn(async (_projectId?: string) => [{ id: "per_umeda", name: "梅田 遼", aliases: ["梅田"] }]), repairTaskBoard: vi.fn(async () => {}),
+  listPeople: vi.fn(async () => [{ id: "per_umeda", name: "梅田 遼", aliases: ["梅田"] }]), repairTaskBoard: vi.fn(async () => {}),
   defer: (work: Promise<void>) => { void work; } };
 }
 describe("meeting minutes task cards", () => {
@@ -66,7 +66,7 @@ describe("meeting minutes task cards", () => {
     expect(viewMetadata.projectId).toBeUndefined();
     const suggestion = await handleMeetingMinutesTaskAction({ type: "block_suggestion", team: { id: "TTK" }, user: { id: "U1" },
       view: { private_metadata: view.private_metadata }, actions: [{ action_id: "mana_meeting_minutes_task_assignee", value: "梅田" }] }, options);
-    expect(suggestion?.status).toBe(200); expect(options.listPeople).toHaveBeenCalledWith(undefined);
+    expect(suggestion?.status).toBe(200); expect(options.listPeople).toHaveBeenCalledWith();
   });
   it("returns Graph SSOT people for the assignee selector", async () => {
     const options = deps(run());
@@ -77,7 +77,7 @@ describe("meeting minutes task cards", () => {
       { text: { type: "plain_text", text: "（担当なし）" }, value: "__none__" },
       { text: { type: "plain_text", text: "梅田 遼" }, value: "per_umeda" },
     ] });
-    expect(options.listPeople).toHaveBeenCalledWith("proj_pms");
+    expect(options.listPeople).toHaveBeenCalledWith();
   });
   it("updates the canonical Graph assignee and redraws the task card", async () => {
     const current = run(); const options = deps(current);
