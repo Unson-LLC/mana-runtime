@@ -86,6 +86,7 @@ describe("Cloudflare Claude runtime config", () => {
     const routing = buildRuntimeClaudeCommand("meeting-minutes", config, { structuredOutput: "meeting-minutes-routing" });
     expect(minutes).toContain("--output-format json --json-schema '");
     expect(minutes).toContain('"required":["title","overview","body","tasks"]');
+    expect(minutes).toContain('"overview":{"type":"string","minLength":1,"maxLength":600}');
     expect(routing).toContain('"required":["projectId","reason"]');
     expect(() => buildRuntimeClaudeCommand("reply", config, { structuredOutput: "meeting-minutes" }))
       .toThrow("runtime_claude_structured_output_invalid");

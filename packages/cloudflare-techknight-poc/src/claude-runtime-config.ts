@@ -31,7 +31,7 @@ const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, 
     type: "object",
     properties: {
       title: { type: "string", minLength: 1, maxLength: 200 },
-      overview: { type: "string", minLength: 1, maxLength: 3000 },
+      overview: { type: "string", minLength: 1, maxLength: 600 },
       body: { type: "string", minLength: 1, maxLength: 100000 },
       tasks: {
         type: "array", maxItems: 20,

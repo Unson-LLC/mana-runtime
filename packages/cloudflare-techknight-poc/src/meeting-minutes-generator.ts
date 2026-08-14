@@ -24,8 +24,8 @@ function nonEmpty(value: unknown, max: number): string | undefined {
 
 export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMinutes {
   const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  const title = nonEmpty(record.title, 200); const overview = nonEmpty(record.overview, 3000);
-  const body = nonEmpty(record.body, 100_000);
+  const title = nonEmpty(record.title, 200); const overview = nonEmpty(record.overview, 600);
+  const body = stripMeetingMinutesActionItems(nonEmpty(record.body, 100_000) ?? "");
   if (!title || !overview || !body) throw new Error("meeting_minutes_generation_invalid");
   const rawTasks = record.tasks === undefined ? [] : record.tasks;
   if (!Array.isArray(rawTasks) || rawTasks.length > 20) throw new Error("meeting_minutes_generation_invalid");
@@ -45,6 +45,11 @@ export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMi
   });
   if (tasks.some((task) => !task)) throw new Error("meeting_minutes_generation_invalid");
   return { title, overview, body, tasks: tasks as MeetingMinutesTaskCandidate[] };
+}
+
+/** Removes a legacy generated action-item tail so tasks[] remains the only action-item source. */
+export function stripMeetingMinutesActionItems(body: string): string {
+  return body.replace(/\n+(?:(?:#{1,6}\s+)|\*)?アクションアイテム(?:\*)?\s*\n[\s\S]*$/u, "").trim();
 }
 
 function balancedJsonObjects(text: string): string[] {
@@ -165,13 +170,13 @@ function generationPrompt(transcript: string): string {
     "あなたは優秀な議事録作成者です。会議の文字起こしから、将来の人間とAIが会議の流れ・文脈・理由を再構築できる物語的な議事録を作成してください。",
     "# 品質契約（narrative_minutes.v1 — 厳守）",
     "議事録は短い要約でも生の文字起こしでもありません。話題がなぜ出て、議論がどう動き、何の結論・未解決点を生んだかを保存してください。",
-    "overviewは会議タイトルに続く2〜4段落で、目的、主要テーマ、決定事項、未解決の論点を具体的に記述してください。",
+    "overviewは1段落・3〜5文・200〜400字を目安にし、600字を絶対に超えないでください。会議の目的、主要な決定事項、重要な未解決点だけを簡潔に記述してください。詳細な背景、議論の経過、アクションアイテム、タスク一覧は含めないでください。",
     "bodyはトピックごとに「------------」だけの行で区切り、具体的な見出しと2〜5段落で背景、議論、重要性、変化、未解決点を記述してください。1〜2文だけで終わらせないでください。",
-    "bodyの最後には必ず「*アクションアイテム*」セクションを置き、担当者別に内容と期限を記述してください。期限不明は[TBD]、担当者不明は@未確認としてください。",
-    "tasksには、会議中に実行することが明示されたアクションだけを最大20件入れてください。推測でタスク、担当者、期限を補わないでください。該当がなければ空配列にしてください。",
+    "bodyにはアクションアイテムやタスクの一覧を含めないでください。アクションアイテムの唯一の正本はtasksです。",
+    "tasksには、会議中に実行することが明示されたアクションだけを最大20件入れてください。推測でタスク、担当者、期限を補わないでください。期限や担当者が不明なら該当フィールドを省略し、該当するアクションがなければ空配列にしてください。",
     "文字起こしにない事実、決定、約束、肩書きを発明しないでください。根拠が薄い場合は不足している根拠を明記してください。",
     "出力はMarkdown fenceを付けず、次のJSONオブジェクトだけにしてください。",
-    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"会議タイトルと2〜4段落の概要","body":"区切り線、トピック別の物語的本文、アクションアイテムを含むSlack mrkdwn","tasks":[{"title":"実行内容","description":"会議で確認できた背景","assignee_name":"文字起こしで明示された担当者名。未確認なら省略","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}]}',
+    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"1段落・3〜5文の短い概要","body":"区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない","tasks":[{"title":"実行内容","description":"会議で確認できた背景","assignee_name":"文字起こしで明示された担当者名。未確認なら省略","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}]}',
     "", "文字起こし:", bounded,
   ].join("\n");
 }

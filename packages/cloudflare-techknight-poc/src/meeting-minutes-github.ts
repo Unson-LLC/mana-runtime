@@ -1,4 +1,5 @@
 import type { GeneratedMeetingMinutes, MeetingMinutesDestination } from "./meeting-minutes-contracts.js";
+import { stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
 
 export interface SavedMeetingMinutesRecords {
   transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string;
@@ -28,9 +29,18 @@ function jstDate(sourceTs: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 export function formatCloudflareMeetingMinutesMarkdown(request: SaveMeetingMinutesRecordsRequest, transcriptPath: string, date: string): string {
+  const tasks = request.minutes.tasks ?? [];
+  const actionItems = tasks.length ? tasks.flatMap((task) => {
+    const details = [task.assignee_name ? `担当: ${task.assignee_name}` : undefined,
+      task.due_at ? `期限: ${task.due_at.slice(0, 10)}` : undefined,
+      task.priority ? `優先度: ${task.priority}` : undefined].filter(Boolean);
+    return [`- [ ] ${task.title}${details.length ? `（${details.join(" / ")}）` : ""}`,
+      ...(task.description ? [`  - 背景: ${task.description}`] : [])];
+  }) : ["- なし"];
   return ["---", `title: ${JSON.stringify(request.minutes.title)}`, `date: ${date}`,
     `project_id: ${JSON.stringify(request.destination.projectId)}`, `transcript_ref: ${JSON.stringify(transcriptPath)}`,
-    "---", "", `# ${request.minutes.title}`, "", request.minutes.overview, "", request.minutes.body, ""].join("\n");
+    "---", "", `# ${request.minutes.title}`, "", request.minutes.overview, "",
+    stripMeetingMinutesActionItems(request.minutes.body), "", "## アクションアイテム", "", ...actionItems, ""].join("\n");
 }
 
 export class CloudflareMeetingMinutesGitHubClient {

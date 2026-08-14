@@ -25,8 +25,11 @@ describe("generateMeetingMinutesInSandbox", () => {
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
-      expect.stringContaining("アクションアイテム"),
+      expect.stringContaining("アクションアイテムの唯一の正本はtasks"),
     );
+    const prompt = String(sandbox.writeFile.mock.calls.find((call) => call[0] === "/tmp/meeting-minutes-prompt.txt")?.[1]);
+    expect(prompt).toContain("1段落・3〜5文・200〜400字");
+    expect(prompt).not.toContain("bodyの最後には必ず「*アクションアイテム*」");
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
       expect.stringContaining('"tasks"'),
@@ -66,6 +69,16 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(parseGeneratedMeetingMinutesOutput(JSON.stringify({
       structured_output: { title: "定例", overview: "概要", body: "本文", tasks: [] },
     }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
+  });
+
+  it("enforces the overview hard limit and strips a legacy action-item tail", () => {
+    const minutes = parseGeneratedMeetingMinutesOutput(JSON.stringify({
+      title: "定例", overview: "あ".repeat(601),
+      body: "------------\n議論本文\n\n*アクションアイテム*\n- 重複タスク", tasks: [{ title: "正本タスク" }],
+    }));
+    expect(minutes.overview).toHaveLength(600);
+    expect(minutes.body).toBe("------------\n議論本文");
+    expect(minutes.tasks).toEqual([{ title: "正本タスク" }]);
   });
 });
 
