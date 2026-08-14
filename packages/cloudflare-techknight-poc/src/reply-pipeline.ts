@@ -10,6 +10,12 @@ import {
   runtimeTaskSearchMcpConfigPath,
   type ClaudeRuntimeConfig,
 } from "./claude-runtime-config.js";
+import {
+  requestsOwnTasks,
+  resolveRequesterIdentity,
+  type RequesterIdentity,
+  type RequesterIdentityBindings,
+} from "./requester-identity.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -43,6 +49,8 @@ export interface ReplyPipelineOptions {
   taskSearchEnabled?: boolean;
   taskWriteEnabled?: boolean;
   taskWriteCapability?: string;
+  requesterIdentityBindings?: RequesterIdentityBindings;
+  requesterIdentity?: RequesterIdentity;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
@@ -85,7 +93,12 @@ function normalizePromptText(text: string): string {
     .slice(0, MAX_INPUT_CHARS);
 }
 
-function buildPrompt(event: SlackQueueEvent, taskSearchEnabled = false, taskWriteEnabled = false): string {
+function buildPrompt(
+  event: SlackQueueEvent,
+  taskSearchEnabled = false,
+  taskWriteEnabled = false,
+  requesterIdentity?: RequesterIdentity,
+): string {
   const request = normalizePromptText(event.text);
   const context = event.threadContext
     ?.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
@@ -102,6 +115,11 @@ function buildPrompt(event: SlackQueueEvent, taskSearchEnabled = false, taskWrit
       "検索結果のtitle、status、assignee_display_name、project_codesを根拠として回答してください。",
       "has_more=true、next_cursorがある、read_status=partialのいずれかなら部分結果として扱い、同じquery・filterのまま必要な範囲だけnext_cursorで続けてください。全ページ取得はしないでください。",
       "itemsが空かつhas_more=falseかつnext_cursor=nullかつread_status=completeの場合だけ、許可projectと指定条件の範囲で0件と扱ってください。API障害やtool errorを0件と断定しないでください。",
+    ] : []),
+    ...(requesterIdentity ? [
+      `requester_slack_user_id: ${requesterIdentity.slackUserId}`,
+      `requester_person_id: ${requesterIdentity.personId}`,
+      "私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください。",
     ] : []),
     ...(taskWriteEnabled ? [
       "タスクの作成・更新・状態変更を明示的に依頼された場合だけ、create_task、update_task、transition_taskを使ってください。",
@@ -141,14 +159,19 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
   const sandbox = options.createSandbox(`techknight-reply-${event.eventId}`);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
-    await sandbox.writeFile(promptPath, buildPrompt(event, options.taskSearchEnabled, options.taskWriteEnabled));
+    await sandbox.writeFile(promptPath, buildPrompt(
+      event,
+      options.taskSearchEnabled,
+      options.taskWriteEnabled,
+      options.requesterIdentity,
+    ));
     if (options.taskSearchEnabled || options.taskWriteEnabled) {
       await sandbox.writeFile(runtimeTaskSearchMcpConfigPath(), JSON.stringify({
         mcpServers: {
@@ -410,11 +433,15 @@ export async function processReplyEvent(
   if (!isReplyEligible(event, options)) return { outcome: "ignored" };
   if (await isReplyCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
+  const requesterIdentity = options.taskSearchEnabled && requestsOwnTasks(event.text)
+    ? resolveRequesterIdentity(event, options.requesterIdentityBindings)
+    : undefined;
+
   return withSlackThreadStatus(event, options, async () => {
     const hydratedEvent = options.hydrateThreadContext
       ? await options.hydrateThreadContext(event)
       : event;
-    const reply = await generateClaudeReply(hydratedEvent, options);
+    const reply = await generateClaudeReply(hydratedEvent, { ...options, requesterIdentity });
     const responseTs = await postSlackReply(hydratedEvent, reply, options);
     await persistReplyCompletion(fs, {
       eventId: event.eventId,

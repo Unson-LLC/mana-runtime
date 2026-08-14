@@ -46,6 +46,7 @@ import { persistEventOnce } from "./workspace-store.js";
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { parseRequesterIdentityBindings } from "./requester-identity.js";
 import {
   consumeTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
@@ -80,6 +81,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   RUNTIME_TASK_BOARD_ENABLED?: string;
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
+  BRAINBASE_SLACK_PERSON_MAP_JSON?: string;
   TENANT_ID: string;
   TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
@@ -280,13 +282,16 @@ export default {
         expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
         expectedChannelIds: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
           .map((placement) => placement.channelId),
+        operatorUserIds: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
+          .find((placement) => placement.channelId === message.body.channelId)
+          ?.audience?.allowedUserIds,
         process: async (event) => {
           const placement = resolveRuntimePlacement(event, {
             tenantId: env.TENANT_ID,
             workspaceId: env.SLACK_EXPECTED_TEAM_ID,
             placements: parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON),
           });
-          const claudeRuntime = resolveClaudeRuntimeConfig(env);
+          const claudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(
@@ -331,6 +336,7 @@ export default {
                     taskSearchEnabled: taskSearch.taskSearchEnabled,
                     taskWriteEnabled,
                     taskWriteCapability,
+                    requesterIdentityBindings: parseRequesterIdentityBindings(env.BRAINBASE_SLACK_PERSON_MAP_JSON),
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     });

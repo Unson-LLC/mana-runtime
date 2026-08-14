@@ -12,6 +12,11 @@ export interface RuntimePlacement {
   channelId: string;
   projectCodes: string[];
   taskWriteEnabled: boolean;
+  audience?: { type: "operator"; allowedUserIds: string[] };
+  agent?: { model: "opus" | "sonnet"; escalationEmployee?: string };
+  capabilities?: { mcp: string[]; gatewayTools: string[] };
+  dataScopes?: { graph: { mode: "read-only"; scopes: string[] } };
+  deliveryScopes?: Array<{ connector: "slack"; channelId: string }>;
 }
 
 export interface ResolvedRuntimePlacement extends RuntimeBinding, RuntimePlacement {}
@@ -77,11 +82,44 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
       ) throw new Error("invalid");
       const projectCodes = parseRuntimeProjectCodes(candidate.projectCodes.join(","));
       if (projectCodes.length !== candidate.projectCodes.length) throw new Error("invalid");
+      const audience = candidate.audience as Record<string, unknown> | undefined;
+      if (audience !== undefined && (
+        typeof audience !== "object" || audience === null || audience.type !== "operator" ||
+        !Array.isArray(audience.allowedUserIds) || audience.allowedUserIds.length === 0 ||
+        audience.allowedUserIds.some((id) => typeof id !== "string" || !/^U[A-Z0-9]{2,31}$/.test(id))
+      )) throw new Error("invalid");
+      const agent = candidate.agent as Record<string, unknown> | undefined;
+      if (agent !== undefined && (
+        typeof agent !== "object" || agent === null ||
+        (agent.model !== "opus" && agent.model !== "sonnet") ||
+        (agent.escalationEmployee !== undefined && typeof agent.escalationEmployee !== "string")
+      )) throw new Error("invalid");
+      const capabilities = candidate.capabilities as Record<string, unknown> | undefined;
+      if (capabilities !== undefined && (
+        typeof capabilities !== "object" || capabilities === null ||
+        !Array.isArray(capabilities.mcp) || capabilities.mcp.some((v) => typeof v !== "string") ||
+        !Array.isArray(capabilities.gatewayTools) || capabilities.gatewayTools.some((v) => typeof v !== "string")
+      )) throw new Error("invalid");
+      const dataScopes = candidate.dataScopes as RuntimePlacement["dataScopes"] | undefined;
+      if (dataScopes !== undefined && (
+        dataScopes?.graph?.mode !== "read-only" || !Array.isArray(dataScopes.graph.scopes) ||
+        dataScopes.graph.scopes.some((v) => typeof v !== "string")
+      )) throw new Error("invalid");
+      const deliveryScopes = candidate.deliveryScopes as RuntimePlacement["deliveryScopes"] | undefined;
+      if (deliveryScopes !== undefined && (
+        !Array.isArray(deliveryScopes) || deliveryScopes.length === 0 ||
+        deliveryScopes.some((scope) => scope?.connector !== "slack" || typeof scope.channelId !== "string")
+      )) throw new Error("invalid");
       return {
         placementId: candidate.placementId,
         channelId: candidate.channelId,
         projectCodes,
         taskWriteEnabled: candidate.taskWriteEnabled === true,
+        ...(audience ? { audience: { type: "operator", allowedUserIds: [...audience.allowedUserIds as string[]] } } : {}),
+        ...(agent ? { agent: { model: agent.model as "opus" | "sonnet", ...(agent.escalationEmployee ? { escalationEmployee: agent.escalationEmployee as string } : {}) } } : {}),
+        ...(capabilities ? { capabilities: { mcp: [...capabilities.mcp as string[]], gatewayTools: [...capabilities.gatewayTools as string[]] } } : {}),
+        ...(dataScopes ? { dataScopes } : {}),
+        ...(deliveryScopes ? { deliveryScopes } : {}),
       };
     });
     if (

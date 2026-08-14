@@ -102,7 +102,23 @@ describe("会社別Cloudflare deployment", () => {
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: false },
-      { placementId: "mana-dev-biz", channelId: "C0BMNSP6C80", projectCodes: ["unson"], taskWriteEnabled: false },
+      {
+        placementId: "mana-dev-biz",
+        channelId: "C0BMNSP6C80",
+        projectCodes: ["mana"],
+        taskWriteEnabled: true,
+        audience: { type: "operator", allowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
+        agent: { model: "sonnet", escalationEmployee: "critical-reviewer" },
+        capabilities: {
+          mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
+          gatewayTools: [
+            "send_message", "create_task", "list_tasks", "update_task", "transition_task",
+            "list_sessions", "get_session", "list_employees", "get_employee",
+          ],
+        },
+        dataScopes: { graph: { mode: "read-only", scopes: ["org:unson"] } },
+        deliveryScopes: [{ connector: "slack", channelId: "C0BMNSP6C80" }],
+      },
     ]);
   });
 

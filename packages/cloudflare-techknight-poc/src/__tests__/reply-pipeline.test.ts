@@ -76,6 +76,57 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
+  it("binds the Slack requester person to 私のタスク searches without asking for identity", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      requesterIdentityBindings: {
+        T_UNSON: { U_UMEDA: "per_umeda" },
+      },
+    } as Partial<ReplyPipelineOptions>);
+
+    await processReplyEvent(fs, event({
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      channelId: "C_BACK_OFFICE",
+      userId: "U_UMEDA",
+      text: "<@U_BOT> 私のタスクを教えて",
+    }), {
+      ...options,
+      expectedTenantId: "unson",
+      expectedWorkspaceId: "T_UNSON",
+      allowedChannelId: "C_BACK_OFFICE",
+      taskSearchEnabled: true,
+    } as ReplyPipelineOptions);
+
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    expect(prompt).toContain("requester_person_id: per_umeda");
+    expect(prompt).toContain("私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください");
+    expect(prompt).not.toContain("名前またはperson IDを確認してください");
+  });
+
+  it.each([
+    ["an unregistered requester", "U_UNKNOWN", { T_UNSON: { U_UMEDA: "per_umeda" } }, "requester_identity_not_found"],
+    ["an ambiguous requester", "U_UMEDA", { T_UNSON: { U_UMEDA: ["per_umeda", "per_other"] } }, "requester_identity_ambiguous"],
+  ])("fails closed before sandbox creation for %s", async (_name, userId, requesterIdentityBindings, code) => {
+    const fs = new MemoryFs();
+    const { options } = harness({ requesterIdentityBindings } as Partial<ReplyPipelineOptions>);
+
+    await expect(processReplyEvent(fs, event({
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      channelId: "C_BACK_OFFICE",
+      userId,
+      text: "<@U_BOT> 私のタスクを教えて",
+    }), {
+      ...options,
+      expectedTenantId: "unson",
+      expectedWorkspaceId: "T_UNSON",
+      allowedChannelId: "C_BACK_OFFICE",
+      taskSearchEnabled: true,
+    } as ReplyPipelineOptions)).rejects.toMatchObject({ code });
+    expect(options.createSandbox).not.toHaveBeenCalled();
+  });
+
   it("accepts a matching non-TechKnight tenant boundary", () => {
     const input = event({
       tenantId: "unson",
