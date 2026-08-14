@@ -17,12 +17,14 @@ import {
 import type { SlackQueueEvent } from "./types.js";
 import {
   isMeetingMinutesSelection,
+  isMeetingMinutesRedo,
   isMeetingMinutesSlackEvent,
   meetingMinutesRuntimeConfig,
   processMeetingMinutesSlackEvent,
+  processMeetingMinutesRedo,
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
-import type { MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import type { MeetingMinutesDestination, MeetingMinutesRedo, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -33,7 +35,7 @@ import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
-import { TaskApiClient } from "@openryoko/task-runtime-core";
+import { TaskApiClient, TaskApiError } from "@openryoko/task-runtime-core";
 import { deterministicRuntimeUuid, isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
@@ -113,7 +115,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_GRAPH_API_TOKEN?: string;
   CF_VERSION_METADATA?: { id: string; tag?: string };
   TENANT_ID: string;
-  TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection>;
+  TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
@@ -216,6 +218,9 @@ function meetingMinutesClients(env: Env) {
     if (techKnightChannels.has(channelId)) return techKnightSlack;
     return slack;
   };
+  const taskClient = () => new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
+    token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
+      fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
   return {
     slack,
     classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
@@ -233,10 +238,7 @@ function meetingMinutesClients(env: Env) {
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
-        const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
-          token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
-            fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
-        return client.createTask(input, idempotencyKey);
+        return taskClient().createTask(input, idempotencyKey);
       },
       resolveAssignee: (name: string, projectId: string) => resolveGraphPersonByName(name, projectId, {
         baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
@@ -248,6 +250,25 @@ function meetingMinutesClients(env: Env) {
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
+    },
+    redo: {
+      deleteGitHub: (destination: MeetingMinutesDestination, paths: readonly string[]) =>
+        github.delete(destination.github, paths),
+      deleteTask: async (taskId: string, idempotencyKey: string) => {
+        const client = taskClient();
+        try {
+          const task = await client.getTask(taskId);
+          await client.deleteTask(taskId, task.version, idempotencyKey);
+        } catch (error) {
+          if (error instanceof TaskApiError && error.status === 404) return;
+          throw error;
+        }
+      },
+      retractSharedMinutes: (destination: MeetingMinutesDestination,
+        parentTs: string, fileName: string) =>
+        destinationSlack(destination.slackChannelId).retractSharedMinutes(destination.slackChannelId, parentTs, fileName),
+      showDestinationSelection: (run: MeetingMinutesRun, destinations: Parameters<typeof slack.showDestinationSelection>[1]) =>
+        slack.showDestinationSelection(run, destinations),
     },
   };
 }
@@ -380,7 +401,7 @@ export default {
     });
   },
 
-  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | TaskBoardRepairEvent>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | TaskBoardRepairEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       if (isTaskBoardRepairEvent(message.body)) {
         await consumeTaskBoardRepair({
@@ -391,6 +412,25 @@ export default {
         continue;
       }
       const meetingMinutesConfig = meetingMinutesRuntimeConfig(env);
+      if (isMeetingMinutesRedo(message.body)) {
+        const command = message.body;
+        try {
+          const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+            env.TENANT_ID, command.workspaceId, command.runId,
+          ));
+          const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+          await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+            const clients = meetingMinutesClients(env);
+            await processMeetingMinutesRedo(workspace.fs, command, meetingMinutesConfig, clients.redo);
+          });
+          message.ack();
+        } catch (error) {
+          console.error(JSON.stringify({ event: "meeting_minutes_redo_failed", runId: command.runId,
+            error: error instanceof Error ? error.message : "unexpected_error" }));
+          message.retry();
+        }
+        continue;
+      }
       if (isMeetingMinutesSelection(message.body)) {
         const selection = message.body;
         if (selection.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
@@ -676,4 +716,4 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await enqueueScheduledTaskBoardRepair(env);
   },
-} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | TaskBoardRepairEvent>;
+} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | TaskBoardRepairEvent>;

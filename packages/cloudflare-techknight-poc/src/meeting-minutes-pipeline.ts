@@ -1,6 +1,6 @@
 import { isMeetingMinutesFile, meetingMinutesRunId, type GeneratedMeetingMinutes,
   type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
-  type MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
+  type MeetingMinutesRedo, type MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
 import { splitMeetingMinutesForSlack } from "./meeting-minutes-generator.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -30,6 +30,13 @@ export interface ResumeMeetingMinutesOptions {
   postTaskCard?(run: MeetingMinutesRun): Promise<string>;
   postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
     index: number, total: number, clientMsgId: string): Promise<string>;
+}
+export interface RedoMeetingMinutesOptions {
+  destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
+  deleteGitHub(destination: MeetingMinutesDestination, paths: readonly string[]): Promise<void>;
+  deleteTask(taskId: string, idempotencyKey: string): Promise<void>;
+  retractSharedMinutes(destination: MeetingMinutesDestination, parentTs: string, fileName: string): Promise<void>;
+  showDestinationSelection(run: MeetingMinutesRun, destinations: readonly MeetingMinutesDestination[]): Promise<string>;
 }
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
@@ -100,8 +107,8 @@ async function digest(value: string): Promise<string> {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function taskIdempotencyKey(runId: string, index: number): Promise<string> {
-  return `meeting-minutes-${await digest(`${runId}:task:${index}`)}`;
+async function taskIdempotencyKey(runId: string, revision: number, index: number): Promise<string> {
+  return `meeting-minutes-${await digest(`${runId}:revision:${revision}:task:${index}`)}`;
 }
 
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
@@ -121,7 +128,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
     const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
     const task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
       project_codes: [run.destination!.projectId] },
-      await taskIdempotencyKey(run.runId, index));
+      await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
     if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
     run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim() });
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
@@ -180,7 +187,8 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     const chunks = splitMeetingMinutesForSlack(narrativeText);
     run.slack ??= { postedChunkIndexes: [] };
     if (!run.slack.parentTs) {
-      run.slack.parentTs = await options.postParent(run.destination.slackChannelId, run.file.name, parentText, `${run.runId}-parent`);
+      run.slack.parentTs = await options.postParent(run.destination.slackChannelId, run.file.name, parentText,
+        `${run.runId}-revision-${run.revision ?? 0}-parent`);
       run.status = "posting"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     if (run.taskRegistration?.registered.length && !run.slack.taskCardTs && options.postTaskCard) {
@@ -190,7 +198,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     for (let index = 0; index < chunks.length; index += 1) {
       if (run.slack.postedChunkIndexes.includes(index)) continue;
       await options.postThreadChunk(run.destination.slackChannelId, run.slack.parentTs, run.file.name, chunks[index]!,
-        index, chunks.length, `${run.runId}-chunk-${index}`);
+        index, chunks.length, `${run.runId}-revision-${run.revision ?? 0}-chunk-${index}`);
       run.slack.postedChunkIndexes.push(index); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     run.status = "completed"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); return run;
@@ -198,4 +206,33 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     run.failure = { stage: run.status, message: error instanceof Error ? error.message : "meeting_minutes_failed" };
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); throw error;
   }
+}
+
+export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMinutesRedo,
+  options: RedoMeetingMinutesOptions): Promise<MeetingMinutesRun> {
+  validateMeetingMinutesDestinations(options.destinations);
+  const run = await loadMeetingMinutesRun(fs, command.runId);
+  if (!run) throw new Error("meeting_minutes_run_not_found");
+  if (run.workspaceId !== command.workspaceId || run.sourceChannelId !== command.channelId) {
+    throw new Error("meeting_minutes_redo_boundary_mismatch");
+  }
+  if (run.status !== "completed" || !run.destination || !run.github || !run.slack?.processingTs) {
+    throw new Error("meeting_minutes_redo_not_available");
+  }
+  await options.deleteGitHub(run.destination, [run.github.transcriptPath, run.github.minutesPath]);
+  for (const task of run.taskRegistration?.registered ?? []) {
+    await options.deleteTask(task.taskId, `meeting-minutes-redo-${run.runId}-revision-${run.revision ?? 0}-${task.index}`);
+  }
+  if (run.slack.parentTs) {
+    await options.retractSharedMinutes(run.destination, run.slack.parentTs, run.file.name);
+  }
+  const selectionTs = await options.showDestinationSelection(structuredClone(run), options.destinations);
+  run.status = "awaiting_destination";
+  run.revision = (run.revision ?? 0) + 1;
+  delete run.destination; delete run.approvedBy; delete run.generated; delete run.github;
+  delete run.taskRegistration; delete run.failure;
+  run.slack = { selectionTs, postedChunkIndexes: [] };
+  run.updatedAt = now(options);
+  await saveMeetingMinutesRun(fs, run);
+  return run;
 }

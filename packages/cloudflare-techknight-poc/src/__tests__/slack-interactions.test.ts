@@ -12,7 +12,7 @@ const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, chan
   message: { ts: "1.1", thread_ts: "1.0" },
   response_url: "https://hooks.slack.com/actions/T1/B1/token",
   actions: [{ action_id: "mana_meeting_minutes_choose_destination", action_ts: "1.2",
-    value: JSON.stringify({ runId: "Ev1_F1", destinationId: "mana" }) }] };
+    value: JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", fileName: "meeting.txt" }) }] };
 const destinations = [
   { id: "mana", projectId: "p1", name: "Back Office", organization: { id: "unson-business", name: "雲孫 事業運営" },
     slackChannelId: "C2", github: { owner: "Unson-LLC", repo: "back_office" } },
@@ -27,11 +27,14 @@ describe("handleMeetingMinutesInteraction", () => {
     const qualifiedPayload = structuredClone(payload);
     qualifiedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:mana";
     const result = await handleMeetingMinutesInteraction(request(qualifiedPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, send, updateOriginal, defer: background.defer });
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
     expect(result.status).toBe(200);
     expect(send).toHaveBeenCalledOnce();
-    expect(updateOriginal).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
+      text: "meeting.txt の保存先に Back Office を選択しました。",
+    }));
   });
 
   it("verifies and queues an authorized selection", async () => {
@@ -41,7 +44,9 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, showProcessing, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({ runId: "Ev1_F1", destinationId: "mana" }));
-    expect(updateOriginal).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
+      text: "meeting.txt の保存先に Back Office を選択しました。",
+    }));
     expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
     expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
     expect(await response.json()).toEqual({ ok: true });
@@ -114,7 +119,7 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).rejects.toThrow("queue unavailable");
-    expect(updateOriginal).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledOnce();
     expect(showProcessing).toHaveBeenCalledOnce(); expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" });
   });
   it("still queues when immediate Slack feedback fails", async () => {
@@ -125,6 +130,40 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, showProcessing, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledOnce(); expect(showProcessing).toHaveBeenCalledOnce();
+  });
+  it("still queues when the selection confirmation update fails", async () => {
+    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValue(new Error("Slack unavailable"));
+    const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(updateOriginal).toHaveBeenCalledOnce(); expect(send).toHaveBeenCalledOnce();
+  });
+  it("shows a confirmation before queueing a redo", async () => {
+    const redoPayload = structuredClone(payload);
+    redoPayload.actions[0]!.action_id = "mana_meeting_minutes_redo";
+    redoPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(redoPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).not.toHaveBeenCalled();
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("GitHubの議事録・文字起こしと自動登録タスクを取り消し");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("取り消して選び直す");
+  });
+  it("queues a confirmed redo command", async () => {
+    const confirmPayload = structuredClone(payload);
+    confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1" });
+    const send = vi.fn().mockResolvedValue(undefined); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
+      channelId: "C1", userId: "U1", actionTs: "1.2" });
   });
   it("queues without immediate feedback when Slack omitted a valid thread timestamp", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;

@@ -1,5 +1,5 @@
-import { resumeMeetingMinutesRun, startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
-import type { MeetingMinutesDestination, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
+import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
+import type { MeetingMinutesDestination, MeetingMinutesRedo, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
@@ -11,6 +11,8 @@ const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId:
   files: [{ id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 100 }] };
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana",
   workspaceId: "T1", channelId: "CROUTER", userId: "U1", actionTs: "2.1" };
+const redo: MeetingMinutesRedo = { kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
+  channelId: "CROUTER", userId: "U1", actionTs: "20.1" };
 function resumeOptions(overrides: Record<string, unknown> = {}) {
   return { destinations: [destination], download: vi.fn().mockResolvedValue("transcript"),
     postProcessingStatus: vi.fn().mockResolvedValue("3.1"),
@@ -173,7 +175,7 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(run.status).toBe("completed"); expect(order).toEqual(["github", "slack-parent", "slack-chunk"]);
-    expect(options.postParent).toHaveBeenCalledWith("CDEST", "meeting.txt", "*定例*\n概要", "Ev1_F1-parent");
+    expect(options.postParent).toHaveBeenCalledWith("CDEST", "meeting.txt", "*定例*\n概要", "Ev1_F1-revision-0-parent");
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST",
       "10.1",
@@ -181,7 +183,7 @@ describe("meeting minutes pipeline", () => {
       "------------\n\n本文",
       0,
       1,
-      "Ev1_F1-chunk-0",
+      "Ev1_F1-revision-0-chunk-0",
     );
   });
 
@@ -199,7 +201,7 @@ describe("meeting minutes pipeline", () => {
       "------------\n議題",
       0,
       1,
-      "Ev1_F1-chunk-0",
+      "Ev1_F1-revision-0-chunk-0",
     );
   });
 
@@ -243,5 +245,41 @@ describe("meeting minutes pipeline", () => {
     await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("slack down");
     await expect(resumeMeetingMinutesRun(fs, { ...selection, userId: "U2" }, options))
       .rejects.toThrow("meeting_minutes_approver_changed");
+  });
+
+  it("removes persisted outputs and reopens destination selection for a completed run", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const generated = { title: "定例", overview: "概要", body: "本文", tasks: [{ title: "確認する" }] };
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({ generate: vi.fn().mockResolvedValue(generated) }));
+    const deleteGitHub = vi.fn(); const deleteTask = vi.fn(); const retractSharedMinutes = vi.fn();
+    const showDestinationSelection = vi.fn().mockResolvedValue("3.1");
+    const reopened = await redoMeetingMinutesRun(fs, redo, { destinations: [destination], deleteGitHub, deleteTask,
+      retractSharedMinutes, showDestinationSelection });
+    expect(deleteGitHub).toHaveBeenCalledWith(destination, ["docs/transcripts/a.txt", "docs/minutes/a.md"]);
+    expect(deleteTask).toHaveBeenCalledWith("task-1", "meeting-minutes-redo-Ev1_F1-revision-0-0");
+    expect(retractSharedMinutes).toHaveBeenCalledWith(destination, "10.1", "meeting.txt");
+    expect(showDestinationSelection).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }), [destination]);
+    expect(reopened).toMatchObject({ status: "awaiting_destination", revision: 1,
+      slack: { selectionTs: "3.1", postedChunkIndexes: [] } });
+    expect(reopened).not.toHaveProperty("destination");
+    expect(reopened).not.toHaveProperty("generated");
+    expect(reopened).not.toHaveProperty("github");
+    expect(reopened).not.toHaveProperty("taskRegistration");
+  });
+
+  it("uses fresh external idempotency keys after a redo", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn().mockResolvedValueOnce({ id: "task-1" }).mockResolvedValueOnce({ id: "task-2" });
+    const options = resumeOptions({ createTask,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [{ title: "確認する" }] }) });
+    await resumeMeetingMinutesRun(fs, selection, options);
+    await redoMeetingMinutesRun(fs, redo, { destinations: [destination], deleteGitHub: vi.fn(), deleteTask: vi.fn(),
+      retractSharedMinutes: vi.fn(), showDestinationSelection: vi.fn().mockResolvedValue("3.1") });
+    await resumeMeetingMinutesRun(fs, selection, options);
+    expect(createTask.mock.calls[0]?.[1]).not.toBe(createTask.mock.calls[1]?.[1]);
+    expect(options.postParent.mock.calls[0]?.[3]).toContain("revision-0");
+    expect(options.postParent.mock.calls[1]?.[3]).toContain("revision-1");
   });
 });

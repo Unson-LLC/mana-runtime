@@ -1,6 +1,6 @@
-import type { MeetingMinutesDestination, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
-import { resumeMeetingMinutesRun, startMeetingMinutesRuns, validateMeetingMinutesDestinations,
-  type ResumeMeetingMinutesOptions, type StartMeetingMinutesOptions } from "./meeting-minutes-pipeline.js";
+import type { MeetingMinutesDestination, MeetingMinutesRedo, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns, validateMeetingMinutesDestinations,
+  type RedoMeetingMinutesOptions, type ResumeMeetingMinutesOptions, type StartMeetingMinutesOptions } from "./meeting-minutes-pipeline.js";
 import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
@@ -53,6 +53,15 @@ export function isMeetingMinutesSelection(value: unknown): value is MeetingMinut
       typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
     typeof candidate.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.actionTs);
 }
+export function isMeetingMinutesRedo(value: unknown): value is MeetingMinutesRedo {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<MeetingMinutesRedo>;
+  return candidate.kind === "meeting_minutes_redo" &&
+    typeof candidate.runId === "string" && /^[A-Za-z0-9_-]{3,260}$/.test(candidate.runId) &&
+    [candidate.workspaceId, candidate.channelId, candidate.userId].every((item) =>
+      typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
+    typeof candidate.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.actionTs);
+}
 
 export async function processMeetingMinutesSlackEvent(fs: WorkspaceFs, event: SlackQueueEvent,
   config: MeetingMinutesRuntimeConfig, options: Pick<StartMeetingMinutesOptions,
@@ -66,4 +75,9 @@ export async function processMeetingMinutesSelection(fs: WorkspaceFs, selection:
   config: MeetingMinutesRuntimeConfig, options: Omit<ResumeMeetingMinutesOptions, "destinations">) {
   if (!config.enabled) throw new Error("meeting_minutes_disabled");
   return resumeMeetingMinutesRun(fs, selection, { ...options, destinations: config.destinations });
+}
+export async function processMeetingMinutesRedo(fs: WorkspaceFs, command: MeetingMinutesRedo,
+  config: MeetingMinutesRuntimeConfig, options: Omit<RedoMeetingMinutesOptions, "destinations">) {
+  if (!config.enabled) throw new Error("meeting_minutes_disabled");
+  return redoMeetingMinutesRun(fs, command, { ...options, destinations: config.destinations });
 }
