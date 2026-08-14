@@ -46,6 +46,7 @@ describe("runtime control command policy", () => {
 
   it.each([
     ["/doctor", { name: "doctor" }],
+    ["/cron", { name: "cron", action: "list" }],
     ["/cron list", { name: "cron", action: "list" }],
     ["/cron run nightly", { name: "cron", action: "run", target: "nightly" }],
     ["/develop READMEを改善する", { name: "develop", request: "READMEを改善する" }],
@@ -61,7 +62,7 @@ describe("runtime control command policy", () => {
     expect(applyModelCommand({ generation: 1 }, "sonnet", placement).modelOverride).toBe("sonnet");
   });
 
-  it.each(["/cron", "/cron delete nightly", "/develop", "/vibepro", "/ryoko-develop"])(
+  it.each(["/cron delete nightly", "/develop", "/vibepro", "/ryoko-develop"])(
     "rejects an incomplete or unsupported deterministic command: %s",
     (text) => expect(() => parseRuntimeControlCommand(text)).toThrow(expect.objectContaining({ code: "command_invalid" })),
   );

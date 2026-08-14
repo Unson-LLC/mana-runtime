@@ -46,6 +46,7 @@ export function parseRuntimeControlCommand(text: string): RuntimeControlCommand 
     return { name: "model", model: model[1] };
   }
   if (normalized.startsWith("/cron")) {
+    if (normalized === "/cron") return { name: "cron", action: "list" };
     const match = normalized.match(/^\/cron\s+(list|run|enable|disable)(?:\s+(.+))?$/);
     if (!match || (match[1] !== "list" && !match[2]?.trim()) || (match[1] === "list" && match[2])) {
       throw new RuntimeControlCommandError("command_invalid");
