@@ -8,6 +8,7 @@ export interface NocodbProxyEnv {
 }
 
 const TOOLS = new Set([
+  "nocodb_list_bases", "nocodb_list_tables",
   "nocodb_list_records", "nocodb_get_record", "nocodb_create_record", "nocodb_update_record",
   "nocodb_delete_record", "nocodb_get_table_meta", "nocodb_update_column",
 ]);
@@ -34,7 +35,16 @@ function dataPath(args: Record<string, unknown>, mapping: Record<string, string>
   return `/api/v1/db/data/noco/${encodeURIComponent(projectId)}/${table}${record ? `/${encodeURIComponent(clean(args.recordId))}` : ""}`;
 }
 
+function mappedProjectId(args: Record<string, unknown>, mapping: Record<string, string>): string {
+  const projectId = mapping[clean(args.baseId)];
+  if (!projectId) throw new Error("nocodb_base_not_allowed");
+  return projectId;
+}
+
 function targetFor(tool: string, args: Record<string, unknown>, mapping: Record<string, string>): { method: string; path: string; body?: unknown } {
+  if (tool === "nocodb_list_tables") {
+    return { method: "GET", path: `/api/v2/meta/bases/${encodeURIComponent(mappedProjectId(args, mapping))}/tables` };
+  }
   if (tool === "nocodb_list_records") {
     const params = new URLSearchParams();
     const limit = args.limit === undefined ? 100 : Number(args.limit);
@@ -63,7 +73,11 @@ export async function handleNocodbProxyRequest(request: Request, env: NocodbProx
   try {
     const input = await request.json() as { tool?: unknown; arguments?: unknown };
     if (typeof input.tool !== "string" || !TOOLS.has(input.tool) || !input.arguments || typeof input.arguments !== "object" || Array.isArray(input.arguments)) throw new Error("invalid_arguments");
-    const target = targetFor(input.tool, input.arguments as Record<string, unknown>, projectMapping(env.NOCODB_PROJECT_MAPPING_JSON));
+    const mapping = projectMapping(env.NOCODB_PROJECT_MAPPING_JSON);
+    if (input.tool === "nocodb_list_bases") {
+      return Response.json({ bases: Object.keys(mapping).sort().map((baseId) => ({ baseId })) });
+    }
+    const target = targetFor(input.tool, input.arguments as Record<string, unknown>, mapping);
     const upstream = await fetchImpl(`${env.NOCODB_URL.replace(/\/$/, "")}${target.path}`, {
       method: target.method,
       headers: { "xc-token": env.NOCODB_TOKEN, "content-type": "application/json" },

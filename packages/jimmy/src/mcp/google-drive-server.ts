@@ -54,7 +54,10 @@ export const GOOGLE_DRIVE_TOOLS = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        query: { type: "string", description: "Google Drive files.list q expression (optional)" },
+        query: {
+          type: "string",
+          description: "Google Drive files.list q expression (optional). For a filename search use exactly: name contains 'mana'. Do not pass a bare search word or human-language sentence.",
+        },
         pageSize: { type: "number", minimum: 1, maximum: 100, default: 20 },
         orderBy: { type: "string", default: "modifiedTime desc" },
         pageToken: { type: "string" },

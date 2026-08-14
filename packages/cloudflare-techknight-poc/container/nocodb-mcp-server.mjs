@@ -3,6 +3,8 @@ import { pathToFileURL } from "node:url";
 
 const ENDPOINT = "https://nocodb.internal/api/runtime/nocodb";
 const definitions = [
+  ["nocodb_list_bases", [], {}],
+  ["nocodb_list_tables", ["baseId"], { baseId: { type: "string" } }],
   ["nocodb_list_records", ["baseId", "tableName"], {
     baseId: { type: "string" }, tableName: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 },
     offset: { type: "integer", minimum: 0 }, where: { type: "string" }, sort: { type: "string" },
