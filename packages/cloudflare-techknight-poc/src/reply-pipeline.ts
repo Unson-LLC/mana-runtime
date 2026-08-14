@@ -153,6 +153,7 @@ function buildPrompt(
       `requester_person_id: ${requesterIdentity.personId}`,
       `依頼者は認証済みで、Brainbase person_id "${requesterIdentity.personId}"です。`,
       "私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください。",
+      "私または自分のタスク一覧では、search_tasksではなくlist_tasksを使ってください。検索語を推測せず、assignee_person_id=requester_person_idを指定してください。",
       "requester_person_idは内部の検索条件です。利用者向け本文には表示せず、入力も要求しないでください。",
     ] : []),
     ...(requesterProfile ? [
