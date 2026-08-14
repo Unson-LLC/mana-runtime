@@ -56,6 +56,7 @@ import { handleSlackCommandRequest } from "./slack-command.js";
 import { runRemoteDevelopmentRequest } from "./development-runner-client.js";
 import { handleDevelopmentCallback } from "./development-callback.js";
 import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
+import { hydrateSlackAttachments } from "./slack-attachments.js";
 import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
@@ -425,8 +426,10 @@ export default {
               }
               const hydrateThreadContext = async (input: SlackQueueEvent) => {
                 const hydrated = await hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN });
-                return { ...hydrated, threadContext: await appendSlackThreadParticipantProfiles(hydrated.threadContext,
-                  { botToken: env.SLACK_BOT_TOKEN }) };
+                const withParticipants = { ...hydrated,
+                  threadContext: await appendSlackThreadParticipantProfiles(hydrated.threadContext,
+                    { botToken: env.SLACK_BOT_TOKEN }) };
+                return hydrateSlackAttachments(withParticipants, { botToken: env.SLACK_BOT_TOKEN });
               };
               return routeRuntimeEvent(event, {
                 meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",

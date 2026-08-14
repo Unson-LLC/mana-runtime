@@ -12,6 +12,8 @@ export interface SlackQueueEvent {
   text: string;
   /** Bounded prior thread messages. Never persisted to the Workspace store. */
   threadContext?: string;
+  /** Bounded, trusted attachment metadata and decoded text. Never persisted. */
+  attachmentContext?: string;
   receivedAt: string;
   /** Bounded Slack file identities. Download URLs are intentionally excluded. */
   files?: SlackFileReference[];
