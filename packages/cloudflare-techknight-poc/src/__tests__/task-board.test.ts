@@ -26,7 +26,13 @@ describe("Cloudflare bounded task Canvas", () => {
         return Response.json({ items: [canonical(parsed.searchParams.get("status")!, parsed.searchParams.get("status")!)], next_cursor: null });
       }
       if (parsed.pathname.endsWith("conversations.info")) {
-        return Response.json({ ok: true, channel: { properties: { canvas: { file_id: "F_CANVAS" } } } });
+        expect(init?.method).toBe("GET");
+        expect(parsed.searchParams.get("channel")).toBe("C_BACK_OFFICE");
+        expect(init?.body).toBeUndefined();
+        return Response.json({
+          ok: true,
+          channel: { properties: { tabs: [{ id: "Ct_TAB", type: "canvas", data: { file_id: "F_CANVAS" } }] } },
+        });
       }
       if (parsed.pathname.endsWith("canvases.edit")) return Response.json({ ok: true });
       throw new Error(`unexpected ${url} ${String(init?.body)}`);
@@ -74,7 +80,7 @@ describe("Cloudflare bounded task Canvas", () => {
         infoCalls += 1;
         return Response.json(infoCalls === 1
           ? { ok: true, channel: { properties: {} } }
-          : { ok: true, channel: { properties: { canvas: { file_id: "F_RACE" } } } });
+          : { ok: true, channel: { properties: { tabz: [{ id: "Ct_RACE", type: "canvas", data: { file_id: "F_RACE" } }] } } });
       }
       if (parsed.pathname.endsWith("conversations.canvases.create")) {
         return Response.json({ ok: false, error: "channel_canvas_already_exists" });

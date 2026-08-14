@@ -73,7 +73,7 @@ async function main() {
   let runner;
   try {
     await ensureRepository();
-    const result = await run("/usr/bin/node", ["/opt/mana/openryoko-development-runner.mjs"], {
+    const result = await run(process.execPath, ["/opt/mana/openryoko-development-runner.mjs"], {
       stdin: JSON.stringify({ mode: "new", request: job.request }),
     });
     runner = parseRunnerResult(result.stdout);
