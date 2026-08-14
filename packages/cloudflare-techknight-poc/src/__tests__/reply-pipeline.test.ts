@@ -118,6 +118,31 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.exec.mock.calls[1][0]).not.toContain("--resume");
   });
 
+  it("falls back to the hydrated thread context when the persisted Claude session is busy", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness();
+    options.claudeSession = {
+      id: "12345678-1234-4123-8123-123456789abc",
+      sandboxId: "techknight-session-stable",
+      resume: true,
+    };
+    sandbox.exec
+      .mockResolvedValueOnce({
+        success: false,
+        stdout: "",
+        stderr: "Error: Session ID 12345678-1234-4123-8123-123456789abc is already in use.",
+        exitCode: 1,
+      })
+      .mockResolvedValueOnce({ success: true, stdout: "本人のタスクです。", stderr: "", exitCode: 0 });
+
+    await processReplyEvent(fs, event({ threadContext: "直前までのSlackスレッド本文" }), options);
+
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
+    expect(sandbox.exec.mock.calls[1][0]).not.toContain("--resume");
+    expect(sandbox.exec.mock.calls[1][0]).not.toContain("--session-id");
+  });
+
   it("injects only the placement persona, instructions, skills, and escalation employee", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({ runtimeContext: { persona: "Ryoko（AI組織のCOO）",
