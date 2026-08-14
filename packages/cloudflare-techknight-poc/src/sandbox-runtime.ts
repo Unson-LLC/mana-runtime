@@ -1,6 +1,7 @@
 import { Sandbox as BaseSandbox, getSandbox } from "@cloudflare/sandbox";
 
 import type { SandboxAdminEnv } from "./sandbox-admin.js";
+import { applyAnthropicCredential } from "./anthropic-auth.js";
 import {
   handleTaskSearchProxyRequest,
   TASK_SEARCH_PROXY_HOST,
@@ -48,13 +49,10 @@ export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
 TechKnightSandbox.outboundByHost = {
   "api.anthropic.com": async (request: Request, env: SandboxRuntimeEnv) => {
     const url = new URL(request.url);
-    const headers = new Headers(request.headers);
-    if (!env.CLAUDE_CODE_OAUTH_TOKEN) {
+    const headers = applyAnthropicCredential(request.headers, env);
+    if (!headers) {
       return new Response("oauth_not_configured", { status: 503 });
     }
-
-    headers.set("Authorization", `Bearer ${env.CLAUDE_CODE_OAUTH_TOKEN}`);
-    headers.delete("x-api-key");
     return fetch(`https://api.anthropic.com${url.pathname}${url.search}`, {
       method: request.method,
       headers,

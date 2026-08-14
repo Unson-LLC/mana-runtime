@@ -7,6 +7,7 @@ import {
 import { DurableObject } from "cloudflare:workers";
 
 import { handleSlackRequest } from "./slack.js";
+import { hasAnthropicCredential } from "./anthropic-auth.js";
 import {
   handleSandboxAdminRequest,
   isSandboxAdminAuthorized,
@@ -234,7 +235,7 @@ function meetingMinutesClients(env: Env) {
   return {
     slack,
     classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
-      if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("oauth_not_configured");
+      if (!hasAnthropicCredential(env)) throw new Error("oauth_not_configured");
       return classifyMeetingMinutesDestinationInSandbox(transcript, candidates, claudeRuntime,
         createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`));
     },
@@ -242,7 +243,7 @@ function meetingMinutesClients(env: Env) {
       postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
       download: (fileId: string) => slack.downloadTextFile(fileId),
       generate: (transcript: string) => {
-        if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("oauth_not_configured");
+        if (!hasAnthropicCredential(env)) throw new Error("oauth_not_configured");
         return generateMeetingMinutesInSandbox(transcript, claudeRuntime,
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
       },
@@ -690,7 +691,7 @@ export default {
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
                     slackBotToken: env.SLACK_BOT_TOKEN,
-                    oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                    oauthConfigured: hasAnthropicCredential(env),
                     claudeRuntime,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
@@ -747,7 +748,7 @@ export default {
                     expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
                     allowedChannelId: placement.channelId,
                     slackBotToken: env.SLACK_BOT_TOKEN,
-                    oauthConfigured: Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+                    oauthConfigured: hasAnthropicCredential(env),
                     claudeRuntime,
                     taskSearchEnabled: taskSearch.taskSearchEnabled,
                     taskWriteEnabled,
