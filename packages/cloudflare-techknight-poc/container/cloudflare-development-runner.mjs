@@ -80,7 +80,7 @@ async function main() {
   try {
     await ensureRepository();
     const result = await run(process.execPath, ["/opt/mana/openryoko-development-runner.mjs"], {
-      stdin: JSON.stringify({ mode: "new", request: job.request }),
+      stdin: JSON.stringify({ request: job.request }),
     });
     runner = parseRunnerResult(result.stdout);
     if (runner.status === "failed") {
