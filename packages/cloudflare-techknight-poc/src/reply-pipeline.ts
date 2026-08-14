@@ -229,7 +229,7 @@ export async function generateClaudeReply(
   const sandbox = options.createSandbox(options.claudeSession?.sandboxId ?? `techknight-reply-${event.eventId}`);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
-    await sandbox.writeFile(promptPath, buildPrompt(
+    const promptContent = buildPrompt(
       event,
       options.taskSearchEnabled,
       options.taskWriteEnabled,
@@ -237,10 +237,11 @@ export async function generateClaudeReply(
       options.requesterProfile,
       options.graphContext,
       options.runtimeContext,
-    ));
+    );
+    let mcpConfigContent: string | undefined;
     if (options.taskSearchEnabled || options.taskWriteEnabled || options.capabilities?.mcp.length) {
       const placementMcp = options.capabilities ? buildRuntimeMcpConfig(options.capabilities).mcpServers : {};
-      await sandbox.writeFile(runtimeTaskSearchMcpConfigPath(), JSON.stringify({
+      mcpConfigContent = JSON.stringify({
         mcpServers: {
           ...placementMcp,
           ...(options.taskSearchEnabled ? { "task-search": {
@@ -252,8 +253,13 @@ export async function generateClaudeReply(
             args: ["/opt/mana/task-write-mcp-server.mjs"],
           } } : {}),
         },
-      }));
+      });
     }
+    const prepareSandbox = async (target: typeof sandbox) => {
+      await target.writeFile(promptPath, promptContent);
+      if (mcpConfigContent) await target.writeFile(runtimeTaskSearchMcpConfigPath(), mcpConfigContent);
+    };
+    await prepareSandbox(sandbox);
     const execOptions = {
       timeout: 120_000,
       env: {
@@ -304,17 +310,23 @@ export async function generateClaudeReply(
         outcome: "fresh_turn",
         reasonCode: "claude_session_busy",
       });
-      // The Slack thread is already hydrated into the prompt, so a one-turn
-      // execution preserves user-visible continuity without racing the locked
-      // Claude transcript. Later turns continue to use the persisted session.
-      result = await sandbox.exec(
-        buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
-          taskSearchEnabled: options.taskSearchEnabled,
-          taskWriteEnabled: options.taskWriteEnabled,
-          mcpEnabled: Boolean(options.capabilities?.mcp.length),
-        }),
-        execOptions,
-      );
+      // A session lock belongs to the container that owns its Claude process.
+      // Run the hydrated one-turn fallback in an isolated sandbox so the same
+      // stale process cannot also reject the recovery command.
+      const recoverySandbox = options.createSandbox(`techknight-recovery-${event.eventId}-${crypto.randomUUID()}`);
+      try {
+        await prepareSandbox(recoverySandbox);
+        result = await recoverySandbox.exec(
+          buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
+            taskSearchEnabled: options.taskSearchEnabled,
+            taskWriteEnabled: options.taskWriteEnabled,
+            mcpEnabled: Boolean(options.capabilities?.mcp.length),
+          }),
+          execOptions,
+        );
+      } finally {
+        await recoverySandbox.destroy();
+      }
     }
     if (!result.success) {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
