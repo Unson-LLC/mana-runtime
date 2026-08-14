@@ -253,7 +253,21 @@ export async function generateClaudeReply(
         },
       }));
     }
-    const result = await sandbox.exec(
+    const execOptions = {
+      timeout: 120_000,
+      env: {
+        IS_SANDBOX: "1",
+        CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+        MANA_TRACE_ID: event.eventId,
+        MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
+        MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
+        ...(options.taskWriteEnabled ? {
+          MANA_TASK_WRITE_REQUEST_ID: event.eventId,
+          MANA_TASK_WRITE_CAPABILITY: options.taskWriteCapability,
+        } : {}),
+      },
+    };
+    let result = await sandbox.exec(
       buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
@@ -261,21 +275,25 @@ export async function generateClaudeReply(
         sessionId: options.claudeSession?.id,
         resumeSession: options.claudeSession?.resume,
       }),
-      {
-        timeout: 120_000,
-        env: {
-          IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
-          MANA_TRACE_ID: event.eventId,
-          MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
-          MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
-          ...(options.taskWriteEnabled ? {
-            MANA_TASK_WRITE_REQUEST_ID: event.eventId,
-            MANA_TASK_WRITE_CAPABILITY: options.taskWriteCapability,
-          } : {}),
-        },
-      },
+      execOptions,
     );
+    if (!result.success && options.claudeSession?.resume
+      && /No conversation found with session ID:/i.test(result.stderr)) {
+      emitTurnLog("log", "mana_claude_session_recovered", event, trace, {
+        outcome: "recreated",
+        reasonCode: "claude_session_not_found",
+      });
+      result = await sandbox.exec(
+        buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
+          taskSearchEnabled: options.taskSearchEnabled,
+          taskWriteEnabled: options.taskWriteEnabled,
+          mcpEnabled: Boolean(options.capabilities?.mcp.length),
+          sessionId: options.claudeSession.id,
+          resumeSession: false,
+        }),
+        execOptions,
+      );
+    }
     if (!result.success) {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
         outcome: "error",
