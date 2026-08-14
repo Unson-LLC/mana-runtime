@@ -65,14 +65,14 @@ describe("meeting minutes task cards", () => {
     const viewMetadata = JSON.parse(String(view.private_metadata)) as Record<string, unknown>;
     expect(viewMetadata.projectId).toBeUndefined();
     const suggestion = await handleMeetingMinutesTaskAction({ type: "block_suggestion", team: { id: "TTK" }, user: { id: "U1" },
-      view: { private_metadata: view.private_metadata }, actions: [{ action_id: "mana_meeting_minutes_task_assignee", value: "梅田" }] }, options);
+      view: { private_metadata: view.private_metadata }, action_id: "mana_meeting_minutes_task_assignee", value: "梅田" }, options);
     expect(suggestion?.status).toBe(200); expect(options.listPeople).toHaveBeenCalledWith();
   });
   it("returns Graph SSOT people for the assignee selector", async () => {
     const options = deps(run());
     const response = await handleMeetingMinutesTaskAction({ type: "block_suggestion", team: { id: "TTK" }, user: { id: "U1" },
       view: { private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0, organizationId: "tech-knight",
-        channelId: "CDEST", projectId: "proj_pms" }) }, actions: [{ action_id: "mana_meeting_minutes_task_assignee", value: "梅田" }] }, options);
+        channelId: "CDEST", projectId: "proj_pms" }) }, action_id: "mana_meeting_minutes_task_assignee", value: "梅田" }, options);
     expect(response?.status).toBe(200); expect(await response?.json()).toEqual({ options: [
       { text: { type: "plain_text", text: "（担当なし）" }, value: "__none__" },
       { text: { type: "plain_text", text: "梅田 遼" }, value: "per_umeda" },
