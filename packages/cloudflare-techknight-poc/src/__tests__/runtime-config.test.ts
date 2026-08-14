@@ -55,6 +55,14 @@ describe("Cloudflare runtime binding", () => {
       .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
   });
 
+  it("retains bounded persona, runtime instructions, and visible skills", () => {
+    const [placement] = parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"],
+      runtimeContext: { persona: "Ryoko", instructions: ["結論を先に述べる"], skills: ["status", "management"] } }]));
+    expect(placement.runtimeContext).toEqual({ persona: "Ryoko", instructions: ["結論を先に述べる"], skills: ["status", "management"] });
+    expect(() => parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"],
+      runtimeContext: { persona: "Ryoko", instructions: [], skills: ["../private"] } }]))).toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+  });
+
   it.each([
     ["techknight", "T_TECHKNIGHT", "C_MANA_TEST", "techknight, shared,techknight"],
     ["unson", "T_UNSON", "C_BACK_OFFICE", "back-office, brainbase"],

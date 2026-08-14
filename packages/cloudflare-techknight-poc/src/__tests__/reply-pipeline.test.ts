@@ -76,6 +76,18 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
+  it("injects only the placement persona, instructions, skills, and escalation employee", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({ runtimeContext: { persona: "Ryoko（AI組織のCOO）",
+      instructions: ["結論を先に述べる", "不確実なことは正直に伝える"],
+      skills: ["status", "management"], escalationEmployee: "critical-reviewer" } });
+    await processReplyEvent(fs, event(), options);
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    expect(prompt).toContain("Ryoko（AI組織のCOO）");
+    expect(prompt).toContain("status, management");
+    expect(prompt).toContain("critical-reviewer");
+    expect(prompt).not.toContain("global private MEMORY");
+  });
   it("binds the Slack requester person to 私のタスク searches without asking for identity", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({

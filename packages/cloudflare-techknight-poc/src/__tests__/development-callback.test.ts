@@ -9,14 +9,33 @@ const body = { job_id: "job_1", event_id: "Ev1", placement_id: "mana-dev-biz", w
 
 describe("development callback", () => {
   it("posts one bounded result after rechecking placement provenance", async () => {
-    const post = vi.fn(async () => "2.0"); const completed = vi.fn(async () => false); const persist = vi.fn(async () => undefined);
-    const response = await handleDevelopmentCallback(request(body), { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement], isCompleted: completed, persistCompleted: persist, post });
+    const post = vi.fn(async () => "2.0"); const claim = vi.fn(async () => true); const complete = vi.fn(async () => undefined);
+    const response = await handleDevelopmentCallback(request(body), { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement], claim, complete, release: async () => undefined, post });
     expect(response.status).toBe(200); expect(post).toHaveBeenCalledWith(expect.objectContaining({ eventId: "development:job_1", channelId: "C1", threadTs: "1.0" }), expect.stringContaining("Story: STR-1"));
-    expect(persist).toHaveBeenCalledWith("development:job_1", "2.0", expect.objectContaining({ job_id: "job_1" }));
+    expect(complete).toHaveBeenCalledWith("development:job_1", "2.0", expect.objectContaining({ job_id: "job_1" }));
   });
   it("is idempotent for a repeated job callback", async () => {
-    const post = vi.fn(); const response = await handleDevelopmentCallback(request(body), { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement], isCompleted: async () => true, persistCompleted: async () => undefined, post });
+    const post = vi.fn(); const response = await handleDevelopmentCallback(request(body), { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement], claim: async () => false, complete: async () => undefined, release: async () => undefined, post });
     expect(response.status).toBe(200); expect(post).not.toHaveBeenCalled();
+  });
+  it("claims a job before posting so concurrent callbacks cannot double-post", async () => {
+    let claimed = false;
+    const claim = vi.fn(async () => claimed ? false : (claimed = true));
+    const post = vi.fn(async () => "2.0");
+    const options = { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement],
+      claim, complete: vi.fn(async () => undefined), release: vi.fn(async () => undefined), post };
+    const [first, second] = await Promise.all([
+      handleDevelopmentCallback(request(body), options),
+      handleDevelopmentCallback(request(body), options),
+    ]);
+    expect(first.status).toBe(200); expect(second.status).toBe(200);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it("releases the claim when Slack posting fails", async () => {
+    const release = vi.fn(async () => undefined);
+    await expect(handleDevelopmentCallback(request(body), { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement],
+      claim: async () => true, complete: async () => undefined, release, post: async () => { throw new Error("slack_down"); } })).rejects.toThrow("slack_down");
+    expect(release).toHaveBeenCalledWith("development:job_1", expect.objectContaining({ job_id: "job_1" }));
   });
   it.each([
     ["bad token", request(body, "wrong")],
@@ -24,7 +43,7 @@ describe("development callback", () => {
     ["other user", request({ ...body, requester_id: "U2" })],
     ["unsafe pr", request({ ...body, pr_url: "javascript:alert(1)" })],
   ])("fails closed for %s", async (_name, input) => {
-    const post = vi.fn(); const response = await handleDevelopmentCallback(input, { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement], isCompleted: async () => false, persistCompleted: async () => undefined, post });
+    const post = vi.fn(); const response = await handleDevelopmentCallback(input, { token: "secret", tenantId: "unson-business", workspaceId: "T1", placements: [placement], claim: async () => true, complete: async () => undefined, release: async () => undefined, post });
     expect(response.status).toBeGreaterThanOrEqual(400); expect(post).not.toHaveBeenCalled();
   });
 });

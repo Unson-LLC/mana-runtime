@@ -35,8 +35,9 @@ function render(payload: DevelopmentCallbackPayload): string {
 
 export async function handleDevelopmentCallback(request: Request, options: {
   token?: string; tenantId: string; workspaceId: string; placements: readonly RuntimePlacement[];
-  isCompleted(eventId: string, payload: DevelopmentCallbackPayload): Promise<boolean>;
-  persistCompleted(eventId: string, responseTs: string, payload: DevelopmentCallbackPayload): Promise<void>;
+  claim(eventId: string, payload: DevelopmentCallbackPayload): Promise<boolean>;
+  complete(eventId: string, responseTs: string, payload: DevelopmentCallbackPayload): Promise<void>;
+  release(eventId: string, payload: DevelopmentCallbackPayload): Promise<void>;
   post(event: SlackQueueEvent, text: string): Promise<string>;
 }): Promise<Response> {
   const bearer = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? "";
@@ -49,11 +50,16 @@ export async function handleDevelopmentCallback(request: Request, options: {
     placement.deliveryScopes?.some((scope) => scope.connector === "slack" && scope.channelId === payload.channel_id);
   if (!allowed) return Response.json({ error: "development_callback_forbidden" }, { status: 403 });
   const callbackEventId = `development:${payload.job_id}`;
-  if (await options.isCompleted(callbackEventId, payload)) return Response.json({ ok: true, duplicate: true });
+  if (!await options.claim(callbackEventId, payload)) return Response.json({ ok: true, duplicate: true });
   const event: SlackQueueEvent = { tenantId: options.tenantId, eventId: callbackEventId, workspaceId: payload.workspace_id,
     channelId: payload.channel_id, threadTs: payload.thread_ts, messageTs: payload.thread_ts, userId: payload.requester_id,
     eventType: "development_result", text: "", receivedAt: new Date().toISOString() };
-  const responseTs = await options.post(event, render(payload));
-  await options.persistCompleted(callbackEventId, responseTs, payload);
-  return Response.json({ ok: true });
+  try {
+    const responseTs = await options.post(event, render(payload));
+    await options.complete(callbackEventId, responseTs, payload);
+    return Response.json({ ok: true });
+  } catch (error) {
+    await options.release(callbackEventId, payload);
+    throw error;
+  }
 }

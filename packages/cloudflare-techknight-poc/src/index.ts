@@ -128,7 +128,34 @@ export class TechKnightWorkspace extends withWorkspace(
     // @cloudflare/computer 0.1.1 was published against Workers types v4.
     storage: self.workspaceStorage as unknown as DurableObjectStorageLike,
   }),
-) {}
+) {
+  async claimDevelopmentCallback(eventId: string): Promise<boolean> {
+    if (!/^[A-Za-z0-9:_-]{1,160}$/.test(eventId)) throw new Error("event_id_invalid");
+    const key = `development-callback:${eventId}`;
+    return this.ctx.storage.transaction(async (transaction) => {
+      if (await transaction.get(key)) return false;
+      await transaction.put(key, { status: "pending", claimedAt: new Date().toISOString() });
+      return true;
+    });
+  }
+
+  async completeDevelopmentCallback(eventId: string, responseTs: string): Promise<void> {
+    const key = `development-callback:${eventId}`;
+    await this.ctx.storage.transaction(async (transaction) => {
+      const current = await transaction.get<{ status?: string }>(key);
+      if (current?.status !== "pending") throw new Error("development_callback_claim_missing");
+      await transaction.put(key, { status: "completed", responseTs, completedAt: new Date().toISOString() });
+    });
+  }
+
+  async releaseDevelopmentCallback(eventId: string): Promise<void> {
+    const key = `development-callback:${eventId}`;
+    await this.ctx.storage.transaction(async (transaction) => {
+      const current = await transaction.get<{ status?: string }>(key);
+      if (current?.status === "pending") await transaction.delete(key);
+    });
+  }
+}
 
 export class MeetingMinutesWorkspace extends withWorkspace(
   WorkspaceBase,
@@ -207,27 +234,25 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
-      let callbackEvent: SlackQueueEvent | undefined;
+      let callbackWorkspace: DurableObjectStub<TechKnightWorkspace> | undefined;
       return handleDevelopmentCallback(request, {
         token: env.DEVELOPMENT_CALLBACK_TOKEN, tenantId: env.TENANT_ID,
         workspaceId: env.SLACK_EXPECTED_TEAM_ID, placements,
-        isCompleted: async (eventId, payload) => {
-          callbackEvent = { tenantId: env.TENANT_ID, eventId, workspaceId: payload.workspace_id,
+        claim: async (eventId, payload) => {
+          const callbackEvent: SlackQueueEvent = { tenantId: env.TENANT_ID, eventId, workspaceId: payload.workspace_id,
             channelId: payload.channel_id, threadTs: payload.thread_ts, messageTs: payload.thread_ts,
             userId: payload.requester_id, eventType: "development_result", text: "", receivedAt: new Date().toISOString() };
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(callbackEvent));
-          return withDisposableResource(
-            () => getWorkspace(env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle),
-            (workspace) => isReplyCompleted(workspace.fs, eventId),
-          );
+          callbackWorkspace = env.TECHKNIGHT_WORKSPACE.get(id);
+          return callbackWorkspace.claimDevelopmentCallback(eventId);
         },
-        persistCompleted: async (eventId, responseTs) => {
-          if (!callbackEvent) throw new Error("development_callback_workspace_missing");
-          const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(callbackEvent));
-          await withDisposableResource(
-            () => getWorkspace(env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle),
-            (workspace) => persistReplyCompletion(workspace.fs, { eventId, responseTs, completedAt: new Date().toISOString() }),
-          );
+        complete: async (eventId, responseTs) => {
+          if (!callbackWorkspace) throw new Error("development_callback_workspace_missing");
+          await callbackWorkspace.completeDevelopmentCallback(eventId, responseTs);
+        },
+        release: async (eventId) => {
+          if (!callbackWorkspace) return;
+          await callbackWorkspace.releaseDevelopmentCallback(eventId);
         },
         post: (event, text) => postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN }),
       });
@@ -493,6 +518,8 @@ export default {
                     requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
                     requesterProfile: profileResolution.profile,
                     graphContext: graphContext.content,
+                    runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
+                      escalationEmployee: placement.agent?.escalationEmployee } : undefined,
                     capabilities: placement.capabilities,
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     respondPolicy: placement.respondTo,

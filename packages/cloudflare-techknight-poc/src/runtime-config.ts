@@ -20,6 +20,7 @@ export interface RuntimePlacement {
   dataScopes?: { graph: { mode: "read-only"; scopes: string[] } };
   deliveryScopes?: Array<{ connector: "slack"; channelId: string }>;
   respondTo?: RuntimeRespondPolicy;
+  runtimeContext?: { persona: string; instructions: string[]; skills: string[] };
 }
 
 export interface ResolvedRuntimePlacement extends RuntimeBinding, RuntimePlacement {}
@@ -121,6 +122,15 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         !respondModes.has(respondTo.im) || !respondModes.has(respondTo.mpim) ||
         !respondModes.has(respondTo.channel) || typeof respondTo.engagedThreads !== "boolean"
       )) throw new Error("invalid");
+      const runtimeContext = candidate.runtimeContext as Record<string, unknown> | undefined;
+      if (runtimeContext !== undefined && (
+        typeof runtimeContext !== "object" || runtimeContext === null ||
+        typeof runtimeContext.persona !== "string" || runtimeContext.persona.trim().length === 0 || runtimeContext.persona.length > 500 ||
+        !Array.isArray(runtimeContext.instructions) || runtimeContext.instructions.length === 0 ||
+        runtimeContext.instructions.some((value) => typeof value !== "string" || value.trim().length === 0 || value.length > 500) ||
+        !Array.isArray(runtimeContext.skills) || runtimeContext.skills.length === 0 ||
+        runtimeContext.skills.some((value) => typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(value))
+      )) throw new Error("invalid");
       return {
         placementId: candidate.placementId,
         channelId: candidate.channelId,
@@ -133,6 +143,8 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         ...(dataScopes ? { dataScopes } : {}),
         ...(deliveryScopes ? { deliveryScopes } : {}),
         ...(respondTo ? { respondTo: respondTo as unknown as RuntimeRespondPolicy } : {}),
+        ...(runtimeContext ? { runtimeContext: { persona: runtimeContext.persona as string,
+          instructions: [...runtimeContext.instructions as string[]], skills: [...runtimeContext.skills as string[]] } } : {}),
       };
     });
     if (
