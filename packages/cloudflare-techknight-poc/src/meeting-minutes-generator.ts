@@ -2,6 +2,8 @@ import type { GeneratedMeetingMinutes, MeetingMinutesTaskCandidate } from "./mee
 import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
+const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
+
 function nonEmpty(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
 }
@@ -69,7 +71,7 @@ export async function generateMeetingMinutesInSandbox(
     const promptPath = runtimeClaudePromptPath("meeting-minutes");
     await sandbox.writeFile(promptPath, generationPrompt(transcript));
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime), {
-      timeout: 180_000,
+      timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
     });
     if (!result.success) throw new Error("meeting_minutes_generation_failed");
