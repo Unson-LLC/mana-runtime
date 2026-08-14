@@ -21,11 +21,14 @@ export async function handleGoogleDriveMcpProxyRequest(
   const headers = new Headers(request.headers);
   headers.set("authorization", `Bearer ${env.GOOGLE_DRIVE_MCP_TOKEN}`);
   headers.delete("cookie");
-  return fetchImpl(`${env.GOOGLE_DRIVE_MCP_BASE_URL.replace(/\/$/, "")}${GOOGLE_DRIVE_MCP_PROXY_PATH}`, {
+  const response = await fetchImpl(`${env.GOOGLE_DRIVE_MCP_BASE_URL.replace(/\/$/, "")}${GOOGLE_DRIVE_MCP_PROXY_PATH}`, {
     method: "POST",
     headers,
     body: request.body,
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(120_000),
   });
+  return response.status >= 300 && response.status < 400
+    ? Response.json({ error: "google_drive_mcp_redirect_rejected" }, { status: 502 })
+    : response;
 }

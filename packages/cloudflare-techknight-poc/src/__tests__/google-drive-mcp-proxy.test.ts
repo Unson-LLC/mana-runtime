@@ -15,8 +15,17 @@ describe("Google Drive MCP proxy", () => {
     expect(response.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledWith(
       "https://bb.unson.jp/runtime-google-drive/mcp",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({ method: "POST", redirect: "manual" }),
     );
+  });
+
+  it("rejects upstream redirects without following them", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } })) as unknown as typeof fetch;
+    const response = await handleGoogleDriveMcpProxyRequest(
+      new Request("https://google-drive-mcp.internal/mcp", { method: "POST", body: "{}" }),
+      { GOOGLE_DRIVE_MCP_BASE_URL: "https://bb.unson.jp/runtime-google-drive", GOOGLE_DRIVE_MCP_TOKEN: "drive-secret" }, fetchImpl,
+    );
+    expect(response.status).toBe(502);
   });
 
   it("fails closed for missing credentials and non-MCP paths", async () => {
