@@ -148,7 +148,9 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.exec).toHaveBeenCalledOnce();
     expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
     expect(createSandbox).toHaveBeenCalledTimes(2);
-    expect(createSandbox.mock.calls[1][0]).toMatch(/^techknight-recovery-EvReply123-/);
+    const recoverySandboxId = createSandbox.mock.calls[1][0] as string;
+    expect(recoverySandboxId).toMatch(/^tkr-[0-9a-f-]{36}$/);
+    expect(recoverySandboxId.length).toBeLessThanOrEqual(63);
     expect(recoverySandbox.writeFile).toHaveBeenCalledOnce();
     expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--resume");
     expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--session-id");
