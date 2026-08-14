@@ -9,7 +9,7 @@ const destinations = [
 ];
 
 describe("generateMeetingMinutesInSandbox", () => {
-  it("uses the isolated prompt file and validates strict JSON", async () => {
+  it("story-meeting-minutes-brainbase-judgment:ac:6 uses the isolated prompt file and validates strict JSON", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
       stdout: JSON.stringify({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20" },
@@ -30,6 +30,10 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
       expect.stringContaining('"tasks"'),
+    );
+    expect(sandbox.writeFile).toHaveBeenCalledWith(
+      "/tmp/mana-meeting-minutes-mcp.json",
+      expect.stringContaining('"brainbase"'),
     );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({

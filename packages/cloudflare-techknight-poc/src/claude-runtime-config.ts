@@ -23,6 +23,8 @@ const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.free
   "meeting-minutes": "/tmp/meeting-minutes-prompt.txt",
 });
 const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
+const MEETING_MINUTES_MCP_CONFIG_PATH = "/tmp/mana-meeting-minutes-mcp.json";
+const MEETING_MINUTES_SETTINGS_PATH = "/opt/mana/meeting-minutes-claude-settings.json";
 
 export function resolveClaudeRuntimeConfig(bindings: ClaudeRuntimeBindings, modelOverride?: "opus" | "sonnet"): ClaudeRuntimeConfig {
   const model = modelOverride ?? bindings.RUNTIME_CLAUDE_MODEL;
@@ -41,6 +43,10 @@ export function runtimeClaudePromptPath(purpose: RuntimeClaudePurpose): string {
 
 export function runtimeTaskSearchMcpConfigPath(): string {
   return TASK_SEARCH_MCP_CONFIG_PATH;
+}
+
+export function runtimeMeetingMinutesMcpConfigPath(): string {
+  return MEETING_MINUTES_MCP_CONFIG_PATH;
 }
 
 export function buildRuntimeClaudeCommand(
@@ -64,7 +70,7 @@ export function buildRuntimeClaudeCommand(
     ? options.resumeSession ? ` --resume ${options.sessionId}` : ` --session-id ${options.sessionId}`
     : "";
   const base = purpose === "meeting-minutes"
-    ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions < ${promptPath}`
+    ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH} --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config < ${promptPath}`
     : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`

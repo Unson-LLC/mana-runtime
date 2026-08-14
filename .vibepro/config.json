@@ -253,8 +253,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-meeting-minutes-brainbase-judgment",
+        "title": "議事録生成をBrainbase判断ライフサイクルへ接続する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-requester-aware-write-broker"
+    "current_story_id": "story-meeting-minutes-brainbase-judgment"
   }
 }

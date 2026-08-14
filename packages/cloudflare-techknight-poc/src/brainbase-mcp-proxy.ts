@@ -1,5 +1,6 @@
 export const BRAINBASE_MCP_PROXY_HOST = "brainbase-mcp.internal";
 export const BRAINBASE_MCP_PROXY_PATH = "/mcp";
+export const BRAINBASE_JUDGMENT_HOOK_PROXY_PATH = "/host/judgment/hook";
 
 export interface BrainbaseMcpProxyEnv {
   BRAINBASE_MCP_BASE_URL?: string;
@@ -8,7 +9,8 @@ export interface BrainbaseMcpProxyEnv {
 
 export async function handleBrainbaseMcpProxyRequest(request: Request, env: BrainbaseMcpProxyEnv, fetchImpl: typeof fetch = fetch): Promise<Response> {
   const url = new URL(request.url);
-  if (url.hostname !== BRAINBASE_MCP_PROXY_HOST || url.pathname !== BRAINBASE_MCP_PROXY_PATH || request.method !== "POST") {
+  const isAllowedPath = url.pathname === BRAINBASE_MCP_PROXY_PATH || url.pathname === BRAINBASE_JUDGMENT_HOOK_PROXY_PATH;
+  if (url.hostname !== BRAINBASE_MCP_PROXY_HOST || !isAllowedPath || request.method !== "POST") {
     return Response.json({ error: "not_found" }, { status: 404 });
   }
   if (!env.BRAINBASE_MCP_BASE_URL || !env.BRAINBASE_MCP_TOKEN) {
@@ -17,7 +19,11 @@ export async function handleBrainbaseMcpProxyRequest(request: Request, env: Brai
   const headers = new Headers(request.headers);
   headers.set("authorization", `Bearer ${env.BRAINBASE_MCP_TOKEN}`);
   headers.delete("cookie");
-  const response = await fetchImpl(`${env.BRAINBASE_MCP_BASE_URL.replace(/\/$/, "")}${BRAINBASE_MCP_PROXY_PATH}`, {
+  headers.delete("x-brainbase-project-code");
+  if (url.pathname === BRAINBASE_JUDGMENT_HOOK_PROXY_PATH) {
+    headers.set("x-brainbase-project-code", "mana-runtime");
+  }
+  const response = await fetchImpl(`${env.BRAINBASE_MCP_BASE_URL.replace(/\/$/, "")}${url.pathname}`, {
     method: "POST", headers, body: request.body, redirect: "manual", signal: AbortSignal.timeout(30_000),
   });
   return response.status >= 300 && response.status < 400
