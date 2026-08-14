@@ -114,10 +114,10 @@ export function normalizeSlackEvent(
   }
 
   const eventId = nonEmptyString(payload.event_id);
-  const eventType = nonEmptyString(payload.event.type);
+  const rawEventType = nonEmptyString(payload.event.type);
   const channelId = nonEmptyString(payload.event.channel);
   const messageTs = nonEmptyString(payload.event.ts);
-  if (!eventId || !eventType || !channelId || !messageTs) {
+  if (!eventId || !rawEventType || !channelId || !messageTs) {
     throw new Error("slack_event_invalid");
   }
 
@@ -125,6 +125,14 @@ export function normalizeSlackEvent(
   const botId = nonEmptyString(payload.event.bot_id);
   const subtype = nonEmptyString(payload.event.subtype);
   const channelType = nonEmptyString(payload.event.channel_type);
+  const text = typeof payload.event.text === "string" ? payload.event.text : "";
+  const authorization = Array.isArray(payload.authorizations)
+    ? payload.authorizations.find(isRecord)
+    : undefined;
+  const authorizedBotUserId = authorization ? nonEmptyString(authorization.user_id) : undefined;
+  const eventType = rawEventType === "message" && authorizedBotUserId && text.includes(`<@${authorizedBotUserId}>`)
+    ? "app_mention"
+    : rawEventType;
   const files = normalizeSlackFiles(payload.event.files);
   return {
     tenantId,
@@ -138,7 +146,7 @@ export function normalizeSlackEvent(
     ...(botId ? { botId } : {}),
     ...(subtype ? { subtype } : {}),
     eventType,
-    text: typeof payload.event.text === "string" ? payload.event.text : "",
+    text,
     receivedAt,
     ...(files ? { files } : {}),
   };
