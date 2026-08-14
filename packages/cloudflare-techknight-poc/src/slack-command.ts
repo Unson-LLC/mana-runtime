@@ -3,8 +3,9 @@ import type { SlackQueueEvent } from "./types.js";
 
 const COMMANDS = new Set(["/vibepro", "/ryoko-develop"]);
 export async function handleSlackCommandRequest(request: Request, options: {
-  signingSecret: string; tenantId: string; expectedTeamId: string; allowedChannelIds: readonly string[];
-  allowedUserIds: readonly string[]; nowMs?: number; send(event: SlackQueueEvent): Promise<unknown>;
+  signingSecret: string; tenantId: string; expectedTeamId: string;
+  placements: ReadonlyArray<{ channelId: string; allowedUserIds: readonly string[] }>;
+  nowMs?: number; send(event: SlackQueueEvent): Promise<unknown>;
 }): Promise<Response> {
   const body = await request.text();
   const valid = await verifySlackRequest({ body, timestamp: request.headers.get("x-slack-request-timestamp") ?? "",
@@ -15,7 +16,8 @@ export async function handleSlackCommandRequest(request: Request, options: {
   const userId = form.get("user_id") ?? ""; const command = form.get("command") ?? "";
   const triggerId = form.get("trigger_id") ?? ""; const text = (form.get("text") ?? "").trim();
   if (teamId !== options.expectedTeamId) return Response.json({ error: "slack_team_forbidden" }, { status: 403 });
-  if (!COMMANDS.has(command) || !options.allowedChannelIds.includes(channelId) || !options.allowedUserIds.includes(userId)) {
+  const placement = options.placements.find((candidate) => candidate.channelId === channelId);
+  if (!COMMANDS.has(command) || !placement?.allowedUserIds.includes(userId)) {
     return Response.json({ response_type: "ephemeral", text: "このコマンドを実行する権限がありません。" }, { status: 200 });
   }
   if (!text) return Response.json({ response_type: "ephemeral", text: "開発依頼を入力してください。" }, { status: 200 });

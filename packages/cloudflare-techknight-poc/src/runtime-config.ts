@@ -12,6 +12,7 @@ export interface RuntimePlacement {
   channelId: string;
   projectCodes: string[];
   taskWriteEnabled: boolean;
+  developmentEnabled?: boolean;
   audience?: { type: "operator"; allowedUserIds: string[] };
   agent?: { model: "opus" | "sonnet"; escalationEmployee?: string };
   capabilities?: { mcp: string[]; gatewayTools: string[] };
@@ -78,7 +79,8 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         !Array.isArray(candidate.projectCodes) ||
         candidate.projectCodes.length === 0 ||
         candidate.projectCodes.some((code) => typeof code !== "string") ||
-        (candidate.taskWriteEnabled !== undefined && typeof candidate.taskWriteEnabled !== "boolean")
+        (candidate.taskWriteEnabled !== undefined && typeof candidate.taskWriteEnabled !== "boolean") ||
+        (candidate.developmentEnabled !== undefined && typeof candidate.developmentEnabled !== "boolean")
       ) throw new Error("invalid");
       const projectCodes = parseRuntimeProjectCodes(candidate.projectCodes.join(","));
       if (projectCodes.length !== candidate.projectCodes.length) throw new Error("invalid");
@@ -115,6 +117,7 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         channelId: candidate.channelId,
         projectCodes,
         taskWriteEnabled: candidate.taskWriteEnabled === true,
+        ...(candidate.developmentEnabled === true ? { developmentEnabled: true } : {}),
         ...(audience ? { audience: { type: "operator", allowedUserIds: [...audience.allowedUserIds as string[]] } } : {}),
         ...(agent ? { agent: { model: agent.model as "opus" | "sonnet", ...(agent.escalationEmployee ? { escalationEmployee: agent.escalationEmployee as string } : {}) } } : {}),
         ...(capabilities ? { capabilities: { mcp: [...capabilities.mcp as string[]], gatewayTools: [...capabilities.gatewayTools as string[]] } } : {}),

@@ -54,6 +54,7 @@ import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
 import { runRemoteDevelopmentRequest } from "./development-runner-client.js";
+import { handleDevelopmentCallback } from "./development-callback.js";
 import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
 import { hydrateGraphContext, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
@@ -79,6 +80,8 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   RUNTIME_CRON_JOBS_JSON?: string;
   DEVELOPMENT_RUNNER_BASE_URL?: string;
   DEVELOPMENT_RUNNER_TOKEN?: string;
+  DEVELOPMENT_CALLBACK_BASE_URL?: string;
+  DEVELOPMENT_CALLBACK_TOKEN?: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
@@ -189,6 +192,33 @@ export default {
         createSandbox: (id) => createTechKnightSandbox(env, id),
       });
     }
+    if (request.method === "POST" && url.pathname === "/development/callback") {
+      const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      let callbackEvent: SlackQueueEvent | undefined;
+      return handleDevelopmentCallback(request, {
+        token: env.DEVELOPMENT_CALLBACK_TOKEN, tenantId: env.TENANT_ID,
+        workspaceId: env.SLACK_EXPECTED_TEAM_ID, placements,
+        isCompleted: async (eventId, payload) => {
+          callbackEvent = { tenantId: env.TENANT_ID, eventId, workspaceId: payload.workspace_id,
+            channelId: payload.channel_id, threadTs: payload.thread_ts, messageTs: payload.thread_ts,
+            userId: payload.requester_id, eventType: "development_result", text: "", receivedAt: new Date().toISOString() };
+          const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(callbackEvent));
+          return withDisposableResource(
+            () => getWorkspace(env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle),
+            (workspace) => isReplyCompleted(workspace.fs, eventId),
+          );
+        },
+        persistCompleted: async (eventId, responseTs) => {
+          if (!callbackEvent) throw new Error("development_callback_workspace_missing");
+          const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(callbackEvent));
+          await withDisposableResource(
+            () => getWorkspace(env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle),
+            (workspace) => persistReplyCompletion(workspace.fs, { eventId, responseTs, completedAt: new Date().toISOString() }),
+          );
+        },
+        post: (event, text) => postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN }),
+      });
+    }
     if (request.method === "POST" && url.pathname === "/slack/interactions") {
       const config = meetingMinutesRuntimeConfig(env);
       return handleMeetingMinutesInteractionEntrypoint(request, env, ctx, config.operatorUserIds,
@@ -207,10 +237,11 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
-      const developmentPlacements = placements.filter((placement) => placement.capabilities?.gatewayTools.length);
+      const developmentPlacements = placements.filter((placement) => placement.developmentEnabled === true);
       return handleSlackCommandRequest(request, { signingSecret: env.SLACK_SIGNING_SECRET, tenantId: env.TENANT_ID,
-        expectedTeamId: env.SLACK_EXPECTED_TEAM_ID, allowedChannelIds: developmentPlacements.map((placement) => placement.channelId),
-        allowedUserIds: [...new Set(developmentPlacements.flatMap((placement) => placement.audience?.allowedUserIds ?? []))],
+        expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
+        placements: developmentPlacements.map((placement) => ({ channelId: placement.channelId,
+          allowedUserIds: placement.audience?.allowedUserIds ?? [] })),
         send: (event) => env.TECHKNIGHT_EVENTS.send(event) });
     }
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
@@ -363,7 +394,9 @@ export default {
                     run: async () => { throw new Error("cron_runner_not_configured"); },
                   }),
                   develop: (request) => runRemoteDevelopmentRequest({ request, placementId: placement.placementId,
-                    requesterId: event.userId!, baseUrl: env.DEVELOPMENT_RUNNER_BASE_URL, token: env.DEVELOPMENT_RUNNER_TOKEN }),
+                    requesterId: event.userId!, eventId: event.eventId, workspaceId: event.workspaceId,
+                    channelId: event.channelId, threadTs: event.threadTs, callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
+                    baseUrl: env.DEVELOPMENT_RUNNER_BASE_URL, token: env.DEVELOPMENT_RUNNER_TOKEN }),
                 });
                 const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
                 await persistReplyCompletion(workspace.fs, {

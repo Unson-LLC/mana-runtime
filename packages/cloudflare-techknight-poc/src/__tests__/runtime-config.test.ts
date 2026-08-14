@@ -48,6 +48,13 @@ describe("Cloudflare runtime binding", () => {
     })).toThrow(expect.objectContaining({ code: "channel_not_allowed" }));
   });
 
+  it("retains an explicit development boundary and rejects non-boolean values", () => {
+    expect(parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], developmentEnabled: true }])))
+      .toMatchObject([{ placementId: "dev", developmentEnabled: true }]);
+    expect(() => parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], developmentEnabled: "true" }])))
+      .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+  });
+
   it.each([
     ["techknight", "T_TECHKNIGHT", "C_MANA_TEST", "techknight, shared,techknight"],
     ["unson", "T_UNSON", "C_BACK_OFFICE", "back-office, brainbase"],

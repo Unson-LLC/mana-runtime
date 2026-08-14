@@ -107,6 +107,7 @@ describe("会社別Cloudflare deployment", () => {
         channelId: "C0BMNSP6C80",
         projectCodes: ["mana"],
         taskWriteEnabled: true,
+        developmentEnabled: true,
         audience: { type: "operator", allowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
         agent: { model: "sonnet", escalationEmployee: "critical-reviewer" },
         capabilities: {
