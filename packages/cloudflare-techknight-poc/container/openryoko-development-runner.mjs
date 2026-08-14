@@ -509,13 +509,26 @@ export async function runCommand(bin, args, options = {}) {
         if (stderr) process.stderr.write(stderr);
         if (terminationError) reject(terminationError);
         else if (code === 0) resolve(stdout);
-        else reject(new Error(`${path.basename(bin)} exited with code ${code ?? "unknown"}`));
+        else {
+          const diagnostic = safeCommandDiagnostic(stderr || stdout);
+          reject(new Error(`${path.basename(bin)} exited with code ${code ?? "unknown"}${diagnostic ? `: ${diagnostic}` : ""}`));
+        }
       });
     });
     if (options.timeoutMs !== undefined) {
       timeoutTimer = setTimeout(() => terminate(new Error("command timed out")), options.timeoutMs);
     }
   });
+}
+
+export function safeCommandDiagnostic(output) {
+  return String(output ?? "")
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/(?:sk-ant|sk-|gh[opusr]_)[A-Za-z0-9_-]+/g, "[REDACTED]")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(-300);
 }
 
 export function validateConfig(config) {

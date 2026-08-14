@@ -193,6 +193,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(config.claudeModel).toBe("sonnet");
     expect(runner).toContain('return ["-p", "--model", model, "--dangerously-skip-permissions", prompt]');
     expect(runner).toContain("buildAgentArgs(buildAgentPrompt(storyId, request, baseBranch), config.claudeModel)");
+    expect(runner).toContain("safeCommandDiagnostic(stderr || stdout)");
+    expect(runner).toContain('Bearer [REDACTED]');
   });
 
   it("開発ランナーの検証用commitに固定の非個人Git identityを設定する", () => {
