@@ -9,6 +9,7 @@ export interface ClaudeRuntimeConfig {
 }
 
 export type RuntimeClaudePurpose = "reply" | "meeting-task" | "meeting-minutes";
+export type RuntimeClaudeStructuredOutput = "meeting-minutes" | "meeting-minutes-routing";
 
 export class ClaudeRuntimeConfigError extends Error {
   constructor(readonly code: string) {
@@ -25,6 +26,39 @@ const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.free
 const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
 const MEETING_MINUTES_MCP_CONFIG_PATH = "/tmp/mana-meeting-minutes-mcp.json";
 const MEETING_MINUTES_SETTINGS_PATH = "/opt/mana/meeting-minutes-claude-settings.json";
+const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, string>> = Object.freeze({
+  "meeting-minutes": JSON.stringify({
+    type: "object",
+    properties: {
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      overview: { type: "string", minLength: 1, maxLength: 3000 },
+      body: { type: "string", minLength: 1, maxLength: 100000 },
+      tasks: {
+        type: "array", maxItems: 20,
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            description: { type: "string", maxLength: 4000 },
+            assignee_name: { type: "string", maxLength: 200 },
+            priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+            due_at: { type: "string", maxLength: 64 },
+          },
+          required: ["title"], additionalProperties: false,
+        },
+      },
+    },
+    required: ["title", "overview", "body", "tasks"], additionalProperties: false,
+  }),
+  "meeting-minutes-routing": JSON.stringify({
+    type: "object",
+    properties: {
+      projectId: { type: "string", minLength: 1, maxLength: 128 },
+      reason: { type: "string", minLength: 1, maxLength: 500 },
+    },
+    required: ["projectId", "reason"], additionalProperties: false,
+  }),
+});
 
 export function resolveClaudeRuntimeConfig(bindings: ClaudeRuntimeBindings, modelOverride?: "opus" | "sonnet"): ClaudeRuntimeConfig {
   const model = modelOverride ?? bindings.RUNTIME_CLAUDE_MODEL;
@@ -53,7 +87,7 @@ export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
   options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean; mcpEnabled?: boolean;
-    sessionId?: string; resumeSession?: boolean } = {},
+    sessionId?: string; resumeSession?: boolean; structuredOutput?: RuntimeClaudeStructuredOutput } = {},
 ): string {
   if (config.model !== "opus" && config.model !== "sonnet") {
     throw new ClaudeRuntimeConfigError("runtime_claude_model_invalid");
@@ -69,8 +103,14 @@ export function buildRuntimeClaudeCommand(
   const sessionArg = options.sessionId
     ? options.resumeSession ? ` --resume ${options.sessionId}` : ` --session-id ${options.sessionId}`
     : "";
+  if (options.structuredOutput && purpose !== "meeting-minutes") {
+    throw new ClaudeRuntimeConfigError("runtime_claude_structured_output_invalid");
+  }
+  const structuredOutputArg = options.structuredOutput
+    ? ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
+    : "";
   const base = purpose === "meeting-minutes"
-    ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH} --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config < ${promptPath}`
+    ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH} --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config${structuredOutputArg} < ${promptPath}`
     : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`

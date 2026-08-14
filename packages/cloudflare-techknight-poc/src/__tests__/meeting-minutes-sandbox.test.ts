@@ -40,6 +40,8 @@ describe("generateMeetingMinutesInSandbox", () => {
         timeout: 600_000,
         env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
       }));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format json --json-schema"),
+      expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
   it("destroys the Sandbox and rejects invalid model output", async () => {
@@ -93,6 +95,8 @@ describe("classifyMeetingMinutesDestinationInSandbox", () => {
       expect.stringContaining("候補のどれとも確信を持って一致しない場合"));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({ timeout: 60_000 }));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining('"required":["projectId","reason"]'),
+      expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
 });
