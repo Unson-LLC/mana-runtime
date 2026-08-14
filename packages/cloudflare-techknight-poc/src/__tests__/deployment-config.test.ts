@@ -217,7 +217,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
     expect(worker).toContain("isMeetingMinutesSelection(message.body)");
     expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
-    expect(worker).toContain("processMeetingMinutesSelection(");
+    expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(event, env)");
     expect(worker).toContain("consumeTaskBoardRepair({");

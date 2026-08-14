@@ -41,6 +41,26 @@ export class MeetingMinutesSlackClient {
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`, value: JSON.stringify({ runId: run.runId, destinationId: destination.id }) })) }] });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
+  async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void> {
+    if (!run.slack?.selectionTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
+    const completed = outcome === "completed";
+    const text = completed
+      ? `${run.file.name} の議事録を作成しました。`
+      : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
+    const details = completed
+      ? [`*✅ 議事録を作成しました*`, `保存先: ${run.destination.name}`,
+        run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
+        `共有先: <#${run.destination.slackChannelId}>`].filter(Boolean).join("\n")
+      : [`*⚠️ 議事録の作成に失敗しました*`, `保存先: ${run.destination.name}`,
+        "下のボタンから再実行できます。"].join("\n");
+    const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn", text: details } }];
+    if (!completed) {
+      blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
+        action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
+        value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id }) }] });
+    }
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.selectionTs, text, blocks });
+  }
   async postParent(channelId: string, text: string, clientMsgId: string): Promise<string> {
     const result = await this.post("chat.postMessage", { channel: channelId, text, client_msg_id: await clientMessageId(clientMsgId), unfurl_links: false });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;

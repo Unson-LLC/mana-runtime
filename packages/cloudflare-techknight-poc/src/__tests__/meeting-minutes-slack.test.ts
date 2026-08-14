@@ -1,6 +1,37 @@
 import { MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
 
 describe("MeetingMinutesSlackClient", () => {
+  const routedRun = () => ({ version: 1 as const, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
+    sourceThreadTs: "1.0", sourceMessageTs: "1.0", file: { id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 10 },
+    status: "completed" as const, destination: { id: "mana", projectId: "mana", name: "mana", slackChannelId: "C2",
+      github: { owner: "o", repo: "r" } }, github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu",
+      minutesUrl: "https://github.test/minutes" }, slack: { selectionTs: "2.1", postedChunkIndexes: [] },
+    createdAt: "2026-08-13T00:00:00.000Z", updatedAt: "2026-08-13T00:00:00.000Z" });
+
+  it("replaces the selector with a durable completed result", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(routedRun(), "completed");
+    expect(fetchImpl).toHaveBeenCalledWith("https://slack.com/api/chat.update", expect.any(Object));
+    expect(body).toMatchObject({ channel: "C1", ts: "2.1" });
+    expect(JSON.stringify(body)).toContain("議事録を作成しました");
+    expect(JSON.stringify(body)).toContain("https://github.test/minutes");
+    expect(JSON.stringify(body)).not.toContain("再実行");
+  });
+
+  it("replaces a failed result with a retry button for the selected destination", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(routedRun(), "failed");
+    expect(JSON.stringify(body)).toContain("議事録の作成に失敗しました");
+    expect(JSON.stringify(body)).toContain("mana_meeting_minutes_choose_destination:mana");
+    expect(JSON.stringify(body)).toContain("再実行");
+  });
+
   it("uses a unique action_id for every destination button", async () => {
     let body: { blocks?: Array<{ elements?: Array<{ action_id?: string }> }> } = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
