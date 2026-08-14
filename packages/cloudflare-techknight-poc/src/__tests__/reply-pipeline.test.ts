@@ -76,6 +76,49 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
+  it("lets triage admit an ambient channel message that can add concrete value", async () => {
+    const fs = new MemoryFs();
+    const triage = vi.fn().mockResolvedValue({ action: "reply" as const, reason: "業務支援対象" });
+    const { options, sandbox } = harness({
+      respondPolicy: { im: "always", mpim: "mention", channel: "mention", engagedThreads: true },
+      triage,
+    });
+
+    await expect(processReplyEvent(fs, event({ eventType: "message", text: "次の打ち手を整理したい" }), options))
+      .resolves.toMatchObject({ outcome: "replied" });
+    expect(triage).toHaveBeenCalledOnce();
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+  });
+
+  it("keeps ambient messages silent when triage says silent", async () => {
+    const fs = new MemoryFs();
+    const triage = vi.fn().mockResolvedValue({ action: "silent" as const, reason: "他者間の雑談" });
+    const { options, sandbox } = harness({
+      respondPolicy: { im: "always", mpim: "mention", channel: "mention", engagedThreads: true },
+      triage,
+    });
+
+    await expect(processReplyEvent(fs, event({ eventType: "message", text: "ランチどうする？" }), options))
+      .resolves.toEqual({ outcome: "ignored" });
+    expect(triage).toHaveBeenCalledOnce();
+    expect(sandbox.exec).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges a triaged short message with one idempotent emoji and no text reply", async () => {
+    const fs = new MemoryFs();
+    const triage = vi.fn().mockResolvedValue({ action: "react" as const, emoji: "thumbsup" });
+    const { options, sandbox, fetchMock } = harness({
+      respondPolicy: { im: "always", mpim: "mention", channel: "mention", engagedThreads: true },
+      triage,
+    });
+
+    await expect(processReplyEvent(fs, event({ eventType: "message", text: "ありがとう" }), options))
+      .resolves.toMatchObject({ outcome: "reacted" });
+    expect(sandbox.exec).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://slack.com/api/reactions.add");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ name: "thumbsup" });
+  });
   it("reuses the thread-generation sandbox and resumes its Claude session", async () => {
     const fs = new MemoryFs();
     const createSandbox = vi.fn();

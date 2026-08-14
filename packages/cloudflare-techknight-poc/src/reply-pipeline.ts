@@ -22,6 +22,7 @@ import { emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { evaluateRuntimeRespondPolicy, type RuntimeRespondPolicy } from "./runtime-respond-policy.js";
 import { markWorkspaceEngaged } from "./workspace-session.js";
 import { resolveTurnActorIdentity, type ActorIdentityResolver } from "./actor-identity.js";
+import type { RuntimeTriageDecision } from "./runtime-triage.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -63,6 +64,7 @@ export interface ReplyPipelineOptions {
   trace?: TurnRuntimeTrace;
   respondPolicy?: RuntimeRespondPolicy;
   isEngagedThread?: boolean;
+  triage?(event: SlackQueueEvent): Promise<RuntimeTriageDecision>;
   runtimeContext?: { persona: string; instructions: readonly string[]; skills: readonly string[]; escalationEmployee?: string };
   claudeSession?: { id: string; sandboxId: string; resume: boolean };
   resolveActorIdentity?: ActorIdentityResolver;
@@ -73,7 +75,7 @@ export interface ReplyPipelineOptions {
 }
 
 export interface ReplyProcessResult {
-  outcome: "ignored" | "already_completed" | "replied";
+  outcome: "ignored" | "already_completed" | "reacted" | "replied";
   responseTs?: string;
 }
 
@@ -101,6 +103,19 @@ export function isReplyEligible(
   if (event.eventType !== "app_mention" && event.eventType !== "message") return false;
   return evaluateRuntimeRespondPolicy({ config: options.respondPolicy, channelType: event.channelType,
     wasMentioned: event.eventType === "app_mention", isEngagedThread: options.isEngagedThread === true }).allow;
+}
+
+function isReplyBoundaryEligible(
+  event: SlackQueueEvent,
+  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId">,
+): boolean {
+  return event.tenantId === (options.expectedTenantId ?? "techknight")
+    && event.workspaceId === options.expectedWorkspaceId
+    && event.channelId === options.allowedChannelId
+    && !event.botId
+    && event.subtype !== "bot_message"
+    && Boolean(event.userId)
+    && (event.eventType === "app_mention" || event.eventType === "message");
 }
 
 function normalizePromptText(text: string): string {
@@ -460,6 +475,28 @@ async function setSlackProcessingReaction(
   return false;
 }
 
+async function addSlackTriageReaction(
+  event: SlackQueueEvent,
+  emoji: string,
+  options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
+): Promise<boolean> {
+  if (!options.slackBotToken) return false;
+  const name = emoji.replace(/^:+|:+$/g, "").replace(/[^a-z0-9_+-]/gi, "").slice(0, 64) || "eyes";
+  try {
+    const response = await (options.fetch ?? fetch)("https://slack.com/api/reactions.add", {
+      method: "POST",
+      headers: { authorization: `Bearer ${options.slackBotToken}`, "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ channel: event.channelId, timestamp: event.messageTs, name }),
+      signal: AbortSignal.timeout(SLACK_REACTION_TIMEOUT_MS),
+    });
+    if (!response.ok) return false;
+    const payload = await response.json() as { ok?: unknown; error?: unknown };
+    return payload.ok === true || payload.error === "already_reacted";
+  } catch {
+    return false;
+  }
+}
+
 export async function setSlackThreadStatus(
   event: SlackQueueEvent,
   status: string,
@@ -569,7 +606,21 @@ export async function processReplyEvent(
   event: SlackQueueEvent,
   options: ReplyPipelineOptions,
 ): Promise<ReplyProcessResult> {
-  if (!isReplyEligible(event, options)) return { outcome: "ignored" };
+  let eligible = isReplyEligible(event, options);
+  let triageDecision: RuntimeTriageDecision | undefined;
+  if (!eligible && options.triage && isReplyBoundaryEligible(event, options)
+    && event.eventType === "message" && event.channelType !== "im") {
+    triageDecision = await options.triage(event);
+    eligible = triageDecision.action === "reply";
+  }
+  if (!eligible && triageDecision?.action === "react") {
+    const reacted = await addSlackTriageReaction(event, triageDecision.emoji ?? "eyes", options);
+    if (!reacted) return { outcome: "ignored" };
+    const completedAt = options.now?.() ?? new Date().toISOString();
+    await persistReplyCompletion(fs, { eventId: event.eventId, responseTs: event.messageTs, completedAt });
+    return { outcome: "reacted", responseTs: event.messageTs };
+  }
+  if (!eligible) return { outcome: "ignored" };
   if (await isReplyCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
   const requesterIdentity = options.taskSearchEnabled && requestsOwnTasks(event.text)
