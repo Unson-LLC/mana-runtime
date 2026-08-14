@@ -1,6 +1,7 @@
 import { isMeetingMinutesSelection, isMeetingMinutesSlackEvent, meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
 
-const destinations = JSON.stringify([{ id: "mana", projectId: "mana", name: "mana", slackChannelId: "CDEST",
+const destinations = JSON.stringify([{ id: "mana", projectId: "mana", name: "mana",
+  organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
   github: { owner: "Unson-LLC", repo: "mana", pathPrefix: "docs" } }]);
 
 describe("meeting minutes entrypoints", () => {

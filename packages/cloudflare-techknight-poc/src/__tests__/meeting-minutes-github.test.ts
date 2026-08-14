@@ -1,6 +1,6 @@
 import { CloudflareMeetingMinutesGitHubClient } from "../meeting-minutes-github.js";
 
-const destination = { id: "mana", projectId: "mana", name: "mana", slackChannelId: "C1",
+const destination = { id: "mana", projectId: "mana", name: "mana", organization: { id: "unson", name: "雲孫" }, slackChannelId: "C1",
   github: { owner: "Unson-LLC", repo: "mana", branch: "main", pathPrefix: "docs" } };
 
 describe("CloudflareMeetingMinutesGitHubClient", () => {

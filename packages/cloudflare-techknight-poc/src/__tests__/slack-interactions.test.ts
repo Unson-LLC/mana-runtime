@@ -12,13 +12,19 @@ const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, chan
   response_url: "https://hooks.slack.com/actions/T1/B1/token",
   actions: [{ action_id: "mana_meeting_minutes_choose_destination", action_ts: "1.2",
     value: JSON.stringify({ runId: "Ev1_F1", destinationId: "mana" }) }] };
+const destinations = [
+  { id: "mana", projectId: "p1", name: "Back Office", organization: { id: "unson-business", name: "雲孫 事業運営" },
+    slackChannelId: "C2", github: { owner: "Unson-LLC", repo: "back_office" } },
+  { id: "board", projectId: "p2", name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" },
+    slackChannelId: "C3", github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } },
+];
 
 describe("handleMeetingMinutesInteraction", () => {
   function deferred() { const work: Promise<void>[] = []; return { work, defer: (promise: Promise<void>) => { work.push(promise); } }; }
   it("accepts destination-qualified action ids", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const qualifiedPayload = structuredClone(payload);
-    qualifiedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:techknight-board";
+    qualifiedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:mana";
     const result = await handleMeetingMinutesInteraction(request(qualifiedPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, send, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
@@ -35,6 +41,58 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({ runId: "Ev1_F1", destinationId: "mana" }));
     expect(updateOriginal).not.toHaveBeenCalled();
     expect(await response.json()).toEqual({ ok: true });
+  });
+  it("replaces the selector with projects for the chosen organization without queueing", async () => {
+    const organizationPayload = structuredClone(payload);
+    organizationPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_organization:tech-knight";
+    organizationPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", organizationId: "tech-knight",
+      fileName: "定例.txt" });
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(organizationPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
+      text: "定例.txt の保存先プロジェクトを選択してください。",
+    }));
+    const message = updateOriginal.mock.calls[0]?.[1];
+    expect(JSON.stringify(message)).toContain("ボード定例");
+    expect(JSON.stringify(message)).not.toContain("Back Office");
+    expect(JSON.stringify(message)).toContain("組織選択に戻る");
+  });
+  it("returns to the organization selector without queueing", async () => {
+    const backPayload = structuredClone(payload);
+    backPayload.actions[0]!.action_id = "mana_meeting_minutes_back_to_organizations";
+    backPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "定例.txt" });
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(backPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).not.toHaveBeenCalled();
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("雲孫 事業運営");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("Tech Knight");
+  });
+  it("rejects an unknown organization without updating or queueing", async () => {
+    const unknownPayload = structuredClone(payload);
+    unknownPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_organization:unknown";
+    unknownPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", organizationId: "unknown", fileName: "定例.txt" });
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(unknownPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(400); expect(background.work).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled(); expect(updateOriginal).not.toHaveBeenCalled();
+  });
+  it("rejects action ids that disagree with their signed selection value", async () => {
+    const mismatchedPayload = structuredClone(payload);
+    mismatchedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:board";
+    const send = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(mismatchedPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, defer: background.defer });
+    expect(response.status).toBe(400); expect(send).not.toHaveBeenCalled(); expect(background.work).toHaveLength(0);
   });
   it("queues even when Slack did not provide a response URL", async () => {
     const invalid = { ...payload, response_url: "https://example.com/actions/token" };
@@ -65,7 +123,7 @@ describe("handleMeetingMinutesInteraction", () => {
       value: JSON.stringify({ approvalId: "approval-1", payloadHash: "a".repeat(64) }) }] };
     const response = await handleMeetingMinutesInteraction(request(approvalPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000,
-      send, updateOriginal, approveTaskWrite });
+      send, updateOriginal, resolveDestinations: () => { throw new Error("minutes config unavailable"); }, approveTaskWrite });
     expect(response.status).toBe(200);
     expect(approveTaskWrite).toHaveBeenCalledWith({ approvalId: "approval-1", payloadHash: "a".repeat(64),
       approverId: "U_APPROVER", channelId: "C1" });

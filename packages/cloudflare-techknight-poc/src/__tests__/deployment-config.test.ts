@@ -201,6 +201,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD");
     const destinations = JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON);
+    expect([...new Map(destinations.map((item: { organization: { id: string; name: string } }) =>
+      [item.organization.id, item.organization.name])).entries()]).toEqual([
+      ["unson-business", "雲孫 事業運営"], ["unson", "雲孫"], ["tech-knight", "Tech Knight"],
+    ]);
     expect(destinations).toHaveLength(12);
     expect(destinations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "back-office", projectId: "proj_back_office", slackChannelId: "C0BKS6RL99T",
