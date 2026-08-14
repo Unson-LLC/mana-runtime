@@ -90,6 +90,7 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_PROJECT_CODES: "back-office",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
       RUNTIME_PLACEMENT_ID: "mana-accounting",
+      RUNTIME_PLACEMENTS_JSON: expect.any(String),
       RUNTIME_TASK_WRITE_ENABLED: "true",
       RUNTIME_TASK_BOARD_ENABLED: "true",
       MEETING_MINUTES_ENABLED: "true",
@@ -98,6 +99,10 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
     });
+    expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
+      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true },
+      { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: false },
+    ]);
   });
 
   it("Claude Codeを検証済みのexact versionへ固定する", () => {
@@ -219,7 +224,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelection(");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
-    expect(worker).toContain("issueTaskWriteRequestContext(event, env)");
+    expect(worker).toContain("issueTaskWriteRequestContext(event, env, Date.now(), placement)");
     expect(worker).toContain("consumeTaskBoardRepair({");
   });
 
@@ -233,7 +238,7 @@ describe("会社別Cloudflare deployment", () => {
       ]));
     }
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
-    expect(worker).toContain("issueTaskWriteRequestContext(event, env)");
+    expect(worker).toContain("issueTaskWriteRequestContext(event, env, Date.now(), placement)");
     expect(worker).toContain("consumeTaskBoardRepair({");
     expect(worker).toContain("enqueueScheduledTaskBoardRepair(env)");
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');

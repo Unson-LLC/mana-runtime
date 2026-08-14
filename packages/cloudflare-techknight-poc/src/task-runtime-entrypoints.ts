@@ -14,6 +14,12 @@ interface TaskWriteRuntimeEnv {
   RUNTIME_PROJECT_CODES?: string;
 }
 
+interface TaskWritePlacement {
+  placementId: string;
+  projectCodes: string[];
+  taskWriteEnabled: boolean;
+}
+
 interface TaskBoardRuntimeEnv extends TaskBoardEnv {
   TENANT_ID: string;
   SLACK_EXPECTED_TEAM_ID: string;
@@ -31,10 +37,12 @@ export async function issueTaskWriteRequestContext(
   event: SlackQueueEvent,
   env: TaskWriteRuntimeEnv,
   now = Date.now(),
+  placement?: TaskWritePlacement,
 ): Promise<{ taskWriteEnabled: boolean; taskWriteCapability?: string }> {
-  if (env.RUNTIME_TASK_WRITE_ENABLED !== "true") return { taskWriteEnabled: false };
-  const projects = parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
-  if (!env.TASK_WRITE_CAPABILITY_SECRET || !env.RUNTIME_PLACEMENT_ID || projects.length === 0 || !event.userId) {
+  if (env.RUNTIME_TASK_WRITE_ENABLED !== "true" || placement?.taskWriteEnabled === false) return { taskWriteEnabled: false };
+  const projects = placement?.projectCodes ?? parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
+  const placementId = placement?.placementId ?? env.RUNTIME_PLACEMENT_ID;
+  if (!env.TASK_WRITE_CAPABILITY_SECRET || !placementId || projects.length === 0 || !event.userId) {
     throw new Error("task_write_not_configured");
   }
   return {
@@ -44,7 +52,7 @@ export async function issueTaskWriteRequestContext(
       audience: "mana-task-write",
       requestId: event.eventId,
       actor: { provider: "slack", id: event.userId, workspace: event.workspaceId },
-      placementId: env.RUNTIME_PLACEMENT_ID,
+      placementId,
       projects,
       operations: ["task.create", "task.update", "task.transition"],
       expiresAt: now + 180_000,
