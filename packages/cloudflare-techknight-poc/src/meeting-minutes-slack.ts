@@ -79,6 +79,10 @@ export function suggestedDestinationMessage(run: MeetingMinutesRun,
 interface SlackApiResponse { ok?: boolean; error?: string; ts?: string }
 function failedRunDetails(run: MeetingMinutesRun): string[] {
   const destination = `保存先: ${run.destination!.name}`;
+  if (run.taskRegistration?.failure && run.slack?.parentTs) {
+    return ["*⚠️ 議事録は共有しましたが、タスク自動登録に失敗しました*", destination,
+      "議事録本文は共有済みです。タスク登録を再試行するには、下のボタンを押してください。"];
+  }
   if (/slack_api_failed:chat\.postMessage:(?:channel_not_found|not_in_channel)/.test(run.failure?.message ?? "")) {
     return ["*⚠️ 保存先チャンネルへ投稿できませんでした*", destination,
       `Manaアプリが「${run.destination!.name}」のチャンネルに参加しているか確認してください。`,
@@ -151,10 +155,25 @@ export class MeetingMinutesSlackClient {
     if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
     await this.setThreadStatus(run, "");
     const completed = outcome === "completed";
-    const text = completed
+    const taskRegistrationPending = completed && Boolean(run.taskRegistration?.failure);
+    const taskIntegrationStage = run.taskRegistration?.failure?.stage;
+    const taskIntegrationMessage = taskIntegrationStage === "task_board"
+      ? "タスク登録は完了しましたが、タスクボードへの反映が完了していません。"
+      : taskIntegrationStage === "task_card"
+      ? "タスク登録は完了しましたが、タスクカードの投稿が完了していません。"
+      : "タスク自動登録だけ完了していません。";
+    const text = taskRegistrationPending
+      ? `${run.file.name} の議事録は作成・共有済みです。未完了のタスク連携を再実行できます。`
+      : completed
       ? `${run.file.name} の議事録を作成しました。`
       : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
-    const details = completed
+    const details = taskRegistrationPending
+      ? [`*⚠️ 議事録は作成・共有済みです*`, `保存先: ${run.destination.name}`,
+        run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
+        `共有先: <#${run.destination.slackChannelId}>`,
+        `${taskIntegrationMessage} 下のボタンから未完了の処理だけ再実行できます。`]
+        .filter(Boolean).join("\n")
+      : completed
       ? [`*✅ 議事録を作成しました*`, `保存先: ${run.destination.name}`,
         run.context ? `Brainbase正本文脈: ${run.context.status === "resolved" ? "参照済み" :
           run.context.status === "confirmed_empty" ? "確認済み（該当なし）" :
@@ -164,9 +183,17 @@ export class MeetingMinutesSlackClient {
       : failedRunDetails(run).join("\n");
     const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn", text: details } }];
     if (completed) {
-      blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "保存先をやり直す" },
+      const elements: Array<Record<string, unknown>> = [];
+      if (taskRegistrationPending) {
+        elements.push({ type: "button", text: { type: "plain_text", text: "タスク処理を再実行" },
+          action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
+          value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,
+            sourceThreadTs: run.sourceThreadTs }) });
+      }
+      elements.push({ type: "button", text: { type: "plain_text", text: "保存先をやり直す" },
         action_id: MEETING_MINUTES_REDO_ACTION_ID,
-        value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) }] });
+        value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) });
+      blocks.push({ type: "actions", elements });
     } else {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
