@@ -34,6 +34,7 @@ import { handleMeetingMinutesTaskAction } from "./meeting-minutes-task-actions.j
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
+import { resolveMeetingMinutesDestinationSlackToken } from "./meeting-minutes-slack-routing.js";
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
@@ -215,23 +216,13 @@ function meetingMinutesDeploymentGate(env: Env): DurableObjectStub<MeetingMinute
 
 function meetingMinutesClients(env: Env) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
-  const techKnightSlack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
   const destinations = meetingMinutesRuntimeConfig(env).destinations;
-  const unsonChannels = new Set(destinations
-    .filter((destination) => destination.organization.id === "unson")
-    .map((destination) => destination.slackChannelId));
-  const techKnightChannels = new Set(destinations
-    .filter((destination) => destination.organization.id === "tech-knight")
-    .map((destination) => destination.slackChannelId));
   const destinationSlack = (channelId: string) => {
-    // Unson destinations are in the same Slack workspace as this Worker. The
-    // Cloudflare app behind SLACK_BOT_TOKEN is the channel member; the legacy
-    // cross-app token cannot see private channels in this workspace.
-    if (unsonChannels.has(channelId)) return slack;
-    if (techKnightChannels.has(channelId)) return techKnightSlack;
-    return slack;
+    const organizationId = destinations.find((destination) => destination.slackChannelId === channelId)
+      ?.organization.id ?? "unson-business";
+    return new MeetingMinutesSlackClient(resolveMeetingMinutesDestinationSlackToken(env, organizationId));
   };
   const taskClient = () => new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
     token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
