@@ -1,7 +1,8 @@
 import { isMeetingMinutesFile, meetingMinutesRunId, type GeneratedMeetingMinutes,
   type MeetingMinutesContextMode, type MeetingMinutesContextReceipt,
   type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
-  type MeetingMinutesRedo, type MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
+  type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
+  meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
 import { splitMeetingMinutesForSlack, stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -35,7 +36,7 @@ export interface ResumeMeetingMinutesOptions {
   >;
   postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string>;
   postTaskCard?(run: MeetingMinutesRun): Promise<string>;
-  repairTaskBoard?(projectId: string): Promise<void>;
+  repairTaskBoard?(projectCodes: readonly string[]): Promise<void>;
   postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
     index: number, total: number, clientMsgId: string): Promise<string>;
 }
@@ -49,9 +50,14 @@ export interface RedoMeetingMinutesOptions {
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
 function destinationIsValid(value: MeetingMinutesDestination): boolean {
+  const taskProjectCodes = value.taskProjectCodes;
   return /^[A-Za-z0-9_-]{1,128}$/.test(value.id) && !!value.projectId.trim() && !!value.name.trim() &&
     /^[A-Za-z0-9_-]{1,128}$/.test(value.organization?.id ?? "") && !!value.organization?.name.trim() &&
-    /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim();
+    /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim() &&
+    (taskProjectCodes === undefined || (Array.isArray(taskProjectCodes) && taskProjectCodes.length > 0 &&
+      taskProjectCodes.length <= 10 &&
+      taskProjectCodes.every((code) => /^[A-Za-z0-9_-]{1,128}$/.test(code)) &&
+      new Set(taskProjectCodes).size === taskProjectCodes.length));
 }
 export function validateMeetingMinutesDestinations(destinations: readonly MeetingMinutesDestination[]): void {
   if (!destinations.length || destinations.length > 25 || destinations.some((item) => !destinationIsValid(item)) ||
@@ -122,6 +128,7 @@ async function taskIdempotencyKey(runId: string, revision: number, index: number
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
   receipt: MeetingMinutesContextReceipt, options: ResumeMeetingMinutesOptions): Promise<void> {
   const tasks: MeetingMinutesTaskCandidate[] = run.generated?.tasks ?? [];
+  const taskProjectCodes = meetingMinutesTaskProjectCodes(run.destination!);
   run.taskRegistration ??= { registered: [] };
   let activeIndex = 0;
   try {
@@ -139,7 +146,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       let assignee_person_id: string | undefined;
       if (candidate.assignee_name) {
         if (!options.resolveAssignee) throw new Error("meeting_minutes_assignee_resolver_unconfigured");
-        const resolution = await options.resolveAssignee(candidate.assignee_name, run.destination!.projectId);
+        const resolution = await options.resolveAssignee(candidate.assignee_name, taskProjectCodes[0]!);
         if (resolution.status === "unavailable") throw new Error("meeting_minutes_assignee_unavailable");
         if (resolution.status === "resolved") assignee_person_id = resolution.personId;
         else console.warn("meeting_minutes_assignee_unresolved", {
@@ -148,7 +155,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       }
       const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
       const task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
-        project_codes: [run.destination!.projectId] },
+        project_codes: taskProjectCodes },
         await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
       if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
       run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
@@ -206,6 +213,10 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   if (run.destination && !sameDestination(run.destination, configured)) {
     throw new Error("meeting_minutes_destination_changed");
   }
+  if (run.destination && JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(configured.taskProjectCodes)) {
+    run.destination.taskProjectCodes = configured.taskProjectCodes ? [...configured.taskProjectCodes] : undefined;
+    run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+  }
   if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
   if (run.status === "completed") {
     if (run.taskRegistration?.failure && run.destination && run.transcriptSha256) {
@@ -224,7 +235,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       if (retryStage !== "task_card" && run.taskRegistration.registered.length && options.repairTaskBoard) {
         await markTaskIntegrationPending(fs, run, "task_board", options);
         try {
-          await options.repairTaskBoard(run.destination.projectId);
+          await options.repairTaskBoard(meetingMinutesTaskProjectCodes(run.destination));
         } catch (error) {
           await deferTaskIntegration(fs, run, "task_board", error, options);
           return run;
@@ -319,7 +330,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
       await markTaskIntegrationPending(fs, run, "task_board", options);
       try {
-        await options.repairTaskBoard(run.destination.projectId);
+        await options.repairTaskBoard(meetingMinutesTaskProjectCodes(run.destination));
       } catch (error) {
         await deferTaskIntegration(fs, run, "task_board", error, options); return run;
       }

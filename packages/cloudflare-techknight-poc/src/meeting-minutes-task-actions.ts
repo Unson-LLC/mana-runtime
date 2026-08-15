@@ -1,6 +1,7 @@
 import type { CanonicalTask, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { MEETING_MINUTES_TASK_CANCEL_ACTION_ID, MEETING_MINUTES_TASK_EDIT_ACTION_ID,
-  MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+  MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID,
+  meetingMinutesTaskProjectCodes, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 import { MEETING_MINUTES_ASSIGNEE_NONE, meetingMinutesTaskEditViewFromAction } from "./meeting-minutes-task-cards.js";
 import type { GraphPersonOption } from "./brainbase-graph-runtime.js";
 
@@ -28,13 +29,18 @@ export interface MeetingMinutesTaskActionDependencies {
   updateCard(run: MeetingMinutesRun): Promise<void>;
   openView(organizationId: string, triggerId: string, view: Record<string, unknown>): Promise<void>;
   listPeople(): Promise<GraphPersonOption[] | undefined>;
-  repairTaskBoard(projectId: string): Promise<void>;
+  repairTaskBoard(projectCodes: readonly string[]): Promise<void>;
   defer(work: Promise<void>): void;
 }
 function candidate(run: MeetingMinutesRun, index: number) {
   return run.taskRegistration?.registered.find((item) => item.index === index && item.status !== "removed");
 }
 function status(error: unknown): number | undefined { return object(error)?.status as number | undefined; }
+function hasExpectedTaskScope(run: MeetingMinutesRun, current: CanonicalTask): boolean {
+  const expected = meetingMinutesTaskProjectCodes(run.destination!);
+  const actual = current.project_codes;
+  return actual?.length === expected.length && expected.every((code) => actual.includes(code));
+}
 function allowed(payload: ObjectValue, run: MeetingMinutesRun, deps: MeetingMinutesTaskActionDependencies): boolean {
   const teamId = text(object(payload.team)?.id); const channelId = text(object(payload.channel)?.id);
   const expectedTeam = deps.destinationTeamIds[run.destination?.organization.id ?? ""] ?? deps.sourceTeamId;
@@ -100,11 +106,11 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
       try { current = await deps.getTask(item.taskId); }
       catch (error) { if (status(error) !== 404) throw error;
         item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-        await deps.repairTaskBoard(run.destination!.projectId); return; }
-      if (current.project_codes?.length !== 1 || current.project_codes[0] !== run.destination!.projectId) throw new Error("meeting_minutes_task_scope_mismatch");
+        await deps.repairTaskBoard(meetingMinutesTaskProjectCodes(run.destination!)); return; }
+      if (!hasExpectedTaskScope(run, current)) throw new Error("meeting_minutes_task_scope_mismatch");
       await deps.deleteTask(item.taskId, current.version, `meeting-minutes-${run.runId}-cancel-${value.index}`);
       item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-      await deps.repairTaskBoard(run.destination!.projectId); })());
+      await deps.repairTaskBoard(meetingMinutesTaskProjectCodes(run.destination!)); })());
     return Response.json({ ok: true });
   }
   const values = object(object(view?.state)?.values); const title = text(object(object(values?.title)?.value)?.value);
@@ -113,7 +119,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const assigneeSelection = text(object(assigneeState?.selected_option)?.value);
   if (!title || title.length > 120) return Response.json({ response_action: "errors", errors: { title: "タイトルを入力してください" } });
   deps.defer((async () => { const current = await deps.getTask(item.taskId);
-    if (current.project_codes?.length !== 1 || current.project_codes[0] !== run.destination!.projectId) throw new Error("meeting_minutes_task_scope_mismatch");
+    if (!hasExpectedTaskScope(run, current)) throw new Error("meeting_minutes_task_scope_mismatch");
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${title}\n${due ?? ""}\n${assigneeSelection ?? "unchanged"}`))))
       .map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 24);
     const updated = await deps.updateTask(item.taskId, { expected_version: current.version, title,
@@ -128,6 +134,6 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     if (generated) { generated.title = title; if (due) generated.due_at = `${due}T00:00:00+09:00`;
       if (assigneeSelection) generated.assignee_name = updated.assignee_display_name ?? undefined; }
     run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-    await deps.repairTaskBoard(run.destination!.projectId); })());
+    await deps.repairTaskBoard(meetingMinutesTaskProjectCodes(run.destination!)); })());
   return Response.json({ ok: true });
 }

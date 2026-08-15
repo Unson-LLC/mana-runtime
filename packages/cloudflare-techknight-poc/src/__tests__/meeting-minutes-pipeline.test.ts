@@ -100,7 +100,7 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(order).toEqual(["github", "slack", "task", "canvas"]);
-    expect(repairTaskBoard).toHaveBeenCalledWith("mana");
+    expect(repairTaskBoard).toHaveBeenCalledWith(["mana"]);
     expect(createTask).toHaveBeenCalledWith(
       expect.objectContaining({ title: "請求書を送る", project_codes: ["mana"] }),
       expect.stringMatching(/^meeting-minutes-/),
@@ -261,8 +261,12 @@ describe("meeting minutes pipeline", () => {
     expect(deferred).not.toHaveProperty("failure");
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
-    const retried = await resumeMeetingMinutesRun(fs, selection, options);
+    const canonicalTaskDestination = { ...destination, taskProjectCodes: ["unson"] };
+    const retried = await resumeMeetingMinutesRun(fs, selection, {
+      ...options, destinations: [canonicalTaskDestination],
+    });
     expect(retried.status).toBe("completed");
+    expect(retried.destination).toMatchObject({ projectId: "mana", taskProjectCodes: ["unson"] });
     expect(retried.taskRegistration?.registered).toEqual([
       { index: 0, title: "Kartzの確認事項を進める", taskId: "task-kartz" },
     ]);
@@ -270,6 +274,8 @@ describe("meeting minutes pipeline", () => {
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(createTask.mock.calls[0]?.[1]).toBe(createTask.mock.calls[1]?.[1]);
+    expect(createTask.mock.calls[0]?.[0]).toMatchObject({ project_codes: ["mana"] });
+    expect(createTask.mock.calls[1]?.[0]).toMatchObject({ project_codes: ["unson"] });
   });
 
   it("keeps the task-only retry until board repair and the final task card both complete", async () => {
