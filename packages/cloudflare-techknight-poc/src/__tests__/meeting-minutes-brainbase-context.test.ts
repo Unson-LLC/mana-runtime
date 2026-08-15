@@ -31,6 +31,31 @@ describe("meeting minutes Brainbase context", () => {
     expect(runtimeFetch).toHaveBeenCalledOnce();
   });
 
+  it("uses the redirect mode supported by Cloudflare Workers", async () => {
+    const runtimeFetch = vi.fn(function (this: unknown, _input: string | URL | Request, init?: RequestInit) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      if (init?.redirect === "error") {
+        throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+      }
+      return Promise.resolve(new Response(JSON.stringify(receipt), { status: 201 }));
+    });
+    const client = new MeetingMinutesBrainbaseContextClient("https://bb.example", "secret", runtimeFetch);
+
+    await expect(client.resolve(receipt.identity)).resolves.toEqual(receipt);
+    expect(runtimeFetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ redirect: "manual" }));
+  });
+
+  it("rejects redirects without following them", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(null, {
+      status: 302,
+      headers: { location: "https://unexpected.example/receipt" },
+    }));
+    const client = new MeetingMinutesBrainbaseContextClient("https://bb.example", "secret", fetch);
+
+    await expect(client.resolve(receipt.identity)).rejects.toThrow("meeting_minutes_context_redirect_rejected");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it("creates and retrieves an identity-bound Receipt through the server API", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 201 }))
@@ -39,7 +64,7 @@ describe("meeting minutes Brainbase context", () => {
     await expect(client.resolve(receipt.identity)).resolves.toEqual(receipt);
     await expect(client.resolve(receipt.identity, receipt.receipt_id)).resolves.toEqual(receipt);
     expect(fetch.mock.calls[0]?.[0].toString()).toBe("https://bb.example/api/meeting-minutes/context-receipts");
-    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "POST", redirect: "error",
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "POST", redirect: "manual",
       headers: expect.objectContaining({ authorization: "Bearer secret" }) });
     expect(fetch.mock.calls[1]?.[0].toString()).toContain(`/api/meeting-minutes/context-receipts/${receipt.receipt_id}`);
   });
