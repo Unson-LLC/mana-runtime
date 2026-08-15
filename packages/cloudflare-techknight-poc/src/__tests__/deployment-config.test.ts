@@ -377,9 +377,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("classifyMeetingMinutesDestinationInSandbox(");
     expect(worker).toContain("download: (fileId) => clients.slack.downloadTextFile(fileId)");
     expect(worker).toContain("classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations)");
-    expect(worker).toContain("if (unsonChannels.has(channelId)) return slack;");
-    expect(worker).toContain('destination.organization.id === "unson"');
-    expect(worker).toContain('destination.organization.id === "tech-knight"');
+    expect(worker).toContain("resolveMeetingMinutesDestinationSlackToken(env, organizationId)");
+    expect(worker).toContain("destinations.find((destination) => destination.slackChannelId === channelId)");
     expect(worker).toContain("consumeTaskBoardRepair({");
   });
 
