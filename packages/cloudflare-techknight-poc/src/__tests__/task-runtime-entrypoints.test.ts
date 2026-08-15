@@ -136,13 +136,13 @@ describe("Cloudflare task runtime entrypoints", () => {
   it("schedules every trusted workspace target and uses its isolated Slack token", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const targets = [
-      { targetId: "unson", organizationId: "unson", workspaceId: "T0882T8N9UH", channelId: "C0BKXCVSDCH",
+      { targetId: "unson", organizationId: "unson", workspaceId: "T07LL5WV7N1", channelId: "C0BKXCVSDCH",
         projectCodes: ["proj_unson"] },
       { targetId: "tech", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB", channelId: "C0BKX9Y169F",
         projectCodes: ["proj_tech"] },
     ];
     const env = { TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
-      SLACK_BOT_TOKEN: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
+      SLACK_BOT_TOKEN: "business-token", SLACK_BOT_TOKEN_UNSON: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
       TASK_BOARD_TARGETS_JSON: JSON.stringify(targets), TASK_BOARD_REPAIRS: { send } };
     await enqueueScheduledTaskBoardRepair(env, "2026-08-15T00:00:00.000Z");
     expect(send).toHaveBeenCalledTimes(2);
@@ -161,9 +161,9 @@ describe("Cloudflare task runtime entrypoints", () => {
       .mockResolvedValueOnce(undefined);
     const env = {
       TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
-      SLACK_BOT_TOKEN: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
+      SLACK_BOT_TOKEN: "business-token", SLACK_BOT_TOKEN_UNSON: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
       TASK_BOARD_TARGETS_JSON: JSON.stringify([
-        { targetId: "unson", organizationId: "unson", workspaceId: "T0882T8N9UH", channelId: "C0BKXCVSDCH",
+        { targetId: "unson", organizationId: "unson", workspaceId: "T07LL5WV7N1", channelId: "C0BKXCVSDCH",
           projectCodes: ["proj_unson"] },
         { targetId: "tech", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB", channelId: "C0BKX9Y169F",
           projectCodes: ["proj_tech"] },

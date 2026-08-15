@@ -86,6 +86,10 @@ describe("会社別Cloudflare deployment", () => {
     });
     expect(minutesTargets.filter((target) => target.organizationId === "tech-knight")
       .every((target) => target.workspaceId === "T07A9J3PEMB")).toBe(true);
+    expect(minutesTargets.filter((target) => ["minutes-salestailor", "minutes-baao", "minutes-yakumokai", "minutes-other"].includes(target.targetId))
+      .every((target) => target.workspaceId === "T07LL5WV7N1")).toBe(true);
+    expect(minutesTargets.filter((target) => target.organizationId === "unson-business")
+      .every((target) => target.workspaceId === "T0882T8N9UH")).toBe(true);
   });
 
   it("builds the shared task runtime before every Cloudflare release entrypoint", () => {
