@@ -12,6 +12,7 @@
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "authorizedTaskChannels" }, { "file": "packages/cloudflare-techknight-poc/container/gateway-mcp-server.mjs", "anchor": "TOOL_DEFINITIONS" }],
         "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "lists only task channels authorized for the actor" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/gateway-mcp-jsonrpc.test.ts", "case": "exposes authorized task channel discovery without model-supplied scope" }]
       },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "must_cover": "lists only task channels authorized for the actor" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/gateway-mcp-jsonrpc.test.ts", "must_cover": "exposes authorized task channel discovery without model-supplied scope" }] },
       "confidence": 0.99
     },
     {
@@ -23,6 +24,7 @@
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "authorizedTaskChannels" }],
         "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "omits task channels unauthorized for the actor" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "fails closed without disclosing ambiguous task channels" }]
       },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "must_cover": "omits task channels unauthorized for the actor" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "must_cover": "fails closed without disclosing ambiguous task channels" }] },
       "confidence": 0.99
     },
     {
@@ -34,6 +36,19 @@
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts", "anchor": "buildPrompt" }],
         "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "discovers authorized channels for an unspecified cross-channel task request" }]
       },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "must_cover": "discovers authorized channels for an unspecified cross-channel task request" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "must_cover": "does not instruct channel discovery when the gateway tool is unavailable" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-003", "type": "contract",
+      "statement": "unit、integration、型検査、buildを通過した同一HEADだけをリリース候補とし、本番設定ではmana-dev-bizだけに一覧toolを公開する。Slack実E2Eはデプロイ後に別途確認する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-authorized-task-channel-discovery.md", "section": "検証" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc", "anchor": "list_authorized_task_channels" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する" }] },
       "confidence": 0.99
     }
   ]
