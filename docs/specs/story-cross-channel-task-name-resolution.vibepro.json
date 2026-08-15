@@ -46,7 +46,7 @@
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
         "architecture_refs": [{ "file": "docs/architecture/story-cross-channel-task-name-resolution.md", "section": "契約" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts", "anchor": "buildPrompt" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "binds the Slack requester person to 私のタスク searches without asking for identity" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "does not bind task searches that are not self-task requests" }]
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "must_cover": "channel IDを利用者へ要求しない" }] },
       "confidence": 0.99
@@ -62,6 +62,18 @@
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "channelName" }] },
       "confidence": 0.99
+    },
+    {
+      "id": "C-004", "type": "contract",
+      "statement": "ローカル回帰、型検査、本番向けbuildを通し、デプロイ後は名前だけのSlack依頼とCanonical Taskの件数・scopeを照合する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-7" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cross-channel-task-name-resolution.md", "section": "検証" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "authorizedTaskScope" }, { "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts", "anchor": "buildPrompt" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "resolves canonical channel names and reports ids, names, and projects" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "does not bind task searches that are not self-task requests" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/*.test.ts", "must_cover": "channel_names" }] },
+      "confidence": 0.95
     }
   ]
 }
