@@ -72,11 +72,11 @@ describe("会社別Cloudflare deployment", () => {
       ...JSON.parse(unson.vars.MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON) as Array<{ projectId: string; slackChannelId: string }>,
     ];
     const minutesTargets = targets.filter((target) => target.targetId.startsWith("minutes-"));
-    expect(targets).toHaveLength(21);
-    expect(minutesTargets).toHaveLength(20);
+    expect(targets).toHaveLength(22);
+    expect(minutesTargets).toHaveLength(21);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
-      .toEqual({ "unson-business": 6, unson: 5, "tech-knight": 9 });
+      .toEqual({ "unson-business": 7, unson: 5, "tech-knight": 9 });
     for (const destination of destinations) {
       expect(minutesTargets).toContainEqual(expect.objectContaining({ channelId: destination.slackChannelId,
         projectCodes: expect.arrayContaining([destination.projectId]) }));
@@ -340,7 +340,7 @@ describe("会社別Cloudflare deployment", () => {
       [item.organization.id, item.organization.name])).entries()]).toEqual([
       ["unson-business", "雲孫 事業運営"], ["unson", "雲孫"], ["tech-knight", "Tech Knight"],
     ]);
-    expect(destinations).toHaveLength(20);
+    expect(destinations).toHaveLength(21);
     expect(destinations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "back-office", projectId: "proj_back_office", slackChannelId: "C0BKS6RL99T",
         github: expect.objectContaining({ owner: "Unson-LLC", repo: "back_office", pathPrefix: "meetings/" }) }),
@@ -370,6 +370,9 @@ describe("会社別Cloudflare deployment", () => {
       expect.objectContaining({ id: "cursorvers", projectId: "proj_otawara_cursorvers", slackChannelId: "C0BHVFJGFK3",
         organization: { id: "unson-business", name: "雲孫 事業運営" },
         github: expect.objectContaining({ owner: "Unson-LLC", repo: "Drive", pathPrefix: "meetings/cursorvers/" }) }),
+      expect.objectContaining({ id: "kartz", projectId: "proj_kartz", slackChannelId: "C0BQA5BGTEH",
+        organization: { id: "unson-business", name: "雲孫 事業運営" },
+        github: expect.objectContaining({ owner: "Unson-LLC", repo: "Drive", pathPrefix: "meetings/kartz/" }) }),
       expect.objectContaining({ id: "united", projectId: "proj_united", slackChannelId: "C0A4RB7739D",
         organization: { id: "tech-knight", name: "Tech Knight" },
         github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "HotelUnitedGAS", pathPrefix: "meetings/" }) }),
