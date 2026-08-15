@@ -27,6 +27,14 @@ describe("gateway MCP", () => {
     expect(result.result.tools[1].inputSchema.required).toEqual(["query"]);
     expect(result.result.tools[1].inputSchema.oneOf).toEqual(list.oneOf);
   });
+  it("exposes authorized task channel discovery without model-supplied scope", async () => {
+    process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_authorized_task_channels"]);
+    const result = await processGatewayRpcMessage({ jsonrpc: "2.0", id: 4, method: "tools/list" });
+    expect(result.result.tools).toEqual([expect.objectContaining({
+      name: "list_authorized_task_channels",
+      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    })]);
+  });
   it("forwards requester capability without accepting a model project", async () => {
     process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_tasks"]);
     process.env.MANA_TASK_WRITE_REQUEST_ID = "Ev1";

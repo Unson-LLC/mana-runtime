@@ -308,8 +308,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-authorized-task-channel-discovery",
+        "title": "AIが許可済みタスクチャンネルを自動選択する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-cross-channel-task-name-resolution"
+    "current_story_id": "story-authorized-task-channel-discovery"
   }
 }

@@ -99,6 +99,15 @@ function authorizedTaskScope(args: Record<string, unknown>, source: RuntimePlace
     project_codes: projectCodes, channels: resolvedChannels } };
 }
 
+function authorizedTaskChannels(source: RuntimePlacement, placements: readonly RuntimePlacement[], actorId: string) {
+  const channels = (source.taskInventoryChannelIds ?? []).flatMap((channelId) => {
+    const matches = placements.filter((candidate) => candidate.channelId === channelId);
+    if (matches.length !== 1 || !matches[0].taskInventoryAllowedUserIds?.includes(actorId)) return [];
+    return [{ channel_id: channelId, channel_name: matches[0].channelName ?? null, project_codes: [...matches[0].projectCodes] }];
+  });
+  return { channels, scope: { mode: "authorized_channels" as const } };
+}
+
 export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch) {
   return async (request: Request, env: RuntimeGatewayProxyEnv): Promise<Response> => {
     const url = new URL(request.url);
@@ -124,6 +133,10 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
           body: JSON.stringify({ ...body.arguments, request_id: body.request_id, project: placement.projectCodes[0], operation, call_index: body.call_index }) }),
         { ...env, RUNTIME_PROJECT_CODES: placement.projectCodes.join(","), RUNTIME_PLACEMENT_ID: placement.placementId,
           SLACK_ALLOWED_CHANNEL_ID: placement.channelId });
+      }
+      if (body.tool === "list_authorized_task_channels") {
+        if (Object.keys(body.arguments).length !== 0) return responseError("invalid_arguments", 400);
+        return Response.json(authorizedTaskChannels(placement, placements, claims.actor.id));
       }
       if (["list_tasks", "search_tasks", "list_tasks_across_channels", "search_tasks_across_channels"].includes(body.tool)) {
         if (!env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN) return responseError("gateway_not_configured", 503);
