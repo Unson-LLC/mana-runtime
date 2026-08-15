@@ -143,7 +143,8 @@ describe("会社別Cloudflare deployment", () => {
       DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
-      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true },
+      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true,
+        taskInventoryAllowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: true },
       {
         placementId: "mana-dev-biz",
@@ -152,6 +153,8 @@ describe("会社別Cloudflare deployment", () => {
         taskWriteEnabled: true,
         taskBoardEnabled: true,
         developmentEnabled: true,
+        taskInventoryChannelIds: ["C0BMNSP6C80", "C0BKS6RL99T"],
+        taskInventoryAllowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"],
         audience: { type: "operator", allowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
         agent: { model: "sonnet", escalationEmployee: "critical-reviewer" },
         runtimeContext: {
@@ -163,7 +166,7 @@ describe("会社別Cloudflare deployment", () => {
         capabilities: {
           mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
           gatewayTools: [
-            "send_message", "create_task", "list_tasks", "search_tasks", "update_task", "transition_task",
+            "send_message", "create_task", "list_tasks", "search_tasks", "list_tasks_across_channels", "search_tasks_across_channels", "update_task", "transition_task",
             "list_sessions", "get_session", "list_employees", "get_employee",
           ],
         },

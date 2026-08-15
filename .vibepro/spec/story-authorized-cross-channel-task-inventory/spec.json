@@ -1,0 +1,287 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-authorized-cross-channel-task-inventory",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "ai_synthesis"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "横断一覧と横断検索は重複しない1〜10件のchannel_idsと最大20件の境界付きqueryを受け、authorized_channels scopeとchannel-project対応を返す",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-cross-channel-task-inventory.md",
+            "section": "MCP契約"
+          },
+          {
+            "file": "docs/architecture/story-authorized-cross-channel-task-inventory.md",
+            "section": "応答契約"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts",
+            "anchor": "createRuntimeGatewayProxyHandler"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/container/gateway-mcp-server.mjs",
+            "anchor": "TOOL_DEFINITIONS"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "lists tasks across explicitly authorized channels"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "searches tasks across explicitly authorized channels"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/gateway-mcp-jsonrpc.test.ts",
+            "case": "exposes authorized cross-channel task tools with bounded channel ids"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/*.test.ts",
+            "must_cover": "list_tasks_across_channels"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T07:31:13.311Z",
+      "last_revised_at": "2026-08-15T07:46:14.743Z"
+    },
+    {
+      "id": "INV-003",
+      "type": "invariant",
+      "statement": "横断対象は呼出元taskInventoryChannelIdsと各対象placementの横断参照専用taskInventoryAllowedUserIdsの積集合で決まり、通常返信用audienceを変更せず、projectを利用者入力で拡張できない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-cross-channel-task-inventory.md",
+            "section": "認可アルゴリズム"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-config.ts",
+            "anchor": "RuntimePlacement"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts",
+            "anchor": "createRuntimeGatewayProxyHandler"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "rejects a channel outside the configured inventory scope before upstream"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "rejects an actor missing from a target task inventory audience"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "rejects a cross-channel result containing a project outside the authorized union"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "must_cover": "target task inventory audience"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T07:43:00.006Z",
+      "last_revised_at": "2026-08-15T07:46:14.743Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "未知・重複・未許可・対象audience外のchannelが一つでもあればupstreamを呼ばず、部分開示しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-cross-channel-task-inventory.md",
+            "section": "認可アルゴリズム"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts",
+            "anchor": "createRuntimeGatewayProxyHandler"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "rejects duplicate requested channels before upstream"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "rejects an empty requested channel scope before upstream"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "rejects ambiguous target channel placements before upstream"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts",
+            "case": "fails closed for duplicate and unknown placement channels"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "must_cover": "before upstream"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T07:31:13.311Z",
+      "last_revised_at": "2026-08-15T07:46:14.743Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "既存current_channel toolは不変で、横断検索はRUNTIME_TASK_SEARCH_ENABLEDによる既存の切戻しに従う",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-cross-channel-task-inventory.md",
+            "section": "リリースと切戻し"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts",
+            "anchor": "createRuntimeGatewayProxyHandler"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "forces list_tasks to the placement project"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "implements bounded search_tasks with placement scope and count metadata"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "disables cross-channel search with the shared kill switch"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "must_cover": "shared kill switch"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T07:31:13.311Z",
+      "last_revised_at": "2026-08-15T07:46:14.743Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "mana-dev-bizだけが現在channelとmana-accountingを横断でき、逆方向とunson越境はdeployment設定で拒否される",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-8"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-cross-channel-task-inventory.md",
+            "section": "設定境界"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc",
+            "anchor": "mana-dev-biz"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "taskInventoryChannelIds"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T07:31:13.311Z",
+      "last_revised_at": "2026-08-15T07:46:14.743Z"
+    }
+  ],
+  "open_questions": [],
+  "generated_at": "2026-08-15T07:46:14.738Z",
+  "previous_spec_id": "2026-08-15T07:43:22.757Z"
+}

@@ -275,8 +275,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-authorized-cross-channel-task-inventory",
+        "title": "権限のある複数チャンネルを横断してタスクを取得する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-slack-task-inventory-count"
+    "current_story_id": "story-authorized-cross-channel-task-inventory"
   }
 }

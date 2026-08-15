@@ -88,6 +88,17 @@ describe("Cloudflare runtime binding", () => {
       .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
   });
 
+  it("retains a bounded unique cross-channel task inventory allowlist", () => {
+    expect(parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskInventoryChannelIds: ["C_DEV", "C_ACCOUNTING"], taskInventoryAllowedUserIds: ["U123"] }])))
+      .toMatchObject([{ taskInventoryChannelIds: ["C_DEV", "C_ACCOUNTING"], taskInventoryAllowedUserIds: ["U123"] }]);
+    expect(() => parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskInventoryChannelIds: ["C_DEV", "C_DEV"] }])))
+      .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+    expect(() => parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskInventoryChannelIds: [] }])))
+      .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+    expect(() => parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskInventoryAllowedUserIds: ["U123", "U123"] }])))
+      .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+  });
+
   it("retains bounded persona, runtime instructions, and visible skills", () => {
     const [placement] = parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"],
       runtimeContext: { persona: "Ryoko", instructions: ["結論を先に述べる"], skills: ["status", "management"] } }]));
