@@ -13,12 +13,18 @@ export const MEETING_MINUTES_CONFIRM_REDO_ACTION_ID = "mana_meeting_minutes_conf
 export interface MeetingMinutesDestination {
   id: string;
   projectId: string;
+  /** Canonical Brainbase project code used to resolve meeting context. */
+  contextProjectCode?: string;
   /** Canonical Brainbase project codes used only for task integration. */
   taskProjectCodes?: string[];
   name: string;
   organization: { id: string; name: string };
   slackChannelId: string;
   github: { owner: string; repo: string; branch?: string; pathPrefix?: string };
+}
+
+export function meetingMinutesContextProjectCode(destination: MeetingMinutesDestination): string {
+  return destination.contextProjectCode ?? destination.projectId;
 }
 
 export function meetingMinutesTaskProjectCodes(destination: MeetingMinutesDestination): string[] {

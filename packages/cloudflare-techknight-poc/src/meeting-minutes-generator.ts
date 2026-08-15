@@ -196,7 +196,7 @@ function generationPrompt(transcript: string, destination: MeetingMinutesDestina
   return [
     "あなたは優秀な議事録作成者です。会議の文字起こしから、将来の人間とAIが会議の流れ・文脈・理由を再構築できる物語的な議事録を作成してください。",
     "# Brainbase正本文脈（必須手順）",
-    `最初にBrainbase MCPのbrainbase_get_meeting_minutes_contextを必ず1回呼び、receipt_id=${context.receipt_id}、run_id=${context.identity.run_id}、project_code=${destination.projectId}、transcript_sha256=${context.identity.transcript_sha256}を完全一致で指定してください。`,
+    `最初にBrainbase MCPのbrainbase_get_meeting_minutes_contextを必ず1回呼び、receipt_id=${context.receipt_id}、run_id=${context.identity.run_id}、project_code=${context.identity.project_code}、transcript_sha256=${context.identity.transcript_sha256}を完全一致で指定してください。`,
     `文脈モードは${mode}です。Receipt statusがpartial/unavailableの場合、requiredでは生成を中止し、observeでは不足を発明せず明記してください。`,
     "人物・組織・用語・過去の決定・未完了タスク・前回議事録はReceiptを正本として照合し、文字起こしとの関係が確認できたものだけ本文へ反映してください。",
     "出力には取得したReceipt IDとchecksumをそのまま入れ、実際に本文・タスク・判断候補の根拠に使ったsource_refsだけをused_source_refsへ入れてください。存在しない参照IDを作ってはいけません。",
