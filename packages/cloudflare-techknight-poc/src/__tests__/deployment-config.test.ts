@@ -63,6 +63,31 @@ describe("会社別Cloudflare deployment", () => {
   const techKnight = loadConfig("wrangler.jsonc");
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
+  it("binds every meeting destination and the existing mana channel to a trusted task Canvas target", () => {
+    const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
+      targetId: string; organizationId: string; workspaceId: string; channelId: string; projectCodes: string[];
+    }>;
+    const destinations = [
+      ...JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON) as Array<{ projectId: string; slackChannelId: string }>,
+      ...JSON.parse(unson.vars.MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON) as Array<{ projectId: string; slackChannelId: string }>,
+    ];
+    const minutesTargets = targets.filter((target) => target.targetId.startsWith("minutes-"));
+    expect(targets).toHaveLength(21);
+    expect(minutesTargets).toHaveLength(20);
+    expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
+      [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
+      .toEqual({ "unson-business": 6, unson: 5, "tech-knight": 9 });
+    for (const destination of destinations) {
+      expect(minutesTargets).toContainEqual(expect.objectContaining({ channelId: destination.slackChannelId,
+        projectCodes: expect.arrayContaining([destination.projectId]) }));
+    }
+    expect(targets.find((target) => target.targetId === "runtime-mana-dev-biz")).toMatchObject({
+      workspaceId: "T0882T8N9UH", channelId: "C0BMNSP6C80", projectCodes: ["mana"],
+    });
+    expect(minutesTargets.filter((target) => target.organizationId === "tech-knight")
+      .every((target) => target.workspaceId === "T07A9J3PEMB")).toBe(true);
+  });
+
   it("builds the shared task runtime before every Cloudflare release entrypoint", () => {
     const packageJsonPath = fileURLToPath(new URL("../../package.json", import.meta.url));
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {

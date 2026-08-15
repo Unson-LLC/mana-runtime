@@ -13,6 +13,7 @@ export interface TaskBoardRepairEvent {
   tenantId: string;
   workspaceId: string;
   channelId: string;
+  targetId: string;
   reason: "task_write" | "scheduled" | "manual";
   requestedAt: string;
 }
@@ -23,6 +24,8 @@ export interface TaskBoardEnv {
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   SLACK_BOT_TOKEN?: string;
+  SLACK_BOT_TOKEN_TECHKNIGHT?: string;
+  TASK_BOARD_TARGETS_JSON?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
   SLACK_EXPECTED_TEAM_ID?: string;
   TENANT_ID?: string;

@@ -2,6 +2,7 @@ import { TaskApiClient, TaskApiError, type CanonicalTask, type CreateTaskInput, 
 import { authorizeTaskWriteIntent, evaluateTaskWritePolicy, verifyTaskWriteCapability, type TaskWriteIntent, type TaskWriteOperation, type TaskWritePolicy } from "@openryoko/write-broker";
 import { parseRuntimePlacements, parseRuntimeProjectCodes } from "./runtime-config.js";
 import type { TaskBoardRepairEvent } from "./task-board.js";
+import { parseTaskBoardTargets, taskBoardTargetsForProjects } from "./task-board-targets.js";
 import { claimTaskWriteBudgetSlot, type TaskWriteBudgetNamespace } from "./task-write-budget.js";
 import { consumeTaskWriteApproval, createTaskWriteApproval, type TaskWriteApprovalNamespace } from "./task-write-approval.js";
 
@@ -24,6 +25,7 @@ export interface TaskWriteProxyEnv {
   TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
   TENANT_ID?: string;
   TASK_BOARD_REPAIRS?: { send(message: TaskBoardRepairEvent): Promise<unknown> };
+  TASK_BOARD_TARGETS_JSON?: string;
   TASK_WRITE_BUDGETS?: TaskWriteBudgetNamespace;
 }
 
@@ -268,15 +270,23 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
         requester: claims.actor.id, approver: approvedBy ?? null, project: body.project, taskId: result.id,
         policyVersion: decision.policyVersion, payloadHash: fingerprint, beforeVersion: beforeVersion ?? null,
         afterVersion: result.version, result: "executed" }));
-      if (env.TASK_BOARD_REPAIRS && env.TENANT_ID && env.SLACK_EXPECTED_TEAM_ID && writeChannelId) {
-        await env.TASK_BOARD_REPAIRS.send({
-          eventType: "task_board_repair",
-          tenantId: env.TENANT_ID,
-          workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-          channelId: writeChannelId,
-          reason: "task_write",
-          requestedAt: new Date().toISOString(),
-        }).catch(() => console.warn(JSON.stringify({ event: "task_board_repair_enqueue_failed", requestId: body.request_id })));
+      if (env.TASK_BOARD_REPAIRS && env.TENANT_ID) {
+        try {
+          const configuredTargets = parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON);
+          const targets = configuredTargets.length > 0
+            ? taskBoardTargetsForProjects(configuredTargets, [body.project])
+            : env.SLACK_EXPECTED_TEAM_ID && writeChannelId
+              ? [{ targetId: `legacy-${placementId}`, workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: writeChannelId }]
+              : [];
+          for (const target of targets) await env.TASK_BOARD_REPAIRS.send({
+              eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID!,
+              workspaceId: target.workspaceId, channelId: target.channelId,
+              reason: "task_write", requestedAt: new Date().toISOString(),
+            }).catch(() => console.warn(JSON.stringify({ event: "task_board_repair_enqueue_failed",
+              requestId: body.request_id, targetId: target.targetId })));
+        } catch {
+          console.warn(JSON.stringify({ event: "task_board_repair_enqueue_failed", requestId: body.request_id }));
+        }
       }
       return Response.json(cleanTask(result));
     } catch (cause) {

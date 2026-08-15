@@ -79,6 +79,7 @@ import {
   isTaskBoardRepairEvent,
   type TaskBoardRepairEvent,
 } from "./task-board.js";
+import { parseTaskBoardTargets, taskBoardTargetsForProjects } from "./task-board-targets.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
@@ -117,6 +118,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   RUNTIME_PLACEMENT_ID?: string;
   RUNTIME_PLACEMENTS_JSON?: string;
   RUNTIME_TASK_BOARD_ENABLED?: string;
+  TASK_BOARD_TARGETS_JSON?: string;
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
   BRAINBASE_SLACK_PERSON_MAP_JSON?: string;
@@ -214,6 +216,23 @@ function meetingMinutesDeploymentGate(env: Env): DurableObjectStub<MeetingMinute
   return env.MEETING_MINUTES_DEPLOYMENT_GATE.get(env.MEETING_MINUTES_DEPLOYMENT_GATE.idFromName(env.TENANT_ID));
 }
 
+async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly string[],
+  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
+  let targets;
+  try { targets = taskBoardTargetsForProjects(parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON), projectIds); }
+  catch (error) { console.error("task_board_targets_invalid", error); return; }
+  const results = await Promise.allSettled(targets.map((target) => env.TASK_BOARD_REPAIRS.send({
+    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
+    workspaceId: target.workspaceId, channelId: target.channelId, reason,
+    requestedAt: new Date().toISOString(),
+  })));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") console.error("task_board_repair_enqueue_failed", {
+      targetId: targets[index]?.targetId, reason, error: result.reason,
+    });
+  });
+}
+
 function meetingMinutesClients(env: Env) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
@@ -256,6 +275,7 @@ function meetingMinutesClients(env: Env) {
       postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
         destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
       postTaskCard: (run: MeetingMinutesRun) => destinationSlack(run.destination!.slackChannelId).postTaskCard(run),
+      repairTaskBoard: (projectId: string) => enqueueTaskBoardRepairsForProjects(env, [projectId], "task_write"),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
@@ -388,12 +408,9 @@ export default {
             }, listPeople: () => listGraphPeople(undefined, {
               baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
               token: env.BRAINBASE_GRAPH_API_TOKEN,
-            }), repairTaskBoard: async () => {
-              try { await env.TASK_BOARD_REPAIRS.send({ eventType: "task_board_repair", tenantId: env.TENANT_ID,
-                workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-                reason: "task_write", requestedAt: new Date().toISOString() }); }
-              catch (error) { console.error("meeting_minutes_task_board_repair_failed", error); }
-            }, defer: (work) => ctx.waitUntil(work),
+            }), repairTaskBoard: (projectId) => enqueueTaskBoardRepairsForProjects(
+              env, [projectId], "task_write",
+            ), defer: (work) => ctx.waitUntil(work),
           });
         });
     }

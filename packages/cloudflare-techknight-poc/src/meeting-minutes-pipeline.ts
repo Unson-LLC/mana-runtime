@@ -29,6 +29,7 @@ export interface ResumeMeetingMinutesOptions {
   >;
   postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string>;
   postTaskCard?(run: MeetingMinutesRun): Promise<string>;
+  repairTaskBoard?(projectId: string): Promise<void>;
   postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
     index: number, total: number, clientMsgId: string): Promise<string>;
 }
@@ -191,6 +192,9 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     await registerGeneratedTasks(fs, run, options);
+    if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
+      await options.repairTaskBoard(run.destination.projectId);
+    }
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = stripMeetingMinutesActionItems(run.generated!.body).trimStart();
     const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
