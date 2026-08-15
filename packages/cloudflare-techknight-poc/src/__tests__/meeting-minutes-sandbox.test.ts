@@ -2,13 +2,13 @@ import { classifyMeetingMinutesDestinationInSandbox, generateMeetingMinutesInSan
   parseGeneratedMeetingMinutesOutput, parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
 
 const destinations = [
-  { id: "sales-tailor", projectId: "proj_salestailor", name: "SalesTailor",
+  { id: "sales-tailor", projectId: "proj_salestailor", contextProjectCode: "unson", name: "SalesTailor",
     organization: { id: "unson", name: "雲孫" }, slackChannelId: "C1", github: { owner: "o", repo: "r" } },
   { id: "united", projectId: "proj_united", name: "United",
     organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2", github: { owner: "o", repo: "r2" } },
 ];
 const context = { schema_version: "meeting_minutes_context_receipt.v1" as const, receipt_id: "mmctx_1",
-  identity: { run_id: "Ev1_F1", project_code: "proj_salestailor", transcript_sha256: "a".repeat(64) },
+  identity: { run_id: "Ev1_F1", project_code: "unson", transcript_sha256: "a".repeat(64) },
   status: "resolved" as const, checksum: "b".repeat(64), resolved_at: "2026-08-15T00:00:00.000Z",
   context: { source_refs: [{ type: "graph_entity", id: "project-1" }], open_tasks: [] } };
 const auditOutput = { brainbase_context_receipt_id: context.receipt_id,
@@ -41,6 +41,8 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(prompt).not.toContain("bodyの最後には必ず「*アクションアイテム*」");
     expect(prompt).toContain("brainbase_get_meeting_minutes_context");
     expect(prompt).toContain(`receipt_id=${context.receipt_id}`);
+    expect(prompt).toContain("project_code=unson");
+    expect(prompt).not.toContain("project_code=proj_salestailor");
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
       expect.stringContaining('"tasks"'),

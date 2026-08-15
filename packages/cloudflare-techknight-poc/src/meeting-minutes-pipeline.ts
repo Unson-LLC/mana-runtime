@@ -2,7 +2,7 @@ import { isMeetingMinutesFile, meetingMinutesRunId, type GeneratedMeetingMinutes
   type MeetingMinutesContextMode, type MeetingMinutesContextReceipt,
   type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
-  meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
+  meetingMinutesContextProjectCode, meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
 import { splitMeetingMinutesForSlack, stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -52,6 +52,7 @@ function now(options: { now?: () => Date }): string { return (options.now?.() ??
 function destinationIsValid(value: MeetingMinutesDestination): boolean {
   const taskProjectCodes = value.taskProjectCodes;
   return /^[A-Za-z0-9_-]{1,128}$/.test(value.id) && !!value.projectId.trim() && !!value.name.trim() &&
+    (value.contextProjectCode === undefined || /^[A-Za-z0-9_-]{1,128}$/.test(value.contextProjectCode)) &&
     /^[A-Za-z0-9_-]{1,128}$/.test(value.organization?.id ?? "") && !!value.organization?.name.trim() &&
     /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim() &&
     (taskProjectCodes === undefined || (Array.isArray(taskProjectCodes) && taskProjectCodes.length > 0 &&
@@ -213,8 +214,13 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   if (run.destination && !sameDestination(run.destination, configured)) {
     throw new Error("meeting_minutes_destination_changed");
   }
-  if (run.destination && JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(configured.taskProjectCodes)) {
+  const contextProjectChanged = !!run.destination &&
+    meetingMinutesContextProjectCode(run.destination) !== meetingMinutesContextProjectCode(configured);
+  if (contextProjectChanged && run.context) throw new Error("meeting_minutes_context_project_changed");
+  if (run.destination && (JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(configured.taskProjectCodes) ||
+    contextProjectChanged)) {
     run.destination.taskProjectCodes = configured.taskProjectCodes ? [...configured.taskProjectCodes] : undefined;
+    run.destination.contextProjectCode = configured.contextProjectCode;
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
   }
   if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
@@ -222,7 +228,8 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     if (run.taskRegistration?.failure && run.destination && run.transcriptSha256) {
       const retryStage = run.taskRegistration.failure.stage;
       try {
-        const receipt = await options.resolveContext({ run_id: run.runId, project_code: run.destination.projectId,
+        const receipt = await options.resolveContext({ run_id: run.runId,
+          project_code: meetingMinutesContextProjectCode(run.destination),
           transcript_sha256: run.transcriptSha256 }, run.context?.receiptId);
         assertMeetingMinutesContextUsable(receipt, options.contextMode);
         await registerGeneratedTasks(fs, run, receipt, options);
@@ -277,7 +284,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       if (run.transcriptSha256 && run.transcriptSha256 !== transcriptSha256) throw new Error("meeting_minutes_transcript_changed");
       run.transcriptSha256 ??= transcriptSha256;
     }
-    const contextIdentity = { run_id: run.runId, project_code: run.destination.projectId,
+    const contextIdentity = { run_id: run.runId, project_code: meetingMinutesContextProjectCode(run.destination),
       transcript_sha256: run.transcriptSha256! };
     contextReceipt = await options.resolveContext(contextIdentity, run.context?.receiptId);
     assertMeetingMinutesContextUsable(contextReceipt, options.contextMode);

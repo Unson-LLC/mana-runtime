@@ -49,6 +49,45 @@ describe("meeting minutes pipeline", () => {
     }));
   });
 
+  it("uses the explicit Brainbase context project without changing task or destination identity", async () => {
+    const fs = new MemoryFs();
+    const kartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [kartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-kartz", identity, status: "resolved" as const, checksum: "checksum-kartz",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const options = resumeOptions({ destinations: [kartz], resolveContext });
+    const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, options);
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
+    expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"] });
+  });
+
+  it("refreshes a persisted Kartz run from the legacy context project before retrying", async () => {
+    const fs = new MemoryFs();
+    const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz" };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "unson", taskProjectCodes: ["unson"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await expect(resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [legacyKartz],
+      resolveContext: vi.fn().mockRejectedValue(new Error("meeting_minutes_context_request_failed:403")),
+    }))).rejects.toThrow("meeting_minutes_context_request_failed:403");
+
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-kartz-retry", identity, status: "resolved" as const, checksum: "checksum-kartz-retry",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [configuredKartz], resolveContext,
+    }));
+
+    expect(resolveContext).toHaveBeenLastCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
+    expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"] });
+  });
+
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
     const fs = new MemoryFs(); const requestDestination = vi.fn().mockResolvedValue("2.1");
     const first = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", destinations: [destination], requestDestination });
