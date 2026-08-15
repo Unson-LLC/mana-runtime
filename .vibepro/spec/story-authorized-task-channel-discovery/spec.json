@@ -62,7 +62,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T11:29:17.604Z",
-      "last_revised_at": "2026-08-15T11:44:13.041Z"
+      "last_revised_at": "2026-08-15T11:53:21.977Z"
     },
     {
       "id": "INV-002",
@@ -116,7 +116,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T11:36:51.231Z",
-      "last_revised_at": "2026-08-15T11:44:13.041Z"
+      "last_revised_at": "2026-08-15T11:53:21.977Z"
     },
     {
       "id": "C-003",
@@ -166,7 +166,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T11:36:51.231Z",
-      "last_revised_at": "2026-08-15T11:44:13.041Z"
+      "last_revised_at": "2026-08-15T11:53:21.977Z"
     },
     {
       "id": "C-002",
@@ -208,9 +208,9 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T11:44:13.041Z",
-      "last_revised_at": "2026-08-15T11:44:13.041Z"
+      "last_revised_at": "2026-08-15T11:53:21.977Z"
     }
   ],
-  "generated_at": "2026-08-15T11:44:13.032Z",
-  "previous_spec_id": "2026-08-15T11:36:51.213Z"
+  "generated_at": "2026-08-15T11:53:21.969Z",
+  "previous_spec_id": "2026-08-15T11:44:13.032Z"
 }

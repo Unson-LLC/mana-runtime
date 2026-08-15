@@ -16,7 +16,7 @@
       "confidence": 0.99
     },
     {
-      "id": "INV-001", "type": "invariant",
+      "id": "INV-002", "type": "invariant",
       "statement": "対象利用者不一致を開示せず、曖昧なchannel placement設定は一覧全体をfail closedで拒否し、既存の横断認可を拡張しない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-3" }],
@@ -28,7 +28,7 @@
       "confidence": 0.99
     },
     {
-      "id": "C-002", "type": "contract",
+      "id": "C-003", "type": "contract",
       "statement": "対象名なしの全件横断依頼では公開済み一覧toolの結果を横断toolへ渡し、利用者へチャンネル名を質問しない。一覧が空なら横断toolを呼ばず、タスク0件とは扱わない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }, { "kind": "acceptance_criteria", "ac_id": "AC-5" }],
@@ -40,7 +40,7 @@
       "confidence": 0.99
     },
     {
-      "id": "C-003", "type": "contract",
+      "id": "C-002", "type": "contract",
       "statement": "unit、integration、型検査、buildを通過した同一HEADだけをリリース候補とし、本番設定ではmana-dev-bizだけに一覧toolを公開する。Slack実E2Eはデプロイ後に別途確認する",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }],
