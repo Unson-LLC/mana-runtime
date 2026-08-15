@@ -6,6 +6,7 @@ import {
   type TaskBoardRepairEvent,
 } from "./task-board.js";
 import type { SlackQueueEvent } from "./types.js";
+import { parseTaskBoardTargets, taskBoardSlackToken, type TaskBoardTarget } from "./task-board-targets.js";
 
 interface TaskWriteRuntimeEnv {
   RUNTIME_TASK_WRITE_ENABLED?: string;
@@ -26,6 +27,20 @@ interface TaskBoardRuntimeEnv extends TaskBoardEnv {
   SLACK_ALLOWED_CHANNEL_ID: string;
   TASK_BOARD_REPAIRS: { send(message: TaskBoardRepairEvent): Promise<unknown> };
   RUNTIME_PLACEMENTS_JSON?: string;
+}
+
+function legacyTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
+  if (env.RUNTIME_PLACEMENTS_JSON) return parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
+    .filter((placement) => placement.taskBoardEnabled)
+    .map((placement) => ({ targetId: `legacy-${placement.placementId}`, organizationId: "unson-business" as const,
+      workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: placement.channelId, projectCodes: placement.projectCodes }));
+  return env.RUNTIME_TASK_BOARD_ENABLED === "true" ? [{ targetId: "legacy-default", organizationId: "unson-business",
+    workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: env.SLACK_ALLOWED_CHANNEL_ID,
+    projectCodes: parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES) }] : [];
+}
+
+export function taskBoardTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
+  return env.TASK_BOARD_TARGETS_JSON ? parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON) : legacyTargets(env);
 }
 
 interface QueueMessageLike<T> {
@@ -71,23 +86,21 @@ export async function consumeTaskBoardRepair(
   refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
 ): Promise<void> {
   const repair = message.body;
-  const placement = env.RUNTIME_PLACEMENTS_JSON
-    ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).find((candidate) => candidate.channelId === repair.channelId && candidate.taskBoardEnabled)
-    : undefined;
+  const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
   if (
     repair.tenantId !== env.TENANT_ID ||
-    repair.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
-    (env.RUNTIME_PLACEMENTS_JSON ? !placement : repair.channelId !== env.SLACK_ALLOWED_CHANNEL_ID)
+    !target || repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId
   ) {
     console.error(JSON.stringify({ event: "task_board_repair_rejected", reason: "scope_mismatch" }));
     message.ack();
     return;
   }
   try {
-    await refresh(placement ? { ...env,
+    await refresh({ ...env,
       RUNTIME_TASK_BOARD_ENABLED: "true",
-      SLACK_ALLOWED_CHANNEL_ID: placement.channelId,
-      RUNTIME_PROJECT_CODES: placement.projectCodes.join(",") } : env);
+      SLACK_BOT_TOKEN: taskBoardSlackToken(target, env),
+      SLACK_ALLOWED_CHANNEL_ID: target.channelId,
+      RUNTIME_PROJECT_CODES: target.projectCodes.join(",") });
     message.ack();
   } catch (error) {
     console.error(JSON.stringify({ event: "task_board_repair_failed", code: error instanceof Error ? error.message : "unknown" }));
@@ -99,19 +112,14 @@ export async function enqueueScheduledTaskBoardRepair(
   env: TaskBoardRuntimeEnv,
   now = new Date().toISOString(),
 ): Promise<void> {
-  const placements = env.RUNTIME_PLACEMENTS_JSON
-    ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).filter((placement) => placement.taskBoardEnabled)
-    : env.RUNTIME_TASK_BOARD_ENABLED === "true"
-      ? [{ channelId: env.SLACK_ALLOWED_CHANNEL_ID }]
-      : [];
-  for (const placement of placements) {
-    await env.TASK_BOARD_REPAIRS.send({
+  const results = await Promise.allSettled(taskBoardTargets(env).map((target) => env.TASK_BOARD_REPAIRS.send({
       eventType: "task_board_repair",
       tenantId: env.TENANT_ID,
-      workspaceId: env.SLACK_EXPECTED_TEAM_ID,
-      channelId: placement.channelId,
+      targetId: target.targetId,
+      workspaceId: target.workspaceId,
+      channelId: target.channelId,
       reason: "scheduled",
       requestedAt: now,
-    });
-  }
+    })));
+  if (results.some((result) => result.status === "rejected")) throw new Error("task_board_schedule_enqueue_failed");
 }

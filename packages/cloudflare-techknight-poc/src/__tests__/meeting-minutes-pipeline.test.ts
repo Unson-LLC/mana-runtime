@@ -84,16 +84,19 @@ describe("meeting minutes pipeline", () => {
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const order: string[] = [];
     const createTask = vi.fn(async () => { order.push("task"); return { id: "task-42" }; });
+    const repairTaskBoard = vi.fn(async () => { order.push("canvas"); });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20T00:00:00+09:00" },
       ] }),
       saveGitHub: vi.fn(async () => { order.push("github"); return { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" }; }),
       createTask,
+      repairTaskBoard,
       postParent: vi.fn(async () => { order.push("slack"); return "10.1"; }),
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
-    expect(order).toEqual(["github", "task", "slack"]);
+    expect(order).toEqual(["github", "task", "canvas", "slack"]);
+    expect(repairTaskBoard).toHaveBeenCalledWith("mana");
     expect(createTask).toHaveBeenCalledWith(
       expect.objectContaining({ title: "請求書を送る", project_codes: ["mana"] }),
       expect.stringMatching(/^meeting-minutes-/),

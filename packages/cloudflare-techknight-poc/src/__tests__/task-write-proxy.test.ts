@@ -106,6 +106,24 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(JSON.stringify(payload)).not.toContain(TASK_TOKEN);
   });
 
+  it("fans a successful write out only to Canvas targets for the changed project", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const bindings = { ...env(), TENANT_ID: "unson-business", TASK_BOARD_REPAIRS: { send },
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([
+        { targetId: "back-office", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
+          channelId: "C0BKS6RL99T", projectCodes: ["back-office"] },
+        { targetId: "pms", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
+          channelId: "C0BKX9Y169F", projectCodes: ["proj_pms"] },
+      ]) };
+    const response = await createTaskWriteProxyHandler(vi.fn().mockResolvedValue(Response.json(task)))(await request({
+      operation: "create", title: "契約更新",
+    }), bindings);
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ targetId: "back-office",
+      workspaceId: "T0882T8N9UH", channelId: "C0BKS6RL99T", reason: "task_write" }));
+  });
+
   it("calls the injected fetch without binding TaskApiClient as its receiver", async () => {
     const upstream = vi.fn(async function (this: unknown) {
       if (this !== undefined) throw new TypeError("Illegal invocation");

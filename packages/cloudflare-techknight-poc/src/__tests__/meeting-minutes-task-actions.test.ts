@@ -44,7 +44,17 @@ describe("meeting minutes task cards", () => {
     expect(response?.status).toBe(200); await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
     expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
     expect(current.taskRegistration!.registered[0]!.status).toBe("removed");
-    expect(options.repairTaskBoard).toHaveBeenCalled();
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("proj_pms");
+  });
+  it("repairs the destination Canvas when the canonical task was already deleted", async () => {
+    const current = run(); const options = deps(current);
+    options.getTask.mockRejectedValue(Object.assign(new Error("not found"), { status: 404 }));
+    const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
+    expect(response?.status).toBe(200);
+    await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
+    expect(options.deleteTask).not.toHaveBeenCalled();
+    expect(current.taskRegistration!.registered[0]!.status).toBe("removed");
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("proj_pms");
   });
   it("opens the edit modal and rejects a destination-channel mismatch", async () => {
     const current = run(); const options = deps(current);
@@ -105,6 +115,7 @@ describe("meeting minutes task cards", () => {
     expect(options.updateTask).toHaveBeenCalledWith("task-1", expect.objectContaining({ assignee_person_id: "per_umeda" }), expect.any(String));
     expect(current.taskRegistration!.registered[0]!).toEqual(expect.objectContaining({ assigneePersonId: "per_umeda", assigneeDisplayName: "梅田 遼" }));
     expect(current.generated?.tasks?.[0]?.assignee_name).toBe("梅田 遼");
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("proj_pms");
   });
   it("removes the canonical assignee when 担当なし is selected", async () => {
     const current = run(); current.taskRegistration!.registered[0]!.assigneePersonId = "per_umeda";
@@ -124,6 +135,7 @@ describe("meeting minutes task cards", () => {
     expect(current.taskRegistration!.registered[0]!.assigneePersonId).toBeUndefined();
     expect(current.taskRegistration!.registered[0]!.assigneeDisplayName).toBeUndefined();
     expect(current.generated?.tasks?.[0]?.assignee_name).toBeUndefined();
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("proj_pms");
   });
   it("rejects a non-operator before reading the durable run", async () => {
     const current = run(); const options = deps(current); const request = payload("mana_meeting_minutes_task_cancel"); request.user.id = "U2";

@@ -23,6 +23,7 @@ const runtime = {
 
 const repair = {
   eventType: "task_board_repair" as const,
+  targetId: "legacy-default",
   tenantId: "unson-business",
   workspaceId: "T_UNSON",
   channelId: "C_BACK_OFFICE",
@@ -54,6 +55,8 @@ describe("Cloudflare task runtime entrypoints", () => {
       TENANT_ID: "unson-business",
       SLACK_EXPECTED_TEAM_ID: "T_UNSON",
       SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+      SLACK_BOT_TOKEN: "unson-token",
+      RUNTIME_TASK_BOARD_ENABLED: "true",
       TASK_BOARD_REPAIRS: { send: vi.fn() },
     };
     await consumeTaskBoardRepair(good, env, refresh);
@@ -74,6 +77,7 @@ describe("Cloudflare task runtime entrypoints", () => {
       SLACK_EXPECTED_TEAM_ID: "T_UNSON",
       SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
       RUNTIME_TASK_BOARD_ENABLED: "true",
+      SLACK_BOT_TOKEN: "unson-token",
       TASK_BOARD_REPAIRS: { send },
     };
     await consumeTaskBoardRepair(failed, env, vi.fn().mockRejectedValue(new Error("boom")));
@@ -85,7 +89,7 @@ describe("Cloudflare task runtime entrypoints", () => {
   it("enqueues and refreshes each task-board-enabled placement with only its own projects", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const env = { TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
-      RUNTIME_TASK_BOARD_ENABLED: "true", RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+      RUNTIME_TASK_BOARD_ENABLED: "true", SLACK_BOT_TOKEN: "unson-token", RUNTIME_PLACEMENTS_JSON: JSON.stringify([
         { placementId: "accounting", channelId: "C_BACK_OFFICE", projectCodes: ["back-office"], taskBoardEnabled: true },
         { placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true },
         { placementId: "router", channelId: "C_ROUTER", projectCodes: ["unson"] },
@@ -95,7 +99,7 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ channelId: "C_DEV" }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
-    const message = { body: { ...repair, channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
+    const message = { body: { ...repair, targetId: "legacy-dev", channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
     await consumeTaskBoardRepair(message, env, refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C_DEV", RUNTIME_PROJECT_CODES: "mana" }));
   });
@@ -107,6 +111,7 @@ describe("Cloudflare task runtime entrypoints", () => {
       SLACK_EXPECTED_TEAM_ID: "T_UNSON",
       SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
       RUNTIME_TASK_BOARD_ENABLED: "false",
+      SLACK_BOT_TOKEN: "unson-token",
       RUNTIME_PLACEMENTS_JSON: JSON.stringify([
         { placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true },
         { placementId: "router", channelId: "C_ROUTER", projectCodes: ["unson"], taskBoardEnabled: false },
@@ -119,12 +124,54 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ channelId: "C_DEV" }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
-    const message = { body: { ...repair, channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
+    const message = { body: { ...repair, targetId: "legacy-dev", channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
     await consumeTaskBoardRepair(message, env, refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       RUNTIME_TASK_BOARD_ENABLED: "true",
       SLACK_ALLOWED_CHANNEL_ID: "C_DEV",
       RUNTIME_PROJECT_CODES: "mana",
     }));
+  });
+
+  it("schedules every trusted workspace target and uses its isolated Slack token", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const targets = [
+      { targetId: "unson", organizationId: "unson", workspaceId: "T0882T8N9UH", channelId: "C0BKXCVSDCH",
+        projectCodes: ["proj_unson"] },
+      { targetId: "tech", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB", channelId: "C0BKX9Y169F",
+        projectCodes: ["proj_tech"] },
+    ];
+    const env = { TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
+      SLACK_BOT_TOKEN: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
+      TASK_BOARD_TARGETS_JSON: JSON.stringify(targets), TASK_BOARD_REPAIRS: { send } };
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-15T00:00:00.000Z");
+    expect(send).toHaveBeenCalledTimes(2);
+
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const tech = { body: { ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB", channelId: "C0BKX9Y169F" },
+      ack: vi.fn(), retry: vi.fn() };
+    await consumeTaskBoardRepair(tech, env, refresh);
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_BOT_TOKEN: "tech-token",
+      SLACK_ALLOWED_CHANNEL_ID: "C0BKX9Y169F", RUNTIME_PROJECT_CODES: "proj_tech" }));
+  });
+
+  it("reports a partial scheduled fanout failure after attempting every trusted target", async () => {
+    const send = vi.fn()
+      .mockRejectedValueOnce(new Error("queue unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const env = {
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
+      SLACK_BOT_TOKEN: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([
+        { targetId: "unson", organizationId: "unson", workspaceId: "T0882T8N9UH", channelId: "C0BKXCVSDCH",
+          projectCodes: ["proj_unson"] },
+        { targetId: "tech", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB", channelId: "C0BKX9Y169F",
+          projectCodes: ["proj_tech"] },
+      ]),
+      TASK_BOARD_REPAIRS: { send },
+    };
+    await expect(enqueueScheduledTaskBoardRepair(env, "2026-08-15T01:00:00.000Z"))
+      .rejects.toThrow("task_board_schedule_enqueue_failed");
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });

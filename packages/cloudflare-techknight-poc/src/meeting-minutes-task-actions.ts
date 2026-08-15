@@ -28,7 +28,7 @@ export interface MeetingMinutesTaskActionDependencies {
   updateCard(run: MeetingMinutesRun): Promise<void>;
   openView(organizationId: string, triggerId: string, view: Record<string, unknown>): Promise<void>;
   listPeople(): Promise<GraphPersonOption[] | undefined>;
-  repairTaskBoard(): Promise<void>;
+  repairTaskBoard(projectId: string): Promise<void>;
   defer(work: Promise<void>): void;
 }
 function candidate(run: MeetingMinutesRun, index: number) {
@@ -100,11 +100,11 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
       try { current = await deps.getTask(item.taskId); }
       catch (error) { if (status(error) !== 404) throw error;
         item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-        await deps.repairTaskBoard(); return; }
+        await deps.repairTaskBoard(run.destination!.projectId); return; }
       if (current.project_codes?.length !== 1 || current.project_codes[0] !== run.destination!.projectId) throw new Error("meeting_minutes_task_scope_mismatch");
       await deps.deleteTask(item.taskId, current.version, `meeting-minutes-${run.runId}-cancel-${value.index}`);
       item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-      await deps.repairTaskBoard(); })());
+      await deps.repairTaskBoard(run.destination!.projectId); })());
     return Response.json({ ok: true });
   }
   const values = object(object(view?.state)?.values); const title = text(object(object(values?.title)?.value)?.value);
@@ -127,6 +127,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     const generated = run.generated?.tasks?.[value.index];
     if (generated) { generated.title = title; if (due) generated.due_at = `${due}T00:00:00+09:00`;
       if (assigneeSelection) generated.assignee_name = updated.assignee_display_name ?? undefined; }
-    run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run); await deps.repairTaskBoard(); })());
+    run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
+    await deps.repairTaskBoard(run.destination!.projectId); })());
   return Response.json({ ok: true });
 }
