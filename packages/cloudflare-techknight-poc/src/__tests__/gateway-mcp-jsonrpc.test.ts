@@ -23,6 +23,7 @@ describe("gateway MCP", () => {
     ]);
     expect(list.properties.channel_ids).toMatchObject({ minItems: 1, maxItems: 10, uniqueItems: true });
     expect(list.properties.channel_names).toMatchObject({ minItems: 1, maxItems: 10, uniqueItems: true });
+    expect(list.properties.channel_names.items.maxLength).toBeUndefined();
     expect(result.result.tools[1].inputSchema.required).toEqual(["query"]);
     expect(result.result.tools[1].inputSchema.oneOf).toEqual(list.oneOf);
   });

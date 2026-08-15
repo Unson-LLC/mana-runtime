@@ -257,6 +257,9 @@ describe("TechKnight Slack reply pipeline", () => {
     await processReplyEvent(fs, event({ text: "<@U_BOT> 契約更新タスクを検索して" }), options);
 
     expect(sandbox.exec.mock.calls[0][1]?.env).not.toHaveProperty("MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID");
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    expect(prompt).toContain("利用者が示したチャンネル名をchannel_namesへ渡し");
+    expect(prompt).toContain("channel IDを利用者へ要求しないでください");
   });
 
   it.each([

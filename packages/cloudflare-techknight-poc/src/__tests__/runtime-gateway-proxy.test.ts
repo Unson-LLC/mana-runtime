@@ -86,6 +86,22 @@ describe("runtime gateway proxy", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ total_count: 1, scope: { mode: "authorized_channels", channel_ids: ["C_MANA", "C_ACCOUNTING"], project_codes: ["mana", "back-office"] } });
   });
+  it("keeps channel-id search compatible", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      expect(url.pathname).toBe("/api/companion/tasks/search");
+      expect(url.searchParams.get("query")).toBe("契約");
+      expect(url.searchParams.getAll("project_code")).toEqual(["mana", "back-office"]);
+      return Response.json({ items: [], next_cursor: null, total_count: 0, count_status: "exact" });
+    });
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch)(await request("search_tasks_across_channels", {
+      channel_ids: ["C_MANA", "C_ACCOUNTING"], query: "契約",
+    }), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ scope: {
+      mode: "authorized_channels", channel_ids: ["C_MANA", "C_ACCOUNTING"], project_codes: ["mana", "back-office"],
+    } });
+  });
   it("resolves canonical channel names and reports ids, names, and projects", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
