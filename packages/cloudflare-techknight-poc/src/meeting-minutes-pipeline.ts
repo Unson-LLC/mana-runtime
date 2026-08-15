@@ -123,36 +123,74 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
   receipt: MeetingMinutesContextReceipt, options: ResumeMeetingMinutesOptions): Promise<void> {
   const tasks: MeetingMinutesTaskCandidate[] = run.generated?.tasks ?? [];
   run.taskRegistration ??= { registered: [] };
-  for (let index = 0; index < tasks.length; index += 1) {
-    if (run.taskRegistration.registered.some((item) => item.index === index)) continue;
-    const candidate = tasks[index]!;
-    const reconciliation = reconcileMeetingMinutesTask(candidate, receipt);
-    if (reconciliation.outcome !== "new") {
-      run.taskRegistration.registered.push({ index, title: candidate.title, taskId: reconciliation.taskId,
-        status: reconciliation.outcome });
+  let activeIndex = 0;
+  try {
+    for (let index = 0; index < tasks.length; index += 1) {
+      activeIndex = index;
+      if (run.taskRegistration.registered.some((item) => item.index === index)) continue;
+      const candidate = tasks[index]!;
+      const reconciliation = reconcileMeetingMinutesTask(candidate, receipt);
+      if (reconciliation.outcome !== "new") {
+        run.taskRegistration.registered.push({ index, title: candidate.title, taskId: reconciliation.taskId,
+          status: reconciliation.outcome });
+        run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+        continue;
+      }
+      let assignee_person_id: string | undefined;
+      if (candidate.assignee_name) {
+        if (!options.resolveAssignee) throw new Error("meeting_minutes_assignee_resolver_unconfigured");
+        const resolution = await options.resolveAssignee(candidate.assignee_name, run.destination!.projectId);
+        if (resolution.status === "unavailable") throw new Error("meeting_minutes_assignee_unavailable");
+        if (resolution.status === "resolved") assignee_person_id = resolution.personId;
+        else console.warn("meeting_minutes_assignee_unresolved", {
+          runId: run.runId, taskIndex: index, status: resolution.status,
+        });
+      }
+      const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
+      const task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
+        project_codes: [run.destination!.projectId] },
+        await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
+      if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
+      run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
+        ...(task.assignee_person_id ? { assigneePersonId: task.assignee_person_id } : {}),
+        ...(task.assignee_display_name ? { assigneeDisplayName: task.assignee_display_name } : {}) });
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
-      continue;
     }
-    let assignee_person_id: string | undefined;
-    if (candidate.assignee_name) {
-      if (!options.resolveAssignee) throw new Error("meeting_minutes_assignee_resolver_unconfigured");
-      const resolution = await options.resolveAssignee(candidate.assignee_name, run.destination!.projectId);
-      if (resolution.status === "unavailable") throw new Error("meeting_minutes_assignee_unavailable");
-      if (resolution.status === "resolved") assignee_person_id = resolution.personId;
-      else console.warn("meeting_minutes_assignee_unresolved", {
-        runId: run.runId, taskIndex: index, status: resolution.status,
-      });
-    }
-    const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
-    const task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
-      project_codes: [run.destination!.projectId] },
-      await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
-    if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
-    run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
-      ...(task.assignee_person_id ? { assigneePersonId: task.assignee_person_id } : {}),
-      ...(task.assignee_display_name ? { assigneeDisplayName: task.assignee_display_name } : {}) });
+  } catch (error) {
+    run.taskRegistration.failure = { index: activeIndex,
+      stage: "task_registration",
+      message: error instanceof Error ? error.message : "meeting_minutes_task_registration_failed",
+      failedAt: now(options) };
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    throw error;
   }
+}
+
+async function deferTaskIntegration(fs: WorkspaceFs, run: MeetingMinutesRun,
+  stage: "task_registration" | "task_board" | "task_card", error: unknown,
+  options: ResumeMeetingMinutesOptions): Promise<void> {
+  run.taskRegistration ??= { registered: [] };
+  run.taskRegistration.failure = { index: run.taskRegistration.failure?.index ??
+    Math.max(0, run.taskRegistration.registered.length - 1), stage,
+    message: error instanceof Error ? error.message : "meeting_minutes_task_integration_failed", failedAt: now(options) };
+  run.status = "completed"; delete run.failure; run.updatedAt = now(options);
+  await saveMeetingMinutesRun(fs, run);
+}
+
+async function markTaskIntegrationPending(fs: WorkspaceFs, run: MeetingMinutesRun,
+  stage: "task_board" | "task_card", options: ResumeMeetingMinutesOptions): Promise<void> {
+  run.taskRegistration ??= { registered: [] };
+  run.taskRegistration.failure = { index: run.taskRegistration.failure?.index ??
+    Math.max(0, run.taskRegistration.registered.length - 1), stage,
+    message: `meeting_minutes_${stage}_pending`, failedAt: now(options) };
+  run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+}
+
+async function clearTaskIntegrationPending(fs: WorkspaceFs, run: MeetingMinutesRun,
+  options: ResumeMeetingMinutesOptions): Promise<void> {
+  if (!run.taskRegistration?.failure) return;
+  delete run.taskRegistration.failure;
+  run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
 }
 
 export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: MeetingMinutesSelection,
@@ -170,9 +208,39 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   }
   if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
   if (run.status === "completed") {
-    if (run.taskRegistration?.registered.length && run.slack?.parentTs && !run.slack.taskCardTs && options.postTaskCard) {
-      run.slack.taskCardTs = await options.postTaskCard(run);
-      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    if (run.taskRegistration?.failure && run.destination && run.transcriptSha256) {
+      const retryStage = run.taskRegistration.failure.stage;
+      try {
+        const receipt = await options.resolveContext({ run_id: run.runId, project_code: run.destination.projectId,
+          transcript_sha256: run.transcriptSha256 }, run.context?.receiptId);
+        assertMeetingMinutesContextUsable(receipt, options.contextMode);
+        await registerGeneratedTasks(fs, run, receipt, options);
+      } catch (error) {
+        console.error("meeting_minutes_task_registration_retry_failed", {
+          runId: run.runId, error: error instanceof Error ? error.message : "meeting_minutes_task_registration_failed",
+        });
+        return run;
+      }
+      if (retryStage !== "task_card" && run.taskRegistration.registered.length && options.repairTaskBoard) {
+        await markTaskIntegrationPending(fs, run, "task_board", options);
+        try {
+          await options.repairTaskBoard(run.destination.projectId);
+        } catch (error) {
+          await deferTaskIntegration(fs, run, "task_board", error, options);
+          return run;
+        }
+      }
+      if (run.taskRegistration.registered.length && run.slack?.parentTs && !run.slack.taskCardTs && options.postTaskCard) {
+        await markTaskIntegrationPending(fs, run, "task_card", options);
+        try {
+          run.slack.taskCardTs = await options.postTaskCard(run);
+          run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+        } catch (error) {
+          await deferTaskIntegration(fs, run, "task_card", error, options);
+          return run;
+        }
+      }
+      await clearTaskIntegrationPending(fs, run, options);
     }
     return run;
   }
@@ -224,10 +292,6 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
-    await registerGeneratedTasks(fs, run, contextReceipt, options);
-    if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
-      await options.repairTaskBoard(run.destination.projectId);
-    }
     const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = stripMeetingMinutesActionItems(run.generated!.body).trimStart();
     const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
@@ -244,10 +308,32 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         index, chunks.length, `${run.runId}-revision-${run.revision ?? 0}-chunk-${index}`);
       run.slack.postedChunkIndexes.push(index); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
-    if (run.taskRegistration?.registered.length && !run.slack.taskCardTs && options.postTaskCard) {
-      run.slack.taskCardTs = await options.postTaskCard(run);
-      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    try {
+      await registerGeneratedTasks(fs, run, contextReceipt, options);
+    } catch (error) {
+      console.error("meeting_minutes_task_registration_deferred", {
+        runId: run.runId, error: error instanceof Error ? error.message : "meeting_minutes_task_registration_failed",
+      });
+      await deferTaskIntegration(fs, run, "task_registration", error, options); return run;
     }
+    if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
+      await markTaskIntegrationPending(fs, run, "task_board", options);
+      try {
+        await options.repairTaskBoard(run.destination.projectId);
+      } catch (error) {
+        await deferTaskIntegration(fs, run, "task_board", error, options); return run;
+      }
+    }
+    if (run.taskRegistration?.registered.length && !run.slack.taskCardTs && options.postTaskCard) {
+      await markTaskIntegrationPending(fs, run, "task_card", options);
+      try {
+        run.slack.taskCardTs = await options.postTaskCard(run);
+        run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+      } catch (error) {
+        await deferTaskIntegration(fs, run, "task_card", error, options); return run;
+      }
+    }
+    await clearTaskIntegrationPending(fs, run, options);
     run.status = "completed"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); return run;
   } catch (error) {
     const failedStage = run.status;

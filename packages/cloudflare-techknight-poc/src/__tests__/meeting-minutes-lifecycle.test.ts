@@ -47,6 +47,20 @@ describe("meeting minutes source status lifecycle", () => {
     expect(updateStatus).toHaveBeenCalledWith(expect.objectContaining({ failure: expect.any(Object) }), "failed");
   });
 
+  it("projects completed with a task warning instead of retrying the whole minutes run", async () => {
+    const fs = await setup(); const updateStatus = vi.fn().mockResolvedValue(undefined);
+    const run = await processMeetingMinutesSelectionWithStatus(fs, selection, config, resume({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }),
+      createTask: vi.fn().mockRejectedValue(new Error("project_code_not_allowed")),
+    }), { updateStatus });
+    expect(run).toMatchObject({ status: "completed",
+      taskRegistration: { failure: { index: 0, message: "project_code_not_allowed" } } });
+    expect(run).not.toHaveProperty("failure");
+    expect(updateStatus).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }), "completed");
+    expect(updateStatus).not.toHaveBeenCalledWith(expect.anything(), "failed");
+  });
+
   it("retries only the completion projection without repeating completed work", async () => {
     const fs = await setup(); const logProjectionError = vi.fn();
     const operations = resume();

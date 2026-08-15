@@ -92,7 +92,8 @@ export interface MeetingMinutesRun {
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
   taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "reused" | "needs_review" | "removed";
-    assigneePersonId?: string; assigneeDisplayName?: string }> };
+    assigneePersonId?: string; assigneeDisplayName?: string }>;
+    failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string; failedAt: string } };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   lifecycle?: {

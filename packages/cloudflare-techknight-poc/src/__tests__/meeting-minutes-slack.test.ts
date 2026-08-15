@@ -104,6 +104,43 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).not.toContain("channel_not_found");
   });
 
+  it("completes the minutes while exposing a task-only retry when automatic registration failed", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "completed" as const,
+      slack: { processingTs: "2.1", parentTs: "10.1", postedChunkIndexes: [0] },
+      taskRegistration: { registered: [], failure: {
+        index: 0, message: "project_code_not_allowed", failedAt: "2026-08-15T00:00:00.000Z",
+      } },
+      github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "https://github/minutes" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("議事録は作成・共有済みです");
+    expect(serialized).toContain("タスク自動登録だけ完了していません");
+    expect(serialized).toContain("タスク処理を再実行");
+    expect(serialized).toContain("GitHubで議事録を開く");
+    expect(serialized).not.toContain("project_code_not_allowed");
+  });
+
+  it("explains when only task board reflection remains", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "completed" as const,
+      slack: { processingTs: "2.1", parentTs: "10.1", postedChunkIndexes: [0] },
+      taskRegistration: { registered: [{ index: 0, title: "確認する", taskId: "task-1" }], failure: {
+        index: 0, stage: "task_board" as const, message: "board down", failedAt: "2026-08-15T00:00:00.000Z",
+      } },
+      github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "https://github/minutes" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("タスク登録は完了しましたが、タスクボードへの反映が完了していません");
+    expect(serialized).not.toContain("board down");
+  });
+
   it("shows only unique organizations in the initial selector", async () => {
     let body: { blocks?: Array<{ elements?: Array<{ action_id?: string }> }> } = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
