@@ -14,7 +14,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC1"
+            "ac_id": "AC-1"
           }
         ],
         "architecture_refs": [
@@ -48,7 +48,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:20:56.246Z"
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
     },
     {
       "id": "INV-001",
@@ -58,11 +58,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC2"
+            "ac_id": "AC-2"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC4"
+            "ac_id": "AC-4"
           }
         ],
         "architecture_refs": [
@@ -101,7 +101,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:20:56.246Z"
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
     },
     {
       "id": "C-002",
@@ -111,7 +111,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC3"
+            "ac_id": "AC-3"
           }
         ],
         "architecture_refs": [
@@ -131,7 +131,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
-            "case": "uses the isolated prompt file and validates strict JSON"
+            "case": "story-meeting-minutes-brainbase-judgment:ac:6 uses the isolated prompt file and validates strict JSON"
           }
         ]
       },
@@ -145,7 +145,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:20:56.246Z"
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
     },
     {
       "id": "C-003",
@@ -155,7 +155,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC5"
+            "ac_id": "AC-5"
           }
         ],
         "architecture_refs": [
@@ -189,7 +189,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:20:56.246Z"
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
     },
     {
       "id": "INV-002",
@@ -199,11 +199,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC6"
+            "ac_id": "AC-6"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC7"
+            "ac_id": "AC-7"
           }
         ],
         "architecture_refs": [
@@ -245,7 +245,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:20:56.246Z"
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
     }
   ],
   "planned_test_suites": [
@@ -268,6 +268,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-15T08:20:56.237Z",
-  "previous_spec_id": null
+  "generated_at": "2026-08-15T08:34:02.386Z",
+  "previous_spec_id": "2026-08-15T08:20:56.237Z"
 }
