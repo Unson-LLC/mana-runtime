@@ -387,7 +387,6 @@ export default {
             token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
               fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
           let cachedRun: MeetingMinutesRun | undefined;
-          const clients = meetingMinutesClients(env);
           return handleMeetingMinutesTaskAction(payload, { sourceTeamId: env.SLACK_EXPECTED_TEAM_ID,
             destinationTeamIds: parsedTeamIds,
             operatorUserIds: config.operatorUserIds,
@@ -396,15 +395,13 @@ export default {
             getTask: (taskId) => taskClient.getTask(taskId),
             updateTask: (taskId, input, key) => taskClient.updateTask(taskId, input, key),
             deleteTask: (taskId, version, key) => taskClient.deleteTask(taskId, version, key),
-            updateCard: async (run) => { const slack = meetingMinutesClients(env);
-              const client = run.destination!.organization.id === "tech-knight"
-                ? new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN_TECHKNIGHT ?? "")
-                : clients.slack;
+            updateCard: async (run) => {
+              const token = resolveMeetingMinutesDestinationSlackToken(env, run.destination!.organization.id);
+              const client = new MeetingMinutesSlackClient(token);
               await client.updateTaskCard(run); },
             openView: async (organizationId, triggerId, view) => {
-              const token = organizationId === "tech-knight"
-                ? env.SLACK_BOT_TOKEN_TECHKNIGHT : env.SLACK_BOT_TOKEN;
-              await new MeetingMinutesSlackClient(token ?? "").openTaskEditView(triggerId, view);
+              const token = resolveMeetingMinutesDestinationSlackToken(env, organizationId);
+              await new MeetingMinutesSlackClient(token).openTaskEditView(triggerId, view);
             }, listPeople: () => listGraphPeople(undefined, {
               baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
               token: env.BRAINBASE_GRAPH_API_TOKEN,
