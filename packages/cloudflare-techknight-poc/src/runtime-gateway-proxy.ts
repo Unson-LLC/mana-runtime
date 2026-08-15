@@ -1,4 +1,4 @@
-import { TaskApiClient } from "@openryoko/task-runtime-core";
+import { TaskApiClient, type TaskListPage } from "@openryoko/task-runtime-core";
 import { verifyTaskWriteCapability } from "@openryoko/write-broker";
 import { parseRuntimePlacements } from "./runtime-config.js";
 import { handleTaskWriteProxyRequest, type TaskWriteProxyEnv } from "./task-write-proxy.js";
@@ -8,6 +8,7 @@ export const RUNTIME_GATEWAY_PATH = "/api/runtime/gateway";
 
 export interface RuntimeGatewayProxyEnv extends TaskWriteProxyEnv {
   RUNTIME_PLACEMENTS_JSON?: string;
+  RUNTIME_TASK_SEARCH_ENABLED?: string;
   SLACK_BOT_TOKEN?: string;
   RUNTIME_EMPLOYEES_JSON?: string;
   RUNTIME_SESSION_REGISTRY?: {
@@ -32,6 +33,31 @@ function cleanTask(task: Record<string, unknown>) {
   return { id: task.id, title: task.title, status: task.status, priority: task.priority, version: task.version,
     project_codes: task.project_codes, assignee_person_id: task.assignee_person_id ?? null,
     assignee_display_name: task.assignee_display_name ?? null, due_at: task.due_at ?? null };
+}
+
+function normalizeTaskPage(page: TaskListPage, allowedProjects: readonly string[], requestedLimit: number) {
+  if (!page || !Array.isArray(page.items)) throw new Error("gateway_upstream_invalid_response");
+  if (page.items.length > requestedLimit) throw new Error("gateway_upstream_invalid_response");
+  if (page.items.some((task) => !task.project_codes?.length || task.project_codes.some((project) => !allowedProjects.includes(project)))) throw new Error("gateway_scope_violation");
+  const countStatus = page.count_status ?? "not_requested";
+  if (!["exact", "lower_bound", "not_requested", "unavailable"].includes(countStatus)) throw new Error("gateway_upstream_invalid_response");
+  const requiresCount = countStatus === "exact" || countStatus === "lower_bound";
+  if (requiresCount !== (Number.isInteger(page.total_count) && Number(page.total_count) >= 0)) throw new Error("gateway_upstream_invalid_response");
+  const nextCursor = page.next_cursor ?? null;
+  const hasMore = Boolean(page.has_more || nextCursor);
+  const readStatus = hasMore ? "partial" : page.read_status === "partial" || page.read_status === "complete" ? page.read_status : "complete";
+  return { untrusted_data: true,
+    items: page.items.map((task) => cleanTask(task as unknown as Record<string, unknown>)), next_cursor: nextCursor,
+    has_more: hasMore, total_count: requiresCount ? page.total_count : null, count_status: countStatus, read_status: readStatus,
+    scope: { mode: "current_channel", project_codes: [...allowedProjects] } };
+}
+
+function taskQuery(args: Record<string, unknown>, projectCodes: readonly string[]) {
+  const limit = args.limit === undefined ? 20 : Number(args.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) return null;
+  return { project_code: [...projectCodes], limit,
+    ...(typeof args.status === "string" ? { status: args.status } : {}), ...(typeof args.priority === "string" ? { priority: args.priority } : {}),
+    ...(typeof args.assignee_person_id === "string" ? { assignee_person_id: args.assignee_person_id } : {}), ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {}) };
 }
 
 export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch) {
@@ -59,17 +85,21 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
         { ...env, RUNTIME_PROJECT_CODES: placement.projectCodes.join(","), RUNTIME_PLACEMENT_ID: placement.placementId,
           SLACK_ALLOWED_CHANNEL_ID: placement.channelId });
       }
-      if (body.tool === "list_tasks") {
+      if (body.tool === "list_tasks" || body.tool === "search_tasks") {
         if (!env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN) return responseError("gateway_not_configured", 503);
+        if (body.tool === "search_tasks" && env.RUNTIME_TASK_SEARCH_ENABLED !== "true") return responseError("gateway_tool_disabled", 503);
         const args = body.arguments;
-        const limit = args.limit === undefined ? 20 : Number(args.limit);
-        if (!Number.isInteger(limit) || limit < 1 || limit > 20) return responseError("invalid_arguments", 400);
+        const query = taskQuery(args, placement.projectCodes);
+        if (!query) return responseError("invalid_arguments", 400);
+        if (body.tool === "search_tasks" && (typeof args.query !== "string" || !args.query.trim() || args.query.length > 200)) return responseError("invalid_arguments", 400);
         const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL, token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl });
-        const page = await client.listTasks({ project_code: placement.projectCodes, limit,
-          ...(typeof args.status === "string" ? { status: args.status } : {}), ...(typeof args.priority === "string" ? { priority: args.priority } : {}),
-          ...(typeof args.assignee_person_id === "string" ? { assignee_person_id: args.assignee_person_id } : {}), ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {}) });
-        if (page.items.some((task) => !task.project_codes?.length || task.project_codes.some((project) => !placement.projectCodes.includes(project)))) return responseError("gateway_scope_violation", 502);
-        return Response.json({ untrusted_data: true, items: page.items.map((task) => cleanTask(task as unknown as Record<string, unknown>)), next_cursor: page.next_cursor ?? null });
+        try {
+          const page = body.tool === "search_tasks" ? await client.searchTasks({ ...query, query: (args.query as string).trim() }) : await client.listTasks(query);
+          return Response.json(normalizeTaskPage(page, placement.projectCodes, query.limit));
+        } catch (cause) {
+          const error = cause instanceof Error ? cause.message : "gateway_upstream_failed";
+          return responseError(error === "gateway_scope_violation" || error === "gateway_upstream_invalid_response" ? error : "gateway_upstream_failed", 502);
+        }
       }
       if (body.tool === "send_message") {
         const args = body.arguments;

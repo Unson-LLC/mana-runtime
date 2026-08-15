@@ -1,0 +1,73 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-task-inventory-count",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "list_tasksとsearch_tasksは最大20件のitemsに加えてhas_more、total_count、count_status、read_status、current_channelのscopeを返す",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }, { "kind": "acceptance_criteria", "ac_id": "AC-2" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-slack-task-inventory-count.md", "section": "応答契約" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "createRuntimeGatewayProxyHandler" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "preserves exact count metadata and reports partial list reads" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "must_cover": "count metadata" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "検索対象projectはdeploymentのplacement bindingから再構築し、Sandbox入力でチャンネル外へ拡張できない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-4" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-slack-task-inventory-count.md", "section": "認可境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "createRuntimeGatewayProxyHandler" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "forces list_tasks to the placement project" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "must_cover": "placement scope" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "件数未取得、部分取得、上流異常を0件または正確な総件数へ丸めず、exact、lower_bound、not_requested、unavailableを区別する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-slack-task-inventory-count.md", "section": "件数の意味" }],
+        "code_refs": [{ "file": "packages/task-runtime-core/src/index.ts", "anchor": "TaskCountStatus" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "rejects invalid count metadata instead of turning it into zero" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "must_cover": "invalid count metadata" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "mana-dev-bizのruntime gatewayはsearch_tasksを公開し、query必須・limit既定20・最大20の入力だけを受ける",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }, { "kind": "acceptance_criteria", "ac_id": "AC-7" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-slack-task-inventory-count.md", "section": "MCP公開" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/container/gateway-mcp-server.mjs", "anchor": "search_tasks" }, { "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc", "anchor": "gatewayTools" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/gateway-mcp-jsonrpc.test.ts", "case": "exposes only placement-allowed tools" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/gateway-mcp-jsonrpc.test.ts", "must_cover": "search_tasks" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "ローカル検証と本番Slack・Brainbase正本照合を分離し、デプロイしていない状態を本番完了と扱わない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-8" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-slack-task-inventory-count.md", "section": "検証境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/package.json", "anchor": "test" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "雲孫事業運営" }] },
+      "confidence": 0.98
+    }
+  ],
+  "open_questions": []
+}

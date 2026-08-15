@@ -163,7 +163,7 @@ describe("会社別Cloudflare deployment", () => {
         capabilities: {
           mcp: ["brainbase", "nocodb", "gateway", "google-drive"],
           gatewayTools: [
-            "send_message", "create_task", "list_tasks", "update_task", "transition_task",
+            "send_message", "create_task", "list_tasks", "search_tasks", "update_task", "transition_task",
             "list_sessions", "get_session", "list_employees", "get_employee",
           ],
         },
