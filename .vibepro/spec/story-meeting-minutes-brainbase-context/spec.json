@@ -1,0 +1,273 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-meeting-minutes-brainbase-context",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "architecture"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "生成前にrun、project、transcript hashへ束縛されたBrainbase context Receiptを取得して永続化する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "データフロー"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-brainbase-context.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "binds required generation to the persisted Brainbase context Receipt"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "binds required generation to the persisted Brainbase context Receipt"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T08:20:56.246Z",
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "requiredモードは不完全なReceipt、identity不一致、checksum不正、Receipt外参照を副作用前に拒否する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "失敗"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-brainbase-context.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
+            "case": "fails closed for partial context only in required mode"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
+            "case": "binds generated minutes to the exact Receipt and known source references"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
+            "must_cover": "fails closed for partial context only in required mode"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
+            "must_cover": "binds generated minutes to the exact Receipt and known source references"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T08:20:56.246Z",
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "Claudeは専用MCPでReceiptを読み、生成結果へReceipt来歴、利用source refs、判断候補を返す",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "生成契約"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/claude-runtime-config.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "story-meeting-minutes-brainbase-judgment:ac:6 uses the isolated prompt file and validates strict JSON"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "uses the isolated prompt file and validates strict JSON"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T08:20:56.246Z",
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "既存タスク完全一致は再利用し、類似候補は要確認、新規だけを登録する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "タスク照合"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-brainbase-context.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "reuses exact tasks and flags similar open tasks instead of creating duplicates"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "reuses exact tasks and flags similar open tasks instead of creating duplicates"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T08:20:56.246Z",
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "GitHubとSlackへ監査可能なReceipt情報だけを表示し、生Graph本文と既存実行契約を変えない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "保存と表示"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-github.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts",
+            "case": "stores transcript then minutes with JST paths and existing SHA"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "clears the assistant status and updates the selector with a durable completed result"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts",
+            "must_cover": "stores transcript then minutes with JST paths and existing SHA"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "clears the assistant status and updates the selector with a durable completed result"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T08:20:56.246Z",
+      "last_revised_at": "2026-08-15T08:34:02.393Z"
+    }
+  ],
+  "planned_test_suites": [
+    {
+      "layer": "unit",
+      "covers": [
+        "Receipt identity",
+        "provenance",
+        "task reconciliation",
+        "GitHub and Slack audit"
+      ]
+    },
+    {
+      "layer": "integration",
+      "covers": [
+        "pipeline retry",
+        "required fail closed",
+        "existing runtime regression"
+      ]
+    }
+  ],
+  "open_questions": [],
+  "generated_at": "2026-08-15T08:34:02.386Z",
+  "previous_spec_id": "2026-08-15T08:20:56.237Z"
+}

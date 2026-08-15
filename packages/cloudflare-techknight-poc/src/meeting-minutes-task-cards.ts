@@ -8,17 +8,25 @@ function safe(value: string): string {
 }
 export function meetingMinutesTaskCard(run: MeetingMinutesRun): { text: string; blocks: Array<Record<string, unknown>> } {
   const registered = run.taskRegistration?.registered ?? [];
+  const created = registered.filter((item) => !item.status || item.status === "registered").length;
+  const reused = registered.filter((item) => item.status === "reused").length;
+  const needsReview = registered.filter((item) => item.status === "needs_review").length;
+  const summary = [`新規${created}件`, `既存${reused}件`, needsReview ? `要確認${needsReview}件` : undefined]
+    .filter(Boolean).join("・");
   const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn",
-    text: `📋 *議事録から${registered.length}件のタスクを正本に登録しました* — 間違いは取り消し/編集できます` } },
+    text: `📋 *議事録のタスク確認* — ${summary}` } },
     { type: "divider" }];
   for (const item of [...registered].sort((left, right) => left.index - right.index)) {
     const candidate = run.generated?.tasks?.[item.index]; const removed = item.status === "removed";
-    const details = [`${removed ? "🗑" : "✅"} *${safe(item.title)}*${removed ? " — _取り消し済み_" : ""}`];
+    const marker = removed ? "🗑" : item.status === "reused" ? "♻️" : item.status === "needs_review" ? "⚠️" : "✅";
+    const suffix = removed ? " — _取り消し済み_" : item.status === "reused" ? " — _既存タスクを再利用_" :
+      item.status === "needs_review" ? " — _似た既存タスクあり・要確認_" : "";
+    const details = [`${marker} *${safe(item.title)}*${suffix}`];
     const meta = [candidate?.assignee_name ? `担当: ${safe(candidate.assignee_name)}` : undefined,
       candidate?.due_at ? `期限: ${safe(candidate.due_at.slice(0, 10))}` : undefined].filter(Boolean);
     if (meta.length) details.push(meta.join(" | ")); if (candidate?.description) details.push(`_${safe(candidate.description)}_`);
     blocks.push({ type: "section", text: { type: "mrkdwn", text: details.join("\n") } });
-    if (!removed) { const value = JSON.stringify({ runId: run.runId, index: item.index,
+    if (!removed && (!item.status || item.status === "registered")) { const value = JSON.stringify({ runId: run.runId, index: item.index,
       organizationId: run.destination?.organization.id, channelId: run.destination?.slackChannelId,
       title: item.title, due: candidate?.due_at?.slice(0, 10), projectId: run.destination?.projectId,
       assigneePersonId: item.assigneePersonId, assigneeDisplayName: item.assigneeDisplayName ?? candidate?.assignee_name }); blocks.push({ type: "actions", elements: [
@@ -29,7 +37,7 @@ export function meetingMinutesTaskCard(run: MeetingMinutesRun): { text: string; 
           confirm: { type: "plain_text", text: "削除する" }, deny: { type: "plain_text", text: "やめる" } } },
     ] }); }
   }
-  return { text: `議事録から${registered.length}件のタスクを登録しました`, blocks };
+  return { text: `議事録のタスク確認: ${summary}`, blocks };
 }
 export function meetingMinutesTaskEditView(run: MeetingMinutesRun, index: number): Record<string, unknown> {
   const item = run.taskRegistration?.registered.find((candidate) => candidate.index === index && candidate.status !== "removed");

@@ -39,6 +39,9 @@ export function formatCloudflareMeetingMinutesMarkdown(request: SaveMeetingMinut
   }) : ["- なし"];
   return ["---", `title: ${JSON.stringify(request.minutes.title)}`, `date: ${date}`,
     `project_id: ${JSON.stringify(request.destination.projectId)}`, `transcript_ref: ${JSON.stringify(transcriptPath)}`,
+    `brainbase_context_receipt: ${JSON.stringify(request.minutes.brainbase_context_receipt_id ?? null)}`,
+    `brainbase_context_checksum: ${JSON.stringify(request.minutes.brainbase_context_checksum ?? null)}`,
+    `brainbase_source_refs: ${JSON.stringify(request.minutes.used_source_refs ?? [])}`,
     "---", "", `# ${request.minutes.title}`, "", request.minutes.overview, "",
     stripMeetingMinutesActionItems(request.minutes.body), "", "## アクションアイテム", "", ...actionItems, ""].join("\n");
 }

@@ -24,6 +24,37 @@ export interface GeneratedMeetingMinutes {
   overview: string;
   body: string;
   tasks?: MeetingMinutesTaskCandidate[];
+  brainbase_context_receipt_id?: string;
+  brainbase_context_checksum?: string;
+  used_source_refs?: MeetingMinutesContextSourceRef[];
+  decision_candidates?: Array<{ title: string; reason?: string; source_ref_ids?: string[] }>;
+}
+
+export type MeetingMinutesContextStatus = "resolved" | "confirmed_empty" | "partial" | "unavailable";
+export type MeetingMinutesContextMode = "observe" | "required";
+export interface MeetingMinutesContextSourceRef { type: string; id: string; ref?: string }
+export interface MeetingMinutesContextReceipt {
+  schema_version: "meeting_minutes_context_receipt.v1";
+  receipt_id: string;
+  identity: { run_id: string; project_code: string; transcript_sha256: string };
+  status: MeetingMinutesContextStatus;
+  checksum: string;
+  resolved_at: string;
+  context: {
+    source_refs: MeetingMinutesContextSourceRef[];
+    open_tasks: Array<Record<string, unknown>>;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface MeetingMinutesContextAudit {
+  receiptId: string;
+  checksum: string;
+  status: MeetingMinutesContextStatus;
+  mode: MeetingMinutesContextMode;
+  sourceRefs: MeetingMinutesContextSourceRef[];
+  resolvedAt: string;
 }
 
 export interface MeetingMinutesTaskCandidate {
@@ -57,9 +88,10 @@ export interface MeetingMinutesRun {
   destination?: MeetingMinutesDestination;
   approvedBy?: string;
   transcriptSha256?: string;
+  context?: MeetingMinutesContextAudit;
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
-  taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "removed";
+  taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "reused" | "needs_review" | "removed";
     assigneePersonId?: string; assigneeDisplayName?: string }> };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };

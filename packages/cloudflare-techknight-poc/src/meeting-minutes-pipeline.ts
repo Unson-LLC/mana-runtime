@@ -1,4 +1,5 @@
 import { isMeetingMinutesFile, meetingMinutesRunId, type GeneratedMeetingMinutes,
+  type MeetingMinutesContextMode, type MeetingMinutesContextReceipt,
   type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
@@ -7,6 +8,8 @@ import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-
 import type { SavedMeetingMinutesRecords } from "./meeting-minutes-github.js";
 import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
+import { assertMeetingMinutesContextUsable, reconcileMeetingMinutesTask,
+  validateGeneratedMeetingMinutesContext } from "./meeting-minutes-brainbase-context.js";
 
 export interface StartMeetingMinutesOptions {
   enabled: boolean; routerChannelId: string; destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
@@ -17,9 +20,12 @@ export interface StartMeetingMinutesOptions {
 }
 export interface ResumeMeetingMinutesOptions {
   destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
+  contextMode: MeetingMinutesContextMode;
+  resolveContext(identity: MeetingMinutesContextReceipt["identity"], receiptId?: string): Promise<MeetingMinutesContextReceipt>;
   postProcessingStatus(run: MeetingMinutesRun): Promise<string>;
   download(fileId: string): Promise<string>;
-  generate(transcript: string, destination: MeetingMinutesDestination): Promise<GeneratedMeetingMinutes>;
+  generate(transcript: string, destination: MeetingMinutesDestination, context: MeetingMinutesContextReceipt,
+    mode: MeetingMinutesContextMode): Promise<GeneratedMeetingMinutes>;
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string; assignee_person_id?: string | null;
@@ -114,12 +120,19 @@ async function taskIdempotencyKey(runId: string, revision: number, index: number
 }
 
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
-  options: ResumeMeetingMinutesOptions): Promise<void> {
+  receipt: MeetingMinutesContextReceipt, options: ResumeMeetingMinutesOptions): Promise<void> {
   const tasks: MeetingMinutesTaskCandidate[] = run.generated?.tasks ?? [];
   run.taskRegistration ??= { registered: [] };
   for (let index = 0; index < tasks.length; index += 1) {
     if (run.taskRegistration.registered.some((item) => item.index === index)) continue;
     const candidate = tasks[index]!;
+    const reconciliation = reconcileMeetingMinutesTask(candidate, receipt);
+    if (reconciliation.outcome !== "new") {
+      run.taskRegistration.registered.push({ index, title: candidate.title, taskId: reconciliation.taskId,
+        status: reconciliation.outcome });
+      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+      continue;
+    }
     let assignee_person_id: string | undefined;
     if (candidate.assignee_name) {
       if (!options.resolveAssignee) throw new Error("meeting_minutes_assignee_resolver_unconfigured");
@@ -176,22 +189,42 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
   }
   let transcript = "";
+  let contextReceipt: MeetingMinutesContextReceipt | undefined;
   try {
-    if (!run.github) {
+    if (!run.github || !run.context) {
       transcript = await options.download(run.file.id);
       if (!transcript.trim()) throw new Error("meeting_minutes_transcript_empty");
       const transcriptSha256 = await digest(transcript);
       if (run.transcriptSha256 && run.transcriptSha256 !== transcriptSha256) throw new Error("meeting_minutes_transcript_changed");
       run.transcriptSha256 ??= transcriptSha256;
+    }
+    const contextIdentity = { run_id: run.runId, project_code: run.destination.projectId,
+      transcript_sha256: run.transcriptSha256! };
+    contextReceipt = await options.resolveContext(contextIdentity, run.context?.receiptId);
+    assertMeetingMinutesContextUsable(contextReceipt, options.contextMode);
+    if (run.context && (run.context.receiptId !== contextReceipt.receipt_id || run.context.checksum !== contextReceipt.checksum)) {
+      throw new Error("meeting_minutes_context_changed");
+    }
+    if (!run.context) {
+      run.context = { receiptId: contextReceipt.receipt_id, checksum: contextReceipt.checksum,
+        status: contextReceipt.status, mode: options.contextMode,
+        sourceRefs: contextReceipt.context.source_refs, resolvedAt: contextReceipt.resolved_at };
+      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    if (!run.github) {
       if (!run.generated) {
-        run.generated = await options.generate(transcript, run.destination); run.status = "generated";
+        run.generated = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
+        run.status = "generated";
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+      }
+      if (options.contextMode === "required" || run.generated.brainbase_context_receipt_id) {
+        validateGeneratedMeetingMinutesContext(run.generated, contextReceipt);
       }
       run.github = await options.saveGitHub({ destination: run.destination, transcript, minutes: run.generated,
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
-    await registerGeneratedTasks(fs, run, options);
+    await registerGeneratedTasks(fs, run, contextReceipt, options);
     if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
       await options.repairTaskBoard(run.destination.projectId);
     }
@@ -245,7 +278,7 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
   const selectionTs = await options.showDestinationSelection(structuredClone(run), options.destinations);
   run.status = "awaiting_destination";
   run.revision = (run.revision ?? 0) + 1;
-  delete run.destination; delete run.approvedBy; delete run.generated; delete run.github;
+  delete run.destination; delete run.approvedBy; delete run.context; delete run.generated; delete run.github;
   delete run.taskRegistration; delete run.failure;
   run.slack = { selectionTs, postedChunkIndexes: [] };
   run.updatedAt = now(options);

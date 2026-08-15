@@ -15,7 +15,11 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
 const redo: MeetingMinutesRedo = { kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
   channelId: "CROUTER", userId: "U1", actionTs: "20.1" };
 function resumeOptions(overrides: Record<string, unknown> = {}) {
-  return { destinations: [destination], download: vi.fn().mockResolvedValue("transcript"),
+  return { destinations: [destination], contextMode: "observe" as const,
+    resolveContext: vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } })),
+    download: vi.fn().mockResolvedValue("transcript"),
     postProcessingStatus: vi.fn().mockResolvedValue("3.1"),
     generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
@@ -341,5 +345,56 @@ describe("meeting minutes pipeline", () => {
     expect(createTask.mock.calls[0]?.[1]).not.toBe(createTask.mock.calls[1]?.[1]);
     expect(options.postParent.mock.calls[0]?.[3]).toContain("revision-0");
     expect(options.postParent.mock.calls[1]?.[3]).toContain("revision-1");
+  });
+
+  it("binds required generation to the persisted Brainbase context Receipt", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-required", identity, status: "resolved" as const, checksum: "context-checksum",
+      resolved_at: "2026-08-15T00:00:00.000Z",
+      context: { source_refs: [{ type: "graph_entity", id: "project-mana" }], open_tasks: [] } }));
+    const generate = vi.fn(async (_transcript, _destination, context) => ({ title: "定例", overview: "概要", body: "本文",
+      brainbase_context_receipt_id: context.receipt_id, brainbase_context_checksum: context.checksum,
+      used_source_refs: context.context.source_refs }));
+    const run = await resumeMeetingMinutesRun(fs, selection,
+      resumeOptions({ contextMode: "required", resolveContext, generate }));
+    expect(generate).toHaveBeenCalledWith("transcript", destination,
+      expect.objectContaining({ receipt_id: "receipt-required" }), "required");
+    expect(run.context).toMatchObject({ receiptId: "receipt-required", checksum: "context-checksum",
+      status: "resolved", mode: "required" });
+  });
+
+  it("fails closed before generation when required Brainbase context is partial", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const generate = vi.fn();
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-partial", identity, status: "partial" as const, checksum: "partial-checksum",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    await expect(resumeMeetingMinutesRun(fs, selection,
+      resumeOptions({ contextMode: "required", resolveContext, generate })))
+      .rejects.toThrow("meeting_minutes_context_partial");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("reuses exact tasks and flags similar open tasks instead of creating duplicates", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn();
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-tasks", identity, status: "resolved" as const, checksum: "tasks-checksum",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [
+        { id: "task-exact", title: "請求書を送る" }, { id: "task-similar", title: "提案資料を顧客へ共有する" },
+      ] } }));
+    const run = await resumeMeetingMinutesRun(fs, selection, resumeOptions({ resolveContext, createTask,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
+        { title: "請求書を送る" }, { title: "提案資料を今日顧客へ共有する" },
+      ] }) }));
+    expect(createTask).not.toHaveBeenCalled();
+    expect(run.taskRegistration?.registered).toEqual([
+      { index: 0, title: "請求書を送る", taskId: "task-exact", status: "reused" },
+      { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review" },
+    ]);
   });
 });

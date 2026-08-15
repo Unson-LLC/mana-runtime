@@ -38,6 +38,7 @@ import { resolveMeetingMinutesDestinationSlackToken } from "./meeting-minutes-sl
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
+import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient, TaskApiError } from "@openryoko/task-runtime-core";
 import { deterministicRuntimeUuid, isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
@@ -110,6 +111,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
+  MEETING_MINUTES_CONTEXT_MODE?: string;
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_EXECUTION_MODE?: string;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
@@ -246,6 +248,9 @@ function meetingMinutesClients(env: Env) {
   const taskClient = () => new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
     token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
       fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
+  const contextMode = resolveMeetingMinutesContextMode(env.MEETING_MINUTES_CONTEXT_MODE);
+  const contextClient = new MeetingMinutesBrainbaseContextClient(env.BRAINBASE_TASK_API_BASE_URL ?? "",
+    env.BRAINBASE_TASK_API_TOKEN ?? "");
   return {
     slack,
     classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
@@ -254,11 +259,15 @@ function meetingMinutesClients(env: Env) {
         createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`));
     },
     resume: {
+      contextMode,
+      resolveContext: (identity: Parameters<MeetingMinutesBrainbaseContextClient["resolve"]>[0], receiptId?: string) =>
+        contextClient.resolve(identity, receiptId),
       postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
       download: (fileId: string) => slack.downloadTextFile(fileId),
-      generate: (transcript: string) => {
+      generate: (transcript: string, destination: MeetingMinutesDestination,
+        context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3]) => {
         if (!hasAnthropicCredential(env)) throw new Error("oauth_not_configured");
-        return generateMeetingMinutesInSandbox(transcript, claudeRuntime,
+        return generateMeetingMinutesInSandbox(transcript, destination, context, mode, claudeRuntime,
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),

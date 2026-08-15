@@ -6,7 +6,9 @@ describe("MeetingMinutesSlackClient", () => {
     status: "completed" as const, destination: { id: "mana", projectId: "mana", name: "mana",
       organization: { id: "unson", name: "雲孫" }, slackChannelId: "C2",
       github: { owner: "o", repo: "r" } }, github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu",
-      minutesUrl: "https://github.test/minutes" }, slack: { selectionTs: "2.1", processingTs: "3.1", postedChunkIndexes: [] },
+      minutesUrl: "https://github.test/minutes" }, context: { receiptId: "receipt-1", checksum: "checksum-1",
+      status: "resolved" as const, mode: "required" as const, sourceRefs: [], resolvedAt: "2026-08-15T00:00:00.000Z" },
+    slack: { selectionTs: "2.1", processingTs: "3.1", postedChunkIndexes: [] },
     createdAt: "2026-08-13T00:00:00.000Z", updatedAt: "2026-08-13T00:00:00.000Z" });
 
   it("clears the assistant status and updates the selector with a durable completed result", async () => {
@@ -21,6 +23,8 @@ describe("MeetingMinutesSlackClient", () => {
     expect(calls[1]?.body).toMatchObject({ channel: "C1", ts: "3.1" });
     expect(JSON.stringify(calls[1]?.body)).toContain("議事録を作成しました");
     expect(JSON.stringify(calls[1]?.body)).toContain("https://github.test/minutes");
+    expect(JSON.stringify(calls[1]?.body)).toContain("Brainbase正本文脈: 参照済み");
+    expect(JSON.stringify(calls[1]?.body)).toContain("receipt-1");
     expect(JSON.stringify(calls[1]?.body)).not.toContain("再実行");
     expect(JSON.stringify(calls[1]?.body)).toContain("保存先をやり直す");
   });

@@ -7,17 +7,26 @@ const destinations = [
   { id: "united", projectId: "proj_united", name: "United",
     organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2", github: { owner: "o", repo: "r2" } },
 ];
+const context = { schema_version: "meeting_minutes_context_receipt.v1" as const, receipt_id: "mmctx_1",
+  identity: { run_id: "Ev1_F1", project_code: "proj_salestailor", transcript_sha256: "a".repeat(64) },
+  status: "resolved" as const, checksum: "b".repeat(64), resolved_at: "2026-08-15T00:00:00.000Z",
+  context: { source_refs: [{ type: "graph_entity", id: "project-1" }], open_tasks: [] } };
+const auditOutput = { brainbase_context_receipt_id: context.receipt_id,
+  brainbase_context_checksum: context.checksum, used_source_refs: [{ type: "graph_entity", id: "project-1" }],
+  decision_candidates: [] };
 
 describe("generateMeetingMinutesInSandbox", () => {
   it("story-meeting-minutes-brainbase-judgment:ac:6 uses the isolated prompt file and validates strict JSON", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
       stdout: JSON.stringify({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20" },
-      ] }), stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
-    await expect(generateMeetingMinutesInSandbox("transcript", { model: "opus", effort: "xhigh" }, sandbox))
+      ], ...auditOutput }), stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
+    await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
+      { model: "opus", effort: "xhigh" }, sandbox))
       .resolves.toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20T00:00:00+09:00" },
-      ] });
+      ], brainbase_context_receipt_id: context.receipt_id, brainbase_context_checksum: context.checksum,
+      used_source_refs: [{ type: "graph_entity", id: "project-1" }] });
     expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("transcript"));
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
@@ -30,6 +39,8 @@ describe("generateMeetingMinutesInSandbox", () => {
     const prompt = String(sandbox.writeFile.mock.calls.find((call) => call[0] === "/tmp/meeting-minutes-prompt.txt")?.[1]);
     expect(prompt).toContain("1段落・3〜5文・200〜400字");
     expect(prompt).not.toContain("bodyの最後には必ず「*アクションアイテム*」");
+    expect(prompt).toContain("brainbase_get_meeting_minutes_context");
+    expect(prompt).toContain(`receipt_id=${context.receipt_id}`);
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
       expect.stringContaining('"tasks"'),
@@ -49,7 +60,8 @@ describe("generateMeetingMinutesInSandbox", () => {
   });
   it("destroys the Sandbox and rejects invalid model output", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true, stdout: "not-json", stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
-    await expect(generateMeetingMinutesInSandbox("transcript", { model: "opus", effort: "xhigh" }, sandbox))
+    await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
+      { model: "opus", effort: "xhigh" }, sandbox))
       .rejects.toThrow("meeting_minutes_generation_invalid");
     expect(sandbox.destroy).toHaveBeenCalled();
   });

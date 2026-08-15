@@ -286,8 +286,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-meeting-minutes-brainbase-context",
+        "title": "Brainbase正本文脈付き議事録",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-authorized-cross-channel-task-inventory"
+    "current_story_id": "story-meeting-minutes-brainbase-context"
   }
 }

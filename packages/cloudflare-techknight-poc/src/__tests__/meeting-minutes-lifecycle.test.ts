@@ -20,7 +20,11 @@ async function setup() {
   return fs;
 }
 function resume(overrides: Record<string, unknown> = {}) {
-  return { postProcessingStatus: vi.fn().mockResolvedValue("3.1"), download: vi.fn().mockResolvedValue("transcript"),
+  return { contextMode: "observe" as const,
+    resolveContext: vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } })),
+    postProcessingStatus: vi.fn().mockResolvedValue("3.1"), download: vi.fn().mockResolvedValue("transcript"),
     generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" }),
