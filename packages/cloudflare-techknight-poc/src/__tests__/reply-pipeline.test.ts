@@ -232,6 +232,7 @@ describe("TechKnight Slack reply pipeline", () => {
       expectedWorkspaceId: "T_UNSON",
       allowedChannelId: "C_BACK_OFFICE",
       taskSearchEnabled: true,
+      capabilities: { mcp: ["gateway"], gatewayTools: ["list_authorized_task_channels"] },
     } as ReplyPipelineOptions);
 
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
@@ -248,18 +249,37 @@ describe("TechKnight Slack reply pipeline", () => {
     });
   });
 
-  it("does not bind task searches that are not self-task requests", async () => {
+  it("discovers authorized channels for an unspecified cross-channel task request", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({
       taskSearchEnabled: true,
+      capabilities: { mcp: ["gateway"], gatewayTools: ["list_authorized_task_channels"] },
     });
 
-    await processReplyEvent(fs, event({ text: "<@U_BOT> 契約更新タスクを検索して" }), options);
+    await processReplyEvent(fs, event({ text: "<@U_BOT> 他チャンネルも含めて俺のタスクを全部出して" }), options);
 
     expect(sandbox.exec.mock.calls[0][1]?.env).not.toHaveProperty("MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID");
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("対象名がない全件横断依頼ではlist_authorized_task_channelsを使い");
+    expect(prompt).toContain("channelsが空なら横断toolを呼ばず");
+    expect(prompt).toContain("タスクが0件とは扱わないでください");
+    expect(prompt).toContain("利用者へチャンネル名を質問しないでください");
     expect(prompt).toContain("channel IDを利用者へ要求しないでください");
+  });
+
+  it("does not instruct channel discovery when the gateway tool is unavailable", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      taskSearchEnabled: true,
+      capabilities: { mcp: ["gateway"], gatewayTools: ["list_tasks_across_channels"] },
+    });
+
+    await processReplyEvent(fs, event({ text: "<@U_BOT> 他チャンネルも含めて俺のタスクを全部出して" }), options);
+
+    const prompt = sandbox.writeFile.mock.calls[0][1] as string;
+    expect(prompt).not.toContain("list_authorized_task_channels");
+    expect(prompt).not.toContain("利用者へチャンネル名を質問しないでください");
+    expect(prompt).toContain("利用者が示したチャンネル名をchannel_namesへ渡してください");
   });
 
   it.each([

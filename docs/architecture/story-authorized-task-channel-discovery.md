@@ -17,7 +17,7 @@ Runtime Gatewayに、署名済みactorが現在のplacementからタスクを横
 1. 署名済みcapability、workspace、呼出元placement、actor、tool公開可否を既存どおり検証する。
 2. 呼出元 `taskInventoryChannelIds` の各IDを、全placementから一意に解決する。
 3. 対象placementの `taskInventoryAllowedUserIds` にactorが含まれる対象だけを返す。
-4. 同じchannel IDを複数placementが宣言する場合は、そのchannelを返さない。
+4. 同じchannel IDを複数placementが宣言する設定不整合は、placement設定全体をfail closedで拒否し、一覧を返さない。
 5. 返却値は `channel_id`、`channel_name`、server-derivedな `project_codes` に限定する。
 
 これは認可の追加ではなく既存認可範囲の投影である。モデル入力、Slack APIの可視範囲、通常返信用audienceを認可根拠にしない。
@@ -30,4 +30,4 @@ Runtime Gatewayに、署名済みactorが現在のplacementからタスクを横
 
 ## 切戻しと検証
 
-問題時はsource placementの `gatewayTools` から新toolを除去する。既存のID・名前指定横断取得と現在チャンネル取得には影響しない。ローカル成功を本番成功へ丸めず、デプロイ後にSlackの自然文依頼が再質問なしで完了することを確認する。
+問題時はsource placementの `gatewayTools` から新toolを除去する。promptもtool公開可否に連動するため、一覧toolの案内だけが消え、既存のID・名前指定横断取得と現在チャンネル取得には影響しない。ローカル成功を本番成功へ丸めず、デプロイ後にSlackの自然文依頼が再質問なしで完了することを確認する。

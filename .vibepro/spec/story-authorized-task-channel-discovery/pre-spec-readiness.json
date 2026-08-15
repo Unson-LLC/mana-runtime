@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-authorized-task-channel-discovery",
-  "created_at": "2026-08-15T11:29:13.394Z",
+  "created_at": "2026-08-15T11:36:49.213Z",
   "status": "ready",
   "git": {
-    "head_sha": "ec17ffa1e3e0c38823f1b7eb0a83be90be1a1e45"
+    "head_sha": "c4104a9d38c89264dc5e3b77ef6c0acf1bed3380"
   },
   "checks": [
     {
@@ -37,7 +37,7 @@
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-15T11:29:13.161Z",
+    "created_at": "2026-08-15T11:36:47.935Z",
     "artifact": ".vibepro/pr/story-authorized-task-channel-discovery/pr-prepare.json"
   },
   "next_actions": []

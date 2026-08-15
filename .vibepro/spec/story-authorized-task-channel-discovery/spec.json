@@ -50,12 +50,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T11:29:17.604Z",
-      "last_revised_at": "2026-08-15T11:29:17.604Z"
+      "last_revised_at": "2026-08-15T11:36:51.231Z"
     },
     {
-      "id": "INV-001",
+      "id": "INV-002",
       "type": "invariant",
-      "statement": "対象利用者不一致と曖昧なchannel placementを開示せず、既存の横断認可を拡張しない",
+      "statement": "対象利用者不一致を開示せず、曖昧なchannel placement設定は一覧全体をfail closedで拒否し、既存の横断認可を拡張しない",
       "origin": {
         "story_refs": [
           {
@@ -91,13 +91,13 @@
         ]
       },
       "confidence": 0.99,
-      "first_seen_at": "2026-08-15T11:29:17.604Z",
-      "last_revised_at": "2026-08-15T11:29:17.604Z"
+      "first_seen_at": "2026-08-15T11:36:51.231Z",
+      "last_revised_at": "2026-08-15T11:36:51.231Z"
     },
     {
-      "id": "C-002",
+      "id": "C-003",
       "type": "contract",
-      "statement": "対象名なしの全件横断依頼では一覧toolの結果を横断toolへ渡し、利用者へチャンネル名を質問しない",
+      "statement": "対象名なしの全件横断依頼では公開済み一覧toolの結果を横断toolへ渡し、利用者へチャンネル名を質問しない。一覧が空なら横断toolを呼ばず、タスク0件とは扱わない",
       "origin": {
         "story_refs": [
           {
@@ -129,10 +129,10 @@
         ]
       },
       "confidence": 0.99,
-      "first_seen_at": "2026-08-15T11:29:17.604Z",
-      "last_revised_at": "2026-08-15T11:29:17.604Z"
+      "first_seen_at": "2026-08-15T11:36:51.231Z",
+      "last_revised_at": "2026-08-15T11:36:51.231Z"
     }
   ],
-  "generated_at": "2026-08-15T11:29:17.598Z",
-  "previous_spec_id": null
+  "generated_at": "2026-08-15T11:36:51.213Z",
+  "previous_spec_id": "2026-08-15T11:29:17.598Z"
 }

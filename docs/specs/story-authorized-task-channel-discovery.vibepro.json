@@ -16,7 +16,7 @@
     },
     {
       "id": "INV-001", "type": "invariant",
-      "statement": "対象利用者不一致と曖昧なchannel placementを開示せず、既存の横断認可を拡張しない",
+      "statement": "対象利用者不一致を開示せず、曖昧なchannel placement設定は一覧全体をfail closedで拒否し、既存の横断認可を拡張しない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-3" }],
         "architecture_refs": [{ "file": "docs/architecture/story-authorized-task-channel-discovery.md", "section": "認可境界" }],
@@ -27,7 +27,7 @@
     },
     {
       "id": "C-002", "type": "contract",
-      "statement": "対象名なしの全件横断依頼では一覧toolの結果を横断toolへ渡し、利用者へチャンネル名を質問しない",
+      "statement": "対象名なしの全件横断依頼では公開済み一覧toolの結果を横断toolへ渡し、利用者へチャンネル名を質問しない。一覧が空なら横断toolを呼ばず、タスク0件とは扱わない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }, { "kind": "acceptance_criteria", "ac_id": "AC-5" }],
         "architecture_refs": [{ "file": "docs/architecture/story-authorized-task-channel-discovery.md", "section": "AIの利用手順" }],
