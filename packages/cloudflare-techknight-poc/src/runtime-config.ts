@@ -11,6 +11,7 @@ export interface RuntimeBinding {
 export interface RuntimePlacement {
   placementId: string;
   channelId: string;
+  channelName?: string;
   projectCodes: string[];
   taskWriteEnabled: boolean;
   developmentEnabled?: boolean;
@@ -83,6 +84,8 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(candidate.placementId) ||
         typeof candidate.channelId !== "string" ||
         !/^[A-Z0-9_]{2,32}$/.test(candidate.channelId) ||
+        (candidate.channelName !== undefined &&
+          (typeof candidate.channelName !== "string" || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(candidate.channelName))) ||
         !Array.isArray(candidate.projectCodes) ||
         candidate.projectCodes.length === 0 ||
         candidate.projectCodes.some((code) => typeof code !== "string") ||
@@ -153,6 +156,7 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
       return {
         placementId: candidate.placementId,
         channelId: candidate.channelId,
+        ...(candidate.channelName ? { channelName: candidate.channelName as string } : {}),
         projectCodes,
         taskWriteEnabled: candidate.taskWriteEnabled === true,
         ...(candidate.developmentEnabled === true ? { developmentEnabled: true } : {}),
@@ -172,7 +176,9 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
     });
     if (
       new Set(placements.map((placement) => placement.placementId)).size !== placements.length ||
-      new Set(placements.map((placement) => placement.channelId)).size !== placements.length
+      new Set(placements.map((placement) => placement.channelId)).size !== placements.length ||
+      new Set(placements.flatMap((placement) => placement.channelName ? [placement.channelName] : [])).size !==
+        placements.filter((placement) => placement.channelName).length
     ) throw new Error("invalid");
     return placements;
   } catch (error) {

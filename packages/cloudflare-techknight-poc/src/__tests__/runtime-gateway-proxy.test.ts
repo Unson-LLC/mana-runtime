@@ -3,11 +3,11 @@ import { signTaskWriteCapability } from "@openryoko/write-broker";
 import { createRuntimeGatewayProxyHandler } from "../runtime-gateway-proxy.js";
 
 const secret = "g".repeat(32);
-const placements = JSON.stringify([{ placementId: "mana-dev-biz", channelId: "C_MANA", projectCodes: ["mana"], taskWriteEnabled: true,
+const placements = JSON.stringify([{ placementId: "mana-dev-biz", channelId: "C_MANA", channelName: "0240-mana-dev", projectCodes: ["mana"], taskWriteEnabled: true,
   audience: { type: "operator", allowedUserIds: ["UALLOWED"] }, taskInventoryChannelIds: ["C_MANA", "C_ACCOUNTING"], taskInventoryAllowedUserIds: ["UALLOWED"],
   capabilities: { mcp: ["gateway"], gatewayTools: ["list_tasks","search_tasks","list_tasks_across_channels","search_tasks_across_channels","send_message"] },
   deliveryScopes: [{ connector: "slack", channelId: "C_MANA" }] },
-{ placementId: "mana-accounting", channelId: "C_ACCOUNTING", projectCodes: ["back-office"], taskWriteEnabled: false,
+{ placementId: "mana-accounting", channelId: "C_ACCOUNTING", channelName: "9960-back-office", projectCodes: ["back-office"], taskWriteEnabled: false,
   taskInventoryAllowedUserIds: ["UALLOWED"] }]);
 async function capability(actor = "UALLOWED", projects = ["mana"]) { return signTaskWriteCapability({ version: 1, audience: "mana-task-write", requestId: "Ev1", actor: { provider: "slack", id: actor, workspace: "T_TEAM" }, placementId: "mana-dev-biz", projects, operations: ["*"], expiresAt: Date.now() + 60_000, nonce: "n", budget: 3 }, secret); }
 const env = { TASK_WRITE_CAPABILITY_SECRET: secret, SLACK_EXPECTED_TEAM_ID: "T_TEAM", RUNTIME_PLACEMENTS_JSON: placements, RUNTIME_TASK_SEARCH_ENABLED: "true", BRAINBASE_TASK_API_BASE_URL: "https://tasks.example.com", BRAINBASE_TASK_API_TOKEN: "task-token", SLACK_BOT_TOKEN: "slack-token", RUNTIME_EMPLOYEES_JSON: JSON.stringify([{ name: "critical-reviewer", persona: "private instructions", model: "opus" }]) };
@@ -80,11 +80,50 @@ describe("runtime gateway proxy", () => {
       return Response.json({ items: [{ id: "t1", title: "請求確認", status: "pending", priority: "high", version: 1, project_codes: ["back-office"] }], next_cursor: null, total_count: 1, count_status: "exact" });
     });
     const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch)(await request("search_tasks_across_channels", {
-      channel_ids: ["C_MANA", "C_ACCOUNTING"], query: "請求", status: "pending", priority: "high",
+      channel_names: ["0240-mana-dev", "9960-back-office"], query: "請求", status: "pending", priority: "high",
       assignee_person_id: "person-1", cursor: "cursor-1", limit: 12,
     }), env);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ total_count: 1, scope: { mode: "authorized_channels", channel_ids: ["C_MANA", "C_ACCOUNTING"], project_codes: ["mana", "back-office"] } });
+  });
+  it("resolves canonical channel names and reports ids, names, and projects", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      expect(url.searchParams.getAll("project_code")).toEqual(["mana", "back-office"]);
+      return Response.json({ items: [], next_cursor: null, total_count: 0, count_status: "exact" });
+    });
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch)(await request("list_tasks_across_channels", {
+      channel_names: [" #0240-MANA-DEV ", "9960-back-office"],
+    }), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ scope: {
+      mode: "authorized_channels", channel_ids: ["C_MANA", "C_ACCOUNTING"],
+      channel_names: ["0240-mana-dev", "9960-back-office"],
+      channels: [
+        { channel_id: "C_MANA", channel_name: "0240-mana-dev", project_codes: ["mana"] },
+        { channel_id: "C_ACCOUNTING", channel_name: "9960-back-office", project_codes: ["back-office"] },
+      ],
+    } });
+  });
+  it("keeps authorization after channel-name resolution", async () => {
+    const restrictedPlacements = JSON.parse(placements) as Array<Record<string, unknown>>;
+    restrictedPlacements[1].taskInventoryAllowedUserIds = ["UOTHER"];
+    const fetchImpl = vi.fn();
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl)(await request("list_tasks_across_channels", {
+      channel_names: ["9960-back-office"],
+    }), { ...env, RUNTIME_PLACEMENTS_JSON: JSON.stringify(restrictedPlacements) });
+    expect(response.status).toBe(403);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it.each([
+    { channel_names: ["unknown"] },
+    { channel_names: ["0240-mana-dev", "#0240-MANA-DEV"] },
+    { channel_names: ["0240-mana-dev"], channel_ids: ["C_MANA"] },
+  ])("rejects invalid channel-name scope before upstream %#", async (args) => {
+    const fetchImpl = vi.fn();
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl)(await request("list_tasks_across_channels", args), env);
+    expect(response.status).toBe(403);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
   async function expectCrossChannelScopeDenied(channel_ids: string[]) {
     const fetchImpl = vi.fn();

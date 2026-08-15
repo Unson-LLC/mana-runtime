@@ -297,8 +297,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-cross-channel-task-name-resolution",
+        "title": "チャンネル名だけで許可済みタスクを横断取得する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-meeting-minutes-brainbase-context"
+    "current_story_id": "story-cross-channel-task-name-resolution"
   }
 }

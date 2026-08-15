@@ -1,0 +1,67 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-cross-channel-task-name-resolution",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "C-001", "type": "contract",
+      "statement": "横断toolはchannel_idsまたはchannel_namesのどちらか一方だけを受け、名前を設定済みchannel IDへ一意に解決する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }, { "kind": "acceptance_criteria", "ac_id": "AC-2" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cross-channel-task-name-resolution.md", "section": "契約" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/container/gateway-mcp-server.mjs", "anchor": "TOOL_DEFINITIONS" }, { "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "authorizedTaskScope" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/gateway-mcp-jsonrpc.test.ts", "case": "exposes authorized cross-channel task tools with bounded channel ids" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "resolves canonical channel names and reports ids, names, and projects" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "searches tasks across explicitly authorized channels" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/*.test.ts", "must_cover": "channel_names" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "INV-001", "type": "invariant",
+      "statement": "名前解決後も既存の許可channel、対象利用者、server-derived project、scope外応答拒否を維持する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-4" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cross-channel-task-name-resolution.md", "section": "解決と認可" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "authorizedTaskScope" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "keeps authorization after channel-name resolution" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "rejects a cross-channel result containing a project outside the authorized union" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "must_cover": "authorization after channel-name resolution" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "INV-002", "type": "invariant",
+      "statement": "未知名、正規化後の重複、IDとの同時指定、重複設定はupstream前にfail closedで拒否する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cross-channel-task-name-resolution.md", "section": "解決と認可" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/runtime-config.ts", "anchor": "parseRuntimePlacements" }, { "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts", "anchor": "authorizedTaskScope" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts", "case": "rejects invalid channel-name scope before upstream %#" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts", "case": "validates unique channel names" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/*.test.ts", "must_cover": "unique channel names" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-002", "type": "contract",
+      "statement": "Slack promptは利用者が示したチャンネル名をtoolへ直接渡し、channel IDを要求しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cross-channel-task-name-resolution.md", "section": "契約" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts", "anchor": "buildPrompt" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "binds the Slack requester person to 私のタスク searches without asking for identity" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "must_cover": "channel IDを利用者へ要求しない" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-003", "type": "contract",
+      "statement": "本番配置は0240-mana-devと9960-back-officeの正規名だけを追加し、横断権限を増やさない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-cross-channel-task-name-resolution.md", "section": "設定と切戻し" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc", "anchor": "RUNTIME_PLACEMENTS_JSON" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "雲孫事業運営を信頼済みworkspace、channel、projectへ固定する" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "channelName" }] },
+      "confidence": 0.99
+    }
+  ]
+}

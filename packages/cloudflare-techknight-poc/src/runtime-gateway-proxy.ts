@@ -36,7 +36,8 @@ function cleanTask(task: Record<string, unknown>) {
 }
 
 type TaskScope = { mode: "current_channel"; project_codes: string[] }
-  | { mode: "authorized_channels"; channel_ids: string[]; project_codes: string[]; channels: Array<{ channel_id: string; project_codes: string[] }> };
+  | { mode: "authorized_channels"; channel_ids: string[]; channel_names: string[]; project_codes: string[];
+    channels: Array<{ channel_id: string; channel_name: string | null; project_codes: string[] }> };
 
 function normalizeTaskPage(page: TaskListPage, allowedProjects: readonly string[], requestedLimit: number, scope: TaskScope) {
   if (!page || !Array.isArray(page.items)) throw new Error("gateway_upstream_invalid_response");
@@ -64,21 +65,38 @@ function taskQuery(args: Record<string, unknown>, projectCodes: readonly string[
 }
 
 function authorizedTaskScope(args: Record<string, unknown>, source: RuntimePlacement, placements: readonly RuntimePlacement[], actorId: string) {
-  const channelIds = args.channel_ids;
-  if (!Array.isArray(channelIds) || channelIds.length < 1 || channelIds.length > 10 ||
-    channelIds.some((id) => typeof id !== "string" || !/^[A-Z0-9_]{2,32}$/.test(id)) ||
-    new Set(channelIds).size !== channelIds.length) return null;
+  const suppliedIds = args.channel_ids;
+  const suppliedNames = args.channel_names;
+  if ((suppliedIds === undefined) === (suppliedNames === undefined)) return null;
+  let channelIds: string[];
+  if (suppliedIds !== undefined) {
+    if (!Array.isArray(suppliedIds) || suppliedIds.length < 1 || suppliedIds.length > 10 ||
+      suppliedIds.some((id) => typeof id !== "string" || !/^[A-Z0-9_]{2,32}$/.test(id)) ||
+      new Set(suppliedIds).size !== suppliedIds.length) return null;
+    channelIds = suppliedIds as string[];
+  } else {
+    if (!Array.isArray(suppliedNames) || suppliedNames.length < 1 || suppliedNames.length > 10 ||
+      suppliedNames.some((name) => typeof name !== "string")) return null;
+    const normalizedNames = (suppliedNames as string[]).map((name) => name.trim().replace(/^#/, "").toLowerCase());
+    if (normalizedNames.some((name) => !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(name)) ||
+      new Set(normalizedNames).size !== normalizedNames.length) return null;
+    const resolved = normalizedNames.map((name) => placements.filter((candidate) => candidate.channelName === name));
+    if (resolved.some((matches) => matches.length !== 1)) return null;
+    channelIds = resolved.map((matches) => matches[0].channelId);
+  }
   const allowedChannels = source.taskInventoryChannelIds ?? [];
-  if (channelIds.some((id) => !allowedChannels.includes(id as string))) return null;
-  const channels = (channelIds as string[]).map((channelId) => {
+  if (channelIds.some((id) => !allowedChannels.includes(id))) return null;
+  const channels = channelIds.map((channelId) => {
     const matches = placements.filter((candidate) => candidate.channelId === channelId);
     if (matches.length !== 1 || !matches[0].taskInventoryAllowedUserIds?.includes(actorId)) return null;
-    return { channel_id: channelId, project_codes: [...matches[0].projectCodes] };
+    return { channel_id: channelId, channel_name: matches[0].channelName ?? null, project_codes: [...matches[0].projectCodes] };
   });
   if (channels.some((channel) => channel === null)) return null;
-  const resolvedChannels = channels as Array<{ channel_id: string; project_codes: string[] }>;
+  const resolvedChannels = channels as Array<{ channel_id: string; channel_name: string | null; project_codes: string[] }>;
   const projectCodes = [...new Set(resolvedChannels.flatMap((channel) => channel.project_codes))];
-  return { projectCodes, scope: { mode: "authorized_channels" as const, channel_ids: [...channelIds] as string[], project_codes: projectCodes, channels: resolvedChannels } };
+  return { projectCodes, scope: { mode: "authorized_channels" as const, channel_ids: channelIds,
+    channel_names: resolvedChannels.flatMap((channel) => channel.channel_name ? [channel.channel_name] : []),
+    project_codes: projectCodes, channels: resolvedChannels } };
 }
 
 export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch) {
