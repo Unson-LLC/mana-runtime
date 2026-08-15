@@ -20,6 +20,17 @@ const receipt: MeetingMinutesContextReceipt = {
 };
 
 describe("meeting minutes Brainbase context", () => {
+  it("invokes the runtime fetch with the global receiver required by Cloudflare Workers", async () => {
+    const runtimeFetch = vi.fn(function (this: unknown) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return Promise.resolve(new Response(JSON.stringify(receipt), { status: 201 }));
+    });
+    const client = new MeetingMinutesBrainbaseContextClient("https://bb.example", "secret", runtimeFetch);
+
+    await expect(client.resolve(receipt.identity)).resolves.toEqual(receipt);
+    expect(runtimeFetch).toHaveBeenCalledOnce();
+  });
+
   it("creates and retrieves an identity-bound Receipt through the server API", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 201 }))

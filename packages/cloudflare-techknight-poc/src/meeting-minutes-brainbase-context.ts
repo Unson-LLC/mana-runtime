@@ -48,7 +48,7 @@ export class MeetingMinutesBrainbaseContextClient {
       url.searchParams.set("project_code", identity.project_code);
       url.searchParams.set("transcript_sha256", identity.transcript_sha256);
     }
-    const response = await this.fetchImpl(url, {
+    const response = await this.fetchImpl.call(globalThis, url, {
       method: receiptId ? "GET" : "POST",
       headers: { authorization: `Bearer ${this.token}`, accept: "application/json",
         ...(receiptId ? {} : { "content-type": "application/json" }) },
