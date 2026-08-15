@@ -52,9 +52,12 @@ export class MeetingMinutesBrainbaseContextClient {
       method: receiptId ? "GET" : "POST",
       headers: { authorization: `Bearer ${this.token}`, accept: "application/json",
         ...(receiptId ? {} : { "content-type": "application/json" }) },
-      ...(receiptId ? {} : { body: JSON.stringify(identity) }), redirect: "error",
+      ...(receiptId ? {} : { body: JSON.stringify(identity) }), redirect: "manual",
       signal: AbortSignal.timeout(15_000),
     });
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error("meeting_minutes_context_redirect_rejected");
+    }
     if (!response.ok) throw new Error(`meeting_minutes_context_request_failed:${response.status}`);
     let payload: unknown;
     try { payload = await response.json(); } catch { throw new Error("meeting_minutes_context_invalid_response"); }
