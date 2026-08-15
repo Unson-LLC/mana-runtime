@@ -5,9 +5,11 @@ import { processGatewayRpcMessage } from "../../container/gateway-mcp-server.mjs
 describe("gateway MCP", () => {
   afterEach(() => { delete process.env.MANA_ALLOWED_GATEWAY_TOOLS; delete process.env.MANA_TASK_WRITE_REQUEST_ID; delete process.env.MANA_TASK_WRITE_CAPABILITY; });
   it("exposes only placement-allowed tools", async () => {
-    process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_tasks", "get_employee"]);
+    process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_tasks", "search_tasks", "get_employee"]);
     const result = await processGatewayRpcMessage({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-    expect(result.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["list_tasks", "get_employee"]);
+    expect(result.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["list_tasks", "search_tasks", "get_employee"]);
+    expect(result.result.tools.find((tool: { name: string }) => tool.name === "list_tasks").description).toContain("正確な総件数とは限りません");
+    expect(result.result.tools.find((tool: { name: string }) => tool.name === "search_tasks").inputSchema.properties.limit.maximum).toBe(20);
   });
   it("forwards requester capability without accepting a model project", async () => {
     process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_tasks"]);

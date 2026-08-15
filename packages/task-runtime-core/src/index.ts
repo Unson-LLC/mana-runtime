@@ -56,13 +56,18 @@ export interface SearchTasksQuery extends ListTasksQuery {
 export interface TaskListPage {
   items: CanonicalTask[];
   next_cursor?: string | null;
+  total_count?: number | null;
+  count_status?: TaskCountStatus;
+  has_more?: boolean;
+  read_status?: string;
 }
 
+export type TaskCountStatus = "exact" | "lower_bound" | "not_requested" | "unavailable";
+
 export interface TaskSearchPage extends TaskListPage {
-  total_count: null;
-  count_status: "not_requested";
+  total_count: number | null;
+  count_status: TaskCountStatus;
   has_more: boolean;
-  read_status?: string;
 }
 
 export const TASK_BOARD_STATUSES = ["in_progress", "waiting", "pending", "completed"] as const;

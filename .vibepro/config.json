@@ -264,8 +264,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-slack-task-inventory-count",
+        "title": "Slackで現在チャンネルのタスク件数と取得範囲を正しく把握する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-meeting-minutes-brainbase-judgment"
+    "current_story_id": "story-slack-task-inventory-count"
   }
 }
