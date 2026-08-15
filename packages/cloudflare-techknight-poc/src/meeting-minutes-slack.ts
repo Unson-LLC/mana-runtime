@@ -156,6 +156,9 @@ export class MeetingMinutesSlackClient {
       : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
     const details = completed
       ? [`*✅ 議事録を作成しました*`, `保存先: ${run.destination.name}`,
+        run.context ? `Brainbase正本文脈: ${run.context.status === "resolved" ? "参照済み" :
+          run.context.status === "confirmed_empty" ? "確認済み（該当なし）" :
+          run.context.status === "partial" ? "一部参照" : "参照不能"}（Receipt: ${run.context.receiptId}）` : undefined,
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
         `共有先: <#${run.destination.slackChannelId}>`].filter(Boolean).join("\n")
       : failedRunDetails(run).join("\n");

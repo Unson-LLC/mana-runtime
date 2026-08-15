@@ -38,6 +38,19 @@ describe("meeting minutes task cards", () => {
       ]) }),
     ])); expect(JSON.stringify(card.blocks)).toContain("説明");
   });
+  it("distinguishes reused and ambiguous tasks without destructive controls", () => {
+    const current = run();
+    current.taskRegistration!.registered = [
+      { index: 0, title: "既存タスク", taskId: "task-1", status: "reused" },
+      { index: 1, title: "似たタスク", taskId: "task-2", status: "needs_review" },
+    ];
+    current.generated!.tasks = [{ title: "既存タスク" }, { title: "似たタスク" }];
+    const card = meetingMinutesTaskCard(current); const serialized = JSON.stringify(card.blocks);
+    expect(serialized).toContain("既存1件・要確認1件");
+    expect(serialized).toContain("既存タスクを再利用");
+    expect(serialized).toContain("似た既存タスクあり・要確認");
+    expect(serialized).not.toContain("mana_meeting_minutes_task_cancel");
+  });
   it("deletes only a task in the run destination project and redraws the card", async () => {
     const current = run(); const options = deps(current);
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
