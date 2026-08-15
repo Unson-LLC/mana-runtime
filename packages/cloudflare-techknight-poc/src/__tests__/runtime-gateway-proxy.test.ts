@@ -5,7 +5,7 @@ import { createRuntimeGatewayProxyHandler } from "../runtime-gateway-proxy.js";
 const secret = "g".repeat(32);
 const placements = JSON.stringify([{ placementId: "mana-dev-biz", channelId: "C_MANA", channelName: "0240-mana-dev", projectCodes: ["mana"], taskWriteEnabled: true,
   audience: { type: "operator", allowedUserIds: ["UALLOWED"] }, taskInventoryChannelIds: ["C_MANA", "C_ACCOUNTING"], taskInventoryAllowedUserIds: ["UALLOWED"],
-  capabilities: { mcp: ["gateway"], gatewayTools: ["list_tasks","search_tasks","list_tasks_across_channels","search_tasks_across_channels","send_message"] },
+  capabilities: { mcp: ["gateway"], gatewayTools: ["list_tasks","search_tasks","list_authorized_task_channels","list_tasks_across_channels","search_tasks_across_channels","send_message"] },
   deliveryScopes: [{ connector: "slack", channelId: "C_MANA" }] },
 { placementId: "mana-accounting", channelId: "C_ACCOUNTING", channelName: "9960-back-office", projectCodes: ["back-office"], taskWriteEnabled: false,
   taskInventoryAllowedUserIds: ["UALLOWED"] }]);
@@ -14,6 +14,40 @@ const env = { TASK_WRITE_CAPABILITY_SECRET: secret, SLACK_EXPECTED_TEAM_ID: "T_T
 const request = async (tool: string, args: Record<string, unknown>, token = capability()) => new Request("https://gateway.internal/api/runtime/gateway", { method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": await token }, body: JSON.stringify({ tool, arguments: args, request_id: "Ev1", call_index: 1 }) });
 
 describe("runtime gateway proxy", () => {
+  it("lists only task channels authorized for the actor", async () => {
+    const fetchImpl = vi.fn();
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl)(await request("list_authorized_task_channels", {}), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      channels: [
+        { channel_id: "C_MANA", channel_name: "0240-mana-dev", project_codes: ["mana"] },
+        { channel_id: "C_ACCOUNTING", channel_name: "9960-back-office", project_codes: ["back-office"] },
+      ],
+      scope: { mode: "authorized_channels" },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it("omits task channels unauthorized for the actor", async () => {
+    const restricted = JSON.parse(placements) as Array<Record<string, unknown>>;
+    restricted[1].taskInventoryAllowedUserIds = ["UOTHER"];
+    const response = await createRuntimeGatewayProxyHandler(vi.fn())(await request("list_authorized_task_channels", {}), {
+      ...env, RUNTIME_PLACEMENTS_JSON: JSON.stringify(restricted),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      channels: [{ channel_id: "C_MANA", channel_name: "0240-mana-dev", project_codes: ["mana"] }],
+      scope: { mode: "authorized_channels" },
+    });
+  });
+  it("fails closed without disclosing ambiguous task channels", async () => {
+    const ambiguous = JSON.parse(placements) as Array<Record<string, unknown>>;
+    ambiguous.push({ placementId: "duplicate-mana", channelId: "C_MANA", channelName: "duplicate", projectCodes: ["outside"], taskInventoryAllowedUserIds: ["UALLOWED"] });
+    const response = await createRuntimeGatewayProxyHandler(vi.fn())(await request("list_authorized_task_channels", {}), {
+      ...env, RUNTIME_PLACEMENTS_JSON: JSON.stringify(ambiguous),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "gateway_denied" });
+  });
   it("forces list_tasks to the placement project", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => { expect(input instanceof Request ? input.url : String(input)).toContain("project_code=mana"); return Response.json({ items: [{ id: "t1", title: "x", status: "pending", priority: "medium", version: 1, project_codes: ["mana"], assignee_person_id: null, assignee_display_name: null, due_at: null }], next_cursor: null }); });
     const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch)(await request("list_tasks", { limit: 10, project: "outside" }), env);

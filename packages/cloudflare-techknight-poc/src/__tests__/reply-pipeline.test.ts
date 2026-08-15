@@ -239,7 +239,8 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください");
     expect(prompt).toContain("私または自分のタスク一覧では、search_tasksではなくlist_tasksを使ってください");
     expect(prompt).toContain("明示的に複数または他のチャンネルを対象にした場合だけlist_tasks_across_channelsまたはsearch_tasks_across_channelsを使ってください");
-    expect(prompt).toContain("利用者が示したチャンネル名をchannel_namesへ渡し");
+    expect(prompt).toContain("対象名がない全件横断依頼ではlist_authorized_task_channelsを使い");
+    expect(prompt).toContain("利用者へチャンネル名を質問しないでください");
     expect(prompt).toContain("channel IDを利用者へ要求しないでください");
     expect(prompt).not.toContain("名前またはperson IDを確認してください");
     expect(sandbox.exec.mock.calls[0][1]?.env).toMatchObject({
@@ -257,7 +258,7 @@ describe("TechKnight Slack reply pipeline", () => {
 
     expect(sandbox.exec.mock.calls[0][1]?.env).not.toHaveProperty("MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID");
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
-    expect(prompt).toContain("利用者が示したチャンネル名をchannel_namesへ渡し");
+    expect(prompt).toContain("対象名がない全件横断依頼ではlist_authorized_task_channelsを使い");
     expect(prompt).toContain("channel IDを利用者へ要求しないでください");
   });
 

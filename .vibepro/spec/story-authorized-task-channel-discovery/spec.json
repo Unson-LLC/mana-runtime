@@ -1,0 +1,138 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-authorized-task-channel-discovery",
+  "generated_by": {
+    "caller": "unknown",
+    "stage": "ai_synthesis"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "list_authorized_task_channelsは入力なしで、actorが呼出元から横断取得できるchannel_id、channel_name、project_codesだけを返す",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-task-channel-discovery.md",
+            "section": "認可境界"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts",
+            "anchor": "authorizedTaskChannels"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/container/gateway-mcp-server.mjs",
+            "anchor": "TOOL_DEFINITIONS"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "lists only task channels authorized for the actor"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/gateway-mcp-jsonrpc.test.ts",
+            "case": "exposes authorized task channel discovery without model-supplied scope"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T11:29:17.604Z",
+      "last_revised_at": "2026-08-15T11:29:17.604Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "対象利用者不一致と曖昧なchannel placementを開示せず、既存の横断認可を拡張しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-task-channel-discovery.md",
+            "section": "認可境界"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/runtime-gateway-proxy.ts",
+            "anchor": "authorizedTaskChannels"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "omits task channels unauthorized for the actor"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-gateway-proxy.test.ts",
+            "case": "fails closed without disclosing ambiguous task channels"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T11:29:17.604Z",
+      "last_revised_at": "2026-08-15T11:29:17.604Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "対象名なしの全件横断依頼では一覧toolの結果を横断toolへ渡し、利用者へチャンネル名を質問しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-authorized-task-channel-discovery.md",
+            "section": "AIの利用手順"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts",
+            "anchor": "buildPrompt"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
+            "case": "discovers authorized channels for an unspecified cross-channel task request"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-15T11:29:17.604Z",
+      "last_revised_at": "2026-08-15T11:29:17.604Z"
+    }
+  ],
+  "generated_at": "2026-08-15T11:29:17.598Z",
+  "previous_spec_id": null
+}
