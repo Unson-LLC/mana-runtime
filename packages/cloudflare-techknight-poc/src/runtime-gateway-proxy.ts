@@ -1,6 +1,6 @@
 import { TaskApiClient, type TaskListPage } from "@openryoko/task-runtime-core";
 import { verifyTaskWriteCapability } from "@openryoko/write-broker";
-import { parseRuntimePlacements } from "./runtime-config.js";
+import { parseRuntimePlacements, type RuntimePlacement } from "./runtime-config.js";
 import { handleTaskWriteProxyRequest, type TaskWriteProxyEnv } from "./task-write-proxy.js";
 
 export const RUNTIME_GATEWAY_PROXY_HOST = "gateway.internal";
@@ -35,7 +35,10 @@ function cleanTask(task: Record<string, unknown>) {
     assignee_display_name: task.assignee_display_name ?? null, due_at: task.due_at ?? null };
 }
 
-function normalizeTaskPage(page: TaskListPage, allowedProjects: readonly string[], requestedLimit: number) {
+type TaskScope = { mode: "current_channel"; project_codes: string[] }
+  | { mode: "authorized_channels"; channel_ids: string[]; project_codes: string[]; channels: Array<{ channel_id: string; project_codes: string[] }> };
+
+function normalizeTaskPage(page: TaskListPage, allowedProjects: readonly string[], requestedLimit: number, scope: TaskScope) {
   if (!page || !Array.isArray(page.items)) throw new Error("gateway_upstream_invalid_response");
   if (page.items.length > requestedLimit) throw new Error("gateway_upstream_invalid_response");
   if (page.items.some((task) => !task.project_codes?.length || task.project_codes.some((project) => !allowedProjects.includes(project)))) throw new Error("gateway_scope_violation");
@@ -49,7 +52,7 @@ function normalizeTaskPage(page: TaskListPage, allowedProjects: readonly string[
   return { untrusted_data: true,
     items: page.items.map((task) => cleanTask(task as unknown as Record<string, unknown>)), next_cursor: nextCursor,
     has_more: hasMore, total_count: requiresCount ? page.total_count : null, count_status: countStatus, read_status: readStatus,
-    scope: { mode: "current_channel", project_codes: [...allowedProjects] } };
+    scope };
 }
 
 function taskQuery(args: Record<string, unknown>, projectCodes: readonly string[]) {
@@ -58,6 +61,24 @@ function taskQuery(args: Record<string, unknown>, projectCodes: readonly string[
   return { project_code: [...projectCodes], limit,
     ...(typeof args.status === "string" ? { status: args.status } : {}), ...(typeof args.priority === "string" ? { priority: args.priority } : {}),
     ...(typeof args.assignee_person_id === "string" ? { assignee_person_id: args.assignee_person_id } : {}), ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {}) };
+}
+
+function authorizedTaskScope(args: Record<string, unknown>, source: RuntimePlacement, placements: readonly RuntimePlacement[], actorId: string) {
+  const channelIds = args.channel_ids;
+  if (!Array.isArray(channelIds) || channelIds.length < 1 || channelIds.length > 10 ||
+    channelIds.some((id) => typeof id !== "string" || !/^[A-Z0-9_]{2,32}$/.test(id)) ||
+    new Set(channelIds).size !== channelIds.length) return null;
+  const allowedChannels = source.taskInventoryChannelIds ?? [];
+  if (channelIds.some((id) => !allowedChannels.includes(id as string))) return null;
+  const channels = (channelIds as string[]).map((channelId) => {
+    const matches = placements.filter((candidate) => candidate.channelId === channelId);
+    if (matches.length !== 1 || !matches[0].taskInventoryAllowedUserIds?.includes(actorId)) return null;
+    return { channel_id: channelId, project_codes: [...matches[0].projectCodes] };
+  });
+  if (channels.some((channel) => channel === null)) return null;
+  const resolvedChannels = channels as Array<{ channel_id: string; project_codes: string[] }>;
+  const projectCodes = [...new Set(resolvedChannels.flatMap((channel) => channel.project_codes))];
+  return { projectCodes, scope: { mode: "authorized_channels" as const, channel_ids: [...channelIds] as string[], project_codes: projectCodes, channels: resolvedChannels } };
 }
 
 export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch) {
@@ -73,7 +94,8 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
       if (!secret || !env.SLACK_EXPECTED_TEAM_ID) throw new Error();
       const placementId = decodePlacementId(token);
       const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId });
-      const placement = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).find((item) => item.placementId === claims.placementId);
+      const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      const placement = placements.find((item) => item.placementId === claims.placementId);
       if (!placement || !placement.audience?.allowedUserIds.includes(claims.actor.id) || !placement.capabilities?.gatewayTools.includes(body.tool)) return responseError("gateway_denied", 403);
       if (claims.projects.length !== placement.projectCodes.length || claims.projects.some((project) => !placement.projectCodes.includes(project))) return responseError("gateway_denied", 403);
 
@@ -85,17 +107,23 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
         { ...env, RUNTIME_PROJECT_CODES: placement.projectCodes.join(","), RUNTIME_PLACEMENT_ID: placement.placementId,
           SLACK_ALLOWED_CHANNEL_ID: placement.channelId });
       }
-      if (body.tool === "list_tasks" || body.tool === "search_tasks") {
+      if (["list_tasks", "search_tasks", "list_tasks_across_channels", "search_tasks_across_channels"].includes(body.tool)) {
         if (!env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN) return responseError("gateway_not_configured", 503);
-        if (body.tool === "search_tasks" && env.RUNTIME_TASK_SEARCH_ENABLED !== "true") return responseError("gateway_tool_disabled", 503);
+        const isSearch = body.tool === "search_tasks" || body.tool === "search_tasks_across_channels";
+        const isCrossChannel = body.tool === "list_tasks_across_channels" || body.tool === "search_tasks_across_channels";
+        if (isSearch && env.RUNTIME_TASK_SEARCH_ENABLED !== "true") return responseError("gateway_tool_disabled", 503);
         const args = body.arguments;
-        const query = taskQuery(args, placement.projectCodes);
+        const authorized = isCrossChannel ? authorizedTaskScope(args, placement, placements, claims.actor.id) : null;
+        if (isCrossChannel && !authorized) return responseError("gateway_denied", 403);
+        const projectCodes = authorized?.projectCodes ?? placement.projectCodes;
+        const scope: TaskScope = authorized?.scope ?? { mode: "current_channel", project_codes: [...placement.projectCodes] };
+        const query = taskQuery(args, projectCodes);
         if (!query) return responseError("invalid_arguments", 400);
-        if (body.tool === "search_tasks" && (typeof args.query !== "string" || !args.query.trim() || args.query.length > 200)) return responseError("invalid_arguments", 400);
+        if (isSearch && (typeof args.query !== "string" || !args.query.trim() || args.query.length > 200)) return responseError("invalid_arguments", 400);
         const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL, token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl });
         try {
-          const page = body.tool === "search_tasks" ? await client.searchTasks({ ...query, query: (args.query as string).trim() }) : await client.listTasks(query);
-          return Response.json(normalizeTaskPage(page, placement.projectCodes, query.limit));
+          const page = isSearch ? await client.searchTasks({ ...query, query: (args.query as string).trim() }) : await client.listTasks(query);
+          return Response.json(normalizeTaskPage(page, projectCodes, query.limit, scope));
         } catch (cause) {
           const error = cause instanceof Error ? cause.message : "gateway_upstream_failed";
           return responseError(error === "gateway_scope_violation" || error === "gateway_upstream_invalid_response" ? error : "gateway_upstream_failed", 502);

@@ -238,6 +238,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("requester_person_id: per_umeda");
     expect(prompt).toContain("私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください");
     expect(prompt).toContain("私または自分のタスク一覧では、search_tasksではなくlist_tasksを使ってください");
+    expect(prompt).toContain("明示的に複数または他のチャンネルを対象にした場合だけlist_tasks_across_channelsまたはsearch_tasks_across_channelsを使い");
     expect(prompt).not.toContain("名前またはperson IDを確認してください");
     expect(sandbox.exec.mock.calls[0][1]?.env).toMatchObject({
       MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID: "per_umeda",

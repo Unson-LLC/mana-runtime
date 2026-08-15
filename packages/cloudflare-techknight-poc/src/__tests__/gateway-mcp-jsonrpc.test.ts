@@ -11,6 +11,15 @@ describe("gateway MCP", () => {
     expect(result.result.tools.find((tool: { name: string }) => tool.name === "list_tasks").description).toContain("正確な総件数とは限りません");
     expect(result.result.tools.find((tool: { name: string }) => tool.name === "search_tasks").inputSchema.properties.limit.maximum).toBe(20);
   });
+  it("exposes authorized cross-channel task tools with bounded channel ids", async () => {
+    process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_tasks_across_channels", "search_tasks_across_channels"]);
+    const result = await processGatewayRpcMessage({ jsonrpc: "2.0", id: 3, method: "tools/list" });
+    expect(result.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["list_tasks_across_channels", "search_tasks_across_channels"]);
+    const list = result.result.tools[0].inputSchema;
+    expect(list.required).toEqual(["channel_ids"]);
+    expect(list.properties.channel_ids).toMatchObject({ minItems: 1, maxItems: 10, uniqueItems: true });
+    expect(result.result.tools[1].inputSchema.required).toEqual(["channel_ids", "query"]);
+  });
   it("forwards requester capability without accepting a model project", async () => {
     process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_tasks"]);
     process.env.MANA_TASK_WRITE_REQUEST_ID = "Ev1";

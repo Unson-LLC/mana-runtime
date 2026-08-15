@@ -19,6 +19,8 @@ export interface RuntimePlacement {
   audience?: { type: "operator"; allowedUserIds: string[] };
   agent?: { model: "opus" | "sonnet"; escalationEmployee?: string };
   capabilities?: { mcp: string[]; gatewayTools: string[] };
+  taskInventoryChannelIds?: string[];
+  taskInventoryAllowedUserIds?: string[];
   dataScopes?: { graph: { mode: "read-only"; scopes: string[] } };
   deliveryScopes?: Array<{ connector: "slack"; channelId: string }>;
   respondTo?: RuntimeRespondPolicy;
@@ -110,6 +112,18 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         !Array.isArray(capabilities.mcp) || capabilities.mcp.some((v) => typeof v !== "string") ||
         !Array.isArray(capabilities.gatewayTools) || capabilities.gatewayTools.some((v) => typeof v !== "string")
       )) throw new Error("invalid");
+      const taskInventoryChannelIds = candidate.taskInventoryChannelIds;
+      if (taskInventoryChannelIds !== undefined && (
+        !Array.isArray(taskInventoryChannelIds) || taskInventoryChannelIds.length === 0 || taskInventoryChannelIds.length > 10 ||
+        taskInventoryChannelIds.some((id) => typeof id !== "string" || !/^[A-Z0-9_]{2,32}$/.test(id)) ||
+        new Set(taskInventoryChannelIds).size !== taskInventoryChannelIds.length
+      )) throw new Error("invalid");
+      const taskInventoryAllowedUserIds = candidate.taskInventoryAllowedUserIds;
+      if (taskInventoryAllowedUserIds !== undefined && (
+        !Array.isArray(taskInventoryAllowedUserIds) || taskInventoryAllowedUserIds.length === 0 || taskInventoryAllowedUserIds.length > 50 ||
+        taskInventoryAllowedUserIds.some((id) => typeof id !== "string" || !/^U[A-Z0-9]{2,31}$/.test(id)) ||
+        new Set(taskInventoryAllowedUserIds).size !== taskInventoryAllowedUserIds.length
+      )) throw new Error("invalid");
       const dataScopes = candidate.dataScopes as RuntimePlacement["dataScopes"] | undefined;
       if (dataScopes !== undefined && (
         dataScopes?.graph?.mode !== "read-only" || !Array.isArray(dataScopes.graph.scopes) ||
@@ -147,6 +161,8 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         ...(audience ? { audience: { type: "operator", allowedUserIds: [...audience.allowedUserIds as string[]] } } : {}),
         ...(agent ? { agent: { model: agent.model as "opus" | "sonnet", ...(agent.escalationEmployee ? { escalationEmployee: agent.escalationEmployee as string } : {}) } } : {}),
         ...(capabilities ? { capabilities: { mcp: [...capabilities.mcp as string[]], gatewayTools: [...capabilities.gatewayTools as string[]] } } : {}),
+        ...(taskInventoryChannelIds ? { taskInventoryChannelIds: [...taskInventoryChannelIds as string[]] } : {}),
+        ...(taskInventoryAllowedUserIds ? { taskInventoryAllowedUserIds: [...taskInventoryAllowedUserIds as string[]] } : {}),
         ...(dataScopes ? { dataScopes } : {}),
         ...(deliveryScopes ? { deliveryScopes } : {}),
         ...(respondTo ? { respondTo: respondTo as unknown as RuntimeRespondPolicy } : {}),
