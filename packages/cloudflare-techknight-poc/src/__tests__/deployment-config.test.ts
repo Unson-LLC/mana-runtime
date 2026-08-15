@@ -144,12 +144,13 @@ describe("会社別Cloudflare deployment", () => {
       DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
-      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true,
+      { placementId: "mana-accounting", channelId: "C0BKS6RL99T", channelName: "9960-back-office", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true,
         taskInventoryAllowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: true },
       {
         placementId: "mana-dev-biz",
         channelId: "C0BMNSP6C80",
+        channelName: "0240-mana-dev",
         projectCodes: ["mana"],
         taskWriteEnabled: true,
         taskBoardEnabled: true,

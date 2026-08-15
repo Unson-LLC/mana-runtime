@@ -16,9 +16,16 @@ describe("gateway MCP", () => {
     const result = await processGatewayRpcMessage({ jsonrpc: "2.0", id: 3, method: "tools/list" });
     expect(result.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["list_tasks_across_channels", "search_tasks_across_channels"]);
     const list = result.result.tools[0].inputSchema;
-    expect(list.required).toEqual(["channel_ids"]);
+    expect(list.required).toBeUndefined();
+    expect(list.oneOf).toEqual([
+      { required: ["channel_ids"], not: { required: ["channel_names"] } },
+      { required: ["channel_names"], not: { required: ["channel_ids"] } },
+    ]);
     expect(list.properties.channel_ids).toMatchObject({ minItems: 1, maxItems: 10, uniqueItems: true });
-    expect(result.result.tools[1].inputSchema.required).toEqual(["channel_ids", "query"]);
+    expect(list.properties.channel_names).toMatchObject({ minItems: 1, maxItems: 10, uniqueItems: true });
+    expect(list.properties.channel_names.items.maxLength).toBeUndefined();
+    expect(result.result.tools[1].inputSchema.required).toEqual(["query"]);
+    expect(result.result.tools[1].inputSchema.oneOf).toEqual(list.oneOf);
   });
   it("forwards requester capability without accepting a model project", async () => {
     process.env.MANA_ALLOWED_GATEWAY_TOOLS = JSON.stringify(["list_tasks"]);

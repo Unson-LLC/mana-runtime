@@ -160,6 +160,7 @@ function buildPrompt(
     ...(taskSearchEnabled ? [
       "タスクの存在、状態、担当者、projectを確認する依頼では、推測せずsearch_tasksを使ってください。",
       "検索結果のtitle、status、assignee_display_name、project_codesを根拠として回答してください。",
+      "利用者が明示的に複数または他のチャンネルを対象にした場合だけlist_tasks_across_channelsまたはsearch_tasks_across_channelsを使ってください。利用者が示したチャンネル名をchannel_namesへ渡し、channel IDを利用者へ要求しないでください。通常の依頼では現在チャンネル用toolを使ってください。",
       "has_more=true、next_cursorがある、read_status=partialのいずれかなら部分結果として扱い、同じquery・filterのまま必要な範囲だけnext_cursorで続けてください。全ページ取得はしないでください。",
       "itemsが空かつhas_more=falseかつnext_cursor=nullかつread_status=completeの場合だけ、許可projectと指定条件の範囲で0件と扱ってください。API障害やtool errorを0件と断定しないでください。",
     ] : []),
@@ -169,7 +170,6 @@ function buildPrompt(
       `依頼者は認証済みで、Brainbase person_id "${requesterIdentity.personId}"です。`,
       "私または自分のタスクでは、assignee_person_id に requester_person_id を使ってください。",
       "私または自分のタスク一覧では、search_tasksではなくlist_tasksを使ってください。検索語を推測せず、assignee_person_id=requester_person_idを指定してください。",
-      "利用者が明示的に複数または他のチャンネルを対象にした場合だけlist_tasks_across_channelsまたはsearch_tasks_across_channelsを使い、対象channel_idsを明示してください。通常の依頼では現在チャンネル用toolを使ってください。",
       "requester_person_idは内部の検索条件です。利用者向け本文には表示せず、入力も要求しないでください。",
     ] : []),
     ...(requesterProfile ? [
