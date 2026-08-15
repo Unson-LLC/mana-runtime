@@ -250,7 +250,6 @@ describe("TechKnight Slack reply pipeline", () => {
   it("does not bind task searches that are not self-task requests", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({
-      requesterIdentity: { slackUserId: "U_UMEDA", personId: "per_umeda" },
       taskSearchEnabled: true,
     });
 
