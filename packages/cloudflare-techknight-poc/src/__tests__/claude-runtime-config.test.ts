@@ -95,6 +95,20 @@ describe("Cloudflare Claude runtime config", () => {
       .toThrow("runtime_claude_structured_output_invalid");
   });
 
+  it("keeps Judgment Hook events without requiring a model-initiated Brainbase tool call", () => {
+    const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
+    const command = buildRuntimeClaudeCommand("meeting-minutes", config, {
+      structuredOutput: "meeting-minutes",
+      includeJudgmentHookEvents: true,
+    });
+    expect(command).toContain("--include-hook-events");
+    expect(command).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
+    expect(() => buildRuntimeClaudeCommand("reply", config, {
+      structuredOutput: "meeting-minutes",
+      includeJudgmentHookEvents: true,
+    })).toThrow("runtime_claude_structured_output_invalid");
+  });
+
   it("starts then resumes the same validated Claude session", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "sonnet" });
     const sessionId = "12345678-1234-4123-8123-123456789abc";

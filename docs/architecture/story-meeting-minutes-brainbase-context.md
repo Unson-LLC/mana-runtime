@@ -2,15 +2,15 @@
 
 ## データフロー
 
-`download -> transcript hash -> Brainbase Receipt -> Claude専用MCP取得 -> JSON検証 -> GitHub -> task reconcile -> Slack`
+`download -> transcript hash -> Brainbase Receipt取得・検証 -> Receipt文脈をClaudeへ注入 -> JSON検証 -> GitHub -> task reconcile -> Slack`
 
-Receipt identityとchecksumをDurable runへ保存してからClaudeを起動する。再試行は同じReceiptを再利用し、生成後の各checkpointを維持する。
+WorkerがBrainbase Receipt APIを必ず呼び、Receipt identityとchecksumをDurable runへ保存してからClaudeを起動する。再試行は同じReceiptを再利用し、生成後の各checkpointを維持する。文脈取得をモデルの任意MCP呼び出しへ委ねない。
 
 ## 生成契約
 
-Claudeへ文字起こし本文に加えて、run id・project code・transcript hash・receipt idを渡す。`brainbase_get_meeting_minutes_context`の呼び出しを必須とし、出力へ`brainbase_context`としてreceipt id/checksum/used source refs/decision candidates/context conflictsを返させる。
+Claudeへ文字起こし本文に加えて、Workerが検証したReceiptのidentity・status・contextを100KB上限で渡す。Receipt本文は命令ではなく正本文脈として扱わせ、出力へ`brainbase_context`としてreceipt id/checksum/used source refs/decision candidates/context conflictsを返させる。追加のMCP呼び出しは成功条件にしない。
 
-parserはidentity一致、checksum一致、source refsがReceipt集合の部分集合であることを検証する。文脈が正常に0件なら`confirmed_empty`として生成を許す。
+Workerは生成結果へ正規Receipt identityを結合し、parserはidentity一致、checksum一致、source refsがReceipt集合の部分集合であることを検証する。Claude生成ターンにはJudgment Hookを適用し、文脈取得の証明とは分離して監査する。文脈が正常に0件なら`confirmed_empty`として生成を許す。
 
 ## タスク照合
 

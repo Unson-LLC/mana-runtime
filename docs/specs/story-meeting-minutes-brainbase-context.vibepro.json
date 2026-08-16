@@ -32,14 +32,14 @@
     {
       "id": "C-002",
       "type": "contract",
-      "statement": "Claudeは専用MCPでReceiptを読み、生成結果へReceipt来歴、利用source refs、判断候補を返す",
+      "statement": "Workerは検証済みReceipt文脈を生成前にClaudeへ必ず渡し、生成結果へReceipt来歴、利用source refs、判断候補を返す。文脈取得をClaudeの任意MCP呼び出しに依存させない",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-8" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }, { "file": "packages/cloudflare-techknight-poc/src/claude-runtime-config.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "story-meeting-minutes-brainbase-judgment:ac:6 uses the isolated prompt file and validates strict JSON" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "accepts the Worker-bound Receipt attestation and rejects altered Receipt identity" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "uses the isolated prompt file and validates strict JSON" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }] },
       "confidence": 0.99
     },
     {

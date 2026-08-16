@@ -97,7 +97,7 @@ export function buildRuntimeClaudeCommand(
   config: ClaudeRuntimeConfig,
   options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean; mcpEnabled?: boolean;
     sessionId?: string; resumeSession?: boolean; structuredOutput?: RuntimeClaudeStructuredOutput;
-    auditBrainbaseToolUse?: boolean } = {},
+    auditBrainbaseToolUse?: boolean; includeJudgmentHookEvents?: boolean } = {},
 ): string {
   if (config.model !== "opus" && config.model !== "sonnet") {
     throw new ClaudeRuntimeConfigError("runtime_claude_model_invalid");
@@ -119,8 +119,11 @@ export function buildRuntimeClaudeCommand(
   if (options.auditBrainbaseToolUse && (purpose !== "meeting-minutes" || options.structuredOutput !== "meeting-minutes")) {
     throw new ClaudeRuntimeConfigError("runtime_claude_audit_output_invalid");
   }
+  if (options.includeJudgmentHookEvents && (purpose !== "meeting-minutes" || options.structuredOutput !== "meeting-minutes")) {
+    throw new ClaudeRuntimeConfigError("runtime_claude_audit_output_invalid");
+  }
   const structuredOutputArg = options.structuredOutput
-    ? options.auditBrainbaseToolUse
+    ? options.auditBrainbaseToolUse || options.includeJudgmentHookEvents
       ? ` --output-format stream-json --verbose --include-hook-events --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : "";
