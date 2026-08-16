@@ -134,7 +134,9 @@ export interface TenantPartitionInput {
     | "cache"
     | "workspace"
     | "mcp_config"
-    | "secret_handle";
+    | "secret_handle"
+    | "usage"
+    | "idempotency";
   connection_id: string;
   workspace_id: string;
   channel_id: string;
@@ -147,21 +149,21 @@ export interface ContainerLease {
   tenant_id: string;
   lease_id: string;
   operation_id: string;
-  state: "clean" | "dirty";
+  state: "clean" | "leased" | "dirty" | "destroyed";
+  sanitization_receipt_id?: string;
   leased_at: string;
   expires_at: string;
 }
 
 export interface ContainerSanitizationReceipt {
-  schema_version: "1.0";
-  container_id: string;
-  previous_tenant_id: string;
-  next_tenant_id: string;
+  sanitation_receipt_id: string;
+  lease_id: string;
+  tenant_hash: string;
   operation_id: string;
-  image_digest: string;
-  completed_at: string;
   checks: Record<string, boolean>;
-  result: "passed" | "destroyed";
+  completed_at: string;
+  image_digest: string;
+  result: "passed" | "failed" | "unobservable";
 }
 
 export interface DeploymentProfile {
