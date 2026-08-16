@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-mana-multitenant-runtime",
+  "spec_id": null,
+  "evaluated_at": "2026-08-16T12:41:48.987Z",
+  "status": "inconclusive",
+  "reason": "no inferred spec found",
+  "summary": {
+    "spec_code_drift": 0,
+    "spec_test_drift": 0,
+    "code_test_drift": 0,
+    "spec_pr_drift": 0
+  },
+  "items": []
+}
