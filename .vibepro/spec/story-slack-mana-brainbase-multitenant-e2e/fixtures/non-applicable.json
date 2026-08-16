@@ -1,0 +1,31 @@
+{
+  "schema_version": "0.1.0",
+  "fixture_id": "FX-NA-001",
+  "fixture_kind": "non_applicable",
+  "description": "compatible OSSでCloud固有billing UIだけがnon-applicableになる境界。共通tenant契約は免除しない。",
+  "deployment": {
+    "mode": "self_hosted",
+    "protocol_version": "mana-brainbase-tenant-context/v1",
+    "advertised_optional_capabilities": {
+      "cloud_billing_dashboard": "non_applicable"
+    }
+  },
+  "expected": {
+    "non_applicable_capabilities": ["cloud_billing_dashboard"],
+    "still_required": [
+      "tenant_resolution",
+      "connection_revision_validation",
+      "actor_project_capability_authorization",
+      "credential_scope_enforcement",
+      "correlation_and_idempotency",
+      "usage_receipt",
+      "failure_classification"
+    ],
+    "silent_protocol_downgrade": "forbidden",
+    "tenant_or_credential_fallback": "forbidden"
+  },
+  "execution_evidence": {
+    "status": "not_collected",
+    "note": "Applicability boundary only; compatible OSS conformance has not been executed."
+  }
+}

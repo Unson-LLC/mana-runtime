@@ -1,0 +1,40 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-mana-brainbase-multitenant-e2e",
+  "assessor": "VibePro assessMultiTenantArchitecture",
+  "contract_source": "Issue #466 / merged PR #467",
+  "validator_source_commit": "7c1534f6c0ca7badc0a22ddf5b6caba1fde0b94e",
+  "mode": "draft",
+  "applicable": true,
+  "activation_reasons": [
+    "explicit_applicability"
+  ],
+  "status": "invalid",
+  "coverage": {
+    "status": "inconclusive",
+    "scanners": {}
+  },
+  "draft_spec_validation": {
+    "ok": true,
+    "error_count": 0,
+    "warning_count": 11,
+    "clause_count": 12
+  },
+  "structural_contract_error_count": 0,
+  "unverified_surface_count": 9,
+  "review_finding_count": 2,
+  "findings": [
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.slack_ingress" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.brainbase_resolution" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.queue_message" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.durable_runtime_state" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.container_or_sandbox" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.tool_invocation" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.brainbase_api" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.usage_receipt" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.slack_delivery" },
+    { "severity": "review", "code": "scanner_coverage_unknown", "path": "verification.scanner_coverage" },
+    { "severity": "review", "code": "evidence_missing", "path": "verification.evidence" }
+  ],
+  "interpretation": "The draft contract satisfies Issue #466 structural requirements. Status remains invalid because no implementation, Graph, scanner, negative-run, Slack, Receipt, or production evidence has been collected."
+}

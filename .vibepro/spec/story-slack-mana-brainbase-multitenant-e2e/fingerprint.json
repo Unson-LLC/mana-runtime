@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-mana-brainbase-multitenant-e2e",
+  "recorded_from": "vibepro spec fingerprint",
+  "generated_at": "2026-08-16T12:39:56.498Z",
+  "inputs_digest": {
+    "story_sha": "sha256:7efd19bb90c4e8633f926e408694232414009a798b1995ee9452151613c83313",
+    "code_sha": "sha256:7a8dec718898c17d30bd09badc591c09f759435d17fbaa2cc8a3065bfaec2765",
+    "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925",
+    "architecture_sha": "sha256:c4610ec8db5d7532d537e2aabfb33429ff2000dbf9c3c73fe341468bc161a23f"
+  },
+  "draft_spec_sha256": "6ec475a6fc7aa625dfc91b23132c2660935582f34314576cf90852ffbf7ccd4c",
+  "story_path": "docs/management/stories/active/story-slack-mana-brainbase-multitenant-e2e.md",
+  "acceptance_criteria_count": 12,
+  "architecture_files": [
+    "docs/architecture/story-mana-multitenant-runtime.md",
+    "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md"
+  ],
+  "previous_accepted_spec_present": false
+}

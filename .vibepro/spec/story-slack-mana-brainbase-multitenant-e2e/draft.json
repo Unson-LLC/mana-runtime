@@ -1,0 +1,1025 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-mana-brainbase-multitenant-e2e",
+  "lifecycle": "draft",
+  "story_context": "SlackからBrainbaseまでのmulti-tenant E2Eで、tenant_id、workspace connection、credential、runtime state、usage Receiptをcross-tenant混線なく扱う。Cloudとcompatible OSSの共通契約を固定する。",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "specification"
+  },
+  "contract_status": {
+    "decision": "fixed_for_parallel_implementation",
+    "implementation_evidence": "not_collected",
+    "production_evidence": "not_collected",
+    "note": "契約値は並列実装の入力として固定する。実装済み・本番確認済みを意味しない。"
+  },
+  "common_contract": {
+    "protocol_version": "mana-brainbase-tenant-context/v1",
+    "canonical_tenant_owner": {
+      "system": "Brainbase",
+      "key": "tenant_id",
+      "rule": "Slack workspace、channel、project、credential、runtime placementからtenant_idを推論してはならない。"
+    },
+    "workspace_connection": {
+      "canonical_owner": "Brainbase",
+      "required_fields": [
+        "workspace_connection_id",
+        "revision",
+        "status",
+        "slack_workspace_id",
+        "slack_app_id",
+        "tenant_id",
+        "credential_mode"
+      ],
+      "revision_rule": "受付時と各不可逆副作用直前に同一revisionを再確認し、stale、revoked、workspace/app不一致はbusiness API前に拒否する。"
+    },
+    "tenant_context_envelope": {
+      "required_fields": {
+        "protocol_version": "string",
+        "tenant_id": "string",
+        "workspace_connection.workspace_connection_id": "string",
+        "workspace_connection.revision": "integer",
+        "workspace_connection.slack_workspace_id": "string",
+        "workspace_connection.slack_app_id": "string",
+        "workspace_connection.status": "active",
+        "actor.person_id": "string",
+        "actor.authenticated_subject_id": "string",
+        "authorization.project_ids": "string[]",
+        "authorization.capability_ids": "string[]",
+        "authorization.placement_id": "string",
+        "request.slack_event_id": "string",
+        "request.correlation_id": "string",
+        "request.idempotency_key": "string",
+        "credential.mode": "cloud_standard|customer_oauth|customer_api",
+        "credential.opaque_reference": "string",
+        "deployment.mode": "managed_shared|managed_dedicated|customer_managed|self_hosted"
+      },
+      "immutable_fields": [
+        "protocol_version",
+        "tenant_id",
+        "workspace_connection.workspace_connection_id",
+        "workspace_connection.revision",
+        "actor.person_id",
+        "request.slack_event_id",
+        "request.correlation_id"
+      ],
+      "forbidden_fields": [
+        "credential.raw_secret",
+        "credential.access_token",
+        "credential.refresh_token",
+        "authorization.bearer_token"
+      ],
+      "missing_or_ambiguous_behavior": "deny_before_business_api"
+    },
+    "authorization": {
+      "actor_source": "Brainbase canonical person resolved from authenticated Slack workspace and user binding",
+      "project_rule": "requested project_ids must be a subset of Brainbase-authorized projects for tenant_id and actor.person_id",
+      "capability_rule": "requested capability_ids must be a subset of the selected placement and connection contract",
+      "revalidation_points": [
+        "slack_ingress",
+        "queue_consumer",
+        "runtime_before_tool",
+        "brainbase_api_boundary",
+        "slack_delivery_boundary"
+      ],
+      "cross_tenant_fallback": "forbidden"
+    },
+    "correlation_and_idempotency": {
+      "correlation_rule": "One correlation_id is created for one accepted Slack event and is preserved unchanged through reply Receipt.",
+      "idempotency_derivation": "sha256(protocol_version|tenant_id|workspace_connection_id|revision|slack_event_id|operation_id)",
+      "idempotency_scope": "tenant_id + workspace_connection_id + revision + operation_id",
+      "retry_rule": "A retry reuses the same idempotency_key; a different tenant, revision, operation, payload contract, or actor must not reuse it.",
+      "side_effect_limit": "At most one accepted Brainbase write and one Slack reply per operation idempotency scope."
+    },
+    "credential_modes": {
+      "allowed": [
+        "cloud_standard",
+        "customer_oauth",
+        "customer_api"
+      ],
+      "lookup_key": "tenant_id",
+      "transport": "opaque_reference_only",
+      "billing_rule": "billing principal and usage attribution follow the Brainbase workspace connection revision; unavailable or missing attribution is not zero.",
+      "fallback": "forbidden"
+    },
+    "usage_and_receipt": {
+      "required_fields": [
+        "receipt_id",
+        "protocol_version",
+        "tenant_id",
+        "workspace_connection_id",
+        "workspace_connection_revision",
+        "correlation_id",
+        "idempotency_key",
+        "actor_person_id",
+        "project_id",
+        "capability_id",
+        "operation_id",
+        "deployment_mode",
+        "credential_mode",
+        "outcome",
+        "failure_code",
+        "usage.state",
+        "usage.observed_units",
+        "reply.state"
+      ],
+      "usage_states": [
+        "collected",
+        "partial",
+        "not_collected"
+      ],
+      "failure_accounting": "Record observed usage on failures; missing, unavailable, partial, or timeout must not be represented as zero or success.",
+      "secret_policy": "No raw credential, token, authorization header, or secret value is recorded."
+    },
+    "failure_classification": [
+      {
+        "code": "TENANT_UNKNOWN",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "TENANT_AMBIGUOUS",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "WORKSPACE_CONNECTION_REVOKED",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "WORKSPACE_CONNECTION_STALE_REVISION",
+        "class": "deny",
+        "retryable": true,
+        "business_api_called": false
+      },
+      {
+        "code": "WORKSPACE_OR_APP_MISMATCH",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "ACTOR_SCOPE_MISMATCH",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "PROJECT_SCOPE_MISMATCH",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "CAPABILITY_SCOPE_MISMATCH",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "CROSS_TENANT_CANDIDATE",
+        "class": "deny_and_audit",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "QUOTA_EXCEEDED",
+        "class": "quota",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "UPSTREAM_UNAVAILABLE",
+        "class": "unavailable",
+        "retryable": true,
+        "business_api_called": "unknown_until_receipt"
+      },
+      {
+        "code": "PARTIAL_RESULT",
+        "class": "partial",
+        "retryable": "operation_contract",
+        "business_api_called": true
+      },
+      {
+        "code": "TIMEOUT",
+        "class": "timeout",
+        "retryable": true,
+        "business_api_called": "unknown_until_receipt"
+      },
+      {
+        "code": "RETRY_EXHAUSTED",
+        "class": "failed",
+        "retryable": false,
+        "business_api_called": "receipt_required"
+      },
+      {
+        "code": "IDEMPOTENCY_CONFLICT",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "FALLBACK_FORBIDDEN",
+        "class": "deny_and_audit",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "SECRET_ARTIFACT_FORBIDDEN",
+        "class": "deny_and_audit",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "REPLY_OWNERSHIP_CONFLICT",
+        "class": "deny_and_audit",
+        "retryable": false,
+        "business_api_called": "receipt_required"
+      },
+      {
+        "code": "PROTOCOL_VERSION_UNSUPPORTED",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "NO_DATA",
+        "class": "empty",
+        "retryable": false,
+        "business_api_called": true
+      }
+    ],
+    "deployment_compatibility": {
+      "required_modes": [
+        "managed_shared",
+        "managed_dedicated",
+        "customer_managed",
+        "self_hosted"
+      ],
+      "common_required_capabilities": [
+        "tenant_resolution",
+        "connection_revision_validation",
+        "actor_project_capability_authorization",
+        "credential_scope_enforcement",
+        "correlation_and_idempotency",
+        "usage_receipt",
+        "failure_classification"
+      ],
+      "optional_capability_rule": "A capability may be non-applicable only when explicitly advertised as optional for that deployment mode. Tenant isolation, authorization, idempotency, failure classification, and Receipt are never non-applicable.",
+      "version_rule": "Cloud and compatible OSS must accept mana-brainbase-tenant-context/v1 or fail with PROTOCOL_VERSION_UNSUPPORTED; silent downgrade is forbidden."
+    },
+    "fallback_policy": {
+      "tenant": "forbidden",
+      "workspace_connection": "forbidden",
+      "actor": "forbidden",
+      "project": "forbidden",
+      "capability": "forbidden",
+      "credential": "forbidden",
+      "runtime_placement": "forbidden",
+      "protocol_version": "forbidden"
+    }
+  },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenant_id",
+      "resolved_from": [
+        "Brainbase.workspace_connection(slack_workspace_id,slack_app_id)"
+      ],
+      "resolution_point": "Brainbase canonical workspace connection resolution before any business API call",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "slack_ingress",
+        "brainbase_resolution",
+        "queue_message",
+        "durable_runtime_state",
+        "container_or_sandbox",
+        "tool_invocation",
+        "brainbase_api",
+        "usage_receipt",
+        "slack_delivery"
+      ],
+      "verified_surfaces": []
+    },
+    "resources": [
+      {
+        "name": "workspace_connection_projection",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/workspace_connection_id/revision",
+        "trust_zone": "brainbase_to_mana_control_plane",
+        "residue_policy": "expire after canonical revision invalidation",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "tenant_id/workspace_connection_id/revision"
+      },
+      {
+        "name": "tenant_context_envelope",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/correlation_id",
+        "trust_zone": "signed_ingress_and_internal_transport",
+        "residue_policy": "retention excludes secrets and expires by operation policy",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "opaque_reference_only"
+      },
+      {
+        "name": "queue_and_durable_runtime_state",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/workspace_connection_id/correlation_id",
+        "trust_zone": "mana_runtime_state",
+        "residue_policy": "expire after terminal Receipt retention period",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "tenant_bound_opaque_reference"
+      },
+      {
+        "name": "tool_container_or_sandbox",
+        "sharing": "tenant_or_session_isolated",
+        "tenant_key": "tenant_id",
+        "trust_zone": "mana_execution_plane",
+        "residue_policy": "destroy after operation and verify reset before reuse",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "tenant_id/workspace_connection_id/revision/operation_id"
+      },
+      {
+        "name": "credential_connection",
+        "sharing": "connection_defined",
+        "tenant_key": "tenant_id",
+        "trust_zone": "brainbase_credential_broker",
+        "residue_policy": "raw secret is never persisted in mana artifacts",
+        "data_owner": "Brainbase",
+        "operational_owner": "Brainbase",
+        "credential_scope": "tenant_id/workspace_connection_id/revision",
+        "connection_modes": [
+          "cloud_standard",
+          "customer_oauth",
+          "customer_api"
+        ]
+      },
+      {
+        "name": "usage_and_operation_receipt",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/correlation_id/operation_id",
+        "trust_zone": "brainbase_canonical_evidence",
+        "residue_policy": "customer retention policy without raw secrets",
+        "data_owner": "Brainbase",
+        "operational_owner": "Brainbase",
+        "credential_scope": "metadata_only"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenant_id",
+      "scope": "tenant_id/workspace_connection_id/revision/operation_id",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "Brainbase"
+      ],
+      "residency": "Declared by the Brainbase workspace connection and preserved by each deployment adapter",
+      "migration": "Revisioned connection migration; old and new revisions cannot be active for the same operation",
+      "rollback": "Revoke the new revision and resume only from an explicitly active prior revision; never infer or silently fall back"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_shared",
+      "managed_dedicated",
+      "customer_managed",
+      "self_hosted"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "no_data",
+      "cross_tenant_candidate"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "BrainbaseTenant",
+        "WorkspaceConnection",
+        "Person",
+        "Project",
+        "Capability",
+        "OperationReceipt"
+      ],
+      "boundary_edges": [
+        "WorkspaceConnection->Tenant",
+        "SlackEvent->WorkspaceConnection",
+        "Person->Tenant",
+        "Person->Project",
+        "Project->Capability",
+        "TenantContextEnvelope->RuntimeSurface",
+        "OperationReceipt->Tenant"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected",
+      "evidence_state": "not_collected",
+      "note": "Draft Spec defines required scanners and fixtures; implementation, Graph, and negative-run evidence has not been collected."
+    }
+  },
+  "responsibilities": {
+    "brainbase": [
+      "Own canonical tenant_id and workspace connection identity/revision/status.",
+      "Resolve authenticated actor person_id and authorize project_ids and capability_ids.",
+      "Own credential mode, tenant-bound opaque credential reference, billing contract, quota policy, and canonical Graph/task readback.",
+      "Persist canonical usage and operation Receipt without raw secrets.",
+      "Return explicit deny, unavailable, empty, partial, and timeout semantics."
+    ],
+    "mana_runtime": [
+      "Verify Slack authenticity and transport the immutable tenant context envelope across every runtime boundary.",
+      "Revalidate workspace connection revision and authorization before tools, Brainbase API calls, and Slack delivery.",
+      "Partition queue, durable state, container/sandbox, tools, credentials, results, and reply delivery by tenant scope.",
+      "Enforce correlation and idempotency for Brainbase writes and Slack replies.",
+      "Observe usage, report partial or unknown usage honestly, and emit one reply outcome."
+    ],
+    "shared_contract": [
+      "Maintain protocol version and compatibility fixtures.",
+      "Use the same failure codes and Receipt schema in Cloud and compatible OSS.",
+      "Prohibit all implicit fallback paths and preserve not_collected as distinct from zero or success."
+    ]
+  },
+  "fixtures": [
+    {
+      "id": "FX-POS-001",
+      "kind": "positive",
+      "file": ".vibepro/spec/story-slack-mana-brainbase-multitenant-e2e/fixtures/positive.json",
+      "execution_status": "not_collected"
+    },
+    {
+      "id": "FX-NEG-001",
+      "kind": "negative",
+      "file": ".vibepro/spec/story-slack-mana-brainbase-multitenant-e2e/fixtures/negative.json",
+      "execution_status": "not_collected"
+    },
+    {
+      "id": "FX-NA-001",
+      "kind": "non_applicable",
+      "file": ".vibepro/spec/story-slack-mana-brainbase-multitenant-e2e/fixtures/non-applicable.json",
+      "execution_status": "not_collected"
+    }
+  ],
+  "acceptance_criteria_mapping": [
+    {
+      "ac_id": "AC-001",
+      "clause_id": "C-001",
+      "fixtures": [
+        "FX-POS-001"
+      ],
+      "responsible": [
+        "Brainbase",
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-002",
+      "clause_id": "C-002",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "Brainbase"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-003",
+      "clause_id": "C-003",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "Brainbase",
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-004",
+      "clause_id": "C-004",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-005",
+      "clause_id": "C-005",
+      "fixtures": [
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "Brainbase",
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-006",
+      "clause_id": "C-006",
+      "fixtures": [
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "Brainbase",
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-007",
+      "clause_id": "C-007",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "Brainbase"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-008",
+      "clause_id": "C-008",
+      "fixtures": [
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "Brainbase",
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-009",
+      "clause_id": "C-009",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-010",
+      "clause_id": "C-010",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NA-001"
+      ],
+      "responsible": [
+        "Brainbase",
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-011",
+      "clause_id": "C-011",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NA-001"
+      ],
+      "responsible": [
+        "Brainbase",
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    },
+    {
+      "ac_id": "AC-012",
+      "clause_id": "C-012",
+      "fixtures": [
+        "FX-POS-001",
+        "FX-NEG-001"
+      ],
+      "responsible": [
+        "mana-runtime"
+      ],
+      "evidence": "not_collected"
+    }
+  ],
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "同一Slack eventのcorrelation_idを受付からBrainbase readback、Usage Receipt、Slack replyまで変更せず保持する。",
+      "rationale": "利用者結果と両システムの証跡を同一操作として追跡するため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-001"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Invariants"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001"
+        ],
+        "required_observation": "same correlation_id at every named surface",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "Tenant AのreadはBrainbaseが許可したproject_idsだけを対象にし、結果は同じtenant_idのcanonical readbackで確認する。",
+      "rationale": "検索結果の越境とreadbackの別テナント化を防ぐため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-002"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Authorization"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NEG-001"
+        ],
+        "required_observation": "allowed projects only and same-tenant canonical readback",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "承認済みwriteはactor、tenant_id、project_id、capability_id、correlation_id、idempotency_keyを保存し、canonical readbackで同一値を確認する。",
+      "rationale": "承認主体と副作用の帰属を再現可能にするため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-003"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Write path"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NEG-001"
+        ],
+        "required_observation": "one canonical write with complete attribution",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "Tenant AとTenant Bの同時実行でsession、queue、file、credential、tool、result、Receipt、replyをtenant scope外へ共有しない。",
+      "rationale": "並行実行時のcross-tenant混線を防ぐため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-004"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Runtime isolation"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NEG-001"
+        ],
+        "required_observation": "concurrent tenant traces remain disjoint",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "Tenant Aのcredential、workspace connection、actor、project、capabilityをTenant Bの要求に利用せず、候補検出時はdeny_and_auditする。",
+      "rationale": "fallbackやキャッシュ混線による越権を防ぐため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-005"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Cross-tenant denial"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-NEG-001"
+        ],
+        "required_observation": "deny before secret resolution or business API",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-006",
+      "type": "contract",
+      "statement": "未登録、失効、stale revision、workspace/app不一致のconnectionはbusiness API前に明示的に拒否する。",
+      "rationale": "古い接続や誤ったSlack appからの副作用を防ぐため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-006"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Connection revision"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-NEG-001"
+        ],
+        "required_observation": "explicit failure and zero business side effects",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-007",
+      "type": "contract",
+      "statement": "Tenant Aのquota消費と拒否はTenant AのReceiptだけへ記録し、Tenant Bのquota、billing、処理結果へ影響させない。",
+      "rationale": "契約・利用量のテナント帰属を保つため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-007"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Quota and usage"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NEG-001"
+        ],
+        "required_observation": "tenant-local quota delta and Receipt",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-008",
+      "type": "contract",
+      "statement": "unavailable、partial、timeout、usage未取得を0件、0利用、成功へ変換せず、分類と観測済みusageをReceiptへ残す。",
+      "rationale": "障害と空結果を区別し、課金・再試行・利用者説明を正しくするため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-008"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Failure semantics"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-NEG-001"
+        ],
+        "required_observation": "failure classification distinct from empty and success",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-009",
+      "type": "contract",
+      "statement": "retryは同じidempotency_keyを再利用し、同じoperation scopeでBrainbase writeとSlack replyをそれぞれ最大1回にする。",
+      "rationale": "再試行で二重書き込みや二重返信を起こさないため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-009"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Idempotency"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NEG-001"
+        ],
+        "required_observation": "at most one write and one reply across retry",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-010",
+      "type": "contract",
+      "statement": "cloud_standard、customer_oauth、customer_apiは同じtenant envelope、failure、usage Receipt契約を使い、billing principalだけをconnection revisionから決める。",
+      "rationale": "credential方式の違いをテナント境界の違いにしないため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-010"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Credential modes"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NA-001"
+        ],
+        "required_observation": "mode-specific billing with common isolation contract",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-011",
+      "type": "contract",
+      "statement": "Cloudとcompatible OSSはprotocol v1の必須能力を共有し、任意能力だけを明示的non-applicableにできる。",
+      "rationale": "配備形態差でtenant isolationやReceiptを省略させないため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-011"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Deployment variants"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NA-001"
+        ],
+        "required_observation": "required capabilities equal across Cloud and OSS",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    },
+    {
+      "id": "C-012",
+      "type": "contract",
+      "statement": "Cloudflareの選択済みplacementだけがSlack replyを1回返し、legacyまたは他deploymentは同一eventへ返信しない。",
+      "rationale": "並行deploymentからの二重返信を防ぐため。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "id": "AC-012"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md",
+            "section": "Reply ownership"
+          }
+        ]
+      },
+      "verification_contract": {
+        "fixtures": [
+          "FX-POS-001",
+          "FX-NEG-001"
+        ],
+        "required_observation": "one Cloudflare reply and zero legacy/other replies",
+        "status": "not_collected"
+      },
+      "first_seen_at": "2026-08-16T12:41:31.795Z",
+      "last_revised_at": "2026-08-16T12:41:31.795Z"
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "OQ-001",
+      "question": "Brainbaseがworkspace connection解決とrevision再確認に公開する正式なAPI名・Graph entity field名は何か。",
+      "owner": "Brainbase lane",
+      "impact": "wire field name only; canonical ownership and deny semantics are fixed"
+    },
+    {
+      "id": "OQ-002",
+      "question": "Operation ReceiptとSlack reply idempotency ledgerの正式な保存API・保持期間はどこで確定するか。",
+      "owner": "Brainbase lane + mana-runtime lane",
+      "impact": "storage endpoint and retention; idempotency scope and at-most-once outcome are fixed"
+    },
+    {
+      "id": "OQ-003",
+      "question": "protocol v1の互換期間、minor capability negotiation、PROTOCOL_VERSION_UNSUPPORTEDのtransport表現をどこで管理するか。",
+      "owner": "cross-contract lane",
+      "impact": "negotiation mechanics; no silent downgrade is fixed"
+    },
+    {
+      "id": "OQ-004",
+      "question": "quotaの警告閾値、超過許可、customer API billingの具体的なplan値は何か。",
+      "owner": "Brainbase lane",
+      "impact": "plan values; tenant-local attribution and honest Receipt semantics are fixed"
+    },
+    {
+      "id": "OQ-005",
+      "question": "connection revision再確認のcache TTLと、各不可逆副作用直前のfreshness取得方式は何か。",
+      "owner": "mana-runtime lane + Brainbase lane",
+      "impact": "performance and API call pattern; stale revision denial is fixed"
+    }
+  ],
+  "generated_at": "2026-08-16T12:41:31.790Z",
+  "previous_spec_id": null
+}
