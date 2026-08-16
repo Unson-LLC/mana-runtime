@@ -1,0 +1,65 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-task-canvas-ownership",
+  "generated_by": { "caller": "codex", "stage": "ai_synthesis" },
+  "clauses": [
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "Manaは信頼済みtargetで有効化され、workspace、channel、manaCanvasIdが一致するCanvasだけを更新し、Slack上の最初のCanvasを自動採用しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "所有権境界" }],
+        "code_refs": [
+          { "file": "packages/cloudflare-techknight-poc/src/task-board-targets.ts", "anchor": "TaskBoardTarget" },
+          { "file": "packages/cloudflare-techknight-poc/src/task-board.ts", "anchor": "refreshTaskBoard" }
+        ],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "case": "updates only the explicitly bound Mana Canvas" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "must_cover": "updates only the explicitly bound Mana Canvas" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "管理Canvasが未設定、無効、Slack上の紐付けと不一致、または消失した場合は自動作成・自動採用・再作成をせずSlack書込み0件で終了する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "所有権境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-board.ts", "anchor": "publishCanvas" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "case": "does not adopt or create an unbound channel Canvas" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "must_cover": "does not adopt or create an unbound channel Canvas" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "scheduled更新とタスク変更後更新は有効かつ管理Canvas IDを持つtargetだけをenqueueし、consumerはtrusted targetを再解決してQueue payloadのscopeを検証する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "所有権境界" }],
+        "code_refs": [
+          { "file": "packages/cloudflare-techknight-poc/src/task-runtime-entrypoints.ts", "anchor": "consumeTaskBoardRepair" },
+          { "file": "packages/cloudflare-techknight-poc/src/task-runtime-entrypoints.ts", "anchor": "enqueueScheduledTaskBoardRepair" }
+        ],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-runtime-entrypoints.test.ts", "case": "enqueues and consumes only enabled bound targets" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-runtime-entrypoints.test.ts", "must_cover": "enqueues and consumes only enabled bound targets" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "本番targetは管理Canvas IDを確認して対象別に有効化するまで既定で更新対象外とし、ログにはtargetと所有権判定結果を残すがtokenやCanvas本文を含めない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "移行" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc", "anchor": "TASK_BOARD_TARGETS_JSON" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "keeps task board targets disabled until Mana Canvas ownership is bound" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "keeps task board targets disabled until Mana Canvas ownership is bound" }] },
+      "confidence": 0.99
+    }
+  ]
+}

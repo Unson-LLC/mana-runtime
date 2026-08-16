@@ -14,6 +14,8 @@ export interface TaskBoardRepairEvent {
   workspaceId: string;
   channelId: string;
   targetId: string;
+  manaCanvasId: string;
+  bindingRevision: number;
   reason: "task_write" | "scheduled" | "manual";
   requestedAt: string;
 }
@@ -27,6 +29,7 @@ export interface TaskBoardEnv {
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
   TASK_BOARD_TARGETS_JSON?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
+  TASK_BOARD_CANVAS_ID?: string;
   SLACK_EXPECTED_TEAM_ID?: string;
   TENANT_ID?: string;
 }
@@ -107,7 +110,8 @@ async function slackApiGet(
   return payload;
 }
 
-function canvasIdFromInfo(payload: Record<string, unknown>): string | null {
+function canvasIdsFromInfo(payload: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>();
   const channel = payload.channel as Record<string, unknown> | undefined;
   const properties = channel?.properties as Record<string, unknown> | undefined;
   for (const key of ["tabs", "tabz"] as const) {
@@ -117,65 +121,39 @@ function canvasIdFromInfo(payload: Record<string, unknown>): string | null {
       if (!tab || typeof tab !== "object" || (tab as Record<string, unknown>).type !== "canvas") continue;
       const data = (tab as Record<string, unknown>).data;
       const id = data && typeof data === "object" ? (data as Record<string, unknown>).file_id : null;
-      if (typeof id === "string" && id) return id;
+      if (typeof id === "string" && id) ids.add(id);
     }
   }
   const canvas = properties?.canvas as Record<string, unknown> | undefined;
   const id = canvas?.file_id ?? canvas?.id;
-  return typeof id === "string" && id ? id : null;
+  if (typeof id === "string" && id) ids.add(id);
+  return ids;
 }
 
 async function publishCanvas(
   channelId: string,
+  canvasId: string,
   token: string,
   markdown: string,
   fetchImpl: typeof fetch,
-): Promise<"created" | "updated"> {
-  const createOrAdopt = async (): Promise<"created" | "updated"> => {
-    try {
-      await slackApi("conversations.canvases.create", token, {
-        channel_id: channelId,
-        title: "タスクボード",
-        document_content: { type: "markdown", markdown },
-      }, fetchImpl);
-      return "created";
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes("channel_canvas_already_exists")) throw error;
-      const latestInfo = await slackApiGet("conversations.info", token, { channel: channelId }, fetchImpl);
-      const adoptedId = canvasIdFromInfo(latestInfo);
-      if (!adoptedId) throw error;
-      await slackApi("canvases.edit", token, {
-        canvas_id: adoptedId,
-        changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }],
-      }, fetchImpl);
-      return "updated";
-    }
-  };
-
+): Promise<"updated"> {
   const info = await slackApiGet("conversations.info", token, { channel: channelId }, fetchImpl);
-  const existingId = canvasIdFromInfo(info);
-  if (existingId) {
-    try {
-      await slackApi("canvases.edit", token, {
-        canvas_id: existingId,
-        changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }],
-      }, fetchImpl);
-      return "updated";
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes("canvas_not_found")) throw error;
-      return createOrAdopt();
-    }
-  }
-  return createOrAdopt();
+  if (!canvasIdsFromInfo(info).has(canvasId)) throw new Error("task_board_canvas_binding_mismatch");
+  await slackApi("canvases.edit", token, {
+    canvas_id: canvasId,
+    changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }],
+  }, fetchImpl);
+  return "updated";
 }
 
 export async function refreshTaskBoard(
   env: TaskBoardEnv,
   options: { fetch?: typeof fetch; now?: () => string } = {},
-): Promise<{ outcome: "disabled" | "created" | "updated"; displayed?: number; hasMore?: boolean }> {
+): Promise<{ outcome: "disabled" | "updated"; displayed?: number; hasMore?: boolean }> {
   if (env.RUNTIME_TASK_BOARD_ENABLED !== "true") return { outcome: "disabled" };
   const projects = parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
-  if (!projects.length || !env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_BOT_TOKEN || !env.SLACK_ALLOWED_CHANNEL_ID) {
+  if (!projects.length || !env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_BOT_TOKEN ||
+    !env.SLACK_ALLOWED_CHANNEL_ID || !env.TASK_BOARD_CANVAS_ID) {
     throw new Error("task_board_not_configured");
   }
   const fetchImpl = options.fetch ?? fetch;
@@ -188,6 +166,7 @@ export async function refreshTaskBoard(
   const now = options.now?.() ?? new Date().toISOString();
   const outcome = await publishCanvas(
     env.SLACK_ALLOWED_CHANNEL_ID,
+    env.TASK_BOARD_CANVAS_ID,
     env.SLACK_BOT_TOKEN,
     renderBoundedTaskBoard(board, projects, now),
     fetchImpl,
