@@ -48,7 +48,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:13:01.871Z"
+      "last_revised_at": "2026-08-16T11:42:01.148Z"
     },
     {
       "id": "INV-001",
@@ -113,7 +113,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:13:01.871Z"
+      "last_revised_at": "2026-08-16T11:42:01.148Z"
     },
     {
       "id": "C-002",
@@ -165,7 +165,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:13:01.871Z"
+      "last_revised_at": "2026-08-16T11:42:01.148Z"
     },
     {
       "id": "C-003",
@@ -209,7 +209,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:13:01.871Z"
+      "last_revised_at": "2026-08-16T11:42:01.148Z"
     },
     {
       "id": "INV-002",
@@ -285,7 +285,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:13:01.871Z"
+      "last_revised_at": "2026-08-16T11:42:01.148Z"
     },
     {
       "id": "C-004",
@@ -458,12 +458,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T08:00:00.000Z",
-      "last_revised_at": "2026-08-16T11:13:01.871Z"
+      "last_revised_at": "2026-08-16T11:42:01.148Z"
     },
     {
-      "id": "C-005",
+      "id": "C-006",
       "type": "contract",
-      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らずSlackへ理由を表示し、runが0件になった後だけ通常のDeployment Gateで停止版を配備する。再開は明示操作とする",
+      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らず、停止前後にQueueへ到達したrouterファイルも通常処理へ流さずSlackへ理由を表示する。runが0件になった後だけ、受付停止機構を保持した停止版を通常のDeployment Gateで配備する。再開は明示操作とする",
       "origin": {
         "story_refs": [
           {
@@ -480,6 +480,12 @@
         "code_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-deployment-gate.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-intake-entrypoints.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/slack.ts"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/slack-interactions.ts"
@@ -500,6 +506,22 @@
             "case": "pauses new intake even while active runs are still draining"
           },
           {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "persists an authenticated intake pause and returns the durable status"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a paused file event without running downstream work or requesting a retry"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "still acks a paused file event when the Slack notice fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
+            "case": "does not enqueue a file received while paused even after intake resumes"
+          },
+          {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
             "case": "explains that intake is paused without enqueueing a destination selection"
           },
@@ -516,6 +538,18 @@
             "must_cover": "pauses new intake even while active runs are still draining"
           },
           {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "persists an authenticated intake pause"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "acks a paused file event"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
+            "must_cover": "does not enqueue a file received while paused even after intake resumes"
+          },
+          {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
             "must_cover": "intake is paused without enqueueing a destination selection"
           },
@@ -526,8 +560,8 @@
         ]
       },
       "confidence": 0.99,
-      "first_seen_at": "2026-08-16T11:12:24.382Z",
-      "last_revised_at": "2026-08-16T11:13:01.871Z"
+      "first_seen_at": "2026-08-16T11:42:01.148Z",
+      "last_revised_at": "2026-08-16T11:42:01.148Z"
     }
   ],
   "planned_test_suites": [
@@ -550,6 +584,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-16T11:13:01.869Z",
-  "previous_spec_id": "2026-08-16T11:12:24.379Z"
+  "generated_at": "2026-08-16T11:42:01.147Z",
+  "previous_spec_id": "2026-08-16T11:13:01.869Z"
 }
