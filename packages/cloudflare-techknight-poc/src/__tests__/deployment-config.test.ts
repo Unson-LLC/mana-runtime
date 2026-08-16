@@ -367,6 +367,10 @@ describe("会社別Cloudflare deployment", () => {
       expect.objectContaining({ id: "pms", projectId: "proj_pms", name: "PMS", slackChannelId: "C0BKX9Y169F",
         organization: { id: "tech-knight", name: "Tech Knight" },
         github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "tech-knight-project", pathPrefix: "meetings/pms/" }) }),
+      expect.objectContaining({ id: "senpainurse", projectId: "proj_senpainurse",
+        contextProjectCode: "senpainurse", taskProjectCodes: ["senpainurse"], slackChannelId: "C0A9J7UV1KL",
+        organization: { id: "tech-knight", name: "Tech Knight" },
+        github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "senpainurse", pathPrefix: "meetings/" }) }),
       expect.objectContaining({ id: "salestailor", projectId: "proj_salestailor", slackChannelId: "C0A9ESC81UZ",
         organization: { id: "unson", name: "雲孫" },
         github: expect.objectContaining({ owner: "Unson-LLC", repo: "salestailor-project", pathPrefix: "meetings/" }) }),
@@ -391,6 +395,9 @@ describe("会社別Cloudflare deployment", () => {
     ]));
     expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-kartz", channelId: "C0BQA5BGTEH", projectCodes: ["unson"],
+    }));
+    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+      targetId: "minutes-senpainurse", channelId: "C0A9J7UV1KL", projectCodes: ["senpainurse"],
     }));
     expect(destinations).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "smartfront" }),
