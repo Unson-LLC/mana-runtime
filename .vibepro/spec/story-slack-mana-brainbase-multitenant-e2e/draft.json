@@ -8,13 +8,118 @@
     "stage": "specification"
   },
   "contract_status": {
-    "decision": "fixed_for_parallel_implementation",
+    "decision": "cross_lane_contract_fixed",
     "implementation_evidence": "not_collected",
     "production_evidence": "not_collected",
-    "note": "契約値は並列実装の入力として固定する。実装済み・本番確認済みを意味しない。"
+    "note": "PR #237を3レーン共通の実装入力とし、PR #1229とPR #236はlane_follow_upsへ追従する。実装済み・本番確認済みを意味しない。"
   },
+  "implementation_start_gate": {
+    "status": "PASS",
+    "scope": "PR #237のfingerprintを実装入力として参照するBrainbase laneとmana-runtime laneのTDD開始",
+    "conditions": [
+      "各レーンは最初のプロダクションコードcommit前にPR #237のSpec fingerprintを記録する。",
+      "PR #1229とPR #236の草案差分はlane_follow_upsに従い、横断契約を上書きしない。",
+      "fixture execution、実装、production readbackはnot_collectedのままであり、PASSは契約整合性だけを示す。"
+    ],
+    "blocking_open_decisions": 0
+  },
+  "cross_lane_decision_table": [
+    {
+      "id": "D-001",
+      "topic": "TenantContextEnvelope fields, signature, and TTL",
+      "status": "fixed",
+      "decision": "Canonical snake_case envelope defined by common_contract.tenant_context_envelope; Brainbase issues a detached JWS using EdDSA/Ed25519 over RFC 8785 canonical JSON, excluding integrity; maximum TTL is 300 seconds with 30 seconds clock skew.",
+      "brainbase_follow_up": "Replace schema_version/protocol_version draft variants with the canonical envelope, publish current and retiring verification keys, and issue immutable envelopes.",
+      "mana_runtime_follow_up": "Replace the camelCase version:1 draft envelope, verify JWS/time/audience at every boundary, and never extend or mutate an envelope."
+    },
+    {
+      "id": "D-002",
+      "topic": "Identifier formats",
+      "status": "fixed",
+      "decision": "New shared identifiers use a lowercase type prefix plus uppercase Crockford ULID; provider IDs and existing Brainbase entity IDs remain opaque canonical strings and are never inferred or rewritten.",
+      "brainbase_follow_up": "Add op_<ULID> and the shared opaque-ID constraints to the ID table.",
+      "mana_runtime_follow_up": "Adopt the prefixed ULID formats for generated IDs and preserve Slack/Brainbase opaque IDs byte-for-byte."
+    },
+    {
+      "id": "D-003",
+      "topic": "Workspace connection revision recheck",
+      "status": "fixed",
+      "decision": "Resolve at ingress, invalidate projections from ordered events, and perform an authoritative expected-revision read immediately before credential lease, Brainbase write, and Slack delivery; cache TTL is at most 30 seconds and cache alone never authorizes an irreversible effect.",
+      "brainbase_follow_up": "Expose authoritative conditional revision validation and monotonic revision events; event delivery is an optimization, not authority.",
+      "mana_runtime_follow_up": "Add the four recheck points and fail closed on stale, revoked, unavailable, or mismatched connection state."
+    },
+    {
+      "id": "D-004",
+      "topic": "Protocol compatibility",
+      "status": "fixed",
+      "decision": "Protocol ID is mana-brainbase-tenant-context, current version is 1.0, supported range is >=1.0 <2.0, peers negotiate the highest mutually supported minor, and unsupported required capabilities or major versions fail without downgrade; deprecation notice is at least 90 days.",
+      "brainbase_follow_up": "Return selected_version, supported_range, required/optional capabilities, and compatibility_until in negotiation.",
+      "mana_runtime_follow_up": "Implement same-major negotiation and explicit PROTOCOL_VERSION_UNSUPPORTED/PROTOCOL_CAPABILITY_UNSUPPORTED failures."
+    },
+    {
+      "id": "D-005",
+      "topic": "Credential broker",
+      "status": "fixed",
+      "decision": "Brainbase is the sole credential and refresh-state owner. mana-runtime carries only an opaque credential_ref and requests a single-use, operation/audience-bound lease of at most 60 seconds; raw material may exist only in trusted volatile injection memory and never in queues, Durable Objects, model/tool payloads, disk, logs, fixtures, or Receipts.",
+      "brainbase_follow_up": "Own OAuth refresh CAS/audit and implement broker lease/proxy issuance bound to tenant, connection revision, operation, audience, and mode.",
+      "mana_runtime_follow_up": "Remove canonical OAuth refresh ownership, consume only scoped leases through a trusted injector, scrub after use, and prohibit alternate-mode fallback."
+    },
+    {
+      "id": "D-006",
+      "topic": "Quota, usage, Receipt, and idempotency",
+      "status": "fixed",
+      "decision": "Brainbase owns contract/quota and canonical UsageEvent/OperationReceipt/business-effect ledger; mana-runtime owns queue and Slack-delivery claims. Quota values are revisioned contract data, usage collection_state is separate from outcome, idempotency keys use the fixed length-prefixed formula, and ledgers retain terminal claims for at least 30 days.",
+      "brainbase_follow_up": "Adopt fixed quota/usage/Receipt enums and schemas, persist business/Receipt claims, and reject payload/context hash conflicts.",
+      "mana_runtime_follow_up": "Adopt the same operation IDs and key derivation, split Brainbase-write and Slack-delivery claims, and report observed usage without inventing zero."
+    },
+    {
+      "id": "D-007",
+      "topic": "partial and not_collected vocabulary",
+      "status": "fixed",
+      "decision": "collection_state is collected|partial|not_collected; outcome is succeeded|failed|cancelled|timed_out; unavailable/timeout are failure observations, and a collected empty result is NO_DATA with observed_units=0 rather than not_collected.",
+      "brainbase_follow_up": "Map measured to collected and unavailable to not_collected plus an explicit failure code.",
+      "mana_runtime_follow_up": "Remove not_measured from outcome and emit collection_state independently."
+    },
+    {
+      "id": "D-008",
+      "topic": "Container sanitization",
+      "status": "fixed",
+      "decision": "Protocol v1 forbids cross-tenant Container reuse. Same-tenant reuse requires a complete sanitization receipt; any failed or unobservable check destroys the Container, and persistent model/Claude sessions never cross operation leases.",
+      "brainbase_follow_up": "No execution-plane implementation; consume sanitization status only as Receipt evidence when present.",
+      "mana_runtime_follow_up": "Tighten the draft from conditional cross-tenant reuse to tenant-change-always-destroy and implement the fixed receipt checks."
+    },
+    {
+      "id": "D-009",
+      "topic": "Cloud and OSS non-applicability",
+      "status": "fixed",
+      "decision": "Only explicitly optional advertised capabilities may be non_applicable with a reason. Tenant context, signature/time validation, revision checks, authorization, credential scope, isolation, idempotency, failure semantics, Usage/Receipt, and no-fallback are mandatory in Cloud and compatible OSS.",
+      "brainbase_follow_up": "Use customer_managed_oss as the wire profile and mark only listed optional capabilities unsupported/non_applicable.",
+      "mana_runtime_follow_up": "Map shared/dedicated/customer_hosted to shared_cloud/dedicated_cloud/customer_managed_oss and do not relax common controls."
+    }
+  ],
   "common_contract": {
-    "protocol_version": "mana-brainbase-tenant-context/v1",
+    "protocol": {
+      "protocol_id": "mana-brainbase-tenant-context",
+      "current_version": "1.0",
+      "supported_range": ">=1.0 <2.0",
+      "negotiation": "highest_mutually_supported_minor",
+      "required_capabilities": [
+        "signed_tenant_context",
+        "connection_revision_recheck",
+        "tenant_scoped_authorization",
+        "credential_broker_v1",
+        "usage_receipt_v1",
+        "idempotent_effects_v1",
+        "container_sanitization_v1"
+      ],
+      "optional_capabilities": [
+        "cloud_billing_export",
+        "managed_operations",
+        "shared_cloud_rls_conformance"
+      ],
+      "deprecation_notice_days_minimum": 90,
+      "incompatible_behavior": "deny_before_business_api_without_downgrade_or_fallback"
+    },
     "canonical_tenant_owner": {
       "system": "Brainbase",
       "key": "tenant_id",
@@ -23,45 +128,95 @@
     "workspace_connection": {
       "canonical_owner": "Brainbase",
       "required_fields": [
-        "workspace_connection_id",
-        "revision",
+        "connection_id",
+        "connection_revision",
+        "tenant_revision",
         "status",
-        "slack_workspace_id",
-        "slack_app_id",
+        "provider",
+        "installation_id",
+        "workspace_id",
+        "app_id",
         "tenant_id",
-        "credential_mode"
+        "credential_mode",
+        "contract_revision"
       ],
-      "revision_rule": "受付時と各不可逆副作用直前に同一revisionを再確認し、stale、revoked、workspace/app不一致はbusiness API前に拒否する。"
+      "revision_type": "integer >= 1 and monotonically increasing per connection_id",
+      "projection_cache_ttl_seconds_maximum": 30,
+      "authoritative_recheck_points": [
+        "slack_ingress_resolution",
+        "before_credential_lease",
+        "before_brainbase_write",
+        "before_slack_delivery"
+      ],
+      "revision_rule": "受付時に解決し、credential lease、Brainbase write、Slack deliveryの各不可逆副作用直前にBrainbaseへexpected connection_revisionを指定したauthoritative readを行う。stale、revoked、unavailable、workspace/app不一致はfail closedとし、cacheまたはrevision eventだけで不可逆副作用を許可しない。",
+      "event_rule": "Revision events are monotonic cache-invalidation hints; missed or reordered events are recovered by authoritative reads and never authorize an effect."
     },
     "tenant_context_envelope": {
+      "wire_format": "canonical snake_case JSON",
       "required_fields": {
-        "protocol_version": "string",
-        "tenant_id": "string",
-        "workspace_connection.workspace_connection_id": "string",
-        "workspace_connection.revision": "integer",
-        "workspace_connection.slack_workspace_id": "string",
-        "workspace_connection.slack_app_id": "string",
+        "schema_version": "1.0",
+        "protocol_id": "mana-brainbase-tenant-context",
+        "protocol_version": "1.0",
+        "issuer": "brainbase",
+        "audience": "string[]",
+        "tenant.tenant_id": "ten_<26 uppercase Crockford ULID>",
+        "tenant.tenant_revision": "integer >= 1",
+        "workspace_connection.connection_id": "wsc_<26 uppercase Crockford ULID>",
+        "workspace_connection.connection_revision": "integer >= 1",
+        "workspace_connection.provider": "slack",
+        "workspace_connection.installation_id": "provider opaque string",
+        "workspace_connection.workspace_id": "provider opaque string",
+        "workspace_connection.app_id": "provider opaque string",
         "workspace_connection.status": "active",
-        "actor.person_id": "string",
+        "actor.principal_id": "Brainbase canonical opaque ID",
+        "actor.principal_type": "person|service",
         "actor.authenticated_subject_id": "string",
-        "authorization.project_ids": "string[]",
+        "authorization.organization_ids": "Brainbase canonical opaque ID[]",
+        "authorization.project_ids": "Brainbase canonical opaque ID[]",
+        "authorization.data_scopes": "string[]",
         "authorization.capability_ids": "string[]",
-        "authorization.placement_id": "string",
-        "request.slack_event_id": "string",
-        "request.correlation_id": "string",
-        "request.idempotency_key": "string",
+        "placement.deployment_id": "dep_<26 uppercase Crockford ULID>",
+        "placement.profile": "shared_cloud|dedicated_cloud|customer_managed_oss",
+        "slack.event_id": "provider opaque string",
+        "slack.channel_id": "provider opaque string",
+        "correlation_id": "cor_<26 uppercase Crockford ULID>",
+        "operation_id": "op_<26 uppercase Crockford ULID>",
+        "idempotency_key": "ik1_<base64url SHA-256 without padding>",
+        "contract_revision": "ctr_<26 uppercase Crockford ULID>",
         "credential.mode": "cloud_standard|customer_oauth|customer_api",
-        "credential.opaque_reference": "string",
-        "deployment.mode": "managed_shared|managed_dedicated|customer_managed|self_hosted"
+        "credential.credential_ref": "opaque tenant-bound reference",
+        "credential.billing_principal_id": "Brainbase canonical opaque ID",
+        "issued_at": "RFC 3339 UTC timestamp",
+        "expires_at": "RFC 3339 UTC timestamp",
+        "integrity.method": "jws_detached",
+        "integrity.algorithm": "EdDSA",
+        "integrity.key_id": "string",
+        "integrity.value": "detached compact JWS"
+      },
+      "optional_fields": {
+        "actor.delegated_by": "Brainbase canonical opaque ID",
+        "slack.enterprise_id": "provider opaque string",
+        "slack.thread_ts": "provider opaque string",
+        "slack.requester_id": "provider opaque string"
       },
       "immutable_fields": [
+        "schema_version",
+        "protocol_id",
         "protocol_version",
-        "tenant_id",
-        "workspace_connection.workspace_connection_id",
-        "workspace_connection.revision",
-        "actor.person_id",
-        "request.slack_event_id",
-        "request.correlation_id"
+        "tenant",
+        "workspace_connection",
+        "actor",
+        "authorization",
+        "placement",
+        "slack",
+        "correlation_id",
+        "operation_id",
+        "idempotency_key",
+        "contract_revision",
+        "credential",
+        "issued_at",
+        "expires_at",
+        "audience"
       ],
       "forbidden_fields": [
         "credential.raw_secret",
@@ -69,11 +224,39 @@
         "credential.refresh_token",
         "authorization.bearer_token"
       ],
-      "missing_or_ambiguous_behavior": "deny_before_business_api"
+      "signature": {
+        "issuer": "Brainbase",
+        "canonicalization": "RFC 8785 JSON Canonicalization Scheme over the envelope with integrity omitted",
+        "serialization": "RFC 7515 detached compact JWS; signing input uses base64url(JCS payload)",
+        "algorithm": "EdDSA with Ed25519",
+        "protected_headers": {
+          "alg": "EdDSA",
+          "kid": "integrity.key_id",
+          "typ": "application/mana-tenant-context+jws"
+        },
+        "key_rotation": "Validators accept current and explicitly retiring public keys only; a retiring key remains published until every envelope it signed has expired."
+      },
+      "time_validity": {
+        "ttl_seconds_maximum": 300,
+        "clock_skew_seconds_maximum": 30,
+        "refresh": "forbidden; obtain a newly resolved and newly signed envelope",
+        "expired_behavior": "deny_before_business_api"
+      },
+      "validation_points": [
+        "slack_ingress",
+        "queue_publish",
+        "queue_claim",
+        "durable_runtime_state",
+        "container_lease",
+        "tool_invocation",
+        "brainbase_api_boundary",
+        "slack_delivery_boundary"
+      ],
+      "missing_ambiguous_invalid_or_expired_behavior": "deny_before_business_api"
     },
     "authorization": {
-      "actor_source": "Brainbase canonical person resolved from authenticated Slack workspace and user binding",
-      "project_rule": "requested project_ids must be a subset of Brainbase-authorized projects for tenant_id and actor.person_id",
+      "actor_source": "Brainbase canonical principal resolved from authenticated Slack workspace and subject binding",
+      "project_rule": "requested project_ids must be a subset of Brainbase-authorized projects for tenant.tenant_id and actor.principal_id",
       "capability_rule": "requested capability_ids must be a subset of the selected placement and connection contract",
       "revalidation_points": [
         "slack_ingress",
@@ -86,10 +269,23 @@
     },
     "correlation_and_idempotency": {
       "correlation_rule": "One correlation_id is created for one accepted Slack event and is preserved unchanged through reply Receipt.",
-      "idempotency_derivation": "sha256(protocol_version|tenant_id|workspace_connection_id|revision|slack_event_id|operation_id)",
-      "idempotency_scope": "tenant_id + workspace_connection_id + revision + operation_id",
-      "retry_rule": "A retry reuses the same idempotency_key; a different tenant, revision, operation, payload contract, or actor must not reuse it.",
-      "side_effect_limit": "At most one accepted Brainbase write and one Slack reply per operation idempotency scope."
+      "operation_rule": "Each logical side effect has one stable operation_id. Brainbase write and Slack delivery use distinct operation_id values under the same correlation_id.",
+      "length_prefix_encoding": "LP(v) = uint32be(UTF-8 byte length of v) followed by UTF-8 bytes of v",
+      "idempotency_derivation": "ik1_ + base64url_without_padding(SHA-256(LP(protocol_id) || LP(protocol_major) || LP(tenant_id) || LP(connection_id) || LP(slack_event_id) || LP(operation_id)))",
+      "idempotency_scope": "tenant_id + connection_id + slack_event_id + operation_id",
+      "retry_rule": "A retry reuses the same idempotency_key across connection revision refresh. Before an effect is claimed, a refreshed signed context may replace a stale one; after claim, any context_hash or payload_hash change fails with IDEMPOTENCY_CONFLICT.",
+      "ledger_owners": {
+        "brainbase": "credential lease, quota decision, canonical business write, UsageEvent, OperationReceipt",
+        "mana_runtime": "queue execution and Slack delivery"
+      },
+      "claim_states": [
+        "pending",
+        "claimed",
+        "succeeded",
+        "failed_terminal"
+      ],
+      "terminal_claim_retention_days_minimum": 30,
+      "side_effect_limit": "At most one accepted effect per operation_id; Brainbase write and Slack reply are independently claimed and independently receipted."
     },
     "credential_modes": {
       "allowed": [
@@ -97,41 +293,139 @@
         "customer_oauth",
         "customer_api"
       ],
-      "lookup_key": "tenant_id",
-      "transport": "opaque_reference_only",
+      "canonical_owner": "Brainbase",
+      "lookup_key": "tenant_id + connection_id + connection_revision + operation_id + audience + mode",
+      "transport": "opaque credential_ref in envelope; single-use broker lease or proxy handle at execution",
+      "lease_ttl_seconds_maximum": 60,
+      "lease_binding": [
+        "tenant_id",
+        "connection_id",
+        "connection_revision",
+        "operation_id",
+        "audience",
+        "credential_mode"
+      ],
+      "refresh_state_owner": "Brainbase",
+      "trusted_injection_rule": "If a provider requires direct credential material, only a trusted injector may materialize it in isolated volatile process memory; it is scrubbed immediately after the call and is never exposed to an untrusted model or tool payload.",
       "billing_rule": "billing principal and usage attribution follow the Brainbase workspace connection revision; unavailable or missing attribution is not zero.",
       "fallback": "forbidden"
     },
     "usage_and_receipt": {
-      "required_fields": [
+      "usage_event_required_fields": [
+        "usage_event_id",
+        "protocol_version",
+        "tenant_id",
+        "connection_id",
+        "connection_revision",
+        "contract_revision",
+        "deployment_id",
+        "correlation_id",
+        "operation_id",
+        "idempotency_key",
+        "kind",
+        "quantity",
+        "unit",
+        "outcome",
+        "collection_state",
+        "failure_code",
+        "observed_at"
+      ],
+      "receipt_required_fields": [
         "receipt_id",
         "protocol_version",
         "tenant_id",
-        "workspace_connection_id",
-        "workspace_connection_revision",
+        "connection_id",
+        "connection_revision",
+        "contract_revision",
+        "deployment_id",
         "correlation_id",
-        "idempotency_key",
-        "actor_person_id",
+        "operation_ids",
+        "idempotency_keys",
+        "actor_principal_id",
         "project_id",
         "capability_id",
-        "operation_id",
-        "deployment_mode",
+        "quota_decision",
         "credential_mode",
         "outcome",
         "failure_code",
-        "usage.state",
+        "usage.collection_state",
         "usage.observed_units",
+        "usage.unknown_fields",
         "reply.state"
       ],
-      "usage_states": [
+      "collection_states": [
         "collected",
         "partial",
         "not_collected"
       ],
-      "failure_accounting": "Record observed usage on failures; missing, unavailable, partial, or timeout must not be represented as zero or success.",
+      "outcomes": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out"
+      ],
+      "quota": {
+        "canonical_owner": "Brainbase",
+        "decision_values": [
+          "allowed",
+          "warning",
+          "hard_stopped",
+          "approval_required",
+          "unavailable"
+        ],
+        "overage_policies": [
+          "deny",
+          "allow_and_bill",
+          "allow_with_approval"
+        ],
+        "threshold_unit": "basis_points",
+        "threshold_values": "revisioned tenant contract data; no cross-contract default",
+        "check_rule": "Check the current contract_revision before any billable effect and record the decision even when unavailable or denied."
+      },
+      "empty_rule": "A successfully collected empty result is outcome=succeeded, collection_state=collected, observed_units=0, failure_code=NO_DATA.",
+      "failure_accounting": "Record observed usage on failures; missing, unavailable, partial, or timeout must use collection_state and must not be represented as zero or success.",
+      "receipt_retention": "OperationReceipt is immutable after finalization and retained under the tenant contract for at least the 30-day terminal idempotency window.",
       "secret_policy": "No raw credential, token, authorization header, or secret value is recorded."
     },
+    "container_sanitization": {
+      "protocol_v1_cross_tenant_reuse": "forbidden",
+      "tenant_change_behavior": "destroy_container",
+      "same_tenant_reuse": "allowed only within an unexpired operation lease after every required check passes",
+      "required_checks": [
+        "stop_all_child_processes",
+        "delete_workspace_tmp_and_home_artifacts",
+        "rebuild_environment_from_allowlist",
+        "unmount_and_scrub_credential_material",
+        "delete_transcript_session_and_cache",
+        "verify_no_unapproved_open_handles",
+        "verify_same_tenant_and_fresh_signed_context"
+      ],
+      "receipt_required_fields": [
+        "sanitization_receipt_id",
+        "lease_id",
+        "tenant_hash",
+        "operation_id",
+        "checks",
+        "completed_at",
+        "image_digest",
+        "result"
+      ],
+      "unobservable_or_failed_behavior": "destroy_container_and_record_CONTAINER_SANITIZATION_UNPROVEN",
+      "persistent_model_session_rule": "A persistent model or Claude session never crosses operation leases."
+    },
     "failure_classification": [
+      {
+        "code": "TENANT_CONTEXT_SIGNATURE_INVALID",
+        "class": "deny_and_audit",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "TENANT_CONTEXT_EXPIRED",
+        "class": "deny",
+        "retryable": true,
+        "business_api_called": false
+      },
       {
         "code": "TENANT_UNKNOWN",
         "class": "deny",
@@ -153,6 +447,12 @@
       {
         "code": "WORKSPACE_CONNECTION_STALE_REVISION",
         "class": "deny",
+        "retryable": true,
+        "business_api_called": false
+      },
+      {
+        "code": "WORKSPACE_CONNECTION_UNAVAILABLE",
+        "class": "unavailable",
         "retryable": true,
         "business_api_called": false
       },
@@ -235,6 +535,12 @@
         "business_api_called": false
       },
       {
+        "code": "CONTAINER_SANITIZATION_UNPROVEN",
+        "class": "deny_and_audit",
+        "retryable": true,
+        "business_api_called": false
+      },
+      {
         "code": "REPLY_OWNERSHIP_CONFLICT",
         "class": "deny_and_audit",
         "retryable": false,
@@ -242,6 +548,12 @@
       },
       {
         "code": "PROTOCOL_VERSION_UNSUPPORTED",
+        "class": "deny",
+        "retryable": false,
+        "business_api_called": false
+      },
+      {
+        "code": "PROTOCOL_CAPABILITY_UNSUPPORTED",
         "class": "deny",
         "retryable": false,
         "business_api_called": false
@@ -255,10 +567,9 @@
     ],
     "deployment_compatibility": {
       "required_modes": [
-        "managed_shared",
-        "managed_dedicated",
-        "customer_managed",
-        "self_hosted"
+        "shared_cloud",
+        "dedicated_cloud",
+        "customer_managed_oss"
       ],
       "common_required_capabilities": [
         "tenant_resolution",
@@ -269,8 +580,47 @@
         "usage_receipt",
         "failure_classification"
       ],
-      "optional_capability_rule": "A capability may be non-applicable only when explicitly advertised as optional for that deployment mode. Tenant isolation, authorization, idempotency, failure classification, and Receipt are never non-applicable.",
-      "version_rule": "Cloud and compatible OSS must accept mana-brainbase-tenant-context/v1 or fail with PROTOCOL_VERSION_UNSUPPORTED; silent downgrade is forbidden."
+      "optional_non_applicable_conditions": [
+        {
+          "capability": "cloud_billing_export",
+          "condition": "customer_managed_oss does not advertise Cloud billing export",
+          "required_evidence": "advertised unsupported/non_applicable plus reason"
+        },
+        {
+          "capability": "managed_operations",
+          "condition": "customer_managed_oss is operated by the customer",
+          "required_evidence": "advertised unsupported/non_applicable plus reason"
+        },
+        {
+          "capability": "shared_cloud_rls_conformance",
+          "condition": "deployment is physically single tenant",
+          "required_evidence": "deployment profile and isolation reason; all other tenant controls remain required"
+        },
+        {
+          "capability": "cloud_standard_credential",
+          "condition": "customer_managed_oss advertises only customer_oauth/customer_api",
+          "required_evidence": "credential mode capability advertisement; no fallback"
+        },
+        {
+          "capability": "customer_specific_price_fixture",
+          "condition": "the tested contract has no customer-specific pricing",
+          "required_evidence": "fixture reason; quota and Receipt schema tests remain required"
+        }
+      ],
+      "never_non_applicable": [
+        "tenant_context_envelope",
+        "signature_and_time_validation",
+        "connection_revision_recheck",
+        "actor_project_capability_authorization",
+        "credential_scope_enforcement",
+        "container_and_state_isolation",
+        "correlation_and_idempotency",
+        "failure_classification",
+        "usage_and_receipt",
+        "fallback_prohibition"
+      ],
+      "optional_capability_rule": "A capability is non_applicable only when listed above, explicitly advertised as optional/unsupported, and accompanied by a reason. Single-tenant OSS does not waive tenant context or isolation.",
+      "version_rule": "Cloud and compatible OSS negotiate >=1.0 <2.0 or fail with PROTOCOL_VERSION_UNSUPPORTED/PROTOCOL_CAPABILITY_UNSUPPORTED; silent downgrade is forbidden."
     },
     "fallback_policy": {
       "tenant": "forbidden",
@@ -315,12 +665,12 @@
         "name": "workspace_connection_projection",
         "sharing": "tenant_partitioned",
         "tenant_key": "tenant_id",
-        "partition_key": "tenant_id/workspace_connection_id/revision",
+        "partition_key": "tenant_id/connection_id/connection_revision",
         "trust_zone": "brainbase_to_mana_control_plane",
         "residue_policy": "expire after canonical revision invalidation",
         "data_owner": "Brainbase",
         "operational_owner": "mana-runtime",
-        "credential_scope": "tenant_id/workspace_connection_id/revision"
+        "credential_scope": "tenant_id/connection_id/connection_revision"
       },
       {
         "name": "tenant_context_envelope",
@@ -328,41 +678,41 @@
         "tenant_key": "tenant_id",
         "partition_key": "tenant_id/correlation_id",
         "trust_zone": "signed_ingress_and_internal_transport",
-        "residue_policy": "retention excludes secrets and expires by operation policy",
+        "residue_policy": "retention excludes secrets; envelope expires within 300 seconds and is never refreshed in place",
         "data_owner": "Brainbase",
         "operational_owner": "mana-runtime",
-        "credential_scope": "opaque_reference_only"
+        "credential_scope": "credential_ref_only"
       },
       {
         "name": "queue_and_durable_runtime_state",
         "sharing": "tenant_partitioned",
         "tenant_key": "tenant_id",
-        "partition_key": "tenant_id/workspace_connection_id/correlation_id",
+        "partition_key": "tenant_id/connection_id/correlation_id",
         "trust_zone": "mana_runtime_state",
         "residue_policy": "expire after terminal Receipt retention period",
         "data_owner": "Brainbase",
         "operational_owner": "mana-runtime",
-        "credential_scope": "tenant_bound_opaque_reference"
+        "credential_scope": "tenant_bound_credential_ref"
       },
       {
         "name": "tool_container_or_sandbox",
         "sharing": "tenant_or_session_isolated",
         "tenant_key": "tenant_id",
         "trust_zone": "mana_execution_plane",
-        "residue_policy": "destroy after operation and verify reset before reuse",
+        "residue_policy": "destroy on tenant change; same-tenant reuse requires a complete sanitization Receipt, otherwise destroy",
         "data_owner": "Brainbase",
         "operational_owner": "mana-runtime",
-        "credential_scope": "tenant_id/workspace_connection_id/revision/operation_id"
+        "credential_scope": "tenant_id/connection_id/connection_revision/operation_id/audience"
       },
       {
         "name": "credential_connection",
         "sharing": "connection_defined",
         "tenant_key": "tenant_id",
         "trust_zone": "brainbase_credential_broker",
-        "residue_policy": "raw secret is never persisted in mana artifacts",
+        "residue_policy": "raw secret is never persisted in mana artifacts; one-use lease expires within 60 seconds",
         "data_owner": "Brainbase",
         "operational_owner": "Brainbase",
-        "credential_scope": "tenant_id/workspace_connection_id/revision",
+        "credential_scope": "tenant_id/connection_id/connection_revision/operation_id/audience/mode",
         "connection_modes": [
           "cloud_standard",
           "customer_oauth",
@@ -383,7 +733,8 @@
     ],
     "credentials": {
       "lookup_key": "tenant_id",
-      "scope": "tenant_id/workspace_connection_id/revision/operation_id",
+      "broker_lookup_scope": "tenant_id + connection_id + connection_revision + operation_id + audience + mode",
+      "scope": "tenant_id/connection_id/connection_revision/operation_id/audience/mode",
       "raw_secret_in_artifacts": "forbidden",
       "cross_tenant_fallback": "forbidden"
     },
@@ -405,9 +756,14 @@
     "deployment_modes": [
       "managed_shared",
       "managed_dedicated",
-      "customer_managed",
-      "self_hosted"
+      "customer_managed"
     ],
+    "wire_profile_mapping": {
+      "managed_shared": "shared_cloud",
+      "managed_dedicated": "dedicated_cloud",
+      "customer_managed": "customer_managed_oss",
+      "self_hosted": "customer_managed_oss"
+    },
     "negative_scenarios": [
       "unknown_tenant",
       "ambiguous_tenant",
@@ -443,20 +799,23 @@
   "responsibilities": {
     "brainbase": [
       "Own canonical tenant_id and workspace connection identity/revision/status.",
-      "Resolve authenticated actor person_id and authorize project_ids and capability_ids.",
-      "Own credential mode, tenant-bound opaque credential reference, billing contract, quota policy, and canonical Graph/task readback.",
-      "Persist canonical usage and operation Receipt without raw secrets.",
+      "Resolve authenticated actor principal_id and authorize organization_ids, project_ids, data_scopes, and capability_ids.",
+      "Issue and sign the immutable TenantContextEnvelope and publish current/retiring verification keys.",
+      "Expose authoritative expected-revision validation and monotonic revision invalidation events.",
+      "Own credential mode, credential_ref, OAuth refresh state, credential broker, billing contract, quota policy, and canonical Graph/task readback.",
+      "Persist canonical UsageEvent, OperationReceipt, and business-effect idempotency claims without raw secrets.",
       "Return explicit deny, unavailable, empty, partial, and timeout semantics."
     ],
     "mana_runtime": [
-      "Verify Slack authenticity and transport the immutable tenant context envelope across every runtime boundary.",
-      "Revalidate workspace connection revision and authorization before tools, Brainbase API calls, and Slack delivery.",
-      "Partition queue, durable state, container/sandbox, tools, credentials, results, and reply delivery by tenant scope.",
-      "Enforce correlation and idempotency for Brainbase writes and Slack replies.",
-      "Observe usage, report partial or unknown usage honestly, and emit one reply outcome."
+      "Verify Slack authenticity and JWS/time/audience of the immutable TenantContextEnvelope at every runtime boundary.",
+      "Perform authoritative workspace connection revision checks before credential lease, Brainbase write, and Slack delivery.",
+      "Partition queue, durable state, container/sandbox, tools, credential leases, results, and reply delivery by tenant scope.",
+      "Destroy Containers on tenant change; require complete sanitization Receipt for same-tenant reuse.",
+      "Own queue/Slack-delivery idempotency claims and use shared operation IDs and key derivation for Brainbase effects.",
+      "Observe usage, report collection_state independently from outcome, and emit one reply outcome."
     ],
     "shared_contract": [
-      "Maintain protocol version and compatibility fixtures.",
+      "Maintain protocol 1.x negotiation, capability advertisement, and compatibility fixtures.",
       "Use the same failure codes and Receipt schema in Cloud and compatible OSS.",
       "Prohibit all implicit fallback paths and preserve not_collected as distinct from zero or success."
     ]
@@ -658,7 +1017,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-002",
@@ -688,7 +1047,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-003",
@@ -718,7 +1077,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-004",
@@ -748,7 +1107,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-005",
@@ -777,7 +1136,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-006",
@@ -806,7 +1165,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-007",
@@ -836,7 +1195,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-008",
@@ -865,7 +1224,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-009",
@@ -895,7 +1254,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-010",
@@ -925,7 +1284,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-011",
@@ -955,7 +1314,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     },
     {
       "id": "C-012",
@@ -985,41 +1344,45 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T12:41:31.795Z"
+      "last_revised_at": "2026-08-16T13:00:50.548Z"
     }
   ],
-  "open_questions": [
+  "source_lane_reviews": [
     {
-      "id": "OQ-001",
-      "question": "Brainbaseがworkspace connection解決とrevision再確認に公開する正式なAPI名・Graph entity field名は何か。",
-      "owner": "Brainbase lane",
-      "impact": "wire field name only; canonical ownership and deny semantics are fixed"
+      "lane": "Brainbase",
+      "pull_request": "https://github.com/Unson-LLC/brainbase-unson/pull/1229",
+      "reviewed_head": "135f8038ed1276183c0cbc4c2b8402a7811e7326",
+      "result": "follow_up_required",
+      "follow_up_decision_ids": [
+        "D-001",
+        "D-002",
+        "D-003",
+        "D-004",
+        "D-005",
+        "D-006",
+        "D-007",
+        "D-009"
+      ]
     },
     {
-      "id": "OQ-002",
-      "question": "Operation ReceiptとSlack reply idempotency ledgerの正式な保存API・保持期間はどこで確定するか。",
-      "owner": "Brainbase lane + mana-runtime lane",
-      "impact": "storage endpoint and retention; idempotency scope and at-most-once outcome are fixed"
-    },
-    {
-      "id": "OQ-003",
-      "question": "protocol v1の互換期間、minor capability negotiation、PROTOCOL_VERSION_UNSUPPORTEDのtransport表現をどこで管理するか。",
-      "owner": "cross-contract lane",
-      "impact": "negotiation mechanics; no silent downgrade is fixed"
-    },
-    {
-      "id": "OQ-004",
-      "question": "quotaの警告閾値、超過許可、customer API billingの具体的なplan値は何か。",
-      "owner": "Brainbase lane",
-      "impact": "plan values; tenant-local attribution and honest Receipt semantics are fixed"
-    },
-    {
-      "id": "OQ-005",
-      "question": "connection revision再確認のcache TTLと、各不可逆副作用直前のfreshness取得方式は何か。",
-      "owner": "mana-runtime lane + Brainbase lane",
-      "impact": "performance and API call pattern; stale revision denial is fixed"
+      "lane": "mana-runtime",
+      "pull_request": "https://github.com/Unson-LLC/mana-runtime/pull/236",
+      "reviewed_head": "4edded8a4d22145f6ff14a5f53f5559d5dfa3e02",
+      "result": "follow_up_required",
+      "follow_up_decision_ids": [
+        "D-001",
+        "D-002",
+        "D-003",
+        "D-004",
+        "D-005",
+        "D-006",
+        "D-007",
+        "D-008",
+        "D-009"
+      ]
     }
   ],
+  "open_questions": [],
   "generated_at": "2026-08-16T12:41:31.790Z",
   "previous_spec_id": null
 }

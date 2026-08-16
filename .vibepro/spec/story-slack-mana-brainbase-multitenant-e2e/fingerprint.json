@@ -2,14 +2,22 @@
   "schema_version": "0.1.0",
   "story_id": "story-slack-mana-brainbase-multitenant-e2e",
   "recorded_from": "vibepro spec fingerprint",
-  "generated_at": "2026-08-16T12:39:56.498Z",
+  "generated_at": "2026-08-16T13:02:07Z",
   "inputs_digest": {
     "story_sha": "sha256:7efd19bb90c4e8633f926e408694232414009a798b1995ee9452151613c83313",
     "code_sha": "sha256:7a8dec718898c17d30bd09badc591c09f759435d17fbaa2cc8a3065bfaec2765",
     "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925",
     "architecture_sha": "sha256:c4610ec8db5d7532d537e2aabfb33429ff2000dbf9c3c73fe341468bc161a23f"
   },
-  "draft_spec_sha256": "6ec475a6fc7aa625dfc91b23132c2660935582f34314576cf90852ffbf7ccd4c",
+  "draft_spec_sha256": "15fc2ca48b60c624cf1d6a6309da12abdb7458fd5a88c5391fd02776085ba205",
+  "fixture_sha256": {
+    "positive": "55ecc4d5476b595c84e42e45e14b54a5e4411d1ae8754508273ceb96b7d3a3c1",
+    "negative": "6cb5ba7cc1e75526e50efebafe6884d6ab9492ce0a49fe28416f2bf1ad1338cc",
+    "non_applicable": "7cd911a9a840dd990e0a0159b361ac49bfe13d6bf6d391b1a1452f09fbe68dc5"
+  },
+  "cross_lane_contract_decision_count": 9,
+  "blocking_open_decision_count": 0,
+  "implementation_start_gate": "PASS",
   "story_path": "docs/management/stories/active/story-slack-mana-brainbase-multitenant-e2e.md",
   "acceptance_criteria_count": 12,
   "architecture_files": [
