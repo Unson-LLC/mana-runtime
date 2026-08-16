@@ -10,6 +10,7 @@ import {
   TenantRuntimeBoundaryVerifier,
   SlackInstallationAdapter,
   TenantQuotaCache,
+  TenantAccountingLedger,
   WorkspaceConnectionRegistry,
   acquireCredentialLease,
   acquireEnvelopeCredentialLease,
@@ -17,6 +18,7 @@ import {
   assertQuotaAllowsExecution,
   assertSecretArtifactFree,
   assertTenantPartition,
+  authorizeTenantQuota,
   authorizeSlackDelivery,
   claimIdempotency,
   completeIdempotency,
@@ -28,6 +30,7 @@ import {
   createTenantTemporaryObject,
   createSecretValue,
   createUsageEvent,
+  createUserFailure,
   executeTenantBoundary,
   jcsCanonicalize,
   negotiateTenantProtocol,
@@ -39,6 +42,7 @@ import {
   tenantPartitionKey,
   validateNonApplicableCapabilities,
   validateTenantBoundary,
+  writeTenantAccounting,
   authorizeSlackDeliveryWithAuthority,
   type BoundaryName,
   type ContainerLease,
@@ -492,6 +496,31 @@ describe("story-mana-multitenant-runtime contract", () => {
       .toMatchObject({ outcome: "succeeded", failure_code: "NO_DATA", usage: { observed_units: 0 } });
   });
 
+  it("tenant accounting ledger deduplicates before Brainbase write planned Red", async () => {
+    const { value, publicKey } = await envelope();
+    const usage = createUsageEvent({ usage_event_id: "use_01ARZ3NDEKTSV4RRFFQ69G5FB6", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_id: OPERATION_A,
+      idempotency_key: value.idempotency_key, kind: "model_tokens", quantity: 12, unit: "tokens",
+      outcome: "succeeded", collection_state: "collected", observed_at: NOW });
+    const receipt = createOperationReceipt({ receipt_id: "rcp_01ARZ3NDEKTSV4RRFFQ69G5FB7", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_ids: [OPERATION_A],
+      idempotency_keys: [value.idempotency_key], actor_principal_id: "person-a", project_id: "project-a",
+      capability_id: "task.write", quota_decision: "allowed", credential_mode: "customer_oauth",
+      outcome: "succeeded", usage: { collection_state: "collected", observed_units: 12, unknown_fields: [] },
+      reply: { state: "not_requested" } });
+    const ledger = new TenantAccountingLedger();
+    const write = vi.fn(async () => ({ result_ref: "brainbase-write-a" }));
+    const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey });
+    await expect(writeTenantAccounting({ tenant_context: value, expected_scope: expectedScope, now: NOW,
+      verifier, ledger, usage_events: [usage], receipt, write })).resolves.toMatchObject({ disposition: "written" });
+    await expect(writeTenantAccounting({ tenant_context: value, expected_scope: expectedScope, now: NOW,
+      verifier, ledger, usage_events: [usage], receipt, write })).resolves.toMatchObject({ disposition: "duplicate" });
+    expect(write).toHaveBeenCalledOnce();
+  });
+
   it("per tenant quota decisions and isolation planned Red", () => {
     const cache = new TenantQuotaCache();
     const stopped: QuotaDecision = { tenant_id: TENANT_A, contract_revision: "contract-7", metric: "model_tokens",
@@ -502,6 +531,27 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(() => assertQuotaAllowsExecution(cache.get(TENANT_A, "contract-7", "model_tokens")))
       .toThrow(expect.objectContaining({ code: "QUOTA_EXCEEDED" }));
     expect(assertQuotaAllowsExecution(cache.get(TENANT_B, "contract-7", "model_tokens"))).toEqual(allowed);
+  });
+
+  it("quota authority cannot default or cross tenants planned Red", async () => {
+    const read = vi.fn(async (): Promise<QuotaDecision> => ({ tenant_id: TENANT_A, contract_revision: "contract-7",
+      metric: "model_tokens", consumed: 1, limit: 100, ratio_basis_points: 100, decision: "allowed",
+      overage_policy: "deny", warning_thresholds_basis_points: [8_000], decision_id: "quota-a" }));
+    await expect(authorizeTenantQuota({ tenant_id: TENANT_A, contract_revision: "contract-7",
+      metric: "model_tokens", read_authoritative_decision: read })).resolves.toMatchObject({ decision: "allowed" });
+    await expect(authorizeTenantQuota({ tenant_id: TENANT_B, contract_revision: "contract-7",
+      metric: "model_tokens", read_authoritative_decision: read }))
+      .rejects.toEqual(expect.objectContaining({ code: "CROSS_TENANT_CANDIDATE" }));
+  });
+
+  it("UserFailure exposes only actionable public fields planned Red", () => {
+    const failure = createUserFailure({ error: new TenantBoundaryError("quota", "QUOTA_EXCEEDED"),
+      correlation_id: unsignedEnvelopeA.correlation_id });
+    expect(failure).toEqual({ code: "usage_limit_reached", message_key: "tenant.usage_limit_reached",
+      next_actions: ["contact_administrator"], correlation_id: unsignedEnvelopeA.correlation_id });
+    expect(JSON.stringify(failure)).not.toContain(TENANT_A);
+    expect(JSON.stringify(failure)).not.toContain("credential");
+    expect(JSON.stringify(failure)).not.toContain("consumed");
   });
 
   it("safe actionable failure and scoped delivery planned Red", async () => {
