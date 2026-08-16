@@ -273,14 +273,15 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
       if (env.TASK_BOARD_REPAIRS && env.TENANT_ID) {
         try {
           const configuredTargets = parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON);
-          const targets = configuredTargets.length > 0
-            ? taskBoardTargetsForProjects(configuredTargets, [body.project])
-            : env.SLACK_EXPECTED_TEAM_ID && writeChannelId
-              ? [{ targetId: `legacy-${placementId}`, workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: writeChannelId }]
-              : [];
+          const targets = taskBoardTargetsForProjects(configuredTargets, [body.project]);
+          configuredTargets.filter((target) => target.projectCodes.includes(body.project) && !targets.includes(target))
+            .forEach((target) => console.info(JSON.stringify({ event: "task_board_repair_suppressed",
+              requestId: body.request_id, targetId: target.targetId,
+              reason: !target.enabled ? "target_disabled" : "canvas_binding_missing" })));
           for (const target of targets) await env.TASK_BOARD_REPAIRS.send({
               eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID!,
               workspaceId: target.workspaceId, channelId: target.channelId,
+              manaCanvasId: target.manaCanvasId!, bindingRevision: target.bindingRevision!,
               reason: "task_write", requestedAt: new Date().toISOString(),
             }).catch(() => console.warn(JSON.stringify({ event: "task_board_repair_enqueue_failed",
               requestId: body.request_id, targetId: target.targetId })));

@@ -16,7 +16,7 @@ describe("Cloudflare bounded task Canvas", () => {
     expect(markdown).toContain("全件走査はしていません");
   });
 
-  it("uses four bounded Brainbase requests and updates the channel Canvas", async () => {
+  it("updates only the explicitly bound Mana Canvas", async () => {
     const fetchMock = vi.fn().mockImplementation(async function (this: unknown, url: string, init?: RequestInit) {
       if (this !== undefined) throw new TypeError("Illegal invocation");
       const parsed = new URL(url);
@@ -31,7 +31,10 @@ describe("Cloudflare bounded task Canvas", () => {
         expect(init?.body).toBeUndefined();
         return Response.json({
           ok: true,
-          channel: { properties: { tabs: [{ id: "Ct_TAB", type: "canvas", data: { file_id: "F_CANVAS" } }] } },
+          channel: { properties: { tabs: [
+            { id: "Ct_OTHER", type: "canvas", data: { file_id: "F_OTHER" } },
+            { id: "Ct_TAB", type: "canvas", data: { file_id: "F_CANVAS" } },
+          ] } },
         });
       }
       if (parsed.pathname.endsWith("canvases.edit")) return Response.json({ ok: true });
@@ -44,21 +47,22 @@ describe("Cloudflare bounded task Canvas", () => {
       BRAINBASE_TASK_API_TOKEN: "task-secret",
       SLACK_BOT_TOKEN: "slack-secret",
       SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+      TASK_BOARD_CANVAS_ID: "F_CANVAS",
     }, { fetch: fetchMock, now: () => "2026-08-13T00:00:00.000Z" });
 
     expect(result).toEqual({ outcome: "updated", displayed: 4, hasMore: false });
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("bb.example.test"))).toHaveLength(4);
     const edit = fetchMock.mock.calls.find(([url]) => String(url).includes("canvases.edit"));
     expect(edit).toBeTruthy();
+    expect(JSON.parse(String((edit?.[1] as RequestInit).body))).toMatchObject({ canvas_id: "F_CANVAS" });
     expect(String((edit?.[1] as RequestInit).body)).not.toContain("task-secret");
   });
 
-  it("creates the channel Canvas when one does not exist", async () => {
+  it("does not adopt or create an unbound channel Canvas", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);
       if (parsed.hostname === "bb.example.test") return Response.json({ items: [], next_cursor: null });
       if (parsed.pathname.endsWith("conversations.info")) return Response.json({ ok: true, channel: { properties: {} } });
-      if (parsed.pathname.endsWith("conversations.canvases.create")) return Response.json({ ok: true, canvas_id: "F_NEW" });
       throw new Error(`unexpected ${url}`);
     });
     await expect(refreshTaskBoard({
@@ -68,24 +72,19 @@ describe("Cloudflare bounded task Canvas", () => {
       BRAINBASE_TASK_API_TOKEN: "task-secret",
       SLACK_BOT_TOKEN: "slack-secret",
       SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
-    }, { fetch: fetchMock })).resolves.toMatchObject({ outcome: "created" });
+      TASK_BOARD_CANVAS_ID: "F_OWNED",
+    }, { fetch: fetchMock })).rejects.toThrow("task_board_canvas_binding_mismatch");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("canvases.edit"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("canvases.create"))).toBe(false);
   });
 
-  it("adopts and edits the channel Canvas created by a concurrent writer", async () => {
-    let infoCalls = 0;
+  it("does not adopt a different Canvas found in the bound channel", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);
       if (parsed.hostname === "bb.example.test") return Response.json({ items: [], next_cursor: null });
       if (parsed.pathname.endsWith("conversations.info")) {
-        infoCalls += 1;
-        return Response.json(infoCalls === 1
-          ? { ok: true, channel: { properties: {} } }
-          : { ok: true, channel: { properties: { tabz: [{ id: "Ct_RACE", type: "canvas", data: { file_id: "F_RACE" } }] } } });
+        return Response.json({ ok: true, channel: { properties: { tabz: [{ id: "Ct_OTHER", type: "canvas", data: { file_id: "F_OTHER" } }] } } });
       }
-      if (parsed.pathname.endsWith("conversations.canvases.create")) {
-        return Response.json({ ok: false, error: "channel_canvas_already_exists" });
-      }
-      if (parsed.pathname.endsWith("canvases.edit")) return Response.json({ ok: true });
       throw new Error(`unexpected ${url}`);
     });
     await expect(refreshTaskBoard({
@@ -95,11 +94,12 @@ describe("Cloudflare bounded task Canvas", () => {
       BRAINBASE_TASK_API_TOKEN: "task-secret",
       SLACK_BOT_TOKEN: "slack-secret",
       SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
-    }, { fetch: fetchMock })).resolves.toMatchObject({ outcome: "updated" });
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("canvases.edit"))).toBe(true);
+      TASK_BOARD_CANVAS_ID: "F_OWNED",
+    }, { fetch: fetchMock })).rejects.toThrow("task_board_canvas_binding_mismatch");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("canvases.edit"))).toBe(false);
   });
 
-  it("recreates a Canvas after Slack reports the stored Canvas is gone", async () => {
+  it("never recreates an explicitly bound Canvas after Slack reports it missing", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);
       if (parsed.hostname === "bb.example.test") return Response.json({ items: [], next_cursor: null });
@@ -117,7 +117,9 @@ describe("Cloudflare bounded task Canvas", () => {
       BRAINBASE_TASK_API_TOKEN: "task-secret",
       SLACK_BOT_TOKEN: "slack-secret",
       SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
-    }, { fetch: fetchMock })).resolves.toMatchObject({ outcome: "created" });
+      TASK_BOARD_CANVAS_ID: "F_STALE",
+    }, { fetch: fetchMock })).rejects.toThrow("task_board_canvas_not_found");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("canvases.create"))).toBe(false);
   });
 
   it("does nothing while the board feature is disabled", async () => {

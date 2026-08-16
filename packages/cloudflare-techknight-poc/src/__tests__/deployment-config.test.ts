@@ -63,9 +63,10 @@ describe("会社別Cloudflare deployment", () => {
   const techKnight = loadConfig("wrangler.jsonc");
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
-  it("binds every meeting destination and the existing mana channel to a trusted task Canvas target", () => {
+  it("keeps task board targets disabled until Mana Canvas ownership is bound", () => {
     const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       targetId: string; organizationId: string; workspaceId: string; channelId: string; projectCodes: string[];
+      enabled: boolean; manaCanvasId: string | null; bindingRevision: number | null;
     }>;
     const destinations = [
       ...JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON) as Array<{ id: string; projectId: string;
@@ -76,6 +77,8 @@ describe("会社別Cloudflare deployment", () => {
     const minutesTargets = targets.filter((target) => target.targetId.startsWith("minutes-"));
     expect(targets).toHaveLength(22);
     expect(minutesTargets).toHaveLength(21);
+    expect(targets.every((target) => target.enabled === false && target.manaCanvasId === null &&
+      target.bindingRevision === null)).toBe(true);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
       .toEqual({ "unson-business": 7, unson: 5, "tech-knight": 9 });

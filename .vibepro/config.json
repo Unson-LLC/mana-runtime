@@ -319,8 +319,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-task-canvas-ownership",
+        "title": "Mana管理Canvasだけを安全に自動更新する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-meeting-minutes-brainbase-context"
+    "current_story_id": "story-task-canvas-ownership"
   }
 }

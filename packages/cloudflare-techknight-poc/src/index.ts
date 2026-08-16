@@ -73,14 +73,16 @@ import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolve
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
   consumeTaskBoardRepair,
+  enqueueMeetingMinutesTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
+  enqueueTaskBoardRepairsForProjects,
   issueTaskWriteRequestContext,
 } from "./task-runtime-entrypoints.js";
 import {
   isTaskBoardRepairEvent,
   type TaskBoardRepairEvent,
 } from "./task-board.js";
-import { parseTaskBoardTargets, taskBoardTargetsForProjects } from "./task-board-targets.js";
+import { parseTaskBoardTargets } from "./task-board-targets.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
@@ -242,35 +244,6 @@ function meetingMinutesCommandGateDependencies(env: Env, enabled: boolean) {
         error: error instanceof Error ? error.message : "unexpected_error",
       })),
   };
-}
-
-async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly string[],
-  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
-  let targets;
-  try { targets = taskBoardTargetsForProjects(parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON), projectIds); }
-  catch (error) { console.error("task_board_targets_invalid", error); return; }
-  const results = await Promise.allSettled(targets.map((target) => env.TASK_BOARD_REPAIRS.send({
-    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
-    workspaceId: target.workspaceId, channelId: target.channelId, reason,
-    requestedAt: new Date().toISOString(),
-  })));
-  results.forEach((result, index) => {
-    if (result.status === "rejected") console.error("task_board_repair_enqueue_failed", {
-      targetId: targets[index]?.targetId, reason, error: result.reason,
-    });
-  });
-}
-
-async function enqueueMeetingMinutesTaskBoardRepair(env: Env, targetId: string,
-  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
-  const target = parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON)
-    .find((candidate) => candidate.targetId === targetId);
-  if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
-  await env.TASK_BOARD_REPAIRS.send({
-    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
-    workspaceId: target.workspaceId, channelId: target.channelId, reason,
-    requestedAt: new Date().toISOString(),
-  });
 }
 
 function meetingMinutesClients(env: Env) {
