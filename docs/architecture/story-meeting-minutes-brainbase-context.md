@@ -42,6 +42,12 @@ Receiptの未完了task候補と生成taskを、project、正規化title、正�
 
 停止版でも、保存先とoperatorの設定は検証して参照用に保持する。新規runの開始可否と既存runの操作に必要な正規設定を分離し、既存完了runのCanonical Task編集・取消を継続する。Task範囲は現在範囲または保存済みの信頼できる旧範囲と完全一致する場合だけ操作し、旧範囲から現行範囲への移行契約を停止中も維持する。
 
+## 保存先のやり直し
+
+「取り消して選び直す」の確認後は、HTTP応答を待たせず同じSlack投稿を「保存先をやり直しています」へ更新してからQueueへ送る。Queue投入に失敗した場合も確認画面へ戻さず、同じ投稿へ理由を伏せた再実行ボタンを表示する。
+
+取り消し処理はrunのrevisionごとに、GitHub削除、Canonical Task削除、共有Slack撤回を工程別チェックポイントとして保存する。各外部副作用の成功直後に状態を永続化し、途中失敗後は完了済み工程を再実行しない。全工程の成功後だけ同じSlack投稿を組織・保存先選択へ更新してrevisionを進める。失敗時はrunへ失敗情報を保存し、同じ投稿へ「取り消しを再実行」を表示する。
+
 ## 保存と表示
 
 GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を、本文末尾へ利用source refsと判断候補を決定的に描画する。Slack完了表示には「Brainbase参照済み」と、Receipt外参照を除外した場合の警告を示す。生Graph contextは保存・投稿しない。

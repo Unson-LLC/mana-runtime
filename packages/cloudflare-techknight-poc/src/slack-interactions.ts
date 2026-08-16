@@ -4,6 +4,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   type MeetingMinutesRedo, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
 import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
+  redoFailedMessage, redoProcessingMessage,
   MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { verifySlackRequest } from "./slack.js";
 
@@ -198,9 +199,29 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return Response.json({ ok: true });
   }
   if (confirmRedoAction) {
-    if (!runId || !channelId || !actionTs || !options.defer) return response("slack_interaction_invalid", 400);
-    options.defer(options.send({ kind: "meeting_minutes_redo", runId, workspaceId: options.expectedTeamId,
-      channelId, userId, actionTs }).then(() => undefined));
+    const responseUrl = string(payload?.response_url);
+    if (!runId || !fileName || !channelId || !actionTs || !responseUrl || !options.updateOriginal || !options.defer) {
+      return response("slack_interaction_invalid", 400);
+    }
+    options.defer((async () => {
+      try { await options.updateOriginal!(responseUrl, redoProcessingMessage(fileName)); }
+      catch (error) {
+        console.error(JSON.stringify({ event: "meeting_minutes_redo_processing_projection_failed", runId,
+          error: error instanceof Error ? error.message : "unexpected_error" }));
+      }
+      try {
+        await options.send({ kind: "meeting_minutes_redo", runId, workspaceId: options.expectedTeamId,
+          channelId, userId, actionTs });
+      } catch (error) {
+        console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failed", runId,
+          error: error instanceof Error ? error.message : "unexpected_error" }));
+        try { await options.updateOriginal!(responseUrl, redoFailedMessage(runId, fileName)); }
+        catch (projectionError) {
+          console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failure_projection_failed", runId,
+            error: projectionError instanceof Error ? projectionError.message : "unexpected_error" }));
+        }
+      }
+    })());
     return Response.json({ ok: true });
   }
   if ((organizationAction || backAction)) {

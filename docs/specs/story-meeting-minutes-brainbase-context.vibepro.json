@@ -106,6 +106,38 @@
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "production prompt example" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "placeholder generation before GitHub, Slack, task, or board side effects" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "unsaved persisted placeholder" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "already saved placeholder" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "reopens destination selection for a completed run" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "placeholder output was rejected before it was shared" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "saved meeting minutes file contains placeholders" }] },
       "confidence": 0.99
+    },
+    {
+      "id": "C-007",
+      "type": "contract",
+      "statement": "保存先やり直しの確認後は同じSlack投稿を処理中へ即時更新する。GitHub・Canonical Task・共有Slackの取り消しをrunへ工程別に永続化し、途中失敗後は完了済み工程を重複させず再開する。成功時は同じ投稿を保存先選択へ、失敗時は再実行表示へ必ず切り替える",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-18" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "保存先のやり直し" }],
+        "code_refs": [
+          { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-contracts.ts" },
+          { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts" },
+          { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts" },
+          { "file": "packages/cloudflare-techknight-poc/src/slack-interactions.ts" }
+        ],
+        "test_refs": [
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts", "case": "queues a confirmed redo command" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts", "case": "replaces the confirmation with a durable retry when redo enqueue fails" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "resumes a partially completed redo without repeating finished cleanup" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "keeps a failed redo visible with a durable retry action" }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts", "must_cover": "confirmed redo command" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts", "must_cover": "durable retry when redo enqueue fails" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "partially completed redo" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "failed redo visible" }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-17T08:00:00.000Z",
+      "last_revised_at": "2026-08-17T08:00:00.000Z"
     }
   ],
   "planned_test_suites": [{ "layer": "unit", "covers": ["Receipt identity", "provenance", "task reconciliation", "GitHub and Slack audit"] }, { "layer": "integration", "covers": ["pipeline retry", "required fail closed", "existing runtime regression"] }],

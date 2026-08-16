@@ -158,14 +158,29 @@ describe("handleMeetingMinutesInteraction", () => {
   it("queues a confirmed redo command", async () => {
     const confirmPayload = structuredClone(payload);
     confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
-    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1" });
-    const send = vi.fn().mockResolvedValue(undefined); const background = deferred();
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn().mockResolvedValue(undefined); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
-      destinations, send, defer: background.defer });
+      destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
     expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
       channelId: "C1", userId: "U1", actionTs: "1.2" });
+  });
+  it("replaces the confirmation with a durable retry when redo enqueue fails", async () => {
+    const confirmPayload = structuredClone(payload);
+    confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn().mockRejectedValue(new Error("queue unavailable"));
+    const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
+    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("取り消しを再実行");
   });
   it("queues without immediate feedback when Slack omitted a valid thread timestamp", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;

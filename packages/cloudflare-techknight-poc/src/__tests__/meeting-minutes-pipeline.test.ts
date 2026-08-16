@@ -655,6 +655,32 @@ describe("meeting minutes pipeline", () => {
     expect(reopened).not.toHaveProperty("failure");
   });
 
+  it("resumes a partially completed redo without repeating finished cleanup", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "確認する" }] }),
+    }));
+    const deleteGitHub = vi.fn(); const deleteTask = vi.fn();
+    const retractSharedMinutes = vi.fn().mockRejectedValueOnce(new Error("Slack unavailable")).mockResolvedValue(undefined);
+    const showDestinationSelection = vi.fn().mockResolvedValue("3.1"); const showRedoFailure = vi.fn();
+    const options = { destinations: [destination], deleteGitHub, deleteTask, retractSharedMinutes,
+      showDestinationSelection, showRedoFailure };
+    await expect(redoMeetingMinutesRun(fs, redo, options)).rejects.toThrow("Slack unavailable");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed", redo: {
+      revision: 0, githubDeletedAt: expect.any(String), deletedTaskIds: ["task-1"],
+      failure: { message: "Slack unavailable" },
+    } });
+    expect(showRedoFailure).toHaveBeenCalledOnce();
+    const reopened = await redoMeetingMinutesRun(fs, redo, options);
+    expect(deleteGitHub).toHaveBeenCalledOnce(); expect(deleteTask).toHaveBeenCalledOnce();
+    expect(retractSharedMinutes).toHaveBeenCalledTimes(2); expect(showDestinationSelection).toHaveBeenCalledOnce();
+    expect(reopened).toMatchObject({ status: "awaiting_destination", revision: 1,
+      slack: { selectionTs: "3.1", postedChunkIndexes: [] } });
+    expect(reopened).not.toHaveProperty("redo");
+  });
+
   it("uses fresh external idempotency keys after a redo", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
