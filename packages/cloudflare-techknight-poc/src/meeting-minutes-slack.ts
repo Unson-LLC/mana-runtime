@@ -77,6 +77,16 @@ export function suggestedDestinationMessage(run: MeetingMinutesRun,
 }
 
 interface SlackApiResponse { ok?: boolean; error?: string; ts?: string }
+function isBrainbaseProjectBindingFailure(run: MeetingMinutesRun): boolean {
+  const taskFailure = run.taskRegistration?.failure;
+  return /^(?:meeting_minutes_context_project_unconfigured|meeting_minutes_context_request_failed:(?:401|403))$/.test(
+    run.failure?.message ?? "",
+  ) || (taskFailure?.stage === "task_registration" && (
+    taskFailure.status === 401 || taskFailure.status === 403
+    || /^(?:project_code_not_allowed|task_scope_not_configured)$/.test(taskFailure.code ?? "")
+    || /^(?:project_code_not_allowed|task_scope_not_configured)$/.test(taskFailure.message)
+  ));
+}
 function failedRunDetails(run: MeetingMinutesRun): string[] {
   const destination = `保存先: ${run.destination!.name}`;
   if (run.taskRegistration?.failure && run.slack?.parentTs) {
@@ -87,6 +97,11 @@ function failedRunDetails(run: MeetingMinutesRun): string[] {
     return ["*⚠️ 保存先チャンネルへ投稿できませんでした*", destination,
       `Manaアプリが「${run.destination!.name}」のチャンネルに参加しているか確認してください。`,
       "参加させた後、下のボタンから再実行できます。"];
+  }
+  if (isBrainbaseProjectBindingFailure(run)) {
+    return ["*⚠️ Brainbaseのプロジェクト紐付けを確認できませんでした*", destination,
+      `「${run.destination!.name}」に対応するBrainbaseプロジェクトが未設定、または利用権限がありません。`,
+      "設定を修正するまで再実行しても成功しません。運用担当者へ確認してください。"];
   }
   return ["*⚠️ 議事録の作成に失敗しました*", destination, "下のボタンから再実行できます。"];
 }
@@ -155,7 +170,9 @@ export class MeetingMinutesSlackClient {
     if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
     await this.setThreadStatus(run, "");
     const completed = outcome === "completed";
-    const taskRegistrationPending = completed && Boolean(run.taskRegistration?.failure);
+    const permanentProjectBindingFailure = isBrainbaseProjectBindingFailure(run);
+    const taskRegistrationPending = completed && Boolean(run.taskRegistration?.failure)
+      && !permanentProjectBindingFailure;
     const contextWarning = completed
       && run.generated?.brainbase_context_warnings?.includes("unknown_source_ref_removed");
     const taskIntegrationStage = run.taskRegistration?.failure?.stage;
@@ -164,13 +181,25 @@ export class MeetingMinutesSlackClient {
       : taskIntegrationStage === "task_card"
       ? "タスク登録は完了しましたが、タスクカードの投稿が完了していません。"
       : "タスク自動登録だけ完了していません。";
-    const text = taskRegistrationPending
+    const text = completed && permanentProjectBindingFailure
+      ? `${run.file.name} の議事録は作成・共有済みですが、Brainbaseのプロジェクト紐付けを確認できませんでした。`
+      : taskRegistrationPending
       ? `${run.file.name} の議事録は作成・共有済みです。未完了のタスク連携を再実行できます。`
       : completed
       ? `${run.file.name} の議事録を作成しました。${contextWarning
         ? " Brainbaseの正本にない参照候補は除外しました。" : ""}`
+      : isBrainbaseProjectBindingFailure(run)
+      ? `${run.file.name} の議事録作成に失敗しました。Brainbaseのプロジェクト紐付けを確認してください。`
       : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
-    const details = taskRegistrationPending
+    const details = completed && permanentProjectBindingFailure
+      ? [`*⚠️ 議事録は作成・共有済みですが、Brainbaseのプロジェクト紐付けを確認できませんでした*`,
+        `保存先: ${run.destination.name}`,
+        run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
+        `共有先: <#${run.destination.slackChannelId}>`,
+        `「${run.destination.name}」に対応するBrainbaseプロジェクトが未登録、またはタスク登録権限がありません。`,
+        "設定を修正するまで再実行しても成功しません。運用担当者へ確認してください。"]
+        .filter(Boolean).join("\n")
+      : taskRegistrationPending
       ? [`*⚠️ 議事録は作成・共有済みです*`, `保存先: ${run.destination.name}`,
         contextWarning ? "⚠️ Brainbaseの正本にない参照候補を除外し、正本の参照だけで作成しました。" : undefined,
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
@@ -199,7 +228,7 @@ export class MeetingMinutesSlackClient {
         action_id: MEETING_MINUTES_REDO_ACTION_ID,
         value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) });
       blocks.push({ type: "actions", elements });
-    } else {
+    } else if (!isBrainbaseProjectBindingFailure(run)) {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,

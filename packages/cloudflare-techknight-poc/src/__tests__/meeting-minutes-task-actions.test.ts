@@ -6,7 +6,9 @@ import type { MeetingMinutesRun } from "../meeting-minutes-contracts.js";
 function run(): MeetingMinutesRun {
   return { version: 1, runId: "Ev_Fv", eventId: "Ev", workspaceId: "TU", sourceChannelId: "CR",
     sourceThreadTs: "1.1", sourceMessageTs: "1.1", file: { id: "Fv", name: "meeting.txt" }, status: "completed",
-    destination: { id: "pms", projectId: "proj_pms", name: "PMS", organization: { id: "tech-knight", name: "Tech Knight" },
+    destination: { id: "pms", projectId: "proj_pms", contextProjectCode: "techknight",
+      taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-pms", name: "PMS",
+      organization: { id: "tech-knight", name: "Tech Knight" },
       slackChannelId: "CDEST", github: { owner: "o", repo: "r" } },
     generated: { title: "会議", overview: "概要", body: "本文", tasks: [{ title: "旧題", description: "説明", due_at: "2026-08-20" }] },
     taskRegistration: { registered: [{ index: 0, title: "旧題", taskId: "task-1" }] },
@@ -19,10 +21,10 @@ function deps(current: MeetingMinutesRun) { return { sourceTeamId: "TU", destina
   operatorUserIds: new Set(["U1"]),
   loadRun: vi.fn(async () => current), saveRun: vi.fn(async () => {}),
   getTask: vi.fn(async () => ({ id: "task-1", version: 3, title: "旧題", description: null, status: "pending",
-    priority: "medium", project_codes: ["proj_pms"], assignee_person_id: null, assignee_display_name: null,
+    priority: "medium", project_codes: ["techknight"], assignee_person_id: null, assignee_display_name: null,
     due_at: null, waiting_on: null, completed_at: null })),
   updateTask: vi.fn<MeetingMinutesTaskActionDependencies["updateTask"]>(async () => ({ id: "task-1", version: 4, title: "旧題", description: null, status: "pending",
-    priority: "medium", project_codes: ["proj_pms"], assignee_person_id: null, assignee_display_name: null,
+    priority: "medium", project_codes: ["techknight"], assignee_person_id: null, assignee_display_name: null,
     due_at: null, waiting_on: null, completed_at: null })), deleteTask: vi.fn(async () => ({})),
   updateCard: vi.fn(async (_run: MeetingMinutesRun) => {}),
   openView: vi.fn(async (_organizationId: string, _triggerId: string, _view: Record<string, unknown>) => {}),
@@ -57,7 +59,7 @@ describe("meeting minutes task cards", () => {
     expect(response?.status).toBe(200); await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
     expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
     expect(current.taskRegistration!.registered[0]!.status).toBe("removed");
-    expect(options.repairTaskBoard).toHaveBeenCalledWith(["proj_pms"]);
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
   });
   it("uses the explicit canonical task scope instead of the minutes destination identity", async () => {
     const current = run(); current.destination!.taskProjectCodes = ["unson"];
@@ -66,7 +68,7 @@ describe("meeting minutes task cards", () => {
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
     expect(response?.status).toBe(200); await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
     expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
-    expect(options.repairTaskBoard).toHaveBeenCalledWith(["unson"]);
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
   });
   it("repairs the destination Canvas when the canonical task was already deleted", async () => {
     const current = run(); const options = deps(current);
@@ -76,7 +78,7 @@ describe("meeting minutes task cards", () => {
     await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
     expect(options.deleteTask).not.toHaveBeenCalled();
     expect(current.taskRegistration!.registered[0]!.status).toBe("removed");
-    expect(options.repairTaskBoard).toHaveBeenCalledWith(["proj_pms"]);
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
   });
   it("opens the edit modal and rejects a destination-channel mismatch", async () => {
     const current = run(); const options = deps(current);
@@ -125,7 +127,7 @@ describe("meeting minutes task cards", () => {
   it("updates the canonical Graph assignee and redraws the task card", async () => {
     const current = run(); const options = deps(current);
     options.updateTask.mockResolvedValue({ id: "task-1", version: 4, title: "新題", description: null,
-      status: "pending", priority: "medium", project_codes: ["proj_pms"], assignee_person_id: "per_umeda",
+      status: "pending", priority: "medium", project_codes: ["techknight"], assignee_person_id: "per_umeda",
       assignee_display_name: "梅田 遼", due_at: null, waiting_on: null, completed_at: null });
     const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
       view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
@@ -137,14 +139,14 @@ describe("meeting minutes task cards", () => {
     expect(options.updateTask).toHaveBeenCalledWith("task-1", expect.objectContaining({ assignee_person_id: "per_umeda" }), expect.any(String));
     expect(current.taskRegistration!.registered[0]!).toEqual(expect.objectContaining({ assigneePersonId: "per_umeda", assigneeDisplayName: "梅田 遼" }));
     expect(current.generated?.tasks?.[0]?.assignee_name).toBe("梅田 遼");
-    expect(options.repairTaskBoard).toHaveBeenCalledWith(["proj_pms"]);
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
   });
   it("removes the canonical assignee when 担当なし is selected", async () => {
     const current = run(); current.taskRegistration!.registered[0]!.assigneePersonId = "per_umeda";
     current.taskRegistration!.registered[0]!.assigneeDisplayName = "梅田 遼";
     current.generated!.tasks![0]!.assignee_name = "梅田 遼";
     const options = deps(current); options.updateTask.mockResolvedValue({ id: "task-1", version: 4, title: "旧題", description: null,
-      status: "pending", priority: "medium", project_codes: ["proj_pms"], assignee_person_id: null,
+      status: "pending", priority: "medium", project_codes: ["techknight"], assignee_person_id: null,
       assignee_display_name: null, due_at: null, waiting_on: null, completed_at: null });
     const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
       view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
@@ -157,7 +159,7 @@ describe("meeting minutes task cards", () => {
     expect(current.taskRegistration!.registered[0]!.assigneePersonId).toBeUndefined();
     expect(current.taskRegistration!.registered[0]!.assigneeDisplayName).toBeUndefined();
     expect(current.generated?.tasks?.[0]?.assignee_name).toBeUndefined();
-    expect(options.repairTaskBoard).toHaveBeenCalledWith(["proj_pms"]);
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
   });
   it("rejects a non-operator before reading the durable run", async () => {
     const current = run(); const options = deps(current); const request = payload("mana_meeting_minutes_task_cancel"); request.user.id = "U2";

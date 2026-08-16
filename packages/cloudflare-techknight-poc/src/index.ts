@@ -235,6 +235,18 @@ async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly
   });
 }
 
+async function enqueueMeetingMinutesTaskBoardRepair(env: Env, targetId: string,
+  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
+  const target = parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON)
+    .find((candidate) => candidate.targetId === targetId);
+  if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
+  await env.TASK_BOARD_REPAIRS.send({
+    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
+    workspaceId: target.workspaceId, channelId: target.channelId, reason,
+    requestedAt: new Date().toISOString(),
+  });
+}
+
 function meetingMinutesClients(env: Env) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
@@ -284,8 +296,8 @@ function meetingMinutesClients(env: Env) {
       postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
         destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
       postTaskCard: (run: MeetingMinutesRun) => destinationSlack(run.destination!.slackChannelId).postTaskCard(run),
-      repairTaskBoard: (projectCodes: readonly string[]) =>
-        enqueueTaskBoardRepairsForProjects(env, projectCodes, "task_write"),
+      repairTaskBoard: (targetId: string) =>
+        enqueueMeetingMinutesTaskBoardRepair(env, targetId, "task_write"),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
@@ -415,8 +427,8 @@ export default {
             }, listPeople: () => listGraphPeople(undefined, {
               baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
               token: env.BRAINBASE_GRAPH_API_TOKEN,
-            }), repairTaskBoard: (projectCodes) => enqueueTaskBoardRepairsForProjects(
-              env, projectCodes, "task_write",
+            }), repairTaskBoard: (targetId) => enqueueMeetingMinutesTaskBoardRepair(
+              env, targetId, "task_write",
             ), defer: (work) => ctx.waitUntil(work),
           });
         });

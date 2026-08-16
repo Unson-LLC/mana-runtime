@@ -5,7 +5,8 @@ import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinu
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
-const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana",
+const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", contextProjectCode: "mana",
+  taskProjectCodes: ["mana"], taskBoardTargetId: "minutes-mana", name: "mana",
   organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
   github: { owner: "Unson-LLC", repo: "mana", pathPrefix: "docs" } };
 const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId: "T1", channelId: "CROUTER",

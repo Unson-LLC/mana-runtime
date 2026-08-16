@@ -15,6 +15,9 @@ Slackへ議事録ファイルを投稿した利用者として、選択したプ
 - [ ] AC7: 配信先、生成本文、GitHub、Slack、redo、watchdog、task/Canvasの既存契約を維持する。
 - [ ] AC8: Brainbase Receipt取得済みのrunは、Claudeが追加のBrainbase MCP呼び出しを行わなくても正本文脈を使って生成でき、Receipt identity・checksum・source refsの検証を通過する。
 - [ ] AC9: ClaudeがReceipt外のsource refを返した場合、observeモードはReceipt内の参照だけへ正規化し、SlackとGitHubへ警告を表示して議事録生成を継続する。requiredモードは副作用前に拒否する。
+- [ ] AC10: すべての議事録保存先は、Brainbase文脈参照コード、Canonical Task登録コード、タスクボード共有先をそれぞれ明示する。保存先の内部`projectId`をBrainbaseコードとして暗黙に代用せず、いずれかが欠けた設定は起動時検証で拒否する。
+- [ ] AC11: Brainbaseプロジェクトの未設定または権限不足（401/403）は、Slackへ「プロジェクト紐付けを確認できない恒久設定エラー」と表示する。内部エラーを露出せず、設定修正まで成功しないため再実行ボタンを表示しない。
+- [ ] AC12: 公式デプロイは全議事録保存先の文脈参照コード、Task登録コード、タスクボードコードを本番Brainbaseの認可済みProject集合と一括照合する。未登録・未許可・用途間不一致が1件でもあれば、Workerを更新せず失敗する。
 
 ## 運用モード
 

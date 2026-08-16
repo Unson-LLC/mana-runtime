@@ -3,9 +3,11 @@ import { classifyMeetingMinutesDestinationInSandbox, generateMeetingMinutesInSan
   parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
 
 const destinations = [
-  { id: "sales-tailor", projectId: "proj_salestailor", contextProjectCode: "unson", name: "SalesTailor",
+  { id: "sales-tailor", projectId: "proj_salestailor", contextProjectCode: "salestailor",
+    taskProjectCodes: ["salestailor"], taskBoardTargetId: "minutes-salestailor", name: "SalesTailor",
     organization: { id: "unson", name: "雲孫" }, slackChannelId: "C1", github: { owner: "o", repo: "r" } },
-  { id: "united", projectId: "proj_united", name: "United",
+  { id: "united", projectId: "proj_united", contextProjectCode: "techknight",
+    taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-united", name: "United",
     organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2", github: { owner: "o", repo: "r2" } },
 ];
 const context = { schema_version: "meeting_minutes_context_receipt.v1" as const, receipt_id: "mmctx_1",

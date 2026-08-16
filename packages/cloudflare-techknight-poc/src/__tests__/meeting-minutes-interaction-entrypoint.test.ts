@@ -61,7 +61,9 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T1", SLACK_EXPECTED_APP_ID: "A1",
       MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C1", MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
       SLACK_BOT_TOKEN: "xoxb-test",
-      MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1", name: "ボード定例",
+      MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1",
+        contextProjectCode: "techknight", taskProjectCodes: ["techknight"],
+        taskBoardTargetId: "minutes-techknight-board", name: "ボード定例",
         organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2",
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } }]), TECHKNIGHT_EVENTS: { send } };
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", { method: "POST", body,
@@ -90,7 +92,9 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     vi.stubGlobal("fetch", slackUpdate); const deferred: Promise<unknown>[] = [];
     const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T1", SLACK_EXPECTED_APP_ID: "A1",
       MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C1", MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
-      MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1", name: "ボード定例",
+      MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1",
+        contextProjectCode: "techknight", taskProjectCodes: ["techknight"],
+        taskBoardTargetId: "minutes-techknight-board", name: "ボード定例",
         organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2",
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } }]), TECHKNIGHT_EVENTS: { send } };
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", { method: "POST", body,

@@ -286,6 +286,21 @@
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
       "last_revised_at": "2026-08-16T06:37:13.776Z"
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "全保存先はBrainbase文脈コード、Task登録コード、タスクボード共有先を明示し、内部projectIdへフォールバックしない。紐付け未設定または権限不足は恒久設定エラーとして原因を表示し、再実行を提示しない。公式配備は全設定コードをBrainbaseの認可済みProject集合と一括照合し、不一致があれば配備前に停止する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-10" }, { "kind": "acceptance_criteria", "ac_id": "AC-11" }, { "kind": "acceptance_criteria", "ac_id": "AC-12" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "プロジェクト紐付け" }, { "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "失敗" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-contracts.ts" }, { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts" }, { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts" }, { "file": "packages/cloudflare-techknight-poc/scripts/brainbase-project-binding-check.mjs" }, { "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts", "case": "rejects a destination without explicit" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "binds every meeting destination and the existing mana channel to a trusted task Canvas target" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "explains a permanent Brainbase project binding failure without offering retry" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts", "case": "allows deployment only when every configured code is authorized" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts", "must_cover": "rejects a destination without explicit" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "binds every meeting destination" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "permanent Brainbase project binding failure" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts", "must_cover": "allows deployment only when every configured code is authorized" }] },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T08:00:00.000Z",
+      "last_revised_at": "2026-08-16T08:00:00.000Z"
     }
   ],
   "planned_test_suites": [

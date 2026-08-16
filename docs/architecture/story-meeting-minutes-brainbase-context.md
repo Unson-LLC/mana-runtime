@@ -18,6 +18,14 @@ source refsの照合はWorkerを正本境界とする。observeモードではRe
 
 Receiptの未完了task候補と生成taskを、project、正規化title、正規化担当者で比較する。完全一致は既存task idをrunへ記録する。類似だけの候補は`needs_review`にして自動作成しない。一致しないものだけ既存のidempotency keyで作成する。
 
+## プロジェクト紐付け
+
+議事録保存先は、画面とrunを識別する内部`projectId`、Brainbase文脈取得に使う`contextProjectCode`、Canonical Task登録に使う`taskProjectCodes`、タスクボード共有先を一意に示す`taskBoardTargetId`を別々の責務として保持する。いずれも全保存先で明示し、内部`projectId`や他用途の値へフォールバックしない。
+
+専用のBrainbaseプロジェクトが存在する保存先はその正規コードへ結ぶ。専用プロジェクトがない会議は、所属Workspaceの正規プロジェクト（`unson`または`techknight`）へ明示的に結ぶ。存在を確認できない`proj_*`コードを推測で作らない。設定欠落はWorkerの起動時検証で拒否し、タスクボードはproject codeの部分一致ではなく`taskBoardTargetId`で解決する。
+
+公式デプロイは、全保存先の`contextProjectCode`、`taskProjectCodes`と、それぞれが参照するタスクボードの`projectCodes`を本番Brainbase Graphの認可済みProject一覧と比較する。用途間の不一致、未登録、実行主体の権限不足、Brainbaseへの到達不能はいずれもfail closedとし、Workerの更新へ進まない。個別の保存先だけを例外扱いしたり、別Projectへ暗黙にフォールバックしたりしない。
+
 ## 保存と表示
 
 GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を、本文末尾へ利用source refsと判断候補を決定的に描画する。Slack完了表示には「Brainbase参照済み」と、Receipt外参照を除外した場合の警告を示す。生Graph contextは保存・投稿しない。
@@ -25,3 +33,5 @@ GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を�
 ## 失敗
 
 requiredモードのReceipt失敗またはReceipt外参照は「Brainbaseの正本文脈を取得できなかったため保存していません」と同じ処理中投稿へ表示する。GitHub・Task・配信先Slackへ副作用を残さない。observeモードのReceipt外参照は警告として保存し、Slack完了表示とGitHub議事録へ警告を出したうえで、正規参照だけで処理を継続する。
+
+Brainbaseプロジェクトコードの未設定、または認証済み実行主体に当該プロジェクトの権限がない401/403は、一時的な生成失敗と区別する。同じ処理中投稿へ「Brainbaseのプロジェクト紐付けを確認できませんでした。未設定、または利用権限がありません。設定を修正するまで再実行しても成功しません」と表示し、内部エラーと再実行ボタンは表示しない。

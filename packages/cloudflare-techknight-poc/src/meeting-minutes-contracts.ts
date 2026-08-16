@@ -14,9 +14,11 @@ export interface MeetingMinutesDestination {
   id: string;
   projectId: string;
   /** Canonical Brainbase project code used to resolve meeting context. */
-  contextProjectCode?: string;
+  contextProjectCode: string;
   /** Canonical Brainbase project codes used only for task integration. */
-  taskProjectCodes?: string[];
+  taskProjectCodes: string[];
+  /** Exact task-board destination; never inferred from a Brainbase project code. */
+  taskBoardTargetId: string;
   name: string;
   organization: { id: string; name: string };
   slackChannelId: string;
@@ -24,11 +26,11 @@ export interface MeetingMinutesDestination {
 }
 
 export function meetingMinutesContextProjectCode(destination: MeetingMinutesDestination): string {
-  return destination.contextProjectCode ?? destination.projectId;
+  return destination.contextProjectCode;
 }
 
 export function meetingMinutesTaskProjectCodes(destination: MeetingMinutesDestination): string[] {
-  return destination.taskProjectCodes ? [...destination.taskProjectCodes] : [destination.projectId];
+  return [...destination.taskProjectCodes];
 }
 
 export interface GeneratedMeetingMinutes {
@@ -138,7 +140,9 @@ export interface MeetingMinutesRun {
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
   taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "reused" | "needs_review" | "removed";
     assigneePersonId?: string; assigneeDisplayName?: string }>;
-    failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string; failedAt: string } };
+    failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string;
+      /** Stable Task API classification retained so Slack can distinguish configuration errors from retryable failures. */
+      code?: string; status?: number; failedAt: string } };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   lifecycle?: {
