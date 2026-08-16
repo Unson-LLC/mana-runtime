@@ -6,9 +6,11 @@ import {
   CredentialLeaseUseRegistry,
   IdempotencyMemoryStore,
   TenantBoundaryError,
+  TenantRuntimeBoundaryVerifier,
   TenantQuotaCache,
   WorkspaceConnectionRegistry,
   acquireCredentialLease,
+  acquireEnvelopeCredentialLease,
   applyCredentialLifecycleEvent,
   assertQuotaAllowsExecution,
   assertSecretArtifactFree,
@@ -16,19 +18,23 @@ import {
   authorizeSlackDelivery,
   claimIdempotency,
   consumeCredentialLease,
+  consumeTenantQueueMessage,
   createDeletionReceipt,
   createIdempotencyKey,
   createOperationReceipt,
   createSecretValue,
   createUsageEvent,
+  executeTenantBoundary,
   jcsCanonicalize,
   negotiateTenantProtocol,
   prepareContainerReuse,
+  resolveSlackWorkerIngress,
   resolveTemporaryObjectExpiry,
   signTenantContextEnvelope,
   tenantPartitionKey,
   validateNonApplicableCapabilities,
   validateTenantBoundary,
+  authorizeSlackDeliveryWithAuthority,
   type BoundaryName,
   type ContainerLease,
   type DeploymentProfile,
@@ -424,6 +430,103 @@ describe("story-mana-multitenant-runtime contract", () => {
       expected_scope: expectedScope, now: NOW, resolve_verification_key: async () => publicKey,
       ownership, payload_hash: "reply-a" })).rejects
       .toEqual(expect.objectContaining({ code: "REPLY_OWNERSHIP_CONFLICT" }));
+  });
+
+  it("authoritative worker ingress resolution planned Red", async () => {
+    const { value, publicKey } = await envelope();
+    const resolveWorkspaceConnection = vi.fn(async () => snapshotA);
+    const readWorkspaceConnection = vi.fn(async () => snapshotA);
+    const issueTenantContext = vi.fn(async () => value);
+    const result = await resolveSlackWorkerIngress({
+      identity: {
+        provider: "slack",
+        app_id: "A-MANA",
+        workspace_id: "T-A",
+        installation_id: "I-A",
+        event_id: "Ev-A-001",
+        channel_id: "C-A",
+        thread_ts: "1723800000.000001",
+        requester_id: "slack-user-a",
+      },
+      required_scopes: ["chat:write"],
+      required_authorization: {
+        audience: "mana-runtime",
+        project_id: "project-a",
+        capability_id: "task.write",
+      },
+      authority: {
+        resolve_workspace_connection: resolveWorkspaceConnection,
+        read_workspace_connection: readWorkspaceConnection,
+        issue_tenant_context: issueTenantContext,
+      },
+      now: NOW,
+      resolve_verification_key: async () => publicKey,
+    });
+    expect(result).toEqual({ tenant_context: value, authoritative_snapshot: snapshotA });
+    expect(resolveWorkspaceConnection).toHaveBeenCalledWith({
+      provider: "slack", app_id: "A-MANA", workspace_id: "T-A",
+    });
+    expect(readWorkspaceConnection).toHaveBeenCalledWith(CONNECTION_A);
+    expect(issueTenantContext).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_connection: snapshotA,
+      slack: expect.objectContaining({ event_id: "Ev-A-001", requester_id: "slack-user-a" }),
+    }));
+  });
+
+  it("queue validation happens before tenant work planned Red", async () => {
+    const { value, publicKey } = await envelope();
+    const readSnapshot = vi.fn(async () => ({ ...snapshotA, connection_revision: "8" }));
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: readSnapshot,
+      resolve_verification_key: async () => publicKey,
+    });
+    const message = { body: { schema_version: "1.0" as const, tenant_context: value, payload: { command: "run" } },
+      ack: vi.fn(), retry: vi.fn() };
+    const process = vi.fn(async () => ({ outcome: "succeeded" }));
+    await consumeTenantQueueMessage(message, {
+      verifier,
+      expected_scope: () => expectedScope,
+      now: () => NOW,
+      process,
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it("DO Container MCP and Brainbase write recheck revision planned Red", async () => {
+    const { value, publicKey } = await envelope();
+    const readSnapshot = vi.fn(async () => snapshotA);
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: readSnapshot,
+      resolve_verification_key: async () => publicKey,
+    });
+    const execute = vi.fn(async () => "done");
+    for (const boundary of ["durable_object", "container_launch", "mcp_gateway", "brainbase_proxy"] as const) {
+      await expect(executeTenantBoundary({ boundary, tenant_context: value, expected_scope: expectedScope,
+        now: NOW, verifier, execute })).resolves.toBe("done");
+    }
+    expect(readSnapshot).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
+
+  it("credential lease and Slack delivery recheck authoritative revision planned Red", async () => {
+    const { value, publicKey } = await envelope();
+    const readSnapshot = vi.fn(async () => snapshotA);
+    const broker = { acquire_lease: vi.fn(async (request) => ({ ...request, lease_id: "lease-a", issued_at: NOW,
+      expires_at: "2026-08-16T13:03:00.000Z", max_uses: 1 as const })) };
+    await expect(acquireEnvelopeCredentialLease({ envelope: value, expected_scope: expectedScope,
+      audience: "anthropic", broker, read_authoritative_snapshot: readSnapshot, now: NOW,
+      resolve_verification_key: async () => publicKey })).resolves.toMatchObject({ lease_id: "lease-a" });
+    expect(broker.acquire_lease).toHaveBeenCalledWith(expect.objectContaining({
+      tenant_id: TENANT_A, connection_revision: "7", credential_ref: "credential-ref-a",
+    }));
+
+    const ownership = new IdempotencyMemoryStore();
+    await expect(authorizeSlackDeliveryWithAuthority({ envelope: value, expected_scope: expectedScope,
+      now: NOW, resolve_verification_key: async () => publicKey, read_authoritative_snapshot: readSnapshot,
+      ownership, payload_hash: "reply-a" })).resolves.toMatchObject({ disposition: "claimed" });
+    expect(readSnapshot).toHaveBeenCalledTimes(3);
   });
 
   it("positive negative and non applicable fixture suites planned Red", () => {
