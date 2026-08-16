@@ -14,6 +14,8 @@ Workerは生成結果へ正規Receipt identityを結合し、parserはidentity�
 
 source refsの照合はWorkerを正本境界とする。observeモードではReceipt外参照を生成結果から除外し、`unknown_source_ref_removed`警告をrunへ永続化して処理を継続する。判断候補の根拠IDも同じ許可集合へ正規化する。requiredモードではReceipt外参照を副作用前に拒否する。
 
+生成結果はプロンプト内の見本・説明文・型の選択肢を値として含めない。Workerは既知の見本値をJSON parse直後に検出し、`run.generated`への永続化およびGitHub・Slack・Task・タスクボードの副作用前に拒否する。再実行では既存の`run.generated`も同じ境界で再検証する。まだGitHubへ保存していない見本文は破棄して同一実行内で再生成する。すでに保存・共有した見本文は自動上書きせず、completed runへ修復理由を永続化し、明示的なやり直しで撤回してから再生成する。
+
 ## タスク照合
 
 Receiptの未完了task候補と生成taskを、project、正規化title、正規化担当者で比較する。完全一致は既存task idをrunへ記録する。類似だけの候補は`needs_review`にして自動作成しない。一致しないものだけ既存のidempotency keyで作成する。
@@ -49,3 +51,5 @@ GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を�
 requiredモードのReceipt失敗またはReceipt外参照は「Brainbaseの正本文脈を取得できなかったため保存していません」と同じ処理中投稿へ表示する。GitHub・Task・配信先Slackへ副作用を残さない。observeモードのReceipt外参照は警告として保存し、Slack完了表示とGitHub議事録へ警告を出したうえで、正規参照だけで処理を継続する。
 
 Brainbaseの401は、Project紐付けではなく認証情報の未設定・無効・期限切れとして扱う。同じ処理中投稿へ「Brainbaseの認証設定を確認できませんでした」と表示する。403または未認可Projectコードは、Project紐付け・権限不足として「Brainbaseのプロジェクト紐付けを確認できませんでした」と表示する。どちらも一時的な生成失敗と区別し、内部エラーと再実行ボタンは表示しない。
+
+新規生成結果がプロンプトの見本を含む場合は、「見本の文章が混ざったため、議事録として保存・共有しませんでした」と処理中投稿へ表示する。内部エラーは表示せず、同じ保存先で安全に再生成できる再実行操作を提示する。すでに保存・共有済みの見本文を検出した場合は、現在のGitHub・共有先を示し、自動上書きせず「保存先をやり直す」で撤回・再生成するよう案内する。

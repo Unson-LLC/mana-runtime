@@ -94,6 +94,11 @@ function isBrainbaseProjectBindingFailure(run: MeetingMinutesRun): boolean {
 }
 function failedRunDetails(run: MeetingMinutesRun): string[] {
   const destination = `保存先: ${run.destination!.name}`;
+  if (run.failure?.message === "meeting_minutes_generation_placeholder_output") {
+    return ["*⚠️ 生成結果が議事録になっていませんでした*", destination,
+      "見本やプレースホルダーのままの出力を検出したため、GitHub・Slack・タスクには保存していません。",
+      "下のボタンから安全に再実行できます。"];
+  }
   if (run.taskRegistration?.failure && run.slack?.parentTs) {
     return ["*⚠️ 議事録は共有しましたが、タスク自動登録に失敗しました*", destination,
       "議事録本文は共有済みです。タスク登録を再試行するには、下のボタンを押してください。"];
@@ -201,6 +206,8 @@ export class MeetingMinutesSlackClient {
     const permanentProjectBindingFailure = isBrainbaseProjectBindingFailure(run);
     const permanentAuthenticationFailure = isBrainbaseAuthenticationFailure(run);
     const permanentBrainbaseFailure = permanentProjectBindingFailure || permanentAuthenticationFailure;
+    const persistedPlaceholderFailure = completed
+      && run.failure?.message === "meeting_minutes_persisted_placeholder_output";
     const taskRegistrationPending = completed && Boolean(run.taskRegistration?.failure)
       && !permanentBrainbaseFailure;
     const contextWarning = completed
@@ -211,7 +218,9 @@ export class MeetingMinutesSlackClient {
       : taskIntegrationStage === "task_card"
       ? "タスク登録は完了しましたが、タスクカードの投稿が完了していません。"
       : "タスク自動登録だけ完了していません。";
-    const text = completed && permanentAuthenticationFailure
+    const text = persistedPlaceholderFailure
+      ? `${run.file.name} の保存済み議事録に見本文が含まれています。保存先をやり直してください。`
+      : completed && permanentAuthenticationFailure
       ? `${run.file.name} の議事録は作成・共有済みですが、Brainbaseの認証設定を確認できませんでした。`
       : completed && permanentProjectBindingFailure
       ? `${run.file.name} の議事録は作成・共有済みですが、Brainbaseのプロジェクト紐付けを確認できませんでした。`
@@ -225,7 +234,14 @@ export class MeetingMinutesSlackClient {
       : permanentProjectBindingFailure
       ? `${run.file.name} の議事録作成に失敗しました。Brainbaseのプロジェクト紐付けを確認してください。`
       : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
-    const details = completed && permanentAuthenticationFailure
+    const details = persistedPlaceholderFailure
+      ? [`*⚠️ 保存済みの議事録に見本文が含まれています*`,
+        `保存先: ${run.destination.name}`,
+        run.github?.minutesUrl ? `<${run.github.minutesUrl}|現在のGitHubファイルを確認する>` : undefined,
+        run.slack?.parentTs ? `共有先: <#${run.destination.slackChannelId}>` : undefined,
+        "以前の生成結果を自動では上書きしません。下の「保存先をやり直す」で撤回し、再生成してください。"]
+        .filter(Boolean).join("\n")
+      : completed && permanentAuthenticationFailure
       ? [`*⚠️ 議事録は作成・共有済みですが、Brainbaseの認証設定を確認できませんでした*`,
         `保存先: ${run.destination.name}`,
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
