@@ -5,6 +5,7 @@ import {
   normalizeSlackEvent,
   verifySlackRequest,
 } from "../slack.js";
+import { interceptMeetingMinutesIntakePause } from "../meeting-minutes-intake-entrypoints.js";
 
 const signingSecret = "test-signing-secret";
 const nowSeconds = 1_786_420_000;
@@ -265,6 +266,77 @@ describe("handleSlackRequest", () => {
       workspaceId: "T_UNSON",
       channelId: "C_BACK_OFFICE",
     }));
+  });
+
+  it("acks an intercepted router file without queueing it", async () => {
+    const body = JSON.stringify({
+      type: "event_callback", api_app_id: "A_UNSON", team_id: "T_UNSON", event_id: "EvPaused",
+      event: { type: "message", subtype: "file_share", channel: "C_ROUTER", ts: "1786420000.000150",
+        user: "U123", text: "", files: [{ id: "F1", name: "meeting.txt" }] },
+    });
+    const send = vi.fn();
+    const intercept = vi.fn().mockResolvedValue(true);
+    const request = new Request("https://example.com/slack/events", { method: "POST", headers: {
+      "content-type": "application/json", "x-slack-request-timestamp": String(nowSeconds),
+      "x-slack-signature": signature(nowSeconds, body),
+    }, body });
+
+    const response = await handleSlackRequest(request, { signingSecret, tenantId: "unson",
+      expectedTeamId: "T_UNSON", expectedAppId: "A_UNSON", nowMs: nowSeconds * 1_000, intercept, send });
+
+    expect(response.status).toBe(200);
+    expect(intercept).toHaveBeenCalledWith(expect.objectContaining({ eventId: "EvPaused", channelId: "C_ROUTER" }));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue a file received while paused even after intake resumes", async () => {
+    const body = JSON.stringify({
+      type: "event_callback", api_app_id: "A_UNSON", team_id: "T_UNSON", event_id: "EvPausedRace",
+      event: { type: "message", subtype: "file_share", channel: "C_ROUTER", ts: "1786420000.000155",
+        user: "U123", text: "", files: [{ id: "F1", name: "meeting.txt" }] },
+    });
+    let paused = true;
+    const send = vi.fn();
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const deferred: Promise<void>[] = [];
+    const request = new Request("https://example.com/slack/events", { method: "POST", headers: {
+      "content-type": "application/json", "x-slack-request-timestamp": String(nowSeconds),
+      "x-slack-signature": signature(nowSeconds, body),
+    }, body });
+
+    const response = await handleSlackRequest(request, { signingSecret, tenantId: "unson",
+      expectedTeamId: "T_UNSON", expectedAppId: "A_UNSON", nowMs: nowSeconds * 1_000,
+      intercept: (event) => interceptMeetingMinutesIntakePause(event, {
+        isPaused: async () => paused,
+        notify,
+        defer: (work) => deferred.push(work),
+      }),
+      send });
+    paused = false;
+    await Promise.all(deferred);
+
+    expect(response.status).toBe(200);
+    expect(send).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith("C_ROUTER", "1786420000.000155");
+  });
+
+  it("continues queueing ordinary events when the interceptor declines them", async () => {
+    const body = JSON.stringify({
+      type: "event_callback", api_app_id: "A_UNSON", team_id: "T_UNSON", event_id: "EvOrdinary",
+      event: { type: "app_mention", channel: "C_OTHER", ts: "1786420000.000160", user: "U123", text: "hello" },
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const intercept = vi.fn().mockResolvedValue(false);
+    const request = new Request("https://example.com/slack/events", { method: "POST", headers: {
+      "content-type": "application/json", "x-slack-request-timestamp": String(nowSeconds),
+      "x-slack-signature": signature(nowSeconds, body),
+    }, body });
+
+    const response = await handleSlackRequest(request, { signingSecret, tenantId: "unson",
+      expectedTeamId: "T_UNSON", expectedAppId: "A_UNSON", nowMs: nowSeconds * 1_000, intercept, send });
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it("rejects a signed request from a different Slack App", async () => {

@@ -15,6 +15,13 @@ Slackへ議事録ファイルを投稿した利用者として、選択したプ
 - [ ] AC7: 配信先、生成本文、GitHub、Slack、redo、watchdog、task/Canvasの既存契約を維持する。
 - [ ] AC8: Brainbase Receipt取得済みのrunは、Claudeが追加のBrainbase MCP呼び出しを行わなくても正本文脈を使って生成でき、Receipt identity・checksum・source refsの検証を通過する。
 - [ ] AC9: ClaudeがReceipt外のsource refを返した場合、observeモードはReceipt内の参照だけへ正規化し、SlackとGitHubへ警告を表示して議事録生成を継続する。requiredモードは副作用前に拒否する。
+- [ ] AC10: すべての議事録保存先は、Brainbase文脈参照コード、Canonical Task登録コード、タスクボード共有先をそれぞれ明示する。保存先の内部`projectId`をBrainbaseコードとして暗黙に代用せず、いずれかが欠けた設定は起動時検証で拒否する。
+- [ ] AC11: Brainbaseの401は「認証情報が未設定、無効、または期限切れ」、403または未認可Projectコードは「プロジェクト紐付け・権限不足」とSlackへ区別して表示する。どちらも内部エラーを露出せず、設定修正まで成功しないため再実行ボタンを表示しない。
+- [ ] AC12: 公式デプロイは全議事録保存先の文脈参照コード、Task登録コード、タスクボードコードを本番Brainbaseの認可済みProject集合と一括照合する。未登録・未許可・用途間不一致が1件でもあれば、Workerを更新せず失敗する。
+- [ ] AC13: 保存先の正規Project紐付けを変更した場合、既存runに保存した旧Task範囲を信頼境界として保持する。編集時は同じTaskを現在の正規範囲へ更新し、取消時は旧範囲と完全一致するTaskだけを削除する。無関係な範囲のTaskは拒否する。
+- [ ] AC14: `taskProjectCodes`導入前に内部`projectId`をTask範囲として保存した既存runも、その旧範囲と完全一致するTaskだけを現行の正規範囲へ移行できる。無関係な範囲は編集・取消せず、操作した利用者へSlackで理由を表示する。公式デプロイはTask APIとGraph APIの両方を本番資格情報で検証する。
+- [ ] AC15: 障害対応やrollbackでは、処理中runを中断せずに新規ファイル投入と保存先選択だけを先に停止できる。停止前後にQueueへ到達したrouterファイル・保存先選択・やり直しは、停止版でも再試行ループや通常処理へ流さずACKし、Slackへ停止理由と復旧後の操作案内を表示する。処理中runが0件になった後だけ、受付停止機構を保持した停止版を通常のDeployment Gateで配備し、再開は明示操作とする。
+- [ ] AC16: 受付停止版は新規runを開始しない一方、検証済みの保存先設定を参照用に保持する。これにより、既存完了runのCanonical Task編集・取消と、保存済みの旧Project範囲から現行の正規範囲への安全な移行を停止中も継続できる。
 
 ## 運用モード
 

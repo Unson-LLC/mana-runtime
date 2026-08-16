@@ -1,4 +1,4 @@
-import { assertMeetingMinutesDeployAllowed } from "../../scripts/deploy-gate-check.mjs";
+import { assertMeetingMinutesDeployAllowed, setMeetingMinutesIntakePaused } from "../../scripts/deploy-gate-check.mjs";
 
 describe("meeting minutes deployment gate", () => {
   it("fails closed when configuration or the current Worker is unavailable", async () => {
@@ -35,5 +35,16 @@ describe("meeting minutes deployment gate", () => {
       fetchImpl: missing })).rejects.toThrow("meeting_minutes_deploy_gate_http_404");
     await expect(assertMeetingMinutesDeployAllowed({ baseUrl: "https://worker.example", token: "token",
       fetchImpl: missing, allowMissingGate: true })).resolves.toBeUndefined();
+  });
+
+  it("pauses new intake even while active runs are still draining", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({
+      allowed: false, intakePaused: true, activeRuns: [{ runId: "run-1" }],
+    }));
+    await expect(setMeetingMinutesIntakePaused({
+      baseUrl: "https://worker.example", token: "token", paused: true, fetchImpl,
+    })).resolves.toEqual(expect.objectContaining({ intakePaused: true }));
+    expect(fetchImpl).toHaveBeenCalledWith(new URL("/admin/meeting-minutes/intake", "https://worker.example"),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ paused: true }) }));
   });
 });

@@ -201,6 +201,39 @@ pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
 `SANDBOX_PROBE_TOKEN`を実行環境へ渡します。応答不能、10秒超過、認証失敗、処理中ありは
 すべて配備を停止します。ゲートを初めて導入する1回だけは、処理中がないことを別途確認したうえで
 `MEETING_MINUTES_DEPLOY_GATE_BOOTSTRAP=true`を指定できます。導入後は指定しません。
+BrainbaseのProject一覧と照合する認証情報も必要なため、ローカル環境へ値を手入力せず、
+正規のInfisicalラッパーから実行します。
+
+```bash
+/Users/ksato/workspace/code/brainbase/scripts/infisical-target-run.sh \
+  --target brainbase-mana-prod -- \
+  pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
+```
+
+配備前検査は全保存先の`contextProjectCode`、`taskProjectCodes`、タスクボードのProjectコードを
+Brainbaseの認可済みProject集合と一括照合します。未登録、権限不足、認証失敗、到達不能のいずれも
+Worker更新前に配備を停止します。
+
+今回のProject紐付けを含む版からrollbackする場合、旧Worker versionをそのままpromoteしてはいけません。
+Worker versionには`MEETING_MINUTES_ENABLED`も含まれるため、旧versionの`true`まで復元され、新規受付が
+再開してしまいます。まず稼働中runが残っていても実行できる受付停止APIを正規Infisicalラッパーから呼びます。
+
+```bash
+/Users/ksato/workspace/code/brainbase/scripts/infisical-target-run.sh \
+  --target brainbase-mana-prod -- \
+  pnpm --filter @openryoko/cloudflare-techknight-poc meeting-minutes:intake:pause
+```
+
+ファイル投入と保存先選択が停止した状態で処理中runが0件になるのを待ち、受付停止API、Slack受信抑止、
+Queue抑止を備えた現行commitの設定を`MEETING_MINUTES_ENABLED=false`にして正規Infisicalラッパーから配備します。
+修復中はこの停止版artifactを維持します。受付停止機構を持たない過去commitやCloudflareの既存versionを
+known-goodとして配備・promoteしてはいけません。
+
+修正版も同じ受付停止機構を保持した新しいartifactとして、まず`false`で配備します。受付停止状態のreadback、
+routerへの`.txt`投入がQueueへ入らないこと、既存の保存先ボタンが「受付停止中」を表示することを確認します。
+その後、全保存先の配備前検査を通した修正版を`true`で再配備し、readback後に同じラッパーから
+`meeting-minutes:intake:resume`を実行します。GitHub保存済みrunのReceiptは
+書き換えず、未保存runは修正版で正規Projectから文脈を取り直します。
 
 ## Sandbox security boundary
 

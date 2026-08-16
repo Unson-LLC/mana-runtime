@@ -9,3 +9,7 @@ export interface MeetingMinutesDeployGateOptions {
 export function assertMeetingMinutesDeployAllowed(
   options: MeetingMinutesDeployGateOptions,
 ): Promise<void>;
+
+export function setMeetingMinutesIntakePaused(
+  options: MeetingMinutesDeployGateOptions & { paused: boolean },
+): Promise<{ intakePaused: boolean }>;

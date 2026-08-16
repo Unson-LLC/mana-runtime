@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-meeting-minutes-brainbase-context",
   "generated_by": {
-    "caller": "codex",
+    "caller": "unknown",
     "stage": "architecture"
   },
   "clauses": [
@@ -48,7 +48,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-16T12:08:34.578Z"
     },
     {
       "id": "INV-001",
@@ -113,7 +113,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-16T12:08:34.578Z"
     },
     {
       "id": "C-002",
@@ -165,7 +165,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-16T12:08:34.578Z"
     },
     {
       "id": "C-003",
@@ -209,7 +209,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-16T12:08:34.578Z"
     },
     {
       "id": "INV-002",
@@ -285,7 +285,345 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-16T12:08:34.578Z"
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "全保存先はBrainbase文脈コード、Task登録コード、タスクボード共有先を明示し、内部projectIdへフォールバックしない。401は認証情報の未設定・無効・期限切れ、403または未認可Projectコードは紐付け・権限不足として区別し、いずれも内部エラーや無効な再実行を提示しない。公式配備は全設定コードをBrainbaseの認可済みProject集合とTask・Graph両資格情報で一括照合し、不一致があれば配備前に停止する。Project紐付け変更前に登録されたTaskは、明示的な旧範囲または当時の内部projectId範囲と完全一致する場合だけ編集・取消を許可し、編集時は現行の正規範囲へ移行する。無関係な範囲は操作せずSlackへ理由を表示する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-11"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-12"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-13"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-14"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "プロジェクト紐付け"
+          },
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "失敗"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-contracts.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/scripts/brainbase-project-binding-check.mjs"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "case": "rejects destinations without every explicit Brainbase binding"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "binds every meeting destination and the existing mana channel to a trusted task Canvas target"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a permanent Brainbase project binding failure without offering retry"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a Brainbase authentication failure without mislabeling it as a project binding"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a task API authentication failure after sharing minutes without offering task retry"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "case": "allows deployment only when every configured code is authorized"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "case": "validates both runtime Task and Graph credentials before deployment"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deploy-unson-business.test.ts",
+            "case": "stops before deployment when Brainbase project preflight fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "cancels an old Kartz task using its trusted legacy scope while minutes are disabled"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "migrates a legacy completed run before cancelling its task"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "migrates a legacy completed run before editing its task"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "rejects an unrelated task scope while migrating an old run"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "notifies the operator when editing a task from an unrelated project scope"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a canonical task project scope mismatch to the operator"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "must_cover": "rejects destinations without every explicit Brainbase binding"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "binds every meeting destination"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "permanent Brainbase project binding failure"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "Brainbase authentication failure without mislabeling it as a project binding"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "task API authentication failure after sharing minutes"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "must_cover": "allows deployment only when every configured code is authorized"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "must_cover": "both runtime Task and Graph credentials"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deploy-unson-business.test.ts",
+            "must_cover": "stops before deployment when Brainbase project preflight fails"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "old Kartz task"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "legacy completed run"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "unrelated task scope"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "canonical task project scope mismatch"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T08:00:00.000Z",
+      "last_revised_at": "2026-08-16T12:08:34.578Z"
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らず、停止前後にQueueへ到達したrouterファイル・保存先選択・やり直しも通常処理や再試行へ流さずACKし、Slackへ停止理由と復旧後の操作案内を表示する。runが0件になった後だけ、受付停止機構を保持した停止版を通常のDeployment Gateで配備する。停止版は検証済みの保存先設定を参照用に保持し、新規runを開始せずに既存完了runのTask編集・取消と信頼できる旧Project範囲から現行範囲への移行を継続する。再開は明示操作とする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-15"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-16"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "配備・rollback"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-deployment-gate.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-intake-entrypoints.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-entrypoints.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-task-actions.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/slack-interactions.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/index.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/scripts/deploy-gate-check.mjs"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-deploy-gate.test.ts",
+            "case": "pauses new intake even while active runs are still draining"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "persists an authenticated intake pause and returns the durable status"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a paused file event without running downstream work or requesting a retry"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "still acks a paused file event when the Slack notice fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
+            "case": "does not enqueue a file received while paused even after intake resumes"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "case": "explains that intake is paused without enqueueing a destination selection"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a queued destination selection instead of retrying it in a disabled Worker"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a queued redo instead of retrying it while intake is paused"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "still acks a blocked command when the private Slack notice fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains an intake pause in the source thread"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a blocked queued command privately to the operator"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "case": "retains trusted destinations while disabled so existing task controls keep working"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "cancels an old Kartz task using its trusted legacy scope while minutes are disabled"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-deploy-gate.test.ts",
+            "must_cover": "pauses new intake even while active runs are still draining"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "persists an authenticated intake pause"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "acks a paused file event"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
+            "must_cover": "does not enqueue a file received while paused even after intake resumes"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "must_cover": "intake is paused without enqueueing a destination selection"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "queued destination selection instead of retrying it in a disabled Worker"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "queued redo instead of retrying it while intake is paused"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "blocked command when the private Slack notice fails"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "blocked queued command privately to the operator"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "must_cover": "retains trusted destinations while disabled"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "cancels an old Kartz task using its trusted legacy scope while minutes are disabled"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T11:42:01.148Z",
+      "last_revised_at": "2026-08-16T12:08:34.578Z"
     }
   ],
   "planned_test_suites": [
@@ -308,6 +646,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-16T06:37:13.774Z",
-  "previous_spec_id": "2026-08-15T08:34:02.386Z"
+  "generated_at": "2026-08-16T12:08:34.577Z",
+  "previous_spec_id": "2026-08-16T12:07:52.943Z"
 }

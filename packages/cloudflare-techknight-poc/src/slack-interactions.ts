@@ -29,6 +29,7 @@ interface InteractionOptions {
   defer?(work: Promise<void>): void;
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string }): Promise<Response>;
   handleMeetingTaskAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
+  isIntakePaused?(): Promise<boolean>;
 }
 
 export type SlackInteractionMessage = SlackSelectionMessage;
@@ -82,6 +83,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
   approveTaskWrite?: InteractionOptions["approveTaskWrite"],
   resolveThreadTs?: InteractionOptions["resolveThreadTs"],
   handleMeetingTaskAction?: InteractionOptions["handleMeetingTaskAction"],
+  isIntakePaused?: InteractionOptions["isIntakePaused"],
 ): Promise<Response> {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const destinationTeamIds = (() => {
@@ -102,7 +104,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
     clearProcessing: (input) => slack.clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
     updateOriginal: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
-    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction });
+    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction, isIntakePaused });
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
@@ -172,6 +174,18 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return response("slack_interaction_invalid", 400);
   }
   const sourceThreadTs = threadTsCandidates[0];
+  if (options.isIntakePaused && await options.isIntakePaused()) {
+    const responseUrl = string(payload?.response_url);
+    if (responseUrl && options.updateOriginal && options.defer) {
+      options.defer(options.updateOriginal(responseUrl, {
+        replace_original: true,
+        text: "議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。",
+        blocks: [{ type: "section", text: { type: "mrkdwn",
+          text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。" } }],
+      }));
+    }
+    return Response.json({ ok: true, intake_paused: true });
+  }
   let destinations: readonly MeetingMinutesDestination[] | undefined;
   try { destinations = options.destinations ?? options.resolveDestinations?.(); }
   catch { return response("slack_interaction_invalid", 400); }

@@ -36,7 +36,7 @@ export interface ResumeMeetingMinutesOptions {
   >;
   postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string>;
   postTaskCard?(run: MeetingMinutesRun): Promise<string>;
-  repairTaskBoard?(projectCodes: readonly string[]): Promise<void>;
+  repairTaskBoard?(targetId: string): Promise<void>;
   postThreadChunk(channelId: string, threadTs: string, fileName: string, text: string,
     index: number, total: number, clientMsgId: string): Promise<string>;
 }
@@ -52,13 +52,16 @@ function now(options: { now?: () => Date }): string { return (options.now?.() ??
 function destinationIsValid(value: MeetingMinutesDestination): boolean {
   const taskProjectCodes = value.taskProjectCodes;
   return /^[A-Za-z0-9_-]{1,128}$/.test(value.id) && !!value.projectId.trim() && !!value.name.trim() &&
-    (value.contextProjectCode === undefined || /^[A-Za-z0-9_-]{1,128}$/.test(value.contextProjectCode)) &&
+    typeof value.contextProjectCode === "string" &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(value.contextProjectCode) &&
+    typeof value.taskBoardTargetId === "string" &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(value.taskBoardTargetId) &&
     /^[A-Za-z0-9_-]{1,128}$/.test(value.organization?.id ?? "") && !!value.organization?.name.trim() &&
     /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim() &&
-    (taskProjectCodes === undefined || (Array.isArray(taskProjectCodes) && taskProjectCodes.length > 0 &&
+    (Array.isArray(taskProjectCodes) && taskProjectCodes.length > 0 &&
       taskProjectCodes.length <= 10 &&
       taskProjectCodes.every((code) => /^[A-Za-z0-9_-]{1,128}$/.test(code)) &&
-      new Set(taskProjectCodes).size === taskProjectCodes.length));
+      new Set(taskProjectCodes).size === taskProjectCodes.length);
 }
 export function validateMeetingMinutesDestinations(destinations: readonly MeetingMinutesDestination[]): void {
   if (!destinations.length || destinations.length > 25 || destinations.some((item) => !destinationIsValid(item)) ||
@@ -140,7 +143,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       const reconciliation = reconcileMeetingMinutesTask(candidate, receipt);
       if (reconciliation.outcome !== "new") {
         run.taskRegistration.registered.push({ index, title: candidate.title, taskId: reconciliation.taskId,
-          status: reconciliation.outcome });
+          status: reconciliation.outcome, projectCodes: [...taskProjectCodes] });
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
         continue;
       }
@@ -160,14 +163,22 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
         await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
       if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
       run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
+        projectCodes: [...taskProjectCodes],
         ...(task.assignee_person_id ? { assigneePersonId: task.assignee_person_id } : {}),
         ...(task.assignee_display_name ? { assigneeDisplayName: task.assignee_display_name } : {}) });
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
   } catch (error) {
+    const taskApiClassification = error && typeof error === "object"
+      ? { code: "code" in error && typeof error.code === "string" ? error.code : undefined,
+        status: "status" in error && typeof error.status === "number" && Number.isInteger(error.status)
+          ? error.status : undefined }
+      : {};
     run.taskRegistration.failure = { index: activeIndex,
       stage: "task_registration",
       message: error instanceof Error ? error.message : "meeting_minutes_task_registration_failed",
+      ...(taskApiClassification.code ? { code: taskApiClassification.code } : {}),
+      ...(taskApiClassification.status ? { status: taskApiClassification.status } : {}),
       failedAt: now(options) };
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     throw error;
@@ -178,9 +189,13 @@ async function deferTaskIntegration(fs: WorkspaceFs, run: MeetingMinutesRun,
   stage: "task_registration" | "task_board" | "task_card", error: unknown,
   options: ResumeMeetingMinutesOptions): Promise<void> {
   run.taskRegistration ??= { registered: [] };
+  const existingClassification = stage === "task_registration" ? run.taskRegistration.failure : undefined;
   run.taskRegistration.failure = { index: run.taskRegistration.failure?.index ??
     Math.max(0, run.taskRegistration.registered.length - 1), stage,
-    message: error instanceof Error ? error.message : "meeting_minutes_task_integration_failed", failedAt: now(options) };
+    message: error instanceof Error ? error.message : "meeting_minutes_task_integration_failed",
+    ...(existingClassification?.code ? { code: existingClassification.code } : {}),
+    ...(existingClassification?.status ? { status: existingClassification.status } : {}),
+    failedAt: now(options) };
   run.status = "completed"; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
 }
@@ -216,11 +231,18 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   }
   const contextProjectChanged = !!run.destination &&
     meetingMinutesContextProjectCode(run.destination) !== meetingMinutesContextProjectCode(configured);
-  if (contextProjectChanged && run.context) throw new Error("meeting_minutes_context_project_changed");
+  // GitHub保存済みの議事録で使ったReceiptは監査証跡として固定する。
+  // ただしタスク・ボード連携は修正後の紐付けへ移行できるようにする。
+  // GitHub保存前なら旧文脈から作った候補を破棄し、新しい紐付けで取得し直せる。
+  if (contextProjectChanged && run.context && !run.github) {
+    delete run.context;
+    delete run.generated;
+  }
   if (run.destination && (JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(configured.taskProjectCodes) ||
-    contextProjectChanged)) {
-    run.destination.taskProjectCodes = configured.taskProjectCodes ? [...configured.taskProjectCodes] : undefined;
-    run.destination.contextProjectCode = configured.contextProjectCode;
+    run.destination.taskBoardTargetId !== configured.taskBoardTargetId || contextProjectChanged)) {
+    run.destination.taskProjectCodes = [...configured.taskProjectCodes];
+    if (!run.context) run.destination.contextProjectCode = configured.contextProjectCode;
+    run.destination.taskBoardTargetId = configured.taskBoardTargetId;
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
   }
   if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
@@ -242,7 +264,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       if (retryStage !== "task_card" && run.taskRegistration.registered.length && options.repairTaskBoard) {
         await markTaskIntegrationPending(fs, run, "task_board", options);
         try {
-          await options.repairTaskBoard(meetingMinutesTaskProjectCodes(run.destination));
+          await options.repairTaskBoard(run.destination.taskBoardTargetId);
         } catch (error) {
           await deferTaskIntegration(fs, run, "task_board", error, options);
           return run;
@@ -348,7 +370,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
       await markTaskIntegrationPending(fs, run, "task_board", options);
       try {
-        await options.repairTaskBoard(meetingMinutesTaskProjectCodes(run.destination));
+        await options.repairTaskBoard(run.destination.taskBoardTargetId);
       } catch (error) {
         await deferTaskIntegration(fs, run, "task_board", error, options); return run;
       }

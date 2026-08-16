@@ -4,8 +4,10 @@ import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinu
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
+import { TaskApiError } from "@openryoko/task-runtime-core";
 
-const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana",
+const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", contextProjectCode: "mana",
+  taskProjectCodes: ["mana"], taskBoardTargetId: "minutes-mana", name: "mana",
   organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
   github: { owner: "Unson-LLC", repo: "mana", pathPrefix: "docs" } };
 const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId: "T1", channelId: "CROUTER",
@@ -67,7 +69,7 @@ describe("meeting minutes pipeline", () => {
   it("uses the explicit Brainbase context project without changing task or destination identity", async () => {
     const fs = new MemoryFs();
     const kartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
-      taskProjectCodes: ["unson"] };
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [kartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
@@ -77,13 +79,14 @@ describe("meeting minutes pipeline", () => {
     const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, options);
     expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
     expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
-      taskProjectCodes: ["unson"] });
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
   });
 
   it("refreshes a persisted Kartz run from the legacy context project before retrying", async () => {
     const fs = new MemoryFs();
     const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz" };
-    const configuredKartz = { ...legacyKartz, contextProjectCode: "unson", taskProjectCodes: ["unson"] };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "unson", taskProjectCodes: ["unson"],
+      taskBoardTargetId: "minutes-kartz" };
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
     await expect(resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
@@ -100,7 +103,79 @@ describe("meeting minutes pipeline", () => {
 
     expect(resolveContext).toHaveBeenLastCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
     expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
-      taskProjectCodes: ["unson"] });
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
+  });
+
+  it("discards an unsaved legacy context and generation before retrying with the corrected project", async () => {
+    const fs = new MemoryFs();
+    const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "kartz", taskProjectCodes: ["kartz"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(persisted).toBeDefined();
+    persisted!.destination = legacyKartz;
+    persisted!.status = "failed";
+    persisted!.transcriptSha256 = "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6";
+    persisted!.context = { receiptId: "receipt-legacy", checksum: "checksum-legacy", status: "resolved",
+      mode: "observe", resolvedAt: "2026-08-15T00:00:00.000Z", sourceRefs: [] };
+    persisted!.generated = audited({ title: "旧議事録", overview: "旧概要", body: "旧本文" }, {
+      schema_version: "meeting_minutes_context_receipt.v1", receipt_id: "receipt-legacy",
+      identity: { run_id: selection.runId, project_code: "unson",
+        transcript_sha256: "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6" },
+      status: "resolved", checksum: "checksum-legacy", resolved_at: "2026-08-15T00:00:00.000Z",
+      context: { source_refs: [], open_tasks: [] },
+    });
+    persisted!.failure = { stage: "routed", message: "meeting_minutes_context_project_changed" };
+    await saveMeetingMinutesRun(fs, persisted!);
+
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-kartz", identity, status: "resolved" as const, checksum: "checksum-kartz",
+      resolved_at: "2026-08-16T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const generate = vi.fn().mockResolvedValue({ title: "新議事録", overview: "新概要", body: "新本文" });
+    const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [configuredKartz], resolveContext, generate,
+    }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "kartz" }), undefined);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(run).toMatchObject({ status: "completed", context: { receiptId: "receipt-kartz" },
+      destination: { contextProjectCode: "kartz", taskProjectCodes: ["kartz"] }, generated: { title: "新議事録" } });
+  });
+
+  it("keeps an immutable saved Receipt while correcting task bindings on an existing run", async () => {
+    const fs = new MemoryFs();
+    const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "kartz", taskProjectCodes: ["kartz"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "project code is not allowed"))
+      .mockResolvedValueOnce({ id: "task-kartz" });
+    const original = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [legacyKartz],
+      generate: vi.fn().mockResolvedValue({ title: "Kartz定例", overview: "概要", body: "本文",
+        tasks: [{ title: "確認する" }] }),
+      createTask,
+    }));
+    expect(original).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
+      destination: { contextProjectCode: "unson" }, taskRegistration: { failure: { status: 403 } } });
+
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const retried = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [configuredKartz], resolveContext, createTask,
+    }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1");
+    expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["kartz"] }), expect.any(String));
+    expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
+      destination: { contextProjectCode: "unson", taskProjectCodes: ["kartz"] } });
+    expect(retried.taskRegistration).not.toHaveProperty("failure");
+    expect(retried.github).toEqual(original.github);
   });
 
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
@@ -154,12 +229,13 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(order).toEqual(["github", "slack", "task", "canvas"]);
-    expect(repairTaskBoard).toHaveBeenCalledWith(["mana"]);
+    expect(repairTaskBoard).toHaveBeenCalledWith("minutes-mana");
     expect(createTask).toHaveBeenCalledWith(
       expect.objectContaining({ title: "請求書を送る", project_codes: ["mana"] }),
       expect.stringMatching(/^meeting-minutes-/),
     );
-    expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42" }]);
+    expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42",
+      projectCodes: ["mana"] }]);
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST", "10.1", "meeting.txt", expect.not.stringContaining("Brainbaseへタスクを1件登録しました"),
       expect.any(Number), expect.any(Number), expect.any(String),
@@ -298,7 +374,7 @@ describe("meeting minutes pipeline", () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
-      .mockRejectedValueOnce(new Error("project_code_not_allowed"))
+      .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "project code is not allowed"))
       .mockResolvedValueOnce({ id: "task-kartz" });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
@@ -311,18 +387,21 @@ describe("meeting minutes pipeline", () => {
 
     expect(deferred).toMatchObject({ status: "completed",
       slack: { parentTs: "10.1", postedChunkIndexes: [0] },
-      taskRegistration: { failure: { index: 0, message: "project_code_not_allowed" } } });
+      taskRegistration: { failure: { index: 0, stage: "task_registration", code: "project_code_not_allowed",
+        status: 403, message: "project code is not allowed" } } });
     expect(deferred).not.toHaveProperty("failure");
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
-    const canonicalTaskDestination = { ...destination, taskProjectCodes: ["unson"] };
+    const canonicalTaskDestination = { ...destination, taskProjectCodes: ["unson"],
+      taskBoardTargetId: "minutes-unson" };
     const retried = await resumeMeetingMinutesRun(fs, selection, {
       ...options, destinations: [canonicalTaskDestination],
     });
     expect(retried.status).toBe("completed");
-    expect(retried.destination).toMatchObject({ projectId: "mana", taskProjectCodes: ["unson"] });
+    expect(retried.destination).toMatchObject({ projectId: "mana", taskProjectCodes: ["unson"],
+      taskBoardTargetId: "minutes-unson" });
     expect(retried.taskRegistration?.registered).toEqual([
-      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-kartz" },
+      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-kartz", projectCodes: ["unson"] },
     ]);
     expect(retried.taskRegistration).not.toHaveProperty("failure");
     expect(options.postParent).toHaveBeenCalledTimes(1);
@@ -637,8 +716,9 @@ describe("meeting minutes pipeline", () => {
       ] }) }));
     expect(createTask).not.toHaveBeenCalled();
     expect(run.taskRegistration?.registered).toEqual([
-      { index: 0, title: "請求書を送る", taskId: "task-exact", status: "reused" },
-      { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review" },
+      { index: 0, title: "請求書を送る", taskId: "task-exact", status: "reused", projectCodes: ["mana"] },
+      { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review",
+        projectCodes: ["mana"] },
     ]);
   });
 });
