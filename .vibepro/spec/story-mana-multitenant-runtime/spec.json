@@ -3,7 +3,7 @@
   "story_id": "story-mana-multitenant-runtime",
   "inputs_digest": {
     "story_sha": "sha256:e09121d6e5249256bf0b08f43e7dc40cc6684bdc2380a0ae56a75c6c067681d0",
-    "architecture_sha": "sha256:c4610ec8db5d7532d537e2aabfb33429ff2000dbf9c3c73fe341468bc161a23f",
+    "architecture_sha": "sha256:144497d6964a4819bd6283fecb6b576cdb5192fc5c0dbc19047f43f39d3e9712",
     "code_sha": "sha256:7a8dec718898c17d30bd09badc591c09f759435d17fbaa2cc8a3065bfaec2765",
     "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925"
   },
@@ -21,15 +21,15 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-001"
+            "ac_id": "AC-1"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-002"
+            "ac_id": "AC-2"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-003"
+            "ac_id": "AC-3"
           }
         ],
         "architecture_refs": [
@@ -51,11 +51,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: registers and revises a Brainbase workspace connection without deriving tenant from team id"
+            "case": "WorkspaceConnectionSnapshotV1 lifecycle planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: records reauthorization scope change uninstall and revocation state transitions"
+            "case": "Slack installation lifecycle uses authenticated revision port planned Red"
           }
         ]
       },
@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "INV-001",
@@ -79,15 +79,15 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-004"
+            "ac_id": "AC-4"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-101"
+            "ac_id": "AC-6"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-104"
+            "ac_id": "AC-9"
           }
         ],
         "architecture_refs": [
@@ -117,11 +117,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: rejects every unresolved revoked stale ambiguous app or scope state before enqueue"
+            "case": "fail closed before enqueue and LLM planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: never falls back to a static tenant or alternate placement"
+            "case": "authoritative worker ingress resolution planned Red"
           }
         ]
       },
@@ -135,7 +135,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "INV-002",
@@ -145,11 +145,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-005"
+            "ac_id": "AC-5"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-302"
+            "ac_id": "AC-17"
           }
         ],
         "architecture_refs": [
@@ -171,7 +171,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: rejects secret material in every envelope state log and receipt serializer"
+            "case": "no credential body crosses a persisted or observable boundary planned Red"
           }
         ]
       },
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-002",
@@ -195,7 +195,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-102"
+            "ac_id": "AC-7"
           }
         ],
         "architecture_refs": [
@@ -213,11 +213,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: round trips the complete typed v1 envelope with deterministic canonical payload"
+            "case": "TenantContextEnvelopeV1 schema and integrity planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: rejects missing malformed expired or mutated fields"
+            "case": "TenantContextEnvelopeV1 schema and integrity planned Red"
           }
         ]
       },
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "INV-003",
@@ -241,11 +241,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-103"
+            "ac_id": "AC-8"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-104"
+            "ac_id": "AC-9"
           }
         ],
         "architecture_refs": [
@@ -271,11 +271,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: revalidates the envelope at all seven boundaries"
+            "case": "Worker Queue DO Container MCP Brainbase proxy delivery validators planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: rejects tampered and stale context independently at every boundary"
+            "case": "DO Container MCP and Brainbase write recheck revision planned Red"
           }
         ]
       },
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-003",
@@ -299,7 +299,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-105"
+            "ac_id": "AC-10"
           }
         ],
         "architecture_refs": [
@@ -321,11 +321,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: claims per tenant event operation and delivers each side effect at most once across retries"
+            "case": "tenant event operation atomic idempotency planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: does not collide on delimiter-like identifiers or share claims across tenants"
+            "case": "tenant event operation atomic idempotency planned Red"
           }
         ]
       },
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "INV-004",
@@ -349,7 +349,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-201"
+            "ac_id": "AC-11"
           }
         ],
         "architecture_refs": [
@@ -371,11 +371,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: isolates every resource type for identical workspace channel user thread and resource ids"
+            "case": "TenantPartitionKeyV1 matrix planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: rejects resource lookup when partition tenant differs from the envelope"
+            "case": "TenantPartitionKeyV1 matrix planned Red"
           }
         ]
       },
@@ -389,7 +389,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "INV-005",
@@ -399,7 +399,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-202"
+            "ac_id": "AC-12"
           }
         ],
         "architecture_refs": [
@@ -417,11 +417,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: sanitizes process filesystem environment credential transcript and handles before cross tenant reuse"
+            "case": "ContainerSanitizationReceiptV1 planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: destroys an unverifiable dirty container instead of leasing it to another tenant"
+            "case": "ContainerSanitizationReceiptV1 planned Red"
           }
         ]
       },
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-004",
@@ -445,7 +445,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-203"
+            "ac_id": "AC-13"
           }
         ],
         "architecture_refs": [
@@ -463,7 +463,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: runs one tenant contract suite for shared dedicated and customer hosted profiles"
+            "case": "common external contract across deployment profiles planned Red"
           }
         ]
       },
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "INV-006",
@@ -487,7 +487,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-204"
+            "ac_id": "AC-14"
           }
         ],
         "architecture_refs": [
@@ -509,11 +509,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned fixture: tenant A and B collision tamper retry and dirty container"
+            "case": "concurrent A B negative matrix planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: denies every cross tenant effect under concurrency retry and reuse"
+            "case": "concurrent A B negative matrix planned Red"
           }
         ]
       },
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-005",
@@ -537,7 +537,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-205"
+            "ac_id": "AC-15"
           }
         ],
         "architecture_refs": [
@@ -559,11 +559,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: enforces tenant size MIME TTL and records deletion outcomes"
+            "case": "tenant temporary object validation and deletion receipt planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: never exposes download URL or secret to the model"
+            "case": "temporary object lifecycle and deletion receipt planned Red"
           }
         ]
       },
@@ -577,7 +577,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-006",
@@ -587,11 +587,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-301"
+            "ac_id": "AC-16"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-302"
+            "ac_id": "AC-17"
           }
         ],
         "architecture_refs": [
@@ -613,11 +613,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: deterministically selects cloud customer oauth or customer api from the contract revision"
+            "case": "CredentialDecisionV1 selection and injection planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: injects an opaque tenant matched credential only at execution time"
+            "case": "credential lease and Slack delivery recheck authoritative revision planned Red"
           }
         ]
       },
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-007",
@@ -641,7 +641,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-303"
+            "ac_id": "AC-18"
           }
         ],
         "architecture_refs": [
@@ -659,7 +659,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: refreshes with revision CAS and audits success conflict failure and revocation per tenant"
+            "case": "tenant OAuth lifecycle and concurrent refresh planned Red"
           }
         ]
       },
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "INV-007",
@@ -683,11 +683,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-304"
+            "ac_id": "AC-19"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-305"
+            "ac_id": "AC-20"
           }
         ],
         "architecture_refs": [
@@ -713,15 +713,15 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: never falls back across mode operator credential or tenant after authentication failure"
+            "case": "no credential fallback planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned non-applicable fixture: customer hosted without cloud standard returns explicit unsupported"
+            "case": "positive negative and non applicable fixture suites planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: shared runtime has no direct singleton credential file or env source"
+            "case": "no singleton credential source on shared path planned Red"
           }
         ]
       },
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-008",
@@ -749,11 +749,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-401"
+            "ac_id": "AC-21"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-404"
+            "ac_id": "AC-24"
           }
         ],
         "architecture_refs": [
@@ -775,11 +775,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: attributes token model tool MCP container storage and retry usage to tenant and correlation"
+            "case": "UsageEventV1 success failure and not measured planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: records failed consumption and preserves not measured separately from zero"
+            "case": "tenant accounting ledger deduplicates before Brainbase write planned Red"
           }
         ]
       },
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-009",
@@ -803,11 +803,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-402"
+            "ac_id": "AC-22"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-403"
+            "ac_id": "AC-23"
           }
         ],
         "architecture_refs": [
@@ -825,11 +825,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: applies warn hard stop and overage decisions from the current plan revision"
+            "case": "per tenant quota decisions and isolation planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: stops tenant A at quota while tenant B continues concurrently"
+            "case": "quota authority cannot default or cross tenants planned Red"
           }
         ]
       },
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-010",
@@ -853,7 +853,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-405"
+            "ac_id": "AC-25"
           }
         ],
         "architecture_refs": [
@@ -871,11 +871,11 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: returns actionable public failures without contract credential quota or tenant internals"
+            "case": "UserFailure exposes only actionable public fields planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned Red: validates original delivery scope and sends at most once"
+            "case": "safe actionable failure and scoped delivery planned Red"
           }
         ]
       },
@@ -889,7 +889,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     },
     {
       "id": "C-011",
@@ -899,27 +899,27 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-001"
+            "ac_id": "AC-1"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-004"
+            "ac_id": "AC-4"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-103"
+            "ac_id": "AC-8"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-204"
+            "ac_id": "AC-14"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-304"
+            "ac_id": "AC-19"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-403"
+            "ac_id": "AC-23"
           }
         ],
         "architecture_refs": [
@@ -941,15 +941,15 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned positive fixture: contracted active v1"
+            "case": "positive negative and non applicable fixture suites planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned negative fixtures: all fail closed boundary cases"
+            "case": "positive negative and non applicable fixture suites planned Red"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "Planned non-applicable fixture: explicit unsupported without fallback"
+            "case": "positive negative and non applicable fixture suites planned Red"
           }
         ]
       },
@@ -963,9 +963,9 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T14:17:03.616Z"
+      "last_revised_at": "2026-08-16T14:22:53.062Z"
     }
   ],
-  "generated_at": "2026-08-16T14:17:03.614Z",
-  "previous_spec_id": "2026-08-16T13:45:11.299Z"
+  "generated_at": "2026-08-16T14:22:53.060Z",
+  "previous_spec_id": "2026-08-16T14:17:03.614Z"
 }
