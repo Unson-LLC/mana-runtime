@@ -1,0 +1,308 @@
+{
+  "fixture_id": "POS-CANONICAL-FLOW-001",
+  "fixture_kind": "positive",
+  "description": "Canonical negotiation, signed tenant context, credential lease, quota, usage, receipt, and idempotency flow.",
+  "evaluation_time": "2026-08-16T13:00:30Z",
+  "key_id": "fixture-ed25519-2026-08",
+  "protocol_request": {
+    "message_type": "protocol_negotiation_request",
+    "protocol_id": "mana-brainbase-tenant-context",
+    "supported_range": ">=1.0 <2.0",
+    "supported_versions": ["1.0"],
+    "required_capabilities": [
+      "signed_tenant_context",
+      "connection_revision_recheck",
+      "tenant_scoped_authorization",
+      "credential_broker_v1",
+      "usage_receipt_v1",
+      "idempotent_effects_v1",
+      "container_sanitization_v1"
+    ],
+    "optional_capabilities": [
+      "cloud_billing_export",
+      "managed_operations",
+      "shared_cloud_rls_conformance"
+    ],
+    "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    "deployment_profile": "shared_cloud"
+  },
+  "protocol_response": {
+    "message_type": "protocol_negotiation_response",
+    "protocol_id": "mana-brainbase-tenant-context",
+    "selected_version": "1.0",
+    "supported_range": ">=1.0 <2.0",
+    "supported_versions": ["1.0"],
+    "required_capabilities": [
+      "signed_tenant_context",
+      "connection_revision_recheck",
+      "tenant_scoped_authorization",
+      "credential_broker_v1",
+      "usage_receipt_v1",
+      "idempotent_effects_v1",
+      "container_sanitization_v1"
+    ],
+    "optional_capabilities": [
+      { "capability": "cloud_billing_export", "status": "supported" },
+      { "capability": "managed_operations", "status": "supported" },
+      { "capability": "shared_cloud_rls_conformance", "status": "supported" }
+    ],
+    "compatibility_until": "2027-08-16T00:00:00Z"
+  },
+  "tenant_context_envelope": {
+    "schema_version": "1.0",
+    "protocol_id": "mana-brainbase-tenant-context",
+    "protocol_version": "1.0",
+    "issuer": "brainbase",
+    "audience": ["mana-runtime", "brainbase-api"],
+    "tenant": {
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "tenant_revision": "3"
+    },
+    "workspace_connection": {
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "connection_revision": "7",
+      "status": "active",
+      "provider": "slack",
+      "installation_id": "I-A",
+      "workspace_id": "T-A",
+      "app_id": "A-MANA"
+    },
+    "actor": {
+      "principal_id": "person-a",
+      "principal_type": "person",
+      "authenticated_subject_id": "slack-user-a"
+    },
+    "authorization": {
+      "organization_ids": ["organization-a"],
+      "project_ids": ["project-a"],
+      "data_scopes": ["tasks:tenant"],
+      "capability_ids": ["task.read", "task.write"]
+    },
+    "placement": {
+      "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "profile": "shared_cloud"
+    },
+    "slack": {
+      "event_id": "Ev-A-001",
+      "channel_id": "C-A",
+      "thread_ts": "1723800000.000001",
+      "requester_id": "U-A"
+    },
+    "correlation_id": "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+    "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+    "idempotency_key": "ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE",
+    "contract_revision": "11",
+    "credential": {
+      "mode": "customer_oauth",
+      "credential_ref": "credential-ref-a",
+      "billing_principal_id": "billing-principal-a"
+    },
+    "issued_at": "2026-08-16T13:00:00Z",
+    "expires_at": "2026-08-16T13:05:00Z",
+    "integrity": {
+      "method": "jws_detached",
+      "algorithm": "EdDSA",
+      "key_id": "fixture-ed25519-2026-08",
+      "value": "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il0sImtpZCI6ImZpeHR1cmUtZWQyNTUxOS0yMDI2LTA4IiwidHlwIjoiYXBwbGljYXRpb24vbWFuYS1icmFpbmJhc2UtdGVuYW50LWNvbnRleHQrandzIn0..u-bvjhkil-ugcHco3PUriIagSQXgpiRPAUbPhEe3mGMkEK_Sc9YA2Yb-OezAY2fBjUQ6rG-_-hx2ynIM5sh_Ag"
+    }
+  },
+  "credential_lease_request": {
+    "message_type": "credential_lease_request",
+    "protocol_version": "1.0",
+    "binding": {
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "connection_revision": "7",
+      "contract_revision": "11",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "audience": "api.openai.com",
+      "credential_mode": "customer_oauth",
+      "credential_ref": "credential-ref-a"
+    },
+    "requested_ttl_seconds": 60
+  },
+  "credential_lease_response": {
+    "message_type": "credential_lease_response",
+    "protocol_version": "1.0",
+    "lease_id": "lease_01ARZ3NDEKTSV4RRFFQ69G5FB1",
+    "contract_revision": "11",
+    "binding": {
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "connection_revision": "7",
+      "contract_revision": "11",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "audience": "api.openai.com",
+      "credential_mode": "customer_oauth",
+      "credential_ref": "credential-ref-a"
+    },
+    "issued_at": "2026-08-16T13:00:30Z",
+    "expires_at": "2026-08-16T13:01:30Z",
+    "max_uses": 1,
+    "lease_token": "opaque-test-lease-handle-not-credential-material"
+  },
+  "quota_decision": {
+    "message_type": "quota_decision",
+    "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "contract_revision": "11",
+    "quota_revision": "19",
+    "decision": "allowed",
+    "limit": 1000000,
+    "used": 1200,
+    "remaining": 998800,
+    "unit": "model_tokens",
+    "window_started_at": "2026-08-01T00:00:00Z",
+    "window_ends_at": "2026-09-01T00:00:00Z",
+    "decided_at": "2026-08-16T13:00:31Z",
+    "failure_code": null
+  },
+  "usage_events": [
+    {
+      "message_type": "usage_event",
+      "usage_event_id": "usage_01ARZ3NDEKTSV4RRFFQ69G5FB2",
+      "protocol_version": "1.0",
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "connection_revision": "7",
+      "contract_revision": "11",
+      "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "correlation_id": "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "idempotency_key": "ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE",
+      "kind": "model_input_tokens",
+      "quantity": 1200,
+      "unit": "tokens",
+      "collection_state": "collected",
+      "outcome": "succeeded",
+      "failure_code": null,
+      "unknown_fields": [],
+      "observed_at": "2026-08-16T13:01:31Z"
+    },
+    {
+      "message_type": "usage_event",
+      "usage_event_id": "usage_01ARZ3NDEKTSV4RRFFQ69G5FB3",
+      "protocol_version": "1.0",
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "connection_revision": "7",
+      "contract_revision": "11",
+      "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "correlation_id": "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "idempotency_key": "ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE",
+      "kind": "search_results",
+      "quantity": 0,
+      "unit": "items",
+      "collection_state": "collected",
+      "outcome": "succeeded",
+      "failure_code": "NO_DATA",
+      "unknown_fields": [],
+      "observed_at": "2026-08-16T13:01:32Z"
+    },
+    {
+      "message_type": "usage_event",
+      "usage_event_id": "usage_01ARZ3NDEKTSV4RRFFQ69G5FB4",
+      "protocol_version": "1.0",
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "connection_revision": "7",
+      "contract_revision": "11",
+      "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "correlation_id": "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "idempotency_key": "ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE",
+      "kind": "provider_cost",
+      "quantity": 0.013,
+      "unit": "usd",
+      "collection_state": "partial",
+      "outcome": "failed",
+      "failure_code": "UPSTREAM_PARTIAL",
+      "unknown_fields": ["output_tokens"],
+      "observed_at": "2026-08-16T13:01:33Z"
+    },
+    {
+      "message_type": "usage_event",
+      "usage_event_id": "usage_01ARZ3NDEKTSV4RRFFQ69G5FB5",
+      "protocol_version": "1.0",
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "connection_revision": "7",
+      "contract_revision": "11",
+      "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "correlation_id": "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "idempotency_key": "ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE",
+      "kind": "provider_cost",
+      "quantity": null,
+      "unit": "usd",
+      "collection_state": "not_collected",
+      "outcome": "timed_out",
+      "failure_code": "UPSTREAM_TIMEOUT",
+      "unknown_fields": ["amount"],
+      "observed_at": "2026-08-16T13:01:34Z"
+    }
+  ],
+  "operation_receipt": {
+    "message_type": "operation_receipt",
+    "receipt_id": "receipt_01ARZ3NDEKTSV4RRFFQ69G5FB6",
+    "protocol_version": "1.0",
+    "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+    "connection_revision": "7",
+    "contract_revision": "11",
+    "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    "correlation_id": "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+    "operation_ids": ["op_01ARZ3NDEKTSV4RRFFQ69G5FAZ"],
+    "idempotency_keys": ["ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE"],
+    "actor_principal_id": "person-a",
+    "project_id": "project-a",
+    "capability_id": "task.read",
+    "quota_decision": "allowed",
+    "credential_mode": "customer_oauth",
+    "collection_state": "partial",
+    "outcome": "failed",
+    "failure_code": "UPSTREAM_PARTIAL",
+    "usage_event_ids": [
+      "usage_01ARZ3NDEKTSV4RRFFQ69G5FB2",
+      "usage_01ARZ3NDEKTSV4RRFFQ69G5FB3",
+      "usage_01ARZ3NDEKTSV4RRFFQ69G5FB4",
+      "usage_01ARZ3NDEKTSV4RRFFQ69G5FB5"
+    ],
+    "reply": {
+      "state": "failed",
+      "reply_count": 0,
+      "legacy_reply_count": 0
+    },
+    "completed_at": "2026-08-16T13:01:35Z"
+  },
+  "idempotency_claims": [
+    {
+      "message_type": "idempotency_claim",
+      "owner": "brainbase",
+      "scope": "business_effect",
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "slack_event_id": "Ev-A-001",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "idempotency_key": "ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE",
+      "context_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state": "succeeded",
+      "retention_until": "2026-09-16T13:01:35Z"
+    },
+    {
+      "message_type": "idempotency_claim",
+      "owner": "mana_runtime",
+      "scope": "slack_delivery",
+      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "slack_event_id": "Ev-A-001",
+      "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FB7",
+      "idempotency_key": "ik1_7RmTRo4np31RNtDay4zzWwRwNmOiEzgcOuQT1CFMTuo",
+      "context_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "state": "failed_terminal",
+      "retention_until": "2026-09-16T13:01:35Z"
+    }
+  ]
+}

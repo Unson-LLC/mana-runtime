@@ -2,88 +2,11 @@
   "schema_version": "0.1.0",
   "fixture_id": "FX-POS-001",
   "fixture_kind": "positive",
-  "description": "Tenant Aの正当なSlack eventが同じtenant contextとcorrelationでread/write/replyまで進む契約入力。",
-  "input": {
-    "schema_version": "1.0",
-    "protocol_id": "mana-brainbase-tenant-context",
-    "protocol_version": "1.0",
-    "issuer": "brainbase",
-    "audience": ["mana-runtime", "brainbase-api"],
-    "tenant": {
-      "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-      "tenant_revision": 3
-    },
-    "workspace_connection": {
-      "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-      "connection_revision": 7,
-      "status": "active",
-      "provider": "slack",
-      "installation_id": "I-A",
-      "workspace_id": "T-A",
-      "app_id": "A-MANA"
-    },
-    "actor": {
-      "principal_id": "person-a",
-      "principal_type": "person",
-      "authenticated_subject_id": "slack-user-a"
-    },
-    "authorization": {
-      "organization_ids": ["organization-a"],
-      "project_ids": ["project-a"],
-      "data_scopes": ["tasks:tenant"],
-      "capability_ids": ["task.read", "task.write"]
-    },
-    "placement": {
-      "deployment_id": "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
-      "profile": "shared_cloud"
-    },
-    "slack": {
-      "event_id": "Ev-A-001",
-      "channel_id": "C-A",
-      "thread_ts": "1723800000.000001",
-      "requester_id": "U-A"
-    },
-    "correlation_id": "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
-    "operation_id": "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
-    "idempotency_key": "ik1_SMJlU0vl95PXZjE3Cs0smROt0-VqWWO1D83Nl7IkSTE",
-    "contract_revision": "ctr_01ARZ3NDEKTSV4RRFFQ69G5FB0",
-    "credential": {
-      "mode": "customer_oauth",
-      "credential_ref": "credential-ref-a",
-      "billing_principal_id": "billing-principal-a"
-    },
-    "issued_at": "2026-08-16T13:00:00Z",
-    "expires_at": "2026-08-16T13:05:00Z",
-    "integrity": {
-      "method": "jws_detached",
-      "algorithm": "EdDSA",
-      "key_id": "fixture-key-2026-08",
-      "value": "fixture-valid-detached-jws-not-a-secret"
-    }
-  },
-  "expected": {
-    "contract_result": "accepted",
-    "brainbase_write_count_max": 1,
-    "slack_reply_count_max": 1,
-    "legacy_reply_count": 0,
-    "same_correlation_surfaces": [
-      "slack_ingress",
-      "brainbase_resolution",
-      "queue_message",
-      "durable_runtime_state",
-      "tool_invocation",
-      "brainbase_api",
-      "usage_receipt",
-      "slack_delivery"
-    ],
-    "canonical_readback_tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-    "collection_state_values": ["collected", "partial", "not_collected"],
-    "quota_decision_values": ["allowed", "warning", "hard_stopped", "approval_required", "unavailable"],
-    "cross_tenant_container_reuse": "forbidden",
-    "raw_secret_recorded": false
-  },
+  "canonical_manifest": "contracts/mana-brainbase-tenant-context/v1/fixtures/manifest.json",
+  "canonical_fixture": "contracts/mana-brainbase-tenant-context/v1/fixtures/positive/canonical-flow.json",
+  "fixture_set_sha256": "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454",
   "execution_evidence": {
     "status": "not_collected",
-    "note": "Fixture expectation only; no runtime, Graph, Slack, Receipt, or production result is asserted."
+    "note": "Reference runner pass only. Brainbase producer, mana-runtime consumer, integration, Graph, Slack, Receipt, and production evidence remain not_collected."
   }
 }

@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-slack-mana-brainbase-multitenant-e2e",
-  "created_at": "2026-08-16T13:05:38.081Z",
+  "created_at": "2026-08-16T23:49:39.789Z",
   "status": "ready",
   "git": {
-    "head_sha": "534c5e6c0ba75d85d75a03e8b206210ef21a4db6"
+    "head_sha": "33d0fbd51e426d919c4f2b7066ba09634ba71dcf"
   },
   "checks": [
     {
@@ -20,7 +20,7 @@
     {
       "id": "story_diagnosis",
       "status": "pass",
-      "reason": "Story diagnosis run exists: 2026-08-16T123439Z"
+      "reason": "Story diagnosis run exists: 2026-08-16T232540Z"
     }
   ],
   "graphify": {
@@ -31,13 +31,13 @@
     "edge_source_key": "links"
   },
   "diagnosis": {
-    "run_id": "2026-08-16T123439Z",
+    "run_id": "2026-08-16T232540Z",
     "gate_status": "pass",
-    "evidence_artifact": ".vibepro/diagnostics/2026-08-16T123439Z/evidence.json"
+    "evidence_artifact": ".vibepro/diagnostics/2026-08-16T232540Z/evidence.json"
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-16T13:05:38.031Z",
+    "created_at": "2026-08-16T23:49:39.709Z",
     "artifact": ".vibepro/pr/story-slack-mana-brainbase-multitenant-e2e/pr-prepare.json"
   },
   "next_actions": []

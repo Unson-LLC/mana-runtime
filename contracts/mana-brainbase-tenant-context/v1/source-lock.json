@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "kit_role": "canonical_conformance_contract",
+  "cross_contract": {
+    "repository": "Unson-LLC/mana-runtime",
+    "pull_request": 237,
+    "input_head": "ba1942e15935e00d1c603f57284439384bc95cac"
+  },
+  "producer_audit_input": {
+    "repository": "Unson-LLC/brainbase-unson",
+    "pull_request": 1229,
+    "head": "2c996d955609434e1ac205fe46a38f2920b815fd"
+  },
+  "consumer_audit_input": {
+    "repository": "Unson-LLC/mana-runtime",
+    "pull_request": 236,
+    "head": "b6c3fb5e46fe86e1cd77e02a5494151974a5a9e5"
+  },
+  "production_code_changed": false,
+  "merge_allowed": false,
+  "deploy_allowed": false
+}

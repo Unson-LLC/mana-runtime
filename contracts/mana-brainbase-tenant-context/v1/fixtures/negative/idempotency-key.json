@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-IDEMPOTENCY-KEY",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "idempotency_claims/0",
+  "mutations": [
+    { "operation": "set", "path": "/idempotency_key", "value": "ik1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
+  ],
+  "expected_code": "IDEMPOTENCY_KEY_INVALID",
+  "business_api_called": false
+}

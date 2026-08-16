@@ -2,37 +2,11 @@
   "schema_version": "0.1.0",
   "fixture_id": "FX-NEG-001",
   "fixture_kind": "negative",
-  "description": "cross-tenant、stale connection、scope mismatch、failure masking、retry duplication、fallbackを拒否する契約ケース。",
-  "cases": [
-    { "id": "NEG-UNKNOWN-TENANT", "mutation": "tenant.tenant_id is absent", "expected_code": "TENANT_UNKNOWN", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-AMBIGUOUS-TENANT", "mutation": "workspace/app resolves more than one tenant", "expected_code": "TENANT_AMBIGUOUS", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-SIGNATURE", "mutation": "RFC 8785 payload does not verify against the detached EdDSA JWS", "expected_code": "TENANT_CONTEXT_SIGNATURE_INVALID", "expected_class": "deny_and_audit", "business_api_called": false },
-    { "id": "NEG-EXPIRED", "mutation": "expires_at is older than now plus allowed 30-second skew", "expected_code": "TENANT_CONTEXT_EXPIRED", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-TTL", "mutation": "expires_at - issued_at is 301 seconds", "expected_code": "TENANT_CONTEXT_EXPIRED", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-CROSS-TENANT-CREDENTIAL", "mutation": "tenant-a envelope references tenant-b credential", "expected_code": "CROSS_TENANT_CANDIDATE", "expected_class": "deny_and_audit", "business_api_called": false },
-    { "id": "NEG-REVOKED-CONNECTION", "mutation": "workspace_connection.status is revoked", "expected_code": "WORKSPACE_CONNECTION_REVOKED", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-STALE-REVISION", "mutation": "envelope revision 6 while canonical revision is 7", "expected_code": "WORKSPACE_CONNECTION_STALE_REVISION", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-REVISION-UNAVAILABLE", "mutation": "authoritative revision read is unavailable before an irreversible effect", "expected_code": "WORKSPACE_CONNECTION_UNAVAILABLE", "expected_class": "unavailable", "business_api_called": false },
-    { "id": "NEG-WRONG-APP", "mutation": "slack_app_id does not match workspace connection", "expected_code": "WORKSPACE_OR_APP_MISMATCH", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-ACTOR-PROJECT", "mutation": "actor requests project-b outside authorized project_ids", "expected_code": "PROJECT_SCOPE_MISMATCH", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-CAPABILITY", "mutation": "task.write is not present in capability_ids", "expected_code": "CAPABILITY_SCOPE_MISMATCH", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-QUOTA", "mutation": "tenant-a quota is exhausted", "expected_code": "QUOTA_EXCEEDED", "expected_class": "quota", "tenant_b_quota_delta": 0 },
-    { "id": "NEG-UNAVAILABLE", "mutation": "Brainbase connection unavailable", "expected_code": "UPSTREAM_UNAVAILABLE", "must_not_report_as": ["success", "empty", "zero_usage"] },
-    { "id": "NEG-PARTIAL", "mutation": "upstream returns partial results with observed usage", "expected_code": "PARTIAL_RESULT", "must_preserve_observed_usage": true },
-    { "id": "NEG-TIMEOUT", "mutation": "operation times out after unknown side-effect state", "expected_code": "TIMEOUT", "must_not_report_as": ["success", "empty", "zero_usage"] },
-    { "id": "NEG-IDEMPOTENCY-MISMATCH", "mutation": "retry changes idempotency_key for same operation", "expected_code": "IDEMPOTENCY_CONFLICT", "additional_write_count": 0, "additional_reply_count": 0 },
-    { "id": "NEG-IDEMPOTENCY-PAYLOAD", "mutation": "same idempotency_key is presented after claim with a different payload_hash or context_hash", "expected_code": "IDEMPOTENCY_CONFLICT", "additional_write_count": 0, "additional_reply_count": 0 },
-    { "id": "NEG-PROTOCOL-MAJOR", "mutation": "peer supports only protocol 2.x", "expected_code": "PROTOCOL_VERSION_UNSUPPORTED", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-PROTOCOL-CAPABILITY", "mutation": "peer omits usage_receipt_v1", "expected_code": "PROTOCOL_CAPABILITY_UNSUPPORTED", "expected_class": "deny", "business_api_called": false },
-    { "id": "NEG-CREDENTIAL-LEASE", "mutation": "credential lease is unbound, reusable, exceeds 60 seconds, or targets another audience", "expected_code": "CROSS_TENANT_CANDIDATE", "expected_class": "deny_and_audit", "business_api_called": false },
-    { "id": "NEG-CONTAINER-TENANT-CHANGE", "mutation": "a Container is reused for a different tenant even after sanitation checks", "expected_code": "CONTAINER_SANITIZATION_UNPROVEN", "expected_class": "deny_and_audit", "container_destroyed": true },
-    { "id": "NEG-CONTAINER-UNOBSERVABLE", "mutation": "same-tenant sanitation cannot verify one required check", "expected_code": "CONTAINER_SANITIZATION_UNPROVEN", "expected_class": "deny_and_audit", "container_destroyed": true },
-    { "id": "NEG-FALLBACK", "mutation": "tenant or credential lookup attempts legacy/default fallback", "expected_code": "FALLBACK_FORBIDDEN", "business_api_called": false },
-    { "id": "NEG-RAW-SECRET", "mutation": "envelope or Receipt contains token material", "expected_code": "SECRET_ARTIFACT_FORBIDDEN", "contract_result": "rejected" },
-    { "id": "NEG-OTHER-DEPLOYMENT-REPLY", "mutation": "legacy and Cloudflare both attempt reply", "expected_code": "REPLY_OWNERSHIP_CONFLICT", "accepted_reply_count_max": 1 }
-  ],
+  "canonical_manifest": "contracts/mana-brainbase-tenant-context/v1/fixtures/manifest.json#negative",
+  "fixture_set_sha256": "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454",
+  "case_count": 16,
   "execution_evidence": {
     "status": "not_collected",
-    "note": "Expected denials are specified but have not been executed against implementation or production."
+    "note": "Reference rejection pass only. Producer/consumer boundary calls and protected business API call counts remain not_collected."
   }
 }

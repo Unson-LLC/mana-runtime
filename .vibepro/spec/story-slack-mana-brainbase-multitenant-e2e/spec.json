@@ -4,7 +4,7 @@
   "lifecycle": "final",
   "story_context": "SlackからBrainbaseまでのmulti-tenant E2Eで、tenant_id、workspace connection、credential、runtime state、usage Receiptをcross-tenant混線なく扱う。Cloudとcompatible OSSの共通契約を固定する。",
   "generated_by": {
-    "caller": "codex-cross-contract-review",
+    "caller": "codex",
     "stage": "specification"
   },
   "contract_status": {
@@ -104,7 +104,9 @@
       "protocol_id": "mana-brainbase-tenant-context",
       "current_version": "1.0",
       "supported_range": ">=1.0 <2.0",
-      "supported_versions": ["1.0"],
+      "supported_versions": [
+        "1.0"
+      ],
       "negotiation": "highest_mutually_supported_minor",
       "request_response_rule": "request and response both carry supported_range, enumerated supported_versions, and required_capabilities; response also carries selected_version, optional capability statuses, and compatibility_until",
       "required_capabilities": [
@@ -236,7 +238,9 @@
         "protected_headers": {
           "alg": "EdDSA",
           "b64": false,
-          "crit": ["b64"],
+          "crit": [
+            "b64"
+          ],
           "kid": "integrity.key_id",
           "typ": "application/mana-brainbase-tenant-context+jws",
           "additional_headers": "forbidden"
@@ -1018,8 +1022,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-1",
-          "index": 0
+            "ac_id": "AC-1",
+            "index": 0
           }
         ],
         "architecture_refs": [
@@ -1043,7 +1047,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-002",
@@ -1054,8 +1058,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-2",
-          "index": 1
+            "ac_id": "AC-2",
+            "index": 1
           }
         ],
         "architecture_refs": [
@@ -1080,7 +1084,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-003",
@@ -1091,8 +1095,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-3",
-          "index": 2
+            "ac_id": "AC-3",
+            "index": 2
           }
         ],
         "architecture_refs": [
@@ -1117,7 +1121,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-004",
@@ -1128,8 +1132,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-4",
-          "index": 3
+            "ac_id": "AC-4",
+            "index": 3
           }
         ],
         "architecture_refs": [
@@ -1154,7 +1158,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-005",
@@ -1165,8 +1169,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-5",
-          "index": 4
+            "ac_id": "AC-5",
+            "index": 4
           }
         ],
         "architecture_refs": [
@@ -1190,7 +1194,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-006",
@@ -1201,8 +1205,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-6",
-          "index": 5
+            "ac_id": "AC-6",
+            "index": 5
           }
         ],
         "architecture_refs": [
@@ -1226,7 +1230,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-007",
@@ -1237,8 +1241,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-7",
-          "index": 6
+            "ac_id": "AC-7",
+            "index": 6
           }
         ],
         "architecture_refs": [
@@ -1263,7 +1267,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-008",
@@ -1274,8 +1278,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-8",
-          "index": 7
+            "ac_id": "AC-8",
+            "index": 7
           }
         ],
         "architecture_refs": [
@@ -1299,7 +1303,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-009",
@@ -1310,8 +1314,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-9",
-          "index": 8
+            "ac_id": "AC-9",
+            "index": 8
           }
         ],
         "architecture_refs": [
@@ -1336,7 +1340,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-010",
@@ -1347,8 +1351,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-10",
-          "index": 9
+            "ac_id": "AC-10",
+            "index": 9
           }
         ],
         "architecture_refs": [
@@ -1373,7 +1377,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-011",
@@ -1384,8 +1388,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-11",
-          "index": 10
+            "ac_id": "AC-11",
+            "index": 10
           }
         ],
         "architecture_refs": [
@@ -1410,7 +1414,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     },
     {
       "id": "C-012",
@@ -1421,8 +1425,8 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-          "ac_id": "AC-12",
-          "index": 11
+            "ac_id": "AC-12",
+            "index": 11
           }
         ],
         "architecture_refs": [
@@ -1447,7 +1451,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:05:38.481Z"
+      "last_revised_at": "2026-08-16T23:49:44.316Z"
     }
   ],
   "source_lane_reviews": [
@@ -1487,5 +1491,5 @@
   ],
   "open_questions": [],
   "generated_at": "2026-08-16T12:41:31.790Z",
-  "previous_spec_id": null
+  "previous_spec_id": "2026-08-16T12:41:31.790Z"
 }
