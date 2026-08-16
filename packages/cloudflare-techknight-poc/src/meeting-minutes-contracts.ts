@@ -139,6 +139,8 @@ export interface MeetingMinutesRun {
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
   taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "reused" | "needs_review" | "removed";
+    /** Canonical Task project scope used when this item was created or last migrated. */
+    projectCodes?: string[];
     assigneePersonId?: string; assigneeDisplayName?: string }>;
     failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string;
       /** Stable Task API classification retained so Slack can distinguish configuration errors from retryable failures. */

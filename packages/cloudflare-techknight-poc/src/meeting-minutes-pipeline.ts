@@ -143,7 +143,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       const reconciliation = reconcileMeetingMinutesTask(candidate, receipt);
       if (reconciliation.outcome !== "new") {
         run.taskRegistration.registered.push({ index, title: candidate.title, taskId: reconciliation.taskId,
-          status: reconciliation.outcome });
+          status: reconciliation.outcome, projectCodes: [...taskProjectCodes] });
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
         continue;
       }
@@ -163,6 +163,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
         await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
       if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
       run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
+        projectCodes: [...taskProjectCodes],
         ...(task.assignee_person_id ? { assigneePersonId: task.assignee_person_id } : {}),
         ...(task.assignee_display_name ? { assigneeDisplayName: task.assignee_display_name } : {}) });
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);

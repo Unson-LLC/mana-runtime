@@ -26,6 +26,8 @@ Receiptの未完了task候補と生成taskを、project、正規化title、正�
 
 公式デプロイは、全保存先の`contextProjectCode`、`taskProjectCodes`と、それぞれが参照するタスクボードの`projectCodes`を本番Brainbase Graphの認可済みProject一覧と比較する。用途間の不一致、未登録、実行主体の権限不足、Brainbaseへの到達不能はいずれもfail closedとし、Workerの更新へ進まない。個別の保存先だけを例外扱いしたり、別Projectへ暗黙にフォールバックしたりしない。
 
+保存先の正規Project紐付けを変更しても、既存runが登録したCanonical Taskを無関係な範囲へ付け替えない。Task項目ごとに登録時の`projectCodes`を永続化する。編集時はTask APIで取得した現在範囲が、現行設定または既存runに保存された旧範囲と完全一致する場合だけ、同じ更新要求で現行範囲へ移行する。取消時は現行範囲または旧範囲と完全一致するTaskだけを削除する。それ以外は拒否する。
+
 ## 保存と表示
 
 GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を、本文末尾へ利用source refsと判断候補を決定的に描画する。Slack完了表示には「Brainbase参照済み」と、Receipt外参照を除外した場合の警告を示す。生Graph contextは保存・投稿しない。

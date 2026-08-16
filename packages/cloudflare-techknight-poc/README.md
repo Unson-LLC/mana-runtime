@@ -214,12 +214,13 @@ BrainbaseのProject一覧と照合する認証情報も必要なため、ロー�
 Brainbaseの認可済みProject集合と一括照合します。未登録、権限不足、認証失敗、到達不能のいずれも
 Worker更新前に配備を停止します。
 
-今回のProject紐付けを含む版からrollbackする場合、旧Workerへ戻すだけでは旧`proj_*`や組織単位の
-紐付けも復活し、Brainbase文脈取得・タスク登録が再び失敗します。まず`MEETING_MINUTES_ENABLED=false`を
-反映して議事録の新規受付を止め、処理中runが0件であることを確認します。受付停止を維持したまま
-known-good Workerへ戻し、修正版で全保存先の配備前検査を通してから再配備します。GitHub保存済みrunの
-Receiptは書き換えず、未保存runは修正版で正規Projectから文脈を取り直します。最後に
-`MEETING_MINUTES_ENABLED=true`を反映し、新規受付を再開します。
+今回のProject紐付けを含む版からrollbackする場合、旧Worker versionをそのままpromoteしてはいけません。
+Worker versionには`MEETING_MINUTES_ENABLED`も含まれるため、旧versionの`true`まで復元され、新規受付が
+再開してしまいます。まず現行commitの設定を`MEETING_MINUTES_ENABLED=false`にして正規Infisicalラッパーから
+配備し、処理中runが0件であることを確認します。次にknown-good commitを隔離worktreeへcheckoutし、同じ設定を
+`false`にした停止版artifactを正規ラッパーから新規配備します。Cloudflareの既存version rollbackは使いません。
+修正版で全保存先の配備前検査を通して再配備した後だけ`true`へ戻します。GitHub保存済みrunのReceiptは
+書き換えず、未保存runは修正版で正規Projectから文脈を取り直します。
 
 ## Sandbox security boundary
 

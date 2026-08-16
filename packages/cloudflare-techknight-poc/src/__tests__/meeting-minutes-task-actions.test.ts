@@ -105,6 +105,60 @@ describe("meeting minutes task cards", () => {
       taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-pms",
     }));
   });
+  it("migrates the canonical task scope when an old Kartz task is edited", async () => {
+    const current = run();
+    current.destination!.id = "kartz";
+    current.destination!.taskProjectCodes = ["unson"];
+    current.destination!.taskBoardTargetId = "minutes-kartz";
+    current.taskRegistration!.registered[0]!.projectCodes = ["unson"];
+    const options = deps(current);
+    options.destinations[0] = { ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" };
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unson"] });
+    options.updateTask.mockResolvedValue({ id: "task-1", version: 4, title: "新題", description: null,
+      status: "pending", priority: "medium", project_codes: ["kartz"], assignee_person_id: null,
+      assignee_display_name: null, due_at: null, waiting_on: null, completed_at: null });
+    const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
+      view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
+        organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_kartz" }), state: { values: {
+          title: { value: { value: "新題" } }, due: { value: {} }, assignee: { mana_meeting_minutes_task_assignee: {} },
+        } } } }, options);
+    expect(response?.status).toBe(200);
+    await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
+    expect(options.updateTask).toHaveBeenCalledWith("task-1", expect.objectContaining({
+      expected_version: 3, title: "新題", project_codes: ["kartz"],
+    }), expect.any(String));
+    expect(current.destination!.taskProjectCodes).toEqual(["kartz"]);
+    expect(current.taskRegistration!.registered[0]!.projectCodes).toEqual(["kartz"]);
+  });
+  it("cancels an old Kartz task only when its scope matches the persisted legacy run", async () => {
+    const current = run();
+    current.destination!.id = "kartz";
+    current.destination!.taskProjectCodes = ["unson"];
+    current.destination!.taskBoardTargetId = "minutes-kartz";
+    const options = deps(current);
+    options.destinations[0] = { ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" };
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unson"] });
+    const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
+    expect(response?.status).toBe(200);
+    await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
+    expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
+    expect(current.destination!.taskProjectCodes).toEqual(["kartz"]);
+    expect(current.taskRegistration!.registered[0]!.status).toBe("removed");
+  });
+  it("rejects an unrelated task scope while migrating an old run", async () => {
+    const current = run();
+    current.destination!.id = "kartz";
+    current.destination!.taskProjectCodes = ["unson"];
+    const options = deps(current);
+    options.destinations[0] = { ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" };
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unrelated"] });
+    options.defer = (work) => { void work.catch(() => {}); };
+    await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
+    await vi.waitFor(() => expect(options.getTask).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(options.deleteTask).not.toHaveBeenCalled();
+    expect(options.updateCard).not.toHaveBeenCalled();
+  });
   it("repairs the destination Canvas when the canonical task was already deleted", async () => {
     const current = run(); const options = deps(current);
     const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };

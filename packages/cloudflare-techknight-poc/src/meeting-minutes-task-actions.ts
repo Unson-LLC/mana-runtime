@@ -49,10 +49,8 @@ function candidate(run: MeetingMinutesRun, index: number) {
   return run.taskRegistration?.registered.find((item) => item.index === index && item.status !== "removed");
 }
 function status(error: unknown): number | undefined { return object(error)?.status as number | undefined; }
-function hasExpectedTaskScope(run: MeetingMinutesRun, current: CanonicalTask): boolean {
-  const expected = meetingMinutesTaskProjectCodes(run.destination!);
-  const actual = current.project_codes;
-  return actual?.length === expected.length && expected.every((code) => actual.includes(code));
+function sameTaskScope(actual: readonly string[] | undefined, expected: readonly string[] | undefined): boolean {
+  return Boolean(actual && expected && actual.length === expected.length && expected.every((code) => actual.includes(code)));
 }
 function allowed(payload: ObjectValue, run: MeetingMinutesRun, deps: MeetingMinutesTaskActionDependencies): boolean {
   const teamId = text(object(payload.team)?.id); const channelId = text(object(payload.channel)?.id);
@@ -114,14 +112,18 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   if (!run || !run.destination || !item || !allowed(payload, run, deps)) {
     return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
   }
+  const legacyTaskScope = item.projectCodes?.length ? [...item.projectCodes]
+    : run.destination.taskProjectCodes?.length ? [...run.destination.taskProjectCodes] : undefined;
   await reconcileTaskDestination(run, deps);
+  const currentTaskScope = meetingMinutesTaskProjectCodes(run.destination);
   if (actionId === MEETING_MINUTES_TASK_CANCEL_ACTION_ID) {
     deps.defer((async () => { let current: CanonicalTask;
       try { current = await deps.getTask(item.taskId); }
       catch (error) { if (status(error) !== 404) throw error;
         item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
         await deps.repairTaskBoard(run.destination!.taskBoardTargetId); return; }
-      if (!hasExpectedTaskScope(run, current)) throw new Error("meeting_minutes_task_scope_mismatch");
+      if (!sameTaskScope(current.project_codes, currentTaskScope) && !sameTaskScope(current.project_codes, legacyTaskScope))
+        throw new Error("meeting_minutes_task_scope_mismatch");
       await deps.deleteTask(item.taskId, current.version, `meeting-minutes-${run.runId}-cancel-${value.index}`);
       item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
       await deps.repairTaskBoard(run.destination!.taskBoardTargetId); })());
@@ -133,15 +135,20 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const assigneeSelection = text(object(assigneeState?.selected_option)?.value);
   if (!title || title.length > 120) return Response.json({ response_action: "errors", errors: { title: "タイトルを入力してください" } });
   deps.defer((async () => { const current = await deps.getTask(item.taskId);
-    if (!hasExpectedTaskScope(run, current)) throw new Error("meeting_minutes_task_scope_mismatch");
+    const scopeIsCurrent = sameTaskScope(current.project_codes, currentTaskScope);
+    const scopeIsTrustedLegacy = !scopeIsCurrent && sameTaskScope(current.project_codes, legacyTaskScope);
+    if (!scopeIsCurrent && !scopeIsTrustedLegacy) throw new Error("meeting_minutes_task_scope_mismatch");
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${title}\n${due ?? ""}\n${assigneeSelection ?? "unchanged"}`))))
       .map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 24);
     const updated = await deps.updateTask(item.taskId, { expected_version: current.version, title,
+      ...(scopeIsTrustedLegacy ? { project_codes: currentTaskScope } : {}),
       ...(due ? { due_at: `${due}T00:00:00+09:00` } : {}),
       ...(assigneeSelection === MEETING_MINUTES_ASSIGNEE_NONE ? { assignee_person_id: null }
         : assigneeSelection ? { assignee_person_id: assigneeSelection } : {}) },
       `meeting-minutes-${run.runId}-edit-${value.index}-${digest}`);
+    if (!sameTaskScope(updated.project_codes, currentTaskScope)) throw new Error("meeting_minutes_task_scope_migration_failed");
     item.title = title;
+    item.projectCodes = [...currentTaskScope];
     if (assigneeSelection) { item.assigneePersonId = updated.assignee_person_id ?? undefined;
       item.assigneeDisplayName = updated.assignee_display_name ?? undefined; }
     const generated = run.generated?.tasks?.[value.index];

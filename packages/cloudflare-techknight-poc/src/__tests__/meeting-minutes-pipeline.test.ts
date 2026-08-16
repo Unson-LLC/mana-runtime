@@ -234,7 +234,8 @@ describe("meeting minutes pipeline", () => {
       expect.objectContaining({ title: "請求書を送る", project_codes: ["mana"] }),
       expect.stringMatching(/^meeting-minutes-/),
     );
-    expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42" }]);
+    expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42",
+      projectCodes: ["mana"] }]);
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST", "10.1", "meeting.txt", expect.not.stringContaining("Brainbaseへタスクを1件登録しました"),
       expect.any(Number), expect.any(Number), expect.any(String),
@@ -400,7 +401,7 @@ describe("meeting minutes pipeline", () => {
     expect(retried.destination).toMatchObject({ projectId: "mana", taskProjectCodes: ["unson"],
       taskBoardTargetId: "minutes-unson" });
     expect(retried.taskRegistration?.registered).toEqual([
-      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-kartz" },
+      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-kartz", projectCodes: ["unson"] },
     ]);
     expect(retried.taskRegistration).not.toHaveProperty("failure");
     expect(options.postParent).toHaveBeenCalledTimes(1);
@@ -715,8 +716,9 @@ describe("meeting minutes pipeline", () => {
       ] }) }));
     expect(createTask).not.toHaveBeenCalled();
     expect(run.taskRegistration?.registered).toEqual([
-      { index: 0, title: "請求書を送る", taskId: "task-exact", status: "reused" },
-      { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review" },
+      { index: 0, title: "請求書を送る", taskId: "task-exact", status: "reused", projectCodes: ["mana"] },
+      { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review",
+        projectCodes: ["mana"] },
     ]);
   });
 });
