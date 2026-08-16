@@ -376,11 +376,11 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
-            "case": "migrates the canonical task scope when an old Kartz task is edited"
+            "case": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
-            "case": "cancels an old Kartz task only when its scope matches the persisted legacy run"
+            "case": "cancels an old Kartz task using its trusted legacy scope while minutes are disabled"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
@@ -561,7 +561,7 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
-            "case": "old Kartz task from unson into the current kartz scope while minutes are disabled"
+            "case": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
@@ -613,7 +613,7 @@
           },
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
-            "must_cover": "old Kartz task from unson into the current kartz scope while minutes are disabled"
+            "must_cover": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
           },
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
