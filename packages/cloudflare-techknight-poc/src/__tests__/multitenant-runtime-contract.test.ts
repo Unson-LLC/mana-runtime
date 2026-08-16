@@ -383,7 +383,7 @@ describe("story-mana-multitenant-runtime contract", () => {
   });
 
   it("UsageEventV1 success failure and not measured planned Red", () => {
-    const usage = createUsageEvent({ usage_event_id: "use-1", protocol_version: "1.0", tenant_id: TENANT_A,
+    const usage = createUsageEvent({ usage_event_id: "use_01ARZ3NDEKTSV4RRFFQ69G5FB4", protocol_version: "1.0", tenant_id: TENANT_A,
       connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
       deployment_id: DEPLOYMENT_A, correlation_id: unsignedEnvelopeA.correlation_id, operation_id: OPERATION_A,
       idempotency_key: "ik1_value", kind: "model_tokens", quantity: null, unit: "tokens", outcome: "failed",
@@ -391,7 +391,7 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(usage).toMatchObject({ quantity: null, outcome: "failed", collection_state: "not_collected" });
     expect(() => createUsageEvent({ ...usage, quantity: 0, collection_state: "not_collected" }))
       .toThrow(expect.objectContaining({ code: "USAGE_COLLECTION_INVALID" }));
-    expect(createOperationReceipt({ receipt_id: "receipt-1", protocol_version: "1.0", tenant_id: TENANT_A,
+    expect(createOperationReceipt({ receipt_id: "rcp_01ARZ3NDEKTSV4RRFFQ69G5FB5", protocol_version: "1.0", tenant_id: TENANT_A,
       connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
       deployment_id: DEPLOYMENT_A, correlation_id: unsignedEnvelopeA.correlation_id,
       operation_ids: [OPERATION_A], idempotency_keys: ["ik1_value"], actor_principal_id: "person-a",

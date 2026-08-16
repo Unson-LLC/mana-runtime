@@ -1,6 +1,6 @@
 import { deny } from "./errors.js";
 
-const FORBIDDEN_SECRET_KEYS = /(?:^|_)(?:access_token|refresh_token|api_key|authorization|cookie|secret|private_key|credential_body)(?:$|_)/i;
+const FORBIDDEN_SECRET_KEYS = /(?:^|_)(?:access_token|refresh_token|api_key|cookie|secret|private_key|credential_body)(?:$|_)/i;
 
 const SECRET_VALUE = Symbol("TenantCredentialSecret");
 
@@ -28,7 +28,10 @@ export function assertSecretArtifactFree<T>(artifact: T): T {
     }
     if (value === null || typeof value !== "object") return;
     for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      if (FORBIDDEN_SECRET_KEYS.test(key)) deny("artifact", "SECRET_ARTIFACT_FORBIDDEN", { path: `${path}.${key}` });
+      if (FORBIDDEN_SECRET_KEYS.test(key)
+        || (key.toLowerCase() === "authorization" && typeof entry === "string")) {
+        deny("artifact", "SECRET_ARTIFACT_FORBIDDEN", { path: `${path}.${key}` });
+      }
       visit(entry, `${path}.${key}`);
     }
   };

@@ -11,11 +11,11 @@
     "audience": ["mana-runtime", "brainbase-api"],
     "tenant": {
       "tenant_id": "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-      "tenant_revision": 3
+      "tenant_revision": "3"
     },
     "workspace_connection": {
       "connection_id": "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
-      "connection_revision": 7,
+      "connection_revision": "7",
       "status": "active",
       "provider": "slack",
       "installation_id": "I-A",

@@ -5,6 +5,7 @@ export * from "./delivery.js";
 export * from "./envelope.js";
 export * from "./errors.js";
 export * from "./idempotency.js";
+export * from "./ids.js";
 export * from "./isolation.js";
 export * from "./objects.js";
 export * from "./protocol.js";

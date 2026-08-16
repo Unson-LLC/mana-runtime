@@ -1,5 +1,6 @@
 import type { CollectionState, OperationOutcome, QuotaDecision } from "./contracts.js";
 import { deny } from "./errors.js";
+import { assertCanonicalSharedId } from "./ids.js";
 
 export interface UsageEventInput {
   usage_event_id: string;
@@ -27,6 +28,7 @@ export interface UsageEvent extends UsageEventInput {
 }
 
 export function createUsageEvent(input: UsageEventInput): UsageEvent {
+  assertCanonicalSharedId(input.usage_event_id, "use_", "usage");
   if (input.collection_state === "not_collected" && input.quantity !== null) {
     deny("usage", "USAGE_COLLECTION_INVALID");
   }
@@ -69,6 +71,7 @@ export interface OperationReceiptInput {
 }
 
 export function createOperationReceipt(input: OperationReceiptInput): OperationReceiptInput & { schema_version: "1.0" } {
+  assertCanonicalSharedId(input.receipt_id, "rcp_", "receipt");
   if (input.operation_ids.length === 0 || input.idempotency_keys.length === 0) deny("receipt", "RECEIPT_INVALID");
   if (input.usage.collection_state === "not_collected" && input.usage.observed_units !== null) {
     deny("receipt", "USAGE_COLLECTION_INVALID");

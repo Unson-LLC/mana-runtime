@@ -7,12 +7,10 @@ export const REQUIRED_TENANT_CAPABILITIES = [
   "signed_tenant_context",
   "connection_revision_recheck",
   "tenant_scoped_authorization",
-  "credential_scope_enforcement",
-  "container_and_state_isolation",
-  "idempotent_effects_v1",
+  "credential_broker_v1",
   "usage_receipt_v1",
-  "failure_classification",
-  "fallback_prohibition",
+  "idempotent_effects_v1",
+  "container_sanitization_v1",
 ] as const;
 
 export type DeploymentProfileName =
@@ -65,6 +63,7 @@ export interface UnsignedTenantContextEnvelope {
     principal_id: string;
     principal_type: "person" | "service";
     authenticated_subject_id: string;
+    delegated_by?: string;
   };
   authorization: {
     organization_ids: string[];
@@ -76,8 +75,9 @@ export interface UnsignedTenantContextEnvelope {
   slack: {
     event_id: string;
     channel_id: string;
-    thread_ts: string;
-    requester_id: string;
+    enterprise_id?: string;
+    thread_ts?: string;
+    requester_id?: string;
   };
   correlation_id: string;
   operation_id: string;
@@ -205,4 +205,4 @@ export interface QuotaDecision {
 }
 
 export type CollectionState = "collected" | "partial" | "not_collected";
-export type OperationOutcome = "succeeded" | "failed" | "denied" | "timed_out";
+export type OperationOutcome = "succeeded" | "failed" | "cancelled" | "timed_out";

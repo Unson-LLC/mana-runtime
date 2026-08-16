@@ -28,12 +28,10 @@
       "signed_tenant_context",
       "connection_revision_recheck",
       "tenant_scoped_authorization",
-      "credential_scope_enforcement",
-      "container_and_state_isolation",
-      "idempotent_effects_v1",
+      "credential_broker_v1",
       "usage_receipt_v1",
-      "failure_classification",
-      "fallback_prohibition"
+      "idempotent_effects_v1",
+      "container_sanitization_v1"
     ],
     "single_tenant_oss_waives_tenant_context": false,
     "cross_tenant_container_reuse": "forbidden",

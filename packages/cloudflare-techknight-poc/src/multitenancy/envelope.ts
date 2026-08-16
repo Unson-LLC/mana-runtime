@@ -9,6 +9,8 @@ import {
   type WorkspaceConnectionSnapshot,
 } from "./contracts.js";
 import { deny } from "./errors.js";
+import { assertCanonicalSharedId } from "./ids.js";
+import { assertSecretArtifactFree } from "./secret-guard.js";
 
 const encoder = new TextEncoder();
 
@@ -71,6 +73,7 @@ export async function signTenantContextEnvelope(
     b64: false,
     crit: ["b64"],
     kid: keyId,
+    typ: "application/mana-tenant-context+jws",
   })));
   const signature = new Uint8Array(await crypto.subtle.sign(
     { name: "Ed25519" },
@@ -109,6 +112,7 @@ function assertEnvelopeShape(
   boundary: BoundaryName,
 ): void {
   if (!envelope || typeof envelope !== "object") deny(boundary, "TENANT_CONTEXT_SCHEMA_INVALID");
+  assertSecretArtifactFree(envelope);
   assertSnakeCaseKeys(envelope, boundary);
   if (envelope.schema_version !== "1.0" || envelope.protocol_id !== TENANT_PROTOCOL_ID || !/^1\.\d+$/.test(envelope.protocol_version)) {
     deny(boundary, "PROTOCOL_VERSION_UNSUPPORTED");
@@ -117,22 +121,28 @@ function assertEnvelopeShape(
     deny(boundary, "TENANT_CONTEXT_SCHEMA_INVALID");
   }
   assertNonEmpty(envelope.tenant?.tenant_id, boundary, "TENANT_UNKNOWN");
+  assertCanonicalSharedId(envelope.tenant.tenant_id, "ten_", boundary);
   assertNonEmpty(envelope.tenant?.tenant_revision, boundary);
   assertNonEmpty(envelope.workspace_connection?.connection_id, boundary);
+  assertCanonicalSharedId(envelope.workspace_connection.connection_id, "wsc_", boundary);
   assertNonEmpty(envelope.workspace_connection?.connection_revision, boundary);
   assertNonEmpty(envelope.workspace_connection?.workspace_id, boundary);
   assertNonEmpty(envelope.workspace_connection?.app_id, boundary);
   assertNonEmpty(envelope.actor?.principal_id, boundary);
   assertNonEmpty(envelope.slack?.event_id, boundary);
   assertNonEmpty(envelope.slack?.channel_id, boundary);
-  assertNonEmpty(envelope.slack?.thread_ts, boundary);
   assertNonEmpty(envelope.correlation_id, boundary);
+  assertCanonicalSharedId(envelope.correlation_id, "cor_", boundary);
   assertNonEmpty(envelope.operation_id, boundary);
+  assertCanonicalSharedId(envelope.operation_id, "op_", boundary);
   assertNonEmpty(envelope.idempotency_key, boundary);
+  if (!/^ik1_[A-Za-z0-9_-]{43}$/.test(envelope.idempotency_key)) deny(boundary, "IDENTIFIER_FORMAT_INVALID");
   assertNonEmpty(envelope.contract_revision, boundary);
   assertNonEmpty(envelope.credential?.credential_ref, boundary);
   assertNonEmpty(envelope.issued_at, boundary);
   assertNonEmpty(envelope.expires_at, boundary);
+  assertNonEmpty(envelope.placement?.deployment_id, boundary);
+  assertCanonicalSharedId(envelope.placement.deployment_id, "dep_", boundary);
 }
 
 function assertFresh(envelope: UnsignedTenantContextEnvelope, boundary: BoundaryName, now: string): void {
@@ -167,7 +177,8 @@ async function assertSignature(
     deny(boundary, "TENANT_CONTEXT_SIGNATURE_INVALID");
   }
   if (header.alg !== "EdDSA" || header.b64 !== false || !Array.isArray(header.crit)
-    || !header.crit.includes("b64") || header.kid !== integrity.key_id) {
+    || !header.crit.includes("b64") || header.kid !== integrity.key_id
+    || header.typ !== "application/mana-tenant-context+jws") {
     deny(boundary, "TENANT_CONTEXT_SIGNATURE_INVALID");
   }
   const verificationKey = await resolveVerificationKey(integrity.key_id);
