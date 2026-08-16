@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { handleMeetingMinutesTaskAction, type MeetingMinutesTaskActionDependencies } from "../meeting-minutes-task-actions.js";
 import { meetingMinutesTaskCard } from "../meeting-minutes-task-cards.js";
 import type { MeetingMinutesRun } from "../meeting-minutes-contracts.js";
+import { meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
 
 function run(): MeetingMinutesRun {
   return { version: 1, runId: "Ev_Fv", eventId: "Ev", workspaceId: "TU", sourceChannelId: "CR",
@@ -32,6 +33,10 @@ function deps(current: MeetingMinutesRun) { return { sourceTeamId: "TU", destina
   openView: vi.fn(async (_organizationId: string, _triggerId: string, _view: Record<string, unknown>) => {}),
   listPeople: vi.fn(async () => [{ id: "per_umeda", name: "梅田 遼", aliases: ["梅田"] }]), repairTaskBoard: vi.fn(async () => {}),
   defer: (work: Promise<void>) => { void work; } };
+}
+function stoppedDestinations(current: MeetingMinutesRun) {
+  return meetingMinutesRuntimeConfig({ MEETING_MINUTES_ENABLED: "false", MEETING_MINUTES_ROUTER_CHANNEL_ID: "CR",
+    MEETING_MINUTES_OPERATOR_USER_IDS: "U1", MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([current.destination]) }).destinations;
 }
 describe("meeting minutes task cards", () => {
   it("renders each canonical task with edit and cancel controls", () => {
@@ -142,14 +147,16 @@ describe("meeting minutes task cards", () => {
     await vi.waitFor(() => expect(options.deleteTask).toHaveBeenCalled());
     expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
   });
-  it("migrates the canonical task scope when an old Kartz task is edited", async () => {
+  it("moves an old Kartz task from unson into the current kartz scope while minutes are disabled", async () => {
     const current = run();
     current.destination!.id = "kartz";
     current.destination!.taskProjectCodes = ["unson"];
     current.destination!.taskBoardTargetId = "minutes-kartz";
     current.taskRegistration!.registered[0]!.projectCodes = ["unson"];
     const options = deps(current);
-    options.destinations[0] = { ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" };
+    options.destinations = stoppedDestinations({ ...current, destination: {
+      ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz",
+    } });
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unson"] });
     options.updateTask.mockResolvedValue({ id: "task-1", version: 4, title: "新題", description: null,
       status: "pending", priority: "medium", project_codes: ["kartz"], assignee_person_id: null,
@@ -167,14 +174,16 @@ describe("meeting minutes task cards", () => {
     expect(current.destination!.taskProjectCodes).toEqual(["kartz"]);
     expect(current.taskRegistration!.registered[0]!.projectCodes).toEqual(["kartz"]);
   });
-  it("cancels an old Kartz task only when its scope matches the persisted legacy run", async () => {
+  it("cancels an old Kartz task using its trusted legacy scope while minutes are disabled", async () => {
     const current = run();
     current.destination!.id = "kartz";
     current.destination!.taskProjectCodes = ["unson"];
     current.destination!.taskBoardTargetId = "minutes-kartz";
     current.taskRegistration!.registered[0]!.projectCodes = ["unson"];
     const options = deps(current);
-    options.destinations[0] = { ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" };
+    options.destinations = stoppedDestinations({ ...current, destination: {
+      ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz",
+    } });
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unson"] });
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
     expect(response?.status).toBe(200);

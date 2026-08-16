@@ -20,6 +20,14 @@ describe("meeting minutes entrypoints", () => {
     expect(isMeetingMinutesRouterFileEvent(event, config.routerChannelId)).toBe(true);
     expect(isMeetingMinutesSlackEvent(event, config)).toBe(false);
   });
+  it("retains trusted destinations while disabled so existing task controls keep working", () => {
+    const config = meetingMinutesRuntimeConfig({ MEETING_MINUTES_ENABLED: "false",
+      MEETING_MINUTES_ROUTER_CHANNEL_ID: "CROUTER", MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
+      MEETING_MINUTES_DESTINATIONS_JSON: destinations });
+    expect(config).toEqual(expect.objectContaining({ enabled: false, destinations: [expect.objectContaining({
+      id: "mana", contextProjectCode: "mana", taskProjectCodes: ["mana"], taskBoardTargetId: "minutes-mana",
+    })] }));
+  });
   it("fails closed when enabled authority config is incomplete", () => {
     expect(() => meetingMinutesRuntimeConfig({ MEETING_MINUTES_ENABLED: "true" })).toThrow("meeting_minutes_config_incomplete");
   });

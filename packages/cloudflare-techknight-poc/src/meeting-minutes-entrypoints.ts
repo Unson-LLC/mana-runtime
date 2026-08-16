@@ -26,10 +26,10 @@ export function meetingMinutesRuntimeConfig(env: MeetingMinutesEnvironment): Mee
   const enabled = env.MEETING_MINUTES_ENABLED === "true";
   const routerChannelId = env.MEETING_MINUTES_ROUTER_CHANNEL_ID?.trim() ?? "";
   const operatorUserIds = new Set((env.MEETING_MINUTES_OPERATOR_USER_IDS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
-  if (!enabled) return { enabled: false,
-    routerChannelId: /^[A-Z0-9]+$/.test(routerChannelId) ? routerChannelId : "",
-    destinations: [], operatorUserIds };
   if (!/^[A-Z0-9]+$/.test(routerChannelId) || !operatorUserIds.size || !env.MEETING_MINUTES_DESTINATIONS_JSON) {
+    if (!enabled) return { enabled: false,
+      routerChannelId: /^[A-Z0-9]+$/.test(routerChannelId) ? routerChannelId : "",
+      destinations: [], operatorUserIds };
     throw new Error("meeting_minutes_config_incomplete");
   }
   const destinations = parseDestinations(env.MEETING_MINUTES_DESTINATIONS_JSON);

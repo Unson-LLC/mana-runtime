@@ -38,6 +38,8 @@ Receiptの未完了task候補と生成taskを、project、正規化title、正�
 
 受付停止中は、新規ファイルと保存先選択をQueueへ送らない。停止前後にQueueへ到達したrouterファイル・保存先選択・やり直しも通常処理や再試行へ流さずACKする。routerファイルには再投稿案内を、保存先選択・やり直しには復旧後の再操作案内をSlackへ表示する。処理中runが0件になった後、通常のDeployment Gateを通して、同じ受付停止機構を保持した`MEETING_MINUTES_ENABLED=false`の停止版を配備する。再開は本番readback後の明示操作とし、受付停止機構を持たない過去commitや過去versionの再昇格は行わない。
 
+停止版でも、保存先とoperatorの設定は検証して参照用に保持する。新規runの開始可否と既存runの操作に必要な正規設定を分離し、既存完了runのCanonical Task編集・取消を継続する。Task範囲は現在範囲または保存済みの信頼できる旧範囲と完全一致する場合だけ操作し、旧範囲から現行範囲への移行契約を停止中も維持する。
+
 ## 保存と表示
 
 GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を、本文末尾へ利用source refsと判断候補を決定的に描画する。Slack完了表示には「Brainbase参照済み」と、Receipt外参照を除外した場合の警告を示す。生Graph contextは保存・投稿しない。
