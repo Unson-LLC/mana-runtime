@@ -8,6 +8,7 @@ import {
   IdempotencyMemoryStore,
   TenantBoundaryError,
   TenantRuntimeBoundaryVerifier,
+  SlackInstallationAdapter,
   TenantQuotaCache,
   WorkspaceConnectionRegistry,
   acquireCredentialLease,
@@ -199,6 +200,29 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(revised).toMatchObject({ tenant_id: TENANT_A, connection_revision: "8", status: "reauth_required" });
     expect(() => registry.revise(CONNECTION_A, "7", { status: "revoked" }))
       .toThrow(expect.objectContaining({ code: "WORKSPACE_CONNECTION_STALE_REVISION" }));
+  });
+
+  it("Slack installation lifecycle uses authenticated revision port planned Red", async () => {
+    const register = vi.fn(async () => snapshotA);
+    const revise = vi.fn(async () => ({ ...snapshotA, connection_revision: "8", status: "reauth_required" as const,
+      granted_scopes: ["app_mentions:read"] }));
+    const adapter = new SlackInstallationAdapter({
+      register_slack_installation: register,
+      revise_workspace_connection: revise,
+      resolve_workspace_connection: vi.fn(async () => snapshotA),
+    });
+    await expect(adapter.apply({ kind: "oauth_callback", expected_revision: "0", app_id: "A-MANA",
+      workspace_id: "T-A", installation_id: "I-A", installer_id: "U-INSTALLER",
+      granted_scopes: ["app_mentions:read", "chat:write"], authorization_code_ref: "opaque-exchange-a" }))
+      .resolves.toEqual(snapshotA);
+    expect(register).toHaveBeenCalledWith(expect.objectContaining({ workspace_id: "T-A",
+      authorization_code_ref: "opaque-exchange-a" }), "0");
+    await expect(adapter.apply({ kind: "scope_changed", connection_id: CONNECTION_A,
+      expected_revision: "7", granted_scopes: ["app_mentions:read"] }))
+      .resolves.toMatchObject({ connection_revision: "8", status: "reauth_required" });
+    expect(revise).toHaveBeenCalledWith(CONNECTION_A, "7", {
+      granted_scopes: ["app_mentions:read"], status: "reauth_required",
+    });
   });
 
   it("fail closed before enqueue and LLM planned Red", () => {
