@@ -19,14 +19,14 @@
     {
       "id": "INV-001",
       "type": "invariant",
-      "statement": "requiredモードは不完全なReceipt、identity不一致、checksum不正、Receipt外参照を副作用前に拒否する",
+      "statement": "Receipt外参照はobserveモードで正規参照だけへ正規化してSlackとGitHubへ警告を残し、requiredモードでは副作用前に拒否する。不完全なReceipt、identity不一致、checksum不正もrequiredで拒否する",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-4" }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-4" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "失敗" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-brainbase-context.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "fails closed for partial context only in required mode" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "binds generated minutes to the exact Receipt and known source references" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "fails closed for partial context only in required mode" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "removes invented references and records a warning in observe mode" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "rejects invented references in required mode" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "must_cover": "fails closed for partial context only in required mode" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "must_cover": "binds generated minutes to the exact Receipt and known source references" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "must_cover": "fails closed for partial context only in required mode" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "must_cover": "removes invented references and records a warning in observe mode" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "must_cover": "rejects invented references in required mode" }] },
       "confidence": 0.99
     },
     {
@@ -58,14 +58,14 @@
     {
       "id": "INV-002",
       "type": "invariant",
-      "statement": "GitHubとSlackへ監査可能なReceipt情報だけを表示し、生Graph本文と既存実行契約を変えない",
+      "statement": "GitHubとSlackへ監査可能なReceipt情報とReceipt外参照の除外警告だけを表示し、生Graph本文と既存実行契約を変えない",
       "origin": {
-        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }, { "kind": "acceptance_criteria", "ac_id": "AC-7" }],
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }, { "kind": "acceptance_criteria", "ac_id": "AC-7" }, { "kind": "acceptance_criteria", "ac_id": "AC-9" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "保存と表示" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-github.ts" }, { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts", "case": "stores transcript then minutes with JST paths and existing SHA" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "clears the assistant status and updates the selector with a durable completed result" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts", "case": "stores transcript then minutes with JST paths and existing SHA" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "clears the assistant status and updates the selector with a durable completed result" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "shows when unknown Brainbase references were removed in observe mode" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts", "case": "renders exactly one deterministic action-item section from tasks" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts", "must_cover": "stores transcript then minutes with JST paths and existing SHA" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "clears the assistant status and updates the selector with a durable completed result" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts", "must_cover": "stores transcript then minutes with JST paths and existing SHA" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "clears the assistant status and updates the selector with a durable completed result" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "shows when unknown Brainbase references were removed in observe mode" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts", "must_cover": "renders exactly one deterministic action-item section from tasks" }] },
       "confidence": 0.99
     }
   ],

@@ -156,6 +156,8 @@ export class MeetingMinutesSlackClient {
     await this.setThreadStatus(run, "");
     const completed = outcome === "completed";
     const taskRegistrationPending = completed && Boolean(run.taskRegistration?.failure);
+    const contextWarning = completed
+      && run.generated?.brainbase_context_warnings?.includes("unknown_source_ref_removed");
     const taskIntegrationStage = run.taskRegistration?.failure?.stage;
     const taskIntegrationMessage = taskIntegrationStage === "task_board"
       ? "タスク登録は完了しましたが、タスクボードへの反映が完了していません。"
@@ -165,10 +167,12 @@ export class MeetingMinutesSlackClient {
     const text = taskRegistrationPending
       ? `${run.file.name} の議事録は作成・共有済みです。未完了のタスク連携を再実行できます。`
       : completed
-      ? `${run.file.name} の議事録を作成しました。`
+      ? `${run.file.name} の議事録を作成しました。${contextWarning
+        ? " Brainbaseの正本にない参照候補は除外しました。" : ""}`
       : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
     const details = taskRegistrationPending
       ? [`*⚠️ 議事録は作成・共有済みです*`, `保存先: ${run.destination.name}`,
+        contextWarning ? "⚠️ Brainbaseの正本にない参照候補を除外し、正本の参照だけで作成しました。" : undefined,
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
         `共有先: <#${run.destination.slackChannelId}>`,
         `${taskIntegrationMessage} 下のボタンから未完了の処理だけ再実行できます。`]
@@ -178,6 +182,7 @@ export class MeetingMinutesSlackClient {
         run.context ? `Brainbase正本文脈: ${run.context.status === "resolved" ? "参照済み" :
           run.context.status === "confirmed_empty" ? "確認済み（該当なし）" :
           run.context.status === "partial" ? "一部参照" : "参照不能"}（Receipt: ${run.context.receiptId}）` : undefined,
+        contextWarning ? "⚠️ Brainbaseの正本にない参照候補を除外し、正本の参照だけで作成しました。" : undefined,
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
         `共有先: <#${run.destination.slackChannelId}>`].filter(Boolean).join("\n")
       : failedRunDetails(run).join("\n");

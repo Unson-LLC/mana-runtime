@@ -29,6 +29,19 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(calls[1]?.body)).toContain("保存先をやり直す");
   });
 
+  it("shows when unknown Brainbase references were removed in observe mode", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), generated: { title: "定例", overview: "概要", body: "本文",
+      brainbase_context_warnings: ["unknown_source_ref_removed" as const] } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("Brainbaseの正本にない参照候補を除外し、正本の参照だけで作成しました");
+    expect(serialized).not.toContain("unknown_source_ref_removed");
+  });
+
   it("shows processing feedback with the Slack assistant thread status", async () => {
     let call: { url: string; body: Record<string, unknown>; signal?: AbortSignal | null } | undefined;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

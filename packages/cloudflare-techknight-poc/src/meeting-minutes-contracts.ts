@@ -40,6 +40,7 @@ export interface GeneratedMeetingMinutes {
   brainbase_context_checksum?: string;
   used_source_refs?: MeetingMinutesContextSourceRef[];
   decision_candidates?: Array<{ title: string; reason?: string; source_ref_ids?: string[] }>;
+  brainbase_context_warnings?: Array<"unknown_source_ref_removed">;
   /** Worker-derived proof that the generation run actually read the canonical Brainbase Receipt. */
   brainbase_context_attestation?: MeetingMinutesContextAttestation;
 }

@@ -575,18 +575,38 @@ describe("meeting minutes pipeline", () => {
       brainbase_context_receipt_id: "receipt-1", brainbase_context_checksum: "checksum-1" } });
   });
 
-  it("does not persist an untrusted source reference before rejecting generation", async () => {
+  it("does not persist an untrusted source reference before rejecting required generation", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: "receipt-source", identity, status: "resolved" as const, checksum: "checksum-source",
       resolved_at: "2026-08-15T00:00:00.000Z",
       context: { source_refs: [{ type: "graph_entity", id: "known" }], open_tasks: [] } }));
-    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({ resolveContext,
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({ contextMode: "required", resolveContext,
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [],
         used_source_refs: [{ type: "graph_entity", id: "invented" }] }),
     }))).rejects.toThrow("meeting_minutes_context_source_ref_unknown");
     expect(await loadMeetingMinutesRun(fs, selection.runId)).not.toHaveProperty("generated");
+  });
+
+  it("removes an untrusted source reference and completes observe generation", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-source", identity, status: "resolved" as const, checksum: "checksum-source",
+      resolved_at: "2026-08-15T00:00:00.000Z",
+      context: { source_refs: [{ type: "graph_entity", id: "known" }], open_tasks: [] } }));
+    const run = await resumeMeetingMinutesRun(fs, selection, resumeOptions({ contextMode: "observe", resolveContext,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [],
+        used_source_refs: [
+          { type: "graph_entity", id: "known" },
+          { type: "graph_entity", id: "invented" },
+        ] }),
+    }));
+    expect(run).toMatchObject({ status: "completed", generated: {
+      used_source_refs: [{ type: "graph_entity", id: "known" }],
+      brainbase_context_warnings: ["unknown_source_ref_removed"],
+    } });
   });
 
   it("fails closed before generation when required Brainbase context is partial", async () => {
