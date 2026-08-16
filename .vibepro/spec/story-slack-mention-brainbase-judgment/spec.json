@@ -1,0 +1,321 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-mention-brainbase-judgment",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "architecture"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "通常replyは常にBrainbase Judgment settings、stream-json、Hook event取得を有効化し、UserPromptSubmitとStopが検証できるまでSlackへ投稿しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "データフロー"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/claude-runtime-config.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-judgment.test.ts",
+            "case": "story-slack-mention-brainbase-judgment:ac:1 ac:2 ac:5 requires a complete Judgment lifecycle before reply"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "requires a complete Judgment lifecycle before reply"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T23:09:00.599Z",
+      "last_revised_at": "2026-08-16T23:34:38.398Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "routing receiptを取得完了とは扱わず、必要なBrainbase tool callとHost監査行を記録順・記録回数どおり保持する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "信頼境界"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-judgment.test.ts",
+            "case": "story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "preserves Host audit order and multiplicity"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T23:09:00.599Z",
+      "last_revised_at": "2026-08-16T23:34:38.398Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "event、workspace、channel、thread、Claude session、Brainbase turn、route、tool journal、Stop、response_tsを本文とsecretなしの永続episode receiptへ結合する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "Episode receipt"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-judgment.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-judgment.test.ts",
+            "case": "story-slack-mention-brainbase-judgment:ac:7 stores a redacted durable episode receipt through Slack completion"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "stores a redacted durable episode receipt"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T23:09:00.599Z",
+      "last_revised_at": "2026-08-16T23:34:38.398Z"
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "同一eventの再配送は完了済みepisodeと返信を再作成せず、失敗後のretryは履歴を保持した新attemptになる",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-8"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "Episode receipt"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-judgment.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-judgment.test.ts",
+            "case": "story-slack-mention-brainbase-judgment:ac:8 keeps retry history without duplicate completion"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
+            "must_cover": "reuses the deterministic Slack client message ID"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T23:09:00.599Z",
+      "last_revised_at": "2026-08-16T23:34:38.398Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "既存の議事録Judgment、proxy認証、placement認可、thread返信、Queue retryを退行させない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-9"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "既存経路との互換性"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/brainbase-mcp-proxy.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
+            "case": "TechKnight Slack reply pipeline"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "generateMeetingMinutesInSandbox"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "generateMeetingMinutesInSandbox"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T23:09:00.599Z",
+      "last_revised_at": "2026-08-16T23:34:38.398Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "本番配備後のfresh Slack eventで返信、Judgment、必要な取得、Stop、episode receipt、response_tsを同一eventとしてreadbackするまでAC10をnot_collectedのまま扱う",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "配備と検証"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "keeps production Slack Judgment evidence open until a fresh deployed event is collected"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "production Slack Judgment evidence open"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T23:34:38.398Z",
+      "last_revised_at": "2026-08-16T23:34:38.398Z"
+    }
+  ],
+  "planned_test_suites": [
+    {
+      "layer": "unit",
+      "covers": [
+        "Claude command",
+        "Hook stream parser",
+        "episode receipt",
+        "監査行"
+      ]
+    },
+    {
+      "layer": "integration",
+      "covers": [
+        "通常reply",
+        "fail closed",
+        "retry",
+        "Slack completion"
+      ]
+    },
+    {
+      "layer": "release",
+      "covers": [
+        "fresh Slack event readback",
+        "AC10 not_collected until deployed"
+      ]
+    }
+  ],
+  "open_questions": [],
+  "generated_at": "2026-08-16T23:34:38.396Z",
+  "previous_spec_id": "2026-08-16T23:09:00.598Z"
+}
