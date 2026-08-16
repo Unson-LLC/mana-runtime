@@ -53,9 +53,17 @@ function containsMeetingMinutesPlaceholder(record: Record<string, unknown>): boo
   ));
 }
 
+export function assertGeneratedMeetingMinutesNotPlaceholder(value: unknown): void {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  if (containsMeetingMinutesPlaceholder(record)) {
+    throw new Error("meeting_minutes_generation_placeholder_output");
+  }
+}
+
 export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMinutes {
   const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  if (containsMeetingMinutesPlaceholder(record)) throw new Error("meeting_minutes_generation_placeholder_output");
+  assertGeneratedMeetingMinutesNotPlaceholder(record);
   const title = nonEmpty(record.title, 200); const overview = nonEmpty(record.overview, 600);
   const body = stripMeetingMinutesActionItems(nonEmpty(record.body, 100_000) ?? "");
   if (!title || !overview || !body) throw new Error("meeting_minutes_generation_invalid");

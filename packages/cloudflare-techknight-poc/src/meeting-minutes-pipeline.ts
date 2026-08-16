@@ -4,7 +4,8 @@ import { isMeetingMinutesFile, meetingMinutesRunId, type AuditedGeneratedMeeting
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
   meetingMinutesContextProjectCode, meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
-import { splitMeetingMinutesForSlack, stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
+import { assertGeneratedMeetingMinutesNotPlaceholder, splitMeetingMinutesForSlack,
+  stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import type { SavedMeetingMinutesRecords } from "./meeting-minutes-github.js";
 import type { SlackQueueEvent } from "./types.js";
@@ -246,6 +247,26 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
   }
   if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
+  if (run.generated) {
+    try {
+      assertGeneratedMeetingMinutesNotPlaceholder(run.generated);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "meeting_minutes_generation_placeholder_output") throw error;
+      if (!run.github) {
+        delete run.generated;
+        delete run.failure;
+        run.status = "routed";
+        run.updatedAt = now(options);
+        await saveMeetingMinutesRun(fs, run);
+      } else {
+        run.status = "completed";
+        run.failure = { stage: "generated", message: "meeting_minutes_persisted_placeholder_output" };
+        run.updatedAt = now(options);
+        await saveMeetingMinutesRun(fs, run);
+        return run;
+      }
+    }
+  }
   if (run.status === "completed") {
     if (run.taskRegistration?.failure && run.destination && run.transcriptSha256) {
       const retryStage = run.taskRegistration.failure.stage;

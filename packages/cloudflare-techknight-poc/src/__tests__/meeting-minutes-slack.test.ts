@@ -159,6 +159,23 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).not.toContain("meeting_minutes_generation_placeholder_output");
   });
 
+  it("requires an explicit redo when a saved meeting minutes file contains placeholders", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), failure: {
+      stage: "generated", message: "meeting_minutes_persisted_placeholder_output",
+    } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("保存済みの議事録に見本文が含まれています");
+    expect(serialized).toContain("以前の生成結果を自動では上書きしません");
+    expect(serialized).toContain("保存先をやり直す");
+    expect(serialized).not.toContain("タスク処理を再実行");
+    expect(serialized).not.toContain("meeting_minutes_persisted_placeholder_output");
+  });
+
   it("explains how to recover when the destination Slack channel is unavailable", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

@@ -68,6 +68,57 @@ describe("meeting minutes pipeline", () => {
     expect(postThreadChunk).not.toHaveBeenCalled();
   });
 
+  it("regenerates an unsaved persisted placeholder before any external side effect", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.generated = { title: "YYYY-MM-DD 会議トピック-要約", overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない", tasks: [] };
+    persisted.failure = { stage: "generated", message: "meeting_minutes_generation_placeholder_output" };
+    await saveMeetingMinutesRun(fs, persisted);
+    const generate = vi.fn().mockResolvedValue({ title: "評議会", overview: "方針を確認しました。",
+      body: "## 方針\n参加者は次の運用方針を確認しました。", tasks: [] });
+    const options = resumeOptions({ generate });
+
+    const repaired = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(repaired).toMatchObject({ status: "completed", generated: { title: "評議会" } });
+    expect(repaired.failure).toBeUndefined();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(options.saveGitHub).toHaveBeenCalledWith(expect.objectContaining({
+      destination,
+      transcript: "transcript",
+      minutes: expect.objectContaining({ title: "評議会" }),
+    }));
+    expect(options.postParent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reuse an already saved placeholder and requires an explicit redo", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions());
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.generated = { title: "YYYY-MM-DD 会議トピック-要約", overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない", tasks: [] };
+    await saveMeetingMinutesRun(fs, persisted);
+    const options = resumeOptions();
+
+    const guarded = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(guarded).toMatchObject({ status: "completed",
+      failure: { stage: "generated", message: "meeting_minutes_persisted_placeholder_output" } });
+    expect(options.generate).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+  });
+
   it("persists one processing reply before generation and reuses it on retry", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
@@ -580,6 +631,13 @@ describe("meeting minutes pipeline", () => {
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const generated = { title: "定例", overview: "概要", body: "本文", tasks: [{ title: "確認する" }] };
     await resumeMeetingMinutesRun(fs, selection, resumeOptions({ generate: vi.fn().mockResolvedValue(generated) }));
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.generated = { title: "YYYY-MM-DD 会議トピック-要約", overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない", tasks: [] };
+    await saveMeetingMinutesRun(fs, persisted);
+    expect(await resumeMeetingMinutesRun(fs, selection, resumeOptions())).toMatchObject({
+      status: "completed", failure: { message: "meeting_minutes_persisted_placeholder_output" },
+    });
     const deleteGitHub = vi.fn(); const deleteTask = vi.fn(); const retractSharedMinutes = vi.fn();
     const showDestinationSelection = vi.fn().mockResolvedValue("3.1");
     const reopened = await redoMeetingMinutesRun(fs, redo, { destinations: [destination], deleteGitHub, deleteTask,
@@ -594,6 +652,7 @@ describe("meeting minutes pipeline", () => {
     expect(reopened).not.toHaveProperty("generated");
     expect(reopened).not.toHaveProperty("github");
     expect(reopened).not.toHaveProperty("taskRegistration");
+    expect(reopened).not.toHaveProperty("failure");
   });
 
   it("uses fresh external idempotency keys after a redo", async () => {
