@@ -17,17 +17,20 @@ import {
   assertTenantPartition,
   authorizeSlackDelivery,
   claimIdempotency,
+  completeIdempotency,
   consumeCredentialLease,
   consumeTenantQueueMessage,
   createDeletionReceipt,
   createIdempotencyKey,
   createOperationReceipt,
+  createTenantTemporaryObject,
   createSecretValue,
   createUsageEvent,
   executeTenantBoundary,
   jcsCanonicalize,
   negotiateTenantProtocol,
   prepareContainerReuse,
+  hashTenantObjectKey,
   resolveSlackWorkerIngress,
   resolveTemporaryObjectExpiry,
   signTenantContextEnvelope,
@@ -253,6 +256,18 @@ describe("story-mana-multitenant-runtime contract", () => {
       operation_id: "op_|same",
     });
     expect(key).not.toBe(changed);
+    const lp = (value: string) => {
+      const body = new TextEncoder().encode(value);
+      const framed = new Uint8Array(4 + body.length);
+      new DataView(framed.buffer).setUint32(0, body.length, false);
+      framed.set(body, 4);
+      return framed;
+    };
+    const digestInput = ["mana-brainbase-tenant-context", "1", TENANT_A, CONNECTION_A, "event|same", OPERATION_A]
+      .map(lp).reduce((left, right) => Uint8Array.from([...left, ...right]), new Uint8Array());
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", digestInput));
+    const expected = `ik1_${btoa(String.fromCharCode(...digest)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+    expect(key).toBe(expected);
 
     const store = new IdempotencyMemoryStore();
     const claim = { key, tenant_id: TENANT_A, connection_id: CONNECTION_A, slack_event_id: "event|same",
@@ -262,15 +277,26 @@ describe("story-mana-multitenant-runtime contract", () => {
     await expect(claimIdempotency(store, claim)).resolves.toMatchObject({ disposition: "in_progress" });
     await expect(claimIdempotency(store, { ...claim, payload_hash: "payload-b" }))
       .rejects.toEqual(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+    expect(() => completeIdempotency(store, { key, tenant_id: TENANT_A, state: "succeeded",
+      result_ref: "opaque-result-a", updated_at: NOW, retained_until: "2026-09-14T13:02:00.000Z" }))
+      .toThrow(expect.objectContaining({ code: "IDEMPOTENCY_RETENTION_INVALID" }));
+    completeIdempotency(store, { key, tenant_id: TENANT_A, state: "succeeded",
+      result_ref: "opaque-result-a", updated_at: NOW, retained_until: "2026-09-15T13:02:00.000Z" });
+    await expect(claimIdempotency(store, claim)).resolves.toMatchObject({ disposition: "succeeded" });
   });
 
   it("TenantPartitionKeyV1 matrix planned Red", () => {
     const key = tenantPartitionKey({ tenant_id: TENANT_A, resource_type: "session", connection_id: CONNECTION_A,
       workspace_id: "T-A", channel_id: "C-A", thread_ts: "1723800000.000001", resource_id: "session-1" });
-    expect(key).toMatch(/^tp1\//);
+    const b64 = (value: string) => btoa(value).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    expect(key).toBe(["tp1", b64(TENANT_A), "session", b64(CONNECTION_A), b64("T-A"), b64("C-A"),
+      b64("1723800000.000001"), b64("session-1")].join("/"));
     expect(assertTenantPartition(key, TENANT_A)).toBe(key);
     expect(() => assertTenantPartition(key, TENANT_B))
       .toThrow(expect.objectContaining({ code: "CROSS_TENANT_CANDIDATE" }));
+    expect(tenantPartitionKey({ tenant_id: TENANT_A, resource_type: "idempotency", connection_id: CONNECTION_A,
+      workspace_id: "", channel_id: "", thread_ts: "", resource_id: "ik1_value" }))
+      .toContain("/idempotency/");
   });
 
   it("ContainerSanitizationReceiptV1 planned Red", async () => {
@@ -287,9 +313,13 @@ describe("story-mana-multitenant-runtime contract", () => {
     await expect(prepareContainerReuse(lease, TENANT_B, OPERATION_A, {
       image_digest: "sha256:image",
       completed_at: NOW,
+      sanitation_receipt_id: "sanitation-a",
       checks: {},
       destroy,
-    })).rejects.toEqual(expect.objectContaining({ code: "CONTAINER_SANITIZATION_UNPROVEN" }));
+    })).rejects.toEqual(expect.objectContaining({ code: "CONTAINER_SANITIZATION_UNPROVEN",
+      details: expect.objectContaining({ receipt: expect.objectContaining({
+        sanitation_receipt_id: "sanitation-a", lease_id: "lease-a", result: "failed",
+      }) }) }));
     expect(destroy).toHaveBeenCalledOnce();
 
     const checks = Object.fromEntries([
@@ -298,8 +328,9 @@ describe("story-mana-multitenant-runtime contract", () => {
       "session_removed", "cache_removed", "open_handles_closed", "same_tenant", "fresh_signed_context",
     ].map((name) => [name, true]));
     await expect(prepareContainerReuse(lease, TENANT_A, OPERATION_A, {
-      image_digest: "sha256:image", completed_at: NOW, checks, destroy,
-    })).resolves.toMatchObject({ result: "passed", operation_id: OPERATION_A });
+      image_digest: "sha256:image", completed_at: NOW, sanitation_receipt_id: "sanitation-b", checks, destroy,
+    })).resolves.toMatchObject({ result: "passed", sanitation_receipt_id: "sanitation-b",
+      lease_id: "lease-a", operation_id: OPERATION_A, tenant_hash: expect.stringMatching(/^sha256:/) });
   });
 
   it("common external contract across deployment profiles planned Red", () => {
@@ -343,8 +374,24 @@ describe("story-mana-multitenant-runtime contract", () => {
       profile_ttl_seconds: 120 })).toBe("2026-08-16T13:02:00.000Z");
     expect(() => resolveTemporaryObjectExpiry({ created_at: NOW, contract_ttl_seconds: undefined,
       profile_ttl_seconds: 120 })).toThrow(expect.objectContaining({ code: "UPSTREAM_UNAVAILABLE" }));
-    expect(createDeletionReceipt({ object_key: "tp1/key", tenant_id: TENANT_A, reason: "expired",
-      deleted_at: NOW, outcome: "not_found" })).toMatchObject({ tenant_id: TENANT_A, outcome: "not_found" });
+  });
+
+  it("tenant temporary object validation and deletion receipt planned Red", async () => {
+    const objectKey = tenantPartitionKey({ tenant_id: TENANT_A, resource_type: "file", connection_id: CONNECTION_A,
+      workspace_id: "T-A", channel_id: "C-A", thread_ts: "1723800000.000001", resource_id: "file-a" });
+    expect(createTenantTemporaryObject({ object_key: objectKey, tenant_id: TENANT_A, connection_id: CONNECTION_A,
+      correlation_id: unsignedEnvelopeA.correlation_id, source: "slack_attachment", mime_type: "text/plain",
+      size_bytes: 10, sha256: "sha256:fixture", created_at: "2026-08-16T13:00:00.000Z", status: "available",
+      contract: { max_size_bytes: 20, mime_allowlist: ["text/plain"], ttl_seconds: 300 },
+      deployment_profile_ttl_seconds: 120 })).toMatchObject({ expires_at: "2026-08-16T13:02:00.000Z" });
+    expect(() => createTenantTemporaryObject({ object_key: objectKey, tenant_id: TENANT_A, connection_id: CONNECTION_A,
+      correlation_id: unsignedEnvelopeA.correlation_id, source: "slack_attachment", mime_type: "text/plain",
+      size_bytes: 10, sha256: "sha256:fixture", created_at: NOW, status: "available",
+      contract: { max_size_bytes: 20, mime_allowlist: ["text/plain"], ttl_seconds: undefined },
+      deployment_profile_ttl_seconds: 120 })).toThrow(expect.objectContaining({ code: "UPSTREAM_UNAVAILABLE" }));
+    expect(createDeletionReceipt({ object_key_hash: await hashTenantObjectKey(objectKey), tenant_id: TENANT_A,
+      reason: "expired", deleted_at: NOW, outcome: "not_found" }))
+      .toMatchObject({ object_key_hash: expect.stringMatching(/^sha256:/), tenant_id: TENANT_A });
   });
 
   it("CredentialDecisionV1 selection and injection planned Red", async () => {
