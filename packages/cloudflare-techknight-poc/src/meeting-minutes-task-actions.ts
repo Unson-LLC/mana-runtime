@@ -1,7 +1,7 @@
 import type { CanonicalTask, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { MEETING_MINUTES_TASK_CANCEL_ACTION_ID, MEETING_MINUTES_TASK_EDIT_ACTION_ID,
   MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID,
-  meetingMinutesTaskProjectCodes, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+  meetingMinutesTaskProjectCodes, type MeetingMinutesDestination, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 import { MEETING_MINUTES_ASSIGNEE_NONE, meetingMinutesTaskEditViewFromAction } from "./meeting-minutes-task-cards.js";
 import type { GraphPersonOption } from "./brainbase-graph-runtime.js";
 
@@ -20,6 +20,7 @@ function metadata(value: unknown): ActionMetadata | undefined {
 }
 export interface MeetingMinutesTaskActionDependencies {
   sourceTeamId: string; destinationTeamIds: Readonly<Record<string, string>>;
+  destinations: readonly MeetingMinutesDestination[];
   operatorUserIds: ReadonlySet<string>;
   loadRun(runId: string): Promise<MeetingMinutesRun | undefined>;
   saveRun(run: MeetingMinutesRun): Promise<void>;
@@ -31,6 +32,18 @@ export interface MeetingMinutesTaskActionDependencies {
   listPeople(): Promise<GraphPersonOption[] | undefined>;
   repairTaskBoard(targetId: string): Promise<void>;
   defer(work: Promise<void>): void;
+}
+async function reconcileTaskDestination(run: MeetingMinutesRun,
+  deps: MeetingMinutesTaskActionDependencies): Promise<void> {
+  const current = run.destination && deps.destinations.find((item) => item.id === run.destination?.id);
+  if (!run.destination || !current) throw new Error("meeting_minutes_destination_forbidden");
+  const changed = JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(current.taskProjectCodes) ||
+    run.destination.taskBoardTargetId !== current.taskBoardTargetId;
+  if (!changed) return;
+  run.destination.taskProjectCodes = [...current.taskProjectCodes];
+  run.destination.taskBoardTargetId = current.taskBoardTargetId;
+  run.updatedAt = new Date().toISOString();
+  await deps.saveRun(run);
 }
 function candidate(run: MeetingMinutesRun, index: number) {
   return run.taskRegistration?.registered.find((item) => item.index === index && item.status !== "removed");
@@ -101,6 +114,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   if (!run || !run.destination || !item || !allowed(payload, run, deps)) {
     return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
   }
+  await reconcileTaskDestination(run, deps);
   if (actionId === MEETING_MINUTES_TASK_CANCEL_ACTION_ID) {
     deps.defer((async () => { let current: CanonicalTask;
       try { current = await deps.getTask(item.taskId); }

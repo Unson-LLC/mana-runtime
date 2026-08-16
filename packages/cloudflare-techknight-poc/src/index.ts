@@ -411,6 +411,7 @@ export default {
           let cachedRun: MeetingMinutesRun | undefined;
           return handleMeetingMinutesTaskAction(payload, { sourceTeamId: env.SLACK_EXPECTED_TEAM_ID,
             destinationTeamIds: parsedTeamIds,
+            destinations: config.destinations,
             operatorUserIds: config.operatorUserIds,
             loadRun: async (runId) => { cachedRun = await loadWorkspace(runId, (workspace) => loadMeetingMinutesRun(workspace.fs, runId)); return cachedRun; },
             saveRun: (run) => loadWorkspace(run.runId, async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); }),

@@ -18,6 +18,7 @@ function payload(actionId: string) { return { team: { id: "TTK" }, channel: { id
   trigger_id: "trigger", actions: [{ action_id: actionId, value: JSON.stringify({ runId: "Ev_Fv", index: 0,
     organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms", title: "旧題", due: "2026-08-20" }) }] }; }
 function deps(current: MeetingMinutesRun) { return { sourceTeamId: "TU", destinationTeamIds: { "tech-knight": "TTK" },
+  destinations: [run().destination!],
   operatorUserIds: new Set(["U1"]),
   loadRun: vi.fn(async () => current), saveRun: vi.fn(async () => {}),
   getTask: vi.fn(async () => ({ id: "task-1", version: 3, title: "旧題", description: null, status: "pending",
@@ -64,14 +65,50 @@ describe("meeting minutes task cards", () => {
   it("uses the explicit canonical task scope instead of the minutes destination identity", async () => {
     const current = run(); current.destination!.taskProjectCodes = ["unson"];
     const options = deps(current);
+    options.destinations[0]!.taskProjectCodes = ["unson"];
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unson"] });
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
     expect(response?.status).toBe(200); await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
     expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
     expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
   });
+  it("migrates a legacy completed run before cancelling its task", async () => {
+    const current = run();
+    const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };
+    delete legacy.taskProjectCodes; delete legacy.taskBoardTargetId;
+    const options = deps(current);
+    const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
+    expect(response?.status).toBe(200);
+    await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
+    expect(current.destination).toEqual(expect.objectContaining({
+      taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-pms",
+    }));
+    expect(options.saveRun).toHaveBeenCalledWith(current);
+    expect(options.deleteTask).toHaveBeenCalledTimes(1);
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
+  });
+  it("migrates a legacy completed run before editing its task", async () => {
+    const current = run();
+    const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };
+    delete legacy.taskProjectCodes; delete legacy.taskBoardTargetId;
+    const options = deps(current);
+    const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
+      view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
+        organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms" }), state: { values: {
+          title: { value: { value: "新題" } }, due: { value: {} }, assignee: { mana_meeting_minutes_task_assignee: {} },
+        } } } }, options);
+    expect(response?.status).toBe(200);
+    await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
+    expect(options.updateTask).toHaveBeenCalledTimes(1);
+    expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
+    expect(current.destination).toEqual(expect.objectContaining({
+      taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-pms",
+    }));
+  });
   it("repairs the destination Canvas when the canonical task was already deleted", async () => {
     const current = run(); const options = deps(current);
+    const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };
+    delete legacy.taskProjectCodes; delete legacy.taskBoardTargetId;
     options.getTask.mockRejectedValue(Object.assign(new Error("not found"), { status: 404 }));
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
     expect(response?.status).toBe(200);
