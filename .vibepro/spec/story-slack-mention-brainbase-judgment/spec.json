@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-slack-mention-brainbase-judgment",
   "generated_by": {
-    "caller": "codex",
+    "caller": "unknown",
     "stage": "architecture"
   },
   "clauses": [
@@ -56,7 +56,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T23:09:00.599Z",
-      "last_revised_at": "2026-08-16T23:34:38.398Z"
+      "last_revised_at": "2026-08-16T23:42:12.550Z"
     },
     {
       "id": "INV-001",
@@ -105,7 +105,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T23:09:00.599Z",
-      "last_revised_at": "2026-08-16T23:34:38.398Z"
+      "last_revised_at": "2026-08-16T23:42:12.550Z"
     },
     {
       "id": "C-002",
@@ -149,7 +149,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T23:09:00.599Z",
-      "last_revised_at": "2026-08-16T23:34:38.398Z"
+      "last_revised_at": "2026-08-16T23:42:12.550Z"
     },
     {
       "id": "S-001",
@@ -193,7 +193,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T23:09:00.599Z",
-      "last_revised_at": "2026-08-16T23:34:38.398Z"
+      "last_revised_at": "2026-08-16T23:42:12.550Z"
     },
     {
       "id": "INV-002",
@@ -230,7 +230,7 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
-            "case": "generateMeetingMinutesInSandbox"
+            "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call"
           }
         ]
       },
@@ -244,7 +244,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T23:09:00.599Z",
-      "last_revised_at": "2026-08-16T23:34:38.398Z"
+      "last_revised_at": "2026-08-16T23:42:12.550Z"
     },
     {
       "id": "C-003",
@@ -285,7 +285,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T23:34:38.398Z",
-      "last_revised_at": "2026-08-16T23:34:38.398Z"
+      "last_revised_at": "2026-08-16T23:42:12.550Z"
     }
   ],
   "planned_test_suites": [
@@ -316,6 +316,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-16T23:34:38.396Z",
-  "previous_spec_id": "2026-08-16T23:09:00.598Z"
+  "generated_at": "2026-08-16T23:42:12.549Z",
+  "previous_spec_id": "2026-08-16T23:34:38.396Z"
 }

@@ -63,7 +63,7 @@
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-9" }],
         "architecture_refs": [{ "file": "docs/architecture/story-slack-mention-brainbase-judgment.md", "section": "既存経路との互換性" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts" }, { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }, { "file": "packages/cloudflare-techknight-poc/src/brainbase-mcp-proxy.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "TechKnight Slack reply pipeline" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "generateMeetingMinutesInSandbox" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts", "case": "TechKnight Slack reply pipeline" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }]
       },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "generateMeetingMinutesInSandbox" }] },
       "confidence": 0.99
