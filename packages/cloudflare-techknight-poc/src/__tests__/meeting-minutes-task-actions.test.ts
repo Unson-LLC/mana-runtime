@@ -77,6 +77,7 @@ describe("meeting minutes task cards", () => {
     const current = run();
     const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };
     delete legacy.taskProjectCodes; delete legacy.taskBoardTargetId;
+    delete current.taskRegistration!.registered[0]!.projectCodes;
     const options = deps(current);
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
@@ -93,6 +94,7 @@ describe("meeting minutes task cards", () => {
     const current = run();
     const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };
     delete legacy.taskProjectCodes; delete legacy.taskBoardTargetId;
+    delete current.taskRegistration!.registered[0]!.projectCodes;
     const options = deps(current);
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
     const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
@@ -170,6 +172,7 @@ describe("meeting minutes task cards", () => {
     current.destination!.id = "kartz";
     current.destination!.taskProjectCodes = ["unson"];
     current.destination!.taskBoardTargetId = "minutes-kartz";
+    current.taskRegistration!.registered[0]!.projectCodes = ["unson"];
     const options = deps(current);
     options.destinations[0] = { ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" };
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unson"] });
@@ -193,6 +196,16 @@ describe("meeting minutes task cards", () => {
     expect(options.deleteTask).not.toHaveBeenCalled();
     expect(options.updateCard).not.toHaveBeenCalled();
     expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1");
+  });
+  it("does not trust the historical projectId when the run item already records a modern scope", async () => {
+    const current = run();
+    current.taskRegistration!.registered[0]!.projectCodes = ["techknight"];
+    const options = deps(current);
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
+    await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
+    await vi.waitFor(() => expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1"));
+    expect(options.deleteTask).not.toHaveBeenCalled();
+    expect(options.updateCard).not.toHaveBeenCalled();
   });
   it("notifies the operator when editing a task from an unrelated project scope", async () => {
     const current = run();

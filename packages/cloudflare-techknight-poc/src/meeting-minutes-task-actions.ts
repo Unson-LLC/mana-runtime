@@ -55,10 +55,12 @@ function sameTaskScope(actual: readonly string[] | undefined, expected: readonly
 }
 function trustedLegacyTaskScopes(run: MeetingMinutesRun,
   item: NonNullable<MeetingMinutesRun["taskRegistration"]>["registered"][number]): string[][] {
-  const candidates = [item.projectCodes, run.destination?.taskProjectCodes,
-    run.destination?.projectId ? [run.destination.projectId] : undefined]
+  const candidates = item.projectCodes?.length
+    ? [item.projectCodes]
+    : [run.destination?.taskProjectCodes, run.destination?.projectId ? [run.destination.projectId] : undefined];
+  const normalized = candidates
     .filter((scope): scope is string[] => Boolean(scope?.length));
-  return candidates.filter((scope, index) => candidates.findIndex((candidate) => sameTaskScope(scope, candidate)) === index);
+  return normalized.filter((scope, index) => normalized.findIndex((candidate) => sameTaskScope(scope, candidate)) === index);
 }
 function allowed(payload: ObjectValue, run: MeetingMinutesRun, deps: MeetingMinutesTaskActionDependencies): boolean {
   const teamId = text(object(payload.team)?.id); const channelId = text(object(payload.channel)?.id);

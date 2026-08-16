@@ -1,4 +1,4 @@
-import { isMeetingMinutesRedo, isMeetingMinutesSelection, isMeetingMinutesSlackEvent,
+import { isMeetingMinutesRedo, isMeetingMinutesRouterFileEvent, isMeetingMinutesSelection, isMeetingMinutesSlackEvent,
   meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
 
 const destinations = JSON.stringify([{ id: "mana", projectId: "mana", contextProjectCode: "mana",
@@ -9,6 +9,15 @@ const destinations = JSON.stringify([{ id: "mana", projectId: "mana", contextPro
 describe("meeting minutes entrypoints", () => {
   it("defaults to disabled without requiring authority config", () => {
     expect(meetingMinutesRuntimeConfig({})).toEqual({ enabled: false, routerChannelId: "", destinations: [], operatorUserIds: new Set() });
+  });
+  it("retains the router identity while disabled so paused intake can reject new files", () => {
+    const config = meetingMinutesRuntimeConfig({ MEETING_MINUTES_ROUTER_CHANNEL_ID: "CROUTER" });
+    const event = { tenantId: "unson", eventId: "E1", workspaceId: "T1", channelId: "CROUTER",
+      threadTs: "1", messageTs: "1", eventType: "message", subtype: "file_share", text: "", receivedAt: "now",
+      files: [{ id: "F1", name: "meeting.txt" }] };
+    expect(config).toEqual({ enabled: false, routerChannelId: "CROUTER", destinations: [], operatorUserIds: new Set() });
+    expect(isMeetingMinutesRouterFileEvent(event, config.routerChannelId)).toBe(true);
+    expect(isMeetingMinutesSlackEvent(event, config)).toBe(false);
   });
   it("fails closed when enabled authority config is incomplete", () => {
     expect(() => meetingMinutesRuntimeConfig({ MEETING_MINUTES_ENABLED: "true" })).toThrow("meeting_minutes_config_incomplete");
