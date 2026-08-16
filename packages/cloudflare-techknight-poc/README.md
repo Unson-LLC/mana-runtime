@@ -224,10 +224,14 @@ Worker versionには`MEETING_MINUTES_ENABLED`も含まれるため、旧version�
   pnpm --filter @openryoko/cloudflare-techknight-poc meeting-minutes:intake:pause
 ```
 
-ファイル投入と保存先選択が停止した状態で処理中runが0件になるのを待ち、現行commitの設定を
-`MEETING_MINUTES_ENABLED=false`にして正規Infisicalラッパーから配備します。次にknown-good commitを隔離worktreeへcheckoutし、同じ設定を
-`false`にした停止版artifactを正規ラッパーから新規配備します。Cloudflareの既存version rollbackは使いません。
-修正版で全保存先の配備前検査を通して再配備し、`true`を確認した後に同じラッパーから
+ファイル投入と保存先選択が停止した状態で処理中runが0件になるのを待ち、受付停止API、Slack受信抑止、
+Queue抑止を備えた現行commitの設定を`MEETING_MINUTES_ENABLED=false`にして正規Infisicalラッパーから配備します。
+修復中はこの停止版artifactを維持します。受付停止機構を持たない過去commitやCloudflareの既存versionを
+known-goodとして配備・promoteしてはいけません。
+
+修正版も同じ受付停止機構を保持した新しいartifactとして、まず`false`で配備します。受付停止状態のreadback、
+routerへの`.txt`投入がQueueへ入らないこと、既存の保存先ボタンが「受付停止中」を表示することを確認します。
+その後、全保存先の配備前検査を通した修正版を`true`で再配備し、readback後に同じラッパーから
 `meeting-minutes:intake:resume`を実行します。GitHub保存済みrunのReceiptは
 書き換えず、未保存runは修正版で正規Projectから文脈を取り直します。
 

@@ -25,10 +25,10 @@ function parseDestinations(value: string): MeetingMinutesDestination[] {
 export function meetingMinutesRuntimeConfig(env: MeetingMinutesEnvironment): MeetingMinutesRuntimeConfig {
   const enabled = env.MEETING_MINUTES_ENABLED === "true";
   const routerChannelId = env.MEETING_MINUTES_ROUTER_CHANNEL_ID?.trim() ?? "";
+  const operatorUserIds = new Set((env.MEETING_MINUTES_OPERATOR_USER_IDS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
   if (!enabled) return { enabled: false,
     routerChannelId: /^[A-Z0-9]+$/.test(routerChannelId) ? routerChannelId : "",
-    destinations: [], operatorUserIds: new Set() };
-  const operatorUserIds = new Set((env.MEETING_MINUTES_OPERATOR_USER_IDS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
+    destinations: [], operatorUserIds };
   if (!/^[A-Z0-9]+$/.test(routerChannelId) || !operatorUserIds.size || !env.MEETING_MINUTES_DESTINATIONS_JSON) {
     throw new Error("meeting_minutes_config_incomplete");
   }

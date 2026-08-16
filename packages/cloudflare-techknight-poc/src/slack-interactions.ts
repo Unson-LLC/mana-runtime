@@ -174,6 +174,18 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return response("slack_interaction_invalid", 400);
   }
   const sourceThreadTs = threadTsCandidates[0];
+  if (options.isIntakePaused && await options.isIntakePaused()) {
+    const responseUrl = string(payload?.response_url);
+    if (responseUrl && options.updateOriginal && options.defer) {
+      options.defer(options.updateOriginal(responseUrl, {
+        replace_original: true,
+        text: "議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。",
+        blocks: [{ type: "section", text: { type: "mrkdwn",
+          text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。" } }],
+      }));
+    }
+    return Response.json({ ok: true, intake_paused: true });
+  }
   let destinations: readonly MeetingMinutesDestination[] | undefined;
   try { destinations = options.destinations ?? options.resolveDestinations?.(); }
   catch { return response("slack_interaction_invalid", 400); }
@@ -211,18 +223,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   }
   if (!runId || !destinationId || !channelId || !actionTs || !options.defer) {
     return response("slack_interaction_invalid", 400);
-  }
-  if (options.isIntakePaused && await options.isIntakePaused()) {
-    const responseUrl = string(payload?.response_url);
-    if (responseUrl && options.updateOriginal) {
-      options.defer(options.updateOriginal(responseUrl, {
-        replace_original: true,
-        text: "議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。",
-        blocks: [{ type: "section", text: { type: "mrkdwn",
-          text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。" } }],
-      }));
-    }
-    return Response.json({ ok: true, intake_paused: true });
   }
   const qualifiedDestinationId = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)
     ? actionId.slice(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`.length)

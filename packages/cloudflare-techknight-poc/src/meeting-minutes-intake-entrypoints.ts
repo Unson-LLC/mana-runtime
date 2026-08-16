@@ -1,4 +1,5 @@
 import type { SlackQueueEvent } from "./types.js";
+import { isMeetingMinutesRouterFileEvent } from "./meeting-minutes-entrypoints.js";
 
 interface IntakeStatus {
   allowed: boolean;
@@ -24,6 +25,14 @@ interface IntakeQueueDependencies {
   logPaused?(eventId: string): void;
   logNotificationFailure?(eventId: string, error: unknown): void;
 }
+
+interface IntakeRouterQueueDependencies extends IntakeQueueDependencies {
+  enabled: boolean;
+  routerChannelId: string;
+  logDisabled?(eventId: string): void;
+}
+
+export type MeetingMinutesRouterQueueGate = "not_router_file" | "ready" | "blocked";
 
 interface IntakeIngressDependencies {
   isPaused(): Promise<boolean>;
@@ -67,6 +76,31 @@ export async function consumeMeetingMinutesIntakePause(
   }
   message.ack();
   return true;
+}
+
+export async function gateMeetingMinutesRouterQueueMessage(
+  message: IntakeQueueMessage,
+  dependencies: IntakeRouterQueueDependencies,
+): Promise<MeetingMinutesRouterQueueGate> {
+  if (!isMeetingMinutesRouterFileEvent(message.body, dependencies.routerChannelId)) {
+    return "not_router_file";
+  }
+
+  if (await dependencies.isPaused()) {
+    dependencies.logPaused?.(message.body.eventId);
+  } else if (!dependencies.enabled) {
+    dependencies.logDisabled?.(message.body.eventId);
+  } else {
+    return "ready";
+  }
+
+  try {
+    await dependencies.notify(message.body.channelId, message.body.threadTs);
+  } catch (error) {
+    dependencies.logNotificationFailure?.(message.body.eventId, error);
+  }
+  message.ack();
+  return "blocked";
 }
 
 export async function interceptMeetingMinutesIntakePause(

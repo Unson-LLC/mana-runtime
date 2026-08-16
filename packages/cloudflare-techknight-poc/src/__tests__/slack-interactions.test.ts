@@ -223,6 +223,19 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, send });
     expect(response.status).toBe(403); expect(send).not.toHaveBeenCalled();
   });
+  it("shows the durable pause reason to an authorized operator without queueing even when minutes are disabled", async () => {
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", expectedChannelId: "C1",
+      operatorUserIds: new Set(["U1"]), nowMs: now * 1000, destinations: [], send, updateOriginal,
+      isIntakePaused: vi.fn().mockResolvedValue(true), defer: background.defer });
+    expect(response.status).toBe(200); expect(await response.json()).toEqual({ ok: true, intake_paused: true });
+    await Promise.all(background.work);
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
+      text: expect.stringContaining("受付は一時停止中"),
+    }));
+  });
   it("rejects selections outside the configured router channel before feedback or queueing", async () => {
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,

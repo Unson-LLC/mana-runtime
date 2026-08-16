@@ -21,7 +21,6 @@ import {
   isMeetingMinutesSelection,
   isMeetingMinutesRedo,
   isMeetingMinutesRouterFileEvent,
-  isMeetingMinutesSlackEvent,
   meetingMinutesRuntimeConfig,
   processMeetingMinutesSlackEvent,
   processMeetingMinutesRedo,
@@ -89,7 +88,7 @@ import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, MEETING_MINUTES_RE
   recoverStaleMeetingMinutesRun } from "./meeting-minutes-recovery.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
-  consumeMeetingMinutesIntakePause,
+  gateMeetingMinutesRouterQueueMessage,
   handleMeetingMinutesIntakeAdminRequest,
   interceptMeetingMinutesIntakePause,
 } from "./meeting-minutes-intake-entrypoints.js";
@@ -590,20 +589,24 @@ export default {
         }
         continue;
       }
-      if (isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)) {
-        if (await consumeMeetingMinutesIntakePause({
+      const meetingMinutesRouterGate = await gateMeetingMinutesRouterQueueMessage({
           body: message.body,
           ack: () => message.ack(),
           retry: () => message.retry(),
         }, {
+          enabled: meetingMinutesConfig.enabled,
+          routerChannelId: meetingMinutesConfig.routerChannelId,
           isPaused: () => meetingMinutesDeploymentGate(env).isIntakePaused(),
           notify: (channelId, threadTs) => meetingMinutesClients(env).slack.postIntakePaused(channelId, threadTs),
           logPaused: (eventId) => console.warn(JSON.stringify({ event: "meeting_minutes_intake_paused", eventId })),
+          logDisabled: (eventId) => console.warn(JSON.stringify({ event: "meeting_minutes_intake_disabled", eventId })),
           logNotificationFailure: (eventId, error) => console.warn(JSON.stringify({
             event: "meeting_minutes_intake_pause_notice_failed", eventId,
             error: error instanceof Error ? error.message : "unexpected_error",
           })),
-        })) continue;
+        });
+      if (meetingMinutesRouterGate === "blocked") continue;
+      if (meetingMinutesRouterGate === "ready") {
         await consumeTechKnightMessage({
           body: message.body,
           ack: () => message.ack(),

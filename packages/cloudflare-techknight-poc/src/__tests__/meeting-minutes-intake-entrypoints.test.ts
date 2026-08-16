@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   consumeMeetingMinutesIntakePause,
+  gateMeetingMinutesRouterQueueMessage,
   handleMeetingMinutesIntakeAdminRequest,
   interceptMeetingMinutesIntakePause,
 } from "../meeting-minutes-intake-entrypoints.js";
@@ -15,6 +16,7 @@ const fileEvent: SlackQueueEvent = {
   threadTs: "1786000000.000001",
   messageTs: "1786000000.000001",
   eventType: "message",
+  subtype: "file_share",
   text: "",
   receivedAt: "2026-08-16T00:00:00.000Z",
   files: [{ id: "F1", name: "meeting.txt" }],
@@ -134,5 +136,48 @@ describe("meeting minutes intake entrypoints", () => {
 
     expect(notify).not.toHaveBeenCalled();
     expect(defer).not.toHaveBeenCalled();
+  });
+
+  it("keeps a queued router file out of ordinary handling in a disabled Worker", async () => {
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await expect(gateMeetingMinutesRouterQueueMessage({ body: fileEvent, ack, retry }, {
+      enabled: false,
+      routerChannelId: fileEvent.channelId,
+      isPaused: vi.fn().mockResolvedValue(false),
+      notify,
+    })).resolves.toBe("blocked");
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(fileEvent.channelId, fileEvent.threadTs);
+  });
+
+  it("allows only an enabled and unpaused router file into minutes processing", async () => {
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    await expect(gateMeetingMinutesRouterQueueMessage({ body: fileEvent, ack, retry }, {
+      enabled: true,
+      routerChannelId: fileEvent.channelId,
+      isPaused: vi.fn().mockResolvedValue(false),
+      notify: vi.fn(),
+    })).resolves.toBe("ready");
+
+    expect(ack).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("does not intercept an ordinary queued event", async () => {
+    const ordinary = { ...fileEvent, channelId: "COTHER" };
+
+    await expect(gateMeetingMinutesRouterQueueMessage({ body: ordinary, ack: vi.fn(), retry: vi.fn() }, {
+      enabled: false,
+      routerChannelId: fileEvent.channelId,
+      isPaused: vi.fn(),
+      notify: vi.fn(),
+    })).resolves.toBe("not_router_file");
   });
 });

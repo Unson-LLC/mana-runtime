@@ -84,7 +84,7 @@
     {
       "id": "C-005",
       "type": "contract",
-      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らずSlackへ理由を表示し、runが0件になった後だけ通常のDeployment Gateで停止版を配備する。再開は明示操作とする",
+      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らず、停止前後にQueueへ到達したrouterファイルも通常処理へ流さずSlackへ理由を表示する。runが0件になった後だけ、受付停止機構を保持した停止版を通常のDeployment Gateで配備する。再開は明示操作とする",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-15" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "配備・rollback" }],
