@@ -1,13 +1,16 @@
-import type { GeneratedMeetingMinutes, MeetingMinutesDestination,
+import type { AuditedGeneratedMeetingMinutes, GeneratedMeetingMinutes, MeetingMinutesDestination,
   MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
   MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinutesMcpConfigPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
 import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
 const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
 const MEETING_MINUTES_ROUTING_HEAD_CHARS = 4_000;
+const MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES = 10_000_000;
+const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
 const MEETING_MINUTES_MCP_CONFIG = JSON.stringify(buildRuntimeMcpConfig({
@@ -176,6 +179,145 @@ export function parseGeneratedMeetingMinutesOutput(stdout: string): GeneratedMee
   throw new Error("meeting_minutes_generation_invalid");
 }
 
+const BRAINBASE_CONTEXT_TOOL = "mcp__brainbase__brainbase_get_meeting_minutes_context" as const;
+
+function streamEvents(stdout: string): Array<Record<string, unknown>> {
+  if (stdout.length > MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES) {
+    throw new Error("meeting_minutes_generation_invalid");
+  }
+  const lines = stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length > MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS) {
+    throw new Error("meeting_minutes_generation_invalid");
+  }
+  return lines.map((line) => {
+    try {
+      const value = JSON.parse(line) as unknown;
+      return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+    } catch { return undefined; }
+  }).filter((value): value is Record<string, unknown> => Boolean(value));
+}
+
+function contentItems(event: Record<string, unknown>): Array<Record<string, unknown>> {
+  const message = event.message && typeof event.message === "object" && !Array.isArray(event.message)
+    ? event.message as Record<string, unknown> : undefined;
+  return Array.isArray(message?.content)
+    ? message.content.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function exactToolInput(value: unknown, receipt: MeetingMinutesContextReceipt): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  return input.receipt_id === receipt.receipt_id && input.run_id === receipt.identity.run_id
+    && input.project_code === receipt.identity.project_code
+    && input.transcript_sha256 === receipt.identity.transcript_sha256;
+}
+
+function findReceipt(value: unknown, expected: MeetingMinutesContextReceipt, depth = 0): MeetingMinutesContextReceipt | undefined {
+  if (depth > 10 || value === null || value === undefined) return undefined;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return undefined;
+    try { return findReceipt(JSON.parse(text), expected, depth + 1); } catch { return undefined; }
+  }
+  if (typeof value !== "object") return undefined;
+  try { return validateMeetingMinutesContextReceipt(value, expected.identity); } catch { /* inspect wrappers */ }
+  const values = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
+  for (const nested of values) {
+    const receipt = findReceipt(nested, expected, depth + 1);
+    if (receipt) return receipt;
+  }
+  return undefined;
+}
+
+function resultMinutes(events: Array<Record<string, unknown>>): {
+  minutes: GeneratedMeetingMinutes; index: number; sessionId?: string;
+} {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.type !== "result") continue;
+    if (event.is_error === true) throw new Error("meeting_minutes_generation_invalid");
+    const structured = event.structured_output ?? event.structuredOutput;
+    const sessionId = event.session_id ?? event.sessionId;
+    if (structured !== undefined) return { minutes: parseGeneratedMeetingMinutes(structured), index,
+      ...(typeof sessionId === "string" ? { sessionId } : {}) };
+    if (typeof event.result === "string") return { minutes: parseGeneratedMeetingMinutesOutput(event.result), index,
+      ...(typeof sessionId === "string" ? { sessionId } : {}) };
+  }
+  throw new Error("meeting_minutes_generation_invalid");
+}
+
+/** Parses Claude's event stream and proves the exact Brainbase Receipt was read and audited. */
+export function parseAuditedGeneratedMeetingMinutesOutput(stdout: string,
+  expected: MeetingMinutesContextReceipt): AuditedGeneratedMeetingMinutes {
+  const events = streamEvents(stdout);
+  const calls: Array<{ index: number; id: string; name: string; input: unknown; sessionId?: string }> = [];
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+    for (const item of contentItems(events[eventIndex]!)) {
+      if (item.type === "tool_use" && typeof item.name === "string"
+        && item.name.startsWith("mcp__brainbase__") && typeof item.id === "string") {
+        const sessionId = events[eventIndex]!.session_id ?? events[eventIndex]!.sessionId;
+        calls.push({ index: eventIndex, id: item.id, name: item.name, input: item.input,
+          ...(typeof sessionId === "string" ? { sessionId } : {}) });
+      }
+    }
+  }
+  if (!calls.length) throw new Error("meeting_minutes_brainbase_tool_not_called");
+  if (calls.length !== 1 || calls[0]!.name !== BRAINBASE_CONTEXT_TOOL || !exactToolInput(calls[0]!.input, expected)) {
+    throw new Error("meeting_minutes_brainbase_tool_input_mismatch");
+  }
+  const call = calls[0]!;
+  const generated = resultMinutes(events);
+  if (!call.sessionId || !generated.sessionId) throw new Error("meeting_minutes_brainbase_session_missing");
+  if (generated.index <= call.index) throw new Error("meeting_minutes_brainbase_session_mismatch");
+  let toolResultIndex = -1;
+  let toolResultSessionId: string | undefined;
+  let returnedReceipt: MeetingMinutesContextReceipt | undefined;
+  for (let eventIndex = call.index + 1; eventIndex < generated.index; eventIndex += 1) {
+    const result = contentItems(events[eventIndex]!).find((item) => item.type === "tool_result" && item.tool_use_id === call.id);
+    if (!result) continue;
+    if (result.is_error === true) throw new Error("meeting_minutes_brainbase_tool_result_mismatch");
+    toolResultIndex = eventIndex;
+    const resultSessionId = events[eventIndex]!.session_id ?? events[eventIndex]!.sessionId;
+    if (typeof resultSessionId === "string") toolResultSessionId = resultSessionId;
+    returnedReceipt = findReceipt(result.content, expected);
+    break;
+  }
+  if (!returnedReceipt || returnedReceipt.receipt_id !== expected.receipt_id || returnedReceipt.checksum !== expected.checksum) {
+    throw new Error("meeting_minutes_brainbase_tool_result_mismatch");
+  }
+  if (!toolResultSessionId) throw new Error("meeting_minutes_brainbase_session_missing");
+  let hook: Record<string, unknown> | undefined;
+  let hookIndex = -1;
+  // PostToolUse may be emitted before the tool result is returned to Claude.
+  // Some streams emit it immediately after tool_result, so bind
+  // the first audit event after this call and before another tool call/final result.
+  for (let eventIndex = call.index + 1; eventIndex < generated.index; eventIndex += 1) {
+    const event = events[eventIndex]!;
+    if (contentItems(event).some((item) => item.type === "tool_use")) break;
+    if (event.type === "system" && event.subtype === "hook_response" && event.hook_event === "PostToolUse"
+      && event.exit_code === 0 && event.outcome === "success"
+      && [event.output, event.stdout].some((value) => typeof value === "string" && value.trim().length > 0)) {
+      hook = event; hookIndex = eventIndex; break;
+    }
+  }
+  if (!hook) throw new Error("meeting_minutes_brainbase_post_tool_use_not_audited");
+  const hookSessionId = hook.session_id ?? hook.sessionId;
+  const sessionId = generated.sessionId;
+  if (hookIndex <= call.index || toolResultIndex <= call.index || generated.index <= hookIndex
+    || generated.index <= toolResultIndex || call.sessionId !== sessionId
+    || toolResultSessionId !== sessionId
+    || (typeof hookSessionId === "string" && hookSessionId !== sessionId)) {
+    throw new Error("meeting_minutes_brainbase_session_mismatch");
+  }
+  return { ...generated.minutes, brainbase_context_attestation: {
+    schema_version: "meeting_minutes_context_attestation.v1", tool_name: BRAINBASE_CONTEXT_TOOL,
+    receipt_id: expected.receipt_id, checksum: expected.checksum,
+    run_id: expected.identity.run_id, project_code: expected.identity.project_code,
+    transcript_sha256: expected.identity.transcript_sha256, session_id: sessionId,
+  } };
+}
+
 export function splitMeetingMinutesForSlack(body: string, maxChars = 2_900): string[] {
   if (!Number.isSafeInteger(maxChars) || maxChars < 100) throw new Error("slack_chunk_size_invalid");
   const chunks: string[] = [];
@@ -199,7 +341,7 @@ function generationPrompt(transcript: string, destination: MeetingMinutesDestina
     `最初にBrainbase MCPのbrainbase_get_meeting_minutes_contextを必ず1回呼び、receipt_id=${context.receipt_id}、run_id=${context.identity.run_id}、project_code=${context.identity.project_code}、transcript_sha256=${context.identity.transcript_sha256}を完全一致で指定してください。`,
     `文脈モードは${mode}です。Receipt statusがpartial/unavailableの場合、requiredでは生成を中止し、observeでは不足を発明せず明記してください。`,
     "人物・組織・用語・過去の決定・未完了タスク・前回議事録はReceiptを正本として照合し、文字起こしとの関係が確認できたものだけ本文へ反映してください。",
-    "出力には取得したReceipt IDとchecksumをそのまま入れ、実際に本文・タスク・判断候補の根拠に使ったsource_refsだけをused_source_refsへ入れてください。存在しない参照IDを作ってはいけません。",
+    "Receipt IDとchecksumはWorkerが正規Receiptから付与します。出力へは含めず、実際に本文・タスク・判断候補の根拠に使ったsource_refsだけをused_source_refsへ入れてください。存在しない参照IDを作ってはいけません。",
     "過去判断との新規・変更・継続が読み取れる場合はdecision_candidatesへ候補として出してください。Brainbase Graphへの判断書き込みは行わないでください。",
     "# 品質契約（narrative_minutes.v1 — 厳守）",
     "議事録は短い要約でも生の文字起こしでもありません。話題がなぜ出て、議論がどう動き、何の結論・未解決点を生んだかを保存してください。",
@@ -209,7 +351,7 @@ function generationPrompt(transcript: string, destination: MeetingMinutesDestina
     "tasksには、会議中に実行することが明示されたアクションだけを最大20件入れてください。推測でタスク、担当者、期限を補わないでください。期限や担当者が不明なら該当フィールドを省略し、該当するアクションがなければ空配列にしてください。",
     "文字起こしにない事実、決定、約束、肩書きを発明しないでください。根拠が薄い場合は不足している根拠を明記してください。",
     "出力はMarkdown fenceを付けず、次のJSONオブジェクトだけにしてください。",
-    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"1段落・3〜5文の短い概要","body":"区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない","tasks":[{"title":"実行内容","description":"会議で確認できた背景","assignee_name":"文字起こしで明示された担当者名。未確認なら省略","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}],"brainbase_context_receipt_id":"取得したReceipt ID","brainbase_context_checksum":"取得したchecksum","used_source_refs":[{"type":"graph_entity","id":"実際に使った参照ID"}],"decision_candidates":[{"title":"判断候補","reason":"文字起こしと正本文脈から確認できた理由","source_ref_ids":["根拠ID"]}]}',
+    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"1段落・3〜5文の短い概要","body":"区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない","tasks":[{"title":"実行内容","description":"会議で確認できた背景","assignee_name":"文字起こしで明示された担当者名。未確認なら省略","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}],"used_source_refs":[{"type":"graph_entity","id":"実際に使った参照ID"}],"decision_candidates":[{"title":"判断候補","reason":"文字起こしと正本文脈から確認できた理由","source_ref_ids":["根拠ID"]}]}',
     "", "文字起こし:", bounded,
   ].join("\n");
 }
@@ -221,17 +363,18 @@ export async function generateMeetingMinutesInSandbox(
   mode: MeetingMinutesContextMode,
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
-): Promise<GeneratedMeetingMinutes> {
+): Promise<AuditedGeneratedMeetingMinutes> {
   try {
     await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript, destination, context, mode));
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
       structuredOutput: "meeting-minutes",
+      auditBrainbaseToolUse: true,
     }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
     });
     if (!result.success) throw new Error("meeting_minutes_generation_failed");
-    return parseGeneratedMeetingMinutesOutput(result.stdout);
+    return parseAuditedGeneratedMeetingMinutesOutput(result.stdout, context);
   } finally {
     await sandbox.destroy().catch(() => undefined);
   }

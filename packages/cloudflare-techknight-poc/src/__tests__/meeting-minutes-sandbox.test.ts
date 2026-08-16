@@ -1,5 +1,6 @@
 import { classifyMeetingMinutesDestinationInSandbox, generateMeetingMinutesInSandbox,
-  parseGeneratedMeetingMinutesOutput, parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
+  parseAuditedGeneratedMeetingMinutesOutput, parseGeneratedMeetingMinutesOutput,
+  parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
 
 const destinations = [
   { id: "sales-tailor", projectId: "proj_salestailor", contextProjectCode: "unson", name: "SalesTailor",
@@ -11,22 +12,41 @@ const context = { schema_version: "meeting_minutes_context_receipt.v1" as const,
   identity: { run_id: "Ev1_F1", project_code: "unson", transcript_sha256: "a".repeat(64) },
   status: "resolved" as const, checksum: "b".repeat(64), resolved_at: "2026-08-15T00:00:00.000Z",
   context: { source_refs: [{ type: "graph_entity", id: "project-1" }], open_tasks: [] } };
-const auditOutput = { brainbase_context_receipt_id: context.receipt_id,
-  brainbase_context_checksum: context.checksum, used_source_refs: [{ type: "graph_entity", id: "project-1" }],
+const auditOutput = { used_source_refs: [{ type: "graph_entity", id: "project-1" }],
   decision_candidates: [] };
+function auditedStream(minutes: Record<string, unknown>, options: { receipt?: unknown; hook?: boolean;
+  input?: Record<string, unknown>; resultSession?: string; toolResultSession?: string;
+  hookBeforeResult?: boolean; hookSession?: string } = {}): string {
+  const input = options.input ?? { receipt_id: context.receipt_id, ...context.identity };
+  const hook = { type: "system", subtype: "hook_response", hook_event: "PostToolUse",
+    exit_code: 0, outcome: "success", stdout: "Brainbase tool use recorded",
+    ...(options.hookSession ? { session_id: options.hookSession } : {}) };
+  const toolResult = { type: "user", session_id: options.toolResultSession ?? "session-1",
+    message: { content: [{ type: "tool_result", tool_use_id: "tool-1",
+      content: JSON.stringify(options.receipt ?? { status: "ok", receipt: context }) }] } };
+  const auditedEvents = options.hook === false ? [toolResult]
+    : options.hookBeforeResult === false ? [toolResult, hook] : [hook, toolResult];
+  return [
+    { type: "system", subtype: "init", session_id: "session-1" },
+    { type: "assistant", session_id: "session-1", message: { content: [{ type: "tool_use", id: "tool-1",
+      name: "mcp__brainbase__brainbase_get_meeting_minutes_context", input }] } },
+    ...auditedEvents,
+    { type: "result", structured_output: minutes, session_id: options.resultSession ?? "session-1" },
+  ].map((event) => JSON.stringify(event)).join("\n");
+}
 
 describe("generateMeetingMinutesInSandbox", () => {
   it("story-meeting-minutes-brainbase-judgment:ac:6 uses the isolated prompt file and validates strict JSON", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
-      stdout: JSON.stringify({ title: "定例", overview: "概要", body: "本文", tasks: [
+      stdout: auditedStream({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20" },
       ], ...auditOutput }), stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
       { model: "opus", effort: "xhigh" }, sandbox))
       .resolves.toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20T00:00:00+09:00" },
-      ], brainbase_context_receipt_id: context.receipt_id, brainbase_context_checksum: context.checksum,
-      used_source_refs: [{ type: "graph_entity", id: "project-1" }] });
+      ], used_source_refs: [{ type: "graph_entity", id: "project-1" }],
+      brainbase_context_attestation: expect.objectContaining({ receipt_id: "mmctx_1", session_id: "session-1" }) });
     expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("transcript"));
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
@@ -41,6 +61,8 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(prompt).not.toContain("bodyの最後には必ず「*アクションアイテム*」");
     expect(prompt).toContain("brainbase_get_meeting_minutes_context");
     expect(prompt).toContain(`receipt_id=${context.receipt_id}`);
+    expect(prompt).toContain("Receipt IDとchecksumはWorkerが正規Receiptから付与します");
+    expect(prompt).not.toContain('"brainbase_context_receipt_id"');
     expect(prompt).toContain("project_code=unson");
     expect(prompt).not.toContain("project_code=proj_salestailor");
     expect(sandbox.writeFile).toHaveBeenCalledWith(
@@ -56,16 +78,65 @@ describe("generateMeetingMinutesInSandbox", () => {
         timeout: 600_000,
         env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
       }));
-    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format json --json-schema"),
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
   it("destroys the Sandbox and rejects invalid model output", async () => {
-    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true, stdout: "not-json", stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
+      stdout: auditedStream({ title: "", overview: "", body: "", tasks: [] }), stderr: "" }),
+    destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
       { model: "opus", effort: "xhigh" }, sandbox))
       .rejects.toThrow("meeting_minutes_generation_invalid");
     expect(sandbox.destroy).toHaveBeenCalled();
+  });
+
+  it("fails closed unless the exact Brainbase call, Receipt, and PostToolUse audit are all present", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(
+      JSON.stringify({ type: "result", structured_output: minutes, session_id: "session-1" }), context,
+    )).toThrow("meeting_minutes_brainbase_tool_not_called");
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(auditedStream(minutes, {
+      input: { receipt_id: "wrong", ...context.identity },
+    }), context)).toThrow("meeting_minutes_brainbase_tool_input_mismatch");
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(auditedStream(minutes, {
+      receipt: { ...context, checksum: "wrong" },
+    }), context)).toThrow("meeting_minutes_brainbase_tool_result_mismatch");
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(auditedStream(minutes, { hook: false }), context))
+      .toThrow("meeting_minutes_brainbase_post_tool_use_not_audited");
+  });
+
+  it("rejects unrelated Brainbase calls, failed results, empty audits, and mixed sessions", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const unrelated = auditedStream(minutes).replace(
+      "mcp__brainbase__brainbase_get_meeting_minutes_context", "mcp__brainbase__search",
+    );
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(unrelated, context))
+      .toThrow("meeting_minutes_brainbase_tool_input_mismatch");
+    const failedResult = auditedStream(minutes).replace('"type":"tool_result"', '"type":"tool_result","is_error":true');
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(failedResult, context))
+      .toThrow("meeting_minutes_brainbase_tool_result_mismatch");
+    const emptyAudit = auditedStream(minutes).replace('"stdout":"Brainbase tool use recorded"', '"stdout":""');
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(emptyAudit, context))
+      .toThrow("meeting_minutes_brainbase_post_tool_use_not_audited");
+    const mixedSession = auditedStream(minutes, { hookSession: "session-2" });
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(mixedSession, context))
+      .toThrow("meeting_minutes_brainbase_session_mismatch");
+    const mixedResultSession = auditedStream(minutes, { resultSession: "session-2" });
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(mixedResultSession, context))
+      .toThrow("meeting_minutes_brainbase_session_mismatch");
+    const mixedToolResultSession = auditedStream(minutes, { toolResultSession: "session-2" });
+    expect(() => parseAuditedGeneratedMeetingMinutesOutput(mixedToolResultSession, context))
+      .toThrow("meeting_minutes_brainbase_session_mismatch");
+  });
+
+  it("accepts PostToolUse immediately before or after the matching tool result", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(parseAuditedGeneratedMeetingMinutesOutput(auditedStream(minutes), context))
+      .toEqual(expect.objectContaining({ title: "定例" }));
+    expect(parseAuditedGeneratedMeetingMinutesOutput(auditedStream(minutes, { hookBeforeResult: false }), context))
+      .toEqual(expect.objectContaining({ title: "定例" }));
   });
 
   it("recovers JSON from Claude prose and a markdown fence", () => {

@@ -1,4 +1,4 @@
-import { isMeetingMinutesFile, meetingMinutesRunId, type GeneratedMeetingMinutes,
+import { isMeetingMinutesFile, meetingMinutesRunId, type AuditedGeneratedMeetingMinutes, type GeneratedMeetingMinutes,
   type MeetingMinutesContextMode, type MeetingMinutesContextReceipt,
   type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
@@ -9,8 +9,8 @@ import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-
 import type { SavedMeetingMinutesRecords } from "./meeting-minutes-github.js";
 import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
-import { assertMeetingMinutesContextUsable, reconcileMeetingMinutesTask,
-  validateGeneratedMeetingMinutesContext } from "./meeting-minutes-brainbase-context.js";
+import { assertMeetingMinutesContextUsable, bindGeneratedMeetingMinutesContext,
+  reconcileMeetingMinutesTask } from "./meeting-minutes-brainbase-context.js";
 
 export interface StartMeetingMinutesOptions {
   enabled: boolean; routerChannelId: string; destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
@@ -26,7 +26,7 @@ export interface ResumeMeetingMinutesOptions {
   postProcessingStatus(run: MeetingMinutesRun): Promise<string>;
   download(fileId: string): Promise<string>;
   generate(transcript: string, destination: MeetingMinutesDestination, context: MeetingMinutesContextReceipt,
-    mode: MeetingMinutesContextMode): Promise<GeneratedMeetingMinutes>;
+    mode: MeetingMinutesContextMode): Promise<AuditedGeneratedMeetingMinutes>;
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string; assignee_person_id?: string | null;
@@ -263,6 +263,9 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     return run;
   }
   if (run.status === "failed") {
+    if (!run.github && run.failure?.message === "meeting_minutes_context_source_ref_unknown") {
+      delete run.generated;
+    }
     run.status = run.github ? (run.slack?.parentTs ? "posting" : "github_saved") :
       run.generated ? "generated" : "routed";
   }
@@ -299,12 +302,20 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     }
     if (!run.github) {
       if (!run.generated) {
-        run.generated = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
+        const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
+        run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt);
         run.status = "generated";
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
-      }
-      if (options.contextMode === "required" || run.generated.brainbase_context_receipt_id) {
-        validateGeneratedMeetingMinutesContext(run.generated, contextReceipt);
+      } else {
+        try {
+          run.generated = bindGeneratedMeetingMinutesContext(run.generated, contextReceipt);
+        } catch (error) {
+          if (!(error instanceof Error) || !["meeting_minutes_context_source_ref_unknown",
+            "meeting_minutes_context_attestation_mismatch"].includes(error.message)) throw error;
+          const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
+          run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt);
+        }
+        run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
       }
       run.github = await options.saveGitHub({ destination: run.destination, transcript, minutes: run.generated,
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });

@@ -94,6 +94,29 @@ export function validateGeneratedMeetingMinutesContext(minutes: GeneratedMeeting
   }
 }
 
+export function bindGeneratedMeetingMinutesContext(minutes: GeneratedMeetingMinutes,
+  receipt: MeetingMinutesContextReceipt): GeneratedMeetingMinutes {
+  const attestation = minutes.brainbase_context_attestation;
+  if (!attestation || attestation.schema_version !== "meeting_minutes_context_attestation.v1"
+    || attestation.tool_name !== "mcp__brainbase__brainbase_get_meeting_minutes_context"
+    || attestation.receipt_id !== receipt.receipt_id || attestation.checksum !== receipt.checksum
+    || attestation.run_id !== receipt.identity.run_id
+    || attestation.project_code !== receipt.identity.project_code
+    || attestation.transcript_sha256 !== receipt.identity.transcript_sha256) {
+    throw new Error("meeting_minutes_context_attestation_mismatch");
+  }
+  const bound = { ...minutes,
+    brainbase_context_receipt_id: receipt.receipt_id,
+    brainbase_context_checksum: receipt.checksum };
+  validateGeneratedMeetingMinutesContext(bound, receipt);
+  return bound;
+}
+
+export function validateMeetingMinutesContextReceipt(value: unknown,
+  expected: MeetingMinutesContextReceipt["identity"]): MeetingMinutesContextReceipt {
+  return validateReceipt(value, expected);
+}
+
 function normalized(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
 }

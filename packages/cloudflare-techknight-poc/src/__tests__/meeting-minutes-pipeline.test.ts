@@ -1,8 +1,9 @@
 import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
-import type { MeetingMinutesDestination, MeetingMinutesRedo, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
+import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
+  MeetingMinutesRedo, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
-import { loadMeetingMinutesRun } from "../meeting-minutes-state.js";
+import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
 
 const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana",
   organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
@@ -14,18 +15,32 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
   workspaceId: "T1", channelId: "CROUTER", userId: "U1", actionTs: "2.1" };
 const redo: MeetingMinutesRedo = { kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
   channelId: "CROUTER", userId: "U1", actionTs: "20.1" };
+function audited(minutes: GeneratedMeetingMinutes, context: MeetingMinutesContextReceipt) {
+  return { ...minutes, brainbase_context_attestation: {
+    schema_version: "meeting_minutes_context_attestation.v1" as const,
+    tool_name: "mcp__brainbase__brainbase_get_meeting_minutes_context" as const,
+    receipt_id: context.receipt_id, checksum: context.checksum,
+    run_id: context.identity.run_id, project_code: context.identity.project_code,
+    transcript_sha256: context.identity.transcript_sha256, session_id: "session-test",
+  } };
+}
 function resumeOptions(overrides: Record<string, unknown> = {}) {
+  const overriddenGenerate = overrides.generate as ((...args: unknown[]) => Promise<GeneratedMeetingMinutes>) | undefined;
+  const defaultGenerate = vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" });
+  const generate = vi.fn(async (transcript: string, target: MeetingMinutesDestination,
+    context: MeetingMinutesContextReceipt, mode: string) => audited(
+    await (overriddenGenerate ?? defaultGenerate)(transcript, target, context, mode), context));
   return { destinations: [destination], contextMode: "observe" as const,
     resolveContext: vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
       resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } })),
     download: vi.fn().mockResolvedValue("transcript"),
     postProcessingStatus: vi.fn().mockResolvedValue("3.1"),
-    generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
       transcriptUrl: "https://github/t", minutesUrl: "https://github/m" }),
-    postParent: vi.fn().mockResolvedValue("10.1"), postThreadChunk: vi.fn().mockResolvedValue("10.2"), ...overrides };
+    postParent: vi.fn().mockResolvedValue("10.1"), postThreadChunk: vi.fn().mockResolvedValue("10.2"),
+    ...overrides, generate };
 }
 
 describe("meeting minutes pipeline", () => {
@@ -511,6 +526,67 @@ describe("meeting minutes pipeline", () => {
       expect.objectContaining({ receipt_id: "receipt-required" }), "required");
     expect(run.context).toMatchObject({ receiptId: "receipt-required", checksum: "context-checksum",
       status: "resolved", mode: "required" });
+    expect(run.generated).toMatchObject({ brainbase_context_receipt_id: "receipt-required",
+      brainbase_context_checksum: "context-checksum" });
+  });
+
+  it("regenerates a persisted legacy output mismatch so Brainbase use is attested", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const poisoned = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    poisoned.destination = structuredClone(destination);
+    poisoned.approvedBy = selection.userId;
+    poisoned.status = "failed";
+    poisoned.generated = { title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_receipt_id: "wrong-receipt", brainbase_context_checksum: "wrong-checksum" };
+    poisoned.failure = { stage: "generated", message: "meeting_minutes_context_output_mismatch" };
+    await saveMeetingMinutesRun(fs, poisoned);
+    const generate = vi.fn().mockResolvedValue({ title: "再生成した定例", overview: "概要", body: "本文", tasks: [] });
+
+    const repaired = await resumeMeetingMinutesRun(fs, selection, resumeOptions({ generate }));
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(repaired).toMatchObject({ status: "completed", generated: {
+      title: "再生成した定例",
+      brainbase_context_receipt_id: "receipt-1", brainbase_context_checksum: "checksum-1",
+      brainbase_context_attestation: { receipt_id: "receipt-1", session_id: "session-test" },
+    } });
+  });
+
+  it("regenerates a legacy output mismatch with an unknown source reference in one retry", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const poisoned = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    poisoned.destination = structuredClone(destination);
+    poisoned.approvedBy = selection.userId;
+    poisoned.status = "failed";
+    poisoned.generated = { title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_receipt_id: "wrong-receipt", brainbase_context_checksum: "wrong-checksum",
+      used_source_refs: [{ type: "graph_entity", id: "invented" }] };
+    poisoned.failure = { stage: "generated", message: "meeting_minutes_context_output_mismatch" };
+    await saveMeetingMinutesRun(fs, poisoned);
+    const generate = vi.fn().mockResolvedValue({ title: "再生成した定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [] });
+
+    const repaired = await resumeMeetingMinutesRun(fs, selection, resumeOptions({ generate }));
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(repaired).toMatchObject({ status: "completed", generated: { title: "再生成した定例",
+      brainbase_context_receipt_id: "receipt-1", brainbase_context_checksum: "checksum-1" } });
+  });
+
+  it("does not persist an untrusted source reference before rejecting generation", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-source", identity, status: "resolved" as const, checksum: "checksum-source",
+      resolved_at: "2026-08-15T00:00:00.000Z",
+      context: { source_refs: [{ type: "graph_entity", id: "known" }], open_tasks: [] } }));
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({ resolveContext,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [],
+        used_source_refs: [{ type: "graph_entity", id: "invented" }] }),
+    }))).rejects.toThrow("meeting_minutes_context_source_ref_unknown");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).not.toHaveProperty("generated");
   });
 
   it("fails closed before generation when required Brainbase context is partial", async () => {

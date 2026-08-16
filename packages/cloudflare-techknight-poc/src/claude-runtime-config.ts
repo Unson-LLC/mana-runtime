@@ -47,8 +47,6 @@ const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, 
           required: ["title"], additionalProperties: false,
         },
       },
-      brainbase_context_receipt_id: { type: "string", minLength: 1, maxLength: 200 },
-      brainbase_context_checksum: { type: "string", minLength: 1, maxLength: 128 },
       used_source_refs: { type: "array", maxItems: 100, items: { type: "object", properties: {
         type: { type: "string", minLength: 1, maxLength: 100 }, id: { type: "string", minLength: 1, maxLength: 300 },
         ref: { type: "string", maxLength: 2000 },
@@ -58,8 +56,8 @@ const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, 
         source_ref_ids: { type: "array", maxItems: 20, items: { type: "string", minLength: 1, maxLength: 300 } },
       }, required: ["title"], additionalProperties: false } },
     },
-    required: ["title", "overview", "body", "tasks", "brainbase_context_receipt_id",
-      "brainbase_context_checksum", "used_source_refs", "decision_candidates"], additionalProperties: false,
+    required: ["title", "overview", "body", "tasks", "used_source_refs", "decision_candidates"],
+    additionalProperties: false,
   }),
   "meeting-minutes-routing": JSON.stringify({
     type: "object",
@@ -98,7 +96,8 @@ export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
   options: { taskSearchEnabled?: boolean; taskWriteEnabled?: boolean; mcpEnabled?: boolean;
-    sessionId?: string; resumeSession?: boolean; structuredOutput?: RuntimeClaudeStructuredOutput } = {},
+    sessionId?: string; resumeSession?: boolean; structuredOutput?: RuntimeClaudeStructuredOutput;
+    auditBrainbaseToolUse?: boolean } = {},
 ): string {
   if (config.model !== "opus" && config.model !== "sonnet") {
     throw new ClaudeRuntimeConfigError("runtime_claude_model_invalid");
@@ -117,8 +116,13 @@ export function buildRuntimeClaudeCommand(
   if (options.structuredOutput && purpose !== "meeting-minutes") {
     throw new ClaudeRuntimeConfigError("runtime_claude_structured_output_invalid");
   }
+  if (options.auditBrainbaseToolUse && (purpose !== "meeting-minutes" || options.structuredOutput !== "meeting-minutes")) {
+    throw new ClaudeRuntimeConfigError("runtime_claude_audit_output_invalid");
+  }
   const structuredOutputArg = options.structuredOutput
-    ? ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
+    ? options.auditBrainbaseToolUse
+      ? ` --output-format stream-json --verbose --include-hook-events --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
+      : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : "";
   const base = purpose === "meeting-minutes"
     ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH} --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config${structuredOutputArg} < ${promptPath}`
