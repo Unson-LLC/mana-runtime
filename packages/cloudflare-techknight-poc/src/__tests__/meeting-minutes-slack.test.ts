@@ -134,6 +134,21 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).not.toContain('"type":"actions"');
   });
 
+  it("explains a Brainbase authentication failure without mislabeling it as a project binding", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "routed" as const,
+      failure: { stage: "routed", message: "meeting_minutes_context_request_failed:401" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("Brainbaseの認証設定を確認できませんでした");
+    expect(serialized).toContain("認証情報が未設定、無効、または期限切れです");
+    expect(serialized).not.toContain("プロジェクト紐付け");
+    expect(serialized).not.toContain('"type":"actions"');
+  });
+
   it("explains a permanent task project binding failure without offering task retry", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

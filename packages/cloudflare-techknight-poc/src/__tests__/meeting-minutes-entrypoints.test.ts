@@ -55,16 +55,15 @@ describe("meeting minutes entrypoints", () => {
         MEETING_MINUTES_ROUTER_CHANNEL_ID: "CROUTER", MEETING_MINUTES_DESTINATIONS_JSON: invalid,
         MEETING_MINUTES_OPERATOR_USER_IDS: "U1" })).toThrow("meeting_minutes_destinations_invalid");
     });
-  it.each(["contextProjectCode", "taskProjectCodes", "taskBoardTargetId"] as const)(
-    "rejects a destination without explicit %s",
-    (field) => {
+  it("rejects destinations without every explicit Brainbase binding", () => {
+    for (const field of ["contextProjectCode", "taskProjectCodes", "taskBoardTargetId"] as const) {
       const destination = JSON.parse(destinations) as Array<Record<string, unknown>>;
       delete destination[0]![field];
       expect(() => meetingMinutesRuntimeConfig({ MEETING_MINUTES_ENABLED: "true",
         MEETING_MINUTES_ROUTER_CHANNEL_ID: "CROUTER", MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify(destination),
         MEETING_MINUTES_OPERATOR_USER_IDS: "U1" })).toThrow("meeting_minutes_destinations_invalid");
-    },
-  );
+    }
+  });
   it("recognizes only a complete selection Queue message", () => {
     expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1", destinationId: "mana",
       workspaceId: "T1", channelId: "C1", userId: "U1", actionTs: "2.1" })).toBe(true);

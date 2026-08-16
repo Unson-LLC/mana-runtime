@@ -230,11 +230,17 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   }
   const contextProjectChanged = !!run.destination &&
     meetingMinutesContextProjectCode(run.destination) !== meetingMinutesContextProjectCode(configured);
-  if (contextProjectChanged && run.context) throw new Error("meeting_minutes_context_project_changed");
+  // GitHub保存済みの議事録で使ったReceiptは監査証跡として固定する。
+  // ただしタスク・ボード連携は修正後の紐付けへ移行できるようにする。
+  // GitHub保存前なら旧文脈から作った候補を破棄し、新しい紐付けで取得し直せる。
+  if (contextProjectChanged && run.context && !run.github) {
+    delete run.context;
+    delete run.generated;
+  }
   if (run.destination && (JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(configured.taskProjectCodes) ||
     run.destination.taskBoardTargetId !== configured.taskBoardTargetId || contextProjectChanged)) {
     run.destination.taskProjectCodes = [...configured.taskProjectCodes];
-    run.destination.contextProjectCode = configured.contextProjectCode;
+    if (!run.context) run.destination.contextProjectCode = configured.contextProjectCode;
     run.destination.taskBoardTargetId = configured.taskBoardTargetId;
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
   }

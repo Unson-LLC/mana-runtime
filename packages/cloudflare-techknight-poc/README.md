@@ -201,6 +201,18 @@ pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
 `SANDBOX_PROBE_TOKEN`を実行環境へ渡します。応答不能、10秒超過、認証失敗、処理中ありは
 すべて配備を停止します。ゲートを初めて導入する1回だけは、処理中がないことを別途確認したうえで
 `MEETING_MINUTES_DEPLOY_GATE_BOOTSTRAP=true`を指定できます。導入後は指定しません。
+BrainbaseのProject一覧と照合する認証情報も必要なため、ローカル環境へ値を手入力せず、
+正規のInfisicalラッパーから実行します。
+
+```bash
+/Users/ksato/workspace/code/brainbase/scripts/infisical-target-run.sh \
+  --target brainbase-mana-prod -- \
+  pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
+```
+
+配備前検査は全保存先の`contextProjectCode`、`taskProjectCodes`、タスクボードのProjectコードを
+Brainbaseの認可済みProject集合と一括照合します。未登録、権限不足、認証失敗、到達不能のいずれも
+Worker更新前に配備を停止します。
 
 ## Sandbox security boundary
 

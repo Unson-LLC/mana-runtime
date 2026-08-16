@@ -106,6 +106,40 @@ describe("meeting minutes pipeline", () => {
       taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
   });
 
+  it("keeps an immutable saved Receipt while correcting task bindings on an existing run", async () => {
+    const fs = new MemoryFs();
+    const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "kartz", taskProjectCodes: ["kartz"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "project code is not allowed"))
+      .mockResolvedValueOnce({ id: "task-kartz" });
+    const original = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [legacyKartz],
+      generate: vi.fn().mockResolvedValue({ title: "Kartz定例", overview: "概要", body: "本文",
+        tasks: [{ title: "確認する" }] }),
+      createTask,
+    }));
+    expect(original).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
+      destination: { contextProjectCode: "unson" }, taskRegistration: { failure: { status: 403 } } });
+
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const retried = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [configuredKartz], resolveContext, createTask,
+    }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1");
+    expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["kartz"] }), expect.any(String));
+    expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
+      destination: { contextProjectCode: "unson", taskProjectCodes: ["kartz"] } });
+    expect(retried.taskRegistration).not.toHaveProperty("failure");
+    expect(retried.github).toEqual(original.github);
+  });
+
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
     const fs = new MemoryFs(); const requestDestination = vi.fn().mockResolvedValue("2.1");
     const first = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", destinations: [destination], requestDestination });

@@ -77,12 +77,17 @@ export function suggestedDestinationMessage(run: MeetingMinutesRun,
 }
 
 interface SlackApiResponse { ok?: boolean; error?: string; ts?: string }
+function isBrainbaseAuthenticationFailure(run: MeetingMinutesRun): boolean {
+  return run.failure?.message === "meeting_minutes_context_request_failed:401"
+    || (run.taskRegistration?.failure?.stage === "task_registration"
+      && run.taskRegistration.failure.status === 401);
+}
 function isBrainbaseProjectBindingFailure(run: MeetingMinutesRun): boolean {
   const taskFailure = run.taskRegistration?.failure;
-  return /^(?:meeting_minutes_context_project_unconfigured|meeting_minutes_context_request_failed:(?:401|403))$/.test(
+  return /^(?:meeting_minutes_context_project_unconfigured|meeting_minutes_context_request_failed:403)$/.test(
     run.failure?.message ?? "",
   ) || (taskFailure?.stage === "task_registration" && (
-    taskFailure.status === 401 || taskFailure.status === 403
+    taskFailure.status === 403
     || /^(?:project_code_not_allowed|task_scope_not_configured)$/.test(taskFailure.code ?? "")
     || /^(?:project_code_not_allowed|task_scope_not_configured)$/.test(taskFailure.message)
   ));
@@ -102,6 +107,11 @@ function failedRunDetails(run: MeetingMinutesRun): string[] {
     return ["*⚠️ Brainbaseのプロジェクト紐付けを確認できませんでした*", destination,
       `「${run.destination!.name}」に対応するBrainbaseプロジェクトが未設定、または利用権限がありません。`,
       "設定を修正するまで再実行しても成功しません。運用担当者へ確認してください。"];
+  }
+  if (isBrainbaseAuthenticationFailure(run)) {
+    return ["*⚠️ Brainbaseの認証設定を確認できませんでした*", destination,
+      "Brainbaseへの認証情報が未設定、無効、または期限切れです。",
+      "認証設定を修正するまで再実行しても成功しません。運用担当者へ確認してください。"];
   }
   return ["*⚠️ 議事録の作成に失敗しました*", destination, "下のボタンから再実行できます。"];
 }
@@ -171,8 +181,10 @@ export class MeetingMinutesSlackClient {
     await this.setThreadStatus(run, "");
     const completed = outcome === "completed";
     const permanentProjectBindingFailure = isBrainbaseProjectBindingFailure(run);
+    const permanentAuthenticationFailure = isBrainbaseAuthenticationFailure(run);
+    const permanentBrainbaseFailure = permanentProjectBindingFailure || permanentAuthenticationFailure;
     const taskRegistrationPending = completed && Boolean(run.taskRegistration?.failure)
-      && !permanentProjectBindingFailure;
+      && !permanentBrainbaseFailure;
     const contextWarning = completed
       && run.generated?.brainbase_context_warnings?.includes("unknown_source_ref_removed");
     const taskIntegrationStage = run.taskRegistration?.failure?.stage;
@@ -181,17 +193,29 @@ export class MeetingMinutesSlackClient {
       : taskIntegrationStage === "task_card"
       ? "タスク登録は完了しましたが、タスクカードの投稿が完了していません。"
       : "タスク自動登録だけ完了していません。";
-    const text = completed && permanentProjectBindingFailure
+    const text = completed && permanentAuthenticationFailure
+      ? `${run.file.name} の議事録は作成・共有済みですが、Brainbaseの認証設定を確認できませんでした。`
+      : completed && permanentProjectBindingFailure
       ? `${run.file.name} の議事録は作成・共有済みですが、Brainbaseのプロジェクト紐付けを確認できませんでした。`
       : taskRegistrationPending
       ? `${run.file.name} の議事録は作成・共有済みです。未完了のタスク連携を再実行できます。`
       : completed
       ? `${run.file.name} の議事録を作成しました。${contextWarning
         ? " Brainbaseの正本にない参照候補は除外しました。" : ""}`
-      : isBrainbaseProjectBindingFailure(run)
+      : permanentAuthenticationFailure
+      ? `${run.file.name} の議事録作成に失敗しました。Brainbaseの認証設定を確認してください。`
+      : permanentProjectBindingFailure
       ? `${run.file.name} の議事録作成に失敗しました。Brainbaseのプロジェクト紐付けを確認してください。`
       : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
-    const details = completed && permanentProjectBindingFailure
+    const details = completed && permanentAuthenticationFailure
+      ? [`*⚠️ 議事録は作成・共有済みですが、Brainbaseの認証設定を確認できませんでした*`,
+        `保存先: ${run.destination.name}`,
+        run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
+        `共有先: <#${run.destination.slackChannelId}>`,
+        "Brainbaseへの認証情報が未設定、無効、または期限切れです。",
+        "認証設定を修正するまで再実行しても成功しません。運用担当者へ確認してください。"]
+        .filter(Boolean).join("\n")
+      : completed && permanentProjectBindingFailure
       ? [`*⚠️ 議事録は作成・共有済みですが、Brainbaseのプロジェクト紐付けを確認できませんでした*`,
         `保存先: ${run.destination.name}`,
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
@@ -228,7 +252,7 @@ export class MeetingMinutesSlackClient {
         action_id: MEETING_MINUTES_REDO_ACTION_ID,
         value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) });
       blocks.push({ type: "actions", elements });
-    } else if (!isBrainbaseProjectBindingFailure(run)) {
+    } else if (!permanentBrainbaseFailure) {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,
