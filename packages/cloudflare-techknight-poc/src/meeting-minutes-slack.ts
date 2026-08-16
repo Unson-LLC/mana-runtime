@@ -314,6 +314,11 @@ export class MeetingMinutesSlackClient {
     await this.post("chat.update", { channel: run.destination.slackChannelId, ts: run.slack.taskCardTs,
       ...meetingMinutesTaskCard(run) });
   }
+  async postTaskScopeMismatch(run: MeetingMinutesRun, userId: string): Promise<void> {
+    if (!run.destination || !run.slack?.parentTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
+    await this.post("chat.postEphemeral", { channel: run.destination.slackChannelId, thread_ts: run.slack.parentTs,
+      user: userId, text: "このタスクは現在のBrainbaseプロジェクトに紐付いていないため、編集・取消できません。管理者がプロジェクト紐付けを確認してください。" });
+  }
   async openTaskEditView(triggerId: string, view: Record<string, unknown>): Promise<void> {
     await this.post("views.open", { trigger_id: triggerId, view }, AbortSignal.timeout(2_000));
   }

@@ -28,6 +28,7 @@ function deps(current: MeetingMinutesRun) { return { sourceTeamId: "TU", destina
     priority: "medium", project_codes: ["techknight"], assignee_person_id: null, assignee_display_name: null,
     due_at: null, waiting_on: null, completed_at: null })), deleteTask: vi.fn(async () => ({})),
   updateCard: vi.fn(async (_run: MeetingMinutesRun) => {}),
+  notifyScopeMismatch: vi.fn(async (_run: MeetingMinutesRun, _userId: string) => {}),
   openView: vi.fn(async (_organizationId: string, _triggerId: string, _view: Record<string, unknown>) => {}),
   listPeople: vi.fn(async () => [{ id: "per_umeda", name: "梅田 遼", aliases: ["梅田"] }]), repairTaskBoard: vi.fn(async () => {}),
   defer: (work: Promise<void>) => { void work; } };
@@ -77,6 +78,7 @@ describe("meeting minutes task cards", () => {
     const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };
     delete legacy.taskProjectCodes; delete legacy.taskBoardTargetId;
     const options = deps(current);
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
     expect(response?.status).toBe(200);
     await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
@@ -92,6 +94,7 @@ describe("meeting minutes task cards", () => {
     const legacy = current.destination as unknown as { taskProjectCodes?: string[]; taskBoardTargetId?: string };
     delete legacy.taskProjectCodes; delete legacy.taskBoardTargetId;
     const options = deps(current);
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
     const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
       view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
         organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms" }), state: { values: {
@@ -99,7 +102,9 @@ describe("meeting minutes task cards", () => {
         } } } }, options);
     expect(response?.status).toBe(200);
     await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
-    expect(options.updateTask).toHaveBeenCalledTimes(1);
+    expect(options.updateTask).toHaveBeenCalledWith("task-1", expect.objectContaining({
+      expected_version: 3, title: "新題", project_codes: ["techknight"],
+    }), expect.any(String));
     expect(options.repairTaskBoard).toHaveBeenCalledWith("minutes-pms");
     expect(current.destination).toEqual(expect.objectContaining({
       taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-pms",
@@ -152,11 +157,25 @@ describe("meeting minutes task cards", () => {
     const options = deps(current);
     options.destinations[0] = { ...current.destination!, taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" };
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unrelated"] });
-    options.defer = (work) => { void work.catch(() => {}); };
     await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
     await vi.waitFor(() => expect(options.getTask).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(options.deleteTask).not.toHaveBeenCalled();
+    expect(options.updateCard).not.toHaveBeenCalled();
+    expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1");
+  });
+  it("notifies the operator when editing a task from an unrelated project scope", async () => {
+    const current = run();
+    const options = deps(current);
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["unrelated"] });
+    const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
+      view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
+        organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms" }), state: { values: {
+          title: { value: { value: "新題" } }, due: { value: {} }, assignee: { mana_meeting_minutes_task_assignee: {} },
+        } } } }, options);
+    expect(response?.status).toBe(200);
+    await vi.waitFor(() => expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1"));
+    expect(options.updateTask).not.toHaveBeenCalled();
     expect(options.updateCard).not.toHaveBeenCalled();
   });
   it("repairs the destination Canvas when the canonical task was already deleted", async () => {

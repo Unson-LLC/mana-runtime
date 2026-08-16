@@ -28,6 +28,7 @@ export interface MeetingMinutesTaskActionDependencies {
   updateTask(taskId: string, input: UpdateTaskInput, idempotencyKey: string): Promise<CanonicalTask>;
   deleteTask(taskId: string, expectedVersion: number, idempotencyKey: string): Promise<unknown>;
   updateCard(run: MeetingMinutesRun): Promise<void>;
+  notifyScopeMismatch(run: MeetingMinutesRun, userId: string): Promise<void>;
   openView(organizationId: string, triggerId: string, view: Record<string, unknown>): Promise<void>;
   listPeople(): Promise<GraphPersonOption[] | undefined>;
   repairTaskBoard(targetId: string): Promise<void>;
@@ -113,7 +114,8 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
   }
   const legacyTaskScope = item.projectCodes?.length ? [...item.projectCodes]
-    : run.destination.taskProjectCodes?.length ? [...run.destination.taskProjectCodes] : undefined;
+    : run.destination.taskProjectCodes?.length ? [...run.destination.taskProjectCodes]
+      : run.destination.projectId ? [run.destination.projectId] : undefined;
   await reconcileTaskDestination(run, deps);
   const currentTaskScope = meetingMinutesTaskProjectCodes(run.destination);
   if (actionId === MEETING_MINUTES_TASK_CANCEL_ACTION_ID) {
@@ -126,7 +128,14 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
         throw new Error("meeting_minutes_task_scope_mismatch");
       await deps.deleteTask(item.taskId, current.version, `meeting-minutes-${run.runId}-cancel-${value.index}`);
       item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-      await deps.repairTaskBoard(run.destination!.taskBoardTargetId); })());
+      await deps.repairTaskBoard(run.destination!.taskBoardTargetId); })().catch(async (error) => {
+      if (error instanceof Error && error.message === "meeting_minutes_task_scope_mismatch") {
+        console.warn("meeting_minutes_task_scope_mismatch", { runId: run.runId, taskId: item.taskId, action: "cancel" });
+        await deps.notifyScopeMismatch(run, userId);
+        return;
+      }
+      throw error;
+    }));
     return Response.json({ ok: true });
   }
   const values = object(object(view?.state)?.values); const title = text(object(object(values?.title)?.value)?.value);
@@ -155,6 +164,13 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     if (generated) { generated.title = title; if (due) generated.due_at = `${due}T00:00:00+09:00`;
       if (assigneeSelection) generated.assignee_name = updated.assignee_display_name ?? undefined; }
     run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-    await deps.repairTaskBoard(run.destination!.taskBoardTargetId); })());
+    await deps.repairTaskBoard(run.destination!.taskBoardTargetId); })().catch(async (error) => {
+    if (error instanceof Error && error.message === "meeting_minutes_task_scope_mismatch") {
+      console.warn("meeting_minutes_task_scope_mismatch", { runId: run.runId, taskId: item.taskId, action: "edit" });
+      await deps.notifyScopeMismatch(run, userId);
+      return;
+    }
+    throw error;
+  }));
   return Response.json({ ok: true });
 }

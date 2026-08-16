@@ -11,6 +11,7 @@ describe("unson business deploy wrapper", () => {
         PATH: "/path-that-does-not-contain-pnpm",
         BRAINBASE_GRAPH_API_BASE_URL: "https://brainbase.invalid",
         BRAINBASE_TASK_API_TOKEN: "",
+        BRAINBASE_GRAPH_API_TOKEN: "",
       },
     });
 

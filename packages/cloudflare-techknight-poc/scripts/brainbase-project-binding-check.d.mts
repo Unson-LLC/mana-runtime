@@ -21,3 +21,11 @@ export function assertBrainbaseMeetingMinutesProjects(options?: BrainbaseProject
   requiredCodes: string[];
   authorizedCodes: string[];
 }>;
+
+export function assertBrainbaseMeetingMinutesRuntimeProjects(options?: Omit<BrainbaseProjectBindingCheckOptions, "token"> & {
+  taskToken?: string;
+  graphToken?: string;
+}): Promise<{
+  graph: { requiredCodes: string[]; authorizedCodes: string[] };
+  task: { requiredCodes: string[]; authorizedCodes: string[] };
+}>;

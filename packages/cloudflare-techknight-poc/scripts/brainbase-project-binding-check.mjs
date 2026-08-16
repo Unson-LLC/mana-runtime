@@ -71,3 +71,17 @@ export async function assertBrainbaseMeetingMinutesProjects({
   if (missing.length > 0) throw new Error(`meeting_minutes_brainbase_project_check_missing:${missing.join(",")}`);
   return { requiredCodes, authorizedCodes: [...authorized] };
 }
+
+export async function assertBrainbaseMeetingMinutesRuntimeProjects({
+  configPath, baseUrl, taskToken, graphToken, timeoutMs = 10_000, fetchImpl = fetch,
+} = {}) {
+  if (!clean(taskToken)) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:task");
+  if (!clean(graphToken)) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:graph");
+  const graph = await assertBrainbaseMeetingMinutesProjects({
+    configPath, baseUrl, token: graphToken, timeoutMs, fetchImpl,
+  });
+  const task = await assertBrainbaseMeetingMinutesProjects({
+    configPath, baseUrl, token: taskToken, timeoutMs, fetchImpl,
+  });
+  return { graph, task };
+}

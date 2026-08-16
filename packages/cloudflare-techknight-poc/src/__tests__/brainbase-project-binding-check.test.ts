@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { assertBrainbaseMeetingMinutesProjects, collectMeetingMinutesProjectBindings, projectCodesFromGraphResponse } from "../../scripts/brainbase-project-binding-check.mjs";
+import { assertBrainbaseMeetingMinutesProjects, assertBrainbaseMeetingMinutesRuntimeProjects, collectMeetingMinutesProjectBindings, projectCodesFromGraphResponse } from "../../scripts/brainbase-project-binding-check.mjs";
 
 function config(overrides: Record<string, unknown> = {}) {
   return { vars: {
@@ -40,6 +40,24 @@ describe("Brainbase meeting-minutes project deployment check", () => {
       .resolves.toEqual(expect.objectContaining({ requiredCodes: ["kartz"] }));
     expect(fetchImpl).toHaveBeenCalledWith(expect.objectContaining({ pathname: "/api/info/graph/entities" }),
       expect.objectContaining({ redirect: "error", headers: { authorization: "Bearer token" } }));
+  });
+
+  it("validates both runtime Task and Graph credentials before deployment", async () => {
+    const path = await configFile(config());
+    const fetchImpl = vi.fn().mockImplementation(async () => Response.json({
+      records: [{ payload: { project_code: "kartz" } }],
+    }));
+    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path, baseUrl: "https://brainbase.example",
+      taskToken: "task-token", graphToken: "graph-token", fetchImpl })).resolves.toEqual(expect.objectContaining({
+      task: expect.objectContaining({ requiredCodes: ["kartz"] }),
+      graph: expect.objectContaining({ requiredCodes: ["kartz"] }),
+    }));
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.map((call) => (call[1] as RequestInit).headers)).toEqual([
+      { authorization: "Bearer graph-token" }, { authorization: "Bearer task-token" },
+    ]);
+    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path, baseUrl: "https://brainbase.example",
+      taskToken: "task-token", graphToken: "" })).rejects.toThrow("meeting_minutes_brainbase_project_check_auth_missing:graph");
   });
 
   it("uses the production Brainbase URL declared by the Worker config", async () => {

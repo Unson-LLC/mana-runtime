@@ -26,7 +26,11 @@ Receiptの未完了task候補と生成taskを、project、正規化title、正�
 
 公式デプロイは、全保存先の`contextProjectCode`、`taskProjectCodes`と、それぞれが参照するタスクボードの`projectCodes`を本番Brainbase Graphの認可済みProject一覧と比較する。用途間の不一致、未登録、実行主体の権限不足、Brainbaseへの到達不能はいずれもfail closedとし、Workerの更新へ進まない。個別の保存先だけを例外扱いしたり、別Projectへ暗黙にフォールバックしたりしない。
 
+この配備前検証は、Canonical Task登録に使うTask API資格情報と、担当者・Project解決に使うGraph API資格情報をそれぞれ本番と同じ経路で検証する。片方だけ有効な状態を配備可能と判定しない。
+
 保存先の正規Project紐付けを変更しても、既存runが登録したCanonical Taskを無関係な範囲へ付け替えない。Task項目ごとに登録時の`projectCodes`を永続化する。編集時はTask APIで取得した現在範囲が、現行設定または既存runに保存された旧範囲と完全一致する場合だけ、同じ更新要求で現行範囲へ移行する。取消時は現行範囲または旧範囲と完全一致するTaskだけを削除する。それ以外は拒否する。
+
+`taskProjectCodes`導入前のrunでは、当時の契約どおり`destination.projectId`を旧Task範囲として復元する。現在のTask API応答がその旧範囲と完全一致する場合だけ移行を許可する。現在範囲・保存済み旧範囲・歴史的`projectId`範囲のいずれにも一致しないTaskは操作せず、操作した利用者へSlackで紐付け不一致を通知する。
 
 ## 保存と表示
 

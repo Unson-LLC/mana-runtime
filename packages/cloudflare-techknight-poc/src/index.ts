@@ -422,6 +422,10 @@ export default {
               const token = resolveMeetingMinutesDestinationSlackToken(env, run.destination!.organization.id);
               const client = new MeetingMinutesSlackClient(token);
               await client.updateTaskCard(run); },
+            notifyScopeMismatch: async (run, userId) => {
+              const token = resolveMeetingMinutesDestinationSlackToken(env, run.destination!.organization.id);
+              await new MeetingMinutesSlackClient(token).postTaskScopeMismatch(run, userId);
+            },
             openView: async (organizationId, triggerId, view) => {
               const token = resolveMeetingMinutesDestinationSlackToken(env, organizationId);
               await new MeetingMinutesSlackClient(token).openTaskEditView(triggerId, view);

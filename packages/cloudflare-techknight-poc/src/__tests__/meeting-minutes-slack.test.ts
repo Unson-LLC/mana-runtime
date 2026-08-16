@@ -65,6 +65,20 @@ describe("MeetingMinutesSlackClient", () => {
       .resolves.toBe("3.1");
   });
 
+  it("explains a canonical task project scope mismatch to the operator", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).postTaskScopeMismatch(run, "U1");
+    expect(call?.url).toBe("https://slack.com/api/chat.postEphemeral");
+    expect(call?.body).toMatchObject({ channel: "C2", thread_ts: "4.1", user: "U1" });
+    expect(String(call?.body.text)).toContain("現在のBrainbaseプロジェクトに紐付いていない");
+    expect(String(call?.body.text)).toContain("編集・取消できません");
+  });
+
   it("posts processing as a second reply after the selector reply", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
