@@ -4,6 +4,7 @@ export * from "./credentials.js";
 export * from "./delivery.js";
 export * from "./envelope.js";
 export * from "./errors.js";
+export * from "./failure.js";
 export * from "./idempotency.js";
 export * from "./ids.js";
 export * from "./isolation.js";
