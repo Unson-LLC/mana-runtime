@@ -26,6 +26,13 @@ const attestation = {
   run_id: receipt.identity.run_id, project_code: receipt.identity.project_code,
   transcript_sha256: receipt.identity.transcript_sha256, session_id: "session-test",
 };
+const receiptAttestation = {
+  schema_version: "meeting_minutes_context_attestation.v2" as const,
+  source: "worker_context_receipt" as const,
+  receipt_id: receipt.receipt_id, checksum: receipt.checksum,
+  run_id: receipt.identity.run_id, project_code: receipt.identity.project_code,
+  transcript_sha256: receipt.identity.transcript_sha256, session_id: "session-test",
+};
 
 describe("meeting minutes Brainbase context", () => {
   it("invokes the runtime fetch with the global receiver required by Cloudflare Workers", async () => {
@@ -123,6 +130,23 @@ describe("meeting minutes Brainbase context", () => {
     }, receipt)).toThrow("meeting_minutes_context_source_ref_unknown");
     expect(() => bindGeneratedMeetingMinutesContext({
       title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [{ type: "graph_entity", id: "project-mana" }],
+    }, receipt)).toThrow("meeting_minutes_context_attestation_mismatch");
+  });
+
+  it("accepts the Worker-bound Receipt attestation and rejects altered Receipt identity", () => {
+    expect(bindGeneratedMeetingMinutesContext({
+      title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_attestation: receiptAttestation,
+      used_source_refs: [{ type: "graph_entity", id: "project-mana" }],
+    }, receipt)).toMatchObject({
+      brainbase_context_receipt_id: receipt.receipt_id,
+      brainbase_context_checksum: receipt.checksum,
+      brainbase_context_attestation: receiptAttestation,
+    });
+    expect(() => bindGeneratedMeetingMinutesContext({
+      title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_attestation: { ...receiptAttestation, receipt_id: "mmctx_other" },
       used_source_refs: [{ type: "graph_entity", id: "project-mana" }],
     }, receipt)).toThrow("meeting_minutes_context_attestation_mismatch");
   });

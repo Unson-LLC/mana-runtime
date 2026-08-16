@@ -11,7 +11,8 @@ const destinations = [
 const context = { schema_version: "meeting_minutes_context_receipt.v1" as const, receipt_id: "mmctx_1",
   identity: { run_id: "Ev1_F1", project_code: "unson", transcript_sha256: "a".repeat(64) },
   status: "resolved" as const, checksum: "b".repeat(64), resolved_at: "2026-08-15T00:00:00.000Z",
-  context: { source_refs: [{ type: "graph_entity", id: "project-1" }], open_tasks: [] } };
+  context: { source_refs: [{ type: "graph_entity", id: "project-1" }],
+    open_tasks: [{ id: "task-1", title: "未完了の正本タスク" }] } };
 const auditOutput = { used_source_refs: [{ type: "graph_entity", id: "project-1" }],
   decision_candidates: [] };
 function auditedStream(minutes: Record<string, unknown>, options: { receipt?: unknown; hook?: boolean;
@@ -35,10 +36,17 @@ function auditedStream(minutes: Record<string, unknown>, options: { receipt?: un
   ].map((event) => JSON.stringify(event)).join("\n");
 }
 
+function receiptBoundStream(minutes: Record<string, unknown>): string {
+  return [
+    { type: "system", subtype: "init", session_id: "session-1" },
+    { type: "result", structured_output: minutes, session_id: "session-1" },
+  ].map((event) => JSON.stringify(event)).join("\n");
+}
+
 describe("generateMeetingMinutesInSandbox", () => {
-  it("story-meeting-minutes-brainbase-judgment:ac:6 uses the isolated prompt file and validates strict JSON", async () => {
+  it("injects the validated Brainbase Receipt context without requiring a model-initiated MCP call", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
-      stdout: auditedStream({ title: "定例", overview: "概要", body: "本文", tasks: [
+      stdout: receiptBoundStream({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20" },
       ], ...auditOutput }), stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
@@ -46,7 +54,10 @@ describe("generateMeetingMinutesInSandbox", () => {
       .resolves.toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20T00:00:00+09:00" },
       ], used_source_refs: [{ type: "graph_entity", id: "project-1" }],
-      brainbase_context_attestation: expect.objectContaining({ receipt_id: "mmctx_1", session_id: "session-1" }) });
+      brainbase_context_attestation: expect.objectContaining({
+        schema_version: "meeting_minutes_context_attestation.v2",
+        source: "worker_context_receipt", receipt_id: "mmctx_1", session_id: "session-1",
+      }) });
     expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("transcript"));
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
@@ -59,8 +70,10 @@ describe("generateMeetingMinutesInSandbox", () => {
     const prompt = String(sandbox.writeFile.mock.calls.find((call) => call[0] === "/tmp/meeting-minutes-prompt.txt")?.[1]);
     expect(prompt).toContain("1段落・3〜5文・200〜400字");
     expect(prompt).not.toContain("bodyの最後には必ず「*アクションアイテム*」");
-    expect(prompt).toContain("brainbase_get_meeting_minutes_context");
+    expect(prompt).not.toContain("brainbase_get_meeting_minutes_contextを必ず1回呼び");
     expect(prompt).toContain(`receipt_id=${context.receipt_id}`);
+    expect(prompt).toContain('"id":"project-1"');
+    expect(prompt).toContain('"title":"未完了の正本タスク"');
     expect(prompt).toContain("Receipt IDとchecksumはWorkerが正規Receiptから付与します");
     expect(prompt).not.toContain('"brainbase_context_receipt_id"');
     expect(prompt).toContain("project_code=unson");
@@ -81,6 +94,22 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
+  });
+
+  it("fails closed before Claude when the canonical Receipt context exceeds the prompt boundary", async () => {
+    const oversizedContext = {
+      ...context,
+      context: { ...context.context, source_refs: [
+        { type: "graph_entity", id: "x".repeat(100_001) },
+      ] },
+    };
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn(), destroy: vi.fn().mockResolvedValue(undefined) };
+
+    await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedContext, "required",
+      { model: "opus", effort: "xhigh" }, sandbox))
+      .rejects.toThrow("meeting_minutes_brainbase_context_prompt_too_large");
+    expect(sandbox.exec).not.toHaveBeenCalled();
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
   it("destroys the Sandbox and rejects invalid model output", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,

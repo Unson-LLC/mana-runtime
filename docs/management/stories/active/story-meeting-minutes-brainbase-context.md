@@ -8,11 +8,12 @@ Slackへ議事録ファイルを投稿した利用者として、選択したプ
 
 - [ ] AC1: 文字起こし取得とhash計算後、生成前に選択先projectのBrainbase context Receiptを取得してrunへ保存する。
 - [ ] AC2: requiredモードではReceiptが`partial`、`unavailable`、identity不一致、checksum不正ならGitHub保存・タスク登録・Slack共有へ進まない。
-- [ ] AC3: Claude promptはrun/project/hash/receipt identityと専用MCP toolの必須利用を明示し、生成結果は利用したsource refsと判断候補を返す。
+- [ ] AC3: Workerは検証済みのBrainbase context Receiptを生成前に必ずClaudeへ渡し、生成結果は利用したsource refsと判断候補を返す。文脈取得をClaudeの任意MCP呼び出しに依存させない。
 - [ ] AC4: 生成結果のsource refsはReceipt内の参照だけを許し、Receipt未使用または架空参照を拒否する。
 - [ ] AC5: 既存タスクと正規化title・担当者・projectが完全一致する場合は既存taskを再利用し、類似候補は`needs_review`として自動登録しない。
 - [ ] AC6: GitHubへReceipt metadataと参照を保存し、Slack完了表示でBrainbase利用を示す。Graph全文は保存しない。
 - [ ] AC7: 配信先、生成本文、GitHub、Slack、redo、watchdog、task/Canvasの既存契約を維持する。
+- [ ] AC8: Brainbase Receipt取得済みのrunは、Claudeが追加のBrainbase MCP呼び出しを行わなくても正本文脈を使って生成でき、Receipt identity・checksum・source refsの検証を通過する。
 
 ## 運用モード
 

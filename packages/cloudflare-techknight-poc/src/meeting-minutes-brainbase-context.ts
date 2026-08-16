@@ -97,8 +97,11 @@ export function validateGeneratedMeetingMinutesContext(minutes: GeneratedMeeting
 export function bindGeneratedMeetingMinutesContext(minutes: GeneratedMeetingMinutes,
   receipt: MeetingMinutesContextReceipt): GeneratedMeetingMinutes {
   const attestation = minutes.brainbase_context_attestation;
-  if (!attestation || attestation.schema_version !== "meeting_minutes_context_attestation.v1"
-    || attestation.tool_name !== "mcp__brainbase__brainbase_get_meeting_minutes_context"
+  const validSource = attestation?.schema_version === "meeting_minutes_context_attestation.v1"
+    ? attestation.tool_name === "mcp__brainbase__brainbase_get_meeting_minutes_context"
+    : attestation?.schema_version === "meeting_minutes_context_attestation.v2"
+      && attestation.source === "worker_context_receipt";
+  if (!attestation || !validSource
     || attestation.receipt_id !== receipt.receipt_id || attestation.checksum !== receipt.checksum
     || attestation.run_id !== receipt.identity.run_id
     || attestation.project_code !== receipt.identity.project_code

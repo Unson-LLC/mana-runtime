@@ -44,7 +44,7 @@ export interface GeneratedMeetingMinutes {
   brainbase_context_attestation?: MeetingMinutesContextAttestation;
 }
 
-export interface MeetingMinutesContextAttestation {
+export interface MeetingMinutesMcpContextAttestation {
   schema_version: "meeting_minutes_context_attestation.v1";
   tool_name: "mcp__brainbase__brainbase_get_meeting_minutes_context";
   receipt_id: string;
@@ -54,6 +54,21 @@ export interface MeetingMinutesContextAttestation {
   transcript_sha256: string;
   session_id: string;
 }
+
+export interface MeetingMinutesReceiptContextAttestation {
+  schema_version: "meeting_minutes_context_attestation.v2";
+  source: "worker_context_receipt";
+  receipt_id: string;
+  checksum: string;
+  run_id: string;
+  project_code: string;
+  transcript_sha256: string;
+  session_id: string;
+}
+
+export type MeetingMinutesContextAttestation =
+  | MeetingMinutesMcpContextAttestation
+  | MeetingMinutesReceiptContextAttestation;
 
 export type AuditedGeneratedMeetingMinutes = GeneratedMeetingMinutes & {
   brainbase_context_attestation: MeetingMinutesContextAttestation;
