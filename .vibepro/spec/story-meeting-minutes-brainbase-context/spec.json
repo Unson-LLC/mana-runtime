@@ -624,6 +624,38 @@
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T11:42:01.148Z",
       "last_revised_at": "2026-08-16T12:08:34.578Z"
+    },
+    {
+      "id": "C-006",
+      "type": "contract",
+      "statement": "生成結果はプロンプトの見本・説明文・型の選択肢を値として含まない。既知の見本出力はrunへの永続化とGitHub・Slack・Task・タスクボードの副作用前に拒否し、利用者へ理由と安全な再実行方法を表示する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-17" }],
+        "architecture_refs": [
+          { "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" },
+          { "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "失敗" }
+        ],
+        "code_refs": [
+          { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" },
+          { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts" },
+          { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts" }
+        ],
+        "test_refs": [
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "rejects the production prompt example when it is copied as meeting minutes" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "stops a placeholder generation before GitHub, Slack, task, or board side effects" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "explains that placeholder output was rejected before it was shared" }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "production prompt example" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "placeholder generation before GitHub, Slack, task, or board side effects" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "placeholder output was rejected before it was shared" }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T13:00:00.000Z",
+      "last_revised_at": "2026-08-16T13:00:00.000Z"
     }
   ],
   "planned_test_suites": [

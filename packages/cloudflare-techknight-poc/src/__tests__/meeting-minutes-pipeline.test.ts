@@ -46,6 +46,28 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("meeting minutes pipeline", () => {
+  it("stops a placeholder generation before GitHub, Slack, task, or board side effects", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const saveGitHub = vi.fn(); const createTask = vi.fn(); const repairTaskBoard = vi.fn();
+    const postParent = vi.fn(); const postThreadChunk = vi.fn();
+    const options = resumeOptions({
+      generate: vi.fn().mockRejectedValue(new Error("meeting_minutes_generation_placeholder_output")),
+      saveGitHub, createTask, repairTaskBoard, postParent, postThreadChunk,
+    });
+
+    await expect(resumeMeetingMinutesRun(fs, selection, options))
+      .rejects.toThrow("meeting_minutes_generation_placeholder_output");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      status: "failed",
+      failure: { message: "meeting_minutes_generation_placeholder_output" },
+    });
+    expect(saveGitHub).not.toHaveBeenCalled(); expect(createTask).not.toHaveBeenCalled();
+    expect(repairTaskBoard).not.toHaveBeenCalled(); expect(postParent).not.toHaveBeenCalled();
+    expect(postThreadChunk).not.toHaveBeenCalled();
+  });
+
   it("persists one processing reply before generation and reuses it on retry", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

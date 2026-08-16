@@ -142,6 +142,23 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(body)).toContain('\\"sourceThreadTs\\":\\"1.0\\"');
   });
 
+  it("explains that placeholder output was rejected before it was shared", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), failure: {
+      stage: "routed", message: "meeting_minutes_generation_placeholder_output",
+    } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("生成結果が議事録になっていませんでした");
+    expect(serialized).toContain("見本やプレースホルダーのままの出力を検出");
+    expect(serialized).toContain("GitHub・Slack・タスクには保存していません");
+    expect(serialized).toContain("再実行");
+    expect(serialized).not.toContain("meeting_minutes_generation_placeholder_output");
+  });
+
   it("explains how to recover when the destination Slack channel is unavailable", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

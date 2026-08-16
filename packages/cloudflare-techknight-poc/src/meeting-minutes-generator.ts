@@ -27,8 +27,35 @@ function nonEmpty(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
 }
 
+const MEETING_MINUTES_PLACEHOLDER_VALUES = new Set([
+  "1段落・3〜5文の短い概要",
+  "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない",
+  "実行内容",
+  "会議で確認できた背景",
+  "文字起こしで明示された担当者名。未確認なら省略",
+  "low|medium|high|urgent",
+  "YYYY-MM-DD",
+]);
+
+function containsMeetingMinutesPlaceholder(record: Record<string, unknown>): boolean {
+  const scalarValues: unknown[] = [record.title, record.overview, record.body];
+  if (Array.isArray(record.tasks)) {
+    for (const item of record.tasks) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const task = item as Record<string, unknown>;
+      scalarValues.push(task.title, task.description, task.assignee_name, task.priority, task.due_at);
+    }
+  }
+  return scalarValues.some((value) => typeof value === "string" && (
+    MEETING_MINUTES_PLACEHOLDER_VALUES.has(value.trim())
+    || /(?:^|\s)YYYY-MM-DD(?:\s|$)/u.test(value)
+    || value.includes("会議トピック-要約")
+  ));
+}
+
 export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMinutes {
   const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  if (containsMeetingMinutesPlaceholder(record)) throw new Error("meeting_minutes_generation_placeholder_output");
   const title = nonEmpty(record.title, 200); const overview = nonEmpty(record.overview, 600);
   const body = stripMeetingMinutesActionItems(nonEmpty(record.body, 100_000) ?? "");
   if (!title || !overview || !body) throw new Error("meeting_minutes_generation_invalid");
@@ -168,14 +195,23 @@ export function parseGeneratedMeetingMinutesOutput(stdout: string): GeneratedMee
       const wrapper = value && typeof value === "object" && !Array.isArray(value)
         ? value as Record<string, unknown> : undefined;
       const unwrapped = wrapper?.structured_output ?? wrapper?.structuredOutput ?? value;
-      try { return parseGeneratedMeetingMinutes(unwrapped); } catch {
+      try { return parseGeneratedMeetingMinutes(unwrapped); } catch (error) {
+        if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
         if (typeof wrapper?.result === "string") {
           for (const nested of [wrapper.result.trim(), ...balancedJsonObjects(wrapper.result)]) {
-            try { return parseGeneratedMeetingMinutes(JSON.parse(nested)); } catch { /* try next candidate */ }
+            try { return parseGeneratedMeetingMinutes(JSON.parse(nested)); } catch (nestedError) {
+              if (nestedError instanceof Error && nestedError.message === "meeting_minutes_generation_placeholder_output") {
+                throw nestedError;
+              }
+              /* try next candidate */
+            }
           }
         }
       }
-    } catch { /* try next candidate */ }
+    } catch (error) {
+      if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+      /* try next candidate */
+    }
   }
   throw new Error("meeting_minutes_generation_invalid");
 }
@@ -381,8 +417,9 @@ function generationPrompt(transcript: string, destination: MeetingMinutesDestina
     "bodyにはアクションアイテムやタスクの一覧を含めないでください。アクションアイテムの唯一の正本はtasksです。",
     "tasksには、会議中に実行することが明示されたアクションだけを最大20件入れてください。推測でタスク、担当者、期限を補わないでください。期限や担当者が不明なら該当フィールドを省略し、該当するアクションがなければ空配列にしてください。",
     "文字起こしにない事実、決定、約束、肩書きを発明しないでください。根拠が薄い場合は不足している根拠を明記してください。",
-    "出力はMarkdown fenceを付けず、次のJSONオブジェクトだけにしてください。",
-    '{"title":"YYYY-MM-DD 会議トピック-要約","overview":"1段落・3〜5文の短い概要","body":"区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない","tasks":[{"title":"実行内容","description":"会議で確認できた背景","assignee_name":"文字起こしで明示された担当者名。未確認なら省略","priority":"low|medium|high|urgent","due_at":"YYYY-MM-DD"}],"used_source_refs":[],"decision_candidates":[]}',
+    "出力はMarkdown fenceや前後の説明を付けず、JSONオブジェクトだけにしてください。",
+    "必須キーはtitle、overview、body、tasks、used_source_refs、decision_candidatesです。JSON Schemaに従い、各値にはこの会議の文字起こしから確認できる固有の内容を書いてください。",
+    "見本・説明文・型の選択肢を値として出力してはいけません。title、overview、body、各taskが会議固有の内容になっていることを確認してから出力してください。",
     "", "文字起こし:", bounded,
   ].join("\n");
 }

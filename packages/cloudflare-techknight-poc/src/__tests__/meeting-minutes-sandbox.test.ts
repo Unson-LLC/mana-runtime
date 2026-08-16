@@ -71,6 +71,9 @@ describe("generateMeetingMinutesInSandbox", () => {
     );
     const prompt = String(sandbox.writeFile.mock.calls.find((call) => call[0] === "/tmp/meeting-minutes-prompt.txt")?.[1]);
     expect(prompt).toContain("1段落・3〜5文・200〜400字");
+    expect(prompt).not.toContain('"title":"YYYY-MM-DD 会議トピック-要約"');
+    expect(prompt).not.toContain('"overview":"1段落・3〜5文の短い概要"');
+    expect(prompt).toContain("見本・説明文・型の選択肢を値として出力してはいけません");
     expect(prompt).not.toContain("bodyの最後には必ず「*アクションアイテム*」");
     expect(prompt).not.toContain("brainbase_get_meeting_minutes_contextを必ず1回呼び");
     expect(prompt).toContain(`receipt_id=${context.receipt_id}`);
@@ -82,7 +85,7 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(prompt).not.toContain("project_code=proj_salestailor");
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
-      expect.stringContaining('"tasks"'),
+      expect.stringContaining("必須キーはtitle、overview、body、tasks"),
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/mana-meeting-minutes-mcp.json",
@@ -185,6 +188,23 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(parseGeneratedMeetingMinutesOutput(JSON.stringify({
       structured_output: { title: "定例", overview: "概要", body: "本文", tasks: [] },
     }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
+  });
+
+  it("rejects the production prompt example when it is copied as meeting minutes", () => {
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({
+      title: "YYYY-MM-DD 会議トピック-要約",
+      overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない",
+      tasks: [{
+        title: "実行内容",
+        description: "会議で確認できた背景",
+        assignee_name: "文字起こしで明示された担当者名。未確認なら省略",
+        priority: "low|medium|high|urgent",
+        due_at: "YYYY-MM-DD",
+      }],
+      used_source_refs: [],
+      decision_candidates: [],
+    }))).toThrow("meeting_minutes_generation_placeholder_output");
   });
 
   it("enforces the overview hard limit and strips a legacy action-item tail", () => {
