@@ -4,7 +4,7 @@
   "lifecycle": "draft",
   "story_context": "SlackからBrainbaseまでのmulti-tenant E2Eで、tenant_id、workspace connection、credential、runtime state、usage Receiptをcross-tenant混線なく扱う。Cloudとcompatible OSSの共通契約を固定する。",
   "generated_by": {
-    "caller": "codex",
+    "caller": "codex-cross-contract-review",
     "stage": "specification"
   },
   "contract_status": {
@@ -1017,7 +1017,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-002",
@@ -1047,7 +1047,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-003",
@@ -1077,7 +1077,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-004",
@@ -1107,7 +1107,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-005",
@@ -1136,7 +1136,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-006",
@@ -1165,7 +1165,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-007",
@@ -1195,7 +1195,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-008",
@@ -1224,7 +1224,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-009",
@@ -1254,13 +1254,13 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-010",
       "type": "contract",
       "statement": "cloud_standard、customer_oauth、customer_apiは同じtenant envelope、failure、usage Receipt契約を使い、billing principalだけをconnection revisionから決める。",
-      "rationale": "credential方式の違いをテナント境界の違いにしないため。",
+      "rationale": "AC-010のCloud標準API、顧客OAuth、顧客APIの各経路で、課金主体と失敗表示を契約どおりにしつつ、credential方式の違いをテナント境界の違いにしないため。",
       "origin": {
         "story_refs": [
           {
@@ -1284,7 +1284,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-011",
@@ -1314,13 +1314,13 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     },
     {
       "id": "C-012",
       "type": "contract",
       "statement": "Cloudflareの選択済みplacementだけがSlack replyを1回返し、legacyまたは他deploymentは同一eventへ返信しない。",
-      "rationale": "並行deploymentからの二重返信を防ぐため。",
+      "rationale": "AC-012のCloudflare単独配送時に、1 eventにつきCloudflareが1回返信し、旧runtimeや別deploymentが返信しないことを固定して二重返信を防ぐため。",
       "origin": {
         "story_refs": [
           {
@@ -1344,7 +1344,7 @@
         "status": "not_collected"
       },
       "first_seen_at": "2026-08-16T12:41:31.795Z",
-      "last_revised_at": "2026-08-16T13:00:50.548Z"
+      "last_revised_at": "2026-08-16T13:05:38.481Z"
     }
   ],
   "source_lane_reviews": [

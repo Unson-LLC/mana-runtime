@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-slack-mana-brainbase-multitenant-e2e",
-  "created_at": "2026-08-16T13:01:20.320Z",
+  "created_at": "2026-08-16T13:05:38.081Z",
   "status": "ready",
   "git": {
-    "head_sha": "d06f662908c78ae444bb3b7fea52854b4999dd86"
+    "head_sha": "534c5e6c0ba75d85d75a03e8b206210ef21a4db6"
   },
   "checks": [
     {
@@ -37,7 +37,7 @@
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-16T13:01:20.275Z",
+    "created_at": "2026-08-16T13:05:38.031Z",
     "artifact": ".vibepro/pr/story-slack-mana-brainbase-multitenant-e2e/pr-prepare.json"
   },
   "next_actions": []

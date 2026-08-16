@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-slack-mana-brainbase-multitenant-e2e",
   "spec_id": null,
-  "evaluated_at": "2026-08-16T13:01:21.026Z",
+  "evaluated_at": "2026-08-16T13:06:14.356Z",
   "status": "inconclusive",
   "reason": "no inferred spec found",
   "summary": {
