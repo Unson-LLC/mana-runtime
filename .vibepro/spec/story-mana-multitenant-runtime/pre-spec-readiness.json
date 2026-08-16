@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-mana-multitenant-runtime",
-  "created_at": "2026-08-16T12:41:48.398Z",
+  "created_at": "2026-08-16T13:25:31.339Z",
   "status": "ready",
   "git": {
-    "head_sha": "59891fd591aaddde5318cb3b09fa54c93c1cc114"
+    "head_sha": "4edded8a4d22145f6ff14a5f53f5559d5dfa3e02"
   },
   "checks": [
     {
@@ -20,7 +20,7 @@
     {
       "id": "story_diagnosis",
       "status": "pass",
-      "reason": "Story diagnosis run exists: 2026-08-16T123117Z"
+      "reason": "Story diagnosis run exists: 2026-08-16T132253Z"
     }
   ],
   "graphify": {
@@ -31,13 +31,13 @@
     "edge_source_key": "links"
   },
   "diagnosis": {
-    "run_id": "2026-08-16T123117Z",
+    "run_id": "2026-08-16T132253Z",
     "gate_status": "pass",
-    "evidence_artifact": ".vibepro/diagnostics/2026-08-16T123117Z/evidence.json"
+    "evidence_artifact": ".vibepro/diagnostics/2026-08-16T132253Z/evidence.json"
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-16T12:41:48.356Z",
+    "created_at": "2026-08-16T13:25:31.295Z",
     "artifact": ".vibepro/pr/story-mana-multitenant-runtime/pr-prepare.json"
   },
   "next_actions": []
