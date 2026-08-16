@@ -375,10 +375,15 @@ export class MeetingMinutesSlackClient {
     await this.post("views.open", { trigger_id: triggerId, view }, AbortSignal.timeout(2_000));
   }
   async retractSharedMinutes(channelId: string, parentTs: string, fileName: string): Promise<void> {
-    await this.post("chat.update", { channel: channelId, ts: parentTs,
-      text: `${fileName} の議事録は保存先変更のため取り消されました。`,
-      blocks: [{ type: "section", text: { type: "mrkdwn",
-        text: `*⚠️ この議事録は取り消されました*\n保存先を変更して再作成しています。` } }] });
+    try {
+      await this.post("chat.update", { channel: channelId, ts: parentTs,
+        text: `${fileName} の議事録は保存先変更のため取り消されました。`,
+        blocks: [{ type: "section", text: { type: "mrkdwn",
+          text: `*⚠️ この議事録は取り消されました*\n保存先を変更して再作成しています。` } }] });
+    } catch (error) {
+      if (error instanceof Error && error.message === "slack_api_failed:chat.update:message_not_found") return;
+      throw error;
+    }
   }
   async showDestinationSelection(run: MeetingMinutesRun,
     destinations: readonly MeetingMinutesDestination[]): Promise<string> {

@@ -727,7 +727,7 @@
     {
       "id": "C-007",
       "type": "contract",
-      "statement": "保存先やり直しの確認後は同じSlack投稿を処理中へ即時更新する。GitHub・Canonical Task・共有Slackの取り消しをrunへ工程別に永続化し、途中失敗後は完了済み工程を重複させず再開する。成功時は同じ投稿を保存先選択へ、失敗時は再実行表示へ必ず切り替える",
+      "statement": "保存先やり直しの確認後は同じSlack投稿を処理中へ即時更新する。GitHub・Canonical Task・共有Slackの取り消しをrunへ工程別に永続化し、途中失敗後は完了済み工程を重複させず再開する。旧共有Slack投稿が既に存在しない場合は撤回済みとして継続し、それ以外のSlackエラーは失敗として保持する。成功時は同じ投稿を保存先選択へ、失敗時は再実行表示へ必ず切り替える",
       "origin": {
         "story_refs": [
           {
@@ -771,6 +771,14 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
             "case": "keeps a failed redo visible with a durable retry action"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "treats an already missing shared post as idempotently withdrawn"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "does not hide other shared post retraction failures"
           }
         ]
       },
@@ -791,6 +799,14 @@
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
             "must_cover": "failed redo visible"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "already missing shared post"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "other shared post retraction failures"
           }
         ]
       },
