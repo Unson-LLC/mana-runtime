@@ -13,7 +13,7 @@ source:
 architecture_reason: "ADR必須。Brainbaseとmana-runtimeをまたぐtenant authority、相関ID、失敗分類、Receipt、rollback、運用責任を固定する統合契約のため。"
 architecture_docs:
   - path: docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md
-    status: required_not_started
+    status: accepted
 spec_docs:
   - path: docs/specs/story-slack-mana-brainbase-multitenant-e2e.vibepro.json
     status: required_not_started

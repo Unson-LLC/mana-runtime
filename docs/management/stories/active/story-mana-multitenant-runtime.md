@@ -13,7 +13,7 @@ source:
 architecture_reason: "ADR必須。Slack installation、Cloudflare Worker／Queue／Durable Object／Container、credential routing、課金帰属、shared／dedicated deploymentの信頼境界を変更するため。"
 architecture_docs:
   - path: docs/architecture/story-mana-multitenant-runtime.md
-    status: required_not_started
+    status: accepted
 spec_docs:
   - path: docs/specs/story-mana-multitenant-runtime.vibepro.json
     status: required_not_started
