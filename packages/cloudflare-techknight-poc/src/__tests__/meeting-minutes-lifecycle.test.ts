@@ -1,6 +1,7 @@
 import { processMeetingMinutesSelectionWithStatus } from "../meeting-minutes-lifecycle.js";
 import { startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
-import type { MeetingMinutesDestination, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
+import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
+  MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
@@ -20,15 +21,28 @@ async function setup() {
   return fs;
 }
 function resume(overrides: Record<string, unknown> = {}) {
+  const overriddenGenerate = overrides.generate as ((...args: unknown[]) => Promise<GeneratedMeetingMinutes>) | undefined;
+  const defaultGenerate = vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" });
+  const generate = vi.fn(async (transcript: string, target: MeetingMinutesDestination,
+    context: MeetingMinutesContextReceipt, mode: string) => ({
+    ...await (overriddenGenerate ?? defaultGenerate)(transcript, target, context, mode),
+    brainbase_context_attestation: {
+      schema_version: "meeting_minutes_context_attestation.v1" as const,
+      tool_name: "mcp__brainbase__brainbase_get_meeting_minutes_context" as const,
+      receipt_id: context.receipt_id, checksum: context.checksum,
+      run_id: context.identity.run_id, project_code: context.identity.project_code,
+      transcript_sha256: context.identity.transcript_sha256, session_id: "session-test",
+    },
+  }));
   return { contextMode: "observe" as const,
     resolveContext: vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
       resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } })),
     postProcessingStatus: vi.fn().mockResolvedValue("3.1"), download: vi.fn().mockResolvedValue("transcript"),
-    generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" }),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" }),
-    postParent: vi.fn().mockResolvedValue("10.1"), postThreadChunk: vi.fn().mockResolvedValue("10.2"), ...overrides };
+    postParent: vi.fn().mockResolvedValue("10.1"), postThreadChunk: vi.fn().mockResolvedValue("10.2"),
+    ...overrides, generate };
 }
 const config = { enabled: true, routerChannelId: "CROUTER", destinations: [destination], operatorUserIds: new Set(["U1"]) };
 

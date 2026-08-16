@@ -1,6 +1,7 @@
 import {
   MeetingMinutesBrainbaseContextClient,
   assertMeetingMinutesContextUsable,
+  bindGeneratedMeetingMinutesContext,
   reconcileMeetingMinutesTask,
   validateGeneratedMeetingMinutesContext,
 } from "../meeting-minutes-brainbase-context.js";
@@ -17,6 +18,13 @@ const receipt: MeetingMinutesContextReceipt = {
     source_refs: [{ type: "graph_entity", id: "project-mana" }],
     open_tasks: [{ id: "task-1", title: "請求書を送る", assignee_person_id: "person-1" }],
   },
+};
+const attestation = {
+  schema_version: "meeting_minutes_context_attestation.v1" as const,
+  tool_name: "mcp__brainbase__brainbase_get_meeting_minutes_context" as const,
+  receipt_id: receipt.receipt_id, checksum: receipt.checksum,
+  run_id: receipt.identity.run_id, project_code: receipt.identity.project_code,
+  transcript_sha256: receipt.identity.transcript_sha256, session_id: "session-test",
 };
 
 describe("meeting minutes Brainbase context", () => {
@@ -86,6 +94,16 @@ describe("meeting minutes Brainbase context", () => {
   });
 
   it("binds generated minutes to the exact Receipt and known source references", () => {
+    expect(bindGeneratedMeetingMinutesContext({
+      title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_receipt_id: "model-copied-wrong-id",
+      brainbase_context_checksum: "model-copied-wrong-checksum",
+      brainbase_context_attestation: attestation,
+      used_source_refs: [{ type: "graph_entity", id: "project-mana" }],
+    }, receipt)).toMatchObject({
+      brainbase_context_receipt_id: receipt.receipt_id,
+      brainbase_context_checksum: receipt.checksum,
+    });
     expect(() => validateGeneratedMeetingMinutesContext({
       title: "定例", overview: "概要", body: "本文", tasks: [],
       brainbase_context_receipt_id: receipt.receipt_id,
@@ -98,6 +116,15 @@ describe("meeting minutes Brainbase context", () => {
       brainbase_context_checksum: receipt.checksum,
       used_source_refs: [{ type: "graph_entity", id: "invented" }],
     }, receipt)).toThrow("meeting_minutes_context_source_ref_unknown");
+    expect(() => bindGeneratedMeetingMinutesContext({
+      title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_attestation: attestation,
+      used_source_refs: [{ type: "graph_entity", id: "invented" }],
+    }, receipt)).toThrow("meeting_minutes_context_source_ref_unknown");
+    expect(() => bindGeneratedMeetingMinutesContext({
+      title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [{ type: "graph_entity", id: "project-mana" }],
+    }, receipt)).toThrow("meeting_minutes_context_attestation_mismatch");
   });
 
   it("reuses exact tasks, flags similar tasks, and creates only genuinely new tasks", () => {

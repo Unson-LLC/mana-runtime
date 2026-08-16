@@ -40,7 +40,24 @@ export interface GeneratedMeetingMinutes {
   brainbase_context_checksum?: string;
   used_source_refs?: MeetingMinutesContextSourceRef[];
   decision_candidates?: Array<{ title: string; reason?: string; source_ref_ids?: string[] }>;
+  /** Worker-derived proof that the generation run actually read the canonical Brainbase Receipt. */
+  brainbase_context_attestation?: MeetingMinutesContextAttestation;
 }
+
+export interface MeetingMinutesContextAttestation {
+  schema_version: "meeting_minutes_context_attestation.v1";
+  tool_name: "mcp__brainbase__brainbase_get_meeting_minutes_context";
+  receipt_id: string;
+  checksum: string;
+  run_id: string;
+  project_code: string;
+  transcript_sha256: string;
+  session_id: string;
+}
+
+export type AuditedGeneratedMeetingMinutes = GeneratedMeetingMinutes & {
+  brainbase_context_attestation: MeetingMinutesContextAttestation;
+};
 
 export type MeetingMinutesContextStatus = "resolved" | "confirmed_empty" | "partial" | "unavailable";
 export type MeetingMinutesContextMode = "observe" | "required";
