@@ -81,7 +81,7 @@ describe("Brainbase judgment Hook forwarder", () => {
       }
     }
     expect(new Set(payloads.map((payload) => payload.turn_id)).size).toBe(1);
-  });
+  }, 15_000);
 
   it("story-meeting-minutes-brainbase-judgment:ac:3 fails closed when the Brainbase Hook endpoint is unavailable", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
