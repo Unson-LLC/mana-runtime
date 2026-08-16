@@ -319,8 +319,30 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-mana-multitenant-runtime",
+        "title": "八雲まなをテナント分離されたSlackランタイムとして提供する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
+      },
+      {
+        "story_id": "story-slack-mana-brainbase-multitenant-e2e",
+        "title": "SlackからBrainbaseまでテナントを越境せず完了する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-meeting-minutes-brainbase-context"
+    "current_story_id": "story-slack-mana-brainbase-multitenant-e2e"
   }
 }
