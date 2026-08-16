@@ -10,7 +10,7 @@ import { assertSecretArtifactFree } from "./secret-guard.js";
 import type { WorkspaceConnectionLookup } from "./workspace-connection.js";
 
 export interface SlackIngressIdentity extends WorkspaceConnectionLookup {
-  installation_id: string;
+  installation_id?: string;
   event_id: string;
   channel_id: string;
   thread_ts: string;
@@ -95,7 +95,7 @@ function assertActiveIngressConnection(
   }
   if (snapshot.status !== "active") deny("worker_ingress", "WORKSPACE_CONNECTION_REAUTH_REQUIRED");
   if (snapshot.app_id !== identity.app_id || snapshot.workspace_id !== identity.workspace_id
-    || snapshot.installation_id !== identity.installation_id
+    || (identity.installation_id !== undefined && snapshot.installation_id !== identity.installation_id)
     || (identity.enterprise_id !== undefined && snapshot.enterprise_id !== identity.enterprise_id)) {
     deny("worker_ingress", "WORKSPACE_OR_APP_MISMATCH");
   }
