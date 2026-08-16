@@ -59,12 +59,48 @@ function feedbackFetch(order: string[]): typeof fetch {
   }) as typeof fetch;
 }
 
+const judgmentLine = "🧠 判断参照: 「質問」を参照 → 質問として回答 ✓";
+const brainbaseLine = "📚 Brainbase参照先: 「質問」→ Brainbase呼び出し0回 ✓";
+const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
+
+function auditedReplyStream(reply = "スレッドの内容を確認しました。"): string {
+  const receipt = (hook_event_name: "UserPromptSubmit" | "Stop") => ({
+    type: "system",
+    subtype: "hook_response",
+    hook_event: hook_event_name,
+    exit_code: 0,
+    outcome: "success",
+    session_id: "session-1",
+    stdout: JSON.stringify({
+      systemMessage: [
+        hook_event_name === "UserPromptSubmit" ? judgmentLine : brainbaseLine,
+        `${receiptPrefix}${JSON.stringify({
+        schema_version: "mana_judgment_hook_receipt.v1",
+        hook_event_name,
+        session_id: "session-1",
+        turn_id: "turn-1",
+        ...(hook_event_name === "UserPromptSubmit" ? {
+          host_receipt_id: "receipt-route-1",
+          route_resolution_sha256: "a".repeat(64),
+        } : {}),
+        })}`,
+      ].join("\n"),
+    }),
+  });
+  return [
+    { type: "system", subtype: "init", session_id: "session-1" },
+    receipt("UserPromptSubmit"),
+    receipt("Stop"),
+    { type: "result", session_id: "session-1", result: [judgmentLine, brainbaseLine, reply].join("\n") },
+  ].map((entry) => JSON.stringify(entry)).join("\n");
+}
+
 function sandbox() {
   return {
     writeFile: vi.fn().mockResolvedValue(undefined),
     exec: vi.fn().mockResolvedValue({
       success: true,
-      stdout: "スレッドの内容を確認しました。",
+      stdout: auditedReplyStream(),
       stderr: "",
     }),
     destroy: vi.fn().mockResolvedValue(undefined),
