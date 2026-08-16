@@ -110,6 +110,36 @@ describe("meeting minutes task cards", () => {
       taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-pms",
     }));
   });
+  it("still migrates a historical projectId task after the run destination was already reconciled", async () => {
+    const current = run();
+    current.destination!.taskProjectCodes = ["techknight"];
+    current.destination!.taskBoardTargetId = "minutes-pms";
+    delete current.taskRegistration!.registered[0]!.projectCodes;
+    const options = deps(current);
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
+    const response = await handleMeetingMinutesTaskAction({ type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
+      view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
+        organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms" }), state: { values: {
+          title: { value: { value: "新題" } }, due: { value: {} }, assignee: { mana_meeting_minutes_task_assignee: {} },
+        } } } }, options);
+    expect(response?.status).toBe(200);
+    await vi.waitFor(() => expect(options.updateCard).toHaveBeenCalled());
+    expect(options.updateTask).toHaveBeenCalledWith("task-1", expect.objectContaining({
+      project_codes: ["techknight"], title: "新題",
+    }), expect.any(String));
+  });
+
+  it("still cancels a historical projectId task after the run destination was already reconciled", async () => {
+    const current = run();
+    current.destination!.taskProjectCodes = ["techknight"];
+    current.destination!.taskBoardTargetId = "minutes-pms";
+    delete current.taskRegistration!.registered[0]!.projectCodes;
+    const options = deps(current);
+    options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
+    expect((await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options))?.status).toBe(200);
+    await vi.waitFor(() => expect(options.deleteTask).toHaveBeenCalled());
+    expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
+  });
   it("migrates the canonical task scope when an old Kartz task is edited", async () => {
     const current = run();
     current.destination!.id = "kartz";

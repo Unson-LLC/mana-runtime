@@ -216,10 +216,19 @@ Worker更新前に配備を停止します。
 
 今回のProject紐付けを含む版からrollbackする場合、旧Worker versionをそのままpromoteしてはいけません。
 Worker versionには`MEETING_MINUTES_ENABLED`も含まれるため、旧versionの`true`まで復元され、新規受付が
-再開してしまいます。まず現行commitの設定を`MEETING_MINUTES_ENABLED=false`にして正規Infisicalラッパーから
-配備し、処理中runが0件であることを確認します。次にknown-good commitを隔離worktreeへcheckoutし、同じ設定を
+再開してしまいます。まず稼働中runが残っていても実行できる受付停止APIを正規Infisicalラッパーから呼びます。
+
+```bash
+/Users/ksato/workspace/code/brainbase/scripts/infisical-target-run.sh \
+  --target brainbase-mana-prod -- \
+  pnpm --filter @openryoko/cloudflare-techknight-poc meeting-minutes:intake:pause
+```
+
+ファイル投入と保存先選択が停止した状態で処理中runが0件になるのを待ち、現行commitの設定を
+`MEETING_MINUTES_ENABLED=false`にして正規Infisicalラッパーから配備します。次にknown-good commitを隔離worktreeへcheckoutし、同じ設定を
 `false`にした停止版artifactを正規ラッパーから新規配備します。Cloudflareの既存version rollbackは使いません。
-修正版で全保存先の配備前検査を通して再配備した後だけ`true`へ戻します。GitHub保存済みrunのReceiptは
+修正版で全保存先の配備前検査を通して再配備し、`true`を確認した後に同じラッパーから
+`meeting-minutes:intake:resume`を実行します。GitHub保存済みrunのReceiptは
 書き換えず、未保存runは修正版で正規Projectから文脈を取り直します。
 
 ## Sandbox security boundary

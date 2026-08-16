@@ -46,6 +46,31 @@ export function projectCodesFromGraphResponse(body) {
   return [...new Set(codes)].sort();
 }
 
+async function fetchJson({ url, token, timeoutMs, fetchImpl, errorPrefix }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetchImpl(url, { headers: { authorization: `Bearer ${token}` }, redirect: "error", signal: controller.signal });
+  } catch { throw new Error(`${errorPrefix}_unreachable`); }
+  finally { clearTimeout(timer); }
+  if (!response.ok) throw new Error(`${errorPrefix}_http_${response.status}`);
+  let body;
+  try { body = await response.json(); } catch { throw new Error(`${errorPrefix}_response_invalid`); }
+  return body;
+}
+
+async function fetchAuthorizedProjectCodes(options) {
+  return projectCodesFromGraphResponse(await fetchJson(options));
+}
+
+async function assertCanonicalTaskApiReachable(options) {
+  const body = await fetchJson(options);
+  if (!body || typeof body !== "object" || !Array.isArray(body.items)) {
+    throw new Error(`${options.errorPrefix}_response_invalid`);
+  }
+}
+
 export async function assertBrainbaseMeetingMinutesProjects({
   configPath = new URL("../wrangler.unson-business.jsonc", import.meta.url), baseUrl, token, timeoutMs = 10_000, fetchImpl = fetch,
 } = {}) {
@@ -73,15 +98,32 @@ export async function assertBrainbaseMeetingMinutesProjects({
 }
 
 export async function assertBrainbaseMeetingMinutesRuntimeProjects({
-  configPath, baseUrl, taskToken, graphToken, timeoutMs = 10_000, fetchImpl = fetch,
+  configPath, taskBaseUrl, graphBaseUrl, taskToken, graphToken, timeoutMs = 10_000, fetchImpl = fetch,
 } = {}) {
   if (!clean(taskToken)) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:task");
   if (!clean(graphToken)) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:graph");
-  const graph = await assertBrainbaseMeetingMinutesProjects({
-    configPath, baseUrl, token: graphToken, timeoutMs, fetchImpl,
-  });
-  const task = await assertBrainbaseMeetingMinutesProjects({
-    configPath, baseUrl, token: taskToken, timeoutMs, fetchImpl,
-  });
-  return { graph, task };
+  let config;
+  try { config = JSON.parse(await readFile(configPath ?? new URL("../wrangler.unson-business.jsonc", import.meta.url), "utf8")); }
+  catch { throw new Error("meeting_minutes_brainbase_project_check_config_invalid"); }
+  const resolvedGraphBaseUrl = clean(graphBaseUrl) || clean(config?.vars?.BRAINBASE_GRAPH_API_BASE_URL);
+  const resolvedTaskBaseUrl = clean(taskBaseUrl) || clean(config?.vars?.BRAINBASE_TASK_API_BASE_URL);
+  if (!resolvedTaskBaseUrl) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:task_url");
+  if (!resolvedGraphBaseUrl) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:graph_url");
+  const { requiredCodes } = collectMeetingMinutesProjectBindings(config);
+  const graphUrl = new URL("/api/info/graph/entities", resolvedGraphBaseUrl);
+  graphUrl.searchParams.set("type", "project"); graphUrl.searchParams.set("limit", "500");
+  const taskApiUrl = new URL("/api/companion/tasks", resolvedTaskBaseUrl);
+  taskApiUrl.searchParams.set("limit", "1");
+  const graphCodes = await fetchAuthorizedProjectCodes({ url: graphUrl, token: graphToken, timeoutMs, fetchImpl,
+    errorPrefix: "meeting_minutes_brainbase_project_check_graph" });
+  await assertCanonicalTaskApiReachable({ url: taskApiUrl, token: taskToken, timeoutMs, fetchImpl,
+    errorPrefix: "meeting_minutes_brainbase_project_check_task_api" });
+  const taskCodes = await fetchAuthorizedProjectCodes({ url: graphUrl, token: taskToken, timeoutMs, fetchImpl,
+    errorPrefix: "meeting_minutes_brainbase_project_check_task_scope" });
+  const missingGraph = requiredCodes.filter((code) => !new Set(graphCodes).has(code));
+  const missingTask = requiredCodes.filter((code) => !new Set(taskCodes).has(code));
+  if (missingGraph.length > 0) throw new Error(`meeting_minutes_brainbase_project_check_graph_missing:${missingGraph.join(",")}`);
+  if (missingTask.length > 0) throw new Error(`meeting_minutes_brainbase_project_check_task_missing:${missingTask.join(",")}`);
+  return { graph: { requiredCodes, authorizedCodes: graphCodes },
+    task: { requiredCodes, authorizedCodes: taskCodes, apiReachable: true } };
 }

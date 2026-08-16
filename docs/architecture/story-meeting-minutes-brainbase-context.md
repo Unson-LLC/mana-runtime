@@ -32,6 +32,12 @@ Receiptの未完了task候補と生成taskを、project、正規化title、正�
 
 `taskProjectCodes`導入前のrunでは、当時の契約どおり`destination.projectId`を旧Task範囲として復元する。現在のTask API応答がその旧範囲と完全一致する場合だけ移行を許可する。現在範囲・保存済み旧範囲・歴史的`projectId`範囲のいずれにも一致しないTaskは操作せず、操作した利用者へSlackで紐付け不一致を通知する。
 
+## 配備・rollback
+
+通常のDeployment Gateは、処理中runがある間のWorker更新を拒否する。障害時に新規受付だけを先に止めるため、Durable Objectへ永続化する受付停止状態を認証済み管理APIから変更できるようにする。この操作はWorkerの配備を伴わず、処理中runと再試行を継続させる。
+
+受付停止中は、新規ファイルと保存先選択をQueueへ送らず、Slackへ停止理由と再投稿案内を表示する。処理中runが0件になった後、通常のDeployment Gateを通して`MEETING_MINUTES_ENABLED=false`の停止版を配備する。再開は本番readback後の明示操作とし、過去versionの再昇格は行わない。
+
 ## 保存と表示
 
 GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を、本文末尾へ利用source refsと判断候補を決定的に描画する。Slack完了表示には「Brainbase参照済み」と、Receipt外参照を除外した場合の警告を示す。生Graph contextは保存・投稿しない。

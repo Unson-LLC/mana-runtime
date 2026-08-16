@@ -5,6 +5,8 @@ export type MeetingMinutesProjectBindingConfig = {
 export type BrainbaseProjectBindingCheckOptions = {
   configPath?: string | URL;
   baseUrl?: string;
+  taskBaseUrl?: string;
+  graphBaseUrl?: string;
   token?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -27,5 +29,5 @@ export function assertBrainbaseMeetingMinutesRuntimeProjects(options?: Omit<Brai
   graphToken?: string;
 }): Promise<{
   graph: { requiredCodes: string[]; authorizedCodes: string[] };
-  task: { requiredCodes: string[]; authorizedCodes: string[] };
+  task: { requiredCodes: string[]; authorizedCodes: string[]; apiReachable: true };
 }>;

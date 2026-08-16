@@ -349,6 +349,20 @@ export default {
       }
       return Response.json(await meetingMinutesDeploymentGate(env).status());
     }
+    if (request.method === "POST" && url.pathname === "/admin/meeting-minutes/intake") {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      let payload: unknown;
+      try { payload = await request.json(); }
+      catch { return Response.json({ error: "invalid_json" }, { status: 400 }); }
+      if (!payload || typeof payload !== "object" || typeof (payload as { paused?: unknown }).paused !== "boolean") {
+        return Response.json({ error: "invalid_intake_state" }, { status: 400 });
+      }
+      const gate = meetingMinutesDeploymentGate(env);
+      await gate.setIntakePaused((payload as { paused: boolean }).paused);
+      return Response.json(await gate.status());
+    }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       let callbackWorkspace: DurableObjectStub<TechKnightWorkspace> | undefined;
@@ -436,7 +450,7 @@ export default {
               env, targetId, "task_write",
             ), defer: (work) => ctx.waitUntil(work),
           });
-        });
+        }, () => meetingMinutesDeploymentGate(env).isIntakePaused());
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
@@ -562,6 +576,17 @@ export default {
         continue;
       }
       if (isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)) {
+        if (await meetingMinutesDeploymentGate(env).isIntakePaused()) {
+          console.warn(JSON.stringify({ event: "meeting_minutes_intake_paused", eventId: message.body.eventId }));
+          try {
+            await meetingMinutesClients(env).slack.postIntakePaused(message.body.channelId, message.body.threadTs);
+          } catch (error) {
+            console.warn(JSON.stringify({ event: "meeting_minutes_intake_pause_notice_failed",
+              eventId: message.body.eventId, error: error instanceof Error ? error.message : "unexpected_error" }));
+          }
+          message.ack();
+          continue;
+        }
         await consumeTechKnightMessage({
           body: message.body,
           ack: () => message.ack(),

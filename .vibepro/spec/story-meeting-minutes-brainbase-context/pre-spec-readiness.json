@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-meeting-minutes-brainbase-context",
-  "created_at": "2026-08-16T10:49:08.183Z",
+  "created_at": "2026-08-16T11:13:01.309Z",
   "status": "ready",
   "git": {
-    "head_sha": "a51c220cbd43281741e8471a2a6ec0c21bccedeb"
+    "head_sha": "fa7d941e07dcbb1c78c0dc9e2c8c18f868f6b938"
   },
   "checks": [
     {
@@ -37,7 +37,7 @@
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-16T10:49:08.142Z",
+    "created_at": "2026-08-16T11:13:01.264Z",
     "artifact": ".vibepro/pr/story-meeting-minutes-brainbase-context/pr-prepare.json"
   },
   "next_actions": []

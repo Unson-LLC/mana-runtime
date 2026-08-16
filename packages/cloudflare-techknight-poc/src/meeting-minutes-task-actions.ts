@@ -53,6 +53,13 @@ function status(error: unknown): number | undefined { return object(error)?.stat
 function sameTaskScope(actual: readonly string[] | undefined, expected: readonly string[] | undefined): boolean {
   return Boolean(actual && expected && actual.length === expected.length && expected.every((code) => actual.includes(code)));
 }
+function trustedLegacyTaskScopes(run: MeetingMinutesRun,
+  item: NonNullable<MeetingMinutesRun["taskRegistration"]>["registered"][number]): string[][] {
+  const candidates = [item.projectCodes, run.destination?.taskProjectCodes,
+    run.destination?.projectId ? [run.destination.projectId] : undefined]
+    .filter((scope): scope is string[] => Boolean(scope?.length));
+  return candidates.filter((scope, index) => candidates.findIndex((candidate) => sameTaskScope(scope, candidate)) === index);
+}
 function allowed(payload: ObjectValue, run: MeetingMinutesRun, deps: MeetingMinutesTaskActionDependencies): boolean {
   const teamId = text(object(payload.team)?.id); const channelId = text(object(payload.channel)?.id);
   const expectedTeam = deps.destinationTeamIds[run.destination?.organization.id ?? ""] ?? deps.sourceTeamId;
@@ -113,9 +120,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   if (!run || !run.destination || !item || !allowed(payload, run, deps)) {
     return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
   }
-  const legacyTaskScope = item.projectCodes?.length ? [...item.projectCodes]
-    : run.destination.taskProjectCodes?.length ? [...run.destination.taskProjectCodes]
-      : run.destination.projectId ? [run.destination.projectId] : undefined;
+  const legacyTaskScopes = trustedLegacyTaskScopes(run, item);
   await reconcileTaskDestination(run, deps);
   const currentTaskScope = meetingMinutesTaskProjectCodes(run.destination);
   if (actionId === MEETING_MINUTES_TASK_CANCEL_ACTION_ID) {
@@ -124,7 +129,8 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
       catch (error) { if (status(error) !== 404) throw error;
         item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
         await deps.repairTaskBoard(run.destination!.taskBoardTargetId); return; }
-      if (!sameTaskScope(current.project_codes, currentTaskScope) && !sameTaskScope(current.project_codes, legacyTaskScope))
+      if (!sameTaskScope(current.project_codes, currentTaskScope) &&
+        !legacyTaskScopes.some((scope) => sameTaskScope(current.project_codes, scope)))
         throw new Error("meeting_minutes_task_scope_mismatch");
       await deps.deleteTask(item.taskId, current.version, `meeting-minutes-${run.runId}-cancel-${value.index}`);
       item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
@@ -145,7 +151,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   if (!title || title.length > 120) return Response.json({ response_action: "errors", errors: { title: "タイトルを入力してください" } });
   deps.defer((async () => { const current = await deps.getTask(item.taskId);
     const scopeIsCurrent = sameTaskScope(current.project_codes, currentTaskScope);
-    const scopeIsTrustedLegacy = !scopeIsCurrent && sameTaskScope(current.project_codes, legacyTaskScope);
+    const scopeIsTrustedLegacy = !scopeIsCurrent && legacyTaskScopes.some((scope) => sameTaskScope(current.project_codes, scope));
     if (!scopeIsCurrent && !scopeIsTrustedLegacy) throw new Error("meeting_minutes_task_scope_mismatch");
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${title}\n${due ?? ""}\n${assigneeSelection ?? "unchanged"}`))))
       .map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 24);

@@ -4,7 +4,8 @@ import { assertMeetingMinutesDeployAllowed } from "./deploy-gate-check.mjs";
 
 try {
   await assertBrainbaseMeetingMinutesRuntimeProjects({
-    baseUrl: process.env.BRAINBASE_GRAPH_API_BASE_URL ?? process.env.BRAINBASE_TASK_API_BASE_URL,
+    taskBaseUrl: process.env.BRAINBASE_TASK_API_BASE_URL,
+    graphBaseUrl: process.env.BRAINBASE_GRAPH_API_BASE_URL,
     taskToken: process.env.BRAINBASE_TASK_API_TOKEN,
     graphToken: process.env.BRAINBASE_GRAPH_API_TOKEN,
   });

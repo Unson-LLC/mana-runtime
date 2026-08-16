@@ -469,7 +469,11 @@ describe("会社別Cloudflare deployment", () => {
     expect(packageJson.scripts["deploy:unson-business"]).toContain("node scripts/deploy-unson-business.mjs");
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/deploy-gate"');
+    expect(worker).toContain('url.pathname === "/admin/meeting-minutes/intake"');
+    expect(worker).toContain("isIntakePaused()");
     expect(worker).toContain("isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN)");
+    expect(packageJson.scripts["meeting-minutes:intake:pause"]).toContain("meeting-minutes-intake-control.mjs pause");
+    expect(packageJson.scripts["meeting-minutes:intake:resume"]).toContain("meeting-minutes-intake-control.mjs resume");
   });
 
   it("binds a durable write budget in every deployment and wires all task runtime entrypoints", () => {

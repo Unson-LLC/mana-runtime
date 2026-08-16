@@ -44,20 +44,49 @@ describe("Brainbase meeting-minutes project deployment check", () => {
 
   it("validates both runtime Task and Graph credentials before deployment", async () => {
     const path = await configFile(config());
-    const fetchImpl = vi.fn().mockImplementation(async () => Response.json({
-      records: [{ payload: { project_code: "kartz" } }],
-    }));
-    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path, baseUrl: "https://brainbase.example",
+    const fetchImpl = vi.fn().mockImplementation(async (input: URL) => input.pathname === "/api/companion/tasks"
+      ? Response.json({ items: [], next_cursor: null })
+      : Response.json({ records: [{ payload: { project_code: "kartz" } }] }));
+    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path,
+      taskBaseUrl: "https://task.brainbase.example", graphBaseUrl: "https://graph.brainbase.example",
       taskToken: "task-token", graphToken: "graph-token", fetchImpl })).resolves.toEqual(expect.objectContaining({
-      task: expect.objectContaining({ requiredCodes: ["kartz"] }),
+      task: expect.objectContaining({ requiredCodes: ["kartz"], apiReachable: true }),
       graph: expect.objectContaining({ requiredCodes: ["kartz"] }),
     }));
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls.map((call) => (call[1] as RequestInit).headers)).toEqual([
-      { authorization: "Bearer graph-token" }, { authorization: "Bearer task-token" },
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl.mock.calls.map((call) => (call[0] as URL).pathname)).toEqual([
+      "/api/info/graph/entities", "/api/companion/tasks", "/api/info/graph/entities",
     ]);
-    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path, baseUrl: "https://brainbase.example",
+    expect(fetchImpl.mock.calls.map((call) => (call[1] as RequestInit).headers)).toEqual([
+      { authorization: "Bearer graph-token" }, { authorization: "Bearer task-token" }, { authorization: "Bearer task-token" },
+    ]);
+    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path,
+      taskBaseUrl: "https://task.brainbase.example", graphBaseUrl: "https://graph.brainbase.example",
       taskToken: "task-token", graphToken: "" })).rejects.toThrow("meeting_minutes_brainbase_project_check_auth_missing:graph");
+  });
+
+  it("fails closed when either runtime API omits a configured project", async () => {
+    const path = await configFile(config());
+    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path,
+      taskBaseUrl: "https://task.brainbase.example", graphBaseUrl: "https://graph.brainbase.example",
+      taskToken: "task-token", graphToken: "graph-token",
+      fetchImpl: vi.fn().mockImplementation(async (input: URL, init: RequestInit) => input.pathname === "/api/companion/tasks"
+        ? Response.json({ items: [], next_cursor: null })
+        : (init.headers as Record<string, string>).authorization === "Bearer task-token"
+          ? Response.json({ records: [] })
+          : Response.json({ records: [{ payload: { project_code: "kartz" } }] })) }))
+      .rejects.toThrow("meeting_minutes_brainbase_project_check_task_missing:kartz");
+  });
+
+  it("fails closed when the Canonical Task API rejects the runtime credential", async () => {
+    const path = await configFile(config());
+    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path,
+      taskBaseUrl: "https://task.brainbase.example", graphBaseUrl: "https://graph.brainbase.example",
+      taskToken: "task-token", graphToken: "graph-token",
+      fetchImpl: vi.fn().mockImplementation(async (input: URL) => input.pathname === "/api/companion/tasks"
+        ? new Response(null, { status: 401 })
+        : Response.json({ records: [{ payload: { project_code: "kartz" } }] })) }))
+      .rejects.toThrow("meeting_minutes_brainbase_project_check_task_api_http_401");
   });
 
   it("uses the production Brainbase URL declared by the Worker config", async () => {

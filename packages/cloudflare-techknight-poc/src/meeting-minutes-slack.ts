@@ -155,6 +155,15 @@ export class MeetingMinutesSlackClient {
       text: message.text, client_msg_id: await clientMessageId(`${run.runId}-selection`), blocks: message.blocks });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
+  async postIntakePaused(channelId: string, threadTs: string): Promise<void> {
+    await this.post("chat.postMessage", {
+      channel: channelId,
+      thread_ts: threadTs,
+      text: "議事録の新規受付は一時停止中です。復旧後にファイルを投稿し直してください。",
+      blocks: [{ type: "section", text: { type: "mrkdwn",
+        text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にファイルを投稿し直してください。" } }],
+    });
+  }
   async postProcessingStatus(run: MeetingMinutesRun): Promise<string> {
     if (!run.destination) throw new Error("meeting_minutes_destination_missing");
     if (!run.slack?.selectionTs) throw new Error("meeting_minutes_selection_coordinates_missing");
