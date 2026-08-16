@@ -348,7 +348,7 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "binds every meeting destination and the existing mana channel to a trusted task Canvas target"
+            "case": "enables Cloudflare meeting minutes with the confirmed cutover authority"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
@@ -412,7 +412,7 @@
           },
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "must_cover": "binds every meeting destination"
+            "must_cover": "enables Cloudflare meeting minutes with the confirmed cutover authority"
           },
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
