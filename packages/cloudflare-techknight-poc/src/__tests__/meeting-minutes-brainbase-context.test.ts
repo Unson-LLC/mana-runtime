@@ -151,6 +151,30 @@ describe("meeting minutes Brainbase context", () => {
     }, receipt)).toThrow("meeting_minutes_context_attestation_mismatch");
   });
 
+  it("removes invented references and records a warning in observe mode", () => {
+    expect(bindGeneratedMeetingMinutesContext({
+      title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_attestation: receiptAttestation,
+      used_source_refs: [
+        { type: "graph_entity", id: "project-mana" },
+        { type: "graph_entity", id: "invented" },
+      ],
+      decision_candidates: [{ title: "判断", source_ref_ids: ["project-mana", "invented"] }],
+    }, receipt, "observe")).toMatchObject({
+      used_source_refs: [{ type: "graph_entity", id: "project-mana" }],
+      decision_candidates: [{ title: "判断", source_ref_ids: ["project-mana"] }],
+      brainbase_context_warnings: ["unknown_source_ref_removed"],
+    });
+  });
+
+  it("rejects invented references in required mode", () => {
+    expect(() => bindGeneratedMeetingMinutesContext({
+      title: "定例", overview: "概要", body: "本文", tasks: [],
+      brainbase_context_attestation: receiptAttestation,
+      used_source_refs: [{ type: "graph_entity", id: "invented" }],
+    }, receipt, "required")).toThrow("meeting_minutes_context_source_ref_unknown");
+  });
+
   it("reuses exact tasks, flags similar tasks, and creates only genuinely new tasks", () => {
     expect(reconcileMeetingMinutesTask({ title: "請求書を送る", assignee_name: "佐藤" }, receipt))
       .toEqual({ outcome: "reused", taskId: "task-1" });

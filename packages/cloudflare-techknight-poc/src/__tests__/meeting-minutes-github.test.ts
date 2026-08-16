@@ -39,7 +39,8 @@ describe("CloudflareMeetingMinutesGitHubClient", () => {
     const markdown = formatCloudflareMeetingMinutesMarkdown({ destination, transcript: "x", sourceFileName: "a.txt", sourceTs: "1",
       minutes: { title: "定例", overview: "概要", body: "本文\n\n*アクションアイテム*\n- 古い重複内容",
         brainbase_context_receipt_id: "receipt-1", brainbase_context_checksum: "checksum-1",
-        used_source_refs: [{ type: "graph_entity", id: "project-mana" }], tasks: [
+        used_source_refs: [{ type: "graph_entity", id: "project-mana" }],
+        brainbase_context_warnings: ["unknown_source_ref_removed"], tasks: [
         { title: "資料を送る", description: "会議で合意", assignee_name: "梅田 遼", priority: "high",
           due_at: "2026-08-20T00:00:00+09:00" },
       ] } }, "docs/transcripts/a.txt", "2026-08-14");
@@ -50,6 +51,8 @@ describe("CloudflareMeetingMinutesGitHubClient", () => {
     expect(markdown).toContain('brainbase_context_receipt: "receipt-1"');
     expect(markdown).toContain('brainbase_context_checksum: "checksum-1"');
     expect(markdown).toContain('brainbase_source_refs: [{"type":"graph_entity","id":"project-mana"}]');
+    expect(markdown).toContain('brainbase_context_warnings: ["unknown_source_ref_removed"]');
+    expect(markdown).toContain("Brainbaseの正本にない参照候補を除外し、正本の参照だけで作成しました");
   });
 
   it("renders an explicit empty action-item section when tasks are empty", () => {

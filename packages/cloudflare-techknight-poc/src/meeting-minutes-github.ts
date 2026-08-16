@@ -30,6 +30,10 @@ function jstDate(sourceTs: string): string {
 }
 export function formatCloudflareMeetingMinutesMarkdown(request: SaveMeetingMinutesRecordsRequest, transcriptPath: string, date: string): string {
   const tasks = request.minutes.tasks ?? [];
+  const contextWarnings = request.minutes.brainbase_context_warnings ?? [];
+  const contextWarningNote = contextWarnings.includes("unknown_source_ref_removed")
+    ? ["> ⚠️ Brainbaseの正本にない参照候補を除外し、正本の参照だけで作成しました。", ""]
+    : [];
   const actionItems = tasks.length ? tasks.flatMap((task) => {
     const details = [task.assignee_name ? `担当: ${task.assignee_name}` : undefined,
       task.due_at ? `期限: ${task.due_at.slice(0, 10)}` : undefined,
@@ -42,8 +46,10 @@ export function formatCloudflareMeetingMinutesMarkdown(request: SaveMeetingMinut
     `brainbase_context_receipt: ${JSON.stringify(request.minutes.brainbase_context_receipt_id ?? null)}`,
     `brainbase_context_checksum: ${JSON.stringify(request.minutes.brainbase_context_checksum ?? null)}`,
     `brainbase_source_refs: ${JSON.stringify(request.minutes.used_source_refs ?? [])}`,
+    `brainbase_context_warnings: ${JSON.stringify(contextWarnings)}`,
     "---", "", `# ${request.minutes.title}`, "", request.minutes.overview, "",
-    stripMeetingMinutesActionItems(request.minutes.body), "", "## アクションアイテム", "", ...actionItems, ""].join("\n");
+    ...contextWarningNote, stripMeetingMinutesActionItems(request.minutes.body), "",
+    "## アクションアイテム", "", ...actionItems, ""].join("\n");
 }
 
 export class CloudflareMeetingMinutesGitHubClient {

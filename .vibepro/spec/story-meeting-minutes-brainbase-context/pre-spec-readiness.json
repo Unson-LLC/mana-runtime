@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-meeting-minutes-brainbase-context",
-  "created_at": "2026-08-16T05:52:47.992Z",
+  "created_at": "2026-08-16T06:37:13.630Z",
   "status": "ready",
   "git": {
-    "head_sha": "6de5da9e1067d8d5e13e8c587babf607198e892e"
+    "head_sha": "172c4f18f1fde95ebcc175f4bc5a12405d4c9a69"
   },
   "checks": [
     {
@@ -20,7 +20,7 @@
     {
       "id": "story_diagnosis",
       "status": "pass",
-      "reason": "Story diagnosis run exists: 2026-08-16T055246Z"
+      "reason": "Story diagnosis run exists: 2026-08-16T063042Z"
     }
   ],
   "graphify": {
@@ -31,13 +31,13 @@
     "edge_source_key": "links"
   },
   "diagnosis": {
-    "run_id": "2026-08-16T055246Z",
+    "run_id": "2026-08-16T063042Z",
     "gate_status": "needs_review",
-    "evidence_artifact": ".vibepro/diagnostics/2026-08-16T055246Z/evidence.json"
+    "evidence_artifact": ".vibepro/diagnostics/2026-08-16T063042Z/evidence.json"
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-16T05:52:47.943Z",
+    "created_at": "2026-08-16T06:37:13.591Z",
     "artifact": ".vibepro/pr/story-meeting-minutes-brainbase-context/pr-prepare.json"
   },
   "next_actions": []

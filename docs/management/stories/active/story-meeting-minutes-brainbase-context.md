@@ -14,6 +14,7 @@ Slackへ議事録ファイルを投稿した利用者として、選択したプ
 - [ ] AC6: GitHubへReceipt metadataと参照を保存し、Slack完了表示でBrainbase利用を示す。Graph全文は保存しない。
 - [ ] AC7: 配信先、生成本文、GitHub、Slack、redo、watchdog、task/Canvasの既存契約を維持する。
 - [ ] AC8: Brainbase Receipt取得済みのrunは、Claudeが追加のBrainbase MCP呼び出しを行わなくても正本文脈を使って生成でき、Receipt identity・checksum・source refsの検証を通過する。
+- [ ] AC9: ClaudeがReceipt外のsource refを返した場合、observeモードはReceipt内の参照だけへ正規化し、SlackとGitHubへ警告を表示して議事録生成を継続する。requiredモードは副作用前に拒否する。
 
 ## 運用モード
 

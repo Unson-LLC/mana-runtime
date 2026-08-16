@@ -95,7 +95,7 @@ export function validateGeneratedMeetingMinutesContext(minutes: GeneratedMeeting
 }
 
 export function bindGeneratedMeetingMinutesContext(minutes: GeneratedMeetingMinutes,
-  receipt: MeetingMinutesContextReceipt): GeneratedMeetingMinutes {
+  receipt: MeetingMinutesContextReceipt, mode: MeetingMinutesContextMode = "required"): GeneratedMeetingMinutes {
   const attestation = minutes.brainbase_context_attestation;
   const validSource = attestation?.schema_version === "meeting_minutes_context_attestation.v1"
     ? attestation.tool_name === "mcp__brainbase__brainbase_get_meeting_minutes_context"
@@ -108,9 +108,26 @@ export function bindGeneratedMeetingMinutesContext(minutes: GeneratedMeetingMinu
     || attestation.transcript_sha256 !== receipt.identity.transcript_sha256) {
     throw new Error("meeting_minutes_context_attestation_mismatch");
   }
+  const allowedRefs = new Set(receipt.context.source_refs.map(refKey));
+  const allowedIds = new Set(receipt.context.source_refs.map((ref) => ref.id));
+  const usedSourceRefs = (minutes.used_source_refs ?? []).filter((ref) => allowedRefs.has(refKey(ref)));
+  const hadUnknownRef = usedSourceRefs.length !== (minutes.used_source_refs ?? []).length
+    || (minutes.decision_candidates ?? []).some((decision) =>
+      (decision.source_ref_ids ?? []).some((id) => !allowedIds.has(id)));
+  if (mode === "required" && hadUnknownRef) throw new Error("meeting_minutes_context_source_ref_unknown");
+  const decisionCandidates = (minutes.decision_candidates ?? []).map((decision) => ({
+    ...decision,
+    ...(decision.source_ref_ids
+      ? { source_ref_ids: decision.source_ref_ids.filter((id) => allowedIds.has(id)) }
+      : {}),
+  }));
   const bound = { ...minutes,
     brainbase_context_receipt_id: receipt.receipt_id,
-    brainbase_context_checksum: receipt.checksum };
+    brainbase_context_checksum: receipt.checksum,
+    ...(minutes.used_source_refs ? { used_source_refs: usedSourceRefs } : {}),
+    ...(minutes.decision_candidates ? { decision_candidates: decisionCandidates } : {}),
+    ...(hadUnknownRef ? { brainbase_context_warnings: ["unknown_source_ref_removed" as const] } : {}),
+  };
   validateGeneratedMeetingMinutesContext(bound, receipt);
   return bound;
 }

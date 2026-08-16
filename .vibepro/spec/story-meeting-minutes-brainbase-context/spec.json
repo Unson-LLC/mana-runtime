@@ -48,12 +48,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:34:02.393Z"
+      "last_revised_at": "2026-08-16T06:37:13.776Z"
     },
     {
       "id": "INV-001",
       "type": "invariant",
-      "statement": "requiredモードは不完全なReceipt、identity不一致、checksum不正、Receipt外参照を副作用前に拒否する",
+      "statement": "Receipt外参照はobserveモードで正規参照だけへ正規化してSlackとGitHubへ警告を残し、requiredモードでは副作用前に拒否する。不完全なReceipt、identity不一致、checksum不正もrequiredで拒否する",
       "origin": {
         "story_refs": [
           {
@@ -63,6 +63,10 @@
           {
             "kind": "acceptance_criteria",
             "ac_id": "AC-4"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-9"
           }
         ],
         "architecture_refs": [
@@ -83,7 +87,11 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
-            "case": "binds generated minutes to the exact Receipt and known source references"
+            "case": "removes invented references and records a warning in observe mode"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
+            "case": "rejects invented references in required mode"
           }
         ]
       },
@@ -95,13 +103,17 @@
           },
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
-            "must_cover": "binds generated minutes to the exact Receipt and known source references"
+            "must_cover": "removes invented references and records a warning in observe mode"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts",
+            "must_cover": "rejects invented references in required mode"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:34:02.393Z"
+      "last_revised_at": "2026-08-16T06:37:13.776Z"
     },
     {
       "id": "C-002",
@@ -153,7 +165,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T05:55:00.000Z"
+      "last_revised_at": "2026-08-16T06:37:13.776Z"
     },
     {
       "id": "C-003",
@@ -197,12 +209,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:34:02.393Z"
+      "last_revised_at": "2026-08-16T06:37:13.776Z"
     },
     {
       "id": "INV-002",
       "type": "invariant",
-      "statement": "GitHubとSlackへ監査可能なReceipt情報だけを表示し、生Graph本文と既存実行契約を変えない",
+      "statement": "GitHubとSlackへ監査可能なReceipt情報とReceipt外参照の除外警告だけを表示し、生Graph本文と既存実行契約を変えない",
       "origin": {
         "story_refs": [
           {
@@ -212,6 +224,10 @@
           {
             "kind": "acceptance_criteria",
             "ac_id": "AC-7"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-9"
           }
         ],
         "architecture_refs": [
@@ -236,6 +252,14 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
             "case": "clears the assistant status and updates the selector with a durable completed result"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "shows when unknown Brainbase references were removed in observe mode"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts",
+            "case": "renders exactly one deterministic action-item section from tasks"
           }
         ]
       },
@@ -248,12 +272,20 @@
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
             "must_cover": "clears the assistant status and updates the selector with a durable completed result"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "shows when unknown Brainbase references were removed in observe mode"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-github.test.ts",
+            "must_cover": "renders exactly one deterministic action-item section from tasks"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-15T08:34:02.393Z"
+      "last_revised_at": "2026-08-16T06:37:13.776Z"
     }
   ],
   "planned_test_suites": [
@@ -276,6 +308,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-15T08:34:02.386Z",
-  "previous_spec_id": "2026-08-15T08:20:56.237Z"
+  "generated_at": "2026-08-16T06:37:13.774Z",
+  "previous_spec_id": "2026-08-15T08:34:02.386Z"
 }

@@ -303,17 +303,17 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     if (!run.github) {
       if (!run.generated) {
         const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
-        run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt);
+        run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt, options.contextMode);
         run.status = "generated";
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
       } else {
         try {
-          run.generated = bindGeneratedMeetingMinutesContext(run.generated, contextReceipt);
+          run.generated = bindGeneratedMeetingMinutesContext(run.generated, contextReceipt, options.contextMode);
         } catch (error) {
           if (!(error instanceof Error) || !["meeting_minutes_context_source_ref_unknown",
             "meeting_minutes_context_attestation_mismatch"].includes(error.message)) throw error;
           const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
-          run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt);
+          run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt, options.contextMode);
         }
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
       }
