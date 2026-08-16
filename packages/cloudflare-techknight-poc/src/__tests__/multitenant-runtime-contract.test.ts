@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { handleTenantSlackRequest } from "../slack.js";
 
 import {
   REQUIRED_TENANT_CAPABILITIES,
@@ -132,6 +133,19 @@ const expectedScope: ExpectedTenantScope = {
 
 async function keyPair(): Promise<CryptoKeyPair> {
   return crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+}
+
+async function signedSlackRequest(payload: unknown, nowMs: number): Promise<Request> {
+  const body = JSON.stringify(payload);
+  const timestamp = String(Math.floor(nowMs / 1_000));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("fixture-signing-key"),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key,
+    new TextEncoder().encode(`v0:${timestamp}:${body}`)));
+  const signature = `v0=${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return new Request("https://runtime.example.test/slack/events", { method: "POST", body,
+    headers: { "content-type": "application/json", "x-slack-request-timestamp": timestamp,
+      "x-slack-signature": signature } });
 }
 
 async function envelope(
@@ -518,6 +532,34 @@ describe("story-mana-multitenant-runtime contract", () => {
       workspace_connection: snapshotA,
       slack: expect.objectContaining({ event_id: "Ev-A-001", requester_id: "U-A" }),
     }));
+  });
+
+  it("Slack signed ingress resolves tenant before queue planned Red", async () => {
+    const nowMs = Date.parse(NOW);
+    const { value, publicKey } = await envelope();
+    const payload = {
+      type: "event_callback", api_app_id: "A-MANA", team_id: "T-A", event_id: "Ev-A-001",
+      event: { type: "app_mention", channel: "C-A", user: "U-A", ts: "1723800000.000001",
+        thread_ts: "1723800000.000001", text: "run" },
+    };
+    const send = vi.fn(async () => undefined);
+    const response = await handleTenantSlackRequest(await signedSlackRequest(payload, nowMs), {
+      signing_secret: "fixture-signing-key",
+      expected_app_id: "A-MANA",
+      required_scopes: ["chat:write"],
+      required_authorization: { audience: "mana-runtime", project_id: "project-a", capability_id: "task.write" },
+      authority: {
+        resolve_workspace_connection: vi.fn(async () => snapshotA),
+        read_workspace_connection: vi.fn(async () => snapshotA),
+        issue_tenant_context: vi.fn(async () => value),
+      },
+      now_ms: nowMs,
+      resolve_verification_key: async () => publicKey,
+      send,
+    });
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ schema_version: "1.0",
+      tenant_context: value, payload: expect.objectContaining({ tenantId: TENANT_A, eventId: "Ev-A-001" }) }));
   });
 
   it("queue validation happens before tenant work planned Red", async () => {
