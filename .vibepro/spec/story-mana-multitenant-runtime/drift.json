@@ -1,14 +1,33 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-mana-multitenant-runtime",
-  "spec_id": "2026-08-16T13:34:39.241Z",
-  "evaluated_at": "2026-08-16T13:45:13.932Z",
-  "status": "clean",
+  "spec_id": "2026-08-16T13:45:11.299Z",
+  "evaluated_at": "2026-08-16T14:17:14.136Z",
+  "status": "drift_detected",
   "summary": {
     "spec_code_drift": 0,
     "spec_test_drift": 0,
     "code_test_drift": 0,
-    "spec_pr_drift": 0
+    "spec_pr_drift": 2
   },
-  "items": []
+  "items": [
+    {
+      "id": "DRIFT-6YTVT8",
+      "axis": "spec_pr",
+      "clause_id": "C-001",
+      "severity": "medium",
+      "title": "C-001 が参照するコードが PR で変更されている",
+      "detail": "packages/cloudflare-techknight-poc/src/slack.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
+      "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
+    },
+    {
+      "id": "DRIFT-34GSXT",
+      "axis": "spec_pr",
+      "clause_id": "INV-001",
+      "severity": "medium",
+      "title": "INV-001 が参照するコードが PR で変更されている",
+      "detail": "packages/cloudflare-techknight-poc/src/slack.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
+      "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
+    }
+  ]
 }

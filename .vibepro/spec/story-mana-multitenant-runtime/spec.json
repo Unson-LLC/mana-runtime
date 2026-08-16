@@ -8,7 +8,7 @@
     "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925"
   },
   "generated_by": {
-    "caller": "unknown",
+    "caller": "codex",
     "stage": "ai_synthesis"
   },
   "open_questions": [],
@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "INV-001",
@@ -135,7 +135,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "INV-002",
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-002",
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "INV-003",
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-003",
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "INV-004",
@@ -389,7 +389,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "INV-005",
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-004",
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "INV-006",
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-005",
@@ -577,7 +577,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-006",
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-007",
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "INV-007",
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-008",
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-009",
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-010",
@@ -889,7 +889,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     },
     {
       "id": "C-011",
@@ -963,9 +963,9 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-16T13:45:11.300Z"
+      "last_revised_at": "2026-08-16T14:17:03.616Z"
     }
   ],
-  "generated_at": "2026-08-16T13:45:11.299Z",
-  "previous_spec_id": "2026-08-16T13:34:39.241Z"
+  "generated_at": "2026-08-16T14:17:03.614Z",
+  "previous_spec_id": "2026-08-16T13:45:11.299Z"
 }
