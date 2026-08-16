@@ -1,5 +1,6 @@
 import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
-  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
+  MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
+  MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
   type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
 
@@ -53,8 +54,25 @@ export function redoConfirmationMessage(runId: string, fileName: string): SlackS
     { type: "section", text: { type: "mrkdwn", text: `*保存先をやり直しますか？*\nGitHubの議事録・文字起こしと自動登録タスクを取り消します。旧共有投稿は「取り消し済み」にし、保存先選択へ戻します。` } },
     { type: "actions", elements: [
       { type: "button", style: "danger", text: { type: "plain_text", text: "取り消して選び直す" },
-        action_id: "mana_meeting_minutes_confirm_redo", value: JSON.stringify({ runId, fileName }) },
+        action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID, value: JSON.stringify({ runId, fileName }) },
     ] },
+  ] };
+}
+
+export function redoProcessingMessage(fileName: string): SlackSelectionMessage {
+  return { replace_original: true, text: `${fileName} の保存先をやり直しています。`, blocks: [
+    { type: "section", text: { type: "mrkdwn",
+      text: `:hourglass_flowing_sand: *保存先をやり直しています…*\n旧保存先の議事録とタスクを取り消したあと、保存先選択へ切り替えます。` } },
+  ] };
+}
+
+export function redoFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
+  return { replace_original: true, text: `${fileName} の保存先変更に失敗しました。`, blocks: [
+    { type: "section", text: { type: "mrkdwn",
+      text: ":warning: *保存先のやり直しを完了できませんでした*\n完了済みの取り消し工程は保持されています。下のボタンから続きを再実行できます。" } },
+    { type: "actions", elements: [{ type: "button", style: "danger",
+      text: { type: "plain_text", text: "取り消しを再実行" }, action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
+      value: JSON.stringify({ runId, fileName }) }] },
   ] };
 }
 
@@ -369,5 +387,11 @@ export class MeetingMinutesSlackClient {
     await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
       text: message.text, blocks: message.blocks });
     return run.slack.processingTs;
+  }
+  async showRedoFailure(run: MeetingMinutesRun): Promise<void> {
+    if (!run.slack?.processingTs) throw new Error("meeting_minutes_status_coordinates_missing");
+    const message = redoFailedMessage(run.runId, run.file.name);
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
+      text: message.text, blocks: message.blocks });
   }
 }

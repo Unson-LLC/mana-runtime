@@ -319,6 +319,7 @@ function meetingMinutesClients(env: Env) {
         destinationSlack(destination.slackChannelId).retractSharedMinutes(destination.slackChannelId, parentTs, fileName),
       showDestinationSelection: (run: MeetingMinutesRun, destinations: Parameters<typeof slack.showDestinationSelection>[1]) =>
         slack.showDestinationSelection(run, destinations),
+      showRedoFailure: (run: MeetingMinutesRun) => slack.showRedoFailure(run),
     },
   };
 }

@@ -155,6 +155,15 @@ export interface MeetingMinutesRun {
   };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */
   revision?: number;
+  /** Durable checkpoints for a completed-run redo. Each external cleanup is performed at most once per revision. */
+  redo?: {
+    revision: number;
+    requestedAt: string;
+    githubDeletedAt?: string;
+    deletedTaskIds: string[];
+    sharedRetractedAt?: string;
+    failure?: { message: string; failedAt: string };
+  };
   createdAt: string;
   updatedAt: string;
 }

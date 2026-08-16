@@ -176,6 +176,19 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).not.toContain("meeting_minutes_persisted_placeholder_output");
   });
 
+  it("keeps a failed redo visible with a durable retry action", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl).showRedoFailure(routedRun());
+    expect(body).toMatchObject({ channel: "C1", ts: "3.1" });
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("保存先のやり直しを完了できませんでした");
+    expect(serialized).toContain("取り消しを再実行");
+    expect(serialized).toContain("mana_meeting_minutes_confirm_redo");
+  });
+
   it("explains how to recover when the destination Slack channel is unavailable", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

@@ -47,6 +47,7 @@ export interface RedoMeetingMinutesOptions {
   deleteTask(taskId: string, idempotencyKey: string): Promise<void>;
   retractSharedMinutes(destination: MeetingMinutesDestination, parentTs: string, fileName: string): Promise<void>;
   showDestinationSelection(run: MeetingMinutesRun, destinations: readonly MeetingMinutesDestination[]): Promise<string>;
+  showRedoFailure?(run: MeetingMinutesRun): Promise<void>;
 }
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
@@ -426,20 +427,49 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
   if (run.status !== "completed" || !run.destination || !run.github || !run.slack?.processingTs) {
     throw new Error("meeting_minutes_redo_not_available");
   }
-  await options.deleteGitHub(run.destination, [run.github.transcriptPath, run.github.minutesPath]);
-  for (const task of run.taskRegistration?.registered ?? []) {
-    await options.deleteTask(task.taskId, `meeting-minutes-redo-${run.runId}-revision-${run.revision ?? 0}-${task.index}`);
+  const redoRevision = run.revision ?? 0;
+  if (!run.redo || run.redo.revision !== redoRevision) {
+    run.redo = { revision: redoRevision, requestedAt: now(options), deletedTaskIds: [] };
+    run.updatedAt = now(options);
+    await saveMeetingMinutesRun(fs, run);
   }
-  if (run.slack.parentTs) {
-    await options.retractSharedMinutes(run.destination, run.slack.parentTs, run.file.name);
+  const redoState = run.redo;
+  try {
+    delete redoState.failure;
+    if (!redoState.githubDeletedAt) {
+      await options.deleteGitHub(run.destination, [run.github.transcriptPath, run.github.minutesPath]);
+      redoState.githubDeletedAt = now(options); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    for (const task of run.taskRegistration?.registered ?? []) {
+      if (redoState.deletedTaskIds.includes(task.taskId)) continue;
+      await options.deleteTask(task.taskId, `meeting-minutes-redo-${run.runId}-revision-${redoRevision}-${task.index}`);
+      redoState.deletedTaskIds.push(task.taskId); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    if (run.slack.parentTs && !redoState.sharedRetractedAt) {
+      await options.retractSharedMinutes(run.destination, run.slack.parentTs, run.file.name);
+      redoState.sharedRetractedAt = now(options); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    const selectionTs = await options.showDestinationSelection(structuredClone(run), options.destinations);
+    run.status = "awaiting_destination";
+    run.revision = redoRevision + 1;
+    delete run.destination; delete run.approvedBy; delete run.context; delete run.generated; delete run.github;
+    delete run.taskRegistration; delete run.failure; delete run.redo;
+    run.slack = { selectionTs, postedChunkIndexes: [] };
+    run.updatedAt = now(options);
+    await saveMeetingMinutesRun(fs, run);
+    return run;
+  } catch (error) {
+    redoState.failure = { message: error instanceof Error ? error.message : "meeting_minutes_redo_failed",
+      failedAt: now(options) };
+    run.updatedAt = now(options);
+    await saveMeetingMinutesRun(fs, run);
+    if (options.showRedoFailure) {
+      try { await options.showRedoFailure(run); }
+      catch (notificationError) {
+        console.error(JSON.stringify({ event: "meeting_minutes_redo_failure_projection_failed", runId: run.runId,
+          error: notificationError instanceof Error ? notificationError.message : "unexpected_error" }));
+      }
+    }
+    throw error;
   }
-  const selectionTs = await options.showDestinationSelection(structuredClone(run), options.destinations);
-  run.status = "awaiting_destination";
-  run.revision = (run.revision ?? 0) + 1;
-  delete run.destination; delete run.approvedBy; delete run.context; delete run.generated; delete run.github;
-  delete run.taskRegistration; delete run.failure;
-  run.slack = { selectionTs, postedChunkIndexes: [] };
-  run.updatedAt = now(options);
-  await saveMeetingMinutesRun(fs, run);
-  return run;
 }
