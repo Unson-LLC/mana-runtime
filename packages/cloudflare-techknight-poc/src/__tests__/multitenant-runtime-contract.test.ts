@@ -87,7 +87,7 @@ const unsignedEnvelopeA: UnsignedTenantContextEnvelope = {
   actor: {
     principal_id: "person-a",
     principal_type: "person",
-    authenticated_subject_id: "slack-user-a",
+    authenticated_subject_id: "U-A",
   },
   authorization: {
     organization_ids: ["organization-a"],
@@ -446,7 +446,7 @@ describe("story-mana-multitenant-runtime contract", () => {
         event_id: "Ev-A-001",
         channel_id: "C-A",
         thread_ts: "1723800000.000001",
-        requester_id: "slack-user-a",
+        requester_id: "U-A",
       },
       required_scopes: ["chat:write"],
       required_authorization: {
@@ -469,7 +469,7 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(readWorkspaceConnection).toHaveBeenCalledWith(CONNECTION_A);
     expect(issueTenantContext).toHaveBeenCalledWith(expect.objectContaining({
       workspace_connection: snapshotA,
-      slack: expect.objectContaining({ event_id: "Ev-A-001", requester_id: "slack-user-a" }),
+      slack: expect.objectContaining({ event_id: "Ev-A-001", requester_id: "U-A" }),
     }));
   });
 

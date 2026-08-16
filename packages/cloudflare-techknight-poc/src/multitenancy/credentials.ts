@@ -1,8 +1,11 @@
 import type {
   CredentialLease,
   CredentialLeaseRequest,
+  ExpectedTenantScope,
+  TenantContextEnvelope,
   WorkspaceConnectionSnapshot,
 } from "./contracts.js";
+import { validateTenantBoundary } from "./envelope.js";
 import { deny } from "./errors.js";
 import { revealSecretValue, type SecretValue } from "./secret-guard.js";
 
@@ -57,6 +60,42 @@ export async function acquireCredentialLease(input: {
   const lease = await input.broker.acquire_lease(structuredClone(input.request));
   assertLeaseBinding(input.request, lease, input.now);
   return lease;
+}
+
+export async function acquireEnvelopeCredentialLease(input: {
+  envelope: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  audience: string;
+  broker: CredentialBrokerClient;
+  read_authoritative_snapshot: () => Promise<WorkspaceConnectionSnapshot>;
+  now: string;
+  resolve_verification_key: (keyId: string) => Promise<CryptoKey | undefined>;
+}): Promise<CredentialLease> {
+  const snapshot = await input.read_authoritative_snapshot();
+  await validateTenantBoundary({
+    boundary: "credential_lease",
+    envelope: input.envelope,
+    authoritative_snapshot: snapshot,
+    expected_scope: input.expected_scope,
+    now: input.now,
+    resolve_verification_key: input.resolve_verification_key,
+  });
+  const request: CredentialLeaseRequest = {
+    tenant_id: input.envelope.tenant.tenant_id,
+    connection_id: input.envelope.workspace_connection.connection_id,
+    connection_revision: input.envelope.workspace_connection.connection_revision,
+    contract_revision: input.envelope.contract_revision,
+    operation_id: input.envelope.operation_id,
+    audience: input.audience,
+    credential_mode: input.envelope.credential.mode,
+    credential_ref: input.envelope.credential.credential_ref,
+  };
+  return acquireCredentialLease({
+    broker: input.broker,
+    request,
+    read_authoritative_snapshot: input.read_authoritative_snapshot,
+    now: input.now,
+  });
 }
 
 export class CredentialLeaseUseRegistry {

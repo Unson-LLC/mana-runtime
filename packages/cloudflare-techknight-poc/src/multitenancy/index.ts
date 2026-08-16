@@ -9,5 +9,6 @@ export * from "./ids.js";
 export * from "./isolation.js";
 export * from "./objects.js";
 export * from "./protocol.js";
+export * from "./runtime-boundaries.js";
 export * from "./secret-guard.js";
 export * from "./workspace-connection.js";

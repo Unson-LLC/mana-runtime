@@ -53,3 +53,20 @@ export async function authorizeSlackDelivery(input: {
     updated_at: input.now,
   });
 }
+
+export async function authorizeSlackDeliveryWithAuthority(input: Omit<
+  Parameters<typeof authorizeSlackDelivery>[0], "authoritative_snapshot"
+> & {
+  read_authoritative_snapshot: () => Promise<WorkspaceConnectionSnapshot>;
+}): Promise<IdempotencyClaimResult> {
+  const authoritativeSnapshot = await input.read_authoritative_snapshot();
+  return authorizeSlackDelivery({
+    envelope: input.envelope,
+    authoritative_snapshot: authoritativeSnapshot,
+    expected_scope: input.expected_scope,
+    now: input.now,
+    resolve_verification_key: input.resolve_verification_key,
+    ownership: input.ownership,
+    payload_hash: input.payload_hash,
+  });
+}
