@@ -70,6 +70,19 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(call?.body)).toContain("復旧後にファイルを投稿し直してください");
   });
 
+  it("explains a blocked queued command privately to the operator", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl).postIntakePausedToUser("C1", "U1");
+    expect(call?.url).toBe("https://slack.com/api/chat.postEphemeral");
+    expect(call?.body).toMatchObject({ channel: "C1", user: "U1" });
+    expect(JSON.stringify(call?.body)).toContain("議事録の受付は一時停止中です");
+    expect(JSON.stringify(call?.body)).toContain("保存先の選択またはやり直しをもう一度実行してください");
+  });
+
   it("does not stop minutes processing when the optional assistant status is unavailable", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).includes("assistant.threads.setStatus")
       ? Response.json({ ok: false, error: "not_allowed" })

@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   consumeMeetingMinutesIntakePause,
+  gateMeetingMinutesCommandQueueMessage,
   gateMeetingMinutesRouterQueueMessage,
   handleMeetingMinutesIntakeAdminRequest,
   interceptMeetingMinutesIntakePause,
 } from "../meeting-minutes-intake-entrypoints.js";
+import type { MeetingMinutesRedo, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 
 const fileEvent: SlackQueueEvent = {
@@ -20,6 +22,16 @@ const fileEvent: SlackQueueEvent = {
   text: "",
   receivedAt: "2026-08-16T00:00:00.000Z",
   files: [{ id: "F1", name: "meeting.txt" }],
+};
+
+const selection: MeetingMinutesSelection = {
+  kind: "meeting_minutes_selection", runId: "Ev-file-1_F1", destinationId: "senpainurse",
+  workspaceId: "T1", channelId: "C0BKTFQ9V38", userId: "U1", actionTs: "1786000010.000001",
+};
+
+const redo: MeetingMinutesRedo = {
+  kind: "meeting_minutes_redo", runId: "Ev-file-1_F1", workspaceId: "T1",
+  channelId: "C0BKTFQ9V38", userId: "U1", actionTs: "1786000020.000001",
 };
 
 describe("meeting minutes intake entrypoints", () => {
@@ -179,5 +191,66 @@ describe("meeting minutes intake entrypoints", () => {
       isPaused: vi.fn(),
       notify: vi.fn(),
     })).resolves.toBe("not_router_file");
+  });
+
+  it("acks a queued destination selection instead of retrying it in a disabled Worker", async () => {
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await expect(gateMeetingMinutesCommandQueueMessage({ body: selection, ack, retry }, {
+      enabled: false,
+      isPaused: vi.fn().mockResolvedValue(false),
+      notify,
+    })).resolves.toBe("blocked");
+
+    expect(notify).toHaveBeenCalledWith(selection);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("acks a queued redo instead of retrying it while intake is paused", async () => {
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    await expect(gateMeetingMinutesCommandQueueMessage({ body: redo, ack, retry }, {
+      enabled: true,
+      isPaused: vi.fn().mockResolvedValue(true),
+      notify: vi.fn().mockResolvedValue(undefined),
+    })).resolves.toBe("blocked");
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("still acks a blocked command when the private Slack notice fails", async () => {
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const logNotificationFailure = vi.fn();
+
+    await expect(gateMeetingMinutesCommandQueueMessage({ body: selection, ack, retry }, {
+      enabled: false,
+      isPaused: vi.fn().mockResolvedValue(false),
+      notify: vi.fn().mockRejectedValue(new Error("slack unavailable")),
+      logNotificationFailure,
+    })).resolves.toBe("blocked");
+
+    expect(logNotificationFailure).toHaveBeenCalledWith(selection, expect.any(Error));
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("leaves a queued command for normal handling only when intake is enabled and unpaused", async () => {
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    await expect(gateMeetingMinutesCommandQueueMessage({ body: selection, ack, retry }, {
+      enabled: true,
+      isPaused: vi.fn().mockResolvedValue(false),
+      notify: vi.fn(),
+    })).resolves.toBe("ready");
+
+    expect(ack).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
   });
 });

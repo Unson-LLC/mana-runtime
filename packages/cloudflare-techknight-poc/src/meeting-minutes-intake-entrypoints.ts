@@ -1,4 +1,5 @@
 import type { SlackQueueEvent } from "./types.js";
+import type { MeetingMinutesRedo, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { isMeetingMinutesRouterFileEvent } from "./meeting-minutes-entrypoints.js";
 
 interface IntakeStatus {
@@ -33,6 +34,24 @@ interface IntakeRouterQueueDependencies extends IntakeQueueDependencies {
 }
 
 export type MeetingMinutesRouterQueueGate = "not_router_file" | "ready" | "blocked";
+export type MeetingMinutesCommandQueueGate = "ready" | "blocked";
+
+type MeetingMinutesQueuedCommand = MeetingMinutesSelection | MeetingMinutesRedo;
+
+interface IntakeCommandQueueMessage {
+  body: MeetingMinutesQueuedCommand;
+  ack(): void;
+  retry(): void;
+}
+
+interface IntakeCommandQueueDependencies {
+  enabled: boolean;
+  isPaused(): Promise<boolean>;
+  notify(command: MeetingMinutesQueuedCommand): Promise<void>;
+  logPaused?(command: MeetingMinutesQueuedCommand): void;
+  logDisabled?(command: MeetingMinutesQueuedCommand): void;
+  logNotificationFailure?(command: MeetingMinutesQueuedCommand, error: unknown): void;
+}
 
 interface IntakeIngressDependencies {
   isPaused(): Promise<boolean>;
@@ -98,6 +117,33 @@ export async function gateMeetingMinutesRouterQueueMessage(
     await dependencies.notify(message.body.channelId, message.body.threadTs);
   } catch (error) {
     dependencies.logNotificationFailure?.(message.body.eventId, error);
+  }
+  message.ack();
+  return "blocked";
+}
+
+/**
+ * Ends a destination-selection or redo command deterministically while intake is
+ * paused/disabled. These commands may already be in Queue when an operator
+ * pauses intake, so retrying them would survive the drain and loop after the
+ * stopped Worker is deployed.
+ */
+export async function gateMeetingMinutesCommandQueueMessage(
+  message: IntakeCommandQueueMessage,
+  dependencies: IntakeCommandQueueDependencies,
+): Promise<MeetingMinutesCommandQueueGate> {
+  if (await dependencies.isPaused()) {
+    dependencies.logPaused?.(message.body);
+  } else if (!dependencies.enabled) {
+    dependencies.logDisabled?.(message.body);
+  } else {
+    return "ready";
+  }
+
+  try {
+    await dependencies.notify(message.body);
+  } catch (error) {
+    dependencies.logNotificationFailure?.(message.body, error);
   }
   message.ack();
   return "blocked";

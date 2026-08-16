@@ -88,6 +88,7 @@ import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, MEETING_MINUTES_RE
   recoverStaleMeetingMinutesRun } from "./meeting-minutes-recovery.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
+  gateMeetingMinutesCommandQueueMessage,
   gateMeetingMinutesRouterQueueMessage,
   handleMeetingMinutesIntakeAdminRequest,
   interceptMeetingMinutesIntakePause,
@@ -221,6 +222,26 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 
 function meetingMinutesDeploymentGate(env: Env): DurableObjectStub<MeetingMinutesDeploymentGate> {
   return env.MEETING_MINUTES_DEPLOYMENT_GATE.get(env.MEETING_MINUTES_DEPLOYMENT_GATE.idFromName(env.TENANT_ID));
+}
+
+function meetingMinutesCommandGateDependencies(env: Env, enabled: boolean) {
+  return {
+    enabled,
+    isPaused: () => meetingMinutesDeploymentGate(env).isIntakePaused(),
+    notify: (command: MeetingMinutesSelection | MeetingMinutesRedo) =>
+      meetingMinutesClients(env).slack.postIntakePausedToUser(command.channelId, command.userId),
+    logPaused: (command: MeetingMinutesSelection | MeetingMinutesRedo) => console.warn(JSON.stringify({
+      event: "meeting_minutes_command_intake_paused", kind: command.kind, runId: command.runId,
+    })),
+    logDisabled: (command: MeetingMinutesSelection | MeetingMinutesRedo) => console.warn(JSON.stringify({
+      event: "meeting_minutes_command_intake_disabled", kind: command.kind, runId: command.runId,
+    })),
+    logNotificationFailure: (command: MeetingMinutesSelection | MeetingMinutesRedo, error: unknown) =>
+      console.warn(JSON.stringify({
+        event: "meeting_minutes_command_intake_notice_failed", kind: command.kind, runId: command.runId,
+        error: error instanceof Error ? error.message : "unexpected_error",
+      })),
+  };
 }
 
 async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly string[],
@@ -500,6 +521,10 @@ export default {
       const meetingMinutesConfig = meetingMinutesRuntimeConfig(env);
       if (isMeetingMinutesRedo(message.body)) {
         const command = message.body;
+        const commandGate = await gateMeetingMinutesCommandQueueMessage({
+          body: command, ack: () => message.ack(), retry: () => message.retry(),
+        }, meetingMinutesCommandGateDependencies(env, meetingMinutesConfig.enabled));
+        if (commandGate === "blocked") continue;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
             env.TENANT_ID, command.workspaceId, command.runId,
@@ -551,6 +576,10 @@ export default {
           message.ack();
           continue;
         }
+        const commandGate = await gateMeetingMinutesCommandQueueMessage({
+          body: selection, ack: () => message.ack(), retry: () => message.retry(),
+        }, meetingMinutesCommandGateDependencies(env, meetingMinutesConfig.enabled));
+        if (commandGate === "blocked") continue;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
             env.TENANT_ID, selection.workspaceId, selection.runId,

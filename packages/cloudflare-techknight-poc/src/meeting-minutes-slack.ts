@@ -164,6 +164,15 @@ export class MeetingMinutesSlackClient {
         text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にファイルを投稿し直してください。" } }],
     });
   }
+  async postIntakePausedToUser(channelId: string, userId: string): Promise<void> {
+    await this.post("chat.postEphemeral", {
+      channel: channelId,
+      user: userId,
+      text: "議事録の受付は一時停止中です。復旧後に、保存先の選択またはやり直しをもう一度実行してください。",
+      blocks: [{ type: "section", text: { type: "mrkdwn",
+        text: ":warning: *議事録の受付は一時停止中です*\n復旧後に、保存先の選択またはやり直しをもう一度実行してください。" } }],
+    });
+  }
   async postProcessingStatus(run: MeetingMinutesRun): Promise<string> {
     if (!run.destination) throw new Error("meeting_minutes_destination_missing");
     if (!run.slack?.selectionTs) throw new Error("meeting_minutes_selection_coordinates_missing");

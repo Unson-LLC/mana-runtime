@@ -48,7 +48,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:42:01.148Z"
+      "last_revised_at": "2026-08-16T11:55:51.255Z"
     },
     {
       "id": "INV-001",
@@ -113,7 +113,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:42:01.148Z"
+      "last_revised_at": "2026-08-16T11:55:51.255Z"
     },
     {
       "id": "C-002",
@@ -165,7 +165,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:42:01.148Z"
+      "last_revised_at": "2026-08-16T11:55:51.255Z"
     },
     {
       "id": "C-003",
@@ -209,7 +209,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:42:01.148Z"
+      "last_revised_at": "2026-08-16T11:55:51.255Z"
     },
     {
       "id": "INV-002",
@@ -285,7 +285,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T11:42:01.148Z"
+      "last_revised_at": "2026-08-16T11:55:51.255Z"
     },
     {
       "id": "C-004",
@@ -458,12 +458,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T08:00:00.000Z",
-      "last_revised_at": "2026-08-16T11:42:01.148Z"
+      "last_revised_at": "2026-08-16T11:55:51.255Z"
     },
     {
       "id": "C-005",
       "type": "contract",
-      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らず、停止前後にQueueへ到達したrouterファイルも通常処理へ流さずSlackへ理由を表示する。runが0件になった後だけ、受付停止機構を保持した停止版を通常のDeployment Gateで配備する。再開は明示操作とする",
+      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らず、停止前後にQueueへ到達したrouterファイル・保存先選択・やり直しも通常処理や再試行へ流さずACKし、Slackへ停止理由と復旧後の操作案内を表示する。runが0件になった後だけ、受付停止機構を保持した停止版を通常のDeployment Gateで配備する。再開は明示操作とする",
       "origin": {
         "story_refs": [
           {
@@ -526,8 +526,24 @@
             "case": "explains that intake is paused without enqueueing a destination selection"
           },
           {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a queued destination selection instead of retrying it in a disabled Worker"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a queued redo instead of retrying it while intake is paused"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "still acks a blocked command when the private Slack notice fails"
+          },
+          {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
             "case": "explains an intake pause in the source thread"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a blocked queued command privately to the operator"
           }
         ]
       },
@@ -554,14 +570,26 @@
             "must_cover": "intake is paused without enqueueing a destination selection"
           },
           {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "queued destination selection instead of retrying it in a disabled Worker"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "queued redo instead of retrying it while intake is paused"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "blocked command when the private Slack notice fails"
+          },
+          {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
-            "must_cover": "intake pause in the source thread"
+            "must_cover": "blocked queued command privately to the operator"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T11:42:01.148Z",
-      "last_revised_at": "2026-08-16T11:42:01.148Z"
+      "last_revised_at": "2026-08-16T11:55:51.255Z"
     }
   ],
   "planned_test_suites": [
@@ -584,6 +612,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-16T11:42:01.147Z",
-  "previous_spec_id": "2026-08-16T11:13:01.869Z"
+  "generated_at": "2026-08-16T11:55:51.254Z",
+  "previous_spec_id": "2026-08-16T11:42:01.147Z"
 }
