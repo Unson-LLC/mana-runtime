@@ -173,6 +173,29 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).not.toContain("project code is not allowed");
   });
 
+  it("explains a task API authentication failure after sharing minutes without offering task retry", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "completed" as const,
+      slack: { processingTs: "2.1", parentTs: "10.1", postedChunkIndexes: [0] },
+      taskRegistration: { registered: [], failure: {
+        index: 0, stage: "task_registration" as const, code: "unauthorized", status: 401,
+        message: "invalid token", failedAt: "2026-08-15T00:00:00.000Z",
+      } },
+      github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "https://github/minutes" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("議事録は作成・共有済みです");
+    expect(serialized).toContain("Brainbaseの認証設定を確認できませんでした");
+    expect(serialized).toContain("認証情報が未設定、無効、または期限切れです");
+    expect(serialized).not.toContain("プロジェクト紐付け");
+    expect(serialized).not.toContain("タスク処理を再実行");
+    expect(serialized).not.toContain("invalid token");
+    expect(serialized).toContain("保存先をやり直す");
+  });
+
   it("keeps task retry for a transient task integration failure", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

@@ -106,6 +106,44 @@ describe("meeting minutes pipeline", () => {
       taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
   });
 
+  it("discards an unsaved legacy context and generation before retrying with the corrected project", async () => {
+    const fs = new MemoryFs();
+    const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "kartz", taskProjectCodes: ["kartz"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(persisted).toBeDefined();
+    persisted!.destination = legacyKartz;
+    persisted!.status = "failed";
+    persisted!.transcriptSha256 = "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6";
+    persisted!.context = { receiptId: "receipt-legacy", checksum: "checksum-legacy", status: "resolved",
+      mode: "observe", resolvedAt: "2026-08-15T00:00:00.000Z", sourceRefs: [] };
+    persisted!.generated = audited({ title: "旧議事録", overview: "旧概要", body: "旧本文" }, {
+      schema_version: "meeting_minutes_context_receipt.v1", receipt_id: "receipt-legacy",
+      identity: { run_id: selection.runId, project_code: "unson",
+        transcript_sha256: "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6" },
+      status: "resolved", checksum: "checksum-legacy", resolved_at: "2026-08-15T00:00:00.000Z",
+      context: { source_refs: [], open_tasks: [] },
+    });
+    persisted!.failure = { stage: "routed", message: "meeting_minutes_context_project_changed" };
+    await saveMeetingMinutesRun(fs, persisted!);
+
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-kartz", identity, status: "resolved" as const, checksum: "checksum-kartz",
+      resolved_at: "2026-08-16T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const generate = vi.fn().mockResolvedValue({ title: "新議事録", overview: "新概要", body: "新本文" });
+    const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [configuredKartz], resolveContext, generate,
+    }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "kartz" }), undefined);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(run).toMatchObject({ status: "completed", context: { receiptId: "receipt-kartz" },
+      destination: { contextProjectCode: "kartz", taskProjectCodes: ["kartz"] }, generated: { title: "新議事録" } });
+  });
+
   it("keeps an immutable saved Receipt while correcting task bindings on an existing run", async () => {
     const fs = new MemoryFs();
     const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",

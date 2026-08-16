@@ -214,6 +214,12 @@ BrainbaseのProject一覧と照合する認証情報も必要なため、ロー�
 Brainbaseの認可済みProject集合と一括照合します。未登録、権限不足、認証失敗、到達不能のいずれも
 Worker更新前に配備を停止します。
 
+今回のProject紐付けを含む版からrollbackする場合、旧Workerへ戻すだけでは旧`proj_*`や組織単位の
+紐付けも復活し、Brainbase文脈取得・タスク登録が再び失敗します。まず議事録の新規受付を止め、
+処理中runが0件であることを確認します。次にknown-good Workerへ戻し、議事録生成は一時的に
+Brainbase連携なしの縮退運転または停止とします。GitHub保存済みrunのReceiptは書き換えず、未保存runは
+修正版を再配備して正規Projectから文脈を取り直します。最後に全保存先の配備前検査を通してから受付を再開します。
+
 ## Sandbox security boundary
 
 Sandboxの一般インターネット接続は無効で、Anthropic APIと固定の検索合成hostだけを許可します。OAuth Tokenと
