@@ -69,17 +69,23 @@ export function validateMeetingMinutesDestinations(destinations: readonly Meetin
   if (!destinations.length || destinations.length > 25 || destinations.some((item) => !destinationIsValid(item)) ||
     new Set(destinations.map((item) => item.id)).size !== destinations.length ||
     destinations.some((item) => destinations.some((candidate) => candidate.organization.id === item.organization.id &&
-      candidate.organization.name !== item.organization.name))) {
+      candidate.organization.name !== item.organization.name)) ||
+    destinations.some((item) => destinations.some((candidate) => candidate.slackChannelId === item.slackChannelId &&
+      candidate.organization.id !== item.organization.id))) {
     throw new Error("meeting_minutes_destinations_invalid");
   }
 }
 
 function sameDestination(left: MeetingMinutesDestination, right: MeetingMinutesDestination): boolean {
   return left.id === right.id && left.projectId === right.projectId && left.name === right.name &&
-    (!left.organization || (left.organization.id === right.organization.id && left.organization.name === right.organization.name)) &&
     left.slackChannelId === right.slackChannelId && left.github.owner === right.github.owner &&
     left.github.repo === right.github.repo && (left.github.branch ?? "main") === (right.github.branch ?? "main") &&
     (left.github.pathPrefix ?? "") === (right.github.pathPrefix ?? "");
+}
+
+function sameDestinationOrganization(left: MeetingMinutesDestination, right: MeetingMinutesDestination): boolean {
+  return !!left.organization && left.organization.id === right.organization.id &&
+    left.organization.name === right.organization.name;
 }
 
 export async function startMeetingMinutesRuns(fs: WorkspaceFs, event: SlackQueueEvent,
@@ -240,8 +246,12 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     delete run.context;
     delete run.generated;
   }
-  if (run.destination && (JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(configured.taskProjectCodes) ||
+  if (run.destination && (!sameDestinationOrganization(run.destination, configured) ||
+    JSON.stringify(run.destination.taskProjectCodes) !== JSON.stringify(configured.taskProjectCodes) ||
     run.destination.taskBoardTargetId !== configured.taskBoardTargetId || contextProjectChanged)) {
+    // organization is trusted credential-routing metadata. Refresh it when the
+    // immutable Slack/GitHub destination still matches so pre-fix runs can retry.
+    run.destination.organization = structuredClone(configured.organization);
     run.destination.taskProjectCodes = [...configured.taskProjectCodes];
     if (!run.context) run.destination.contextProjectCode = configured.contextProjectCode;
     run.destination.taskBoardTargetId = configured.taskBoardTargetId;

@@ -254,8 +254,11 @@ function meetingMinutesClients(env: Env) {
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
   const destinations = meetingMinutesRuntimeConfig(env).destinations;
   const destinationSlack = (channelId: string) => {
-    const organizationId = destinations.find((destination) => destination.slackChannelId === channelId)
-      ?.organization.id ?? "unson-business";
+    const organizationIds = [...new Set(destinations
+      .filter((destination) => destination.slackChannelId === channelId)
+      .map((destination) => destination.organization.id))];
+    if (organizationIds.length !== 1) throw new Error("meeting_minutes_destination_slack_routing_invalid");
+    const [organizationId] = organizationIds;
     return new MeetingMinutesSlackClient(resolveMeetingMinutesDestinationSlackToken(env, organizationId));
   };
   const taskClient = () => new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",

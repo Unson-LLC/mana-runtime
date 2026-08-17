@@ -1,4 +1,5 @@
-import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
+import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns,
+  validateMeetingMinutesDestinations } from "../meeting-minutes-pipeline.js";
 import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
   MeetingMinutesRedo, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
@@ -46,6 +47,13 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("meeting minutes pipeline", () => {
+  it("rejects ambiguous Slack credential routing across organizations", () => {
+    expect(() => validateMeetingMinutesDestinations([
+      destination,
+      { ...destination, id: "other", organization: { id: "unson-business", name: "雲孫 事業運営" } },
+    ])).toThrow("meeting_minutes_destinations_invalid");
+  });
+
   it("stops a placeholder generation before GitHub, Slack, task, or board side effects", async () => {
     const fs = new MemoryFs();
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
@@ -137,6 +145,66 @@ describe("meeting minutes pipeline", () => {
     expect(postProcessingStatus).toHaveBeenCalledWith(expect.objectContaining({
       sourceChannelId: "CROUTER", sourceThreadTs: "1.1", destination: expect.objectContaining({ id: "mana" }),
     }));
+  });
+
+  it("retries a failed run after only its destination organization routing was corrected", async () => {
+    const fs = new MemoryFs();
+    const legacyDestination = { ...destination,
+      organization: { id: "unson-business", name: "雲孫 事業運営" } };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyDestination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(legacyDestination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.failure = { stage: "github_saved", message: "slack_api_failed:channel_not_found" };
+    persisted.generated = { title: "法務定例", overview: "概要", body: "本文" };
+    persisted.github = { transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
+      transcriptUrl: "https://github/t", minutesUrl: "https://github/m" };
+    persisted.context = { receiptId: "receipt-1", checksum: "checksum-1", status: "resolved", mode: "observe",
+      resolvedAt: "2026-08-17T09:27:00.000Z", sourceRefs: [] };
+    persisted.transcriptSha256 = "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6";
+    await saveMeetingMinutesRun(fs, persisted);
+    const options = resumeOptions();
+
+    const retried = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(retried).toMatchObject({ status: "completed",
+      destination: { organization: { id: "unson", name: "雲孫" } } });
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects a persisted run when its Slack delivery channel changed", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.failure = { stage: "routed", message: "generator down" };
+    await saveMeetingMinutesRun(fs, persisted);
+
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      destinations: [{ ...destination, slackChannelId: "COTHER" }],
+    }))).rejects.toThrow("meeting_minutes_destination_changed");
+  });
+
+  it("still rejects a persisted run when its GitHub delivery path changed", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.failure = { stage: "routed", message: "generator down" };
+    await saveMeetingMinutesRun(fs, persisted);
+
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      destinations: [{ ...destination, github: { ...destination.github, pathPrefix: "other" } }],
+    }))).rejects.toThrow("meeting_minutes_destination_changed");
   });
 
   it("uses the explicit Brainbase context project without changing task or destination identity", async () => {

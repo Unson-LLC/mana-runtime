@@ -493,7 +493,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("download: (fileId) => clients.slack.downloadTextFile(fileId)");
     expect(worker).toContain("classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations)");
     expect(worker).toContain("resolveMeetingMinutesDestinationSlackToken(env, organizationId)");
-    expect(worker).toContain("destinations.find((destination) => destination.slackChannelId === channelId)");
+    expect(worker).toContain(".filter((destination) => destination.slackChannelId === channelId)");
+    expect(worker).toContain('throw new Error("meeting_minutes_destination_slack_routing_invalid")');
     expect(worker).toContain("consumeTaskBoardRepair({");
   });
 
