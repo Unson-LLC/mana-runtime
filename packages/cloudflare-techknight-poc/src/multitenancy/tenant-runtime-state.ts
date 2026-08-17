@@ -158,6 +158,29 @@ class DurableTenantStateStore implements IdempotencyStore {
     });
   }
 
+  async reserveAccountingTimestamp(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+    proposed_at: string;
+  }): Promise<string> {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    return this.storage.transaction(async (transaction) => {
+      const storageKey = `accounting-timestamp:${key}`;
+      const existing = await transaction.get<string>(storageKey);
+      if (existing) return existing;
+      await transaction.put(storageKey, input.proposed_at);
+      return input.proposed_at;
+    });
+  }
+
   async completeAccounting(claim: AccountingLedgerClaim): Promise<void> {
     await this.storage.transaction(async (transaction) => {
       for (const key of claim.entity_keys) {
@@ -190,6 +213,7 @@ export function createDurableTenantStateStore(storage: TenantStateStorage): Idem
 export function createDurableTenantAccountingStore(storage: TenantStateStorage): TenantAccountingLedgerStore {
   const store = new DurableTenantStateStore(storage);
   return {
+    reserve_timestamp: (input) => store.reserveAccountingTimestamp(input),
     claim: (input) => store.claimAccounting(input),
     complete: (claim) => store.completeAccounting(claim),
     release: (claim) => store.releaseAccounting(claim),
@@ -268,6 +292,15 @@ export function createDurableTenantAccountingClient(
   });
   const stub = namespace.get(namespace.idFromName(`accounting:${statePartitionKey}`));
   return {
+    reserve_timestamp: (input) => {
+      if (input.tenant_context.tenant.tenant_id !== tenantId
+        || input.tenant_context.workspace_connection.connection_id
+          !== tenantContext.workspace_connection.connection_id
+        || input.tenant_context.correlation_id !== tenantContext.correlation_id) {
+        deny("durable_object", "CROSS_TENANT_CANDIDATE");
+      }
+      return callState(stub, "accounting/reserve-timestamp", input);
+    },
     claim: (input) => {
       if (input.tenant_context.tenant.tenant_id !== tenantId
         || input.tenant_context.workspace_connection.connection_id
@@ -313,6 +346,10 @@ export class TenantRuntimeStateHandler {
         result = null;
       } else if (url.pathname === "/idempotency/complete") {
         result = await this.#idempotency.complete(input as unknown as IdempotencyCompleteInput);
+      } else if (url.pathname === "/accounting/reserve-timestamp") {
+        result = await this.#accounting.reserve_timestamp(
+          input as unknown as Parameters<TenantAccountingLedgerStore["reserve_timestamp"]>[0],
+        );
       } else if (url.pathname === "/accounting/claim") {
         result = await this.#accounting.claim(input as unknown as Parameters<TenantAccountingLedgerStore["claim"]>[0]);
       } else if (url.pathname === "/accounting/complete") {

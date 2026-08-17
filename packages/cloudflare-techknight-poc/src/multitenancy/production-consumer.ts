@@ -52,6 +52,12 @@ async function recordOperation(input: {
   now: string;
 }): Promise<void> {
   const seed = `${input.tenant_context.correlation_id}:${input.tenant_context.operation_id}`;
+  const receiptId = await createDeterministicSharedId("receipt_", `${seed}:receipt`);
+  const recordedAt = await input.ledger.reserve_timestamp({
+    tenant_context: input.tenant_context,
+    receipt_id: receiptId,
+    proposed_at: input.now,
+  });
   const usageEvent = createUsageEvent({
     usage_event_id: await createDeterministicSharedId("usage_", `${seed}:usage`),
     protocol_version: input.tenant_context.protocol_version,
@@ -70,10 +76,10 @@ async function recordOperation(input: {
     outcome: input.outcome,
     failure_code: input.failure_code,
     unknown_fields: ["observed_units"],
-    observed_at: input.now,
+    observed_at: recordedAt,
   });
   const receipt = createOperationReceipt({
-    receipt_id: await createDeterministicSharedId("receipt_", `${seed}:receipt`),
+    receipt_id: receiptId,
     protocol_version: input.tenant_context.protocol_version,
     tenant_id: input.tenant_context.tenant.tenant_id,
     connection_id: input.tenant_context.workspace_connection.connection_id,
@@ -95,7 +101,7 @@ async function recordOperation(input: {
     reply: input.response_ts
       ? { state: "delivered", reply_count: 1, legacy_reply_count: 0, slack_reply_ts: input.response_ts }
       : { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 },
-    completed_at: input.now,
+    completed_at: recordedAt,
   });
   await writeTenantAccounting({
     tenant_context: input.tenant_context,

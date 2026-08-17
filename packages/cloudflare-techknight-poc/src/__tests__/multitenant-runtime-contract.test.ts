@@ -932,7 +932,9 @@ describe("story-mana-multitenant-runtime contract", () => {
   });
 
   it("two adapter instances share one Durable Object state and execute duplicate once planned Red", async () => {
-    const { createDurableTenantStateStore } = await import("../multitenancy/tenant-runtime-state.js");
+    const { createDurableTenantAccountingStore, createDurableTenantStateStore } =
+      await import("../multitenancy/tenant-runtime-state.js");
+    const { value } = await envelope();
     const values = new Map<string, unknown>();
     interface FixtureStorage {
       get<T>(key: string): Promise<T | undefined>;
@@ -968,5 +970,13 @@ describe("story-mana-multitenant-runtime contract", () => {
     }
     expect(businessEffect).toHaveBeenCalledOnce();
     expect(values.size).toBe(1);
+    const accountingFromFirstIsolate = createDurableTenantAccountingStore(storage);
+    const accountingAfterRestart = createDurableTenantAccountingStore(storage);
+    const receiptId = "receipt_01ARZ3NDEKTSV4RRFFQ69G5FBA";
+    await expect(accountingFromFirstIsolate.reserve_timestamp({ tenant_context: value, receipt_id: receiptId,
+      proposed_at: NOW })).resolves.toBe(NOW);
+    await expect(accountingAfterRestart.reserve_timestamp({ tenant_context: value, receipt_id: receiptId,
+      proposed_at: "2026-08-16T13:02:30.000Z" })).resolves.toBe(NOW);
+    expect(values.size).toBe(2);
   });
 });

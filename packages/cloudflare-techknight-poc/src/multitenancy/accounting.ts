@@ -204,6 +204,11 @@ export type AccountingLedgerResult = AccountingLedgerClaim | { disposition: "dup
 type Awaitable<T> = T | Promise<T>;
 
 export interface TenantAccountingLedgerStore {
+  reserve_timestamp(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+    proposed_at: string;
+  }): Awaitable<string>;
   claim(input: {
     tenant_context: TenantContextEnvelope;
     usage_event_ids: readonly string[];
@@ -217,6 +222,27 @@ export interface TenantAccountingLedgerStore {
 /** Tenant-partitioned in-memory port. A Durable Object implementation can preserve these semantics. */
 export class TenantAccountingLedger implements TenantAccountingLedgerStore {
   readonly #entities = new Map<string, { batch_key: string; state: "claimed" | "written" }>();
+  readonly #timestamps = new Map<string, string>();
+
+  reserve_timestamp(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+    proposed_at: string;
+  }): string {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    const existing = this.#timestamps.get(key);
+    if (existing) return existing;
+    this.#timestamps.set(key, input.proposed_at);
+    return input.proposed_at;
+  }
 
   claim(input: {
     tenant_context: TenantContextEnvelope;
