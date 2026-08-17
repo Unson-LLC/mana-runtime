@@ -11,6 +11,7 @@ const REQUIRED_TEXT_BINDINGS = [
   "MANA_REQUIRED_CAPABILITY_ID",
   "MANA_CREDENTIAL_AUDIENCE",
   "BRAINBASE_RUNTIME_API_TOKEN",
+  "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
 ] as const;
 
 const REQUIRED_HTTPS_BINDINGS = [
@@ -65,6 +66,10 @@ export function assessTenantRuntimeReadiness(
     ? env.MANA_REQUIRED_SLACK_SCOPES.split(",").map((value) => value.trim()).filter(Boolean)
     : [];
   if (scopes.length === 0) missing.push("MANA_REQUIRED_SLACK_SCOPES");
+  if ((env.RUNTIME_TASK_BOARD_ENABLED === "true" || nonEmpty(env.TASK_BOARD_TARGETS_JSON))
+    && !nonEmpty(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)) {
+    missing.push("MANA_TASK_BOARD_SERVICE_ACTOR_ID");
+  }
   const capabilities = new Set(typeof env.MANA_RUNTIME_CAPABILITIES === "string"
     ? env.MANA_RUNTIME_CAPABILITIES.split(",").map((value) => value.trim()).filter(Boolean)
     : []);
