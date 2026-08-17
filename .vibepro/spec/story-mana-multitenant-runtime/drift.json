@@ -1,18 +1,18 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-mana-multitenant-runtime",
-  "spec_id": "2026-08-17T03:19:55.405Z",
-  "evaluated_at": "2026-08-17T05:15:34.233Z",
+  "spec_id": "2026-08-17T05:11:32.683Z",
+  "evaluated_at": "2026-08-17T05:27:33.702Z",
   "status": "drift_detected",
   "summary": {
     "spec_code_drift": 0,
     "spec_test_drift": 0,
     "code_test_drift": 0,
-    "spec_pr_drift": 12
+    "spec_pr_drift": 15
   },
   "items": [
     {
-      "id": "DRIFT-TNBTMZ",
+      "id": "DRIFT-RHX3MY",
       "axis": "spec_pr",
       "clause_id": "C-001",
       "severity": "medium",
@@ -21,7 +21,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-8EJVQ5",
+      "id": "DRIFT-TZT7Z7",
       "axis": "spec_pr",
       "clause_id": "INV-001",
       "severity": "medium",
@@ -30,7 +30,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-DC6NBR",
+      "id": "DRIFT-9PLY32",
       "axis": "spec_pr",
       "clause_id": "INV-003",
       "severity": "medium",
@@ -39,7 +39,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-5L635P",
+      "id": "DRIFT-HXMQ9Z",
       "axis": "spec_pr",
       "clause_id": "C-013",
       "severity": "medium",
@@ -48,7 +48,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-AL5EYB",
+      "id": "DRIFT-BBVRAP",
       "axis": "spec_pr",
       "clause_id": "INV-005",
       "severity": "medium",
@@ -57,7 +57,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-PAVPG5",
+      "id": "DRIFT-J45Y64",
       "axis": "spec_pr",
       "clause_id": "INV-006",
       "severity": "medium",
@@ -66,25 +66,25 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-ZWUZ4W",
+      "id": "DRIFT-YSNGBM",
       "axis": "spec_pr",
       "clause_id": "C-014",
       "severity": "medium",
       "title": "C-014 が参照するコードが PR で変更されている",
-      "detail": "packages/cloudflare-techknight-poc/src/multitenancy/credential-injector.ts, packages/cloudflare-techknight-poc/src/sandbox-runtime.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
+      "detail": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-VPA5KJ",
+      "id": "DRIFT-V6WVF2",
       "axis": "spec_pr",
       "clause_id": "INV-007",
       "severity": "medium",
       "title": "INV-007 が参照するコードが PR で変更されている",
-      "detail": "packages/cloudflare-techknight-poc/src/multitenancy/credential-injector.ts, packages/cloudflare-techknight-poc/src/sandbox-runtime.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
+      "detail": "packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-LF7VE5",
+      "id": "DRIFT-7DDW5U",
       "axis": "spec_pr",
       "clause_id": "C-015",
       "severity": "medium",
@@ -93,7 +93,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-AP9REQ",
+      "id": "DRIFT-DF7SU6",
       "axis": "spec_pr",
       "clause_id": "C-016",
       "severity": "medium",
@@ -102,7 +102,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-S94BDD",
+      "id": "DRIFT-PYCQV5",
       "axis": "spec_pr",
       "clause_id": "C-010",
       "severity": "medium",
@@ -111,12 +111,39 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-TDYAWJ",
+      "id": "DRIFT-8YT58D",
       "axis": "spec_pr",
       "clause_id": "C-017",
       "severity": "medium",
       "title": "C-017 が参照するコードが PR で変更されている",
       "detail": "packages/cloudflare-techknight-poc/src/index.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
+      "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
+    },
+    {
+      "id": "DRIFT-PEEBFW",
+      "axis": "spec_pr",
+      "clause_id": "C-002",
+      "severity": "medium",
+      "title": "C-002 が参照するコードが PR で変更されている",
+      "detail": "packages/cloudflare-techknight-poc/src/index.ts, packages/cloudflare-techknight-poc/src/index.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
+      "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
+    },
+    {
+      "id": "DRIFT-V2KA99",
+      "axis": "spec_pr",
+      "clause_id": "C-003",
+      "severity": "medium",
+      "title": "C-003 が参照するコードが PR で変更されている",
+      "detail": "packages/cloudflare-techknight-poc/src/multitenancy/runtime-boundaries.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
+      "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
+    },
+    {
+      "id": "DRIFT-AUAQ7E",
+      "axis": "spec_pr",
+      "clause_id": "INV-008",
+      "severity": "medium",
+      "title": "INV-008 が参照するコードが PR で変更されている",
+      "detail": "packages/cloudflare-techknight-poc/src/multitenancy/idempotency.ts, packages/cloudflare-techknight-poc/src/multitenancy/accounting.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない",
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     }
   ]
