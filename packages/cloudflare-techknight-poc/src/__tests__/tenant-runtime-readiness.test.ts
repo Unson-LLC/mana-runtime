@@ -92,6 +92,14 @@ describe("tenant runtime readiness", () => {
       ready: false,
       missing_bindings: ["BRAINBASE_TENANT_RUNTIME_HOST"],
     });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_TENANT_RUNTIME_HOST: "*",
+      BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK: "1",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_TENANT_RUNTIME_HOST"],
+    });
   });
 
   it("requires a service actor whenever TaskBoard scheduling is enabled", () => {
