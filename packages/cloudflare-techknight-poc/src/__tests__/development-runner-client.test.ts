@@ -16,6 +16,8 @@ function input(overrides: Record<string, unknown> = {}) {
     credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
     githubCredentialLeaseHandle: "github_lease_handle_abcdefghijklmnopqrs",
     tenantBoundaryHandle: "tb_opaque_operation_handle_1234567890",
+    contextExpiresAt: "2026-08-17T10:04:05.000Z",
+    now: () => "2026-08-17T10:00:00.000Z",
     callbackBaseUrl: "https://worker.example.com",
     createSandbox: vi.fn(),
     ...overrides,
@@ -23,6 +25,33 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runCloudflareDevelopmentRequest", () => {
+  it("bounds the asynchronous process lifetime below the signed tenant context expiry", async () => {
+    const startProcess = vi.fn(async () => ({ id: "development-Ev1" }));
+    const createSandbox = vi.fn(() => ({
+      writeFile: vi.fn(async () => undefined),
+      startProcess,
+    }));
+
+    await runCloudflareDevelopmentRequest(input({ createSandbox }));
+
+    expect(startProcess.mock.calls[0]![1]).toEqual(expect.objectContaining({ timeout: 240_000 }));
+  });
+
+  it("fails closed before launch when the signed tenant context cannot cover process startup", async () => {
+    const startProcess = vi.fn(async () => ({ id: "development-Ev1" }));
+    const createSandbox = vi.fn(() => ({
+      writeFile: vi.fn(async () => undefined),
+      startProcess,
+    }));
+
+    await expect(runCloudflareDevelopmentRequest(input({
+      contextExpiresAt: "2026-08-17T10:00:04.999Z",
+      createSandbox,
+    }))).rejects.toThrow("development_tenant_context_expiring");
+    expect(createSandbox).not.toHaveBeenCalled();
+    expect(startProcess).not.toHaveBeenCalled();
+  });
+
   it("stores a bounded job and starts the bundled runner asynchronously", async () => {
     const writeFile = vi.fn(async (_path: string, _content: string) => undefined);
     const startProcess = vi.fn(async (_command: string, _options: Record<string, unknown>) => ({ id: "development-Ev1" }));
