@@ -898,6 +898,33 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(source.slice(ingressEnd)).not.toContain("if (replyPersisted)");
   });
 
+  it("Meeting Minutes and interaction HTTP clients use only tenant credential fetch", () => {
+    const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const clientsStart = source.indexOf("function meetingMinutesClients(");
+    const clientsEnd = source.indexOf("function requiredRuntimeBinding", clientsStart);
+    const clients = source.slice(clientsStart, clientsEnd);
+    expect(clients).toContain("createTenantCredentialFetch");
+    expect(clients).not.toContain("env.SLACK_BOT_TOKEN");
+    expect(clients).not.toContain("env.GITHUB_TOKEN");
+    expect(clients).not.toContain("env.BRAINBASE_TASK_API_TOKEN");
+    expect(clients).not.toContain("env.BRAINBASE_GRAPH_API_TOKEN");
+    expect(clients).not.toContain("resolveMeetingMinutesDestinationSlackToken");
+
+    const interactionsStart = source.indexOf('url.pathname === "/slack/interactions"');
+    const interactionsEnd = source.indexOf('url.pathname === "/slack/commands"', interactionsStart);
+    const interactions = source.slice(interactionsStart, interactionsEnd);
+    expect(interactions).toContain("createTaskWriteProxyHandler(tenantFetch)");
+    expect(interactions).not.toContain("env.BRAINBASE_TASK_API_TOKEN");
+    expect(interactions).not.toContain("env.BRAINBASE_GRAPH_API_TOKEN");
+    expect(interactions).not.toContain("resolveMeetingMinutesDestinationSlackToken");
+  });
+
+  it("does not expose a raw TaskBoard queue consumer with static tenant fallback", () => {
+    const source = readFileSync(new URL("../task-runtime-entrypoints.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("consumeTaskBoardRepair");
+    expect(source).not.toContain("env.TENANT_ID");
+  });
+
   it("publishes recovery only as a canonical tenant queue body and rejects legacy recovery", () => {
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
     const selectionStart = source.indexOf("async function processTenantMeetingMinutesSelection");

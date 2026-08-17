@@ -99,9 +99,10 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       headers: { "content-type": "application/json" },
     }));
     const slackDelivery = vi.fn<TenantInteractionEffects["slackDelivery"]>(
-      async (_effectId, _target, _event, execute) => execute(),
+      async (_effectId, _target, _event, execute) => (
+        execute as unknown as (fetchImpl: typeof fetch) => Promise<void>
+      )(slackUpdate as typeof fetch),
     );
-    vi.stubGlobal("fetch", slackUpdate);
     const deferred: Promise<unknown>[] = [];
     const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T1", SLACK_EXPECTED_APP_ID: "A1",
       MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C1", MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
@@ -126,7 +127,6 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       method: "POST", body: JSON.stringify({ channel_id: "C1", thread_ts: "1.0",
         status: "議事録を作成しています…（ボード定例）" }),
     }));
-    vi.unstubAllGlobals();
   });
 
   it("updates the selector to trusted projects and does not enqueue an organization choice", async () => {
