@@ -103,7 +103,7 @@
     {
       "id": "C-102",
       "type": "contract",
-      "statement": "TenantContextEnvelopeはcanonical snake_caseで、schema_version:'1.0'、protocol_id:'mana-brainbase-tenant-context'、protocol_version:'1.0'、issuer:'brainbase'、audience:string[]、tenant:{tenant_id:'ten_'+ULID,tenant_revision:string}、workspace_connection:{connection_id:'wsc_'+ULID,connection_revision:string,provider:'slack',installation_id:string,workspace_id:string,app_id:string,status:'active'}、actor:{principal_id:string,principal_type:'person'|'service',authenticated_subject_id:string,delegated_by?:string}、authorization:{organization_ids:string[],project_ids:string[],data_scopes:string[],capability_ids:string[]}、placement:{deployment_id:'dep_'+ULID,profile:'shared_cloud'|'dedicated_cloud'|'customer_managed_oss'}、slack:{event_id:string,channel_id:string,enterprise_id?:string,thread_ts?:string,requester_id?:string}、correlation_id:'cor_'+ULID、operation_id:'op_'+ULID、idempotency_key:'ik1_'+base64url、contract_revision:string、credential:{mode:'cloud_standard'|'customer_oauth'|'customer_api',credential_ref:string,billing_principal_id:string}、issued_at、expires_at、integrity:{method:'jws_detached',algorithm:'EdDSA',key_id:string,value:string}を必須とする。integrityを除くJSONをRFC 8785 JCSでcanonicalizeし、BrainbaseのEd25519 detached compact JWS（protected header alg=EdDSA、kid、typ='application/mana-tenant-context+jws'）で検証する。TTLは300秒以下、clock skewは30秒以下とし、validatorはfieldを変更・補完・延命しない。raw secret類は禁止する。",
+      "statement": "TenantContextEnvelopeはcanonical snake_caseでPR #237のschema.jsonとreference/types.tsのexact object schemaを満たし、全revisionは/^(0|[1-9][0-9]*)$/のcanonical decimal stringとする。integrityを除くJSONをRFC 8785 JCSでcanonicalizeし、RFC 7797 unencoded payloadのEd25519 detached compact JWSを検証する。protected headerは{alg:'EdDSA',b64:false,crit:['b64'],kid:key_id,typ:'application/mana-brainbase-tenant-context+jws'}の5 keyだけを許可し、key追加、順序・値・kid不一致、非canonical base64urlを拒否する。TTLは1〜300秒、clock skewは±30秒とし、validatorはfieldを変更・補完・延命しない。raw secret類は禁止する。",
       "origin": {
         "story_refs": [
           { "kind": "acceptance_criteria", "ac_id": "AC-7" }
@@ -158,7 +158,7 @@
     {
       "id": "C-105",
       "type": "contract",
-      "statement": "idempotency_keyはLP(v)=uint32be(UTF8 byte length)+UTF8として、'ik1_'+base64url_no_padding(SHA-256(LP(protocol_id)||LP(protocol_major)||LP(tenant_id)||LP(connection_id)||LP(slack_event_id)||LP(operation_id)))で生成する。IdempotencyClaim {key,tenant_id,connection_id,slack_event_id,operation_id,context_hash,payload_hash,state:'pending'|'claimed'|'succeeded'|'failed_terminal',lease_until?,result_ref?,connection_revision,updated_at}をtenant partition内で原子的にclaimし、terminal stateを30日以上保持する。Brainbase writeとSlack deliveryは同じcorrelation配下の別operation_idで最大1回にする。retryは同じkeyを維持し、claim後のcontext_hashまたはpayload_hash不一致はIDEMPOTENCY_CONFLICT、revision変更はfresh contextへ再解決する。",
+      "statement": "idempotency_keyはLP(v)=uint32be(UTF8 byte length)+UTF8として、'ik1_'+base64url_no_padding(SHA-256(LP(protocol_id)||LP(protocol_major)||LP(tenant_id)||LP(connection_id)||LP(slack_event_id)||LP(operation_id)))で生成する。IdempotencyClaimはmessage_type:'idempotency_claim'、owner、scope、tenant_id、connection_id、slack_event_id、operation_id、idempotency_key、context_hash、payload_hash、state、retention_untilのexact schemaとする。Brainbaseだけがcredential_lease、quota_decision、business_effect、usage_receiptを所有し、mana_runtimeはqueue_executionとslack_deliveryだけを所有する。claimはtenant partition内で原子的に行い、Brainbase writeとSlack deliveryは同じcorrelation配下の別operation_idで最大1回にする。retryは同じkeyを維持し、owner/key/context_hash/payload_hash不一致をbusiness API前に拒否する。",
       "origin": {
         "story_refs": [
           { "kind": "acceptance_criteria", "ac_id": "AC-10" }
@@ -317,7 +317,7 @@
     {
       "id": "C-301",
       "type": "contract",
-      "statement": "CredentialBrokerClient.acquire_lease({tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref})はCredentialLease {lease_id,credential_ref,tenant_id,connection_id,connection_revision,operation_id,audience,credential_mode,issued_at,expires_at,max_uses:1}またはCredentialErrorを返す。入口解決結果とauthoritative expected revisionをlease直前に再照合し、Brainbaseだけが所有するopaque credential_refを使用する。leaseは60秒以下、operation/audience-bound、single-useとし、trusted volatile injectorだけがraw secretへ交換してheader/envへ注入する。mana-runtimeはrefresh token、OAuth refresh state、credential本文を保存・更新しない。",
+      "statement": "CredentialBrokerClient.acquire_leaseはCredentialLeaseRequest {message_type:'credential_lease_request',protocol_version:'1.0',binding:{tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref},requested_ttl_seconds:1..60}だけを送る。応答はCredentialLeaseResponse {message_type:'credential_lease_response',protocol_version:'1.0',lease_id:'lease_'+ULID,contract_revision,binding,issued_at,expires_at,max_uses:1,lease_token:opaque}のexact schemaとし、全binding、contract_revision、TTL、時刻、single-useを検証する。入口解決結果とauthoritative expected revisionをlease直前に再照合し、Brainbaseだけが所有するopaque credential_refを使用する。trusted volatile injectorだけがlease_tokenをraw secretへ交換し、mana-runtimeはrefresh token、OAuth refresh state、credential本文を保存・更新しない。",
       "origin": {
         "story_refs": [
           { "kind": "acceptance_criteria", "ac_id": "AC-16" },
@@ -401,7 +401,7 @@
     {
       "id": "C-401",
       "type": "contract",
-      "statement": "UsageEvent {usage_event_id,protocol_version:'1.0',tenant_id,connection_id,connection_revision,contract_revision,deployment_id,correlation_id,operation_id,idempotency_key,kind,quantity:number|null,unit,outcome:'succeeded'|'failed'|'cancelled'|'timed_out',collection_state:'collected'|'partial'|'not_collected',failure_code,observed_at}を各実消費点から発行する。OperationReceipt {receipt_id,protocol_version:'1.0',tenant_id,connection_id,connection_revision,contract_revision,deployment_id,correlation_id,operation_ids,idempotency_keys,actor_principal_id,project_id,capability_id,quota_decision,credential_mode,outcome,failure_code,usage:{collection_state,observed_units,unknown_fields},reply:{state}}を副作用結果としてBrainbaseへ送る。失敗時も既知quantityを記録し、取得不能はnot_collected、部分取得はpartialとして0と区別する。取得済み0件はsucceeded/collected/observed_units=0/NO_DATAとする。Brainbase write直前にrevisionを再確認し、usage_event_idとreceipt_idをtenant ledgerで重複排除する。",
+      "statement": "UsageEventはPR #237のexact schema（message_type:'usage_event'、usage_event_id、protocol_version、tenant/connection/contract/deployment/correlation/operation/idempotency、kind、quantity、unit、collection_state、outcome、failure_code:string|null、unknown_fields:string[]、observed_at）で各実消費点から発行する。OperationReceiptもexact schema（message_type:'operation_receipt'、receipt_id、同一scope、operation_ids、idempotency_keys、actor/project/capability/quota/credential、collection_state、outcome、failure_code、usage_event_ids、reply:{state,reply_count,legacy_reply_count,slack_reply_ts?}、completed_at）でBrainbaseへ送る。collection_stateとoutcomeは独立し、not_collectedはquantity=null、partialはunknown_fields非空、collectedの0はNO_DATAとして0と未取得を区別する。Brainbase write直前にauthoritative revisionを再確認し、usage_event_idとreceipt_idをtenant ledgerで重複排除する。",
       "origin": {
         "story_refs": [
           { "kind": "acceptance_criteria", "ac_id": "AC-21" },
@@ -429,7 +429,7 @@
     {
       "id": "C-402",
       "type": "contract",
-      "statement": "QuotaDecision {tenant_id,contract_revision,metric,consumed,limit,ratio_basis_points,decision:'allowed'|'warning'|'hard_stopped'|'approval_required'|'unavailable',overage_policy:'deny'|'allow_and_bill'|'allow_with_approval',warning_thresholds_basis_points:number[],retry_after?,decision_id}をLLM/tool/Container起動前に現行Brainbase contractから取得する。thresholdとoverage policyはrevision付き正本値だけを使い、runtime defaultで補わない。quota stateとdecision cacheはtenant partitionに置き、Tenant Aのhard_stoppedはAの新規operationだけを止めTenant Bへ波及させない。quota拒否をQUOTA_EXCEEDED、正本取得不能をUPSTREAM_UNAVAILABLEとしてoutcomeとcollection_stateから分離する。",
+      "statement": "QuotaDecision {message_type:'quota_decision',tenant_id,contract_revision,quota_revision,decision:'allowed'|'warning'|'hard_stopped'|'approval_required'|'unavailable',limit:number|null,used:number|null,remaining:number|null,unit,window_started_at,window_ends_at,decided_at,failure_code?:string|null}をLLM/tool/Container起動前に現行Brainbase contractから取得する。全revisionをcanonical decimal stringとして検証し、runtime defaultで補わない。quota stateとdecision cacheはtenant partitionに置き、Tenant Aのhard_stoppedはAの新規operationだけを止めTenant Bへ波及させない。quota拒否をQUOTA_EXCEEDED、正本取得不能をUPSTREAM_UNAVAILABLEとしてoutcomeとcollection_stateから分離する。",
       "origin": {
         "story_refs": [
           { "kind": "acceptance_criteria", "ac_id": "AC-22" },
@@ -482,7 +482,7 @@
     {
       "id": "C-900",
       "type": "contract",
-      "statement": "positive fixture contracted-active-v1はactive connection、protocol 1.0、shared_cloud、customer_oauth、quota allowedを与え、tenant/connection/revision/credential lease/Brainbase write/usage/Slack deliveryが同じcorrelationで各1回完了する。negative fixturesはINV-204の全失敗codeと、collection_state/outcome分離、tenant変更Container destroy、single-use lease、queue／delivery idempotencyを網羅する。non-applicable fixture customer-managed-oss-optional-cloud-opsはoptional capabilityだけを理由付きnon_applicableとし、全mandatory contractを実行してcredentialやprotocolをfallbackしない。横断契約D-001〜D-009はmana-runtime PR #237 HEAD ba1942e15935e00d1c603f57284439384bc95cacを正本とし、本Specのopen questionは0件である。TDDは各planned Redを先に追加して意図した未実装理由で失敗させ、その後に最小Greenを実装する。",
+      "statement": "mana-runtime consumer conformanceはPR #237 HEAD 37dd9f5eee783b9b3ba94c31c9c7e32f7afa3351のcontracts/mana-brainbase-tenant-context/v1を固定入力とし、manifest記載のfixture 18件を複製せず直接読む。fixture set SHA-256は81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454と一致しなければ実行しない。positive 1件はschema、exact protected header、RFC 8785+Ed25519、TTL/skew、revision、protocol/capability、credential lease、quota/usage/Receipt/idempotencyを全検証後に受理し、negative 16件はexpected_codeでbusiness API前に拒否し、non-applicable 1件は必須capability waiver 0・fallback 0を確認する。横断契約D-001〜D-009とschema/reference implementationを正本とし、本Specのopen questionは0件である。TDDはcanonical manifest adapter Redを意図した未実装理由で固定した後に最小Greenを実装する。",
       "origin": {
         "story_refs": [
           { "kind": "acceptance_criteria", "ac_id": "AC-1" },
