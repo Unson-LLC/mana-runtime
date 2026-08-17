@@ -3,7 +3,7 @@ import type { SlackQueueEvent } from "./types.js";
 
 const COMMANDS = new Set(["/vibepro", "/ryoko-develop"]);
 export async function handleSlackCommandRequest(request: Request, options: {
-  signingSecret: string; expectedTeamId: string;
+  signingSecret: string;
   placements: ReadonlyArray<{ channelId: string; allowedUserIds: readonly string[] }>;
   nowMs?: number; send(event: Omit<SlackQueueEvent, "tenantId">): Promise<unknown>;
 }): Promise<Response> {
@@ -15,7 +15,6 @@ export async function handleSlackCommandRequest(request: Request, options: {
   const teamId = form.get("team_id") ?? ""; const channelId = form.get("channel_id") ?? "";
   const userId = form.get("user_id") ?? ""; const command = form.get("command") ?? "";
   const triggerId = form.get("trigger_id") ?? ""; const text = (form.get("text") ?? "").trim();
-  if (teamId !== options.expectedTeamId) return Response.json({ error: "slack_team_forbidden" }, { status: 403 });
   const placement = options.placements.find((candidate) => candidate.channelId === channelId);
   if (!COMMANDS.has(command) || !placement?.allowedUserIds.includes(userId)) {
     return Response.json({ response_type: "ephemeral", text: "このコマンドを実行する権限がありません。" }, { status: 200 });

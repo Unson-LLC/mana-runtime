@@ -1514,7 +1514,6 @@ export default {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       const developmentPlacements = placements.filter((placement) => placement.developmentEnabled === true);
       return handleSlackCommandRequest(request, { signingSecret: env.SLACK_SIGNING_SECRET,
-        expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
         placements: developmentPlacements.map((placement) => ({ channelId: placement.channelId,
           allowedUserIds: placement.audience?.allowedUserIds ?? [] })),
         send: async (event) => {
