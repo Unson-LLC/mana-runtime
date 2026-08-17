@@ -12,6 +12,7 @@ Slackへ議事録ファイルを投稿した利用者として、Cloudflare Work
 - [x] AC4: 同じClaude session内のHookは同じ`turn_id`を利用する。
 - [x] AC5: SandboxへBrainbase bearer tokenを渡さず、Workerのsynthetic-host proxyだけがHook認証情報と`mana-runtime` project bindingを付与する。
 - [x] AC6: 既存の議事録JSON解析、GitHub保存、タスク登録、Slack共有、および議事録以外のClaude実行契約を変更しない。
+- [x] AC7: Receipt取得前の保存先自動判定も同じ議事録用Claude実行境界を使い、モデル用Brainbase MCPを公開せず、候補外・判定不能時は既存の手動選択へ戻す。
 
 ## 成功指標
 

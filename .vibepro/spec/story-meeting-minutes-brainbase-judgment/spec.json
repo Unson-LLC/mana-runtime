@@ -19,6 +19,10 @@
           {
             "kind": "acceptance_criteria",
             "ac_id": "AC-2"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
           }
         ],
         "architecture_refs": [
@@ -39,10 +43,14 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/claude-runtime-config.test.ts",
           "case": "story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 story-meeting-minutes-brainbase-context:ac:8 enables command Hooks without exposing model-initiated Brainbase MCP for meeting-minutes"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "classifies a bounded transcript in an isolated Sandbox"
           }
         ]
       },
-      "verifiable_by": {"test_pattern":[{"file_glob":"packages/cloudflare-techknight-poc/src/__tests__/claude-runtime-config.test.ts","must_cover":"story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 story-meeting-minutes-brainbase-context:ac:8 enables command Hooks without exposing model-initiated Brainbase MCP for meeting-minutes"}]},
+      "verifiable_by": {"test_pattern":[{"file_glob":"packages/cloudflare-techknight-poc/src/__tests__/claude-runtime-config.test.ts","must_cover":"story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 story-meeting-minutes-brainbase-context:ac:8 enables command Hooks without exposing model-initiated Brainbase MCP for meeting-minutes"},{"file_glob":"packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts","must_cover":"classifies a bounded transcript in an isolated Sandbox"}]},
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
       "last_revised_at": "2026-08-14T10:00:15.628Z"
@@ -82,7 +90,7 @@
       "last_revised_at": "2026-08-14T10:00:15.628Z"
     },
     {
-      "id": "S-002",
+      "id": "S-001",
       "type": "scenario",
       "statement": "3つのHook eventは同じturn identityで中央処理され、1 MiB超の入力、中央障害、または要求と束縛されない応答では生成を停止する",
       "origin": {
@@ -164,7 +172,7 @@
       "covers": [
         "command",
         "proxy",
-        "MCP config",
+        "model MCP config absence",
         "Docker assets"
       ]
     },

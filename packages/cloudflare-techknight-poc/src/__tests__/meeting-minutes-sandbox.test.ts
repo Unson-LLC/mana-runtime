@@ -247,6 +247,11 @@ describe("classifyMeetingMinutesDestinationInSandbox", () => {
       expect.objectContaining({ timeout: 60_000 }));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining('"required":["projectId","reason"]'),
       expect.any(Object));
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(
+      "/tmp/mana-meeting-minutes-mcp.json",
+      expect.anything(),
+    );
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--mcp-config"), expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ Claude Codeのcommand Hooksを薄い転送層としてContainerへ配置する�
 
 ## データフロー
 
+0. Receipt取得前の保存先自動判定は、候補一覧と文字起こしだけを議事録用Claudeへ渡す。モデル用Brainbase MCPは公開せず、候補外・判定不能時は既存の手動選択へ戻す。
 1. WorkerがBrainbaseから正規の議事録文脈Receiptを取得・検証し、その内容とidentityを議事録promptへ固定してSandboxへ書く。モデル用Brainbase MCP configは書かない。
 2. Claude Codeは専用settingsを読み、`UserPromptSubmit`を転送する。
 3. Sandboxのsynthetic host proxyがBearerと`mana-runtime` bindingを付け、Brainbaseへ送る。
