@@ -385,7 +385,7 @@ export async function generateClaudeReply(
     try {
       judgment = parseReplyJudgmentStream(result.stdout);
     } catch (error) {
-      const code = error instanceof Error && /^reply_judgment_[a-z_]+$/.test(error.message)
+      const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
         ? error.message
         : "reply_judgment_stream_invalid";
       throw new ReplyPipelineError(code);

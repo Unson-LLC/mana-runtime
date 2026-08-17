@@ -462,6 +462,29 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
   });
 
+  it("preserves safe judgment diagnostics containing HTTP status digits", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox, fetchMock } = harness();
+    sandbox.exec.mockResolvedValue({
+      success: true,
+      stdout: JSON.stringify({
+        type: "system",
+        subtype: "hook_response",
+        hook_event: "UserPromptSubmit",
+        exit_code: 2,
+        outcome: "error",
+        stderr: "judgment_hook_http_500",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toMatchObject({
+      code: "reply_judgment_hook_failed_judgment_hook_http_500",
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
+  });
+
   it("reuses the deterministic Slack client message ID after a post-success receipt failure", async () => {
     class FailCompletedReceiptOnceFs extends MemoryFs {
       private shouldFail = true;
