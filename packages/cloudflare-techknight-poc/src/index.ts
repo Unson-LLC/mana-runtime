@@ -692,11 +692,40 @@ export default {
     if (request.method === "POST" && url.pathname === "/slack/commands") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       const developmentPlacements = placements.filter((placement) => placement.developmentEnabled === true);
-      return handleSlackCommandRequest(request, { signingSecret: env.SLACK_SIGNING_SECRET, tenantId: env.TENANT_ID,
+      return handleSlackCommandRequest(request, { signingSecret: env.SLACK_SIGNING_SECRET,
         expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
         placements: developmentPlacements.map((placement) => ({ channelId: placement.channelId,
           allowedUserIds: placement.audience?.allowedUserIds ?? [] })),
-        send: (event) => env.TECHKNIGHT_EVENTS.send(event) });
+        send: async (event) => {
+          const clients = tenantRuntimeClients(env);
+          const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+            .split(",").map((value) => value.trim()).filter(Boolean);
+          const resolved = await resolveSlackWorkerIngress({
+            identity: {
+              provider: "slack",
+              app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+              workspace_id: event.workspaceId,
+              event_id: event.eventId,
+              channel_id: event.channelId,
+              thread_ts: event.threadTs,
+              requester_id: event.userId ?? "",
+            },
+            required_scopes: requiredScopes,
+            required_authorization: {
+              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            },
+            authority: clients.authority,
+            now: event.receivedAt,
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          return env.TECHKNIGHT_EVENTS.send({
+            schema_version: "1.0",
+            tenant_context: resolved.tenant_context,
+            payload: { ...event, tenantId: resolved.tenant_context.tenant.tenant_id },
+          });
+        } });
     }
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
       return Response.json({ error: "not_found" }, { status: 404 });
