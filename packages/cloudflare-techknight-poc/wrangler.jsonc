@@ -13,6 +13,9 @@
     "RUNTIME_CLAUDE_MODEL": "opus",
     "RUNTIME_CLAUDE_EFFORT": "xhigh",
     "MANA_DEPLOYMENT_PROFILE": "shared_cloud",
+    "BRAINBASE_TENANT_RUNTIME_ENABLED": "1",
+    "BRAINBASE_TENANT_RUNTIME_HOST": "127.0.0.1",
+    "BRAINBASE_TENANT_RUNTIME_PORT": "31016",
     "MANA_CREDENTIAL_AUDIENCE": "api.anthropic.com",
     "MANA_RUNTIME_CAPABILITIES": "signed_tenant_context,connection_revision_recheck,tenant_scoped_authorization,credential_broker_v1,usage_receipt_v1,idempotent_effects_v1,container_sanitization_v1"
   },

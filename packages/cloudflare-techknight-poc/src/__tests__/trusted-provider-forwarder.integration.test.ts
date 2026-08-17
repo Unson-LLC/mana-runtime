@@ -191,6 +191,72 @@ const FORWARD_CASES: ForwardCase[] = [
 ];
 
 describe("Brainbase trusted provider forwarder HTTP integration", () => {
+  it("materializes provider credentials only inside the trusted service before a successful provider request", async () => {
+    const providerCredential = "provider-secret-confined-to-brainbase-test-service";
+    let providerHeaders: Record<string, string | string[] | undefined> | undefined;
+    const providerPort = await listen((request, response) => {
+      providerHeaders = request.headers;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ id: "msg-a", type: "message" }));
+    });
+    let trustedWireBody: Record<string, unknown> | undefined;
+    const trustedPort = await listen((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        void (async () => {
+          trustedWireBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+          const upstream = await fetch(`http://127.0.0.1:${providerPort}/v1/messages`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-api-key": providerCredential,
+              "brainbase-provider-operation": String(trustedWireBody.provider_operation),
+            },
+            body: JSON.stringify((trustedWireBody.request as { body: unknown }).body),
+          });
+          response.writeHead(upstream.status, { "content-type": "application/json" });
+          response.end(JSON.stringify({
+            provider: "anthropic",
+            operation_id: BINDING.operation_id,
+            provider_operation: trustedWireBody.provider_operation,
+            status: upstream.status,
+            response_encoding: "json",
+            content_type: upstream.headers.get("content-type"),
+            body: await upstream.json(),
+          }));
+        })().catch((error: unknown) => {
+          response.writeHead(500, { "content-type": "application/problem+json" });
+          response.end(JSON.stringify({ code: "test_trusted_service_failure", detail: String(error) }));
+        });
+      });
+    });
+    const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
+      env: {
+        ...BASE_ENV,
+        BRAINBASE_TENANT_RUNTIME_PORT: String(trustedPort),
+        BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN,
+      },
+      tenant_context: TENANT_CONTEXT,
+    });
+
+    const response = await forwarder.forward({
+      lease: LEASE,
+      expected_binding: BINDING,
+      request: jsonRequest("https://api.anthropic.com/v1/messages", "POST", { messages: [] }),
+      now: "2026-08-17T01:00:01.000Z",
+    });
+
+    expect(response.status).toBe(200);
+    const responseText = await response.text();
+    expect(JSON.parse(responseText)).toEqual({ id: "msg-a", type: "message" });
+    expect(JSON.stringify(trustedWireBody)).not.toContain(providerCredential);
+    expect(providerHeaders?.["x-api-key"]).toBe(providerCredential);
+    expect(providerHeaders?.authorization).toBeUndefined();
+    expect(providerHeaders?.["brainbase-provider-operation"]).toBe("anthropic.messages.create");
+    expect(responseText).not.toContain(providerCredential);
+  });
+
   it.each(FORWARD_CASES)("maps $label to the exact trusted wire without provider credentials", async (testCase) => {
     let observed: { headers: Record<string, string | string[] | undefined>; body: Record<string, unknown>; url?: string } | undefined;
     const port = await listen((request, response) => {

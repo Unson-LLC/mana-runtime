@@ -19,7 +19,10 @@ import {
   type UnsignedTenantContextEnvelope,
   type WorkspaceConnectionSnapshot,
 } from "../multitenancy/index.js";
-import type { TrustedProviderForwarder } from "../multitenancy/trusted-provider-forwarder.js";
+import {
+  createBrainbaseTrustedProviderForwarderFromEnv,
+  type TrustedProviderForwarder,
+} from "../multitenancy/trusted-provider-forwarder.js";
 import {
   authorizeTenantProviderOutbound,
   tenantCredentialFetchForResolvedContext,
@@ -142,39 +145,70 @@ class TenantRuntimeNamespace {
 function trustedForwarderForTest(
   namespace: TenantRuntimeNamespace,
   materialByOpaqueHandle: ReadonlyMap<string, string>,
+  tenantContext: TenantContextEnvelope,
 ): TrustedProviderForwarder {
-  return {
-    async forward({ lease, expected_binding, request, now }) {
-      const material = materialByOpaqueHandle.get(lease.lease_token);
+  return createBrainbaseTrustedProviderForwarderFromEnv({
+    env: {
+      BRAINBASE_TENANT_RUNTIME_ENABLED: "1",
+      BRAINBASE_TENANT_RUNTIME_PORT: "31016",
+      BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "brainbase-service-token-placeholder",
+      BRAINBASE_TASK_API_BASE_URL: "https://tasks.example.test",
+      BRAINBASE_GRAPH_API_BASE_URL: "https://graph.example.test",
+      BRAINBASE_MCP_BASE_URL: "https://mcp.example.test",
+      GOOGLE_DRIVE_MCP_BASE_URL: "https://drive.example.test",
+      NOCODB_URL: "https://nocodb.example.test",
+    },
+    tenant_context: tenantContext,
+    fetch_impl: async (requestInfo, init) => {
+      const request = new Request(requestInfo, init);
+      const input = await request.json() as {
+        tenant_context: TenantContextEnvelope;
+        lease_id: string;
+        lease_token: string;
+        audience: string;
+        provider_operation: string;
+        request: unknown;
+      };
+      expect(request.url).toBe("http://127.0.0.1:31016/api/v1/runtime/provider-requests:forward");
+      expect(request.headers.get("authorization")).toBe("Bearer brainbase-service-token-placeholder");
+      expect(request.headers.get("brainbase-protocol-version")).toBe("1.0");
+      expect(input.tenant_context).toEqual(tenantContext);
+      const material = materialByOpaqueHandle.get(input.lease_token);
       if (!material) throw new Error("trusted_materialization_unavailable");
-      if (Date.parse(now) >= Date.parse(lease.expires_at)) {
-        throw new Error("trusted_materialization_expired");
-      }
-      expect(lease.binding).toEqual(expected_binding);
-      if (namespace.claimedLeaseIds.has(lease.lease_id)) throw new Error("trusted_materialization_replayed");
-      namespace.claimedLeaseIds.add(lease.lease_id);
-      const headers = new Headers(request.headers);
-      const hostname = new URL(request.url).hostname;
-      if (hostname === "github.com") {
-        headers.set("authorization", `Basic ${btoa(`x-access-token:${material}`)}`);
-      } else if (hostname === "api.anthropic.com") {
-        headers.set("x-api-key", material);
-      } else if (hostname === "nocodb.example.test") {
-        headers.set("xc-token", material);
+      if (namespace.claimedLeaseIds.has(input.lease_id)) throw new Error("trusted_materialization_replayed");
+      namespace.claimedLeaseIds.add(input.lease_id);
+      let authorization: string | null = null;
+      let apiKey: string | null = null;
+      let xcToken: string | null = null;
+      if (input.audience === "github.com") {
+        authorization = `Basic ${btoa(`x-access-token:${material}`)}`;
+      } else if (input.audience === "api.anthropic.com") {
+        apiKey = material;
+      } else if (input.audience === "nocodb.example.test") {
+        xcToken = material;
       } else {
-        headers.set("authorization", `Bearer ${material}`);
+        authorization = `Bearer ${material}`;
       }
       namespace.providerRequests.push({
-        url: request.url,
-        authorization: headers.get("authorization"),
-        apiKey: headers.get("x-api-key"),
-        xcToken: headers.get("xc-token"),
+        url: input.provider_operation,
+        authorization,
+        apiKey,
+        xcToken,
       });
-      return Response.json(hostname === "slack.com"
+      const body = input.audience === "slack.com"
         ? { ok: true, ts: "1723800000.000009" }
-        : { ok: true });
+        : { ok: true };
+      return Response.json({
+        provider: input.provider_operation.split(".", 1)[0],
+        operation_id: tenantContext.operation_id,
+        provider_operation: input.provider_operation,
+        status: 200,
+        response_encoding: "json",
+        content_type: "application/json",
+        body,
+      });
     },
-  };
+  });
 }
 
 async function signedEnvelope() {
@@ -472,7 +506,7 @@ describe("sandbox provider credential integration", () => {
       BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
       BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
     } as TenantProviderOutboundEnv;
-    const trustedForwarder = trustedForwarderForTest(namespace, materialByOpaqueHandle);
+    const trustedForwarder = trustedForwarderForTest(namespace, materialByOpaqueHandle, envelope);
 
     const responses = await Promise.all([
       authorizeTenantProviderOutbound(new Request("https://api.anthropic.com/v1/messages", {
@@ -640,7 +674,7 @@ describe("sandbox provider credential integration", () => {
       BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
       BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
     } as unknown as TenantGatewayDeliveryEnv;
-    const trustedForwarder = trustedForwarderForTest(namespace, materialByOpaqueHandle);
+    const trustedForwarder = trustedForwarderForTest(namespace, materialByOpaqueHandle, envelope);
     const input = {
       requestId: "gateway-request-1",
       callIndex: 0,

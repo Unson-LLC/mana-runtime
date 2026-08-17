@@ -137,6 +137,7 @@ import {
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
+import { createBrainbaseTrustedProviderForwarderFromEnv } from "./multitenancy/trusted-provider-forwarder.js";
 import {
   createDurableTenantBoundaryRegistry,
   resolveDurableTenantBoundaryContext,
@@ -213,6 +214,11 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_RUNTIME_API_TOKEN?: string;
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
+  BRAINBASE_TENANT_RUNTIME_ENABLED?: string;
+  BRAINBASE_TENANT_RUNTIME_HOST?: string;
+  BRAINBASE_TENANT_RUNTIME_PORT?: string;
+  BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK?: string;
+  BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN?: string;
   SLACK_INSTALLATION_LIFECYCLE_TOKEN?: string;
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
@@ -464,6 +470,10 @@ function createTenantInteractionEffectResolver(env: Env) {
       envelope: effect.tenantContext,
       expected_scope: effect.expectedScope,
       broker: clients.credential_broker,
+      trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+        env,
+        tenant_context: effect.tenantContext,
+      }),
       read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
         effect.tenantContext.workspace_connection.connection_id),
       resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -577,6 +587,10 @@ function createMeetingMinutesTenantEffectGuard(input: {
     envelope: tenantContext,
     expected_scope: expectedScope,
     broker: clients.credential_broker,
+    trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+      env: input.env,
+      tenant_context: tenantContext,
+    }),
     read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
       tenantContext.workspace_connection.connection_id),
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(input.env, keyId),
@@ -1417,6 +1431,10 @@ export default {
             envelope: callbackBoundary.tenant_context,
             expected_scope: callbackBoundary.expected_scope,
             broker: callbackClients.credential_broker,
+            trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+              env,
+              tenant_context: callbackBoundary.tenant_context,
+            }),
             read_authoritative_snapshot: () => callbackClients.authority.read_workspace_connection(
               callbackBoundary.tenant_context.workspace_connection.connection_id),
             resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -1704,6 +1722,10 @@ export default {
               envelope: tenantContext,
               expected_scope: expectedScope,
               broker: clients.credential_broker,
+              trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+                env,
+                tenant_context: tenantContext,
+              }),
               read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
                 tenantContext.workspace_connection.connection_id),
               resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2082,6 +2104,10 @@ export default {
                 envelope: tenantContext,
                 expected_scope: expectedScope,
                 broker: clients.credential_broker,
+                trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+                  env,
+                  tenant_context: tenantContext,
+                }),
                 read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
                   tenantContext.workspace_connection.connection_id),
                 resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),

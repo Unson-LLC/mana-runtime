@@ -13,6 +13,9 @@ const REQUIRED_TEXT_BINDINGS = [
   "BRAINBASE_RUNTIME_API_TOKEN",
   "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
   "SLACK_EXPECTED_APP_ID",
+  "BRAINBASE_TENANT_RUNTIME_ENABLED",
+  "BRAINBASE_TENANT_RUNTIME_PORT",
+  "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
 ] as const;
 
 const REQUIRED_HTTPS_BINDINGS = [
@@ -88,6 +91,22 @@ export function assessTenantRuntimeReadiness(
   }
   for (const binding of REQUIRED_TEXT_BINDINGS) {
     if (!nonEmpty(env[binding])) missing.push(binding);
+  }
+  if (env.BRAINBASE_TENANT_RUNTIME_ENABLED !== "1"
+    && !missing.includes("BRAINBASE_TENANT_RUNTIME_ENABLED")) {
+    missing.push("BRAINBASE_TENANT_RUNTIME_ENABLED");
+  }
+  const trustedForwardHost = nonEmpty(env.BRAINBASE_TENANT_RUNTIME_HOST)
+    ? String(env.BRAINBASE_TENANT_RUNTIME_HOST).trim()
+    : "127.0.0.1";
+  if (["0.0.0.0", "::", "[::]"].includes(trustedForwardHost)
+    || (!new Set(["127.0.0.1", "localhost", "::1", "[::1]"]).has(trustedForwardHost)
+      && env.BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK !== "1")) {
+    missing.push("BRAINBASE_TENANT_RUNTIME_HOST");
+  }
+  const trustedForwardPort = Number(env.BRAINBASE_TENANT_RUNTIME_PORT);
+  if (!Number.isInteger(trustedForwardPort) || trustedForwardPort < 1 || trustedForwardPort > 65_535) {
+    if (!missing.includes("BRAINBASE_TENANT_RUNTIME_PORT")) missing.push("BRAINBASE_TENANT_RUNTIME_PORT");
   }
   const scopes = typeof env.MANA_REQUIRED_SLACK_SCOPES === "string"
     ? env.MANA_REQUIRED_SLACK_SCOPES.split(",").map((value) => value.trim()).filter(Boolean)

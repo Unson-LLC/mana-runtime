@@ -7,7 +7,10 @@ import {
 import { createTenantRuntimeHttpClients } from "./http-clients.js";
 import { createTenantCredentialFetch } from "./tenant-credential-fetch.js";
 import type { DeploymentProfileName } from "./contracts.js";
-import type { TrustedProviderForwarder } from "./trusted-provider-forwarder.js";
+import {
+  createBrainbaseTrustedProviderForwarderFromEnv,
+  type TrustedProviderForwarder,
+} from "./trusted-provider-forwarder.js";
 
 export interface TenantProviderOutboundEnv {
   MANA_DEPLOYMENT_PROFILE?: string;
@@ -18,6 +21,16 @@ export interface TenantProviderOutboundEnv {
   BRAINBASE_RUNTIME_API_TOKEN?: string;
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
+  BRAINBASE_TENANT_RUNTIME_ENABLED?: string;
+  BRAINBASE_TENANT_RUNTIME_HOST?: string;
+  BRAINBASE_TENANT_RUNTIME_PORT?: string;
+  BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK?: string;
+  BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN?: string;
+  BRAINBASE_TASK_API_BASE_URL?: string;
+  BRAINBASE_GRAPH_API_BASE_URL?: string;
+  BRAINBASE_MCP_BASE_URL?: string;
+  GOOGLE_DRIVE_MCP_BASE_URL?: string;
+  NOCODB_URL?: string;
   TENANT_RUNTIME_STATE: TenantBoundaryContextNamespace;
 }
 
@@ -75,11 +88,15 @@ export function tenantCredentialFetchForResolvedContext(
   trustedForwarder?: TrustedProviderForwarder,
 ): typeof fetch {
   const clients = tenantRuntimeHttpClientsForEnv(env);
+  const productionForwarder = trustedForwarder ?? createBrainbaseTrustedProviderForwarderFromEnv({
+    env,
+    tenant_context: resolved.tenant_context,
+  });
   return createTenantCredentialFetch({
     envelope: resolved.tenant_context,
     expected_scope: resolved.expected_scope,
     broker: clients.credential_broker,
-    trusted_forwarder: trustedForwarder,
+    trusted_forwarder: productionForwarder,
     read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
       resolved.tenant_context.workspace_connection.connection_id,
     ),
