@@ -925,6 +925,23 @@ describe("story-mana-multitenant-runtime contract", () => {
         return "injected";
       },
     })).resolves.toBe("injected");
+    const expiringRegistry = {
+      register: vi.fn(async () => "lease_handle_expiring_abcdefghijklmnopqrstuvwxyz"),
+      dispose: vi.fn(async () => undefined),
+    };
+    await expect(withTenantCredentialLease({
+      envelope: value,
+      expected_scope: expectedScope,
+      audience: "api.anthropic.com",
+      broker: clients.credential_broker,
+      read_authoritative_snapshot: () => clients.authority.read_workspace_connection(CONNECTION_A),
+      resolve_verification_key: async () => publicKey,
+      now: () => NOW,
+      credential_registry: expiringRegistry,
+      release: "on_expiration",
+      run: async (handle) => handle,
+    })).resolves.toBe("lease_handle_expiring_abcdefghijklmnopqrstuvwxyz");
+    expect(expiringRegistry.dispose).not.toHaveBeenCalled();
     expect(requests.find((request) => request.url.endsWith("/credential-broker"))?.body)
       .toMatchObject({ requested_ttl_seconds: 60, binding: {
         tenant_id: TENANT_A, connection_revision: "7", contract_revision: "11",

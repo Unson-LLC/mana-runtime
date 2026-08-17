@@ -1,5 +1,20 @@
 import { createHmac } from "node:crypto";
-import { handleMeetingMinutesInteractionEntrypoint } from "../slack-interactions.js";
+import {
+  handleMeetingMinutesInteractionEntrypoint,
+  type TenantInteractionEffects,
+  type TenantInteractionIdentity,
+} from "../slack-interactions.js";
+
+function tenantEffectResolver(overrides: Partial<TenantInteractionEffects> = {}) {
+  return vi.fn(async (source: TenantInteractionIdentity): Promise<TenantInteractionEffects> => ({
+    tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    source,
+    durableObject: async (_effectId, _target, execute) => execute(),
+    brainbaseProxy: async (_effectId, _target, _mode, execute) => execute(),
+    slackDelivery: async (_effectId, _target, _event, execute) => execute(),
+    ...overrides,
+  }));
+}
 
 describe("meeting minutes interaction Worker entrypoint", () => {
   it("fails closed when the canonical tenant effect resolver is not wired", async () => {
@@ -39,12 +54,17 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
       MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
       TECHKNIGHT_EVENTS: { send: vi.fn() } };
+    const resolveTenantEffects = tenantEffectResolver();
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
       method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
     }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
-    handleMeetingTaskAction);
+    handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, resolveTenantEffects);
     expect(response.status).toBe(200);
-    expect(handleMeetingTaskAction).toHaveBeenCalledWith(expect.objectContaining({ team: { id: "T-TECHKNIGHT" } }));
+    expect(handleMeetingTaskAction).toHaveBeenCalledWith(
+      expect.objectContaining({ team: { id: "T-TECHKNIGHT" } }),
+      expect.objectContaining({ tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+    );
+    expect(resolveTenantEffects).toHaveBeenCalledOnce();
   });
 
   it("does not accept a destination-team payload signed by the source Slack app", async () => {
@@ -61,7 +81,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
       method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
     }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
-    handleMeetingTaskAction);
+    handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, tenantEffectResolver());
     expect(response.status).toBe(403);
     expect(handleMeetingTaskAction).not.toHaveBeenCalled();
   });
@@ -78,6 +98,9 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const send = vi.fn().mockResolvedValue(undefined); const slackUpdate = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
       headers: { "content-type": "application/json" },
     }));
+    const slackDelivery = vi.fn<TenantInteractionEffects["slackDelivery"]>(
+      async (_effectId, _target, _event, execute) => execute(),
+    );
     vi.stubGlobal("fetch", slackUpdate);
     const deferred: Promise<unknown>[] = [];
     const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T1", SLACK_EXPECTED_APP_ID: "A1",
@@ -88,10 +111,17 @@ describe("meeting minutes interaction Worker entrypoint", () => {
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } }]), TECHKNIGHT_EVENTS: { send } };
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", { method: "POST", body,
       headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature } }), env as never,
-      { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]));
+      { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]),
+      undefined, undefined, undefined, send, tenantEffectResolver({ slackDelivery }));
     expect(response.status).toBe(200);
     expect(deferred).toHaveLength(1); await Promise.all(deferred);
     expect(send).toHaveBeenCalledOnce();
+    expect(slackDelivery).toHaveBeenCalledWith(
+      "processing-show:Ev1_F1:techknight-board",
+      expect.objectContaining({ channel_id: "C1", thread_ts: "1.0" }),
+      expect.objectContaining({ kind: "processing_status", runId: "Ev1_F1" }),
+      expect.any(Function),
+    );
     expect(slackUpdate).toHaveBeenCalledWith("https://slack.com/api/assistant.threads.setStatus", expect.objectContaining({
       method: "POST", body: JSON.stringify({ channel_id: "C1", thread_ts: "1.0",
         status: "議事録を作成しています…（ボード定例）" }),
@@ -117,7 +147,8 @@ describe("meeting minutes interaction Worker entrypoint", () => {
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } }]), TECHKNIGHT_EVENTS: { send } };
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", { method: "POST", body,
       headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature } }), env as never,
-      { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]));
+      { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]),
+      undefined, undefined, undefined, send, tenantEffectResolver());
     expect(response.status).toBe(200); await Promise.all(deferred);
     expect(send).not.toHaveBeenCalled();
     expect(slackUpdate).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({

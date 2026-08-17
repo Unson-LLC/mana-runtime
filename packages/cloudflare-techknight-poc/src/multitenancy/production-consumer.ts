@@ -130,6 +130,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
   quota_unit: string;
   now(): string;
   process(): Promise<R>;
+  replay_after_accounting?(): Promise<R>;
 }): Promise<R> {
   if (!input.quota_unit.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
   const receiptId = await operationReceiptId(input.tenant_context);
@@ -151,6 +152,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     if (pending.receipt.outcome !== "succeeded") {
       deny("brainbase_proxy", pending.receipt.failure_code ?? "UPSTREAM_UNAVAILABLE");
     }
+    if (input.replay_after_accounting) return input.replay_after_accounting();
     const responseTs = pending.receipt.reply.slack_reply_ts;
     return {
       outcome: "already_completed",
@@ -234,11 +236,12 @@ export async function postTenantSlackReply(input: {
   retention_until: string;
   event: unknown;
   text: string;
+  effect_id?: string;
   post(): Promise<string>;
 }): Promise<string> {
   const deliveryOperationId = await createDeterministicSharedId(
     "op_",
-    `${input.tenant_context.operation_id}:slack_delivery`,
+    `${input.tenant_context.operation_id}:slack_delivery:${input.effect_id ?? "reply"}`,
   );
   const claim = await authorizeSlackDeliveryWithAuthority({
     envelope: input.tenant_context,

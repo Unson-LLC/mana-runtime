@@ -27,8 +27,32 @@ interface InteractionOptions {
   resolveThreadTs?(runId: string): Promise<string | undefined>;
   updateOriginal?(responseUrl: string, message: SlackInteractionMessage): Promise<void>;
   defer?(work: Promise<void>): void;
-  approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string }): Promise<Response>;
-  handleMeetingTaskAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
+  approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string },
+    effects?: TenantInteractionEffects): Promise<Response>;
+  handleMeetingTaskAction?(payload: Record<string, unknown>, effects?: TenantInteractionEffects): Promise<Response | undefined>;
+  resolveTenantEffects?(identity: TenantInteractionIdentity): Promise<TenantInteractionEffects>;
+}
+
+export interface TenantInteractionIdentity {
+  app_id: string;
+  workspace_id: string;
+  enterprise_id?: string;
+  event_id: string;
+  channel_id: string;
+  thread_ts: string;
+  requester_id: string;
+}
+
+export type TenantInteractionTarget = Partial<Omit<TenantInteractionIdentity, "event_id">>;
+
+export interface TenantInteractionEffects {
+  readonly tenant_id: string;
+  readonly source: TenantInteractionIdentity;
+  durableObject<T>(effectId: string, target: TenantInteractionTarget, execute: () => Promise<T>): Promise<T>;
+  brainbaseProxy<T>(effectId: string, target: TenantInteractionTarget, mode: "read" | "write",
+    execute: () => Promise<T>): Promise<T>;
+  slackDelivery(effectId: string, target: TenantInteractionTarget, event: unknown,
+    execute: () => Promise<void>): Promise<void>;
 }
 
 export type SlackInteractionMessage = SlackSelectionMessage;
@@ -50,6 +74,36 @@ function string(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 function response(error: string, status: number): Response { return Response.json({ error }, { status }); }
+
+async function interactionEventId(body: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)));
+  let binary = "";
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  return `slack-interaction-${btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+}
+
+function parsedObject(value: unknown): Record<string, unknown> | undefined {
+  const raw = string(value);
+  if (!raw) return undefined;
+  try { return object(JSON.parse(raw)); } catch { return undefined; }
+}
+
+function target(channelId: string | undefined, threadTs: string | undefined): TenantInteractionTarget {
+  return {
+    ...(channelId ? { channel_id: channelId } : {}),
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+  };
+}
+
+function guardedSlackEffect(
+  effects: TenantInteractionEffects | undefined,
+  effectId: string,
+  effectTarget: TenantInteractionTarget,
+  event: unknown,
+  execute: () => Promise<void>,
+): Promise<void> {
+  return effects ? effects.slackDelivery(effectId, effectTarget, event, execute) : execute();
+}
 
 function slackResponseUrl(value: unknown): string | undefined {
   const raw = string(value);
@@ -83,7 +137,9 @@ export function handleMeetingMinutesInteractionEntrypoint(
   resolveThreadTs?: InteractionOptions["resolveThreadTs"],
   handleMeetingTaskAction?: InteractionOptions["handleMeetingTaskAction"],
   send?: InteractionOptions["send"],
+  resolveTenantEffects?: InteractionOptions["resolveTenantEffects"],
 ): Promise<Response> {
+  if (!send || !resolveTenantEffects) return Promise.resolve(response("FALLBACK_FORBIDDEN", 503));
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const destinationTeamIds = (() => {
     try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
@@ -98,12 +154,12 @@ export function handleMeetingMinutesInteractionEntrypoint(
     }] : [],
     expectedChannelId: env.MEETING_MINUTES_ROUTER_CHANNEL_ID?.trim(),
     resolveDestinations: () => meetingMinutesRuntimeConfig(env).destinations,
-    send: send ?? ((selection) => env.TECHKNIGHT_EVENTS.send(selection)),
+    send,
     showProcessing: (input) => slack.showProcessingStatus(input.channelId, input.threadTs, input.destinationName),
     clearProcessing: (input) => slack.clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
     updateOriginal: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
-    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction });
+    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction, resolveTenantEffects });
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
@@ -136,8 +192,39 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     string(team?.id) === authenticator.expectedTeamId &&
     (!authenticator.expectedAppId || appId === authenticator.expectedAppId));
   if (!verifiedAuthenticator) return response("slack_app_or_team_forbidden", 403);
+  const actionValue = parsedObject(action?.value);
+  const view = object(payload?.view);
+  const viewMetadata = parsedObject(view?.private_metadata);
+  const interactionId = await interactionEventId(body);
+  const interactionWorkspaceId = string(team?.id);
+  const interactionRequesterId = string(user?.id);
+  const interactionChannelId = string(channel?.id) ?? string(actionValue?.channelId) ?? string(viewMetadata?.channelId);
+  const interactionThreadTs = string(sourceMessage?.thread_ts) ?? string(sourceContainer?.thread_ts)
+    ?? string(sourceMessage?.ts) ?? string(actionValue?.sourceThreadTs) ?? string(action?.action_ts)
+    ?? `interaction:${interactionId.slice("slack-interaction-".length)}`;
+  let tenantEffects: TenantInteractionEffects | undefined;
+  if (options.resolveTenantEffects) {
+    if (!interactionWorkspaceId || !appId || !interactionRequesterId || !interactionChannelId) {
+      return response("slack_interaction_invalid", 400);
+    }
+    try {
+      tenantEffects = await options.resolveTenantEffects({
+        app_id: appId,
+        workspace_id: interactionWorkspaceId,
+        event_id: interactionId,
+        channel_id: interactionChannelId,
+        thread_ts: interactionThreadTs,
+        requester_id: interactionRequesterId,
+        ...(string(object(payload?.enterprise)?.id) ? { enterprise_id: string(object(payload?.enterprise)?.id) } : {}),
+      });
+    } catch {
+      return response("TENANT_INTERACTION_UNAVAILABLE", 503);
+    }
+  }
   if (options.handleMeetingTaskAction) {
-    const taskResponse = await options.handleMeetingTaskAction(payload!);
+    const taskResponse = tenantEffects
+      ? await options.handleMeetingTaskAction(payload!, tenantEffects)
+      : await options.handleMeetingTaskAction(payload!);
     if (taskResponse) return taskResponse;
   }
   if (string(team?.id) !== options.expectedTeamId) return response("slack_team_forbidden", 403);
@@ -148,7 +235,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
     const approvalId = string(value?.approvalId); const payloadHash = string(value?.payloadHash);
     if (!userId || !channelId || !approvalId || !payloadHash) return response("slack_interaction_invalid", 400);
-    return options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId });
+    return tenantEffects
+      ? options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId }, tenantEffects)
+      : options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId });
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
   if (options.expectedChannelId && channelId !== options.expectedChannelId) return response("slack_channel_forbidden", 403);
@@ -181,7 +270,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     if (!runId || !fileName || !responseUrl || !options.updateOriginal || !options.defer) {
       return response("slack_interaction_invalid", 400);
     }
-    options.defer(options.updateOriginal(responseUrl, redoConfirmationMessage(runId, fileName)));
+    options.defer(guardedSlackEffect(tenantEffects, `redo-confirm:${runId}`,
+      target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId },
+      () => options.updateOriginal!(responseUrl, redoConfirmationMessage(runId, fileName))));
     return Response.json({ ok: true });
   }
   if (confirmRedoAction) {
@@ -207,7 +298,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         ? projectSelectionMessage(runId, fileName, organizationId ?? "", destinations)
         : organizationSelectionMessage(runId, fileName, destinations);
     } catch { return response("slack_interaction_invalid", 400); }
-    options.defer(options.updateOriginal(responseUrl, message));
+    options.defer(guardedSlackEffect(tenantEffects, `destination-menu:${runId}:${organizationId ?? "root"}`,
+      target(channelId, sourceThreadTs), { kind: organizationAction ? "project_selection" : "organization_selection", runId },
+      () => options.updateOriginal!(responseUrl, message)));
     return Response.json({ ok: true });
   }
   if (!runId || !destinationId || !channelId || !actionTs || !options.defer) {
@@ -224,7 +317,12 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   options.defer((async () => {
     let feedbackThreadTs: string | undefined = sourceThreadTs;
     if (!feedbackThreadTs && options.resolveThreadTs) {
-      try { feedbackThreadTs = await options.resolveThreadTs(runId); }
+      try {
+        feedbackThreadTs = tenantEffects
+          ? await tenantEffects.durableObject(`resolve-thread:${runId}`, target(channelId, interactionThreadTs),
+              () => options.resolveThreadTs!(runId))
+          : await options.resolveThreadTs(runId);
+      }
       catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_lookup_failed", runId,
           error: error instanceof Error ? error.message : "unexpected_error" }));
@@ -236,7 +334,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     let processingShown = false;
     if (options.showProcessing && feedbackThreadTs && timestampPattern.test(feedbackThreadTs) && destination) {
       try {
-        await options.showProcessing({ channelId, threadTs: feedbackThreadTs, destinationName: destination.name });
+        await guardedSlackEffect(tenantEffects, `processing-show:${runId}:${destination.id}`,
+          target(channelId, feedbackThreadTs), { kind: "processing_status", runId, destinationId: destination.id },
+          () => options.showProcessing!({ channelId, threadTs: feedbackThreadTs!, destinationName: destination.name }));
         processingShown = true;
       } catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
@@ -246,7 +346,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     try {
       const responseUrl = string(payload?.response_url);
       if (responseUrl && options.updateOriginal && destination && fileName) {
-        try { await options.updateOriginal(responseUrl, destinationSelectedMessage(runId, fileName, destination)); }
+        try {
+          await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
+            target(channelId, feedbackThreadTs), { kind: "destination_confirmation", runId, destinationId: destination.id },
+            () => options.updateOriginal!(responseUrl, destinationSelectedMessage(runId, fileName, destination)));
+        }
         catch (error) {
           console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
             error: error instanceof Error ? error.message : "unexpected_error" }));
@@ -256,7 +360,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         channelId, threadTs: feedbackThreadTs, userId, actionTs });
     } catch (error) {
       if (processingShown && options.clearProcessing && feedbackThreadTs) {
-        try { await options.clearProcessing({ channelId, threadTs: feedbackThreadTs }); }
+        try {
+          await guardedSlackEffect(tenantEffects, `processing-clear:${runId}:${destinationId}`,
+            target(channelId, feedbackThreadTs), { kind: "processing_status_clear", runId, destinationId },
+            () => options.clearProcessing!({ channelId, threadTs: feedbackThreadTs! }));
+        }
         catch (clearError) {
           console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_clear_failed", runId,
             error: clearError instanceof Error ? clearError.message : "unexpected_error" }));

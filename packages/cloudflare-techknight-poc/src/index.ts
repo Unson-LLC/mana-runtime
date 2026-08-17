@@ -26,7 +26,12 @@ import {
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
 import type { MeetingMinutesDestination, MeetingMinutesRecovery, MeetingMinutesRedo, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
-import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
+import {
+  handleMeetingMinutesInteractionEntrypoint,
+  type TenantInteractionEffects,
+  type TenantInteractionIdentity,
+  type TenantInteractionTarget,
+} from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import { handleMeetingMinutesTaskAction } from "./meeting-minutes-task-actions.js";
@@ -107,6 +112,7 @@ import {
 } from "./multitenancy/production-consumer.js";
 import {
   REQUIRED_TENANT_CAPABILITIES,
+  type BoundaryName,
   type DeploymentProfileName,
   type ExpectedTenantScope,
   type TenantContextEnvelope,
@@ -343,8 +349,210 @@ async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly
   });
 }
 
+async function childInteractionEventId(baseEventId: string, effectId: string): Promise<string> {
+  if (!effectId.trim()) deny("worker_ingress", "CONFIGURATION_INVALID");
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${baseEventId}:${effectId}`),
+  ));
+  let binary = "";
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  return `tenant-effect-${btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+}
+
+function createTenantInteractionEffectResolver(env: Env) {
+  const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+    .split(",").map((value) => value.trim()).filter(Boolean);
+  const requiredAuthorization = {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+  };
+  const clients = tenantRuntimeClients(env);
+  const resolve = (identity: TenantInteractionIdentity) => resolveSlackWorkerIngress({
+    identity: { provider: "slack", ...identity },
+    required_scopes: requiredScopes,
+    required_authorization: requiredAuthorization,
+    authority: clients.authority,
+    now: new Date().toISOString(),
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  });
+  return async (source: TenantInteractionIdentity): Promise<TenantInteractionEffects> => {
+    const sourceResolved = await resolve(source);
+    const sourceTenantContext = sourceResolved.tenant_context;
+    const resolveEffect = async (effectId: string, target: TenantInteractionTarget) => {
+      const identity: TenantInteractionIdentity = {
+        ...source,
+        ...target,
+        event_id: await childInteractionEventId(source.event_id, effectId),
+      };
+      const resolved = await resolve(identity);
+      const tenantContext = resolved.tenant_context;
+      if (tenantContext.tenant.tenant_id !== sourceTenantContext.tenant.tenant_id
+        || tenantContext.placement.deployment_id !== sourceTenantContext.placement.deployment_id
+        || tenantContext.placement.profile !== sourceTenantContext.placement.profile) {
+        deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+      }
+      const verifier = new TenantRuntimeBoundaryVerifier({
+        read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+      });
+      const expectedScope: ExpectedTenantScope = {
+        ...requiredAuthorization,
+        workspace_id: identity.workspace_id,
+        app_id: identity.app_id,
+        channel_id: identity.channel_id,
+        thread_ts: identity.thread_ts,
+        actor_principal_id: tenantContext.actor.principal_id,
+        deployment_id: tenantContext.placement.deployment_id,
+      };
+      return { tenantContext, verifier, expectedScope, now: new Date().toISOString() };
+    };
+    const runBrainbaseWrite = async <T>(effectId: string, target: TenantInteractionTarget,
+      execute: () => Promise<T>): Promise<T> => {
+      const effect = await resolveEffect(effectId, target);
+      const perform = async () => ({ outcome: "completed", value: await executeTenantBoundary({
+        boundary: "brainbase_proxy",
+        tenant_context: effect.tenantContext,
+        expected_scope: effect.expectedScope,
+        verifier: effect.verifier,
+        now: new Date().toISOString(),
+        execute,
+      }) });
+      const result = await executeTenantRuntimeOperation({
+        tenant_context: effect.tenantContext,
+        expected_scope: effect.expectedScope,
+        verifier: effect.verifier,
+        quota: clients.quota,
+        accounting: clients.accounting,
+        ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, effect.tenantContext),
+        quota_unit: "interaction_effect",
+        now: () => new Date().toISOString(),
+        process: perform,
+        replay_after_accounting: perform,
+      });
+      return result.value;
+    };
+    return {
+      tenant_id: sourceTenantContext.tenant.tenant_id,
+      source,
+      async durableObject<T>(effectId: string, target: TenantInteractionTarget,
+        execute: () => Promise<T>): Promise<T> {
+        const effect = await resolveEffect(effectId, target);
+        return executeTenantBoundary({ boundary: "durable_object", tenant_context: effect.tenantContext,
+          expected_scope: effect.expectedScope, verifier: effect.verifier,
+          now: new Date().toISOString(), execute });
+      },
+      async brainbaseProxy<T>(effectId: string, target: TenantInteractionTarget, mode: "read" | "write",
+        execute: () => Promise<T>): Promise<T> {
+        if (mode === "write") return runBrainbaseWrite(effectId, target, execute);
+        const effect = await resolveEffect(effectId, target);
+        return executeTenantBoundary({ boundary: "brainbase_proxy", tenant_context: effect.tenantContext,
+          expected_scope: effect.expectedScope, verifier: effect.verifier,
+          now: new Date().toISOString(), execute });
+      },
+      async slackDelivery(effectId: string, target: TenantInteractionTarget, event: unknown,
+        execute: () => Promise<void>): Promise<void> {
+        const effect = await resolveEffect(effectId, target);
+        const perform = async () => {
+          await postTenantSlackReply({
+            tenant_context: effect.tenantContext,
+            expected_scope: effect.expectedScope,
+            ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE,
+              effect.tenantContext.tenant.tenant_id),
+            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+              effect.tenantContext.workspace_connection.connection_id,
+            ),
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            now: new Date().toISOString(),
+            retention_until: tenantRetentionUntil(new Date().toISOString()),
+            event,
+            text: `tenant_interaction_effect:${effectId}`,
+            effect_id: effectId,
+            post: async () => {
+              await executeTenantBoundary({ boundary: "slack_delivery", tenant_context: effect.tenantContext,
+                expected_scope: effect.expectedScope, verifier: effect.verifier,
+                now: new Date().toISOString(), execute });
+              return `interaction_effect:${effect.tenantContext.operation_id}`;
+            },
+          });
+          return { outcome: "completed" };
+        };
+        await executeTenantRuntimeOperation({
+          tenant_context: effect.tenantContext,
+          expected_scope: effect.expectedScope,
+          verifier: effect.verifier,
+          quota: clients.quota,
+          accounting: clients.accounting,
+          ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, effect.tenantContext),
+          quota_unit: "interaction_effect",
+          now: () => new Date().toISOString(),
+          process: perform,
+          replay_after_accounting: perform,
+        });
+      },
+    };
+  };
+}
+
+interface MeetingMinutesTenantEffectGuard {
+  boundary<T>(boundary: BoundaryName, execute: () => Promise<T>): Promise<T>;
+  slack<T>(effectId: string, event: unknown, execute: () => Promise<T>): Promise<T>;
+}
+
+function createMeetingMinutesTenantEffectGuard(input: {
+  env: Env;
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  verifier: TenantRuntimeBoundaryVerifier;
+  now(): string;
+}): MeetingMinutesTenantEffectGuard {
+  const clients = tenantRuntimeClients(input.env);
+  return {
+    boundary: (boundary, execute) => executeTenantBoundary({
+      boundary,
+      tenant_context: input.tenant_context,
+      expected_scope: input.expected_scope,
+      verifier: input.verifier,
+      now: input.now(),
+      execute,
+    }),
+    async slack<T>(effectId: string, event: unknown, execute: () => Promise<T>): Promise<T> {
+      let output: T | undefined;
+      const resultRef = await postTenantSlackReply({
+        tenant_context: input.tenant_context,
+        expected_scope: input.expected_scope,
+        ownership: createDurableTenantStateClient(input.env.TENANT_RUNTIME_STATE,
+          input.tenant_context.tenant.tenant_id),
+        read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+          input.tenant_context.workspace_connection.connection_id,
+        ),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(input.env, keyId),
+        now: input.now(),
+        retention_until: tenantRetentionUntil(input.now()),
+        event,
+        text: `meeting_minutes_effect:${effectId}`,
+        effect_id: effectId,
+        post: async () => {
+          output = await executeTenantBoundary({
+            boundary: "slack_delivery",
+            tenant_context: input.tenant_context,
+            expected_scope: input.expected_scope,
+            verifier: input.verifier,
+            now: input.now(),
+            execute,
+          });
+          return typeof output === "string" && output ? output : `meeting_minutes_effect:${effectId}`;
+        },
+      });
+      return output === undefined ? resultRef as T : output;
+    },
+  };
+}
+
 function meetingMinutesClients(
   env: Env,
+  effects: MeetingMinutesTenantEffectGuard,
   credentialLeaseHandle?: string,
   tenantBoundaryHandle?: string,
 ) {
@@ -354,7 +562,8 @@ function meetingMinutesClients(
   const destinations = meetingMinutesRuntimeConfig(env).destinations;
   const destinationSlack = (channelId: string) => {
     const organizationId = destinations.find((destination) => destination.slackChannelId === channelId)
-      ?.organization.id ?? "unson-business";
+      ?.organization.id;
+    if (!organizationId) deny("slack_delivery", "DELIVERY_SCOPE_MISMATCH");
     return new MeetingMinutesSlackClient(resolveMeetingMinutesDestinationSlackToken(env, organizationId));
   };
   const taskClient = () => new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
@@ -364,64 +573,90 @@ function meetingMinutesClients(
   const contextClient = new MeetingMinutesBrainbaseContextClient(env.BRAINBASE_TASK_API_BASE_URL ?? "",
     env.BRAINBASE_TASK_API_TOKEN ?? "");
   return {
-    slack,
+    slack: {
+      updateRunStatus: (run: MeetingMinutesRun, outcome: Parameters<typeof slack.updateRunStatus>[1]) =>
+        effects.slack(`source-status:${run.runId}:${outcome}`,
+          { kind: "source_status", runId: run.runId, outcome }, () => slack.updateRunStatus(run, outcome)),
+      downloadTextFile: (fileId: string) => effects.boundary("slack_delivery", () => slack.downloadTextFile(fileId)),
+      requestDestination: (run: MeetingMinutesRun, candidates: Parameters<typeof slack.requestDestination>[1]) =>
+        effects.slack(`destination-request:${run.runId}`,
+          { kind: "destination_request", runId: run.runId }, () => slack.requestDestination(run, candidates)),
+    },
     classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
       if (!credentialLeaseHandle) throw new Error("credential_lease_required");
-      return classifyMeetingMinutesDestinationInSandbox(transcript, candidates, claudeRuntime,
+      return effects.boundary("container_launch", () => classifyMeetingMinutesDestinationInSandbox(
+        transcript, candidates, claudeRuntime,
         createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`),
-        credentialLeaseHandle, tenantBoundaryHandle);
+        credentialLeaseHandle, tenantBoundaryHandle));
     },
     resume: {
       contextMode,
       resolveContext: (identity: Parameters<MeetingMinutesBrainbaseContextClient["resolve"]>[0], receiptId?: string) =>
-        contextClient.resolve(identity, receiptId),
-      postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
-      download: (fileId: string) => slack.downloadTextFile(fileId),
+        effects.boundary("brainbase_proxy", () => contextClient.resolve(identity, receiptId)),
+      postProcessingStatus: (run: MeetingMinutesRun) => effects.slack(`processing-status:${run.runId}`,
+        { kind: "processing_status", runId: run.runId }, () => slack.postProcessingStatus(run)),
+      download: (fileId: string) => effects.boundary("slack_delivery", () => slack.downloadTextFile(fileId)),
       generate: (transcript: string, destination: MeetingMinutesDestination,
         context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3]) => {
         if (!credentialLeaseHandle) throw new Error("credential_lease_required");
-        return generateMeetingMinutesInSandbox(transcript, destination, context, mode, claudeRuntime,
+        return effects.boundary("container_launch", () => generateMeetingMinutesInSandbox(
+          transcript, destination, context, mode, claudeRuntime,
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`),
-          credentialLeaseHandle, tenantBoundaryHandle);
+          credentialLeaseHandle, tenantBoundaryHandle));
       },
-      saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
+      saveGitHub: (input: Parameters<typeof github.save>[0]) =>
+        effects.boundary("mcp_gateway", () => github.save(input)),
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
-        return taskClient().createTask(input, idempotencyKey);
+        return effects.boundary("brainbase_proxy", () => taskClient().createTask(input, idempotencyKey));
       },
       // Destination project IDs belong to the task destination contract and are
       // not Graph person scopes. Resolve globally, then let non-unique names
       // fail closed in resolveGraphPersonByName.
-      resolveAssignee: (name: string, _projectId: string) => resolveGraphPersonByName(name, undefined, {
-        baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
-        token: env.BRAINBASE_GRAPH_API_TOKEN,
-      }),
+      resolveAssignee: (name: string, _projectId: string) => effects.boundary("brainbase_proxy", () =>
+        resolveGraphPersonByName(name, undefined, {
+          baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
+          token: env.BRAINBASE_GRAPH_API_TOKEN,
+        })),
       postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
-        destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
-      postTaskCard: (run: MeetingMinutesRun) => destinationSlack(run.destination!.slackChannelId).postTaskCard(run),
+        effects.slack(`destination-parent:${clientMsgId}`,
+          { kind: "destination_parent", channelId, clientMsgId },
+          () => destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId)),
+      postTaskCard: (run: MeetingMinutesRun) => effects.slack(`task-card:${run.runId}`,
+        { kind: "task_card", runId: run.runId, channelId: run.destination!.slackChannelId },
+        () => destinationSlack(run.destination!.slackChannelId).postTaskCard(run)),
       repairTaskBoard: (projectCodes: readonly string[]) =>
-        enqueueTaskBoardRepairsForProjects(env, projectCodes, "task_write"),
+        effects.boundary("durable_object", () => enqueueTaskBoardRepairsForProjects(env, projectCodes, "task_write")),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
-        destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
+        effects.slack(`destination-thread:${clientMsgId}:${index}`,
+          { kind: "destination_thread", channelId, threadTs, clientMsgId, index, total },
+          () => destinationSlack(channelId).postThreadChunk(
+            channelId, threadTs, fileName, text, index, total, clientMsgId)),
     },
     redo: {
       deleteGitHub: (destination: MeetingMinutesDestination, paths: readonly string[]) =>
-        github.delete(destination.github, paths),
+        effects.boundary("mcp_gateway", () => github.delete(destination.github, paths)),
       deleteTask: async (taskId: string, idempotencyKey: string) => {
-        const client = taskClient();
-        try {
-          const task = await client.getTask(taskId);
-          await client.deleteTask(taskId, task.version, idempotencyKey);
-        } catch (error) {
-          if (error instanceof TaskApiError && error.status === 404) return;
-          throw error;
-        }
+        await effects.boundary("brainbase_proxy", async () => {
+          const client = taskClient();
+          try {
+            const task = await client.getTask(taskId);
+            await client.deleteTask(taskId, task.version, idempotencyKey);
+          } catch (error) {
+            if (error instanceof TaskApiError && error.status === 404) return;
+            throw error;
+          }
+        });
       },
       retractSharedMinutes: (destination: MeetingMinutesDestination,
         parentTs: string, fileName: string) =>
-        destinationSlack(destination.slackChannelId).retractSharedMinutes(destination.slackChannelId, parentTs, fileName),
+        effects.slack(`retract:${parentTs}`,
+          { kind: "minutes_retract", channelId: destination.slackChannelId, parentTs },
+          () => destinationSlack(destination.slackChannelId).retractSharedMinutes(
+            destination.slackChannelId, parentTs, fileName)),
       showDestinationSelection: (run: MeetingMinutesRun, destinations: Parameters<typeof slack.showDestinationSelection>[1]) =>
-        slack.showDestinationSelection(run, destinations),
+        effects.slack(`destination-selection:${run.runId}`,
+          { kind: "destination_selection", runId: run.runId }, () => slack.showDestinationSelection(run, destinations)),
     },
   };
 }
@@ -709,44 +944,66 @@ async function processTenantMeetingMinutesSelection(input: {
   config: ReturnType<typeof meetingMinutesRuntimeConfig>;
   selection: MeetingMinutesSelection;
   tenantContext: TenantContextEnvelope;
+  expectedScope: ExpectedTenantScope;
+  verifier: TenantRuntimeBoundaryVerifier;
+  now(): string;
   credentialLeaseHandle: string;
   tenantBoundaryHandle: string;
 }): Promise<{ outcome: "completed" }> {
-  const { env, config, selection, tenantContext, credentialLeaseHandle, tenantBoundaryHandle } = input;
+  const {
+    env,
+    config,
+    selection,
+    tenantContext,
+    expectedScope,
+    verifier,
+    now,
+    credentialLeaseHandle,
+    tenantBoundaryHandle,
+  } = input;
   const tenantId = tenantContext.tenant.tenant_id;
-  const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-    tenantId, selection.workspaceId, selection.runId,
-  ));
-  const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-  await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-    const clients = meetingMinutesClients(env, credentialLeaseHandle, tenantBoundaryHandle);
-    const armed = await armMeetingMinutesRecovery(workspace.fs, selection);
-    if (!armed.terminal) {
-      await meetingMinutesDeploymentGate(env, tenantId).markActive({ runId: selection.runId,
-        startedAt: new Date().toISOString(),
-        deadlineAt: new Date(Date.now() + armed.delaySeconds * 1_000).toISOString() });
-      await env.TECHKNIGHT_EVENTS.send({
-        schema_version: "1.0",
-        tenant_context: tenantContext,
-        payload: armed.event,
-      }, {
-        delaySeconds: Math.min(armed.delaySeconds, MEETING_MINUTES_RECOVERY_DELAY_SECONDS),
-      });
-    }
-    try {
-      await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, config, clients.resume, {
-        updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
-        logProjectionError: (entry) => console.warn(JSON.stringify({
-          event: "meeting_minutes_status_projection_failed", ...entry,
-        })),
-      });
-    } catch (error) {
-      const persisted = await loadMeetingMinutesRun(workspace.fs, selection.runId);
-      if (persisted?.status === "completed" || persisted?.lifecycle?.recoveryProjectedAt) {
-        await meetingMinutesDeploymentGate(env, tenantId).markTerminal(selection.runId);
+  const effects = createMeetingMinutesTenantEffectGuard({
+    env,
+    tenant_context: tenantContext,
+    expected_scope: expectedScope,
+    verifier,
+    now,
+  });
+  await effects.boundary("durable_object", async () => {
+    const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+      tenantId, selection.workspaceId, selection.runId,
+    ));
+    const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+    await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+      const clients = meetingMinutesClients(env, effects, credentialLeaseHandle, tenantBoundaryHandle);
+      const armed = await armMeetingMinutesRecovery(workspace.fs, selection);
+      if (!armed.terminal) {
+        await meetingMinutesDeploymentGate(env, tenantId).markActive({ runId: selection.runId,
+          startedAt: now(),
+          deadlineAt: new Date(Date.parse(now()) + armed.delaySeconds * 1_000).toISOString() });
+        await env.TECHKNIGHT_EVENTS.send({
+          schema_version: "1.0",
+          tenant_context: tenantContext,
+          payload: armed.event,
+        }, {
+          delaySeconds: Math.min(armed.delaySeconds, MEETING_MINUTES_RECOVERY_DELAY_SECONDS),
+        });
       }
-      throw error;
-    }
+      try {
+        await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, config, clients.resume, {
+          updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
+          logProjectionError: (entry) => console.warn(JSON.stringify({
+            event: "meeting_minutes_status_projection_failed", ...entry,
+          })),
+        });
+      } catch (error) {
+        const persisted = await loadMeetingMinutesRun(workspace.fs, selection.runId);
+        if (persisted?.status === "completed" || persisted?.lifecycle?.recoveryProjectedAt) {
+          await meetingMinutesDeploymentGate(env, tenantId).markTerminal(selection.runId);
+        }
+        throw error;
+      }
+    });
   });
   await meetingMinutesDeploymentGate(env, tenantId).markTerminal(selection.runId);
   return { outcome: "completed" };
@@ -761,13 +1018,14 @@ async function processTenantMeetingMinutesRecovery(input: {
   now(): string;
 }): Promise<{ outcome: "recovered" | "terminal" | "superseded" }> {
   const { env, recovery, tenantContext, expectedScope, verifier, now } = input;
-  return executeTenantBoundary({
-    boundary: "durable_object",
+  const effects = createMeetingMinutesTenantEffectGuard({
+    env,
     tenant_context: tenantContext,
     expected_scope: expectedScope,
     verifier,
-    now: now(),
-    execute: async () => {
+    now,
+  });
+  return effects.boundary("durable_object", async () => {
       const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
         tenantContext.tenant.tenant_id, recovery.workspaceId, recovery.runId,
       ));
@@ -775,20 +1033,12 @@ async function processTenantMeetingMinutesRecovery(input: {
       return withDisposableResource(() => getWorkspace(handle), async (workspace) => {
         const outcome = await recoverStaleMeetingMinutesRun(workspace.fs, recovery, {
           now: () => Date.parse(now()),
-          updateStatus: async (run) => executeTenantBoundary({
-            boundary: "slack_delivery",
-            tenant_context: tenantContext,
-            expected_scope: expectedScope,
-            verifier,
-            now: now(),
-            execute: () => meetingMinutesClients(env).slack.updateRunStatus(run, "failed"),
-          }),
+          updateStatus: (run) => meetingMinutesClients(env, effects).slack.updateRunStatus(run, "failed"),
         });
         if (outcome === "not_due") deny("queue_consumer", "UPSTREAM_UNAVAILABLE");
         await meetingMinutesDeploymentGate(env, tenantContext.tenant.tenant_id).markTerminal(recovery.runId);
         return { outcome };
       });
-    },
   });
 }
 
@@ -796,18 +1046,40 @@ async function processTenantMeetingMinutesRedo(input: {
   env: Env;
   config: ReturnType<typeof meetingMinutesRuntimeConfig>;
   command: MeetingMinutesRedo;
-  tenantId: string;
+  tenantContext: TenantContextEnvelope;
+  expectedScope: ExpectedTenantScope;
+  verifier: TenantRuntimeBoundaryVerifier;
+  now(): string;
   credentialLeaseHandle: string;
   tenantBoundaryHandle: string;
 }): Promise<{ outcome: "completed" }> {
-  const { env, config, command, tenantId, credentialLeaseHandle, tenantBoundaryHandle } = input;
-  const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-    tenantId, command.workspaceId, command.runId,
-  ));
-  const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-  await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-    const clients = meetingMinutesClients(env, credentialLeaseHandle, tenantBoundaryHandle);
-    await processMeetingMinutesRedo(workspace.fs, command, config, clients.redo);
+  const {
+    env,
+    config,
+    command,
+    tenantContext,
+    expectedScope,
+    verifier,
+    now,
+    credentialLeaseHandle,
+    tenantBoundaryHandle,
+  } = input;
+  const effects = createMeetingMinutesTenantEffectGuard({
+    env,
+    tenant_context: tenantContext,
+    expected_scope: expectedScope,
+    verifier,
+    now,
+  });
+  await effects.boundary("durable_object", async () => {
+    const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+      tenantContext.tenant.tenant_id, command.workspaceId, command.runId,
+    ));
+    const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+    await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+      const clients = meetingMinutesClients(env, effects, credentialLeaseHandle, tenantBoundaryHandle);
+      await processMeetingMinutesRedo(workspace.fs, command, config, clients.redo);
+    });
   });
   return { outcome: "completed" };
 }
@@ -935,26 +1207,37 @@ export default {
     if (request.method === "POST" && url.pathname === "/slack/interactions") {
       const config = meetingMinutesRuntimeConfig(env);
       return handleMeetingMinutesInteractionEntrypoint(request, env, ctx, config.operatorUserIds,
-        async ({ approvalId, payloadHash, approverId, channelId }) => {
+        async ({ approvalId, payloadHash, approverId, channelId }, effects) => {
+          if (!effects) return Response.json({ error: "TENANT_INTERACTION_UNAVAILABLE" }, { status: 503 });
           const approvalChannelId = env.TASK_WRITE_APPROVAL_CHANNEL_ID ?? env.SLACK_ALLOWED_CHANNEL_ID;
           if (channelId !== approvalChannelId) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
-          const pending = await peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId);
+          const pending = await effects.durableObject(`task-approval-peek:${approvalId}`, {},
+            () => peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId));
           if (pending.payloadHash !== payloadHash) return Response.json({ error: "task_write_approval_payload_mismatch" }, { status: 403 });
-          const approved = await handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", {
-            method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": pending.capability,
-              "x-mana-task-write-approval-id": approvalId, "x-mana-task-write-approver-id": approverId },
-            body: JSON.stringify(pending.body),
-          }), env);
+          const approved = await effects.brainbaseProxy(`task-approval-execute:${approvalId}`, {}, "write",
+            () => handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", {
+              method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": pending.capability,
+                "x-mana-task-write-approval-id": approvalId, "x-mana-task-write-approver-id": approverId },
+              body: JSON.stringify(pending.body),
+            }), env));
           if (!approved.ok) return approved;
           return Response.json({ ok: true, approval_id: approvalId });
-        }, undefined, async (payload) => {
+        }, undefined, async (payload, effects) => {
+          if (!effects) return Response.json({ error: "TENANT_INTERACTION_UNAVAILABLE" }, { status: 503 });
           const parsedTeamIds = (() => { try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
             catch { return {}; } })();
-          const loadWorkspace = async <T>(runId: string, operation: (workspace: { fs: Parameters<typeof loadMeetingMinutesRun>[0] }) => Promise<T>) => {
+          const sourceWorkspaceId = requiredRuntimeBinding(env.SLACK_EXPECTED_TEAM_ID);
+          const sourceTarget: TenantInteractionTarget = {
+            workspace_id: sourceWorkspaceId,
+            app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+          };
+          const loadWorkspace = async <T>(runId: string, operationName: string,
+            operation: (workspace: { fs: Parameters<typeof loadMeetingMinutesRun>[0] }) => Promise<T>) => {
             const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-              env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId));
+              effects.tenant_id, sourceWorkspaceId, runId));
             const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-            return withDisposableResource(() => getWorkspace(handle), operation);
+            return effects.durableObject(`meeting-run:${operationName}:${runId}`, sourceTarget,
+              () => withDisposableResource(() => getWorkspace(handle), operation));
           };
           const taskClient = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
             token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
@@ -963,24 +1246,43 @@ export default {
           return handleMeetingMinutesTaskAction(payload, { sourceTeamId: env.SLACK_EXPECTED_TEAM_ID,
             destinationTeamIds: parsedTeamIds,
             operatorUserIds: config.operatorUserIds,
-            loadRun: async (runId) => { cachedRun = await loadWorkspace(runId, (workspace) => loadMeetingMinutesRun(workspace.fs, runId)); return cachedRun; },
-            saveRun: (run) => loadWorkspace(run.runId, async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); }),
-            getTask: (taskId) => taskClient.getTask(taskId),
-            updateTask: (taskId, input, key) => taskClient.updateTask(taskId, input, key),
-            deleteTask: (taskId, version, key) => taskClient.deleteTask(taskId, version, key),
+            loadRun: async (runId) => {
+              cachedRun = await loadWorkspace(runId, "load",
+                (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+              return cachedRun;
+            },
+            saveRun: (run) => loadWorkspace(run.runId, "save",
+              async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); }),
+            getTask: (taskId) => effects.brainbaseProxy(`task-read:${taskId}`, {}, "read",
+              () => taskClient.getTask(taskId)),
+            updateTask: (taskId, input, key) => effects.brainbaseProxy(`task-update:${key}`, {}, "write",
+              () => taskClient.updateTask(taskId, input, key)),
+            deleteTask: (taskId, version, key) => effects.brainbaseProxy(`task-delete:${key}`, {}, "write",
+              () => taskClient.deleteTask(taskId, version, key)),
             updateCard: async (run) => {
               const token = resolveMeetingMinutesDestinationSlackToken(env, run.destination!.organization.id);
               const client = new MeetingMinutesSlackClient(token);
-              await client.updateTaskCard(run); },
+              await effects.slackDelivery(`task-card:${run.runId}`, {
+                channel_id: run.destination!.slackChannelId,
+              }, { kind: "task_card", runId: run.runId }, () => client.updateTaskCard(run));
+            },
             openView: async (organizationId, triggerId, view) => {
               const token = resolveMeetingMinutesDestinationSlackToken(env, organizationId);
-              await new MeetingMinutesSlackClient(token).openTaskEditView(triggerId, view);
-            }, listPeople: () => listGraphPeople(undefined, {
-              baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
-              token: env.BRAINBASE_GRAPH_API_TOKEN,
-            }), repairTaskBoard: (projectCodes) => enqueueTaskBoardRepairsForProjects(
-              env, projectCodes, "task_write",
-            ), defer: (work) => ctx.waitUntil(work),
+              await effects.slackDelivery(`task-edit-view:${organizationId}`, {},
+                { kind: "task_edit_view", organizationId },
+                () => new MeetingMinutesSlackClient(token).openTaskEditView(triggerId, view));
+            },
+            listPeople: () => effects.brainbaseProxy("task-assignee-list", {}, "read",
+              () => listGraphPeople(undefined, {
+                baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
+                token: env.BRAINBASE_GRAPH_API_TOKEN,
+              })),
+            repairTaskBoard: (projectCodes) => effects.durableObject(
+              `task-board-repair:${[...projectCodes].sort().join(",")}`,
+              sourceTarget,
+              () => enqueueTaskBoardRepairsForProjects(env, projectCodes, "task_write"),
+            ),
+            defer: (work) => ctx.waitUntil(work),
           });
         }, async (command) => {
           const clients = tenantRuntimeClients(env);
@@ -1019,7 +1321,7 @@ export default {
                 tenant_context: resolved.tenant_context,
                 payload: command,
               });
-        });
+        }, createTenantInteractionEffectResolver(env));
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
@@ -1095,6 +1397,7 @@ export default {
       expected_scope: ExpectedTenantScope;
       verifier: TenantRuntimeBoundaryVerifier;
       now: string;
+      release?: "on_completion" | "on_expiration";
       execute(tenantBoundaryHandle: string): Promise<T>;
     }): Promise<T> => executeTenantBoundary({
       boundary: "container_launch",
@@ -1112,7 +1415,7 @@ export default {
         try {
           return await input.execute(handle);
         } finally {
-          await registry.dispose(handle);
+          if (input.release !== "on_expiration") await registry.dispose(handle);
         }
       },
     });
@@ -1229,7 +1532,10 @@ export default {
                   env,
                   config: meetingMinutesConfig,
                   command,
-                  tenantId: runtimeTenantId,
+                  tenantContext,
+                  expectedScope,
+                  verifier,
+                  now,
                   credentialLeaseHandle,
                   tenantBoundaryHandle,
                 }),
@@ -1337,6 +1643,9 @@ export default {
                   config: meetingMinutesConfig,
                   selection,
                   tenantContext,
+                  expectedScope,
+                  verifier,
+                  now,
                   credentialLeaseHandle,
                   tenantBoundaryHandle,
                 }),
@@ -1407,6 +1716,14 @@ export default {
                 verifier,
                 now: tenantConsumerOptions.now(),
                 execute: async (tenantBoundaryHandle) => {
+                  const expectedScope = tenantConsumerOptions.expected_scope(tenantBody);
+                  const effects = createMeetingMinutesTenantEffectGuard({
+                    env,
+                    tenant_context: tenantContext,
+                    expected_scope: expectedScope,
+                    verifier,
+                    now: tenantConsumerOptions.now,
+                  });
                   for (const file of event.files ?? []) {
                     if (!/\.txt$/i.test(file.name)) continue;
                     const runId = `${event.eventId}_${file.id}`;
@@ -1417,6 +1734,7 @@ export default {
                     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
                       const meetingClients = meetingMinutesClients(
                         env,
+                        effects,
                         credentialLeaseHandle,
                         tenantBoundaryHandle,
                       );
@@ -1625,12 +1943,13 @@ export default {
                     ),
                     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
                     now: tenantConsumerOptions.now,
-                    release: "on_consumption",
+                    release: "on_expiration",
                     run: (credentialLeaseHandle) => executeTenantContainerOperation({
                       tenant_context: tenantBody.tenant_context,
                       expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                       verifier,
                       now: tenantConsumerOptions.now(),
+                      release: "on_expiration",
                       execute: (tenantBoundaryHandle) => runCloudflareDevelopmentRequest({
                         request,
                         placementId: placement.placementId,
