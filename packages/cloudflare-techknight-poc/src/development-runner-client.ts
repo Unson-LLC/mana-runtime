@@ -4,6 +4,7 @@ import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
 const DEVELOPMENT_PROCESS_MAX_TIMEOUT_MS = 4_800_000;
 const TENANT_CONTEXT_SHUTDOWN_RESERVE_MS = 5_000;
+const DEVELOPMENT_CALLBACK_RESERVE_MS = 10_000;
 
 export interface DevelopmentSandbox {
   writeFile(path: string, content: string): Promise<unknown>;
@@ -80,7 +81,8 @@ export async function runCloudflareDevelopmentRequest(input: {
     DEVELOPMENT_PROCESS_MAX_TIMEOUT_MS,
     contextExpiresAt - observedAt - TENANT_CONTEXT_SHUTDOWN_RESERVE_MS,
   );
-  if (!Number.isFinite(contextExpiresAt) || !Number.isFinite(observedAt) || processTimeout <= 0) {
+  const runnerTimeout = processTimeout - DEVELOPMENT_CALLBACK_RESERVE_MS;
+  if (!Number.isFinite(contextExpiresAt) || !Number.isFinite(observedAt) || runnerTimeout <= 0) {
     throw new Error("development_tenant_context_expiring");
   }
   const jobId = await jobIdForTenantOperation(input);
@@ -100,6 +102,7 @@ export async function runCloudflareDevelopmentRequest(input: {
     channel_id: input.channelId,
     thread_ts: input.threadTs,
     callback_url: `${callback.origin}${callbackPath}/development/callback`,
+    runner_timeout_ms: runnerTimeout,
   };
 
   try {
