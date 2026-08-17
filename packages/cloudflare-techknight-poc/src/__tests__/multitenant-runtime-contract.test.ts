@@ -878,6 +878,12 @@ describe("story-mana-multitenant-runtime contract", () => {
     const clients = createTenantRuntimeHttpClients(bindings, { fetch: fetchMock, now: () => NOW });
     await expect(clients.authority.resolve_workspace_connection({ provider: "slack", app_id: "A-MANA",
       workspace_id: "T-A" })).resolves.toEqual(snapshotA);
+    const customerManagedClients = createTenantRuntimeHttpClients(
+      { ...bindings, deployment_profile: "customer_managed_oss" },
+      { fetch: fetchMock, now: () => NOW },
+    );
+    await expect(customerManagedClients.authority.resolve_workspace_connection({ provider: "slack",
+      app_id: "A-MANA", workspace_id: "T-A" })).resolves.toEqual(snapshotA);
     const { value, publicKey } = await envelope();
     const injector = new TenantCredentialInjector();
     await expect(withTenantCredentialLease({
