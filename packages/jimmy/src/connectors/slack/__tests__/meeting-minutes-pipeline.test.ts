@@ -22,6 +22,7 @@ import {
 } from "../meeting-minutes-pipeline.js";
 import type { GraphEntityClient } from "../../../shared/brainbase-graph.js";
 import type { BrainbaseTaskClient } from "../../../shared/brainbase-tasks.js";
+import type { BrainbaseEntityResolver } from "../../../shared/brainbase-entity-resolution.js";
 import { logger } from "../../../shared/logger.js";
 
 const STATE_DIR = "/tmp/openryoko-meeting-minutes-test";
@@ -64,6 +65,33 @@ function makeTaskClient() {
   } as unknown as BrainbaseTaskClient;
 }
 
+function resolutionReceipt(
+  overrides: { sourceStatus?: "complete" | "partial" | "unavailable"; resolutionStatus?: "complete" | "partial" | "none" | "blocked" } = {},
+) {
+  const sourceStatus = overrides.sourceStatus ?? "complete";
+  const resolutionStatus = overrides.resolutionStatus ?? "none";
+  return {
+    schemaVersion: 1 as const,
+    resolverVersion: "1.0.0",
+    graphSchemaVersion: sourceStatus === "unavailable" ? null : 2 as const,
+    ontology: sourceStatus === "unavailable"
+      ? null
+      : { id: "brainbase-personal-os", version: "test", releaseDigest: "test" },
+    request: {
+      textSha256: "a".repeat(64),
+      textLength: TRANSCRIPT.length,
+      projectScope: { projectIds: ["proj_salestailor"], policy: "strict" as const },
+      asOf: "2026-08-17T00:00:00.000Z",
+      entityTypes: ["decision", "org", "person", "project"] as const,
+    },
+    source: { authority: "local_graph" as const, status: sourceStatus, issueCodes: [] },
+    resolutionStatus,
+    mentions: [],
+    summary: sourceStatus === "unavailable" ? null : { resolved: 0, ambiguous: 0, unresolved: 0 },
+    digest: "b".repeat(64),
+  };
+}
+
 function makePipeline(overrides: {
   config?: Record<string, unknown>;
   fetchTranscript?: ReturnType<typeof vi.fn>;
@@ -73,6 +101,7 @@ function makePipeline(overrides: {
   share?: ReturnType<typeof vi.fn>;
   update?: ReturnType<typeof vi.fn>;
   saveMeetingRecords?: ReturnType<typeof vi.fn>;
+  entityResolver?: BrainbaseEntityResolver;
   settingsWebBaseUrl?: string;
   workspaceId?: string;
   /** Test-only convenience: emulate the operator selecting the LLM suggestion. */
@@ -88,6 +117,13 @@ function makePipeline(overrides: {
   const generate = overrides.generate ?? vi.fn().mockResolvedValue({ minutes: MINUTES });
   const handoff =
     overrides.handoff === null ? null : overrides.handoff ?? vi.fn().mockResolvedValue(true);
+  const entityResolver = overrides.entityResolver ?? {
+    resolve: vi.fn().mockResolvedValue({
+      receipt: resolutionReceipt(),
+      properNouns: [],
+      decisions: [],
+    }),
+  };
   const pipeline = new MeetingMinutesPipeline(
     app,
     {
@@ -103,6 +139,7 @@ function makePipeline(overrides: {
       generateImpl: generate as any,
       saveMeetingRecords: overrides.saveMeetingRecords as any,
       graphClient: makeGraphClient(),
+      entityResolver,
       taskClientFactory: () => makeTaskClient(),
       taskProposalNotifier: handoff ? { processMinutesText: handoff as any } : null,
       sourceConnectorInstanceId: "slack",
@@ -135,7 +172,17 @@ function makePipeline(overrides: {
       }
     };
   }
-  return { pipeline, apiCall, fetchTranscript, classify, generate, handoff, share: overrides.share, update: overrides.update };
+  return {
+    pipeline,
+    apiCall,
+    fetchTranscript,
+    classify,
+    generate,
+    handoff,
+    entityResolver,
+    share: overrides.share,
+    update: overrides.update,
+  };
 }
 
 function fileEvent(overrides: Record<string, unknown> = {}) {
@@ -294,6 +341,23 @@ describe("advanceStatus", () => {
 });
 
 describe("detection gates", () => {
+  it("does not start the production resolver without Brainbase Graph credentials", () => {
+    const { app } = makeApp();
+    const pipeline = new MeetingMinutesPipeline(
+      app,
+      { enabled: true, routerChannels: [ROUTER], destinations: DESTINATIONS },
+      [OPERATOR],
+      { taskClientFactory: () => makeTaskClient() },
+    );
+
+    pipeline.register();
+
+    expect(app.message).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[meeting-minutes] Brainbase Graph resolver not configured — feature not started",
+    );
+  });
+
   it("ignores channels outside the router allowlist", async () => {
     const { pipeline, fetchTranscript } = makePipeline();
     await pipeline.maybeHandleFileMessage(fileEvent({ channel: "C_OTHER" }));
@@ -479,6 +543,77 @@ describe("happy path", () => {
     expect(run.status).toBe("tasks_dispatched");
     expect(run.sourceTextHash).toBe(sha256Hex(TRANSCRIPT));
     expect(state.lastMinutesByChannel["C_ST"]).toMatchObject({ title: MINUTES.title });
+  });
+
+  it("resolves transcript entities through Brainbase and persists the portable Receipt", async () => {
+    const receipt = resolutionReceipt({ resolutionStatus: "complete" });
+    const entityResolver = {
+      resolve: vi.fn().mockResolvedValue({
+        receipt,
+        properNouns: [{ id: "per_takashow", name: "タカショー", aliases: ["Takashowさん"] }],
+        decisions: ["価格改定を8月に実施する"],
+      }),
+    };
+    const { pipeline, generate } = makePipeline({ entityResolver });
+
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    expect(entityResolver.resolve).toHaveBeenCalledWith(TRANSCRIPT, {
+      projectId: "proj_salestailor",
+      asOf: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    });
+    expect(generate).toHaveBeenCalledWith(
+      TRANSCRIPT,
+      expect.objectContaining({
+        properNouns: [{ id: "per_takashow", name: "タカショー", aliases: ["Takashowさん"] }],
+        decisions: ["価格改定を8月に実施する"],
+        brainbaseResolution: expect.objectContaining({
+          sourceStatus: "complete",
+          resolutionStatus: "complete",
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(Object.values(readState().runs)[0].brainbaseResolutionReceipt).toEqual(receipt);
+    expect(JSON.stringify(readState())).not.toContain(TRANSCRIPT);
+  });
+
+  it("fails before generation when Brainbase resolution is unavailable", async () => {
+    const entityResolver = {
+      resolve: vi.fn().mockResolvedValue({
+        receipt: resolutionReceipt({ sourceStatus: "unavailable", resolutionStatus: "blocked" }),
+        properNouns: [],
+        decisions: [],
+      }),
+    };
+    const { pipeline, generate, apiCall } = makePipeline({ entityResolver });
+
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    const run = Object.values(readState().runs)[0];
+    expect(run.status).toBe("failed:brainbase");
+    expect(run.brainbaseResolutionReceipt?.source.status).toBe("unavailable");
+    expect(generate).not.toHaveBeenCalled();
+    expect(postedMessages(apiCall).some((message) => message.channel === "C_ST")).toBe(false);
+  });
+
+  it("fails before generation when Brainbase retrieval is only partial", async () => {
+    const entityResolver = {
+      resolve: vi.fn().mockResolvedValue({
+        receipt: resolutionReceipt({ sourceStatus: "partial", resolutionStatus: "partial" }),
+        properNouns: [{ id: "per_takashow", name: "タカショー", aliases: ["Takashowさん"] }],
+        decisions: [],
+      }),
+    };
+    const { pipeline, generate, apiCall } = makePipeline({ entityResolver });
+
+    await pipeline.maybeHandleFileMessage(fileEvent());
+
+    const run = Object.values(readState().runs)[0];
+    expect(run.status).toBe("failed:brainbase");
+    expect(run.brainbaseResolutionReceipt?.source.status).toBe("partial");
+    expect(generate).not.toHaveBeenCalled();
+    expect(postedMessages(apiCall).some((message) => message.channel === "C_ST")).toBe(false);
   });
 
   it("records handoff-disabled without failing the run", async () => {
@@ -922,6 +1057,13 @@ describe("failures and retry", () => {
         fetchTranscript: vi.fn().mockResolvedValue({ text: TRANSCRIPT, fileName: "m.txt" }) as any,
         classifyImpl: vi.fn().mockResolvedValue({ destination: DESTINATIONS[0], reason: "x" }) as any,
         generateImpl: vi.fn().mockResolvedValue({ minutes: MINUTES }) as any,
+        entityResolver: {
+          resolve: vi.fn().mockResolvedValue({
+            receipt: resolutionReceipt(),
+            properNouns: [],
+            decisions: [],
+          }),
+        },
         graphClient: makeGraphClient(),
         taskClientFactory: () => makeTaskClient(),
         taskProposalNotifier: { processMinutesText: vi.fn().mockResolvedValue(true) as any },
