@@ -467,6 +467,21 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(JSON.stringify(execOptions)).not.toContain("lease_token");
   });
 
+  it("prefers the tenant boundary marker when both credential handles are present", async () => {
+    const fs = new MemoryFs();
+    const credentialLeaseHandle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const tenantBoundaryHandle = `tb_${"B".repeat(32)}`;
+    const { options, sandbox } = harness({ credentialLeaseHandle, tenantBoundaryHandle });
+
+    await processReplyEvent(fs, event(), options);
+
+    const execOptions = sandbox.exec.mock.calls[0][1] as { env: Record<string, string> };
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN)
+      .toBe(`mana-tenant-boundary-v1:${tenantBoundaryHandle}`);
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN)
+      .not.toBe(`mana-credential-lease-v1:${credentialLeaseHandle}`);
+  });
+
   it("configures only the bounded search MCP when task search is enabled", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({ taskSearchEnabled: true });

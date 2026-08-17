@@ -1,6 +1,36 @@
 import { buildRuntimeTriagePrompt, parseRuntimeTriageDecision, runRuntimeTriage } from "../runtime-triage.js";
 
 describe("runtime Slack triage", () => {
+  it("prefers the tenant boundary marker when both credential handles are present", async () => {
+    const exec = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '{"action":"reply"}',
+      stderr: "",
+    });
+    const tenantBoundaryHandle = `tb_${"B".repeat(32)}`;
+
+    await runRuntimeTriage({
+      botName: "八雲まな",
+      speakerName: "佐藤圭吾",
+      channelType: "channel",
+      messageText: "次の打ち手を整理して",
+      recentThread: [],
+    }, {
+      model: "sonnet",
+      credentialLeaseHandle: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      tenantBoundaryHandle,
+      createSandbox: () => ({
+        writeFile: vi.fn().mockResolvedValue(undefined),
+        exec,
+        destroy: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const execOptions = exec.mock.calls[0][1] as { env: Record<string, string> };
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN)
+      .toBe(`mana-tenant-boundary-v1:${tenantBoundaryHandle}`);
+  });
+
   it.each([
     { success: false, stdout: "", stderr: "upstream failed" },
     new Error("sandbox unavailable"),
