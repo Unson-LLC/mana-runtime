@@ -35,13 +35,18 @@ describe("Brainbase judgment Hook forwarder", () => {
         schema_version: "1", accepted: true,
         hook_event_name: payload.hook_event_name, session_id: payload.session_id,
         turn_id: payload.turn_id, receipt_id: `receipt-${payload.hook_event_name}`,
+        ...(payload.hook_event_name === "UserPromptSubmit"
+          ? { route_resolution_sha256: "a".repeat(64) }
+          : {}),
         output: payload.hook_event_name === "PostToolUse"
           ? { systemMessage: "Brainbase tool use recorded" }
           : {
-              hookSpecificOutput: { hookEventName: payload.hook_event_name },
-              ...(payload.hook_event_name === "UserPromptSubmit"
-                ? { systemMessage: "Judgment route resolved" }
-                : {}),
+              hookSpecificOutput: {
+                hookEventName: payload.hook_event_name,
+                ...(payload.hook_event_name === "UserPromptSubmit"
+                  ? { additionalContext: "Judgment route resolved" }
+                  : {}),
+              },
             },
       }));
     });
@@ -77,7 +82,7 @@ describe("Brainbase judgment Hook forwarder", () => {
       });
       expect(embeddedReceipt.turn_id).toBeTruthy();
       if (hook_event_name === "UserPromptSubmit") {
-        expect(embeddedReceipt.route_resolution_sha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(embeddedReceipt.route_resolution_sha256).toBe("a".repeat(64));
       }
     }
     expect(new Set(payloads.map((payload) => payload.turn_id)).size).toBe(1);
@@ -136,9 +141,17 @@ describe("Brainbase judgment Hook forwarder", () => {
         schema_version: "1", accepted: true,
         hook_event_name: payload.hook_event_name, session_id: payload.session_id,
         turn_id: payload.turn_id,
-        ...(payload.hook_event_name === "UserPromptSubmit" ? { receipt_id: "receipt-session-5" } : {}),
+        ...(payload.hook_event_name === "UserPromptSubmit" ? {
+          receipt_id: "receipt-session-5",
+          route_resolution_sha256: "d".repeat(64),
+        } : {}),
         output: payload.hook_event_name === "UserPromptSubmit"
-          ? { systemMessage: "Judgment route resolved" }
+          ? {
+              hookSpecificOutput: {
+                hookEventName: "UserPromptSubmit",
+                additionalContext: "Judgment route resolved",
+              },
+            }
           : {},
       }));
     });
@@ -171,7 +184,13 @@ describe("Brainbase judgment Hook forwarder", () => {
         hook_event_name: "UserPromptSubmit",
         session_id: "session-route-1",
         turn_id: payload.turn_id,
-        output: { systemMessage: "Judgment route resolved" },
+        route_resolution_sha256: "e".repeat(64),
+        output: {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext: "Judgment route resolved",
+          },
+        },
       }));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -186,5 +205,43 @@ describe("Brainbase judgment Hook forwarder", () => {
     });
     expect(missingReceipt.code).toBe(2);
     expect(missingReceipt.stderr).toContain("judgment_hook_route_receipt_missing");
+  });
+
+  it("fails closed when UserPromptSubmit has an invalid Host route digest", async () => {
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1",
+        accepted: true,
+        hook_event_name: "UserPromptSubmit",
+        session_id: "session-route-digest",
+        turn_id: payload.turn_id,
+        receipt_id: "receipt-route-digest",
+        route_resolution_sha256: "not-a-digest",
+        output: {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext: "Judgment route resolved",
+          },
+        },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const result = await runHook({
+      hook_event_name: "UserPromptSubmit", session_id: "session-route-digest",
+    }, {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("judgment_hook_route_receipt_missing");
   });
 });

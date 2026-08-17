@@ -32,14 +32,20 @@ function validatedOutput(envelope, payload) {
       && (typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
     throw new Error("judgment_hook_audit_not_recorded");
   }
+  const hookSpecificOutput = envelope.output.hookSpecificOutput;
   if (payload.hook_event_name === "UserPromptSubmit"
       && (typeof envelope.receipt_id !== "string" || !envelope.receipt_id.trim()
-        || typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
+        || typeof envelope.route_resolution_sha256 !== "string"
+        || !/^[a-f0-9]{64}$/.test(envelope.route_resolution_sha256)
+        || !hookSpecificOutput || typeof hookSpecificOutput !== "object"
+        || Array.isArray(hookSpecificOutput)
+        || hookSpecificOutput.hookEventName !== "UserPromptSubmit"
+        || typeof hookSpecificOutput.additionalContext !== "string"
+        || !hookSpecificOutput.additionalContext.trim())) {
     throw new Error("judgment_hook_route_receipt_missing");
   }
   const routeResolutionSha256 = payload.hook_event_name === "UserPromptSubmit"
-    && typeof envelope.output.systemMessage === "string"
-    ? createHash("sha256").update(envelope.output.systemMessage).digest("hex")
+    ? envelope.route_resolution_sha256
     : undefined;
   const { manaJudgmentReceipt: _unsupportedReceipt, ...documentedOutput } = envelope.output;
   const receipt = {
