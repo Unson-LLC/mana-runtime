@@ -140,6 +140,10 @@ export class TenantCredentialInjector {
   dispose(handle: string): void {
     if (HANDLE_PATTERN.test(handle)) this.#active.delete(handle);
   }
+
+  activeCredentialCount(): number {
+    return this.#active.size;
+  }
 }
 
 export interface TenantCredentialRegistry {

@@ -1,6 +1,5 @@
 import type { CredentialLease, CredentialLeaseBinding } from "./contracts.js";
 import {
-  createCredentialLeaseHandle,
   TenantCredentialInjector,
   type TenantCredentialRegistry,
 } from "./credential-injector.js";
@@ -12,6 +11,7 @@ const TARGET_METHOD_HEADER = "x-mana-credential-target-method";
 const OBSERVED_AT_HEADER = "x-mana-credential-observed-at";
 const MARKER_PREFIX = "mana-credential-lease-v1:";
 const HANDLE_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+const CLOCK_SKEW_MS = 30_000;
 
 interface CredentialRelayStub {
   fetch(request: Request): Promise<Response>;
@@ -28,6 +28,31 @@ interface RegistrationInput {
   expected_binding: CredentialLeaseBinding;
   now: string;
   allowed_hostname?: string;
+}
+
+export interface CredentialLeaseOwnership {
+  claim(leaseId: string): Promise<boolean>;
+}
+
+function inMemoryLeaseOwnership(): CredentialLeaseOwnership {
+  const claimed = new Set<string>();
+  return {
+    async claim(leaseId) {
+      if (claimed.has(leaseId)) return false;
+      claimed.add(leaseId);
+      return true;
+    },
+  };
+}
+
+async function credentialHandleForLease(leaseId: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`mana-credential-relay-v1:${leaseId}`),
+  ));
+  let binary = "";
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 function handleFromAuthorization(value: string | null): string | undefined {
@@ -51,7 +76,7 @@ export function createDurableTenantCredentialRegistry(
 ): TenantCredentialRegistry {
   return {
     async register(input) {
-      const handle = createCredentialLeaseHandle();
+      const handle = await credentialHandleForLease(input.lease.lease_id);
       const response = await relayStub(namespace, handle).fetch(new Request(`https://${RELAY_HOST}/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -97,8 +122,32 @@ export async function forwardTenantCredentialRequest(
 
 export class TenantCredentialRelayHandler {
   readonly #injector = new TenantCredentialInjector();
+  readonly #expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly ownership: CredentialLeaseOwnership = inMemoryLeaseOwnership(),
+  ) {}
+
+  activeCredentialCount(): number {
+    return this.#injector.activeCredentialCount();
+  }
+
+  #clearExpiry(handle: string): void {
+    const timer = this.#expiryTimers.get(handle);
+    if (timer !== undefined) clearTimeout(timer);
+    this.#expiryTimers.delete(handle);
+  }
+
+  #scheduleExpiry(handle: string, expiresAt: string, observedAt: string): void {
+    this.#clearExpiry(handle);
+    const delay = Math.max(0, Date.parse(expiresAt) - Date.parse(observedAt) + CLOCK_SKEW_MS + 1);
+    const timer = setTimeout(() => {
+      this.#injector.dispose(handle);
+      this.#expiryTimers.delete(handle);
+    }, delay);
+    this.#expiryTimers.set(handle, timer);
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -115,6 +164,18 @@ export class TenantCredentialRelayHandler {
           allowed_hostname: input.allowed_hostname,
           handle: input.handle,
         });
+        let claimed = false;
+        try {
+          claimed = await this.ownership.claim(input.lease.lease_id);
+        } catch (error) {
+          this.#injector.dispose(handle);
+          throw error;
+        }
+        if (!claimed) {
+          this.#injector.dispose(handle);
+          throw new TenantBoundaryError("credential_lease", "FALLBACK_FORBIDDEN");
+        }
+        this.#scheduleExpiry(handle, input.lease.expires_at, input.now);
         return Response.json({ result: { handle } });
       }
       if (url.pathname === "/dispose") {
@@ -123,6 +184,7 @@ export class TenantCredentialRelayHandler {
           return Response.json({ error: "SCHEMA_INVALID" }, { status: 400 });
         }
         this.#injector.dispose(input.handle);
+        this.#clearExpiry(input.handle);
         return Response.json({ result: null });
       }
       if (url.pathname === "/forward") {
@@ -137,6 +199,8 @@ export class TenantCredentialRelayHandler {
           return new Response("credential_lease_rejected", { status: 503 });
         }
         const headers = this.#injector.inject({ hostname: target.hostname, headers: request.headers, now: observedAt });
+        const handle = handleFromAuthorization(request.headers.get("authorization"));
+        if (handle) this.#clearExpiry(handle);
         headers.delete(TARGET_URL_HEADER);
         headers.delete(TARGET_METHOD_HEADER);
         headers.delete(OBSERVED_AT_HEADER);

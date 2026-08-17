@@ -180,7 +180,14 @@ export class TenantRuntimeState extends DurableObject {
   readonly #handler = new TenantRuntimeStateHandler(
     this.ctx.storage as unknown as TenantStateStorage,
   );
-  readonly #credentialRelay = new TenantCredentialRelayHandler();
+  readonly #credentialRelay = new TenantCredentialRelayHandler(fetch, {
+    claim: async () => this.ctx.storage.transaction(async (transaction) => {
+      const key = "credential-lease-claimed-v1";
+      if (await transaction.get(key)) return false;
+      await transaction.put(key, { claimed: true });
+      return true;
+    }),
+  });
 
   fetch(request: Request): Promise<Response> {
     if (new URL(request.url).hostname === "tenant-credential-relay.internal") {
