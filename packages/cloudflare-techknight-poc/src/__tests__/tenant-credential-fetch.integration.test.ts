@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createTenantCredentialFetch } from "../multitenancy/tenant-credential-fetch.js";
-import {
-  createDurableTenantCredentialRegistry,
-  TenantCredentialRelayHandler,
-} from "../multitenancy/durable-credential-relay.js";
+import type { TrustedProviderForwarder } from "../multitenancy/trusted-provider-forwarder.js";
 import {
   createIdempotencyKey,
   signTenantContextEnvelope,
@@ -44,37 +41,6 @@ const EXPECTED_SCOPE: ExpectedTenantScope = {
   capability_id: "task.write",
   deployment_id: SNAPSHOT.deployment_id,
 };
-
-class CredentialNamespace {
-  readonly handlers = new Map<string, TenantCredentialRelayHandler>();
-  readonly claimed = new Set<string>();
-  readonly providerFetch = vi.fn(async (request: Request) => Response.json({
-    authorization: request.headers.get("authorization"),
-    apiKey: request.headers.get("x-api-key"),
-    xcToken: request.headers.get("xc-token"),
-    url: request.url,
-  }));
-
-  idFromName(name: string): string { return name; }
-
-  get(id: unknown): { fetch(request: Request): Promise<Response> } {
-    const key = String(id);
-    return { fetch: (request) => {
-      let handler = this.handlers.get(key);
-      if (!handler) {
-        handler = new TenantCredentialRelayHandler(this.providerFetch as unknown as typeof fetch, {
-          claim: async (leaseId) => {
-            if (this.claimed.has(leaseId)) return false;
-            this.claimed.add(leaseId);
-            return true;
-          },
-        });
-        this.handlers.set(key, handler);
-      }
-      return handler.fetch(request);
-    } };
-  }
-}
 
 async function signedEnvelope() {
   const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
@@ -126,10 +92,10 @@ async function signedEnvelope() {
 }
 
 describe("tenant credential fetch integration", () => {
-  it("acquires and consumes a fresh 60-second single-use lease for every outbound request", async () => {
+  it("uses a fresh lease through the trusted forwarder without putting opaque handles in provider headers", async () => {
     const { envelope, publicKey } = await signedEnvelope();
-    const namespace = new CredentialNamespace();
     const requests: CredentialLeaseRequest[] = [];
+    const forwarded: Array<{ leaseToken: string; authorization: string | null; apiKey: string | null; xcToken: string | null }> = [];
     const broker: CredentialBrokerClient = {
       acquire_lease: vi.fn(async (request: CredentialLeaseRequest): Promise<CredentialLease> => {
         requests.push(structuredClone(request));
@@ -143,16 +109,26 @@ describe("tenant credential fetch integration", () => {
           issued_at: "2026-08-17T00:59:50.000Z",
           expires_at: "2026-08-17T01:00:50.000Z",
           max_uses: 1,
-          lease_token: `test-provider-token-${requests.length}`,
+          lease_token: `opaque-lease-handle-${requests.length}`,
         };
+      }),
+    };
+    const trustedForwarder: TrustedProviderForwarder = {
+      forward: vi.fn(async ({ lease, request }) => {
+        forwarded.push({
+          leaseToken: lease.lease_token,
+          authorization: request.headers.get("authorization"),
+          apiKey: request.headers.get("x-api-key"),
+          xcToken: request.headers.get("xc-token"),
+        });
+        return Response.json({ forwarded: true, url: request.url });
       }),
     };
     const tenantFetch = createTenantCredentialFetch({
       envelope,
       expected_scope: EXPECTED_SCOPE,
       broker,
-      credential_registry: createDurableTenantCredentialRegistry(namespace),
-      credential_relay: namespace,
+      trusted_forwarder: trustedForwarder,
       read_authoritative_snapshot: async () => SNAPSHOT,
       resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,
       now: () => NOW,
@@ -165,24 +141,26 @@ describe("tenant credential fetch integration", () => {
       headers: { authorization: "Bearer placeholder-must-be-replaced" },
     });
 
-    await expect(first.json()).resolves.toMatchObject({ authorization: "Bearer test-provider-token-1" });
-    await expect(second.json()).resolves.toMatchObject({ authorization: "Bearer test-provider-token-2" });
+    await expect(first.json()).resolves.toMatchObject({ forwarded: true });
+    await expect(second.json()).resolves.toMatchObject({ forwarded: true });
     expect(requests).toHaveLength(2);
     expect(requests.every((request) => request.requested_ttl_seconds === 60)).toBe(true);
     expect(requests.every((request) => request.binding.audience === "slack.com")).toBe(true);
-    expect(namespace.providerFetch).toHaveBeenCalledTimes(2);
+    expect(forwarded).toEqual([
+      { leaseToken: "opaque-lease-handle-1", authorization: null, apiKey: null, xcToken: null },
+      { leaseToken: "opaque-lease-handle-2", authorization: null, apiKey: null, xcToken: null },
+    ]);
   });
 
   it("fails closed for non-HTTPS targets before asking the broker", async () => {
     const { envelope, publicKey } = await signedEnvelope();
-    const namespace = new CredentialNamespace();
     const broker = { acquire_lease: vi.fn() } as unknown as CredentialBrokerClient;
+    const trustedForwarder = { forward: vi.fn() } as unknown as TrustedProviderForwarder;
     const tenantFetch = createTenantCredentialFetch({
       envelope,
       expected_scope: EXPECTED_SCOPE,
       broker,
-      credential_registry: createDurableTenantCredentialRegistry(namespace),
-      credential_relay: namespace,
+      trusted_forwarder: trustedForwarder,
       read_authoritative_snapshot: async () => SNAPSHOT,
       resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,
       now: () => NOW,
@@ -192,11 +170,11 @@ describe("tenant credential fetch integration", () => {
       code: "CREDENTIAL_LEASE_BINDING_MISMATCH",
     });
     expect(broker.acquire_lease).not.toHaveBeenCalled();
+    expect(trustedForwarder.forward).not.toHaveBeenCalled();
   });
 
-  it("routes an opaque lease into the provider-specific NocoDB header without forwarding placeholders", async () => {
+  it("rejects replayed lease ids before a second trusted forward", async () => {
     const { envelope, publicKey } = await signedEnvelope();
-    const namespace = new CredentialNamespace();
     const broker: CredentialBrokerClient = {
       acquire_lease: vi.fn(async (request: CredentialLeaseRequest): Promise<CredentialLease> => ({
         message_type: "credential_lease_response",
@@ -207,33 +185,121 @@ describe("tenant credential fetch integration", () => {
         issued_at: "2026-08-17T00:59:50.000Z",
         expires_at: "2026-08-17T01:00:50.000Z",
         max_uses: 1,
-        lease_token: "test-nocodb-token",
+        lease_token: "opaque-replayed-lease-handle",
+      })),
+    };
+    const trustedForwarder: TrustedProviderForwarder = {
+      forward: vi.fn(async () => Response.json({ forwarded: true })),
+    };
+    const tenantFetch = createTenantCredentialFetch({
+      envelope,
+      expected_scope: EXPECTED_SCOPE,
+      broker,
+      trusted_forwarder: trustedForwarder,
+      read_authoritative_snapshot: async () => SNAPSHOT,
+      resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,
+      now: () => NOW,
+    });
+
+    await expect(tenantFetch("https://api.anthropic.com/v1/messages")).resolves.toBeInstanceOf(Response);
+    await expect(tenantFetch("https://api.anthropic.com/v1/messages"))
+      .rejects.toMatchObject({ code: "FALLBACK_FORBIDDEN" });
+    expect(trustedForwarder.forward).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["revision mismatch", { connection_revision: "8" }, "WORKSPACE_CONNECTION_STALE_REVISION"],
+    ["cross-tenant mismatch", { tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FB9" }, "CROSS_TENANT_CANDIDATE"],
+    ["provider mismatch", { audience: "github.com" }, "CREDENTIAL_LEASE_BINDING_MISMATCH"],
+  ])("fails closed for %s before the trusted forwarder", async (_label, bindingOverride, expectedCode) => {
+    const { envelope, publicKey } = await signedEnvelope();
+    const trustedForwarder = { forward: vi.fn() } as unknown as TrustedProviderForwarder;
+    const broker: CredentialBrokerClient = {
+      acquire_lease: vi.fn(async (request: CredentialLeaseRequest): Promise<CredentialLease> => ({
+        message_type: "credential_lease_response",
+        protocol_version: "1.0",
+        lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB3",
+        contract_revision: request.binding.contract_revision,
+        binding: { ...request.binding, ...bindingOverride },
+        issued_at: "2026-08-17T00:59:50.000Z",
+        expires_at: "2026-08-17T01:00:50.000Z",
+        max_uses: 1,
+        lease_token: "opaque-mismatched-lease-handle",
       })),
     };
     const tenantFetch = createTenantCredentialFetch({
       envelope,
       expected_scope: EXPECTED_SCOPE,
       broker,
-      credential_registry: createDurableTenantCredentialRegistry(namespace),
-      credential_relay: namespace,
+      trusted_forwarder: trustedForwarder,
+      read_authoritative_snapshot: async () => bindingOverride.connection_revision || bindingOverride.tenant_id
+        ? { ...SNAPSHOT, ...bindingOverride }
+        : SNAPSHOT,
+      resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,
+      now: () => NOW,
+    });
+
+    await expect(tenantFetch("https://api.anthropic.com/v1/messages"))
+      .rejects.toMatchObject({ code: expectedCode });
+    expect(trustedForwarder.forward).not.toHaveBeenCalled();
+  });
+
+  it("rejects an expired lease before the trusted forwarder", async () => {
+    const { envelope, publicKey } = await signedEnvelope();
+    const trustedForwarder = { forward: vi.fn() } as unknown as TrustedProviderForwarder;
+    const broker: CredentialBrokerClient = {
+      acquire_lease: vi.fn(async (request: CredentialLeaseRequest): Promise<CredentialLease> => ({
+        message_type: "credential_lease_response",
+        protocol_version: "1.0",
+        lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB5",
+        contract_revision: request.binding.contract_revision,
+        binding: request.binding,
+        issued_at: "2026-08-17T00:58:00.000Z",
+        expires_at: "2026-08-17T00:59:20.000Z",
+        max_uses: 1,
+        lease_token: "opaque-expired-lease-handle",
+      })),
+    };
+    const tenantFetch = createTenantCredentialFetch({
+      envelope,
+      expected_scope: EXPECTED_SCOPE,
+      broker,
+      trusted_forwarder: trustedForwarder,
       read_authoritative_snapshot: async () => SNAPSHOT,
       resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,
       now: () => NOW,
-      credential_header: "xc-token",
     });
 
-    const response = await tenantFetch("https://nocodb.example.test/api/v1/db/data/noco/project/table", {
-      headers: {
-        authorization: "Bearer must-not-leak",
-        "x-api-key": "must-not-leak",
-        "xc-token": "tenant-credential-injected",
-      },
+    await expect(tenantFetch("https://api.anthropic.com/v1/messages"))
+      .rejects.toMatchObject({ code: "TTL_EXCEEDED" });
+    expect(trustedForwarder.forward).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the trusted forwarder wire is unavailable", async () => {
+    const { envelope, publicKey } = await signedEnvelope();
+    const broker: CredentialBrokerClient = {
+      acquire_lease: vi.fn(async (request: CredentialLeaseRequest): Promise<CredentialLease> => ({
+        message_type: "credential_lease_response",
+        protocol_version: "1.0",
+        lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB4",
+        contract_revision: request.binding.contract_revision,
+        binding: request.binding,
+        issued_at: "2026-08-17T00:59:50.000Z",
+        expires_at: "2026-08-17T01:00:50.000Z",
+        max_uses: 1,
+        lease_token: "opaque-unavailable-lease-handle",
+      })),
+    };
+    const tenantFetch = createTenantCredentialFetch({
+      envelope,
+      expected_scope: EXPECTED_SCOPE,
+      broker,
+      read_authoritative_snapshot: async () => SNAPSHOT,
+      resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,
+      now: () => NOW,
     });
 
-    await expect(response.json()).resolves.toMatchObject({
-      authorization: null,
-      apiKey: null,
-      xcToken: "test-nocodb-token",
-    });
+    await expect(tenantFetch("https://slack.com/api/chat.postMessage"))
+      .rejects.toMatchObject({ code: "CREDENTIAL_FORWARDING_UNAVAILABLE" });
   });
 });
