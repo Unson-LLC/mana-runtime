@@ -568,6 +568,48 @@ describe("story-mana-multitenant-runtime contract", () => {
       .resolves.toEqual({ disposition: "written", result_ref: "brainbase-write-retried" });
   });
 
+  it("retries the same successful Receipt without repeating the Slack effect", async () => {
+    const { executeTenantRuntimeOperation } = await import("../multitenancy/production-consumer.js");
+    const { value, publicKey } = await envelope();
+    const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey });
+    const ledger = new TenantAccountingLedger();
+    const payloads: unknown[] = [];
+    const accounting = { write: vi.fn(async (payload: unknown) => {
+      payloads.push(structuredClone(payload));
+      if (payloads.length === 1) throw new Error("accounting unavailable after Slack");
+      return { result_ref: "brainbase-write-retried" };
+    }) };
+    const quota = { read_authoritative_decision: vi.fn(async (): Promise<QuotaDecision> => ({
+      message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11", quota_revision: "19",
+      decision: "allowed", limit: 100, used: 1, remaining: 99, unit: "model_tokens",
+      window_started_at: "2026-08-01T00:00:00Z", window_ends_at: "2026-09-01T00:00:00Z", decided_at: NOW,
+    })) };
+    let persistedResponseTs: string | undefined;
+    const postSlackOnce = vi.fn(async () => {
+      persistedResponseTs = "4.0";
+      return { outcome: "replied", responseTs: persistedResponseTs };
+    });
+    const run = () => executeTenantRuntimeOperation({
+      tenant_context: value,
+      expected_scope: expectedScope,
+      verifier,
+      quota,
+      accounting,
+      ledger,
+      quota_unit: "model_tokens",
+      now: () => NOW,
+      process: () => persistedResponseTs
+        ? Promise.resolve({ outcome: "already_completed", responseTs: persistedResponseTs })
+        : postSlackOnce(),
+    });
+    await expect(run()).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+    await expect(run()).resolves.toEqual({ outcome: "already_completed", responseTs: "4.0" });
+    expect(postSlackOnce).toHaveBeenCalledOnce();
+    expect(accounting.write).toHaveBeenCalledTimes(2);
+    expect(payloads[1]).toEqual(payloads[0]);
+  });
+
   it("per tenant quota decisions and isolation planned Red", () => {
     const cache = new TenantQuotaCache();
     const stopped: QuotaDecision = { message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11",
