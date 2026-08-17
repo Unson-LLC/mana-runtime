@@ -20,6 +20,12 @@ describe("meeting minutes stale recovery", () => {
     const first = await armMeetingMinutesRecovery(fs, selection, 1_000);
     const second = await armMeetingMinutesRecovery(fs, selection, 60_000);
     expect(second.event).toEqual(first.event);
+    expect(first.event).toMatchObject({
+      workspaceId: selection.workspaceId,
+      channelId: selection.channelId,
+      threadTs: selection.threadTs,
+      userId: selection.userId,
+    });
     expect((await loadMeetingMinutesRun(fs, selection.runId))?.lifecycle?.deadlineAt)
       .toBe(new Date(1_000 + 20 * 60 * 1_000).toISOString());
   });

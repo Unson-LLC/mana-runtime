@@ -420,11 +420,15 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
     expect(worker).toContain("isTenantMeetingMinutesSelectionBody(message.body)");
     expect(worker).toContain("isTenantMeetingMinutesRedoBody(message.body)");
+    expect(worker).toContain("isTenantMeetingMinutesRecoveryBody(message.body)");
     expect(worker).toContain("expectedTenantMeetingMinutesRedoScope(env, tenantBody)");
+    expect(worker).toContain("expectedTenantMeetingMinutesRecoveryScope(env, tenantBody)");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
-    expect(worker).not.toContain("recoverStaleMeetingMinutesRun(");
-    expect(worker).toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
+    expect(worker).toContain("recoverStaleMeetingMinutesRun(");
+    expect(worker).toContain("resolveSlackWorkerIngress({");
+    expect(worker).toContain("meetingMinutesRecoveryEventId(recovery)");
+    expect(worker).not.toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
     expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("credentialLeaseHandle,\n                        tenantBoundaryHandle");
