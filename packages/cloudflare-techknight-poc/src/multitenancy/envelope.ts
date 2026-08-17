@@ -9,32 +9,14 @@ import {
   type WorkspaceConnectionSnapshot,
 } from "./contracts.js";
 import { deny } from "./errors.js";
+import { CanonicalContractError, validateCanonicalEnvelope } from "./canonical-consumer.js";
 import { assertCanonicalSharedId } from "./ids.js";
+import { jcsCanonicalize } from "./jcs.js";
 import { assertSecretArtifactFree } from "./secret-guard.js";
 
+export { jcsCanonicalize } from "./jcs.js";
+
 const encoder = new TextEncoder();
-
-function canonicalValue(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new TypeError("JCS rejects non-finite numbers");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalValue).join(",")}]`;
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalValue(entry)}`).join(",")}}`;
-  }
-  throw new TypeError(`JCS rejects ${typeof value}`);
-}
-
-export function jcsCanonicalize(value: unknown): string {
-  return canonicalValue(value);
-}
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
@@ -73,7 +55,7 @@ export async function signTenantContextEnvelope(
     b64: false,
     crit: ["b64"],
     kid: keyId,
-    typ: "application/mana-tenant-context+jws",
+    typ: "application/mana-brainbase-tenant-context+jws",
   })));
   const signature = new Uint8Array(await crypto.subtle.sign(
     { name: "Ed25519" },
@@ -178,7 +160,9 @@ async function assertSignature(
   }
   if (header.alg !== "EdDSA" || header.b64 !== false || !Array.isArray(header.crit)
     || !header.crit.includes("b64") || header.kid !== integrity.key_id
-    || header.typ !== "application/mana-tenant-context+jws") {
+    || header.crit.length !== 1 || header.crit[0] !== "b64"
+    || Object.keys(header).sort().join(",") !== "alg,b64,crit,kid,typ"
+    || header.typ !== "application/mana-brainbase-tenant-context+jws") {
     deny(boundary, "TENANT_CONTEXT_SIGNATURE_INVALID");
   }
   const verificationKey = await resolveVerificationKey(integrity.key_id);
@@ -242,9 +226,17 @@ export async function validateTenantBoundary(input: {
   now: string;
   resolve_verification_key: (keyId: string) => Promise<CryptoKey | undefined>;
 }): Promise<TenantContextEnvelope> {
-  assertEnvelopeShape(input.envelope, input.boundary);
-  assertFresh(input.envelope, input.boundary, input.now);
-  await assertSignature(input.envelope, input.boundary, input.resolve_verification_key);
+  const verificationKey = await input.resolve_verification_key(input.envelope.integrity?.key_id);
+  if (!verificationKey) deny(input.boundary, "TENANT_CONTEXT_SIGNATURE_INVALID");
+  try {
+    await validateCanonicalEnvelope(input.envelope, {
+      now: input.now,
+      verification_key: verificationKey,
+    });
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny(input.boundary, error.code, error.details);
+    throw error;
+  }
   assertAuthoritativeSnapshot(input.envelope, input.authoritative_snapshot, input.boundary);
   assertExpectedScope(input.envelope, input.expected_scope, input.boundary);
   return input.envelope;
