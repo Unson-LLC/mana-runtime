@@ -303,6 +303,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).toContain("resolveDurableTenantBoundaryContext(");
+    expect(sandboxRuntime).toContain(
+      "SLACK_EXPECTED_TEAM_ID: resolved.tenant_context.workspace_connection.workspace_id",
+    );
     expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
     expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch)");
     expect(sandboxRuntime).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
