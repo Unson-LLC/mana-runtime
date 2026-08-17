@@ -11,6 +11,7 @@ interface DeploymentConfig {
     logs: { invocation_logs: boolean };
   };
   version_metadata?: { binding: string };
+  services?: Array<{ binding: string; service: string }>;
   vars: Record<string, string>;
   durable_objects: {
     bindings: Array<{ name: string; class_name: string }>;
@@ -221,11 +222,19 @@ describe("会社別Cloudflare deployment", () => {
     const runnerPath = fileURLToPath(new URL("../../container/openryoko-development-runner.mjs", import.meta.url));
     const runner = readFileSync(runnerPath, "utf8");
     expect(runner).toContain('IS_SANDBOX: "1"');
-    expect(runner).toContain("CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryMarker");
     expect(runner).toContain("MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle");
     expect(runner).toContain('throw new Error("tenant_boundary_required")');
-    expect(runner).not.toContain('CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected"');
+    expect(runner).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
     expect(runner).toContain("extraEnv: sandboxAgentEnv");
+  });
+
+  it("両Cloudflare profileをBrainbase専用internal serviceへbindする", () => {
+    for (const config of [techKnight, unson]) {
+      expect(config.services).toContainEqual({
+        binding: "BRAINBASE_TENANT_RUNTIME_SERVICE",
+        service: "brainbase-tenant-runtime",
+      });
+    }
   });
 
   it("開発エージェントもplacement既定と同じsonnetを明示して起動する", () => {

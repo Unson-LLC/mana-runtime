@@ -1,7 +1,7 @@
 import { buildRuntimeTriagePrompt, parseRuntimeTriageDecision, runRuntimeTriage } from "../runtime-triage.js";
 
 describe("runtime Slack triage", () => {
-  it("uses only the tenant operation boundary marker", async () => {
+  it("uses only the dedicated tenant operation control channel", async () => {
     const exec = vi.fn().mockResolvedValue({
       success: true,
       stdout: '{"action":"reply"}',
@@ -26,8 +26,9 @@ describe("runtime Slack triage", () => {
     });
 
     const execOptions = exec.mock.calls[0][1] as { env: Record<string, string> };
-    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN)
-      .toBe(`mana-tenant-boundary-v1:${tenantBoundaryHandle}`);
+    expect(execOptions.env.MANA_TENANT_BOUNDARY_HANDLE).toBe(tenantBoundaryHandle);
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(exec.mock.calls[0][0]).toContain("/opt/mana/tenant-claude-runner.mjs");
   });
 
   it.each([

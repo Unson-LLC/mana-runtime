@@ -1,6 +1,6 @@
 import { createServer, type RequestListener, type Server } from "node:http";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CredentialLease, CredentialLeaseBinding, TenantContextEnvelope } from "../multitenancy/contracts.js";
 import { createBrainbaseTrustedProviderForwarderFromEnv } from "../multitenancy/trusted-provider-forwarder.js";
@@ -54,6 +54,9 @@ const TENANT_CONTEXT = {
 
 const BASE_ENV = {
   BRAINBASE_TENANT_RUNTIME_ENABLED: "1",
+  BRAINBASE_TENANT_RUNTIME_SERVICE: {
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
+  },
   BRAINBASE_TASK_API_BASE_URL: "https://tasks.example.test",
   BRAINBASE_GRAPH_API_BASE_URL: "https://graph.example.test",
   BRAINBASE_MCP_BASE_URL: "https://mcp.example.test",
@@ -296,8 +299,52 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
     ["missing port", { BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
     ["missing token", { BRAINBASE_TENANT_RUNTIME_PORT: "31016" }],
     ["wildcard host", { BRAINBASE_TENANT_RUNTIME_HOST: "0.0.0.0", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
+    ["asterisk host", { BRAINBASE_TENANT_RUNTIME_HOST: "*", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK: "1", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
+    ["missing Cloudflare service binding", { BRAINBASE_TENANT_RUNTIME_ENABLED: "1", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
   ])("rejects unsafe internal service configuration: %s", (_label, env) => {
     expect(() => createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: TENANT_CONTEXT })).toThrow("runtime_configuration_invalid");
+  });
+
+  it("uses the Brainbase Service Binding instead of the Worker global network", async () => {
+    const observed: Request[] = [];
+    const service = {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        observed.push(request.clone());
+        const body = await request.json() as { provider_operation: string };
+        return Response.json({
+          provider: "anthropic",
+          operation_id: BINDING.operation_id,
+          provider_operation: body.provider_operation,
+          status: 200,
+          response_encoding: "json",
+          content_type: "application/json",
+          body: { ok: true },
+        });
+      },
+    };
+    const globalFetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("global network forbidden"));
+    const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
+      env: {
+        ...BASE_ENV,
+        BRAINBASE_TENANT_RUNTIME_SERVICE: service,
+        BRAINBASE_TENANT_RUNTIME_PORT: "31016",
+        BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN,
+      },
+      tenant_context: TENANT_CONTEXT,
+    });
+
+    await expect(forwarder.forward({
+      lease: LEASE,
+      expected_binding: BINDING,
+      request: jsonRequest("https://api.anthropic.com/v1/messages", "POST", { messages: [] }),
+      now: LEASE.issued_at,
+    }).then((response) => response.json())).resolves.toEqual({ ok: true });
+
+    expect(globalFetch).not.toHaveBeenCalled();
+    expect(observed).toHaveLength(1);
+    expect(new URL(observed[0]!.url).pathname).toBe("/api/v1/runtime/provider-requests:forward");
+    globalFetch.mockRestore();
   });
 
   it.each([

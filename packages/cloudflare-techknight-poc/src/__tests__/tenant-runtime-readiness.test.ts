@@ -27,6 +27,7 @@ const complete = {
   BRAINBASE_TENANT_RUNTIME_HOST: "127.0.0.1",
   BRAINBASE_TENANT_RUNTIME_PORT: "31016",
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "internal-service-token-placeholder",
+  BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async () => new Response() },
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   SLACK_EXPECTED_APP_ID: "A-MANA",
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
@@ -74,12 +75,14 @@ describe("tenant runtime readiness", () => {
       BRAINBASE_TENANT_RUNTIME_ENABLED: undefined,
       BRAINBASE_TENANT_RUNTIME_PORT: undefined,
       BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: undefined,
+      BRAINBASE_TENANT_RUNTIME_SERVICE: undefined,
     })).toEqual({
       ready: false,
       missing_bindings: [
         "BRAINBASE_TENANT_RUNTIME_ENABLED",
         "BRAINBASE_TENANT_RUNTIME_PORT",
         "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
+        "BRAINBASE_TENANT_RUNTIME_SERVICE",
       ],
     });
     expect(assessTenantRuntimeReadiness({

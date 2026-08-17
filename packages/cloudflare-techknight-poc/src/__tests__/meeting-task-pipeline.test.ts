@@ -161,12 +161,11 @@ describe("Cloudflare meeting task pipeline", () => {
     expect(String(reactionCalls[1][0])).toContain("reactions.remove");
     expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(sandbox.exec.mock.invocationCallOrder[0]);
     expect(sandbox.exec).toHaveBeenCalledWith(
-      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/meeting-task-prompt.txt)"',
+      'node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/meeting-task-prompt.txt)"',
       {
         timeout: 120_000,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: "mana-tenant-boundary-v1:tb_00000000000000000000000000000003",
           MANA_TENANT_BOUNDARY_HANDLE: "tb_00000000000000000000000000000003",
         },
       },
@@ -206,9 +205,11 @@ describe("Cloudflare meeting task pipeline", () => {
     });
     await processMeetingTaskEvent(new MemoryFs(), event(), options);
     expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ env: expect.objectContaining({
-      CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${boundaryHandle}`,
       MANA_TENANT_BOUNDARY_HANDLE: boundaryHandle,
     }) }));
+    expect(sandbox.exec.mock.calls[0]?.[0]).toContain("/opt/mana/tenant-claude-runner.mjs");
+    expect(JSON.stringify(sandbox.exec.mock.calls[0]?.[1])).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(JSON.stringify(sandbox.exec.mock.calls[0]?.[1])).not.toContain("mana-tenant-boundary-v1:");
   });
 
   it("does not repeat Claude, Brainbase, or Slack after completion", async () => {

@@ -3,8 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDurableTenantBoundaryRegistry,
   resolveDurableTenantBoundaryContext,
-  tenantBoundaryCredentialMarker,
-  tenantBoundaryHandleFromCredentialAuthorization,
   TenantBoundaryContextHandler,
   TENANT_BOUNDARY_HANDLE_HEADER,
 } from "../multitenancy/durable-tenant-boundary.js";
@@ -483,8 +481,6 @@ describe("sandbox provider credential integration", () => {
       expected_scope: EXPECTED_SCOPE,
       now: new Date().toISOString(),
     });
-    const marker = tenantBoundaryCredentialMarker(handle);
-    expect(tenantBoundaryHandleFromCredentialAuthorization(`Bearer ${marker}`)).toBe(handle);
     const resolved = await resolveDurableTenantBoundaryContext(
       namespace,
       new Request("https://api.anthropic.com/v1/messages", {
@@ -511,20 +507,20 @@ describe("sandbox provider credential integration", () => {
     const responses = await Promise.all([
       authorizeTenantProviderOutbound(new Request("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { authorization: `Bearer ${marker}` },
+        headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle },
         body: "{}",
       }), env, trustedForwarder),
       authorizeTenantProviderOutbound(new Request("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { authorization: `Bearer ${marker}` },
+        headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle },
         body: "{}",
       }), env, trustedForwarder),
       authorizeTenantProviderOutbound(new Request("https://github.com/example/repo.git/info/refs", {
-        headers: { authorization: `Bearer ${marker}` },
+        headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle },
       }), env, trustedForwarder),
       authorizeTenantProviderOutbound(new Request("https://github.com/example/repo.git/git-upload-pack", {
         method: "POST",
-        headers: { authorization: `Bearer ${marker}` },
+        headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle },
         body: "request-body",
       }), env, trustedForwarder),
     ]);
@@ -583,6 +579,16 @@ describe("sandbox provider credential integration", () => {
       && !request.xcToken?.includes(handle)
     ))).toBe(true);
     expect(JSON.stringify(namespace.providerRequests)).not.toContain("opaque-lease-handle");
+
+    const legacyMarker = `mana-tenant-boundary-v1:${handle}`;
+    const leaseCountBeforeLegacyAttempt = leaseRequests.length;
+    const rejectedLegacy = await authorizeTenantProviderOutbound(new Request(
+      "https://api.anthropic.com/v1/messages",
+      { method: "POST", headers: { authorization: `Bearer ${legacyMarker}` }, body: "{}" },
+    ), env, trustedForwarder);
+    expect(rejectedLegacy.status).toBe(503);
+    expect(await rejectedLegacy.text()).toBe("credential_lease_rejected");
+    expect(leaseRequests).toHaveLength(leaseCountBeforeLegacyAttempt);
   });
 
   it("replays the exact Gateway accounting outbox without posting Slack twice and rejects stale revision", async () => {

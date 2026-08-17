@@ -318,12 +318,11 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("TechKnight");
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
-      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)"',
+      'node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)"',
       {
         timeout: 120_000,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${TENANT_BOUNDARY_A}`,
           MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_A,
           MANA_TRACE_ID: "EvReply123",
           MANA_TRACE_PLACEMENT_ID: undefined,
@@ -378,7 +377,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
-  it("passes only the tenant operation boundary marker into the Container", async () => {
+  it("passes the tenant operation boundary only through the dedicated control channel", async () => {
     const fs = new MemoryFs();
     const tenantBoundaryHandle = `tb_${"B".repeat(32)}`;
     const { options, sandbox } = harness({ tenantBoundaryHandle });
@@ -386,7 +385,9 @@ describe("TechKnight Slack reply pipeline", () => {
     await processReplyEvent(fs, event(), options);
 
     const execOptions = sandbox.exec.mock.calls[0][1] as { env: Record<string, string> };
-    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(`mana-tenant-boundary-v1:${tenantBoundaryHandle}`);
+    expect(execOptions.env.MANA_TENANT_BOUNDARY_HANDLE).toBe(tenantBoundaryHandle);
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(JSON.stringify(execOptions)).not.toContain("mana-tenant-boundary-v1:");
     expect(JSON.stringify(execOptions)).not.toContain("credential-ref");
     expect(JSON.stringify(execOptions)).not.toContain("lease_token");
   });
@@ -399,8 +400,7 @@ describe("TechKnight Slack reply pipeline", () => {
     await processReplyEvent(fs, event(), options);
 
     const execOptions = sandbox.exec.mock.calls[0][1] as { env: Record<string, string> };
-    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN)
-      .toBe(`mana-tenant-boundary-v1:${tenantBoundaryHandle}`);
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(JSON.stringify(execOptions)).not.toContain("mana-credential-lease-v1:");
   });
 

@@ -52,9 +52,10 @@ describe("generateMeetingMinutesInSandbox", () => {
     await generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
       { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle);
     expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ env: expect.objectContaining({
-      CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${tenantBoundaryHandle}`,
       MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
     }) }));
+    expect(sandbox.exec.mock.calls[0]?.[0]).toContain("/opt/mana/tenant-claude-runner.mjs");
+    expect(JSON.stringify(sandbox.exec.mock.calls[0]?.[1])).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
   });
   it("injects the validated Brainbase Receipt context without requiring a model-initiated MCP call", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
@@ -103,7 +104,6 @@ describe("generateMeetingMinutesInSandbox", () => {
         timeout: 600_000,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${tenantBoundaryHandle}`,
           MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
         },
       }));
