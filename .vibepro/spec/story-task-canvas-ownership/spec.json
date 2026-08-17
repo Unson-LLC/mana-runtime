@@ -63,7 +63,7 @@
         "mana-runtime"
       ],
       "residency": "binding in tenant-partitioned Durable Object; projection in target Slack workspace",
-      "migration": "bindingRevision creates a new partition and never adopts an existing Canvas",
+      "migration": "bindingRevision creates a new partition; only one editable legacy task board owned by the same Mana bot may be reused when Slack free plan blocks creation",
       "rollback": "disable the individual target; retained binding prevents accidental reassignment"
     },
     "failure_semantics": {
@@ -177,7 +177,7 @@
     {
       "id": "INV-001",
       "type": "invariant",
-      "statement": "Manaは信頼済みtargetで新規作成したCanvas IDだけを永続bindingとして再利用し、既存Canvasや先頭Canvasを自動採用しない",
+      "statement": "Manaは信頼済みtargetで作成したCanvasを再利用する。無料プランで作成不能な場合だけ、同じMana bot所有・編集可能・タスクボード名称・一意候補を満たす既存Canvasを継続利用し、人所有・別用途・複数候補は採用しない",
       "origin": {
         "story_refs": [
           {
@@ -207,6 +207,10 @@
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts",
             "case": "story-task-canvas-ownership:ac:1 creates a Mana-owned Canvas in the trusted channel"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts",
+            "case": "story-task-canvas-ownership:ac:2 reuses the only legacy task board owned by the same Mana bot"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board-binding.test.ts",
