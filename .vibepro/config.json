@@ -325,11 +325,14 @@
         "title": "八雲まなをテナント分離されたSlackランタイムとして提供する",
         "ssot": "local",
         "status": "active",
-        "horizon": null,
-        "view": null,
+        "horizon": "quarter",
+        "view": "product",
         "period": null,
         "started_at": null,
-        "due_at": null
+        "due_at": null,
+        "category": "product",
+        "contract_type": "new_capability",
+        "derived_by": "vibepro-story-derive"
       },
       {
         "story_id": "story-slack-mana-brainbase-multitenant-e2e",

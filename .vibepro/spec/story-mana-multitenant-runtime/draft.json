@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-001",
@@ -135,7 +135,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-002",
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-012",
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-003",
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-013",
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-004",
@@ -389,12 +389,12 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-005",
       "type": "invariant",
-      "statement": "ContainerLease {container_id:'ctr_'+ULID,tenant_id:'ten_'+ULID,lease_id:string,operation_id:'op_'+ULID,state:'clean'|'leased'|'dirty'|'destroyed',sanitization_receipt_id?:string,leased_at,expires_at}だけを再利用判定に使う。tenant_id変更時は除染結果にかかわらず必ずdestroyし、cross-tenant reuseを禁止する。同一tenantでの再利用は未失効operation leaseと、全子process停止、workspace/tmp/home削除、environment allowlist再構築、credential mount解除・scrub、transcript/session/cache削除、未承認open handleなし、same tenant、fresh signed contextの全checkがpassした場合だけ許可する。ContainerSanitizationReceipt {sanitation_receipt_id,lease_id,tenant_hash,operation_id,checks,completed_at,image_digest,result:'passed'|'failed'|'unobservable'}を残し、failed/unobservableはdestroyしてCONTAINER_SANITIZATION_UNPROVENとする。persistent model/Claude sessionはoperation leaseを越えて再利用しない。",
+      "statement": "ContainerLease {container_id:'ctr_'+ULID,tenant_id:'ten_'+ULID,lease_id:string,operation_id:'op_'+ULID,state:'clean'|'leased'|'dirty'|'destroyed',sanitization_receipt_id?:string,leased_at,expires_at}だけを再利用判定に使う。tenant_id変更時は除染結果にかかわらず必ずdestroyし、cross-tenant reuseを禁止する。同一tenantでの再利用は未失効operation leaseと、全子process停止、workspace/tmp/home削除、environment allowlist再構築、credential mount解除・scrub、transcript/session/cache削除、未承認open handleなし、same tenant、fresh signed contextの全checkがpassした場合だけ許可する。ContainerSanitizationReceipt {sanitation_receipt_id,lease_id,tenant_hash,operation_id,checks,completed_at,image_digest,purpose:'reuse_sanitization'|'final_destruction',reuse_eligible:boolean,result:'passed'|'failed'|'unobservable'}を残す。reuse_sanitizationのpassedは全check観測済みかつreuse_eligible:trueの場合だけとし、failed/unobservableはdestroyしてCONTAINER_SANITIZATION_UNPROVENとする。fresh IDかつno-reuseのContainerをproviderで破棄した事実を観測した場合だけfinal_destructionをresult:passed,reuse_eligible:falseとして記録でき、container_destroyed/fresh_container_per_attempt/no_reuse/cross_tenant_reuse_forbiddenを必須checkとする。この最終破棄証跡は再利用許可に使わず、破棄失敗または観測不能を成功へ丸めない。persistent model/Claude sessionはoperation leaseを越えて再利用しない。",
       "origin": {
         "story_refs": [
           {
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-004",
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-006",
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-005",
@@ -577,7 +577,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-014",
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-007",
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-007",
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-015",
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-016",
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-010",
@@ -889,7 +889,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-017",
@@ -963,7 +963,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-002",
@@ -1033,7 +1033,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "C-003",
@@ -1103,7 +1103,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     },
     {
       "id": "INV-008",
@@ -1165,9 +1165,292 @@
       },
       "confidence": 0.93,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T08:16:09.760Z"
+      "last_revised_at": "2026-08-17T14:26:51.785Z"
     }
   ],
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenant_id",
+      "resolved_from": [
+        "Brainbase.workspace_connection(slack_workspace_id,slack_app_id)"
+      ],
+      "resolution_point": "Slack ingress resolves the authoritative Brainbase workspace connection before queueing or any business effect",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "slack_ingress",
+        "queue_message",
+        "durable_object",
+        "container",
+        "mcp",
+        "brainbase_proxy",
+        "credential_broker",
+        "brainbase_write",
+        "slack_delivery"
+      ],
+      "verified_surfaces": [
+        "slack_ingress",
+        "queue_message",
+        "durable_object",
+        "container",
+        "mcp",
+        "brainbase_proxy",
+        "credential_broker",
+        "brainbase_write",
+        "slack_delivery"
+      ]
+    },
+    "resources": [
+      {
+        "name": "workspace_connection_projection",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/connection_id/connection_revision",
+        "trust_zone": "brainbase_to_mana_control_plane",
+        "residue_policy": "expire after authoritative revision invalidation",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "tenant_id/connection_id/connection_revision"
+      },
+      {
+        "name": "queue_and_durable_runtime_state",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/connection_id/correlation_id",
+        "trust_zone": "mana_runtime_state",
+        "residue_policy": "expire after terminal Receipt retention period without raw secrets",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "tenant_bound_credential_ref"
+      },
+      {
+        "name": "tool_container_or_sandbox",
+        "sharing": "tenant_or_session_isolated",
+        "tenant_key": "tenant_id",
+        "trust_zone": "mana_execution_plane",
+        "residue_policy": "destroy for every final lifecycle; same-tenant reuse requires all sanitation checks and a reuse-eligible Receipt",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "tenant_id/connection_id/connection_revision/operation_id/audience"
+      },
+      {
+        "name": "credential_connection",
+        "sharing": "connection_defined",
+        "tenant_key": "tenant_id",
+        "trust_zone": "brainbase_credential_broker",
+        "residue_policy": "raw secret is never persisted; every request uses a single-use lease that expires within 60 seconds",
+        "data_owner": "Brainbase",
+        "operational_owner": "Brainbase",
+        "credential_scope": "tenant_id/connection_id/connection_revision/operation_id/audience/mode",
+        "connection_modes": [
+          "cloud_standard",
+          "customer_oauth",
+          "customer_api"
+        ]
+      },
+      {
+        "name": "usage_and_operation_receipt",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/correlation_id/operation_id",
+        "trust_zone": "brainbase_canonical_evidence",
+        "residue_policy": "customer retention policy without raw secrets",
+        "data_owner": "Brainbase",
+        "operational_owner": "Brainbase",
+        "credential_scope": "metadata_only"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenant_id",
+      "scope": "tenant_id/connection_id/connection_revision/operation_id/audience/mode",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "Brainbase"
+      ],
+      "residency": "Declared by the Brainbase workspace connection and preserved by each deployment adapter",
+      "migration": "Revisioned connection migration; old and new revisions cannot be active for the same operation",
+      "rollback": "Revoke the new revision and resume only from an explicitly active prior revision; never infer or silently fall back"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_shared",
+      "managed_dedicated",
+      "customer_managed"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "no_data",
+      "cross_tenant_candidate"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "BrainbaseTenant",
+        "WorkspaceConnection",
+        "TenantContextEnvelope",
+        "TenantRuntimeState",
+        "ContainerLease",
+        "CredentialLease",
+        "OperationReceipt"
+      ],
+      "boundary_edges": [
+        "SlackEvent->WorkspaceConnection",
+        "WorkspaceConnection->TenantContextEnvelope",
+        "TenantContextEnvelope->RuntimeSurface",
+        "TenantRuntimeState->OperationReceipt",
+        "CredentialLease->OutboundRequest"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "verified",
+      "evidence_state": "collected",
+      "evidence": {
+        "propagation_surfaces": [
+          "slack_ingress",
+          "queue_message",
+          "durable_object",
+          "container",
+          "mcp",
+          "brainbase_proxy",
+          "credential_broker",
+          "brainbase_write",
+          "slack_delivery"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "no_data",
+          "cross_tenant_candidate"
+        ],
+        "scanner_results": {
+          "tenant_boundary": "pass",
+          "tenant_key_propagation": "pass",
+          "cross_tenant_authorization": "pass",
+          "state_partitioning": "pass",
+          "sandbox_isolation": "pass",
+          "connection_routing": "pass",
+          "secret_scope": "pass",
+          "canonical_data_owner": "pass",
+          "deployment_topology": "pass",
+          "cross_tenant_negative_evidence": "pass"
+        },
+        "graph": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "connection_defined",
+            "tenant_or_session_isolated",
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "customer_managed",
+            "managed_dedicated",
+            "managed_shared"
+          ],
+          "tenant_entities": [
+            {
+              "name": "WorkspaceConnection",
+              "tenant_scope": "tenant_id/connection_id/connection_revision",
+              "tenant_key_source": "Brainbase workspace connection resolver",
+              "trust_zone": "brainbase_to_mana_control_plane",
+              "data_owner": "Brainbase"
+            },
+            {
+              "name": "TenantRuntimeState",
+              "tenant_scope": "tenant_id/connection_id/correlation_id",
+              "tenant_key_source": "verified TenantContextEnvelope",
+              "trust_zone": "mana_runtime_state",
+              "data_owner": "Brainbase"
+            },
+            {
+              "name": "ContainerLease",
+              "tenant_scope": "tenant_id/operation_id/container_id",
+              "tenant_key_source": "verified TenantContextEnvelope",
+              "trust_zone": "mana_execution_plane",
+              "data_owner": "Brainbase"
+            }
+          ],
+          "boundary_edges": [
+            {
+              "name": "SlackEvent->WorkspaceConnection",
+              "tenant_scope": "workspace_id/app_id to tenant_id/connection_id/revision",
+              "tenant_key_source": "Brainbase workspace connection resolver",
+              "sharing_mode": "tenant_partitioned",
+              "credential_scope": "none",
+              "connection_mode": "authoritative_http",
+              "deployment_mode": "managed_shared"
+            },
+            {
+              "name": "TenantContextEnvelope->RuntimeSurface",
+              "tenant_scope": "tenant_id/connection_id/revision/operation_id",
+              "tenant_key_source": "RFC8785 plus Ed25519 verified envelope",
+              "sharing_mode": "tenant_partitioned",
+              "credential_scope": "opaque_ref_only",
+              "connection_mode": "protocol_v1",
+              "deployment_mode": "managed_dedicated"
+            },
+            {
+              "name": "CredentialLease->OutboundRequest",
+              "tenant_scope": "tenant_id/connection_id/revision/operation_id/audience",
+              "tenant_key_source": "verified tenant boundary handle",
+              "sharing_mode": "connection_defined",
+              "credential_scope": "single_use_60_seconds",
+              "connection_mode": "brokered_request_lease",
+              "deployment_mode": "customer_managed"
+            }
+          ]
+        },
+        "spec": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "connection_defined",
+            "tenant_or_session_isolated",
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "customer_managed",
+            "managed_dedicated",
+            "managed_shared"
+          ]
+        },
+        "implementation": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "connection_defined",
+            "tenant_or_session_isolated",
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "customer_managed",
+            "managed_dedicated",
+            "managed_shared"
+          ]
+        },
+        "evidence_refs": [
+          "Graphify run 2026-08-17T142306Z",
+          "contracts/mana-brainbase-tenant-context/v1/fixtures/manifest.json",
+          "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+          "packages/cloudflare-techknight-poc/src/__tests__/production-multitenancy.integration.test.ts",
+          "packages/cloudflare-techknight-poc/src/__tests__/sandbox-provider-credential.integration.test.ts"
+        ]
+      }
+    }
+  },
   "generated_at": "2026-08-17T00:46:42.058Z",
   "previous_spec_id": "2026-08-17T00:46:42.058Z"
 }
