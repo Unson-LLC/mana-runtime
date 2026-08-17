@@ -10,7 +10,7 @@ import {
   claimIdempotency,
   createIdempotencyKey,
   type IdempotencyClaimResult,
-  type IdempotencyMemoryStore,
+  type IdempotencyStore,
 } from "./idempotency.js";
 
 export async function authorizeSlackDelivery(input: {
@@ -19,7 +19,7 @@ export async function authorizeSlackDelivery(input: {
   expected_scope: ExpectedTenantScope;
   now: string;
   resolve_verification_key: (keyId: string) => Promise<CryptoKey | undefined>;
-  ownership: IdempotencyMemoryStore;
+  ownership: IdempotencyStore;
   payload_hash: string;
   delivery_operation_id: string;
   retention_until: string;

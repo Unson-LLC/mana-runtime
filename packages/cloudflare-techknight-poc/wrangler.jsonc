@@ -11,7 +11,10 @@
     "RUNTIME_EXECUTION_MODE": "reply_only",
     "RUNTIME_TASK_SEARCH_ENABLED": "false",
     "RUNTIME_CLAUDE_MODEL": "opus",
-    "RUNTIME_CLAUDE_EFFORT": "xhigh"
+    "RUNTIME_CLAUDE_EFFORT": "xhigh",
+    "MANA_DEPLOYMENT_PROFILE": "shared_cloud",
+    "MANA_CREDENTIAL_AUDIENCE": "api.anthropic.com",
+    "MANA_RUNTIME_CAPABILITIES": "signed_tenant_context,connection_revision_recheck,tenant_scoped_authorization,credential_broker_v1,usage_receipt_v1,idempotent_effects_v1,container_sanitization_v1"
   },
   "durable_objects": {
     "bindings": [
@@ -30,6 +33,10 @@
       {
         "name": "RUNTIME_SESSION_REGISTRY",
         "class_name": "RuntimeSessionRegistry"
+      },
+      {
+        "name": "TENANT_RUNTIME_STATE",
+        "class_name": "TenantRuntimeState"
       }
     ]
   },
@@ -49,6 +56,10 @@
     {
       "tag": "v4",
       "new_sqlite_classes": ["RuntimeSessionRegistry"]
+    },
+    {
+      "tag": "v5",
+      "new_sqlite_classes": ["TenantRuntimeState"]
     }
   ],
   "containers": [

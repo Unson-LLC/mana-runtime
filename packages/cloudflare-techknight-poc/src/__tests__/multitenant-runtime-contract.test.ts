@@ -11,6 +11,7 @@ import {
   SlackInstallationAdapter,
   TenantQuotaCache,
   TenantAccountingLedger,
+  TenantCredentialInjector,
   WorkspaceConnectionRegistry,
   acquireCredentialLease,
   acquireEnvelopeCredentialLease,
@@ -42,6 +43,7 @@ import {
   tenantPartitionKey,
   validateNonApplicableCapabilities,
   validateTenantBoundary,
+  withTenantCredentialLease,
   writeTenantAccounting,
   authorizeSlackDeliveryWithAuthority,
   type BoundaryName,
@@ -757,6 +759,20 @@ describe("story-mana-multitenant-runtime contract", () => {
       if (url.endsWith("/accounting")) {
         return Response.json({ result_ref: "brainbase-write-a" });
       }
+      if (url.endsWith("/credential-broker")) {
+        const request = body as unknown as import("../multitenancy/contracts.js").CredentialLeaseRequest;
+        return Response.json({ result: {
+          message_type: "credential_lease_response",
+          protocol_version: request.protocol_version,
+          lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB2",
+          contract_revision: request.binding.contract_revision,
+          binding: structuredClone(request.binding),
+          issued_at: NOW,
+          expires_at: "2026-08-16T13:03:00.000Z",
+          max_uses: 1,
+          lease_token: "fixture-provider-token",
+        } });
+      }
       return new Response("unavailable", { status: 503 });
     });
     const bindings = {
@@ -768,10 +784,36 @@ describe("story-mana-multitenant-runtime contract", () => {
       api_token: "fixture-runtime-token",
       timeout_ms: 25,
     };
-    const clients = createTenantRuntimeHttpClients(bindings, { fetch: fetchMock });
+    const clients = createTenantRuntimeHttpClients(bindings, { fetch: fetchMock, now: () => NOW });
     await expect(clients.authority.resolve_workspace_connection({ provider: "slack", app_id: "A-MANA",
       workspace_id: "T-A" })).resolves.toEqual(snapshotA);
-    const { value } = await envelope();
+    const { value, publicKey } = await envelope();
+    const injector = new TenantCredentialInjector();
+    await expect(withTenantCredentialLease({
+      envelope: value,
+      expected_scope: expectedScope,
+      audience: "api.anthropic.com",
+      broker: clients.credential_broker,
+      read_authoritative_snapshot: () => clients.authority.read_workspace_connection(CONNECTION_A),
+      resolve_verification_key: async () => publicKey,
+      now: () => NOW,
+      injector,
+      run: async (handle) => {
+        const headers = injector.inject({
+          hostname: "api.anthropic.com",
+          headers: new Headers({ authorization: `Bearer mana-credential-lease-v1:${handle}` }),
+          now: NOW,
+        });
+        expect(headers.get("authorization")).toBe("Bearer fixture-provider-token");
+        return "injected";
+      },
+    })).resolves.toBe("injected");
+    expect(requests.find((request) => request.url.endsWith("/credential-broker"))?.body)
+      .toMatchObject({ requested_ttl_seconds: 60, binding: {
+        tenant_id: TENANT_A, connection_revision: "7", contract_revision: "11",
+        operation_id: OPERATION_A, audience: "api.anthropic.com", credential_ref: "credential-ref-a",
+      } });
+    expect(JSON.stringify(requests)).not.toContain("fixture-provider-token");
     const usage = createUsageEvent({ usage_event_id: "usage_01ARZ3NDEKTSV4RRFFQ69G5FB8", protocol_version: "1.0",
       tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
       deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_id: OPERATION_A,
@@ -805,11 +847,17 @@ describe("story-mana-multitenant-runtime contract", () => {
   it("two adapter instances share one Durable Object state and execute duplicate once planned Red", async () => {
     const { createDurableTenantStateStore } = await import("../multitenancy/tenant-runtime-state.js");
     const values = new Map<string, unknown>();
-    const storage = {
+    interface FixtureStorage {
+      get<T>(key: string): Promise<T | undefined>;
+      put(key: string, value: unknown): Promise<void>;
+      delete(key: string): Promise<boolean>;
+      transaction<T>(callback: (txn: FixtureStorage) => Promise<T>): Promise<T>;
+    }
+    const storage: FixtureStorage = {
       get: async <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
       put: async (key: string, value: unknown) => { values.set(key, structuredClone(value)); },
       delete: async (key: string) => values.delete(key),
-      transaction: async <T>(callback: (txn: typeof storage) => Promise<T>) => callback(storage),
+      transaction: async <T>(callback: (txn: FixtureStorage) => Promise<T>) => callback(storage),
     };
     const storeFromFirstIsolate = createDurableTenantStateStore(storage);
     const storeAfterRestart = createDurableTenantStateStore(storage);

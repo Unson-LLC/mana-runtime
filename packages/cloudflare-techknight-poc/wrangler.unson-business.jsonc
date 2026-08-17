@@ -46,7 +46,10 @@
     "RUNTIME_CLAUDE_MODEL": "opus",
     "RUNTIME_CLAUDE_EFFORT": "xhigh",
     "RUNTIME_CRON_JOBS_JSON": "[]",
-    "RUNTIME_EMPLOYEES_JSON": "[{\"name\":\"critical-reviewer\",\"displayName\":\"Critical Reviewer\",\"department\":\"executive\",\"rank\":\"senior\",\"engine\":\"claude\",\"model\":\"opus\",\"effortLevel\":\"xhigh\",\"emoji\":\"🔬\",\"alwaysNotify\":true,\"persona\":\"You handle only high-impact work where the additional latency and Max usage are justified: architecture decisions, security or privacy analysis, irreversible operational changes, and final review of important deliverables. Separate confirmed facts, evidence, inference, and unresolved items. Do not make external changes unless the parent task explicitly authorizes them.\",\"provides\":[{\"name\":\"critical-analysis\",\"description\":\"重要な設計・セキュリティ・不可逆変更をOpus/xhighで精査する\"},{\"name\":\"final-critical-review\",\"description\":\"重要成果物をOpus/xhighで最終レビューする\"}]}]"
+    "RUNTIME_EMPLOYEES_JSON": "[{\"name\":\"critical-reviewer\",\"displayName\":\"Critical Reviewer\",\"department\":\"executive\",\"rank\":\"senior\",\"engine\":\"claude\",\"model\":\"opus\",\"effortLevel\":\"xhigh\",\"emoji\":\"🔬\",\"alwaysNotify\":true,\"persona\":\"You handle only high-impact work where the additional latency and Max usage are justified: architecture decisions, security or privacy analysis, irreversible operational changes, and final review of important deliverables. Separate confirmed facts, evidence, inference, and unresolved items. Do not make external changes unless the parent task explicitly authorizes them.\",\"provides\":[{\"name\":\"critical-analysis\",\"description\":\"重要な設計・セキュリティ・不可逆変更をOpus/xhighで精査する\"},{\"name\":\"final-critical-review\",\"description\":\"重要成果物をOpus/xhighで最終レビューする\"}]}]",
+    "MANA_DEPLOYMENT_PROFILE": "shared_cloud",
+    "MANA_CREDENTIAL_AUDIENCE": "api.anthropic.com",
+    "MANA_RUNTIME_CAPABILITIES": "signed_tenant_context,connection_revision_recheck,tenant_scoped_authorization,credential_broker_v1,usage_receipt_v1,idempotent_effects_v1,container_sanitization_v1"
   },
   "durable_objects": {
     "bindings": [
@@ -77,6 +80,10 @@
       {
         "name": "RUNTIME_SESSION_REGISTRY",
         "class_name": "RuntimeSessionRegistry"
+      },
+      {
+        "name": "TENANT_RUNTIME_STATE",
+        "class_name": "TenantRuntimeState"
       }
     ]
   },
@@ -108,6 +115,10 @@
     {
       "tag": "v7",
       "new_sqlite_classes": ["MeetingMinutesDeploymentGate"]
+    },
+    {
+      "tag": "v8",
+      "new_sqlite_classes": ["TenantRuntimeState"]
     }
   ],
   "containers": [

@@ -10,7 +10,7 @@ import { assertSecretArtifactFree } from "./secret-guard.js";
 import {
   claimIdempotency,
   completeIdempotency,
-  type IdempotencyMemoryStore,
+  type IdempotencyStore,
   releaseIdempotency,
 } from "./idempotency.js";
 import { validateCanonicalIdempotencyClaim } from "./canonical-consumer.js";
@@ -224,8 +224,8 @@ export async function consumeTenantQueueMessage<T, R>(
     expected_scope(body: TenantQueueBody<T>): ExpectedTenantScope;
     now(): string;
     process(payload: T, tenantContext: TenantContextEnvelope): Promise<R>;
-    ownership: IdempotencyMemoryStore;
-    payload_hash(payload: T): string;
+    ownership: IdempotencyStore;
+    payload_hash(payload: T): string | Promise<string>;
     retention_until(now: string): string;
     log?(entry: Record<string, string>): void;
     log_error?(entry: Record<string, string>): void;
@@ -234,6 +234,7 @@ export async function consumeTenantQueueMessage<T, R>(
   const eventId = message.body.tenant_context.slack.event_id;
   const tenantContext = message.body.tenant_context;
   let idempotencyClaimed = false;
+  let idempotencyPartitionKey: string | undefined;
   try {
     assertSecretArtifactFree(message.body);
     await options.verifier.validate({
@@ -249,7 +250,7 @@ export async function consumeTenantQueueMessage<T, R>(
     const contextHash = `sha256:${[...contextDigest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
     const observedAt = options.now();
     const retentionUntil = options.retention_until(observedAt);
-    const payloadHash = options.payload_hash(message.body.payload);
+    const payloadHash = await options.payload_hash(message.body.payload);
     await validateCanonicalIdempotencyClaim({
       message_type: "idempotency_claim",
       owner: "mana_runtime",
@@ -282,13 +283,15 @@ export async function consumeTenantQueueMessage<T, R>(
       return;
     }
     idempotencyClaimed = true;
+    idempotencyPartitionKey = claim.claim.partition_key;
     await options.process(message.body.payload, tenantContext);
-    completeIdempotency(options.ownership, {
+    await completeIdempotency(options.ownership, {
       key: tenantContext.idempotency_key,
       tenant_id: tenantContext.tenant.tenant_id,
       state: "succeeded",
       updated_at: observedAt,
       retained_until: retentionUntil,
+      partition_key: idempotencyPartitionKey,
     });
     options.log?.({ event: "tenant_queue_completed", event_id: eventId });
     message.ack();
@@ -297,15 +300,17 @@ export async function consumeTenantQueueMessage<T, R>(
     options.log_error?.({ event: "tenant_queue_failed", event_id: eventId, code });
     if (idempotencyClaimed) {
       if (RETRYABLE_BOUNDARY_CODES.has(code)) {
-        releaseIdempotency(options.ownership, tenantContext.idempotency_key, tenantContext.tenant.tenant_id);
+        await releaseIdempotency(options.ownership, tenantContext.idempotency_key,
+          tenantContext.tenant.tenant_id, idempotencyPartitionKey);
       } else {
         const observedAt = options.now();
-        completeIdempotency(options.ownership, {
+        await completeIdempotency(options.ownership, {
           key: tenantContext.idempotency_key,
           tenant_id: tenantContext.tenant.tenant_id,
           state: "failed_terminal",
           updated_at: observedAt,
           retained_until: options.retention_until(observedAt),
+          partition_key: idempotencyPartitionKey,
         });
       }
     }

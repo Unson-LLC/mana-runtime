@@ -4,7 +4,7 @@ import { TenantBoundaryError } from "./errors.js";
 import { createIdempotencyKey } from "./idempotency.js";
 
 export const CANONICAL_FIXTURE_SET_SHA256 =
-  "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454" as const;
+  "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833" as const;
 export const CANONICAL_SUPPORTED_RANGE = ">=1.0 <2.0" as const;
 export const CANONICAL_PROTECTED_TYP = "application/mana-brainbase-tenant-context+jws" as const;
 

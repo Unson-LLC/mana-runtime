@@ -419,14 +419,14 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
     expect(worker).toContain("recoverStaleMeetingMinutesRun(");
-    expect(worker).toContain("isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)");
+    expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
     expect(worker).toContain("classifyMeetingMinutesDestinationInSandbox(");
-    expect(worker).toContain("download: (fileId) => clients.slack.downloadTextFile(fileId)");
-    expect(worker).toContain("classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations)");
+    expect(worker).toContain("download: (fileId) => meetingClients.slack.downloadTextFile(fileId)");
+    expect(worker).toContain("classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations)");
     expect(worker).toContain("resolveMeetingMinutesDestinationSlackToken(env, organizationId)");
     expect(worker).toContain("destinations.find((destination) => destination.slackChannelId === channelId)");
     expect(worker).toContain("consumeTaskBoardRepair({");

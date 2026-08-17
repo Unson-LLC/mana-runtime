@@ -1,3 +1,5 @@
+import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+
 export interface RuntimeTriageInput {
   botName: string;
   persona?: string;
@@ -71,6 +73,7 @@ export function parseRuntimeTriageDecision(raw: string): RuntimeTriageDecision |
 export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
   model: "sonnet" | "opus";
   effort?: "xhigh";
+  credentialLeaseHandle?: string;
   createSandbox(id: string): TriageSandbox;
 }): Promise<RuntimeTriageDecision> {
   const sandbox = options.createSandbox(`triage-${crypto.randomUUID()}`);
@@ -80,7 +83,12 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
     const effort = options.effort ? ` --effort ${options.effort}` : "";
     const result = await sandbox.exec(
       `claude --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
-      { timeout: 30_000, env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" } },
+      { timeout: 30_000, env: {
+        IS_SANDBOX: "1",
+        CLAUDE_CODE_OAUTH_TOKEN: options.credentialLeaseHandle
+          ? credentialLeaseMarker(options.credentialLeaseHandle)
+          : "proxy-injected",
+      } },
     );
     if (!result.success) return { action: "reply", reason: "triage_error" };
     return parseRuntimeTriageDecision(result.stdout) ?? { action: "reply", reason: "parse_failed" };

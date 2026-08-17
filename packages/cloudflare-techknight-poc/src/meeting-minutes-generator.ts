@@ -5,6 +5,7 @@ import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinut
 import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
 import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
+import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
 const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
@@ -142,6 +143,7 @@ export async function classifyMeetingMinutesDestinationInSandbox(
   destinations: readonly MeetingMinutesDestination[],
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
+  credentialLeaseHandle?: string,
 ): Promise<{ destinationId: string; reason: string } | null> {
   try {
     await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations));
@@ -149,7 +151,12 @@ export async function classifyMeetingMinutesDestinationInSandbox(
       structuredOutput: "meeting-minutes-routing",
     }), {
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
-      env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      env: {
+        IS_SANDBOX: "1",
+        CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseHandle
+          ? credentialLeaseMarker(credentialLeaseHandle)
+          : "proxy-injected",
+      },
     });
     if (!result.success) return null;
     return parseMeetingMinutesRoutingOutput(result.stdout, destinations);
@@ -394,6 +401,7 @@ export async function generateMeetingMinutesInSandbox(
   mode: MeetingMinutesContextMode,
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
+  credentialLeaseHandle?: string,
 ): Promise<AuditedGeneratedMeetingMinutes> {
   try {
     await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript, destination, context, mode));
@@ -402,7 +410,12 @@ export async function generateMeetingMinutesInSandbox(
       includeJudgmentHookEvents: true,
     }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
-      env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      env: {
+        IS_SANDBOX: "1",
+        CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseHandle
+          ? credentialLeaseMarker(credentialLeaseHandle)
+          : "proxy-injected",
+      },
     });
     if (!result.success) throw new Error("meeting_minutes_generation_failed");
     return parseReceiptBoundGeneratedMeetingMinutesOutput(result.stdout, context);

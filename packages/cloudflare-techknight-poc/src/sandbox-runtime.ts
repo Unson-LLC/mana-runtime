@@ -1,7 +1,7 @@
 import { Sandbox as BaseSandbox, getSandbox } from "@cloudflare/sandbox";
 
 import type { SandboxAdminEnv } from "./sandbox-admin.js";
-import { applyAnthropicCredential } from "./anthropic-auth.js";
+import { tenantCredentialInjector } from "./multitenancy/credential-injector.js";
 import {
   handleTaskSearchProxyRequest,
   TASK_SEARCH_PROXY_HOST,
@@ -47,11 +47,17 @@ export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
 }
 
 TechKnightSandbox.outboundByHost = {
-  "api.anthropic.com": async (request: Request, env: SandboxRuntimeEnv) => {
+  "api.anthropic.com": async (request: Request, _env: SandboxRuntimeEnv) => {
     const url = new URL(request.url);
-    const headers = applyAnthropicCredential(request.headers, env);
-    if (!headers) {
-      return new Response("oauth_not_configured", { status: 503 });
+    let headers: Headers;
+    try {
+      headers = tenantCredentialInjector.inject({
+        hostname: url.hostname,
+        headers: request.headers,
+        now: new Date().toISOString(),
+      });
+    } catch {
+      return new Response("credential_lease_rejected", { status: 503 });
     }
     return fetch(`https://api.anthropic.com${url.pathname}${url.search}`, {
       method: request.method,

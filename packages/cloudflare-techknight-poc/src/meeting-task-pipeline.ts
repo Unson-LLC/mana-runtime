@@ -22,6 +22,7 @@ import {
   TaskApiClient,
   TaskApiError,
 } from "@openryoko/task-runtime-core";
+import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
 
 const MAX_TASKS = 20;
 const MAX_TITLE_CHARS = 200;
@@ -59,6 +60,7 @@ export interface MeetingTaskPipelineOptions {
   brainbaseTaskToken?: string;
   slackBotToken?: string;
   oauthConfigured: boolean;
+  credentialLeaseHandle?: string;
   claudeRuntime: ClaudeRuntimeConfig;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
@@ -158,7 +160,8 @@ function buildExtractionPrompt(event: SlackQueueEvent): string {
 
 async function extractCandidates(
   event: SlackQueueEvent,
-  options: Pick<MeetingTaskPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox">,
+  options: Pick<MeetingTaskPipelineOptions,
+    "oauthConfigured" | "credentialLeaseHandle" | "claudeRuntime" | "createSandbox">,
 ): Promise<TaskCandidate[]> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   const sandbox = options.createSandbox(`meeting-tasks-${event.eventId}`);
@@ -171,7 +174,12 @@ async function extractCandidates(
         buildRuntimeClaudeCommand("meeting-task", options.claudeRuntime),
         {
           timeout: 120_000,
-          env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+          env: {
+            IS_SANDBOX: "1",
+            CLAUDE_CODE_OAUTH_TOKEN: options.credentialLeaseHandle
+              ? credentialLeaseMarker(options.credentialLeaseHandle)
+              : "proxy-injected",
+          },
         },
       );
     } catch {

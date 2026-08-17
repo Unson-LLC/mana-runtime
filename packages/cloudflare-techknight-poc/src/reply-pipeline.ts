@@ -23,6 +23,7 @@ import { evaluateRuntimeRespondPolicy, type RuntimeRespondPolicy } from "./runti
 import { markWorkspaceEngaged } from "./workspace-session.js";
 import { resolveTurnActorIdentity, type ActorIdentityResolver } from "./actor-identity.js";
 import type { RuntimeTriageDecision } from "./runtime-triage.js";
+import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -52,6 +53,7 @@ export interface ReplyPipelineOptions {
   allowedChannelId: string;
   slackBotToken?: string;
   oauthConfigured: boolean;
+  credentialLeaseHandle?: string;
   claudeRuntime: ClaudeRuntimeConfig;
   taskSearchEnabled?: boolean;
   taskWriteEnabled?: boolean;
@@ -228,7 +230,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "credentialLeaseHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
@@ -287,7 +289,9 @@ export async function generateClaudeReply(
       timeout: 120_000,
       env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+        CLAUDE_CODE_OAUTH_TOKEN: options.credentialLeaseHandle
+          ? credentialLeaseMarker(options.credentialLeaseHandle)
+          : "proxy-injected",
         MANA_TRACE_ID: event.eventId,
         MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
         MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),

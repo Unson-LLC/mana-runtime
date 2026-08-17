@@ -192,16 +192,28 @@ export type OperationReceipt = OperationReceiptInput & {
   failure_code: string | null;
 };
 
-interface AccountingLedgerClaim {
+export interface AccountingLedgerClaim {
   disposition: "claimed";
   batch_key: string;
   entity_keys: string[];
 }
 
-type AccountingLedgerResult = AccountingLedgerClaim | { disposition: "duplicate" };
+export type AccountingLedgerResult = AccountingLedgerClaim | { disposition: "duplicate" };
+
+type Awaitable<T> = T | Promise<T>;
+
+export interface TenantAccountingLedgerStore {
+  claim(input: {
+    tenant_context: TenantContextEnvelope;
+    usage_event_ids: readonly string[];
+    receipt_id: string;
+  }): Awaitable<AccountingLedgerResult>;
+  complete(claim: AccountingLedgerClaim): Awaitable<void>;
+  release(claim: AccountingLedgerClaim): Awaitable<void>;
+}
 
 /** Tenant-partitioned in-memory port. A Durable Object implementation can preserve these semantics. */
-export class TenantAccountingLedger {
+export class TenantAccountingLedger implements TenantAccountingLedgerStore {
   readonly #entities = new Map<string, { batch_key: string; state: "claimed" | "written" }>();
 
   claim(input: {
@@ -288,7 +300,7 @@ export async function writeTenantAccounting(input: {
   expected_scope: ExpectedTenantScope;
   now: string;
   verifier: TenantRuntimeBoundaryVerifier;
-  ledger: TenantAccountingLedger;
+  ledger: TenantAccountingLedgerStore;
   usage_events: readonly UsageEvent[];
   receipt: OperationReceipt;
   write(payload: {
@@ -308,7 +320,7 @@ export async function writeTenantAccounting(input: {
     usage_events: input.usage_events.map((event) => structuredClone(event)),
     receipt: structuredClone(input.receipt),
   });
-  const claim = input.ledger.claim({
+  const claim = await input.ledger.claim({
     tenant_context: input.tenant_context,
     usage_event_ids: input.usage_events.map((event) => event.usage_event_id),
     receipt_id: input.receipt.receipt_id,
@@ -326,10 +338,10 @@ export async function writeTenantAccounting(input: {
   try {
     const result = await input.write({ partition_key: partitionKey, ...artifact });
     if (!result?.result_ref) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
-    input.ledger.complete(claim);
+    await input.ledger.complete(claim);
     return { disposition: "written", result_ref: result.result_ref };
   } catch (error) {
-    input.ledger.release(claim);
+    await input.ledger.release(claim);
     if (error instanceof TenantBoundaryError) throw error;
     deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
   }

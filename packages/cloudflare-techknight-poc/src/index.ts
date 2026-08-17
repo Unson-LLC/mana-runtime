@@ -6,8 +6,7 @@ import {
 } from "@cloudflare/computer";
 import { DurableObject } from "cloudflare:workers";
 
-import { handleSlackRequest } from "./slack.js";
-import { hasAnthropicCredential } from "./anthropic-auth.js";
+import { handleTenantSlackRequest } from "./slack.js";
 import {
   handleSandboxAdminRequest,
   isSandboxAdminAuthorized,
@@ -52,7 +51,6 @@ import {
   runWithReplyTaskSearchBinding,
 } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
-import { consumeTechKnightMessage } from "./queue-consumer.js";
 import { isReplyCompleted, persistEventOnce, persistReplyCompletion } from "./workspace-store.js";
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
@@ -87,6 +85,25 @@ import { runRuntimeTriage } from "./runtime-triage.js";
 import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, MEETING_MINUTES_RECOVERY_DELAY_SECONDS,
   recoverStaleMeetingMinutesRun } from "./meeting-minutes-recovery.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
+import {
+  consumeTenantQueueMessage,
+  type TenantQueueBody,
+  TenantRuntimeBoundaryVerifier,
+} from "./multitenancy/runtime-boundaries.js";
+import { createTenantRuntimeHttpClients } from "./multitenancy/http-clients.js";
+import {
+  createDurableTenantStateClient,
+  TenantRuntimeStateHandler,
+  type TenantStateStorage,
+} from "./multitenancy/tenant-runtime-state.js";
+import {
+  REQUIRED_TENANT_CAPABILITIES,
+  type DeploymentProfileName,
+  type ExpectedTenantScope,
+} from "./multitenancy/contracts.js";
+import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
+import { jcsCanonicalize } from "./multitenancy/jcs.js";
+import { withTenantCredentialLease } from "./multitenancy/credential-injector.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -128,7 +145,21 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_GRAPH_API_TOKEN?: string;
   CF_VERSION_METADATA?: { id: string; tag?: string };
   TENANT_ID: string;
-  TECHKNIGHT_EVENTS: Queue<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
+  MANA_DEPLOYMENT_PROFILE?: string;
+  MANA_REQUIRED_AUDIENCE?: string;
+  MANA_REQUIRED_PROJECT_ID?: string;
+  MANA_REQUIRED_CAPABILITY_ID?: string;
+  MANA_REQUIRED_SLACK_SCOPES?: string;
+  MANA_CREDENTIAL_AUDIENCE?: string;
+  MANA_RUNTIME_CAPABILITIES?: string;
+  BRAINBASE_TENANT_AUTHORITY_URL?: string;
+  BRAINBASE_CREDENTIAL_BROKER_URL?: string;
+  BRAINBASE_QUOTA_URL?: string;
+  BRAINBASE_ACCOUNTING_URL?: string;
+  BRAINBASE_RUNTIME_API_TOKEN?: string;
+  BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
+  BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
+  TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
@@ -136,9 +167,20 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   MEETING_MINUTES_WORKSPACE: DurableObjectNamespace<MeetingMinutesWorkspace>;
   MEETING_MINUTES_DEPLOYMENT_GATE: DurableObjectNamespace<MeetingMinutesDeploymentGate>;
   RUNTIME_SESSION_REGISTRY: DurableObjectNamespace<RuntimeSessionRegistry>;
+  TENANT_RUNTIME_STATE: DurableObjectNamespace<TenantRuntimeState>;
 }
 
 interface WorkspaceEnv {}
+
+export class TenantRuntimeState extends DurableObject {
+  readonly #handler = new TenantRuntimeStateHandler(
+    this.ctx.storage as unknown as TenantStateStorage,
+  );
+
+  fetch(request: Request): Promise<Response> {
+    return this.#handler.fetch(request);
+  }
+}
 
 class WorkspaceBase extends DurableObject<WorkspaceEnv> {
   get workspaceStorage(): DurableObjectStorage {
@@ -235,7 +277,7 @@ async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly
   });
 }
 
-function meetingMinutesClients(env: Env) {
+function meetingMinutesClients(env: Env, credentialLeaseHandle?: string) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
@@ -254,9 +296,9 @@ function meetingMinutesClients(env: Env) {
   return {
     slack,
     classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
-      if (!hasAnthropicCredential(env)) throw new Error("oauth_not_configured");
+      if (!credentialLeaseHandle) throw new Error("credential_lease_required");
       return classifyMeetingMinutesDestinationInSandbox(transcript, candidates, claudeRuntime,
-        createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`));
+        createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`), credentialLeaseHandle);
     },
     resume: {
       contextMode,
@@ -266,9 +308,9 @@ function meetingMinutesClients(env: Env) {
       download: (fileId: string) => slack.downloadTextFile(fileId),
       generate: (transcript: string, destination: MeetingMinutesDestination,
         context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3]) => {
-        if (!hasAnthropicCredential(env)) throw new Error("oauth_not_configured");
+        if (!credentialLeaseHandle) throw new Error("credential_lease_required");
         return generateMeetingMinutesInSandbox(transcript, destination, context, mode, claudeRuntime,
-          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
+          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`), credentialLeaseHandle);
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
@@ -310,6 +352,102 @@ function meetingMinutesClients(env: Env) {
         slack.showDestinationSelection(run, destinations),
     },
   };
+}
+
+function requiredRuntimeBinding(value: string | undefined): string {
+  if (!value?.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
+  return value;
+}
+
+function tenantDeploymentProfile(env: Env): DeploymentProfileName {
+  const profile = requiredRuntimeBinding(env.MANA_DEPLOYMENT_PROFILE);
+  if (profile !== "shared_cloud" && profile !== "dedicated_cloud" && profile !== "customer_managed_oss") {
+    deny("runtime_configuration", "CONFIGURATION_INVALID");
+  }
+  const capabilities = new Set(requiredRuntimeBinding(env.MANA_RUNTIME_CAPABILITIES)
+    .split(",").map((value) => value.trim()).filter(Boolean));
+  const missing = REQUIRED_TENANT_CAPABILITIES.filter((capability) => !capabilities.has(capability));
+  if (missing.length > 0) deny("runtime_configuration", "PROTOCOL_CAPABILITY_UNSUPPORTED", { missing });
+  return profile;
+}
+
+function tenantRuntimeClients(env: Env) {
+  return createTenantRuntimeHttpClients({
+    deployment_profile: tenantDeploymentProfile(env),
+    tenant_authority_url: requiredRuntimeBinding(env.BRAINBASE_TENANT_AUTHORITY_URL),
+    credential_broker_url: requiredRuntimeBinding(env.BRAINBASE_CREDENTIAL_BROKER_URL),
+    quota_url: requiredRuntimeBinding(env.BRAINBASE_QUOTA_URL),
+    accounting_url: requiredRuntimeBinding(env.BRAINBASE_ACCOUNTING_URL),
+    api_token: requiredRuntimeBinding(env.BRAINBASE_RUNTIME_API_TOKEN),
+    timeout_ms: Number(env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000"),
+  });
+}
+
+async function resolveTenantVerificationKey(env: Env, keyId: string): Promise<CryptoKey | undefined> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(requiredRuntimeBinding(env.BRAINBASE_TENANT_CONTEXT_JWKS_JSON));
+  } catch {
+    deny("runtime_configuration", "CONFIGURATION_INVALID");
+  }
+  const keys = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    && Array.isArray((parsed as { keys?: unknown }).keys)
+    ? (parsed as { keys: JsonWebKey[] }).keys
+    : [];
+  const matches = keys.filter((key) => (key as JsonWebKey & { kid?: string }).kid === keyId
+    && key.kty === "OKP" && key.crv === "Ed25519"
+    && (key.use === undefined || key.use === "sig"));
+  if (matches.length !== 1) return undefined;
+  try {
+    return await crypto.subtle.importKey("jwk", matches[0], { name: "Ed25519" }, false, ["verify"]);
+  } catch {
+    return undefined;
+  }
+}
+
+function isTenantSlackQueueBody(value: unknown): value is TenantQueueBody<SlackQueueEvent> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const body = value as Partial<TenantQueueBody<SlackQueueEvent>>;
+  return body.schema_version === "1.0" && !!body.tenant_context && !!body.payload;
+}
+
+function expectedTenantQueueScope(env: Env, body: TenantQueueBody<SlackQueueEvent>): ExpectedTenantScope {
+  const event = body.payload;
+  const envelope = body.tenant_context;
+  if (event.tenantId !== envelope.tenant.tenant_id
+    || event.workspaceId !== envelope.workspace_connection.workspace_id
+    || event.channelId !== envelope.slack.channel_id
+    || event.threadTs !== envelope.slack.thread_ts
+    || event.eventId !== envelope.slack.event_id
+    || event.userId !== envelope.actor.authenticated_subject_id
+    || envelope.placement.profile !== tenantDeploymentProfile(env)) {
+    deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
+  }
+  return {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    workspace_id: event.workspaceId,
+    app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+    channel_id: event.channelId,
+    thread_ts: event.threadTs,
+    actor_principal_id: envelope.actor.principal_id,
+    project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    deployment_id: envelope.placement.deployment_id,
+  };
+}
+
+async function tenantPayloadHash(payload: SlackQueueEvent): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(jcsCanonicalize(payload)),
+  ));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function tenantRetentionUntil(now: string): string {
+  const observedAt = Date.parse(now);
+  if (!Number.isFinite(observedAt)) deny("queue_consumer", "TIME_INVALID");
+  return new Date(observedAt + 30 * 24 * 60 * 60 * 1_000).toISOString();
 }
 
 export default {
@@ -433,16 +571,30 @@ export default {
     if (request.method !== "POST" || url.pathname !== "/slack/events") {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    return handleSlackRequest(request, {
-      signingSecret: env.SLACK_SIGNING_SECRET,
-      tenantId: env.TENANT_ID,
-      expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
-      expectedAppId: env.SLACK_EXPECTED_APP_ID,
-      send: (event) => env.TECHKNIGHT_EVENTS.send(event),
-    });
+    try {
+      const clients = tenantRuntimeClients(env);
+      const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+        .split(",").map((value) => value.trim()).filter(Boolean);
+      return handleTenantSlackRequest(request, {
+        signing_secret: env.SLACK_SIGNING_SECRET,
+        expected_app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+        required_scopes: requiredScopes,
+        required_authorization: {
+          audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+          project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+          capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+        },
+        authority: clients.authority,
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        send: (event) => env.TECHKNIGHT_EVENTS.send(event),
+      });
+    } catch (error) {
+      const code = error instanceof TenantBoundaryError ? error.code : "CONFIGURATION_INVALID";
+      return Response.json({ error: code }, { status: 503 });
+    }
   },
 
-  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<TenantQueueBody<SlackQueueEvent> | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       if (isTaskBoardRepairEvent(message.body)) {
         await consumeTaskBoardRepair({
@@ -544,47 +696,76 @@ export default {
         }
         continue;
       }
-      if (isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)) {
-        await consumeTechKnightMessage({
-          body: message.body,
+      if (!isTenantSlackQueueBody(message.body)) {
+        console.error(JSON.stringify({ event: "tenant_queue_failed", code: "FALLBACK_FORBIDDEN" }));
+        message.ack();
+        continue;
+      }
+      const tenantBody = message.body;
+      const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
+      const runtimeWorkspaceId = tenantBody.tenant_context.workspace_connection.workspace_id;
+      const clients = tenantRuntimeClients(env);
+      const verifier = new TenantRuntimeBoundaryVerifier({
+        read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+      });
+      const tenantConsumerOptions = {
+        verifier,
+        expected_scope: (body: TenantQueueBody<SlackQueueEvent>) => expectedTenantQueueScope(env, body),
+        now: () => new Date().toISOString(),
+        ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, runtimeTenantId),
+        payload_hash: tenantPayloadHash,
+        retention_until: tenantRetentionUntil,
+        log: (entry: Record<string, string>) => console.log(JSON.stringify(entry)),
+        log_error: (entry: Record<string, string>) => console.error(JSON.stringify(entry)),
+      };
+      if (isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)) {
+        await consumeTenantQueueMessage({
+          body: tenantBody,
           ack: () => message.ack(),
           retry: () => message.retry(),
         }, {
-          expectedTenantId: env.TENANT_ID,
-          expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-          expectedChannelId: meetingMinutesConfig.routerChannelId,
-          process: async (event) => {
-            for (const file of event.files ?? []) {
-              if (!/\.txt$/i.test(file.name)) continue;
-              const runId = `${event.eventId}_${file.id}`;
-              const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-                env.TENANT_ID, event.workspaceId, runId,
-              ));
-              const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-              await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-                const clients = meetingMinutesClients(env);
-                await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
-                  download: (fileId) => clients.slack.downloadTextFile(fileId),
-                  classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations),
-                  requestDestination: (run, destinations) => clients.slack.requestDestination(run, destinations),
+          ...tenantConsumerOptions,
+          process: async (event, tenantContext) => withTenantCredentialLease({
+            envelope: tenantContext,
+            expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+            audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
+            broker: clients.credential_broker,
+            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+              tenantContext.workspace_connection.connection_id,
+            ),
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            now: tenantConsumerOptions.now,
+            run: async (credentialLeaseHandle) => {
+              for (const file of event.files ?? []) {
+                if (!/\.txt$/i.test(file.name)) continue;
+                const runId = `${event.eventId}_${file.id}`;
+                const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+                  runtimeTenantId, event.workspaceId, runId,
+                ));
+                const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+                await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+                  const meetingClients = meetingMinutesClients(env, credentialLeaseHandle);
+                  await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
+                    download: (fileId) => meetingClients.slack.downloadTextFile(fileId),
+                    classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations),
+                    requestDestination: (run, destinations) => meetingClients.slack.requestDestination(run, destinations),
+                  });
                 });
-              });
-            }
-            return { outcome: "awaiting_destination" };
-          },
-          log: (entry) => console.log(JSON.stringify(entry)),
-          logError: (entry) => console.error(JSON.stringify(entry)),
-          errorCode: (error) => error instanceof Error ? error.message : "unexpected_error",
+              }
+              return { outcome: "awaiting_destination" };
+            },
+          }),
         });
         continue;
       }
-      const ordinaryEvent = message.body as SlackQueueEvent;
+      const ordinaryEvent = tenantBody.payload;
       const ordinaryPlacements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       let resolvedPlacement;
       try {
         resolvedPlacement = resolveRuntimePlacement(ordinaryEvent, {
-          tenantId: env.TENANT_ID,
-          workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+          tenantId: runtimeTenantId,
+          workspaceId: runtimeWorkspaceId,
           placements: ordinaryPlacements,
         });
       } catch (error) {
@@ -594,17 +775,12 @@ export default {
         message.ack();
         continue;
       }
-      await consumeTechKnightMessage({
-        body: message.body as SlackQueueEvent,
+      await consumeTenantQueueMessage({
+        body: tenantBody,
         ack: () => message.ack(),
         retry: () => message.retry(),
       }, {
-        // Every ordinary reply must belong to an explicit placement. The
-        // meeting-minutes router is also a normal Lightsail placement.
-        expectedTenantId: env.TENANT_ID,
-        expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
-        expectedChannelIds: [resolvedPlacement.channelId],
-        operatorUserIds: resolvedPlacement.audience?.allowedUserIds,
+        ...tenantConsumerOptions,
         process: async (event) => {
           const placement = resolvedPlacement;
           const placementClaudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
@@ -631,8 +807,8 @@ export default {
                await reconcilePermissionRevision(workspace.fs, placement.permissionRevision ?? "legacy-v1", event.receivedAt);
                const workspaceSession = await readWorkspaceSession(workspace.fs);
               const replyEligible = isReplyEligible(event, {
-                expectedTenantId: env.TENANT_ID,
-                expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                expectedTenantId: runtimeTenantId,
+                expectedWorkspaceId: runtimeWorkspaceId,
                 allowedChannelId: placement.channelId,
                 respondPolicy: placement.respondTo,
                 isEngagedThread: workspaceSession.engaged === true,
@@ -719,7 +895,17 @@ export default {
                     { botToken: env.SLACK_BOT_TOKEN }) };
                 return hydrateSlackAttachments(withParticipants, { botToken: env.SLACK_BOT_TOKEN });
               };
-              return routeRuntimeEvent(event, {
+              return withTenantCredentialLease({
+                envelope: tenantBody.tenant_context,
+                expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+                audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
+                broker: clients.credential_broker,
+                read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+                  tenantBody.tenant_context.workspace_connection.connection_id,
+                ),
+                resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+                now: tenantConsumerOptions.now,
+                run: async (credentialLeaseHandle) => routeRuntimeEvent(event, {
                 meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
                 processMeetingTask: () => {
                   const binding = placement;
@@ -728,15 +914,16 @@ export default {
                     brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
                     brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
                     slackBotToken: env.SLACK_BOT_TOKEN,
-                    oauthConfigured: hasAnthropicCredential(env),
+                    oauthConfigured: true,
+                    credentialLeaseHandle,
                     claudeRuntime,
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                   });
                 },
                 processReply: async () => runWithReplyTaskSearchBinding(event, {
-                    tenantId: env.TENANT_ID,
-                    workspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                    tenantId: runtimeTenantId,
+                    workspaceId: runtimeWorkspaceId,
                     channelId: placement.channelId,
                     projectCodes: placement.projectCodes.join(","),
                     taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
@@ -781,11 +968,12 @@ export default {
                       `${workspaceName(event)}:generation:${workspaceSession.generation}`,
                     );
                     const replyResult = await processReplyEvent(workspace.fs, event, {
-                    expectedTenantId: env.TENANT_ID,
-                    expectedWorkspaceId: env.SLACK_EXPECTED_TEAM_ID,
+                    expectedTenantId: runtimeTenantId,
+                    expectedWorkspaceId: runtimeWorkspaceId,
                     allowedChannelId: placement.channelId,
                     slackBotToken: env.SLACK_BOT_TOKEN,
-                    oauthConfigured: hasAnthropicCredential(env),
+                    oauthConfigured: true,
+                    credentialLeaseHandle,
                     claudeRuntime,
                     taskSearchEnabled: taskSearch.taskSearchEnabled,
                     taskWriteEnabled,
@@ -815,6 +1003,7 @@ export default {
                       }, {
                         model: claudeRuntime.model,
                         effort: claudeRuntime.effort,
+                        credentialLeaseHandle,
                         createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                       });
                       emitTurnLog("log", "mana_triage_decided", triageEvent, trace, {
@@ -836,6 +1025,7 @@ export default {
                     }
                     return replyResult;
                   }),
+                }),
               });
               },
             );
@@ -855,9 +1045,6 @@ export default {
             throw error;
           }
         },
-        log: (entry) => console.log(JSON.stringify(entry)),
-        logError: (entry) => console.error(JSON.stringify(entry)),
-        errorCode: runtimeErrorCode,
       });
     }
   },
@@ -865,4 +1052,4 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await enqueueScheduledTaskBoardRepair(env);
   },
-} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;
+} satisfies ExportedHandler<Env, TenantQueueBody<SlackQueueEvent> | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;

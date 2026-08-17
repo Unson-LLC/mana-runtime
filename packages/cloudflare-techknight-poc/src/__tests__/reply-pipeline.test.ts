@@ -401,6 +401,19 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
+  it("passes only the canonical credential lease marker into the Container", async () => {
+    const fs = new MemoryFs();
+    const handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const { options, sandbox } = harness({ credentialLeaseHandle: handle });
+
+    await processReplyEvent(fs, event(), options);
+
+    const execOptions = sandbox.exec.mock.calls[0][1] as { env: Record<string, string> };
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(`mana-credential-lease-v1:${handle}`);
+    expect(JSON.stringify(execOptions)).not.toContain("credential-ref");
+    expect(JSON.stringify(execOptions)).not.toContain("lease_token");
+  });
+
   it("configures only the bounded search MCP when task search is enabled", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness({ taskSearchEnabled: true });

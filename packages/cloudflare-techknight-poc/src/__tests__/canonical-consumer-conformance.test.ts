@@ -12,6 +12,7 @@ import {
   validateCanonicalEnvelope,
   validateCanonicalIdempotencyClaim,
   validateCanonicalNonApplicable,
+  validateCanonicalOperationReceipt,
   validateCanonicalQuotaDecision,
   validateCanonicalUsageEvent,
 } from "../multitenancy/index.js";
@@ -106,6 +107,10 @@ async function validateNegative(fixture: NegativeFixture, base: Record<string, u
   }
   if (fixture.target === "quota_decision") {
     validateCanonicalQuotaDecision(mutated);
+    return;
+  }
+  if (fixture.target === "operation_receipt") {
+    validateCanonicalOperationReceipt(mutated);
     return;
   }
   if (fixture.target.startsWith("usage_events/")) {

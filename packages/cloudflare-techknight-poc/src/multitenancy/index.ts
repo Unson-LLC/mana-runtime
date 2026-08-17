@@ -1,6 +1,7 @@
 export * from "./accounting.js";
 export * from "./canonical-consumer.js";
 export * from "./contracts.js";
+export * from "./credential-injector.js";
 export * from "./credentials.js";
 export * from "./delivery.js";
 export * from "./envelope.js";

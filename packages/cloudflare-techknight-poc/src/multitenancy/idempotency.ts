@@ -33,6 +33,25 @@ export interface IdempotencyClaimResult {
   claim: IdempotencyClaim;
 }
 
+type Awaitable<T> = T | Promise<T>;
+
+export interface IdempotencyCompleteInput {
+  key: string;
+  tenant_id: string;
+  state: "succeeded" | "failed_terminal";
+  result_ref?: string;
+  updated_at: string;
+  retained_until: string;
+  partition_key?: string;
+}
+
+export interface IdempotencyStore {
+  claim(input: IdempotencyClaimInput): Awaitable<{ created: boolean; value: IdempotencyClaim }>;
+  read(key: string): Awaitable<IdempotencyClaim | undefined>;
+  release(key: string, tenantId: string, partitionKey?: string): Awaitable<void>;
+  complete(input: IdempotencyCompleteInput): Awaitable<IdempotencyClaim>;
+}
+
 function base64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -65,7 +84,7 @@ export async function createIdempotencyKey(tuple: IdempotencyTuple): Promise<str
   return `ik1_${base64Url(new Uint8Array(digest))}`;
 }
 
-export class IdempotencyMemoryStore {
+export class IdempotencyMemoryStore implements IdempotencyStore {
   readonly #claims = new Map<string, IdempotencyClaim>();
 
   claim(input: IdempotencyClaimInput): { created: boolean; value: IdempotencyClaim } {
@@ -100,14 +119,7 @@ export class IdempotencyMemoryStore {
     if (current.state === "claimed") this.#claims.delete(key);
   }
 
-  complete(input: {
-    key: string;
-    tenant_id: string;
-    state: "succeeded" | "failed_terminal";
-    result_ref?: string;
-    updated_at: string;
-    retained_until: string;
-  }): IdempotencyClaim {
+  complete(input: IdempotencyCompleteInput): IdempotencyClaim {
     const current = this.#claims.get(input.key);
     if (!current) deny("idempotency", "IDEMPOTENCY_CLAIM_MISSING");
     if (current.tenant_id !== input.tenant_id) deny("idempotency", "CROSS_TENANT_CANDIDATE");
@@ -130,10 +142,10 @@ export class IdempotencyMemoryStore {
 }
 
 export async function claimIdempotency(
-  store: IdempotencyMemoryStore,
+  store: IdempotencyStore,
   claim: IdempotencyClaimInput,
 ): Promise<IdempotencyClaimResult> {
-  const result = store.claim(claim);
+  const result = await store.claim(claim);
   if (result.created) return { disposition: "claimed", claim: result.value };
   const existing = result.value;
   if (existing.connection_revision !== claim.connection_revision) {
@@ -160,13 +172,18 @@ export async function claimIdempotency(
   };
 }
 
-export function releaseIdempotency(store: IdempotencyMemoryStore, key: string, tenantId: string): void {
-  store.release(key, tenantId);
+export function releaseIdempotency(
+  store: IdempotencyStore,
+  key: string,
+  tenantId: string,
+  partitionKey?: string,
+): Awaitable<void> {
+  return store.release(key, tenantId, partitionKey);
 }
 
 export function completeIdempotency(
-  store: IdempotencyMemoryStore,
-  input: Parameters<IdempotencyMemoryStore["complete"]>[0],
-): IdempotencyClaim {
+  store: IdempotencyStore,
+  input: IdempotencyCompleteInput,
+): Awaitable<IdempotencyClaim> {
   return store.complete(input);
 }
