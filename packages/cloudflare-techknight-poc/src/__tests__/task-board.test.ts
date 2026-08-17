@@ -1,4 +1,4 @@
-import { refreshTaskBoard, renderBoundedTaskBoard } from "../task-board.js";
+import { createManagedTaskBoardCanvas, refreshTaskBoard, renderBoundedTaskBoard } from "../task-board.js";
 
 const canonical = (id: string, status: string) => ({
   id, version: 1, title: `タスク${id}`, description: null, status, priority: "low",
@@ -7,6 +7,29 @@ const canonical = (id: string, status: string) => ({
 });
 
 describe("Cloudflare bounded task Canvas", () => {
+  it("story-task-canvas-ownership:ac:1 creates a Mana-owned Canvas in the trusted channel", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true, canvas_id: "FMANABOARD" }));
+
+    const canvasId = await createManagedTaskBoardCanvas(
+      "C_TRUSTED",
+      "tech-token",
+      { fetch: fetchMock },
+    );
+
+    expect(canvasId).toBe("FMANABOARD");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://slack.com/api/canvases.create");
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      channel_id: "C_TRUSTED",
+      title: "Mana タスクボード",
+      document_content: {
+        type: "markdown",
+        markdown: "# タスクボード\n\nManaがBrainbaseの正本タスクを同期します。",
+      },
+    });
+  });
+
   it("renders truncation as a lower bound rather than an exact total", () => {
     const markdown = renderBoundedTaskBoard({
       items: [canonical("1", "pending")], hasMore: true, observedLowerBound: 2, requestCount: 4,

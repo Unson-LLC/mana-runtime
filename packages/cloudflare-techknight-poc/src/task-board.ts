@@ -7,6 +7,8 @@ import {
 import { parseRuntimeProjectCodes } from "./runtime-config.js";
 
 const DISPLAY_LIMIT = 20;
+const SLACK_ID = /^[A-Z0-9]{2,32}$/;
+const AMBIGUOUS_SLACK_ERRORS = new Set(["fatal_error", "internal_error", "request_timeout", "service_unavailable"]);
 
 export interface TaskBoardRepairEvent {
   eventType: "task_board_repair";
@@ -14,7 +16,7 @@ export interface TaskBoardRepairEvent {
   workspaceId: string;
   channelId: string;
   targetId: string;
-  manaCanvasId: string;
+  manaCanvasId: string | null;
   bindingRevision: number;
   reason: "task_write" | "scheduled" | "manual";
   requestedAt: string;
@@ -87,6 +89,49 @@ async function slackApi(
     throw new Error(`task_board_${code.replace(/[^a-z0-9_-]/gi, "_")}`);
   }
   return payload;
+}
+
+export class TaskBoardCanvasProvisioningError extends Error {
+  constructor(message: string, readonly definitive: boolean) {
+    super(message);
+    this.name = "TaskBoardCanvasProvisioningError";
+  }
+}
+
+export async function createManagedTaskBoardCanvas(
+  channelId: string,
+  token: string,
+  options: { fetch?: typeof fetch } = {},
+): Promise<string> {
+  const fetchImpl = options.fetch ?? fetch;
+  let response: Response;
+  try {
+    response = await fetchImpl("https://slack.com/api/canvases.create", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({
+        channel_id: channelId,
+        title: "Mana タスクボード",
+        document_content: {
+          type: "markdown",
+          markdown: "# タスクボード\n\nManaがBrainbaseの正本タスクを同期します。",
+        },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw new TaskBoardCanvasProvisioningError("task_board_canvas_create_uncertain", false);
+  }
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const canvasId = typeof payload?.canvas_id === "string" ? payload.canvas_id : "";
+  if (response.ok && payload?.ok === true && SLACK_ID.test(canvasId)) return canvasId;
+  const code = typeof payload?.error === "string"
+    ? payload.error.replace(/[^a-z0-9_-]/gi, "_")
+    : "slack_api_failed";
+  const definitive = response.status < 500
+    && payload?.ok === false
+    && !AMBIGUOUS_SLACK_ERRORS.has(code);
+  throw new TaskBoardCanvasProvisioningError(`task_board_${code}`, definitive);
 }
 
 async function slackApiGet(

@@ -27,6 +27,23 @@ describe("task-board targets", () => {
       .toThrow("invalid_task_board_canvas_binding");
   });
 
+  it("allows an enabled target to provision a new Mana-owned Canvas", () => {
+    const parsed = parseTaskBoardTargets(JSON.stringify([{
+      ...targets[2],
+      autoProvision: true,
+      manaCanvasId: null,
+      bindingRevision: 1,
+    }]));
+    expect(parsed[0]).toMatchObject({
+      enabled: true,
+      autoProvision: true,
+      manaCanvasId: null,
+      bindingRevision: 1,
+    });
+    expect(taskBoardTargetsForProjects(parsed, ["proj_pms"])).toEqual(parsed);
+  });
+
+
   it("rejects one owned Canvas being bound to two target channels", () => {
     expect(() => parseTaskBoardTargets(JSON.stringify([targets[0], {
       ...targets[0], targetId: "duplicate-owner", channelId: "C0A9ESC81UX",

@@ -2,29 +2,31 @@
 architecture_id: arch-task-canvas-ownership
 story_id: story-task-canvas-ownership
 title: Mana管理Canvasの所有権境界
-status: proposed
-date: 2026-08-16
+status: accepted
+date: 2026-08-17
 ---
 
 # Mana管理Canvasの所有権境界
 
 ## 決定
 
-タスクボード更新対象は、信頼済み設定で `targetId`、`workspaceId`、`channelId`、`manaCanvasId` が明示的に結び付けられ、かつ対象別に有効化されたCanvasだけとする。Slackで最初に見つかったCanvasを所有権の根拠にしない。
+信頼済み設定は、Manaによるタスクボード作成を許可する `targetId`、`workspaceId`、`channelId` と世代だけを管理する。ManaがSlack APIで新規作成したCanvas IDはDurable Objectへ保存し、以後そのIDだけを更新する。Slackで最初に見つかったCanvasや既存Canvasは所有権の根拠にしない。
 
 ## 所有権境界
 
-1. producerは、有効かつ `manaCanvasId` を持つtargetだけをQueueへ送る。
+1. producerは、有効で正の `bindingRevision` を持ち、静的Canvas IDまたは `autoProvision` が設定されたtargetだけをQueueへ送る。
 2. consumerはQueue payloadを信用せず、`targetId` から信頼済みtargetを再解決する。
-3. workspace、channel、Canvasの三点が信頼済みtargetと一致しないイベントはackして変更しない。
-4. Slackの `conversations.info` で対象channelに結び付くCanvas IDと `manaCanvasId` が一致する場合だけ全文置換する。
-5. Canvas未設定、無効、不一致、消失では作成・採用・再作成をせず、構造化ログへ理由を残す。
-6. tenant、token、projectの既存分離は維持し、Canvas IDはQueue payloadやSlack上の並び順から採用しない。
+3. tenant、workspace、channel、binding revisionが信頼済みtargetと一致しないイベントはackして変更しない。
+4. `autoProvision` targetにbindingがなければ、Manaのworkspace別bot tokenで`canvases.create`へ信頼済み`channelId`を渡し、返却されたCanvas IDだけをDurable Objectへ保存する。
+5. 保存済みCanvas IDはSlackの `conversations.info` で対象channelに結び付くことを確認した場合だけ全文置換する。
+6. 作成予約をDurable Objectで直列化する。同時実行は1件だけが作成へ進み、応答が不明な失敗では予約を保持して二重作成を防ぐ。作成されていないと確定できる失敗だけ予約を解除して再試行する。
+7. 静的IDで既に運用するtargetは後方互換として維持する。静的IDが消失・不一致の場合は自動再作成しない。
+8. tenant、token、projectの既存分離は維持し、Canvas IDはQueue payloadやSlack上の並び順から採用しない。
 
 ## 移行
 
-既存targetは管理Canvas IDを持たないため、安全側で無効として扱う。運用者が対象Canvasの用途を確認し、IDを設定して対象別に有効化するまで自動更新しない。一括有効化はしない。
+既存targetは一括有効化しない。Mana botのチャンネル参加と必要scopeを確認したtargetだけ、`autoProvision: true`、正の`bindingRevision`、`enabled: true`へ変更する。初回Queue処理でCanvasを作成し、その返却IDを実行時bindingの正本にする。まずPMSとHP制作を個別に有効化し、本番readback後に他targetへ展開する。
 
 ## 切戻しと検証
 
-対象別の `enabled` をfalseに戻せば、そのtargetのscheduled更新とタスク変更後更新を止められる。検証では、明示ID一致時だけ `canvases.edit` が1回実行され、未設定・不一致・旧イベント・競合時にはSlack書込みが0回であることを確認する。
+対象別の `enabled` をfalseに戻せば、そのtargetのscheduled更新とタスク変更後更新を止められる。検証では、未binding時に`canvases.create`が1回だけ実行され、返却IDが保存され、再実行は同じIDへの`canvases.edit`だけになることを確認する。不一致・旧イベント・競合・作成結果不明時には追加のSlack書込みが0回であることも確認する。

@@ -63,10 +63,10 @@ describe("会社別Cloudflare deployment", () => {
   const techKnight = loadConfig("wrangler.jsonc");
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
-  it("keeps task board targets disabled until Mana Canvas ownership is bound", () => {
+  it("story-task-canvas-ownership:ac:5 enables auto-provision only for PMS and HP Sales", () => {
     const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       targetId: string; organizationId: string; workspaceId: string; channelId: string; projectCodes: string[];
-      enabled: boolean; manaCanvasId: string | null; bindingRevision: number | null;
+      enabled: boolean; autoProvision?: boolean; manaCanvasId: string | null; bindingRevision: number | null;
     }>;
     const destinations = [
       ...JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON) as Array<{ id: string; projectId: string;
@@ -77,8 +77,13 @@ describe("会社別Cloudflare deployment", () => {
     const minutesTargets = targets.filter((target) => target.targetId.startsWith("minutes-"));
     expect(targets).toHaveLength(23);
     expect(minutesTargets).toHaveLength(22);
-    expect(targets.every((target) => target.enabled === false && target.manaCanvasId === null &&
-      target.bindingRevision === null)).toBe(true);
+    const autoProvisioned = targets.filter((target) => target.autoProvision);
+    expect(autoProvisioned).toEqual([
+      expect.objectContaining({ targetId: "minutes-pms", enabled: true, manaCanvasId: null, bindingRevision: 1 }),
+      expect.objectContaining({ targetId: "minutes-hp-sales", enabled: true, manaCanvasId: null, bindingRevision: 1 }),
+    ]);
+    expect(targets.filter((target) => !target.autoProvision).every((target) =>
+      target.enabled === false && target.manaCanvasId === null && target.bindingRevision === null)).toBe(true);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
       .toEqual({ "unson-business": 8, unson: 5, "tech-knight": 9 });
@@ -373,6 +378,7 @@ describe("会社別Cloudflare deployment", () => {
         expect.objectContaining({ name: "TASK_WRITE_BUDGETS", class_name: "TaskWriteBudget" }),
         expect.objectContaining({ name: "MEETING_MINUTES_WORKSPACE", class_name: "MeetingMinutesWorkspace" }),
         expect.objectContaining({ name: "MEETING_MINUTES_DEPLOYMENT_GATE", class_name: "MeetingMinutesDeploymentGate" }),
+        expect.objectContaining({ name: "TASK_BOARD_BINDINGS", class_name: "TaskBoardBinding" }),
       ]),
     );
     expect(unson.containers).toEqual([
@@ -465,6 +471,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.migrations).toEqual(expect.arrayContaining([
       expect.objectContaining({ tag: "v4", new_sqlite_classes: ["MeetingMinutesWorkspace"] }),
       expect.objectContaining({ tag: "v7", new_sqlite_classes: ["MeetingMinutesDeploymentGate"] }),
+      expect.objectContaining({ tag: "v8", new_sqlite_classes: ["TaskBoardBinding"] }),
     ]));
     const raw = readFileSync(fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)), "utf8");
     expect(raw).not.toContain('"GITHUB_TOKEN":');
