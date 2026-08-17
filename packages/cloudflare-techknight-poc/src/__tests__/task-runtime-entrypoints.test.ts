@@ -213,8 +213,8 @@ describe("Cloudflare task runtime entrypoints", () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     await processTaskBoardRepair({ ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB",
       channelId: "C0BKX9Y169F" }, env, "unson-business", fetch, refresh);
-    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_BOT_TOKEN: "tenant-credential-injected",
-      BRAINBASE_TASK_API_TOKEN: "tenant-credential-injected",
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_BOT_TOKEN: undefined,
+      BRAINBASE_TASK_API_TOKEN: undefined,
       SLACK_ALLOWED_CHANNEL_ID: "C0BKX9Y169F", RUNTIME_PROJECT_CODES: "proj_tech" }), { fetch });
   });
 

@@ -118,9 +118,11 @@ function authorizedTaskChannels(source: RuntimePlacement, placements: readonly R
 }
 
 export function createRuntimeGatewayProxyHandler(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl?: typeof fetch,
   dependencies: RuntimeGatewayProxyDependencies = {},
 ) {
+  const brokered = fetchImpl !== undefined;
+  const providerFetch = fetchImpl ?? fetch;
   return async (request: Request, env: RuntimeGatewayProxyEnv): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method !== "POST" || url.protocol !== "https:" || url.hostname !== RUNTIME_GATEWAY_PROXY_HOST || url.pathname !== RUNTIME_GATEWAY_PATH) return responseError("not_found", 404);
@@ -151,7 +153,7 @@ export function createRuntimeGatewayProxyHandler(
         return Response.json(authorizedTaskChannels(placement, placements, claims.actor.id));
       }
       if (["list_tasks", "search_tasks", "list_tasks_across_channels", "search_tasks_across_channels"].includes(body.tool)) {
-        if (!env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN) return responseError("gateway_not_configured", 503);
+        if (!env.BRAINBASE_TASK_API_BASE_URL || (!env.BRAINBASE_TASK_API_TOKEN && !brokered)) return responseError("gateway_not_configured", 503);
         const isSearch = body.tool === "search_tasks" || body.tool === "search_tasks_across_channels";
         const isCrossChannel = body.tool === "list_tasks_across_channels" || body.tool === "search_tasks_across_channels";
         if (isSearch && env.RUNTIME_TASK_SEARCH_ENABLED !== "true") return responseError("gateway_tool_disabled", 503);
@@ -163,7 +165,8 @@ export function createRuntimeGatewayProxyHandler(
         const query = taskQuery(args, projectCodes);
         if (!query) return responseError("invalid_arguments", 400);
         if (isSearch && (typeof args.query !== "string" || !args.query.trim() || args.query.length > 200)) return responseError("invalid_arguments", 400);
-        const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL, token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl });
+        const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+          token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl: providerFetch });
         try {
           const page = isSearch ? await client.searchTasks({ ...query, query: (args.query as string).trim() }) : await client.listTasks(query);
           return Response.json(normalizeTaskPage(page, projectCodes, query.limit, scope));

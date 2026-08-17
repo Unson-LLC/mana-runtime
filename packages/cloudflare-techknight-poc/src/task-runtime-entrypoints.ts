@@ -105,8 +105,8 @@ export async function processTaskBoardRepair(
   }
   await refresh({ ...env,
     RUNTIME_TASK_BOARD_ENABLED: "true",
-    BRAINBASE_TASK_API_TOKEN: "tenant-credential-injected",
-    SLACK_BOT_TOKEN: "tenant-credential-injected",
+    BRAINBASE_TASK_API_TOKEN: undefined,
+    SLACK_BOT_TOKEN: undefined,
     SLACK_ALLOWED_CHANNEL_ID: target.channelId,
     RUNTIME_PROJECT_CODES: target.projectCodes.join(",") }, { fetch: credentialFetch });
 }

@@ -68,13 +68,14 @@ export function renderBoundedTaskBoard(board: BoundedTaskBoard, projects: readon
 
 async function slackApi(
   method: string,
-  token: string,
+  token: string | undefined,
   body: Record<string, unknown>,
   fetchImpl: typeof fetch,
 ): Promise<Record<string, unknown>> {
   const response = await fetchImpl(`https://slack.com/api/${method}`, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
+    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}),
+      "content-type": "application/json; charset=utf-8" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(15_000),
   });
@@ -88,7 +89,7 @@ async function slackApi(
 
 async function slackApiGet(
   method: string,
-  token: string,
+  token: string | undefined,
   query: Record<string, string>,
   fetchImpl: typeof fetch,
 ): Promise<Record<string, unknown>> {
@@ -96,7 +97,7 @@ async function slackApiGet(
   for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
   const response = await fetchImpl(url.toString(), {
     method: "GET",
-    headers: { authorization: `Bearer ${token}` },
+    headers: token ? { authorization: `Bearer ${token}` } : {},
     signal: AbortSignal.timeout(15_000),
   });
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -127,7 +128,7 @@ function canvasIdFromInfo(payload: Record<string, unknown>): string | null {
 
 async function publishCanvas(
   channelId: string,
-  token: string,
+  token: string | undefined,
   markdown: string,
   fetchImpl: typeof fetch,
 ): Promise<"created" | "updated"> {
@@ -175,7 +176,9 @@ export async function refreshTaskBoard(
 ): Promise<{ outcome: "disabled" | "created" | "updated"; displayed?: number; hasMore?: boolean }> {
   if (env.RUNTIME_TASK_BOARD_ENABLED !== "true") return { outcome: "disabled" };
   const projects = parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
-  if (!projects.length || !env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_BOT_TOKEN || !env.SLACK_ALLOWED_CHANNEL_ID) {
+  const brokered = options.fetch !== undefined;
+  if (!projects.length || !env.BRAINBASE_TASK_API_BASE_URL || !env.SLACK_ALLOWED_CHANNEL_ID
+    || ((!env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_BOT_TOKEN) && !brokered)) {
     throw new Error("task_board_not_configured");
   }
   const fetchImpl = options.fetch ?? fetch;

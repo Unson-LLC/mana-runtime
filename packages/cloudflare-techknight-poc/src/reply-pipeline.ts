@@ -403,14 +403,14 @@ export async function postSlackReply(
   text: string,
   options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
 ): Promise<string> {
-  if (!options.slackBotToken) throw new ReplyPipelineError("slack_bot_token_not_configured");
+  if (!options.slackBotToken && !options.fetch) throw new ReplyPipelineError("slack_bot_token_not_configured");
   const clientMsgId = await deterministicClientMessageId(event.eventId);
   let response: Response;
   try {
     response = await (options.fetch ?? fetch)("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${options.slackBotToken}`,
+        ...(options.slackBotToken ? { authorization: `Bearer ${options.slackBotToken}` } : {}),
         "content-type": "application/json; charset=utf-8",
       },
       body: JSON.stringify({
@@ -458,7 +458,7 @@ async function setSlackProcessingReaction(
   action: "add" | "remove",
   options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
 ): Promise<boolean> {
-  if (!options.slackBotToken) {
+  if (!options.slackBotToken && !options.fetch) {
     logSlackReactionFailure(action, "slack_bot_token_not_configured");
     return false;
   }
@@ -468,7 +468,7 @@ async function setSlackProcessingReaction(
     response = await (options.fetch ?? fetch)(`https://slack.com/api/reactions.${action}`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${options.slackBotToken}`,
+        ...(options.slackBotToken ? { authorization: `Bearer ${options.slackBotToken}` } : {}),
         "content-type": "application/json; charset=utf-8",
       },
       body: JSON.stringify({
@@ -505,12 +505,13 @@ async function addSlackTriageReaction(
   emoji: string,
   options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
 ): Promise<boolean> {
-  if (!options.slackBotToken) return false;
+  if (!options.slackBotToken && !options.fetch) return false;
   const name = emoji.replace(/^:+|:+$/g, "").replace(/[^a-z0-9_+-]/gi, "").slice(0, 64) || "eyes";
   try {
     const response = await (options.fetch ?? fetch)("https://slack.com/api/reactions.add", {
       method: "POST",
-      headers: { authorization: `Bearer ${options.slackBotToken}`, "content-type": "application/json; charset=utf-8" },
+      headers: { ...(options.slackBotToken ? { authorization: `Bearer ${options.slackBotToken}` } : {}),
+        "content-type": "application/json; charset=utf-8" },
       body: JSON.stringify({ channel: event.channelId, timestamp: event.messageTs, name }),
       signal: AbortSignal.timeout(SLACK_REACTION_TIMEOUT_MS),
     });
@@ -527,7 +528,7 @@ export async function setSlackThreadStatus(
   status: string,
   options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
 ): Promise<boolean> {
-  if (!options.slackBotToken) {
+  if (!options.slackBotToken && !options.fetch) {
     logSlackStatusFailure("slack_bot_token_not_configured");
     return false;
   }
@@ -537,7 +538,7 @@ export async function setSlackThreadStatus(
     response = await (options.fetch ?? fetch)("https://slack.com/api/assistant.threads.setStatus", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${options.slackBotToken}`,
+        ...(options.slackBotToken ? { authorization: `Bearer ${options.slackBotToken}` } : {}),
         "content-type": "application/json; charset=utf-8",
       },
       body: JSON.stringify({
@@ -601,13 +602,13 @@ export async function updateSlackReply(
   text: string,
   options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
 ): Promise<void> {
-  if (!options.slackBotToken) throw new ReplyPipelineError("slack_bot_token_not_configured");
+  if (!options.slackBotToken && !options.fetch) throw new ReplyPipelineError("slack_bot_token_not_configured");
   let response: Response;
   try {
     response = await (options.fetch ?? fetch)("https://slack.com/api/chat.update", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${options.slackBotToken}`,
+        ...(options.slackBotToken ? { authorization: `Bearer ${options.slackBotToken}` } : {}),
         "content-type": "application/json; charset=utf-8",
       },
       body: JSON.stringify({ channel: event.channelId, ts: responseTs, text }),

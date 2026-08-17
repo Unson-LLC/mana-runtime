@@ -99,11 +99,11 @@ async function authorizeTenantRuntimeProxy(
   const proxyEnv: SandboxRuntimeEnv = {
     ...env,
     SLACK_EXPECTED_TEAM_ID: resolved.tenant_context.workspace_connection.workspace_id,
-    BRAINBASE_TASK_API_TOKEN: "tenant-credential-injected",
-    SLACK_BOT_TOKEN: "tenant-credential-injected",
-    NOCODB_TOKEN: "tenant-credential-injected",
-    BRAINBASE_MCP_TOKEN: "tenant-credential-injected",
-    GOOGLE_DRIVE_MCP_TOKEN: "tenant-credential-injected",
+    BRAINBASE_TASK_API_TOKEN: undefined,
+    SLACK_BOT_TOKEN: undefined,
+    NOCODB_TOKEN: undefined,
+    BRAINBASE_MCP_TOKEN: undefined,
+    GOOGLE_DRIVE_MCP_TOKEN: undefined,
   };
   return handler(new Request(request, { headers }), credentialFetch, proxyEnv, resolved);
 }

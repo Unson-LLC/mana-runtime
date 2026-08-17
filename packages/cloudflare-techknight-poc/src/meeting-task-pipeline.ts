@@ -228,7 +228,7 @@ async function createBrainbaseTask(
   index: number,
   options: MeetingTaskPipelineOptions,
 ): Promise<string> {
-  if (!options.brainbaseApiBaseUrl || !options.brainbaseTaskToken) {
+  if (!options.brainbaseApiBaseUrl || (!options.brainbaseTaskToken && !options.fetch)) {
     throw new ReplyPipelineError("brainbase_not_configured");
   }
   let task: Awaited<ReturnType<TaskApiClient["createTask"]>>;
