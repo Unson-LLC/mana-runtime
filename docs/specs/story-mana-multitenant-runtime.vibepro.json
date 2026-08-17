@@ -394,7 +394,7 @@
     {
       "id": "INV-005",
       "type": "invariant",
-      "statement": "ContainerLease {container_id:'ctr_'+ULID,tenant_id:'ten_'+ULID,lease_id:string,operation_id:'op_'+ULID,state:'clean'|'leased'|'dirty'|'destroyed',sanitization_receipt_id?:string,leased_at,expires_at}だけを再利用判定に使う。tenant_id変更時は除染結果にかかわらず必ずdestroyし、cross-tenant reuseを禁止する。同一tenantでの再利用は未失効operation leaseと、全子process停止、workspace/tmp/home削除、environment allowlist再構築、credential mount解除・scrub、transcript/session/cache削除、未承認open handleなし、same tenant、fresh signed contextの全checkがpassした場合だけ許可する。ContainerSanitizationReceipt {sanitation_receipt_id,lease_id,tenant_hash,operation_id,checks,completed_at,image_digest,result:'passed'|'failed'|'unobservable'}を残し、failed/unobservableはdestroyしてCONTAINER_SANITIZATION_UNPROVENとする。persistent model/Claude sessionはoperation leaseを越えて再利用しない。",
+      "statement": "ContainerLease {container_id:'ctr_'+ULID,tenant_id:'ten_'+ULID,lease_id:string,operation_id:'op_'+ULID,state:'clean'|'leased'|'dirty'|'destroyed',sanitization_receipt_id?:string,leased_at,expires_at}だけを再利用判定に使う。tenant_id変更時は除染結果にかかわらず必ずdestroyし、cross-tenant reuseを禁止する。同一tenantでの再利用は未失効operation leaseと、全子process停止、workspace/tmp/home削除、environment allowlist再構築、credential mount解除・scrub、transcript/session/cache削除、未承認open handleなし、same tenant、fresh signed contextの全checkがpassした場合だけ許可する。ContainerSanitizationReceipt {sanitation_receipt_id,lease_id,tenant_hash,operation_id,checks,completed_at,image_digest,purpose:'reuse_sanitization'|'final_destruction',reuse_eligible:boolean,result:'passed'|'failed'|'unobservable'}を残す。reuse_sanitizationのpassedは全check観測済みかつreuse_eligible:trueの場合だけとし、failed/unobservableはdestroyしてCONTAINER_SANITIZATION_UNPROVENとする。fresh IDかつno-reuseのContainerをproviderで破棄した事実を観測した場合だけfinal_destructionをresult:passed,reuse_eligible:falseとして記録でき、container_destroyed/fresh_container_per_attempt/no_reuse/cross_tenant_reuse_forbiddenを必須checkとする。この最終破棄証跡は再利用許可に使わず、破棄失敗または観測不能を成功へ丸めない。persistent model/Claude sessionはoperation leaseを越えて再利用しない。",
       "origin": {
         "story_refs": [
           {
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:45:08.486Z"
+      "last_revised_at": "2026-08-17T14:19:35.300Z"
     },
     {
       "id": "C-004",

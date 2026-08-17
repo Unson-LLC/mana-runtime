@@ -78,7 +78,7 @@ contextが欠落、曖昧、改ざん、失効、古い場合はその場で停�
 
 すべての内部キーはtenantを最上位境界に置き、その下でworkspace、channel、thread、session、operationを区別する。同名workspace、channel、user、projectでもtenantが違えば同じkey、cache、object、sessionを共有しない。
 
-別tenantへのContainer再利用は常に禁止し、tenant変更時は必ずdestroyする。同一tenantでの再利用だけを、未失効のoperation lease、全子process停止、workspace／tmp／home削除、environment allowlist再構築、credential mount解除、transcript／session／cache削除、未承認open handleなし、同一tenantのfreshな署名済みcontextを満たす場合に許可する。全checkを含む除染Receiptを発行できない場合もdestroyし、`CONTAINER_SANITIZATION_UNPROVEN`で停止する。
+別tenantへのContainer再利用は常に禁止し、tenant変更時は必ずdestroyする。同一tenantでの再利用だけを、未失効のoperation lease、全子process停止、workspace／tmp／home削除、environment allowlist再構築、credential mount解除、transcript／session／cache削除、未承認open handleなし、同一tenantのfreshな署名済みcontextを満たす場合に許可する。`ContainerSanitizationReceipt`は`purpose: reuse_sanitization | final_destruction`と`reuse_eligible`を持つ。`reuse_sanitization`の`passed`は全checkが観測済みで`reuse_eligible: true`の場合だけであり、発行できない場合はdestroyして`CONTAINER_SANITIZATION_UNPROVEN`で停止する。fresh IDで作成して再利用しないContainerのprovider破棄を観測した場合だけ、`purpose: final_destruction`、`result: passed`、`reuse_eligible: false`の最終破棄証跡を残せる。この証跡は`container_destroyed`、`fresh_container_per_attempt`、`no_reuse`、`cross_tenant_reuse_forbidden`を必須checkとし、再利用許可には一切使わない。破棄自体が失敗または観測不能なら`failed | unobservable`として永続化し、成功へ丸めない。
 
 添付ファイルと一時objectはtenant scope、size／MIME制限、保持期限、削除証跡を持ち、URLやsecretをモデルへ直接渡さない。
 
