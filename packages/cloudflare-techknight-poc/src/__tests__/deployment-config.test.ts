@@ -420,7 +420,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("expectedTenantMeetingMinutesRedoScope(env, tenantBody)");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
-    expect(worker).toContain("recoverStaleMeetingMinutesRun(");
+    expect(worker).not.toContain("recoverStaleMeetingMinutesRun(");
+    expect(worker).toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
     expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("meetingMinutesClients(env, credentialLeaseHandle)");

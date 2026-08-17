@@ -185,9 +185,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return Response.json({ ok: true });
   }
   if (confirmRedoAction) {
-    if (!runId || !channelId || !actionTs || !options.defer) return response("slack_interaction_invalid", 400);
+    if (!runId || !channelId || !sourceThreadTs || !actionTs || !options.defer) {
+      return response("slack_interaction_invalid", 400);
+    }
     options.defer(options.send({ kind: "meeting_minutes_redo", runId, workspaceId: options.expectedTeamId,
-      channelId, userId, actionTs }).then(() => undefined));
+      channelId, threadTs: sourceThreadTs, userId, actionTs }).then(() => undefined));
     return Response.json({ ok: true });
   }
   if ((organizationAction || backAction)) {

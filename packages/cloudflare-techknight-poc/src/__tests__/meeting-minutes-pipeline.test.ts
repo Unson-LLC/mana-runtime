@@ -14,7 +14,7 @@ const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId:
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana",
   workspaceId: "T1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
 const redo: MeetingMinutesRedo = { kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
-  channelId: "CROUTER", userId: "U1", actionTs: "20.1" };
+  channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "20.1" };
 function audited(minutes: GeneratedMeetingMinutes, context: MeetingMinutesContextReceipt) {
   return { ...minutes, brainbase_context_attestation: {
     schema_version: "meeting_minutes_context_attestation.v1" as const,
