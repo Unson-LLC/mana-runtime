@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-mana-multitenant-runtime",
   "spec_id": "2026-08-17T00:28:16.287Z",
-  "evaluated_at": "2026-08-17T00:46:43.029Z",
+  "evaluated_at": "2026-08-17T00:54:32.808Z",
   "status": "drift_detected",
   "summary": {
     "spec_code_drift": 0,
@@ -12,7 +12,7 @@
   },
   "items": [
     {
-      "id": "DRIFT-E32XXP",
+      "id": "DRIFT-XZD2DD",
       "axis": "spec_pr",
       "clause_id": "C-001",
       "severity": "medium",
@@ -21,7 +21,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-W4759D",
+      "id": "DRIFT-YGMVUG",
       "axis": "spec_pr",
       "clause_id": "INV-001",
       "severity": "medium",
