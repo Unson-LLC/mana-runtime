@@ -194,6 +194,19 @@ describe("Cloudflare meeting task pipeline", () => {
     expect(tenantBId.length).toBeLessThanOrEqual(63);
   });
 
+  it("uses the tenant operation boundary for each Claude provider request", async () => {
+    const boundaryHandle = "tb_opaque_operation_handle_1234567890";
+    const { options, sandbox } = harness({
+      credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
+      tenantBoundaryHandle: boundaryHandle,
+    });
+    await processMeetingTaskEvent(new MemoryFs(), event(), options);
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ env: expect.objectContaining({
+      CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${boundaryHandle}`,
+      MANA_TENANT_BOUNDARY_HANDLE: boundaryHandle,
+    }) }));
+  });
+
   it("does not repeat Claude, Brainbase, or Slack after completion", async () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();

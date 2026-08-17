@@ -44,6 +44,19 @@ function receiptBoundStream(minutes: Record<string, unknown>): string {
 }
 
 describe("generateMeetingMinutesInSandbox", () => {
+  it("uses the tenant operation boundary so every Claude outbound can acquire a fresh lease", async () => {
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
+      stdout: receiptBoundStream({ title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput }),
+      stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
+    const boundaryHandle = "tb_opaque_operation_handle_1234567890";
+    await generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
+      { model: "opus", effort: "xhigh" }, sandbox,
+      "lease_handle_abcdefghijklmnopqrstuvwxyz12", boundaryHandle);
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ env: expect.objectContaining({
+      CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${boundaryHandle}`,
+      MANA_TENANT_BOUNDARY_HANDLE: boundaryHandle,
+    }) }));
+  });
   it("injects the validated Brainbase Receipt context without requiring a model-initiated MCP call", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
       stdout: receiptBoundStream({ title: "定例", overview: "概要", body: "本文", tasks: [
