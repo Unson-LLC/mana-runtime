@@ -724,6 +724,34 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("accepts a bot-attributed app mention only for an explicitly trusted human user", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      botAttributedAppMentionUserIds: ["U_USER"],
+    });
+    const input = event({ botId: "B_FILE_UPLOAD_APP" });
+
+    expect(isReplyEligible(input, options)).toBe(true);
+    await expect(processReplyEvent(fs, input, options)).resolves.toMatchObject({ outcome: "replied" });
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["an untrusted user", { userId: "U_OTHER" }],
+    ["an ambient message", { eventType: "message" }],
+    ["a bot subtype", { subtype: "bot_message" }],
+  ])("rejects a bot-attributed event even with the trusted-user escape hatch: %s", async (_name, change) => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      botAttributedAppMentionUserIds: ["U_USER"],
+    });
+    const input = event({ botId: "B_FILE_UPLOAD_APP", ...change });
+
+    expect(isReplyEligible(input, options)).toBe(false);
+    await expect(processReplyEvent(fs, input, options)).resolves.toEqual({ outcome: "ignored" });
+    expect(sandbox.exec).not.toHaveBeenCalled();
+  });
+
   it("keeps worker secrets out of sandbox input and completion records", async () => {
     const fs = new MemoryFs();
     const { options, sandbox } = harness();

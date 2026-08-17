@@ -73,6 +73,7 @@ export interface ReplyPipelineOptions {
   trace?: TurnRuntimeTrace;
   respondPolicy?: RuntimeRespondPolicy;
   isEngagedThread?: boolean;
+  botAttributedAppMentionUserIds?: readonly string[];
   triage?(event: SlackQueueEvent): Promise<RuntimeTriageDecision>;
   runtimeContext?: { persona: string; instructions: readonly string[]; skills: readonly string[]; escalationEmployee?: string };
   claudeSession?: { id: string; sandboxId: string; resume: boolean };
@@ -97,13 +98,16 @@ export class ReplyPipelineError extends Error {
 
 export function isReplyEligible(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId" | "respondPolicy" | "isEngagedThread">,
+  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId" | "respondPolicy" | "isEngagedThread" | "botAttributedAppMentionUserIds">,
 ): boolean {
+  const trustedBotAttributedAppMention = event.eventType === "app_mention"
+    && typeof event.userId === "string"
+    && options.botAttributedAppMentionUserIds?.includes(event.userId) === true;
   const boundaryAllowed = (
     event.tenantId === (options.expectedTenantId ?? "techknight") &&
     event.workspaceId === options.expectedWorkspaceId &&
     event.channelId === options.allowedChannelId &&
-    !event.botId &&
+    (!event.botId || trustedBotAttributedAppMention) &&
     event.subtype !== "bot_message" &&
     Boolean(event.userId)
   );
