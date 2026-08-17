@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-mana-multitenant-runtime",
   "spec_id": "2026-08-17T00:46:42.058Z",
-  "evaluated_at": "2026-08-17T08:28:57.046Z",
+  "evaluated_at": "2026-08-17T09:51:47.778Z",
   "status": "drift_detected",
   "summary": {
     "spec_code_drift": 0,
@@ -12,7 +12,7 @@
   },
   "items": [
     {
-      "id": "DRIFT-97GSJ7",
+      "id": "DRIFT-PVQE6B",
       "axis": "spec_pr",
       "clause_id": "C-001",
       "severity": "medium",
@@ -21,7 +21,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-7R9SUH",
+      "id": "DRIFT-TAGKB2",
       "axis": "spec_pr",
       "clause_id": "INV-001",
       "severity": "medium",
@@ -30,7 +30,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-PYP58N",
+      "id": "DRIFT-FQRCWY",
       "axis": "spec_pr",
       "clause_id": "INV-003",
       "severity": "medium",
@@ -39,7 +39,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-NCBRAT",
+      "id": "DRIFT-6LVXWC",
       "axis": "spec_pr",
       "clause_id": "C-013",
       "severity": "medium",
@@ -48,7 +48,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-WFP8F5",
+      "id": "DRIFT-LBED2S",
       "axis": "spec_pr",
       "clause_id": "INV-005",
       "severity": "medium",
@@ -57,7 +57,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-5BZZTV",
+      "id": "DRIFT-KKNC6G",
       "axis": "spec_pr",
       "clause_id": "INV-006",
       "severity": "medium",
@@ -66,7 +66,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-UV5Z7C",
+      "id": "DRIFT-5ATL4P",
       "axis": "spec_pr",
       "clause_id": "C-014",
       "severity": "medium",
@@ -75,7 +75,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-PPL6F7",
+      "id": "DRIFT-FZXP7Z",
       "axis": "spec_pr",
       "clause_id": "INV-007",
       "severity": "medium",
@@ -84,7 +84,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-MRPEHR",
+      "id": "DRIFT-ZE3MV3",
       "axis": "spec_pr",
       "clause_id": "C-015",
       "severity": "medium",
@@ -93,7 +93,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-T3R5BF",
+      "id": "DRIFT-DQM3S8",
       "axis": "spec_pr",
       "clause_id": "C-016",
       "severity": "medium",
@@ -102,7 +102,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-TVTEYT",
+      "id": "DRIFT-3B5FKC",
       "axis": "spec_pr",
       "clause_id": "C-010",
       "severity": "medium",
@@ -111,7 +111,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-EMG9DS",
+      "id": "DRIFT-EYH8HW",
       "axis": "spec_pr",
       "clause_id": "C-017",
       "severity": "medium",
@@ -120,7 +120,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-CYHC9N",
+      "id": "DRIFT-FXNLDJ",
       "axis": "spec_pr",
       "clause_id": "C-002",
       "severity": "medium",
@@ -129,7 +129,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-XYL4G6",
+      "id": "DRIFT-3CQ7B2",
       "axis": "spec_pr",
       "clause_id": "C-003",
       "severity": "medium",
@@ -138,7 +138,7 @@
       "suggested_action": "Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する"
     },
     {
-      "id": "DRIFT-Y2FY2Q",
+      "id": "DRIFT-4JC76X",
       "axis": "spec_pr",
       "clause_id": "INV-008",
       "severity": "medium",
