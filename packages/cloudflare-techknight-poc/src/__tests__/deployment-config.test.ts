@@ -97,7 +97,13 @@ describe("会社別Cloudflare deployment", () => {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
       scripts: Record<string, string>;
     };
-    for (const scriptName of ["build", "build:unson-business", "deploy:unson-business"]) {
+    expect(packageJson.scripts.build).toBe("node scripts/build-profiles.mjs");
+    const buildProfiles = readFileSync(
+      fileURLToPath(new URL("../../scripts/build-profiles.mjs", import.meta.url)),
+      "utf8",
+    );
+    expect(buildProfiles).toContain('["build:default", "build:unson-business"]');
+    for (const scriptName of ["build:default", "build:unson-business", "deploy:unson-business"]) {
       expect(packageJson.scripts[scriptName]).toContain(
         "pnpm --filter @openryoko/task-runtime-core build",
       );
