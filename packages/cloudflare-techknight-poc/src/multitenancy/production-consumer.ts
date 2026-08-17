@@ -145,22 +145,9 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     });
     throw error;
   }
+  let result: R;
   try {
-    const result = await input.process();
-    await recordOperation({
-      tenant_context: input.tenant_context,
-      expected_scope: input.expected_scope,
-      verifier: input.verifier,
-      ledger: input.ledger,
-      accounting: input.accounting,
-      quota_decision: quotaDecision.decision,
-      unit: input.quota_unit,
-      outcome: "succeeded",
-      failure_code: null,
-      ...(result.responseTs ? { response_ts: result.responseTs } : {}),
-      now: input.now(),
-    });
-    return result;
+    result = await input.process();
   } catch (error) {
     const code = errorCode(error);
     await recordOperation({
@@ -177,6 +164,20 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     });
     throw error;
   }
+  await recordOperation({
+    tenant_context: input.tenant_context,
+    expected_scope: input.expected_scope,
+    verifier: input.verifier,
+    ledger: input.ledger,
+    accounting: input.accounting,
+    quota_decision: quotaDecision.decision,
+    unit: input.quota_unit,
+    outcome: "succeeded",
+    failure_code: null,
+    ...(result.responseTs ? { response_ts: result.responseTs } : {}),
+    now: input.now(),
+  });
+  return result;
 }
 
 async function payloadHash(value: unknown): Promise<string> {
