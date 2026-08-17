@@ -708,11 +708,12 @@ async function processTenantMeetingMinutesSelection(input: {
   env: Env;
   config: ReturnType<typeof meetingMinutesRuntimeConfig>;
   selection: MeetingMinutesSelection;
-  tenantId: string;
+  tenantContext: TenantContextEnvelope;
   credentialLeaseHandle: string;
   tenantBoundaryHandle: string;
 }): Promise<{ outcome: "completed" }> {
-  const { env, config, selection, tenantId, credentialLeaseHandle, tenantBoundaryHandle } = input;
+  const { env, config, selection, tenantContext, credentialLeaseHandle, tenantBoundaryHandle } = input;
+  const tenantId = tenantContext.tenant.tenant_id;
   const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
     tenantId, selection.workspaceId, selection.runId,
   ));
@@ -724,7 +725,11 @@ async function processTenantMeetingMinutesSelection(input: {
       await meetingMinutesDeploymentGate(env, tenantId).markActive({ runId: selection.runId,
         startedAt: new Date().toISOString(),
         deadlineAt: new Date(Date.now() + armed.delaySeconds * 1_000).toISOString() });
-      await env.TECHKNIGHT_EVENTS.send(armed.event, {
+      await env.TECHKNIGHT_EVENTS.send({
+        schema_version: "1.0",
+        tenant_context: tenantContext,
+        payload: armed.event,
+      }, {
         delaySeconds: Math.min(armed.delaySeconds, MEETING_MINUTES_RECOVERY_DELAY_SECONDS),
       });
     }
@@ -1275,46 +1280,8 @@ export default {
         continue;
       }
       if (isMeetingMinutesRecovery(message.body)) {
-        const recovery = message.body;
-        try {
-          const clients = tenantRuntimeClients(env);
-          const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
-            .split(",").map((value) => value.trim()).filter(Boolean);
-          const resolved = await resolveSlackWorkerIngress({
-            identity: {
-              provider: "slack",
-              app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
-              workspace_id: recovery.workspaceId,
-              event_id: meetingMinutesRecoveryEventId(recovery),
-              channel_id: recovery.channelId,
-              thread_ts: recovery.threadTs,
-              requester_id: recovery.userId,
-            },
-            required_scopes: requiredScopes,
-            required_authorization: {
-              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
-              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
-            },
-            authority: clients.authority,
-            now: new Date().toISOString(),
-            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-          });
-          await env.TECHKNIGHT_EVENTS.send({
-            schema_version: "1.0",
-            tenant_context: resolved.tenant_context,
-            payload: recovery,
-          });
-          message.ack();
-        } catch (error) {
-          const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
-          console.error(JSON.stringify({ event: "meeting_minutes_recovery_trigger_failed", code }));
-          if (code === "WORKSPACE_CONNECTION_UNAVAILABLE" || code === "UPSTREAM_UNAVAILABLE") {
-            message.retry();
-          } else {
-            message.ack();
-          }
-        }
+        console.error(JSON.stringify({ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }));
+        message.ack();
         continue;
       }
       if (isTenantMeetingMinutesSelectionBody(message.body)) {
@@ -1369,7 +1336,7 @@ export default {
                   env,
                   config: meetingMinutesConfig,
                   selection,
-                  tenantId: runtimeTenantId,
+                  tenantContext,
                   credentialLeaseHandle,
                   tenantBoundaryHandle,
                 }),
