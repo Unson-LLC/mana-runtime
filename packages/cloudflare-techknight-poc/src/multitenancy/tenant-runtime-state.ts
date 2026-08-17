@@ -127,6 +127,7 @@ class DurableTenantStateStore implements IdempotencyStore {
     tenant_context: TenantContextEnvelope;
     usage_event_ids: readonly string[];
     receipt_id: string;
+    payload_hash: string;
   }): Promise<AccountingLedgerResult> {
     const entityKeys = [...input.usage_event_ids, input.receipt_id].map((resourceId) => tenantPartitionKey({
       tenant_id: input.tenant_context.tenant.tenant_id,
@@ -137,7 +138,7 @@ class DurableTenantStateStore implements IdempotencyStore {
       thread_ts: input.tenant_context.slack.thread_ts ?? "",
       resource_id: resourceId,
     }));
-    const batchKey = JSON.stringify(entityKeys);
+    const batchKey = JSON.stringify([entityKeys, input.payload_hash]);
     return this.storage.transaction(async (transaction) => {
       const entries = await Promise.all(entityKeys.map((key) => transaction.get<{
         batch_key: string;
@@ -145,6 +146,9 @@ class DurableTenantStateStore implements IdempotencyStore {
       }>(`accounting:${key}`)));
       if (entries.every((entry) => entry?.state === "written" && entry.batch_key === batchKey)) {
         return { disposition: "duplicate" };
+      }
+      if (entries.every((entry) => entry?.state === "claimed" && entry.batch_key === batchKey)) {
+        return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys };
       }
       if (entries.some((entry) => entry !== undefined)) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
       for (const key of entityKeys) {

@@ -14,6 +14,7 @@ import {
 import { deny, TenantBoundaryError } from "./errors.js";
 import { assertCanonicalSharedId } from "./ids.js";
 import { tenantPartitionKey } from "./isolation.js";
+import { jcsCanonicalize } from "./jcs.js";
 import type { TenantRuntimeBoundaryVerifier } from "./runtime-boundaries.js";
 import { assertSecretArtifactFree } from "./secret-guard.js";
 
@@ -207,6 +208,7 @@ export interface TenantAccountingLedgerStore {
     tenant_context: TenantContextEnvelope;
     usage_event_ids: readonly string[];
     receipt_id: string;
+    payload_hash: string;
   }): Awaitable<AccountingLedgerResult>;
   complete(claim: AccountingLedgerClaim): Awaitable<void>;
   release(claim: AccountingLedgerClaim): Awaitable<void>;
@@ -220,6 +222,7 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
     tenant_context: TenantContextEnvelope;
     usage_event_ids: readonly string[];
     receipt_id: string;
+    payload_hash: string;
   }): AccountingLedgerResult {
     const resourceIds = [...input.usage_event_ids, input.receipt_id];
     const entityKeys = resourceIds.map((resourceId) => tenantPartitionKey({
@@ -231,10 +234,13 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
       thread_ts: input.tenant_context.slack.thread_ts ?? "",
       resource_id: resourceId,
     }));
-    const batchKey = JSON.stringify(entityKeys);
+    const batchKey = JSON.stringify([entityKeys, input.payload_hash]);
     const existing = entityKeys.map((key) => this.#entities.get(key));
     if (existing.every((entry) => entry?.state === "written" && entry.batch_key === batchKey)) {
       return { disposition: "duplicate" };
+    }
+    if (existing.every((entry) => entry?.state === "claimed" && entry.batch_key === batchKey)) {
+      return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys };
     }
     if (existing.some((entry) => entry !== undefined)) {
       deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
@@ -259,6 +265,14 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
       if (entry?.batch_key === claim.batch_key && entry.state === "claimed") this.#entities.delete(key);
     }
   }
+}
+
+async function accountingPayloadHash(value: unknown): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(jcsCanonicalize(value)),
+  ));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function assertAccountingScope(
@@ -324,6 +338,7 @@ export async function writeTenantAccounting(input: {
     tenant_context: input.tenant_context,
     usage_event_ids: input.usage_events.map((event) => event.usage_event_id),
     receipt_id: input.receipt.receipt_id,
+    payload_hash: await accountingPayloadHash(artifact),
   });
   if (claim.disposition === "duplicate") return claim;
   const partitionKey = tenantPartitionKey({
@@ -341,7 +356,6 @@ export async function writeTenantAccounting(input: {
     await input.ledger.complete(claim);
     return { disposition: "written", result_ref: result.result_ref };
   } catch (error) {
-    await input.ledger.release(claim);
     if (error instanceof TenantBoundaryError) throw error;
     deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
   }

@@ -51,7 +51,7 @@ import {
   runWithReplyTaskSearchBinding,
 } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
-import { isReplyCompleted, persistEventOnce, persistReplyCompletion } from "./workspace-store.js";
+import { persistEventOnce, persistReplyCompletion, readReplyCompletion } from "./workspace-store.js";
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
@@ -1070,7 +1070,13 @@ export default {
                 });
               }
               if (controlCommand) {
-                if (await isReplyCompleted(workspace.fs, event.eventId)) return { outcome: "already_completed" as const };
+                const completedReply = await readReplyCompletion(workspace.fs, event.eventId);
+                if (completedReply) {
+                  return runTenantOperation(async () => ({
+                    outcome: "already_completed" as const,
+                    responseTs: completedReply.responseTs,
+                  }));
+                }
                 return runTenantOperation(async () => {
                   const text = await executeRuntimeControlCommand({
                   fs: workspace.fs,
@@ -1140,7 +1146,12 @@ export default {
                     { botToken: env.SLACK_BOT_TOKEN }) };
                 return hydrateSlackAttachments(withParticipants, { botToken: env.SLACK_BOT_TOKEN });
               };
-              return runTenantOperation(() => withTenantCredentialLease({
+              return runTenantOperation(async () => {
+                const completedReply = await readReplyCompletion(workspace.fs, event.eventId);
+                if (completedReply) {
+                  return { outcome: "already_completed" as const, responseTs: completedReply.responseTs };
+                }
+                return withTenantCredentialLease({
                 envelope: tenantBody.tenant_context,
                 expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                 audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
@@ -1273,21 +1284,14 @@ export default {
                     return replyResult;
                   }),
                 }),
-              }));
+                });
+              });
               },
             );
             if (deliveryClaimed) await workspaceStub.completeRuntimeEvent(deliveryId,
               "responseTs" in result && typeof result.responseTs === "string" ? result.responseTs : undefined);
             return result;
           } catch (error) {
-            const replyPersisted = deliveryClaimed && await withDisposableResource(
-              () => getWorkspace(handle),
-              (currentWorkspace) => isReplyCompleted(currentWorkspace.fs, event.eventId),
-            ).catch(() => false);
-            if (replyPersisted) {
-              await workspaceStub.completeRuntimeEvent(deliveryId).catch(() => undefined);
-              return { outcome: "already_completed" as const };
-            }
             if (deliveryClaimed) await workspaceStub.releaseRuntimeEvent(deliveryId);
             throw error;
           }
