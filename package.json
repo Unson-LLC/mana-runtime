@@ -20,6 +20,7 @@
     "verify:cloudflare-task-migration-evidence": "pnpm --filter @openryoko/cloudflare-techknight-poc verify:production-task-migration-evidence",
     "test:e2e": "node -e \"console.log(JSON.stringify({ node_arch: process.arch, node_version: process.version }))\" && playwright test",
     "typecheck:cloudflare-task-migration": "pnpm --filter @openryoko/write-broker typecheck && pnpm --filter @openryoko/task-runtime-core typecheck && pnpm --filter @openryoko/cloudflare-techknight-poc typecheck",
+    "build:cloudflare-default": "pnpm --filter @openryoko/cloudflare-techknight-poc build:default",
     "build:cloudflare-task-migration": "pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business",
     "clean": "rm -rf .turbo node_modules/.cache && turbo clean",
     "ryoko": "node packages/jimmy/dist/bin/jimmy.js",
