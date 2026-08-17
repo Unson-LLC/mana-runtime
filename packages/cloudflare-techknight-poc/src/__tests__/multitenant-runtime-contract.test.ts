@@ -982,5 +982,26 @@ describe("story-mana-multitenant-runtime contract", () => {
     await expect(accountingAfterRestart.reserve_timestamp({ tenant_context: value, receipt_id: receiptId,
       proposed_at: "2026-08-16T13:02:30.000Z" })).resolves.toBe(NOW);
     expect(values.size).toBe(2);
+    const usage = createUsageEvent({ usage_event_id: "usage_01ARZ3NDEKTSV4RRFFQ69G5FBB", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_id: OPERATION_A,
+      idempotency_key: value.idempotency_key, kind: "runtime_operation", quantity: null, unit: "model_tokens",
+      outcome: "succeeded", collection_state: "not_collected", unknown_fields: ["observed_units"], observed_at: NOW });
+    const receipt = createOperationReceipt({ receipt_id: receiptId, protocol_version: "1.0", tenant_id: TENANT_A,
+      connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_ids: [OPERATION_A],
+      idempotency_keys: [value.idempotency_key], actor_principal_id: "person-a", project_id: "project-a",
+      capability_id: "task.write", quota_decision: "allowed", credential_mode: "customer_oauth",
+      collection_state: "not_collected", outcome: "succeeded", usage_event_ids: [usage.usage_event_id],
+      reply: { state: "delivered", reply_count: 1, legacy_reply_count: 0, slack_reply_ts: "4.0" }, completed_at: NOW });
+    const artifact = { partition_key: "tp1/durable-accounting-fixture", usage_events: [usage], receipt };
+    const accountingClaim = await accountingFromFirstIsolate.claim({ tenant_context: value,
+      usage_event_ids: [usage.usage_event_id], receipt_id: receiptId, payload_hash: PAYLOAD_HASH, artifact });
+    expect(accountingClaim.disposition).toBe("claimed");
+    await expect(accountingAfterRestart.read_pending({ tenant_context: value, receipt_id: receiptId }))
+      .resolves.toEqual(artifact);
+    if (accountingClaim.disposition === "claimed") await accountingAfterRestart.complete(accountingClaim);
+    await expect(accountingAfterRestart.read_pending({ tenant_context: value, receipt_id: receiptId }))
+      .resolves.toBeUndefined();
   });
 });
