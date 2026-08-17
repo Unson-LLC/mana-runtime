@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-001",
@@ -135,7 +135,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-002",
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-012",
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-003",
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-013",
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-004",
@@ -389,7 +389,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-005",
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-004",
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-006",
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-005",
@@ -577,7 +577,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-014",
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-007",
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-007",
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-015",
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-016",
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-010",
@@ -889,7 +889,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-017",
@@ -963,7 +963,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-002",
@@ -1033,7 +1033,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "C-003",
@@ -1103,7 +1103,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     },
     {
       "id": "INV-008",
@@ -1165,9 +1165,9 @@
       },
       "confidence": 0.93,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T05:26:43.529Z"
+      "last_revised_at": "2026-08-17T05:45:08.486Z"
     }
   ],
   "generated_at": "2026-08-17T00:46:42.058Z",
-  "previous_spec_id": "2026-08-17T05:11:32.683Z"
+  "previous_spec_id": "2026-08-17T00:46:42.058Z"
 }
