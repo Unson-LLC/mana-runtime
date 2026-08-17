@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "contract_id": "mana-brainbase-tenant-context/v1",
-  "fixture_set_sha256": "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454",
+  "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
   "hash_algorithm": "sha256 over UTF-8 relative_path + NUL + file_bytes in the listed order; manifest is excluded",
   "test_key": "test-key.json",
   "positive": [
@@ -23,7 +23,12 @@
     "negative/usage-partial-unknown.json",
     "negative/usage-outcome-mixed.json",
     "negative/idempotency-owner.json",
-    "negative/idempotency-key.json"
+    "negative/idempotency-key.json",
+    "negative/required-missing.json",
+    "negative/additional-property.json",
+    "negative/receipt-structure.json",
+    "negative/usage-required-missing.json",
+    "negative/idempotency-claim-required-missing.json"
   ],
   "non_applicable": [
     "non-applicable/customer-managed-oss.json"

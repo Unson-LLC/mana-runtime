@@ -3,7 +3,7 @@
   "role": "mana_runtime_consumer",
   "canonical_owner": "mana-runtime execution boundary",
   "fixture_manifest": "fixtures/manifest.json",
-  "fixture_set_sha256": "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454",
+  "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
   "required_adapter_behavior": [
     "Load fixtures/manifest.json from the pinned PR #237 kit commit; do not copy fixtures.",
     "Accept POS-CANONICAL-FLOW-001 only after schema, protected header, RFC 8785 Ed25519 signature, time, revision, audience, and idempotency validation.",
