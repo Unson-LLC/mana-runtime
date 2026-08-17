@@ -49,14 +49,15 @@ describe("runCloudflareDevelopmentRequest", () => {
         autoCleanup: true,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: "mana-credential-lease-v1:lease_handle_abcdefghijklmnopqrstuvwxyz12",
+          CLAUDE_CODE_OAUTH_TOKEN: "mana-tenant-boundary-v1:tb_opaque_operation_handle_1234567890",
           GIT_CONFIG_COUNT: "1",
           GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-          GIT_CONFIG_VALUE_0: "Authorization: Bearer mana-credential-lease-v1:github_lease_handle_abcdefghijklmnopqrs",
+          GIT_CONFIG_VALUE_0: "Authorization: Bearer mana-tenant-boundary-v1:tb_opaque_operation_handle_1234567890",
           MANA_TENANT_BOUNDARY_HANDLE: "tb_opaque_operation_handle_1234567890",
         },
       }),
     );
+    expect(JSON.stringify(startProcess.mock.calls[0]![1])).not.toContain("mana-credential-lease-v1:");
   });
 
   it("never interpolates request text into the shell command", async () => {
