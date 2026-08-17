@@ -30,6 +30,91 @@ describe("Cloudflare bounded task Canvas", () => {
     });
   });
 
+  it("story-task-canvas-ownership:ac:2 reuses the only legacy task board owned by the same Mana bot", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("canvases.create")) {
+        return Response.json({ ok: false, error: "free_team_canvas_tab_already_exists" });
+      }
+      if (parsed.pathname.endsWith("auth.test")) {
+        return Response.json({ ok: true, user_id: "UMANABOT" });
+      }
+      if (parsed.pathname.endsWith("conversations.info")) {
+        return Response.json({
+          ok: true,
+          channel: { properties: { tabs: [
+            { id: "Ct_LEGACY", type: "canvas", data: { file_id: "FLEGACY" } },
+          ] } },
+        });
+      }
+      if (parsed.pathname.endsWith("files.info")) {
+        expect(parsed.searchParams.get("file")).toBe("FLEGACY");
+        return Response.json({
+          ok: true,
+          file: { id: "FLEGACY", user: "UMANABOT", title: "タスクボード", editable: true },
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
+      .resolves.toBe("FLEGACY");
+  });
+
+  it.each([
+    ["a human-owned Canvas", { id: "FHUMAN", user: "UHUMAN", title: "タスクボード", editable: true }],
+    ["a different-purpose Canvas", { id: "FOTHER", user: "UMANABOT", title: "過去ログ", editable: true }],
+    ["a read-only Canvas", { id: "FREADONLY", user: "UMANABOT", title: "タスクボード", editable: false }],
+  ])("does not reuse %s when channel Canvas creation is blocked", async (_label, file) => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("canvases.create")) {
+        return Response.json({ ok: false, error: "free_team_canvas_tab_already_exists" });
+      }
+      if (parsed.pathname.endsWith("auth.test")) return Response.json({ ok: true, user_id: "UMANABOT" });
+      if (parsed.pathname.endsWith("conversations.info")) {
+        return Response.json({
+          ok: true,
+          channel: { properties: { tabs: [
+            { id: "Ct_EXISTING", type: "canvas", data: { file_id: file.id } },
+          ] } },
+        });
+      }
+      if (parsed.pathname.endsWith("files.info")) return Response.json({ ok: true, file });
+      throw new Error(`unexpected ${url}`);
+    });
+
+    await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
+      .rejects.toThrow("task_board_free_team_canvas_tab_already_exists");
+  });
+
+  it("does not choose between multiple legacy Mana-owned task boards", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("canvases.create")) {
+        return Response.json({ ok: false, error: "free_team_canvas_tab_already_exists" });
+      }
+      if (parsed.pathname.endsWith("auth.test")) return Response.json({ ok: true, user_id: "UMANABOT" });
+      if (parsed.pathname.endsWith("conversations.info")) {
+        return Response.json({
+          ok: true,
+          channel: { properties: { tabs: [
+            { id: "Ct_ONE", type: "canvas", data: { file_id: "FONE" } },
+            { id: "Ct_TWO", type: "canvas", data: { file_id: "FTWO" } },
+          ] } },
+        });
+      }
+      if (parsed.pathname.endsWith("files.info")) {
+        const id = parsed.searchParams.get("file");
+        return Response.json({ ok: true, file: { id, user: "UMANABOT", title: "タスクボード", editable: true } });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
+      .rejects.toThrow("task_board_free_team_canvas_tab_already_exists");
+  });
+
   it("renders truncation as a lower bound rather than an exact total", () => {
     const markdown = renderBoundedTaskBoard({
       items: [canonical("1", "pending")], hasMore: true, observedLowerBound: 2, requestCount: 4,
