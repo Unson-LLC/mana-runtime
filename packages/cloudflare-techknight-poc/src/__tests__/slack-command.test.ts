@@ -23,4 +23,26 @@ describe("Slack native development command", () => {
       placements: [{ channelId: "C1", allowedUserIds: ["U1"] }, { channelId: "C2", allowedUserIds: ["U2"] }], nowMs, send });
     expect(response.status).toBe(200); expect(send).not.toHaveBeenCalled();
   });
+  it("lets the canonical resolver authorize an installed workspace instead of a static team binding", async () => {
+    const send = vi.fn(async (_event: Omit<SlackQueueEvent, "tenantId">) => undefined);
+    const body = new URLSearchParams({
+      team_id: "T_INSTALLED",
+      channel_id: "C1",
+      user_id: "U1",
+      command: "/vibepro",
+      trigger_id: "tr-installed",
+      text: "tenant boundaryを直して",
+    }).toString();
+
+    const response = await handleSlackCommandRequest(make(body), {
+      signingSecret: secret,
+      expectedTeamId: "T_STATIC",
+      placements: [{ channelId: "C1", allowedUserIds: ["U1"] }],
+      nowMs,
+      send,
+    });
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "T_INSTALLED" }));
+  });
 });
