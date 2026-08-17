@@ -535,6 +535,39 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(write).toHaveBeenCalledOnce();
   });
 
+  it("keeps an exact pending accounting claim after an upstream failure", async () => {
+    const { value, publicKey } = await envelope();
+    const usage = createUsageEvent({ usage_event_id: "usage_01ARZ3NDEKTSV4RRFFQ69G5FB8", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_id: OPERATION_A,
+      idempotency_key: value.idempotency_key, kind: "runtime_operation", quantity: null, unit: "model_tokens",
+      outcome: "succeeded", collection_state: "not_collected", unknown_fields: ["observed_units"], observed_at: NOW });
+    const receipt = createOperationReceipt({ receipt_id: "receipt_01ARZ3NDEKTSV4RRFFQ69G5FB9", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_ids: [OPERATION_A],
+      idempotency_keys: [value.idempotency_key], actor_principal_id: "person-a", project_id: "project-a",
+      capability_id: "task.write", quota_decision: "allowed", credential_mode: "customer_oauth",
+      collection_state: "not_collected", outcome: "succeeded", usage_event_ids: [usage.usage_event_id],
+      reply: { state: "delivered", reply_count: 1, legacy_reply_count: 0, slack_reply_ts: "4.0" }, completed_at: NOW });
+    const ledger = new TenantAccountingLedger();
+    const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey });
+    const unavailable = vi.fn(async () => { throw new Error("accounting unavailable"); });
+    await expect(writeTenantAccounting({ tenant_context: value, expected_scope: expectedScope, now: NOW,
+      verifier, ledger, usage_events: [usage], receipt, write: unavailable }))
+      .rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+    const changedReceipt = createOperationReceipt({ ...receipt, outcome: "failed", failure_code: "UPSTREAM_UNAVAILABLE",
+      reply: { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 } });
+    await expect(writeTenantAccounting({ tenant_context: value, expected_scope: expectedScope, now: NOW,
+      verifier, ledger, usage_events: [usage], receipt: changedReceipt,
+      write: async () => ({ result_ref: "must-not-write-changed-payload" }) }))
+      .rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    await expect(writeTenantAccounting({ tenant_context: value, expected_scope: expectedScope, now: NOW,
+      verifier, ledger, usage_events: [usage], receipt,
+      write: async () => ({ result_ref: "brainbase-write-retried" }) }))
+      .resolves.toEqual({ disposition: "written", result_ref: "brainbase-write-retried" });
+  });
+
   it("per tenant quota decisions and isolation planned Red", () => {
     const cache = new TenantQuotaCache();
     const stopped: QuotaDecision = { message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11",
@@ -753,6 +786,8 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(source.slice(ingressEnd)).toContain("executeTenantRuntimeOperation");
     expect(source.slice(ingressEnd)).toContain("createDurableTenantAccountingClient");
     expect(source.slice(ingressEnd)).toContain("postTenantSlackReply");
+    expect(source.slice(ingressEnd)).toContain("readReplyCompletion");
+    expect(source.slice(ingressEnd)).not.toContain("if (replyPersisted)");
   });
 
   it("mock server preserves timeout error and not_collected semantics planned Red", async () => {

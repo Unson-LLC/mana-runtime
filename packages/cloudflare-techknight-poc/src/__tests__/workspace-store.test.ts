@@ -94,4 +94,26 @@ describe("reply completion", () => {
       completedAt: "2026-08-11T13:30:00.000Z",
     });
   });
+
+  it("reads the persisted response timestamp so accounting retry does not repost Slack", async () => {
+    const fs = new MemoryFs();
+    await persistReplyCompletion(fs, {
+      eventId: "EvAccountingRetry",
+      responseTs: "4.0",
+      completedAt: "2026-08-11T13:31:00.000Z",
+    });
+    const workspaceStore = await import("../workspace-store.js") as typeof import("../workspace-store.js") & {
+      readReplyCompletion?: (inputFs: MemoryFs, eventId: string) => Promise<{
+        eventId: string;
+        responseTs: string;
+        completedAt: string;
+      } | undefined>;
+    };
+    expect(workspaceStore.readReplyCompletion).toBeTypeOf("function");
+    await expect(workspaceStore.readReplyCompletion?.(fs, "EvAccountingRetry")).resolves.toEqual({
+      eventId: "EvAccountingRetry",
+      responseTs: "4.0",
+      completedAt: "2026-08-11T13:31:00.000Z",
+    });
+  });
 });
