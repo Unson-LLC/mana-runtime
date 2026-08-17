@@ -67,6 +67,38 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(resolveTenantEffects).toHaveBeenCalledOnce();
   });
 
+  it("preserves the authenticated destination workspace and app when queueing a selection", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "tech-knight-secret";
+    const payload = { api_app_id: "A-TECHKNIGHT", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },
+      channel: { id: "CDEST" }, message: { ts: "2.1", thread_ts: "2.0" }, actions: [{
+        action_id: "mana_meeting_minutes_choose_destination:techknight-board", action_ts: "2.2",
+        value: JSON.stringify({ runId: "Ev1_F1", destinationId: "techknight-board" }),
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const send = vi.fn().mockResolvedValue(undefined); const deferred: Promise<unknown>[] = [];
+    const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
+      SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C-SOURCE",
+      MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
+      MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
+      MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1", name: "ボード定例",
+        organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "CDEST",
+        github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } }]), TECHKNIGHT_EVENTS: { send } };
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never,
+    new Set(["U1"]), undefined, undefined, undefined, send, tenantEffectResolver());
+
+    expect(response.status).toBe(200); await Promise.all(deferred);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "meeting_minutes_selection",
+      workspaceId: "T-TECHKNIGHT",
+      appId: "A-TECHKNIGHT",
+      channelId: "CDEST",
+    }));
+  });
+
   it("does not accept a destination-team payload signed by the source Slack app", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "unson-secret";
     const payload = { api_app_id: "A-UNSON", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },

@@ -919,6 +919,24 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(interactions).not.toContain("resolveMeetingMinutesDestinationSlackToken");
   });
 
+  it("keeps the authenticated Slack app across every Meeting Minutes derived boundary", () => {
+    const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const interactionsStart = source.indexOf('url.pathname === "/slack/interactions"');
+    const interactionsEnd = source.indexOf('url.pathname === "/slack/commands"', interactionsStart);
+    const interactions = source.slice(interactionsStart, interactionsEnd);
+    expect(interactions).toContain("app_id: command.appId");
+    expect(interactions).not.toContain("app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID)");
+
+    const selectionScopeStart = source.indexOf("function expectedTenantMeetingMinutesSelectionScope");
+    const queueScopeStart = source.indexOf("function expectedTenantQueueScope", selectionScopeStart);
+    const meetingScopes = source.slice(selectionScopeStart, queueScopeStart);
+    expect(meetingScopes).toContain("app_id: selection.appId");
+    expect(meetingScopes).toContain("app_id: command.appId");
+    expect(meetingScopes).toContain("app_id: recovery.appId");
+    expect(meetingScopes).not.toContain("app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID)");
+    expect(source).toContain("app_id: armed.event.appId");
+  });
+
   it("resolves every Meeting Minutes destination workspace before Slack delivery", () => {
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
     const guardStart = source.indexOf("interface MeetingMinutesTenantEffectGuard");

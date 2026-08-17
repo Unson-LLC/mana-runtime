@@ -4,7 +4,7 @@ import { meetingMinutesTaskCard } from "../meeting-minutes-task-cards.js";
 import type { MeetingMinutesRun } from "../meeting-minutes-contracts.js";
 
 function run(): MeetingMinutesRun {
-  return { version: 1, runId: "Ev_Fv", eventId: "Ev", workspaceId: "TU", sourceChannelId: "CR",
+  return { version: 1, runId: "Ev_Fv", eventId: "Ev", workspaceId: "TU", sourceAppId: "AU", sourceChannelId: "CR",
     sourceThreadTs: "1.1", sourceMessageTs: "1.1", file: { id: "Fv", name: "meeting.txt" }, status: "completed",
     destination: { id: "pms", projectId: "proj_pms", name: "PMS", organization: { id: "tech-knight", name: "Tech Knight" },
       slackChannelId: "CDEST", github: { owner: "o", repo: "r" } },
@@ -14,7 +14,8 @@ function run(): MeetingMinutesRun {
 }
 function payload(actionId: string) { return { team: { id: "TTK" }, channel: { id: "CDEST" }, user: { id: "U1" },
   trigger_id: "trigger", actions: [{ action_id: actionId, value: JSON.stringify({ runId: "Ev_Fv", index: 0,
-    organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms", title: "旧題", due: "2026-08-20" }) }] }; }
+    organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms", title: "旧題", due: "2026-08-20",
+    sourceWorkspaceId: "TU", sourceAppId: "AU", sourceChannelId: "CR", sourceThreadTs: "1.1" }) }] }; }
 function deps(current: MeetingMinutesRun) { return { sourceTeamId: "TU", destinationTeamIds: { "tech-knight": "TTK" },
   operatorUserIds: new Set(["U1"]),
   loadRun: vi.fn(async () => current), saveRun: vi.fn(async () => {}),
@@ -58,6 +59,14 @@ describe("meeting minutes task cards", () => {
     expect(options.deleteTask).toHaveBeenCalledWith("task-1", 3, expect.any(String));
     expect(current.taskRegistration!.registered[0]!.status).toBe("removed");
     expect(options.repairTaskBoard).toHaveBeenCalledWith(["proj_pms"]);
+  });
+  it("loads the durable run through the source workspace identity embedded in the signed action", async () => {
+    const current = run(); const options = deps(current);
+    const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
+    expect(response?.status).toBe(200);
+    expect(options.loadRun).toHaveBeenCalledWith("Ev_Fv", {
+      workspaceId: "TU", appId: "AU", channelId: "CR", threadTs: "1.1",
+    });
   });
   it("uses the explicit canonical task scope instead of the minutes destination identity", async () => {
     const current = run(); current.destination!.taskProjectCodes = ["unson"];

@@ -44,6 +44,13 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("meeting minutes pipeline", () => {
+  it("persists the canonical source Slack app with every new run", async () => {
+    const fs = new MemoryFs();
+    const [created] = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      sourceAppId: "A1", destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    expect(created).toMatchObject({ workspaceId: "T1", sourceAppId: "A1", sourceChannelId: "CROUTER" });
+  });
+
   it("persists one processing reply before generation and reuses it on retry", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
