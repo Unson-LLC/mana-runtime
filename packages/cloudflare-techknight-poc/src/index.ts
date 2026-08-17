@@ -120,6 +120,7 @@ import {
   createDurableTenantBoundaryRegistry,
   TenantBoundaryContextHandler,
 } from "./multitenancy/durable-tenant-boundary.js";
+import { assessTenantRuntimeReadiness } from "./multitenancy/runtime-readiness.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -648,15 +649,17 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
+      const readiness = assessTenantRuntimeReadiness(env as unknown as Record<string, unknown>);
       return Response.json({
-        ok: true,
+        ok: readiness.ready,
+        tenant_runtime: readiness,
         tenant: env.TENANT_ID,
         meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
         taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED === "true",
         taskWriteEnabled: env.RUNTIME_TASK_WRITE_ENABLED === "true",
         taskBoardEnabled: env.RUNTIME_TASK_BOARD_ENABLED === "true",
         meetingMinutesEnabled: env.MEETING_MINUTES_ENABLED === "true",
-      });
+      }, { status: readiness.ready ? 200 : 503 });
     }
     if (url.pathname.startsWith("/admin/sandbox/")) {
       return handleSandboxAdminRequest(request, env, {
