@@ -1,7 +1,6 @@
 export * from "./accounting.js";
 export * from "./canonical-consumer.js";
 export * from "./contracts.js";
-export * from "./credential-injector.js";
 export * from "./credentials.js";
 export * from "./delivery.js";
 export * from "./envelope.js";
@@ -15,4 +14,5 @@ export * from "./protocol.js";
 export * from "./runtime-boundaries.js";
 export * from "./secret-guard.js";
 export * from "./tenant-credential-fetch.js";
+export * from "./trusted-provider-forwarder.js";
 export * from "./workspace-connection.js";

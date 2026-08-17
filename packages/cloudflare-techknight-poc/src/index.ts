@@ -136,12 +136,7 @@ import {
 } from "./multitenancy/contracts.js";
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
-import { withTenantCredentialLease } from "./multitenancy/credential-injector.js";
 import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
-import {
-  createDurableTenantCredentialRegistry,
-  TenantCredentialRelayHandler,
-} from "./multitenancy/durable-credential-relay.js";
 import {
   createDurableTenantBoundaryRegistry,
   resolveDurableTenantBoundaryContext,
@@ -239,16 +234,6 @@ export class TenantRuntimeState extends DurableObject<Env> {
   readonly #handler = new TenantRuntimeStateHandler(
     this.ctx.storage as unknown as TenantStateStorage,
   );
-  readonly #credentialRelay = new TenantCredentialRelayHandler(fetch, {
-    claim: async () => this.ctx.storage.transaction(async (transaction) => {
-      const key = "credential-lease-claimed-v1";
-      if (await transaction.get(key)) return false;
-      await transaction.put(key, { claimed: true });
-      return true;
-    }),
-  }, {
-    setAlarm: (scheduledTime) => this.ctx.storage.setAlarm(scheduledTime),
-  });
   readonly #boundaryContext = new TenantBoundaryContextHandler(
     this.ctx.storage,
     async (input) => {
@@ -266,9 +251,6 @@ export class TenantRuntimeState extends DurableObject<Env> {
   );
 
   fetch(request: Request): Promise<Response> {
-    if (new URL(request.url).hostname === "tenant-credential-relay.internal") {
-      return this.#credentialRelay.fetch(request);
-    }
     if (new URL(request.url).hostname === "tenant-boundary-context.internal") {
       return this.#boundaryContext.fetch(request);
     }
@@ -281,7 +263,6 @@ export class TenantRuntimeState extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const now = new Date().toISOString();
     await Promise.all([
-      this.#credentialRelay.alarm(),
       this.#boundaryContext.alarm(),
       this.#developmentTerminalOutbox.alarm(
         now,
@@ -483,8 +464,6 @@ function createTenantInteractionEffectResolver(env: Env) {
       envelope: effect.tenantContext,
       expected_scope: effect.expectedScope,
       broker: clients.credential_broker,
-      credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-      credential_relay: env.TENANT_RUNTIME_STATE,
       read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
         effect.tenantContext.workspace_connection.connection_id),
       resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -598,8 +577,6 @@ function createMeetingMinutesTenantEffectGuard(input: {
     envelope: tenantContext,
     expected_scope: expectedScope,
     broker: clients.credential_broker,
-    credential_registry: createDurableTenantCredentialRegistry(input.env.TENANT_RUNTIME_STATE),
-    credential_relay: input.env.TENANT_RUNTIME_STATE,
     read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
       tenantContext.workspace_connection.connection_id),
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(input.env, keyId),
@@ -697,7 +674,6 @@ function createMeetingMinutesTenantEffectGuard(input: {
 function meetingMinutesClients(
   env: Env,
   effects: MeetingMinutesTenantEffectGuard,
-  credentialLeaseHandle?: string,
   tenantBoundaryHandle?: string,
 ) {
   const injectedCredential = "tenant-credential-injected";
@@ -737,11 +713,11 @@ function meetingMinutesClients(
           (credentialFetch) => sourceSlack(credentialFetch).requestDestination(run, candidates)),
     },
     classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
-      if (!credentialLeaseHandle) throw new Error("credential_lease_required");
+      if (!tenantBoundaryHandle) throw new Error("tenant_boundary_required");
       return effects.boundary("container_launch", () => classifyMeetingMinutesDestinationInSandbox(
         transcript, candidates, claudeRuntime,
         createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`),
-        credentialLeaseHandle, tenantBoundaryHandle));
+        tenantBoundaryHandle));
     },
     resume: {
       contextMode,
@@ -755,11 +731,11 @@ function meetingMinutesClients(
         (credentialFetch) => sourceSlack(credentialFetch).downloadTextFile(fileId)),
       generate: (transcript: string, destination: MeetingMinutesDestination,
         context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3]) => {
-        if (!credentialLeaseHandle) throw new Error("credential_lease_required");
+        if (!tenantBoundaryHandle) throw new Error("tenant_boundary_required");
         return effects.boundary("container_launch", () => generateMeetingMinutesInSandbox(
           transcript, destination, context, mode, claudeRuntime,
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`),
-          credentialLeaseHandle, tenantBoundaryHandle));
+          tenantBoundaryHandle));
       },
       saveGitHub: (input: Parameters<CloudflareMeetingMinutesGitHubClient["save"]>[0]) =>
         effects.boundary("mcp_gateway", (credentialFetch) => new CloudflareMeetingMinutesGitHubClient(
@@ -1181,7 +1157,6 @@ async function processTenantMeetingMinutesSelection(input: {
   expectedScope: ExpectedTenantScope;
   verifier: TenantRuntimeBoundaryVerifier;
   now(): string;
-  credentialLeaseHandle: string;
   tenantBoundaryHandle: string;
 }): Promise<{ outcome: "completed" }> {
   const {
@@ -1192,7 +1167,6 @@ async function processTenantMeetingMinutesSelection(input: {
     expectedScope,
     verifier,
     now,
-    credentialLeaseHandle,
     tenantBoundaryHandle,
   } = input;
   const tenantId = tenantContext.tenant.tenant_id;
@@ -1209,7 +1183,7 @@ async function processTenantMeetingMinutesSelection(input: {
     ));
     const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-      const clients = meetingMinutesClients(env, effects, credentialLeaseHandle, tenantBoundaryHandle);
+      const clients = meetingMinutesClients(env, effects, tenantBoundaryHandle);
       const armed = await armMeetingMinutesRecovery(workspace.fs, selection);
       if (!armed.terminal) {
         const recoveryTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
@@ -1292,7 +1266,6 @@ async function processTenantMeetingMinutesRedo(input: {
   expectedScope: ExpectedTenantScope;
   verifier: TenantRuntimeBoundaryVerifier;
   now(): string;
-  credentialLeaseHandle: string;
   tenantBoundaryHandle: string;
 }): Promise<{ outcome: "completed" }> {
   const {
@@ -1303,7 +1276,6 @@ async function processTenantMeetingMinutesRedo(input: {
     expectedScope,
     verifier,
     now,
-    credentialLeaseHandle,
     tenantBoundaryHandle,
   } = input;
   const effects = createMeetingMinutesTenantEffectGuard({
@@ -1319,7 +1291,7 @@ async function processTenantMeetingMinutesRedo(input: {
     ));
     const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-      const clients = meetingMinutesClients(env, effects, credentialLeaseHandle, tenantBoundaryHandle);
+      const clients = meetingMinutesClients(env, effects, tenantBoundaryHandle);
       await processMeetingMinutesRedo(workspace.fs, command, config, clients.redo);
     });
   });
@@ -1445,8 +1417,6 @@ export default {
             envelope: callbackBoundary.tenant_context,
             expected_scope: callbackBoundary.expected_scope,
             broker: callbackClients.credential_broker,
-            credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-            credential_relay: env.TENANT_RUNTIME_STATE,
             read_authoritative_snapshot: () => callbackClients.authority.read_workspace_connection(
               callbackBoundary.tenant_context.workspace_connection.connection_id),
             resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -1734,8 +1704,6 @@ export default {
               envelope: tenantContext,
               expected_scope: expectedScope,
               broker: clients.credential_broker,
-              credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-              credential_relay: env.TENANT_RUNTIME_STATE,
               read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
                 tenantContext.workspace_connection.connection_id),
               resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -1811,18 +1779,7 @@ export default {
             ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
             quota_unit: "model_tokens",
             now,
-            process: () => withTenantCredentialLease({
-              envelope: tenantContext,
-              expected_scope: expectedScope,
-              audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
-              broker: clients.credential_broker,
-              credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-              read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-                tenantContext.workspace_connection.connection_id,
-              ),
-              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-              now,
-              run: (credentialLeaseHandle) => executeTenantContainerOperation({
+            process: () => executeTenantContainerOperation({
                 tenant_context: tenantContext,
                 expected_scope: expectedScope,
                 verifier,
@@ -1835,10 +1792,8 @@ export default {
                   expectedScope,
                   verifier,
                   now,
-                  credentialLeaseHandle,
                   tenantBoundaryHandle,
                 }),
-              }),
             }),
           }),
         });
@@ -1921,18 +1876,7 @@ export default {
             ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
             quota_unit: "model_tokens",
             now,
-            process: () => withTenantCredentialLease({
-              envelope: tenantContext,
-              expected_scope: expectedScope,
-              audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
-              broker: clients.credential_broker,
-              credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-              read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-                tenantContext.workspace_connection.connection_id,
-              ),
-              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-              now,
-              run: (credentialLeaseHandle) => executeTenantContainerOperation({
+            process: () => executeTenantContainerOperation({
                 tenant_context: tenantContext,
                 expected_scope: expectedScope,
                 verifier,
@@ -1945,10 +1889,8 @@ export default {
                   expectedScope,
                   verifier,
                   now,
-                  credentialLeaseHandle,
                   tenantBoundaryHandle,
                 }),
-              }),
             }),
           }),
         });
@@ -2026,18 +1968,7 @@ export default {
                   ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, childTenantContext),
                   quota_unit: "model_tokens",
                   now: tenantConsumerOptions.now,
-                  process: () => withTenantCredentialLease({
-                    envelope: childTenantContext,
-                    expected_scope: childExpectedScope,
-                    audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
-                    broker: clients.credential_broker,
-                    credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-                    read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-                      childTenantContext.workspace_connection.connection_id,
-                    ),
-                    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-                    now: tenantConsumerOptions.now,
-                    run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                  process: () => executeTenantContainerOperation({
                       tenant_context: childTenantContext,
                       expected_scope: childExpectedScope,
                       verifier,
@@ -2059,7 +1990,6 @@ export default {
                       const meetingClients = meetingMinutesClients(
                         env,
                         effects,
-                        credentialLeaseHandle,
                         tenantBoundaryHandle,
                       );
                       await processMeetingMinutesSlackEvent(workspace.fs, childEvent, meetingMinutesConfig, {
@@ -2071,7 +2001,6 @@ export default {
                     });
                         return { outcome: "awaiting_destination" };
                       },
-                    }),
                   }),
                 });
               }
@@ -2153,8 +2082,6 @@ export default {
                 envelope: tenantContext,
                 expected_scope: expectedScope,
                 broker: clients.credential_broker,
-                credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-                credential_relay: env.TENANT_RUNTIME_STATE,
                 read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
                   tenantContext.workspace_connection.connection_id),
                 resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2387,18 +2314,7 @@ export default {
                 if (completedReply) {
                   return { outcome: "already_completed" as const, responseTs: completedReply.responseTs };
                 }
-                return withTenantCredentialLease({
-                envelope: tenantBody.tenant_context,
-                expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
-                audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
-                broker: clients.credential_broker,
-                credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-                read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-                  tenantBody.tenant_context.workspace_connection.connection_id,
-                ),
-                resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-                now: tenantConsumerOptions.now,
-                run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                return executeTenantContainerOperation({
                   tenant_context: tenantBody.tenant_context,
                   expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                   verifier,
@@ -2414,7 +2330,6 @@ export default {
                         slackBotToken: injectedCredential,
                         fetch: tenantCredentialFetch,
                         oauthConfigured: true,
-                        credentialLeaseHandle,
                         tenantBoundaryHandle,
                         claudeRuntime,
                         createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
@@ -2473,7 +2388,6 @@ export default {
                     slackBotToken: injectedCredential,
                     fetch: tenantCredentialFetch,
                     oauthConfigured: true,
-                    credentialLeaseHandle,
                     tenantBoundaryHandle,
                     claudeRuntime,
                     taskSearchEnabled: taskSearch.taskSearchEnabled,
@@ -2504,7 +2418,6 @@ export default {
                       }, {
                         model: claudeRuntime.model,
                         effort: claudeRuntime.effort,
-                        credentialLeaseHandle,
                         tenantBoundaryHandle,
                         createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                       });
@@ -2520,7 +2433,6 @@ export default {
                     });
                     }),
                   }),
-                }),
                 });
               });
               },

@@ -232,7 +232,7 @@ describe("tenant credential fetch integration", () => {
       expected_scope: EXPECTED_SCOPE,
       broker,
       trusted_forwarder: trustedForwarder,
-      read_authoritative_snapshot: async () => bindingOverride.connection_revision || bindingOverride.tenant_id
+      read_authoritative_snapshot: async () => "connection_revision" in bindingOverride || "tenant_id" in bindingOverride
         ? { ...SNAPSHOT, ...bindingOverride }
         : SNAPSHOT,
       resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,

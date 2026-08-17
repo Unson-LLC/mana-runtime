@@ -76,6 +76,7 @@ function harness(overrides: Partial<MeetingTaskPipelineOptions> = {}) {
     brainbaseTaskToken: "brainbase-secret",
     slackBotToken: "slack-secret",
     oauthConfigured: true,
+    tenantBoundaryHandle: "tb_00000000000000000000000000000003",
     claudeRuntime: resolveClaudeRuntimeConfig({
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
@@ -163,7 +164,11 @@ describe("Cloudflare meeting task pipeline", () => {
       'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/meeting-task-prompt.txt)"',
       {
         timeout: 120_000,
-        env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+        env: {
+          IS_SANDBOX: "1",
+          CLAUDE_CODE_OAUTH_TOKEN: "mana-tenant-boundary-v1:tb_00000000000000000000000000000003",
+          MANA_TENANT_BOUNDARY_HANDLE: "tb_00000000000000000000000000000003",
+        },
       },
     );
     sharedCreate.mockRestore();
@@ -197,7 +202,6 @@ describe("Cloudflare meeting task pipeline", () => {
   it("uses the tenant operation boundary for each Claude provider request", async () => {
     const boundaryHandle = "tb_opaque_operation_handle_1234567890";
     const { options, sandbox } = harness({
-      credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
       tenantBoundaryHandle: boundaryHandle,
     });
     await processMeetingTaskEvent(new MemoryFs(), event(), options);

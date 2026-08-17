@@ -29,7 +29,10 @@ const SERVER_PATHS = Object.freeze({
 export function buildRuntimeMcpConfig(capabilities: {
   mcp: readonly string[];
   gatewayTools: readonly string[];
-}, tenantBoundaryHandle?: string): RuntimeMcpConfig {
+}, tenantBoundaryHandle: string): RuntimeMcpConfig {
+  if (!tenantBoundaryHandle.trim()) {
+    throw new RuntimeMcpConfigError("tenant_boundary_required");
+  }
   if (capabilities.gatewayTools.length > 0 && !capabilities.mcp.includes("gateway")) {
     throw new RuntimeMcpConfigError("runtime_gateway_not_enabled");
   }
@@ -41,9 +44,7 @@ export function buildRuntimeMcpConfig(capabilities: {
         url: name === "brainbase"
           ? "https://brainbase-mcp.internal/mcp"
           : "https://google-drive-mcp.internal/mcp",
-        ...(tenantBoundaryHandle ? {
-          headers: { "x-mana-tenant-boundary-handle": tenantBoundaryHandle },
-        } : {}),
+        headers: { "x-mana-tenant-boundary-handle": tenantBoundaryHandle },
       };
       continue;
     }
@@ -52,16 +53,12 @@ export function buildRuntimeMcpConfig(capabilities: {
     mcpServers[name] = {
       command: "node",
       args: [path],
-      ...((name === "gateway" || tenantBoundaryHandle) ? {
-        env: {
-          ...(name === "gateway" ? {
-            MANA_ALLOWED_GATEWAY_TOOLS: JSON.stringify([...capabilities.gatewayTools]),
-          } : {}),
-          ...(tenantBoundaryHandle ? {
-            MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
-          } : {}),
-        },
-      } : {}),
+      env: {
+        ...(name === "gateway" ? {
+          MANA_ALLOWED_GATEWAY_TOOLS: JSON.stringify([...capabilities.gatewayTools]),
+        } : {}),
+        MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+      },
     };
   }
   return { mcpServers };

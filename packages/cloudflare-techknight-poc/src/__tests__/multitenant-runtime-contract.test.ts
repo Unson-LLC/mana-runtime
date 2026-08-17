@@ -11,7 +11,6 @@ import {
   SlackInstallationAdapter,
   TenantQuotaCache,
   TenantAccountingLedger,
-  TenantCredentialInjector,
   WorkspaceConnectionRegistry,
   acquireCredentialLease,
   acquireEnvelopeCredentialLease,
@@ -23,13 +22,12 @@ import {
   authorizeSlackDelivery,
   claimIdempotency,
   completeIdempotency,
-  consumeCredentialLease,
   consumeTenantQueueMessage,
   createDeletionReceipt,
   createIdempotencyKey,
   createOperationReceipt,
   createTenantTemporaryObject,
-  createSecretValue,
+  createTenantCredentialFetch,
   createUsageEvent,
   createUserFailure,
   executeTenantBoundary,
@@ -43,7 +41,6 @@ import {
   tenantPartitionKey,
   validateNonApplicableCapabilities,
   validateTenantBoundary,
-  withTenantCredentialLease,
   writeTenantAccounting,
   authorizeSlackDeliveryWithAuthority,
   type BoundaryName,
@@ -252,6 +249,12 @@ describe("story-mana-multitenant-runtime contract", () => {
       .toThrow(expect.objectContaining({ code: "SECRET_ARTIFACT_FORBIDDEN" }));
     expect(() => assertSecretArtifactFree({ credential_ref: "opaque-ref", authorization: "Bearer sensitive-value" }))
       .toThrow(expect.objectContaining({ code: "SECRET_ARTIFACT_FORBIDDEN" }));
+    expect(() => assertSecretArtifactFree({ lease_token: "opaque-single-use-handle" }))
+      .toThrow(expect.objectContaining({ code: "SECRET_ARTIFACT_FORBIDDEN" }));
+    expect(() => assertSecretArtifactFree({ "xc-token": "materialized-provider-secret" }))
+      .toThrow(expect.objectContaining({ code: "SECRET_ARTIFACT_FORBIDDEN" }));
+    expect(() => assertSecretArtifactFree({ provider_header: "Basic materialized-provider-secret" }))
+      .toThrow(expect.objectContaining({ code: "SECRET_ARTIFACT_FORBIDDEN" }));
     expect(assertSecretArtifactFree({ credential_ref: "opaque-ref", outcome: "failed" }))
       .toEqual({ credential_ref: "opaque-ref", outcome: "failed" });
   });
@@ -445,7 +448,7 @@ describe("story-mana-multitenant-runtime contract", () => {
       .toMatchObject({ object_key_hash: expect.stringMatching(/^sha256:/), tenant_id: TENANT_A });
   });
 
-  it("CredentialDecisionV1 selection and injection planned Red", async () => {
+  it("keeps CredentialDecisionV1 lease material opaque and single-use", async () => {
     const request = { message_type: "credential_lease_request" as const, protocol_version: "1.0" as const,
       binding: { tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7",
         contract_revision: "11", operation_id: OPERATION_A, audience: "anthropic",
@@ -458,11 +461,10 @@ describe("story-mana-multitenant-runtime contract", () => {
       lease_token: "opaque-test-lease-handle" })) };
     const lease = await acquireCredentialLease({ broker, request, read_authoritative_snapshot: async () => snapshotA, now: NOW });
     const registry = new CredentialLeaseUseRegistry();
-    const headers = await consumeCredentialLease(registry, lease, createSecretValue("fixture-runtime-value"),
-      (secret) => new Headers({ authorization: `Bearer ${secret}` }), NOW);
-    expect(headers.get("authorization")).toBe("Bearer fixture-runtime-value");
-    await expect(consumeCredentialLease(registry, lease, createSecretValue("fixture-runtime-value"),
-      () => new Headers(), NOW)).rejects.toEqual(expect.objectContaining({ code: "FALLBACK_FORBIDDEN" }));
+    registry.consume(lease.lease_id);
+    expect(lease.lease_token).toBe("opaque-test-lease-handle");
+    expect(() => registry.consume(lease.lease_id))
+      .toThrow(expect.objectContaining({ code: "FALLBACK_FORBIDDEN" }));
   });
 
   it("tenant OAuth lifecycle and concurrent refresh planned Red", () => {
@@ -1034,7 +1036,9 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(sandbox).toContain('["mcp_gateway", "brainbase_proxy"]');
     expect(sandbox).toContain("tenantCredentialFetchForResolvedContext(env, resolved");
     expect(providerOutbound).toContain("createTenantCredentialFetch({");
-    expect(providerOutbound).toContain("createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE)");
+    expect(providerOutbound).toContain("trusted_forwarder");
+    expect(providerOutbound).not.toContain("createDurableTenantCredentialRegistry");
+    expect(providerOutbound).not.toContain("tenant-credential-relay.internal");
     expect(providerOutbound).toContain("read_authoritative_snapshot:");
     expect(sandbox).toContain("createTaskSearchProxyHandler(credentialFetch)");
     expect(sandbox).toContain("createTaskWriteProxyHandler(credentialFetch)");
@@ -1132,43 +1136,30 @@ describe("story-mana-multitenant-runtime contract", () => {
     await expect(customerManagedClients.authority.resolve_workspace_connection({ provider: "slack",
       app_id: "A-MANA", workspace_id: "T-A" })).resolves.toEqual(snapshotA);
     const { value, publicKey } = await envelope();
-    const injector = new TenantCredentialInjector();
-    await expect(withTenantCredentialLease({
-      envelope: value,
-      expected_scope: expectedScope,
-      audience: "api.anthropic.com",
-      broker: clients.credential_broker,
-      read_authoritative_snapshot: () => clients.authority.read_workspace_connection(CONNECTION_A),
-      resolve_verification_key: async () => publicKey,
-      now: () => NOW,
-      injector,
-      run: async (handle) => {
-        const headers = injector.inject({
-          hostname: "api.anthropic.com",
-          headers: new Headers({ authorization: `Bearer mana-credential-lease-v1:${handle}` }),
-          now: NOW,
-        });
-        expect(headers.get("authorization")).toBe("Bearer fixture-provider-token");
-        return "injected";
-      },
-    })).resolves.toBe("injected");
-    const expiringRegistry = {
-      register: vi.fn(async () => "lease_handle_expiring_abcdefghijklmnopqrstuvwxyz"),
-      dispose: vi.fn(async () => undefined),
+    const trustedForwarder = {
+      forward: vi.fn(async (input: import("../multitenancy/trusted-provider-forwarder.js").TrustedProviderForwardInput) => {
+        expect(input.lease.lease_token).toBe("fixture-provider-token");
+        expect(input.request.headers.get("authorization")).toBeNull();
+        expect(input.request.headers.get("x-api-key")).toBeNull();
+        return Response.json({ ok: true });
+      }),
     };
-    await expect(withTenantCredentialLease({
+    const credentialFetch = createTenantCredentialFetch({
       envelope: value,
       expected_scope: expectedScope,
-      audience: "api.anthropic.com",
       broker: clients.credential_broker,
       read_authoritative_snapshot: () => clients.authority.read_workspace_connection(CONNECTION_A),
       resolve_verification_key: async () => publicKey,
       now: () => NOW,
-      credential_registry: expiringRegistry,
-      release: "on_expiration",
-      run: async (handle) => handle,
-    })).resolves.toBe("lease_handle_expiring_abcdefghijklmnopqrstuvwxyz");
-    expect(expiringRegistry.dispose).not.toHaveBeenCalled();
+      trusted_forwarder: trustedForwarder,
+    });
+    await expect(credentialFetch("https://api.anthropic.com/v1/messages", {
+      headers: {
+        authorization: "Bearer attacker-controlled",
+        "x-api-key": "attacker-controlled",
+      },
+    })).resolves.toMatchObject({ ok: true });
+    expect(trustedForwarder.forward).toHaveBeenCalledTimes(1);
     expect(requests.find((request) => request.url.endsWith("/credential-broker"))?.body)
       .toMatchObject({ requested_ttl_seconds: 60, binding: {
         tenant_id: TENANT_A, connection_revision: "7", contract_revision: "11",

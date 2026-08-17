@@ -15,6 +15,7 @@ const context = { schema_version: "meeting_minutes_context_receipt.v1" as const,
     open_tasks: [{ id: "task-1", title: "未完了の正本タスク" }] } };
 const auditOutput = { used_source_refs: [{ type: "graph_entity", id: "project-1" }],
   decision_candidates: [] };
+const tenantBoundaryHandle = "tb_meeting_minutes_operation_1234567890";
 function auditedStream(minutes: Record<string, unknown>, options: { receipt?: unknown; hook?: boolean;
   input?: Record<string, unknown>; resultSession?: string; toolResultSession?: string;
   hookBeforeResult?: boolean; hookSession?: string } = {}): string {
@@ -48,13 +49,11 @@ describe("generateMeetingMinutesInSandbox", () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
       stdout: receiptBoundStream({ title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput }),
       stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
-    const boundaryHandle = "tb_opaque_operation_handle_1234567890";
     await generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
-      { model: "opus", effort: "xhigh" }, sandbox,
-      "lease_handle_abcdefghijklmnopqrstuvwxyz12", boundaryHandle);
+      { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle);
     expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ env: expect.objectContaining({
-      CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${boundaryHandle}`,
-      MANA_TENANT_BOUNDARY_HANDLE: boundaryHandle,
+      CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${tenantBoundaryHandle}`,
+      MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
     }) }));
   });
   it("injects the validated Brainbase Receipt context without requiring a model-initiated MCP call", async () => {
@@ -63,7 +62,7 @@ describe("generateMeetingMinutesInSandbox", () => {
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20" },
       ], ...auditOutput }), stderr: "" }), destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
-      { model: "opus", effort: "xhigh" }, sandbox))
+      { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle))
       .resolves.toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", description: "会議で合意", priority: "high", due_at: "2026-08-20T00:00:00+09:00" },
       ], used_source_refs: [{ type: "graph_entity", id: "project-1" }],
@@ -102,7 +101,11 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({
         timeout: 600_000,
-        env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+        env: {
+          IS_SANDBOX: "1",
+          CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${tenantBoundaryHandle}`,
+          MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+        },
       }));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.any(Object));
@@ -119,7 +122,7 @@ describe("generateMeetingMinutesInSandbox", () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn(), destroy: vi.fn().mockResolvedValue(undefined) };
 
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedContext, "required",
-      { model: "opus", effort: "xhigh" }, sandbox))
+      { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle))
       .rejects.toThrow("meeting_minutes_brainbase_context_prompt_too_large");
     expect(sandbox.exec).not.toHaveBeenCalled();
     expect(sandbox.destroy).toHaveBeenCalledOnce();
@@ -129,7 +132,7 @@ describe("generateMeetingMinutesInSandbox", () => {
       stdout: auditedStream({ title: "", overview: "", body: "", tasks: [] }), stderr: "" }),
     destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
-      { model: "opus", effort: "xhigh" }, sandbox))
+      { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle))
       .rejects.toThrow("meeting_minutes_generation_invalid");
     expect(sandbox.destroy).toHaveBeenCalled();
   });
@@ -229,7 +232,7 @@ describe("classifyMeetingMinutesDestinationInSandbox", () => {
       stdout: '{"projectId":"proj_united","reason":"ホテルUnitedの定例"}', stderr: "" }),
     destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(classifyMeetingMinutesDestinationInSandbox("transcript", destinations,
-      { model: "opus", effort: "xhigh" }, sandbox))
+      { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle))
       .resolves.toEqual({ destinationId: "united", reason: "ホテルUnitedの定例" });
     expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt",
       expect.stringContaining("候補のどれとも確信を持って一致しない場合"));

@@ -1,7 +1,6 @@
 import { Sandbox as BaseSandbox, getSandbox } from "@cloudflare/sandbox";
 
 import type { SandboxAdminEnv } from "./sandbox-admin.js";
-import type { TenantCredentialRelayNamespace } from "./multitenancy/durable-credential-relay.js";
 import {
   resolveDurableTenantBoundaryContext,
   TENANT_BOUNDARY_HANDLE_HEADER,
@@ -18,7 +17,6 @@ import { handleNocodbProxyRequest, NOCODB_PROXY_HOST, type NocodbProxyEnv } from
 import { BRAINBASE_MCP_PROXY_HOST, handleBrainbaseMcpProxyRequest, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
 import { GOOGLE_DRIVE_MCP_PROXY_HOST, handleGoogleDriveMcpProxyRequest, type GoogleDriveMcpProxyEnv } from "./google-drive-mcp-proxy.js";
 import { createRuntimeGatewayProxyHandler, RUNTIME_GATEWAY_PROXY_HOST, type RuntimeGatewayProxyEnv } from "./runtime-gateway-proxy.js";
-import type { CredentialInjectionHeader } from "./multitenancy/credential-injector.js";
 import {
   authorizeTenantProviderOutbound,
   tenantCredentialFetchForResolvedContext,
@@ -57,7 +55,7 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
   BRAINBASE_RUNTIME_API_TOKEN?: string;
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
-  TENANT_RUNTIME_STATE: TenantCredentialRelayNamespace & TenantBoundaryContextNamespace;
+  TENANT_RUNTIME_STATE: TenantBoundaryContextNamespace;
 }
 
 export const DEVELOPMENT_CALLBACK_PROXY_HOST = "development-callback.internal";
@@ -73,7 +71,6 @@ async function authorizeTenantRuntimeProxy(
   env: SandboxRuntimeEnv,
   handler: (request: Request, credentialFetch: typeof fetch, proxyEnv: SandboxRuntimeEnv,
     resolved: AuthorizedTenantBoundaryContext) => Promise<Response> | Response,
-  credentialHeader?: CredentialInjectionHeader,
 ): Promise<Response> {
   const now = new Date().toISOString();
   const resolved = await resolveDurableTenantBoundaryContext(
@@ -85,7 +82,7 @@ async function authorizeTenantRuntimeProxy(
   if (resolved instanceof Response) return resolved;
   let credentialFetch: typeof fetch;
   try {
-    credentialFetch = tenantCredentialFetchForResolvedContext(env, resolved, credentialHeader);
+    credentialFetch = tenantCredentialFetchForResolvedContext(env, resolved);
   } catch {
     return Response.json({ boundary: "credential_lease", error: "CONFIGURATION_INVALID" }, { status: 503 });
   }
@@ -108,7 +105,7 @@ TechKnightSandbox.outboundByHost = {
     return authorizeTenantProviderOutbound(request, env);
   },
   "github.com": async (request: Request, env: SandboxRuntimeEnv) => {
-    return authorizeTenantProviderOutbound(request, env, "github-basic");
+    return authorizeTenantProviderOutbound(request, env);
   },
   [DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv) => {
     return proxyDevelopmentCallback(request, env);
@@ -124,7 +121,6 @@ TechKnightSandbox.outboundByHost = {
   [NOCODB_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
     request, env, (authorized, credentialFetch, proxyEnv) =>
       handleNocodbProxyRequest(authorized, proxyEnv, credentialFetch),
-    "xc-token",
   ),
   [BRAINBASE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
     request, env, (authorized, credentialFetch, proxyEnv) =>

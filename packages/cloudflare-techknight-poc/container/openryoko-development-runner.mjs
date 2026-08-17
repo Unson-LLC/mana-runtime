@@ -881,10 +881,17 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     // Fail silent: progress reporting is best-effort, never blocks the run.
   }
   const stopProgress = startAgentProgressReporting(worktree, baselineSha, startedAt);
+  const tenantBoundaryHandle = process.env.MANA_TENANT_BOUNDARY_HANDLE ?? "";
+  const tenantBoundaryMarker = `mana-tenant-boundary-v1:${tenantBoundaryHandle}`;
+  if (!/^tb_[A-Za-z0-9_-]{32,128}$/.test(tenantBoundaryHandle)
+    || process.env.CLAUDE_CODE_OAUTH_TOKEN !== tenantBoundaryMarker) {
+    throw new Error("tenant_boundary_required");
+  }
   const sandboxAgentEnv = {
     ...agentEnv,
     IS_SANDBOX: "1",
-    CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+    CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryMarker,
+    MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
   };
 
   try {

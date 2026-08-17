@@ -1,11 +1,5 @@
-import { hasAnthropicCredential } from "./anthropic-auth.js";
-
-const OAUTH_OK_MARKER = "TECHKNIGHT_OAUTH_OK";
-
 export interface SandboxAdminEnv {
   SANDBOX_PROBE_TOKEN?: string;
-  ANTHROPIC_API_KEY?: string;
-  CLAUDE_CODE_OAUTH_TOKEN?: string;
 }
 
 interface ExecResult {
@@ -74,36 +68,12 @@ export async function handleSandboxAdminRequest(
         tenant: "techknight",
         runtime: "claude-code",
         version: result.success ? boundedVersion(result.stdout) : undefined,
-        oauthConfigured: hasAnthropicCredential(env),
-        credentialLocation: "worker-secret",
+        providerForwarding: "trusted_forwarder_required",
       });
     }
 
     if (pathname === "/admin/sandbox/oauth-probe") {
-      if (!hasAnthropicCredential(env)) {
-        return Response.json({ error: "oauth_not_configured" }, { status: 503 });
-      }
-      const result = await sandbox.exec(
-        `claude --print --permission-mode bypassPermissions "Reply exactly: ${OAUTH_OK_MARKER}"`,
-        {
-          timeout: 120_000,
-          env: {
-            IS_SANDBOX: "1",
-            CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
-          },
-        },
-      );
-      const ok = result.success && result.stdout.includes(OAUTH_OK_MARKER);
-      return Response.json(
-        {
-          ok,
-          tenant: "techknight",
-          auth: "anthropic-oauth",
-          credentialLocation: "worker-secret",
-          freshContainer: true,
-        },
-        { status: ok ? 200 : 502 },
-      );
+      return Response.json({ error: "credential_forwarding_unavailable" }, { status: 503 });
     }
 
     return Response.json({ error: "not_found" }, { status: 404 });

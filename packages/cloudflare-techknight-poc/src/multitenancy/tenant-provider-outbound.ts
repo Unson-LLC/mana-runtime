@@ -1,8 +1,4 @@
 import {
-  createDurableTenantCredentialRegistry,
-  type TenantCredentialRelayNamespace,
-} from "./durable-credential-relay.js";
-import {
   resolveDurableTenantBoundaryContext,
   tenantBoundaryHandleFromCredentialAuthorization,
   TENANT_BOUNDARY_HANDLE_HEADER,
@@ -10,8 +6,8 @@ import {
 } from "./durable-tenant-boundary.js";
 import { createTenantRuntimeHttpClients } from "./http-clients.js";
 import { createTenantCredentialFetch } from "./tenant-credential-fetch.js";
-import type { CredentialInjectionHeader } from "./credential-injector.js";
 import type { DeploymentProfileName } from "./contracts.js";
+import type { TrustedProviderForwarder } from "./trusted-provider-forwarder.js";
 
 export interface TenantProviderOutboundEnv {
   MANA_DEPLOYMENT_PROFILE?: string;
@@ -22,7 +18,7 @@ export interface TenantProviderOutboundEnv {
   BRAINBASE_RUNTIME_API_TOKEN?: string;
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
-  TENANT_RUNTIME_STATE: TenantCredentialRelayNamespace & TenantBoundaryContextNamespace;
+  TENANT_RUNTIME_STATE: TenantBoundaryContextNamespace;
 }
 
 function requiredBinding(value: string | undefined): string {
@@ -76,28 +72,26 @@ export function tenantRuntimeHttpClientsForEnv(env: TenantProviderOutboundEnv) {
 export function tenantCredentialFetchForResolvedContext(
   env: TenantProviderOutboundEnv,
   resolved: Exclude<Awaited<ReturnType<typeof resolveDurableTenantBoundaryContext>>, Response>,
-  credentialHeader?: CredentialInjectionHeader,
+  trustedForwarder?: TrustedProviderForwarder,
 ): typeof fetch {
   const clients = tenantRuntimeHttpClientsForEnv(env);
   return createTenantCredentialFetch({
     envelope: resolved.tenant_context,
     expected_scope: resolved.expected_scope,
     broker: clients.credential_broker,
-    credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-    credential_relay: env.TENANT_RUNTIME_STATE,
+    trusted_forwarder: trustedForwarder,
     read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
       resolved.tenant_context.workspace_connection.connection_id,
     ),
     resolve_verification_key: (keyId) => resolveTenantProviderVerificationKey(env, keyId),
     now: () => new Date().toISOString(),
-    credential_header: credentialHeader,
   });
 }
 
 export async function authorizeTenantProviderOutbound(
   request: Request,
   env: TenantProviderOutboundEnv,
-  credentialHeader?: CredentialInjectionHeader,
+  trustedForwarder?: TrustedProviderForwarder,
 ): Promise<Response> {
   const handle = tenantBoundaryHandleFromCredentialAuthorization(request.headers.get("authorization"));
   if (!handle) return new Response("credential_lease_rejected", { status: 503 });
@@ -111,7 +105,7 @@ export async function authorizeTenantProviderOutbound(
   );
   if (resolved instanceof Response) return new Response("credential_lease_rejected", { status: 503 });
   try {
-    const credentialFetch = tenantCredentialFetchForResolvedContext(env, resolved, credentialHeader);
+    const credentialFetch = tenantCredentialFetchForResolvedContext(env, resolved, trustedForwarder);
     const headers = new Headers(request.headers);
     headers.delete("authorization");
     headers.delete("x-api-key");

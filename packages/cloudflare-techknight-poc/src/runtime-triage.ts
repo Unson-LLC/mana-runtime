@@ -1,4 +1,3 @@
-import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
 import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
@@ -75,10 +74,10 @@ export function parseRuntimeTriageDecision(raw: string): RuntimeTriageDecision |
 export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
   model: "sonnet" | "opus";
   effort?: "xhigh";
-  credentialLeaseHandle?: string;
-  tenantBoundaryHandle?: string;
+  tenantBoundaryHandle: string;
   createSandbox(id: string): TriageSandbox;
 }): Promise<RuntimeTriageDecision> {
+  if (!options.tenantBoundaryHandle) throw new Error("tenant_boundary_required");
   const sandbox = options.createSandbox(freshTenantContainerId("triage"));
   const promptPath = "/tmp/mana-triage-prompt.txt";
   try {
@@ -88,11 +87,7 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
       `claude --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
       { timeout: 30_000, env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: options.tenantBoundaryHandle
-          ? tenantBoundaryCredentialMarker(options.tenantBoundaryHandle)
-          : options.credentialLeaseHandle
-            ? credentialLeaseMarker(options.credentialLeaseHandle)
-            : "proxy-injected",
+        CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(options.tenantBoundaryHandle),
         MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
       } },
     );

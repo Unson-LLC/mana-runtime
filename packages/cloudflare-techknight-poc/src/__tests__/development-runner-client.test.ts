@@ -16,8 +16,6 @@ function input(overrides: Record<string, unknown> = {}) {
     tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
     connectionId: "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
     operationId: "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
-    credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
-    githubCredentialLeaseHandle: "github_lease_handle_abcdefghijklmnopqrs",
     tenantBoundaryHandle: "tb_opaque_operation_handle_1234567890",
     contextExpiresAt: "2026-08-17T10:04:05.000Z",
     now: () => "2026-08-17T10:00:00.000Z",

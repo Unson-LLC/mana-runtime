@@ -1,7 +1,7 @@
 import { buildRuntimeTriagePrompt, parseRuntimeTriageDecision, runRuntimeTriage } from "../runtime-triage.js";
 
 describe("runtime Slack triage", () => {
-  it("prefers the tenant boundary marker when both credential handles are present", async () => {
+  it("uses only the tenant operation boundary marker", async () => {
     const exec = vi.fn().mockResolvedValue({
       success: true,
       stdout: '{"action":"reply"}',
@@ -17,7 +17,6 @@ describe("runtime Slack triage", () => {
       recentThread: [],
     }, {
       model: "sonnet",
-      credentialLeaseHandle: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       tenantBoundaryHandle,
       createSandbox: () => ({
         writeFile: vi.fn().mockResolvedValue(undefined),
@@ -48,6 +47,7 @@ describe("runtime Slack triage", () => {
       recentThread: [],
     }, {
       model: "sonnet",
+      tenantBoundaryHandle: `tb_${"C".repeat(32)}`,
       createSandbox: () => ({
         writeFile: vi.fn().mockResolvedValue(undefined),
         exec,

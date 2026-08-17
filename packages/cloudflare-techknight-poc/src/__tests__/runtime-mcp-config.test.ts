@@ -29,19 +29,36 @@ describe("placement-scoped runtime MCP config", () => {
   });
 
   it("does not expose undeclared servers or gateway tools", () => {
-    const config = buildRuntimeMcpConfig({ mcp: ["brainbase"], gatewayTools: [] });
+    const config = buildRuntimeMcpConfig(
+      { mcp: ["brainbase"], gatewayTools: [] },
+      "tb_opaque_operation_handle",
+    );
     expect(config.mcpServers).toEqual({
-      brainbase: { type: "http", url: "https://brainbase-mcp.internal/mcp" },
+      brainbase: {
+        type: "http",
+        url: "https://brainbase-mcp.internal/mcp",
+        headers: { "x-mana-tenant-boundary-handle": "tb_opaque_operation_handle" },
+      },
     });
   });
 
+  it("fails closed when the tenant boundary is unavailable", () => {
+    expect(() => buildRuntimeMcpConfig(
+      { mcp: ["brainbase"], gatewayTools: [] },
+      "",
+    )).toThrow(expect.objectContaining({ code: "tenant_boundary_required" }));
+  });
+
   it("fails closed for an unknown MCP server", () => {
-    expect(() => buildRuntimeMcpConfig({ mcp: ["shell"], gatewayTools: [] }))
+    expect(() => buildRuntimeMcpConfig({ mcp: ["shell"], gatewayTools: [] }, "tb_handle"))
       .toThrow(expect.objectContaining({ code: "runtime_mcp_not_supported" }));
   });
 
   it("fails closed when gateway tools are declared without gateway", () => {
-    expect(() => buildRuntimeMcpConfig({ mcp: ["brainbase"], gatewayTools: ["list_tasks"] }))
+    expect(() => buildRuntimeMcpConfig(
+      { mcp: ["brainbase"], gatewayTools: ["list_tasks"] },
+      "tb_handle",
+    ))
       .toThrow(expect.objectContaining({ code: "runtime_gateway_not_enabled" }));
   });
 });

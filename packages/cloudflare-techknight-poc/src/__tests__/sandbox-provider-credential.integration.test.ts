@@ -8,9 +8,6 @@ import {
   TenantBoundaryContextHandler,
   TENANT_BOUNDARY_HANDLE_HEADER,
 } from "../multitenancy/durable-tenant-boundary.js";
-import {
-  TenantCredentialRelayHandler,
-} from "../multitenancy/durable-credential-relay.js";
 import { TenantRuntimeStateHandler } from "../multitenancy/tenant-runtime-state.js";
 import {
   createIdempotencyKey,
@@ -22,6 +19,7 @@ import {
   type UnsignedTenantContextEnvelope,
   type WorkspaceConnectionSnapshot,
 } from "../multitenancy/index.js";
+import type { TrustedProviderForwarder } from "../multitenancy/trusted-provider-forwarder.js";
 import {
   authorizeTenantProviderOutbound,
   tenantCredentialFetchForResolvedContext,
@@ -46,6 +44,7 @@ import {
   DevelopmentTerminalOutboxHandler,
 } from "../multitenancy/development-terminal-outbox.js";
 import { developmentJobIdForTenantOperation } from "../development-runner-client.js";
+import { handleNocodbProxyRequest } from "../nocodb-proxy.js";
 
 const SNAPSHOT: WorkspaceConnectionSnapshot = {
   connection_id: "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
@@ -95,7 +94,12 @@ class TenantRuntimeNamespace {
   readonly handlers = new Map<string, { fetch(request: Request): Promise<Response> }>();
   readonly storages = new Map<string, MemoryStorage>();
   readonly claimedLeaseIds = new Set<string>();
-  readonly providerRequests: Array<{ url: string; authorization: string | null }> = [];
+  readonly providerRequests: Array<{
+    url: string;
+    authorization: string | null;
+    apiKey: string | null;
+    xcToken: string | null;
+  }> = [];
 
   idFromName(name: string): string { return name; }
 
@@ -125,22 +129,7 @@ class TenantRuntimeNamespace {
           } else if (key.startsWith("development-terminal:")) {
             handler = new DevelopmentTerminalOutboxHandler(storage, storage);
           } else {
-            handler = new TenantCredentialRelayHandler(async (providerRequest) => {
-              const request = new Request(providerRequest);
-              this.providerRequests.push({
-                url: request.url,
-                authorization: request.headers.get("authorization"),
-              });
-              return Response.json(request.url.startsWith("https://slack.com/")
-                ? { ok: true, ts: "1723800000.000009" }
-                : { ok: true });
-            }, {
-              claim: async (leaseId) => {
-                if (this.claimedLeaseIds.has(leaseId)) return false;
-                this.claimedLeaseIds.add(leaseId);
-                return true;
-              },
-            });
+            throw new Error(`unexpected_tenant_runtime_namespace:${key}`);
           }
           this.handlers.set(key, handler);
         }
@@ -148,6 +137,44 @@ class TenantRuntimeNamespace {
       },
     };
   }
+}
+
+function trustedForwarderForTest(
+  namespace: TenantRuntimeNamespace,
+  materialByOpaqueHandle: ReadonlyMap<string, string>,
+): TrustedProviderForwarder {
+  return {
+    async forward({ lease, expected_binding, request, now }) {
+      const material = materialByOpaqueHandle.get(lease.lease_token);
+      if (!material) throw new Error("trusted_materialization_unavailable");
+      if (Date.parse(now) >= Date.parse(lease.expires_at)) {
+        throw new Error("trusted_materialization_expired");
+      }
+      expect(lease.binding).toEqual(expected_binding);
+      if (namespace.claimedLeaseIds.has(lease.lease_id)) throw new Error("trusted_materialization_replayed");
+      namespace.claimedLeaseIds.add(lease.lease_id);
+      const headers = new Headers(request.headers);
+      const hostname = new URL(request.url).hostname;
+      if (hostname === "github.com") {
+        headers.set("authorization", `Basic ${btoa(`x-access-token:${material}`)}`);
+      } else if (hostname === "api.anthropic.com") {
+        headers.set("x-api-key", material);
+      } else if (hostname === "nocodb.example.test") {
+        headers.set("xc-token", material);
+      } else {
+        headers.set("authorization", `Bearer ${material}`);
+      }
+      namespace.providerRequests.push({
+        url: request.url,
+        authorization: headers.get("authorization"),
+        apiKey: headers.get("x-api-key"),
+        xcToken: headers.get("xc-token"),
+      });
+      return Response.json(hostname === "slack.com"
+        ? { ok: true, ts: "1723800000.000009" }
+        : { ok: true });
+    },
+  };
 }
 
 async function signedEnvelope() {
@@ -383,7 +410,8 @@ describe("sandbox provider credential integration", () => {
     const { envelope, jwks } = await signedEnvelope();
     const namespace = new TenantRuntimeNamespace();
     const leaseRequests: CredentialLeaseRequest[] = [];
-    const leaseSuffixes = ["B0", "B1", "B2", "B3"];
+    const materialByOpaqueHandle = new Map<string, string>();
+    const leaseSuffixes = ["B0", "B1", "B2", "B3", "B4"];
     const upstreamFetch = vi.fn(async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(requestInfo, init);
       const url = new URL(request.url);
@@ -395,6 +423,8 @@ describe("sandbox provider credential integration", () => {
         leaseRequests.push(structuredClone(leaseRequest));
         const leaseNumber = leaseRequests.length;
         const leaseNow = Date.now();
+        const opaqueHandle = `opaque-lease-handle-${leaseNumber}`;
+        materialByOpaqueHandle.set(opaqueHandle, `materialized-provider-secret-${leaseNumber}`);
         return Response.json({
           result: {
             message_type: "credential_lease_response",
@@ -405,7 +435,7 @@ describe("sandbox provider credential integration", () => {
             issued_at: new Date(leaseNow).toISOString(),
             expires_at: new Date(leaseNow + 59_000).toISOString(),
             max_uses: 1,
-            lease_token: `test-provider-token-${leaseNumber}`,
+            lease_token: opaqueHandle,
           },
         });
       }
@@ -430,6 +460,7 @@ describe("sandbox provider credential integration", () => {
       new Date().toISOString(),
     );
     expect(resolved).not.toBeInstanceOf(Response);
+    if (resolved instanceof Response) throw new Error("test_tenant_boundary_unavailable");
     const env = {
       TENANT_RUNTIME_STATE: namespace,
       MANA_DEPLOYMENT_PROFILE: "shared_cloud",
@@ -441,54 +472,83 @@ describe("sandbox provider credential integration", () => {
       BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
       BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
     } as TenantProviderOutboundEnv;
+    const trustedForwarder = trustedForwarderForTest(namespace, materialByOpaqueHandle);
 
     const responses = await Promise.all([
       authorizeTenantProviderOutbound(new Request("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { authorization: `Bearer ${marker}` },
         body: "{}",
-      }), env),
+      }), env, trustedForwarder),
       authorizeTenantProviderOutbound(new Request("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { authorization: `Bearer ${marker}` },
         body: "{}",
-      }), env),
+      }), env, trustedForwarder),
       authorizeTenantProviderOutbound(new Request("https://github.com/example/repo.git/info/refs", {
         headers: { authorization: `Bearer ${marker}` },
-      }), env, "github-basic"),
+      }), env, trustedForwarder),
       authorizeTenantProviderOutbound(new Request("https://github.com/example/repo.git/git-upload-pack", {
         method: "POST",
         headers: { authorization: `Bearer ${marker}` },
         body: "request-body",
-      }), env, "github-basic"),
+      }), env, trustedForwarder),
     ]);
 
     const responseBodies = await Promise.all(responses.map((response) => response.clone().text()));
+    const nocodbResponse = await handleNocodbProxyRequest(
+      new Request("https://nocodb.internal/api/runtime/nocodb", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tool: "nocodb_list_records",
+          arguments: { baseId: "base-a", tableName: "tasks" },
+        }),
+      }),
+      {
+        NOCODB_URL: "https://nocodb.example.test",
+        NOCODB_TOKEN: "tenant-credential-injected",
+        NOCODB_PROJECT_MAPPING_JSON: JSON.stringify({ "base-a": "project-a" }),
+      },
+      tenantCredentialFetchForResolvedContext(env, resolved, trustedForwarder),
+    );
     expect({
       statuses: responses.map((response) => response.status),
       responseBodies,
       leaseRequestCount: leaseRequests.length,
       providerRequestCount: namespace.providerRequests.length,
+      nocodbStatus: nocodbResponse.status,
     }).toEqual({
       statuses: [200, 200, 200, 200],
       responseBodies: ["{\"ok\":true}", "{\"ok\":true}", "{\"ok\":true}", "{\"ok\":true}"],
-      leaseRequestCount: 4,
-      providerRequestCount: 4,
+      leaseRequestCount: 5,
+      providerRequestCount: 5,
+      nocodbStatus: 200,
     });
-    expect(leaseRequests).toHaveLength(4);
+    expect(leaseRequests).toHaveLength(5);
     expect(new Set(leaseRequests.map((request) => request.binding.audience)))
-      .toEqual(new Set(["api.anthropic.com", "github.com"]));
+      .toEqual(new Set(["api.anthropic.com", "github.com", "nocodb.example.test"]));
     expect(leaseRequests.every((request) => request.requested_ttl_seconds === 60)).toBe(true);
-    expect(namespace.claimedLeaseIds.size).toBe(4);
-    expect(namespace.providerRequests).toHaveLength(4);
-    expect(namespace.providerRequests.slice(0, 2).map((request) => request.authorization))
-      .toEqual(["Bearer test-provider-token-1", "Bearer test-provider-token-2"]);
-    expect(namespace.providerRequests.slice(2).map((request) => request.authorization))
+    expect(namespace.claimedLeaseIds.size).toBe(5);
+    expect(namespace.providerRequests).toHaveLength(5);
+    expect(namespace.providerRequests.slice(0, 2).map((request) => request.apiKey))
+      .toEqual(["materialized-provider-secret-1", "materialized-provider-secret-2"]);
+    expect(namespace.providerRequests.slice(2, 4).map((request) => request.authorization))
       .toEqual([
-        `Basic ${btoa("x-access-token:test-provider-token-3")}`,
-        `Basic ${btoa("x-access-token:test-provider-token-4")}`,
+        `Basic ${btoa("x-access-token:materialized-provider-secret-3")}`,
+        `Basic ${btoa("x-access-token:materialized-provider-secret-4")}`,
       ]);
-    expect(namespace.providerRequests.every((request) => !request.authorization?.includes(handle))).toBe(true);
+    expect(namespace.providerRequests[4]).toMatchObject({
+      authorization: null,
+      apiKey: null,
+      xcToken: "materialized-provider-secret-5",
+    });
+    expect(namespace.providerRequests.every((request) => (
+      !request.authorization?.includes(handle)
+      && !request.apiKey?.includes(handle)
+      && !request.xcToken?.includes(handle)
+    ))).toBe(true);
+    expect(JSON.stringify(namespace.providerRequests)).not.toContain("opaque-lease-handle");
   });
 
   it("replays the exact Gateway accounting outbox without posting Slack twice and rejects stale revision", async () => {
@@ -497,6 +557,7 @@ describe("sandbox provider credential integration", () => {
     const accountingPayloads: unknown[] = [];
     const quotaRequests: unknown[] = [];
     const leaseRequests: CredentialLeaseRequest[] = [];
+    const materialByOpaqueHandle = new Map<string, string>();
     let activeSnapshot = structuredClone(SNAPSHOT);
     let failAccounting = true;
     const upstreamFetch = vi.fn(async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
@@ -509,6 +570,7 @@ describe("sandbox provider credential integration", () => {
         const quota = await request.json() as { unit: string };
         quotaRequests.push(structuredClone(quota));
         const now = new Date().toISOString();
+        materialByOpaqueHandle.set("opaque-gateway-lease-handle", "materialized-slack-secret");
         return Response.json({ result: {
           message_type: "quota_decision",
           tenant_id: SNAPSHOT.tenant_id,
@@ -538,7 +600,7 @@ describe("sandbox provider credential integration", () => {
           issued_at: new Date(leaseNow).toISOString(),
           expires_at: new Date(leaseNow + 59_000).toISOString(),
           max_uses: 1,
-          lease_token: "test-gateway-provider-token",
+          lease_token: "opaque-gateway-lease-handle",
         } });
       }
       if (url.hostname === "accounting.example.test") {
@@ -578,6 +640,7 @@ describe("sandbox provider credential integration", () => {
       BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
       BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
     } as unknown as TenantGatewayDeliveryEnv;
+    const trustedForwarder = trustedForwarderForTest(namespace, materialByOpaqueHandle);
     const input = {
       requestId: "gateway-request-1",
       callIndex: 0,
@@ -589,7 +652,7 @@ describe("sandbox provider credential integration", () => {
       input,
       env,
       resolved,
-      tenantCredentialFetchForResolvedContext(env, resolved),
+      tenantCredentialFetchForResolvedContext(env, resolved, trustedForwarder),
     );
 
     await expect(deliver()).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
@@ -600,14 +663,14 @@ describe("sandbox provider credential integration", () => {
     expect(quotaRequests).toHaveLength(1);
     expect(accountingPayloads).toHaveLength(2);
     expect(accountingPayloads[1]).toEqual(accountingPayloads[0]);
-    expect(JSON.stringify(accountingPayloads)).not.toContain("test-gateway-provider-token");
+    expect(JSON.stringify(accountingPayloads)).not.toContain("opaque-gateway-lease-handle");
 
     activeSnapshot = { ...activeSnapshot, connection_revision: "8" };
     await expect(deliverTenantGatewaySlackMessage(
       { ...input, requestId: "gateway-request-stale", callIndex: 1 },
       env,
       resolved,
-      tenantCredentialFetchForResolvedContext(env, resolved),
+      tenantCredentialFetchForResolvedContext(env, resolved, trustedForwarder),
     )).rejects.toMatchObject({ code: "WORKSPACE_CONNECTION_STALE_REVISION" });
     expect(namespace.providerRequests.filter((entry) => entry.url.includes("chat.postMessage"))).toHaveLength(1);
     expect(accountingPayloads).toHaveLength(2);

@@ -67,6 +67,7 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
     allowedChannelId: "C_MANA_TEST",
     slackBotToken: "xoxb-worker-secret",
     oauthConfigured: true,
+    tenantBoundaryHandle: TENANT_BOUNDARY_A,
     claudeRuntime: resolveClaudeRuntimeConfig({
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
@@ -159,23 +160,6 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://slack.com/api/reactions.add");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ name: "thumbsup" });
   });
-  it("reuses the thread-generation sandbox and resumes its Claude session", async () => {
-    const fs = new MemoryFs();
-    const createSandbox = vi.fn();
-    const { options, sandbox } = harness();
-    createSandbox.mockReturnValue(sandbox);
-    options.createSandbox = createSandbox;
-    options.claudeSession = {
-      id: "12345678-1234-4123-8123-123456789abc",
-      sandboxId: "techknight-session-stable",
-      resume: true,
-    };
-    await processReplyEvent(fs, event(), options);
-    expect(createSandbox).toHaveBeenCalledWith("techknight-session-stable");
-    expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
-    expect(sandbox.destroy).not.toHaveBeenCalled();
-  });
-
   it("partitions ephemeral reply containers by the verified tenant boundary", async () => {
     const tenantA = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     const tenantB = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_B });
@@ -190,70 +174,6 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(tenantAId).not.toBe(tenantBId);
     expect(tenantAId.length).toBeLessThanOrEqual(63);
     expect(tenantBId.length).toBeLessThanOrEqual(63);
-  });
-
-  it("recreates the same Claude session when its persisted transcript is missing", async () => {
-    const fs = new MemoryFs();
-    const { options, sandbox } = harness();
-    options.claudeSession = {
-      id: "12345678-1234-4123-8123-123456789abc",
-      sandboxId: "techknight-session-stable",
-      resume: true,
-    };
-    sandbox.exec
-      .mockResolvedValueOnce({
-        success: false,
-        stdout: "",
-        stderr: "No conversation found with session ID: 12345678-1234-4123-8123-123456789abc",
-        exitCode: 1,
-      })
-      .mockResolvedValueOnce({ success: true, stdout: "復旧しました。", stderr: "", exitCode: 0 });
-
-    await processReplyEvent(fs, event(), options);
-
-    expect(sandbox.exec).toHaveBeenCalledTimes(2);
-    expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
-    expect(sandbox.exec.mock.calls[1][0]).toContain("--session-id 12345678-1234-4123-8123-123456789abc");
-    expect(sandbox.exec.mock.calls[1][0]).not.toContain("--resume");
-  });
-
-  it("falls back to the hydrated thread context when the persisted Claude session is busy", async () => {
-    const fs = new MemoryFs();
-    const { options, sandbox } = harness();
-    const recoverySandbox = {
-      writeFile: vi.fn().mockResolvedValue(undefined),
-      exec: vi.fn().mockResolvedValue({ success: true, stdout: "本人のタスクです。", stderr: "", exitCode: 0 }),
-      destroy: vi.fn().mockResolvedValue(undefined),
-    };
-    const createSandbox = vi.fn()
-      .mockReturnValueOnce(sandbox)
-      .mockReturnValueOnce(recoverySandbox);
-    options.createSandbox = createSandbox;
-    options.claudeSession = {
-      id: "12345678-1234-4123-8123-123456789abc",
-      sandboxId: "techknight-session-stable",
-      resume: true,
-    };
-    sandbox.exec
-      .mockResolvedValueOnce({
-        success: false,
-        stdout: "",
-        stderr: "Error: Session ID 12345678-1234-4123-8123-123456789abc is already in use.",
-        exitCode: 1,
-      });
-
-    await processReplyEvent(fs, event({ threadContext: "直前までのSlackスレッド本文" }), options);
-
-    expect(sandbox.exec).toHaveBeenCalledOnce();
-    expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
-    expect(createSandbox).toHaveBeenCalledTimes(2);
-    const recoverySandboxId = createSandbox.mock.calls[1][0] as string;
-    expect(recoverySandboxId).toMatch(/^tkr-[0-9a-f-]{36}$/);
-    expect(recoverySandboxId.length).toBeLessThanOrEqual(63);
-    expect(recoverySandbox.writeFile).toHaveBeenCalledOnce();
-    expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--resume");
-    expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--session-id");
-    expect(recoverySandbox.destroy).toHaveBeenCalledOnce();
   });
 
   it("injects only the placement persona, instructions, skills, and escalation employee", async () => {
@@ -403,7 +323,8 @@ describe("TechKnight Slack reply pipeline", () => {
         timeout: 120_000,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+          CLAUDE_CODE_OAUTH_TOKEN: `mana-tenant-boundary-v1:${TENANT_BOUNDARY_A}`,
+          MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_A,
           MANA_TRACE_ID: "EvReply123",
           MANA_TRACE_PLACEMENT_ID: undefined,
           MANA_TRACE_PROJECT_CODES: undefined,
@@ -457,32 +378,30 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
-  it("passes only the canonical credential lease marker into the Container", async () => {
+  it("passes only the tenant operation boundary marker into the Container", async () => {
     const fs = new MemoryFs();
-    const handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    const { options, sandbox } = harness({ credentialLeaseHandle: handle });
+    const tenantBoundaryHandle = `tb_${"B".repeat(32)}`;
+    const { options, sandbox } = harness({ tenantBoundaryHandle });
 
     await processReplyEvent(fs, event(), options);
 
     const execOptions = sandbox.exec.mock.calls[0][1] as { env: Record<string, string> };
-    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(`mana-credential-lease-v1:${handle}`);
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(`mana-tenant-boundary-v1:${tenantBoundaryHandle}`);
     expect(JSON.stringify(execOptions)).not.toContain("credential-ref");
     expect(JSON.stringify(execOptions)).not.toContain("lease_token");
   });
 
-  it("prefers the tenant boundary marker when both credential handles are present", async () => {
+  it("does not accept a legacy credential lease handle option", async () => {
     const fs = new MemoryFs();
-    const credentialLeaseHandle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const tenantBoundaryHandle = `tb_${"B".repeat(32)}`;
-    const { options, sandbox } = harness({ credentialLeaseHandle, tenantBoundaryHandle });
+    const { options, sandbox } = harness({ tenantBoundaryHandle });
 
     await processReplyEvent(fs, event(), options);
 
     const execOptions = sandbox.exec.mock.calls[0][1] as { env: Record<string, string> };
     expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN)
       .toBe(`mana-tenant-boundary-v1:${tenantBoundaryHandle}`);
-    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN)
-      .not.toBe(`mana-credential-lease-v1:${credentialLeaseHandle}`);
+    expect(JSON.stringify(execOptions)).not.toContain("mana-credential-lease-v1:");
   });
 
   it("configures only the bounded search MCP when task search is enabled", async () => {
@@ -502,6 +421,7 @@ describe("TechKnight Slack reply pipeline", () => {
         "task-search": {
           command: "node",
           args: ["/opt/mana/task-search-mcp-server.mjs"],
+          env: { MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_A },
         },
       },
     }));
@@ -527,8 +447,10 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(String(writes["/tmp/mana-slack-prompt.txt"])).toContain("transition_task");
     expect(JSON.parse(String(writes["/tmp/mana-task-search-mcp.json"]))).toEqual({
       mcpServers: {
-        "task-search": { command: "node", args: ["/opt/mana/task-search-mcp-server.mjs"] },
-        "task-write": { command: "node", args: ["/opt/mana/task-write-mcp-server.mjs"] },
+        "task-search": { command: "node", args: ["/opt/mana/task-search-mcp-server.mjs"],
+          env: { MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_A } },
+        "task-write": { command: "node", args: ["/opt/mana/task-write-mcp-server.mjs"],
+          env: { MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_A } },
       },
     });
     expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({

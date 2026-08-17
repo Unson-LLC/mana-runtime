@@ -8,7 +8,6 @@ import type {
 import { CanonicalContractError, validateCanonicalCredentialLease } from "./canonical-consumer.js";
 import { validateTenantBoundary } from "./envelope.js";
 import { deny } from "./errors.js";
-import { revealSecretValue, type SecretValue } from "./secret-guard.js";
 
 export interface CredentialBrokerClient {
   acquire_lease(request: CredentialLeaseRequest): Promise<CredentialLease>;
@@ -108,21 +107,6 @@ export class CredentialLeaseUseRegistry {
     if (this.#used.has(leaseId)) deny("credential_lease", "FALLBACK_FORBIDDEN");
     this.#used.add(leaseId);
   }
-}
-
-export async function consumeCredentialLease<T>(
-  registry: CredentialLeaseUseRegistry,
-  lease: CredentialLease,
-  secret: SecretValue,
-  inject: (secret: string) => T | Promise<T>,
-  now: string,
-): Promise<T> {
-  const observedAt = Date.parse(now);
-  if (!Number.isFinite(observedAt) || observedAt > Date.parse(lease.expires_at) + 30_000) {
-    deny("credential_lease", "WORKSPACE_CONNECTION_REVOKED");
-  }
-  registry.consume(lease.lease_id);
-  return inject(revealSecretValue(secret));
 }
 
 export interface CredentialLifecycleEvent {

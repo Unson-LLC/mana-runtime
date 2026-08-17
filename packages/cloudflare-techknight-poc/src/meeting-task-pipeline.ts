@@ -22,7 +22,6 @@ import {
   TaskApiClient,
   TaskApiError,
 } from "@openryoko/task-runtime-core";
-import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
 import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 
@@ -62,8 +61,7 @@ export interface MeetingTaskPipelineOptions {
   brainbaseTaskToken?: string;
   slackBotToken?: string;
   oauthConfigured: boolean;
-  credentialLeaseHandle?: string;
-  tenantBoundaryHandle?: string;
+  tenantBoundaryHandle: string;
   claudeRuntime: ClaudeRuntimeConfig;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
@@ -164,9 +162,10 @@ function buildExtractionPrompt(event: SlackQueueEvent): string {
 async function extractCandidates(
   event: SlackQueueEvent,
   options: Pick<MeetingTaskPipelineOptions,
-    "oauthConfigured" | "credentialLeaseHandle" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox">,
+    "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox">,
 ): Promise<TaskCandidate[]> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
+  if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
   const sandbox = options.createSandbox(freshTenantContainerId("meeting-tasks"));
   try {
     const promptPath = runtimeClaudePromptPath("meeting-task");
@@ -179,9 +178,7 @@ async function extractCandidates(
           timeout: 120_000,
           env: {
             IS_SANDBOX: "1",
-            CLAUDE_CODE_OAUTH_TOKEN: options.tenantBoundaryHandle
-              ? tenantBoundaryCredentialMarker(options.tenantBoundaryHandle)
-              : options.credentialLeaseHandle ? credentialLeaseMarker(options.credentialLeaseHandle) : "proxy-injected",
+            CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(options.tenantBoundaryHandle),
             MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
           },
         },

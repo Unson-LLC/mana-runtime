@@ -217,11 +217,14 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).not.toContain('stdin: JSON.stringify({ mode: "new", request: job.request })');
   });
 
-  it("開発エージェントへCloudflare認証プロキシ用の非秘密プレースホルダーを渡す", () => {
+  it("開発エージェントへ検証済みtenant operation boundaryだけを渡す", () => {
     const runnerPath = fileURLToPath(new URL("../../container/openryoko-development-runner.mjs", import.meta.url));
     const runner = readFileSync(runnerPath, "utf8");
     expect(runner).toContain('IS_SANDBOX: "1"');
-    expect(runner).toContain('CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected"');
+    expect(runner).toContain("CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryMarker");
+    expect(runner).toContain("MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle");
+    expect(runner).toContain('throw new Error("tenant_boundary_required")');
+    expect(runner).not.toContain('CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected"');
     expect(runner).toContain("extraEnv: sandboxAgentEnv");
   });
 
@@ -300,7 +303,8 @@ describe("会社別Cloudflare deployment", () => {
     ), "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
     expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST');
-    expect(sandboxRuntime).toContain('"github-basic"');
+    expect(sandboxRuntime).not.toContain('"github-basic"');
+    expect(sandboxRuntime).not.toContain("credential_header");
     expect(sandboxRuntime).toContain("authorizeTenantProviderOutbound(");
     const tenantProviderOutbound = readFileSync(fileURLToPath(
       new URL("../multitenancy/tenant-provider-outbound.ts", import.meta.url),
@@ -474,15 +478,13 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
     expect(worker).toContain("const childEventId = await childInteractionEventId(event.eventId, `meeting-minutes-file:${file.id}`)");
     expect(worker).toContain("const childTenantContext = await resolveDerivedSlackTenantContext");
-    expect(worker).toContain("envelope: childTenantContext");
+    expect(worker).toContain("tenant_context: childTenantContext");
     const ingestionStart = worker.indexOf("if (isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig))");
     const ingestionEnd = worker.indexOf("const ordinaryEvent = tenantBody.payload", ingestionStart);
     const ingestion = worker.slice(ingestionStart, ingestionEnd);
-    expect(ingestion.indexOf("for (const file of event.files ?? [])")).toBeLessThan(
-      ingestion.indexOf("withTenantCredentialLease({"),
-    );
+    expect(ingestion).not.toContain("withTenantCredentialLease({");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
-    expect(worker).toContain("credentialLeaseHandle,\n                        tenantBoundaryHandle");
+    expect(worker).not.toContain("credentialLeaseHandle");
     expect(worker).toContain("createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE)");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
