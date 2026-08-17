@@ -179,8 +179,8 @@ describe("Cloudflare meeting task pipeline", () => {
   });
 
   it("partitions ephemeral meeting-task containers by the verified tenant boundary", async () => {
-    const tenantA = harness({ tenantBoundaryHandle: "tb_tenant_a" });
-    const tenantB = harness({ tenantBoundaryHandle: "tb_tenant_b" });
+    const tenantA = harness({ tenantBoundaryHandle: "tb_tenant_a_opaque_operation_handle_0001" });
+    const tenantB = harness({ tenantBoundaryHandle: "tb_tenant_b_opaque_operation_handle_0002" });
 
     await processMeetingTaskEvent(new MemoryFs(), event(), tenantA.options);
     await processMeetingTaskEvent(new MemoryFs(), event(), tenantB.options);

@@ -7,6 +7,7 @@ import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
 import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
+import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
 const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
@@ -16,6 +17,11 @@ const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const MEETING_MINUTES_CONTEXT_PROMPT_MAX_BYTES = 100_000;
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
+function providerCredentialMarker(tenantBoundaryHandle?: string, credentialLeaseHandle?: string): string {
+  return tenantBoundaryHandle
+    ? tenantBoundaryCredentialMarker(tenantBoundaryHandle)
+    : credentialLeaseHandle ? credentialLeaseMarker(credentialLeaseHandle) : "proxy-injected";
+}
 async function prepareMeetingMinutesRuntime(
   sandbox: ReplySandbox,
   prompt: string,
@@ -157,9 +163,7 @@ export async function classifyMeetingMinutesDestinationInSandbox(
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseHandle
-          ? credentialLeaseMarker(credentialLeaseHandle)
-          : "proxy-injected",
+        CLAUDE_CODE_OAUTH_TOKEN: providerCredentialMarker(tenantBoundaryHandle, credentialLeaseHandle),
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
@@ -422,9 +426,7 @@ export async function generateMeetingMinutesInSandbox(
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseHandle
-          ? credentialLeaseMarker(credentialLeaseHandle)
-          : "proxy-injected",
+        CLAUDE_CODE_OAUTH_TOKEN: providerCredentialMarker(tenantBoundaryHandle, credentialLeaseHandle),
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
