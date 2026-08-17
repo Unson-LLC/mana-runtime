@@ -209,6 +209,8 @@ export class TenantRuntimeState extends DurableObject<Env> {
       await transaction.put(key, { claimed: true });
       return true;
     }),
+  }, {
+    setAlarm: (scheduledTime) => this.ctx.storage.setAlarm(scheduledTime),
   });
   readonly #boundaryContext = new TenantBoundaryContextHandler(
     this.ctx.storage,
@@ -232,8 +234,11 @@ export class TenantRuntimeState extends DurableObject<Env> {
     return this.#handler.fetch(request);
   }
 
-  alarm(): Promise<void> {
-    return this.#boundaryContext.alarm();
+  async alarm(): Promise<void> {
+    await Promise.all([
+      this.#credentialRelay.alarm(),
+      this.#boundaryContext.alarm(),
+    ]);
   }
 }
 

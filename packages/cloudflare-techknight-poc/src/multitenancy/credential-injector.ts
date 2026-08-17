@@ -141,6 +141,10 @@ export class TenantCredentialInjector {
     if (HANDLE_PATTERN.test(handle)) this.#active.delete(handle);
   }
 
+  disposeAll(): void {
+    this.#active.clear();
+  }
+
   activeCredentialCount(): number {
     return this.#active.size;
   }

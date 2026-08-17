@@ -34,6 +34,10 @@ export interface CredentialLeaseOwnership {
   claim(leaseId: string): Promise<boolean>;
 }
 
+export interface CredentialRelayAlarmScheduler {
+  setAlarm(scheduledTime: number): Promise<void>;
+}
+
 function inMemoryLeaseOwnership(): CredentialLeaseOwnership {
   const claimed = new Set<string>();
   return {
@@ -127,6 +131,7 @@ export class TenantCredentialRelayHandler {
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly ownership: CredentialLeaseOwnership = inMemoryLeaseOwnership(),
+    private readonly alarmScheduler?: CredentialRelayAlarmScheduler,
   ) {}
 
   activeCredentialCount(): number {
@@ -139,14 +144,25 @@ export class TenantCredentialRelayHandler {
     this.#expiryTimers.delete(handle);
   }
 
-  #scheduleExpiry(handle: string, expiresAt: string, observedAt: string): void {
+  async #scheduleExpiry(handle: string, expiresAt: string, observedAt: string): Promise<void> {
     this.#clearExpiry(handle);
     const delay = Math.max(0, Date.parse(expiresAt) - Date.parse(observedAt) + CLOCK_SKEW_MS + 1);
+    const scheduledTime = Date.parse(expiresAt) + CLOCK_SKEW_MS + 1;
+    if (!Number.isFinite(delay) || !Number.isFinite(scheduledTime)) {
+      throw new TenantBoundaryError("credential_lease", "CREDENTIAL_LEASE_INVALID");
+    }
+    await this.alarmScheduler?.setAlarm(scheduledTime);
     const timer = setTimeout(() => {
       this.#injector.dispose(handle);
       this.#expiryTimers.delete(handle);
     }, delay);
     this.#expiryTimers.set(handle, timer);
+  }
+
+  async alarm(): Promise<void> {
+    for (const timer of this.#expiryTimers.values()) clearTimeout(timer);
+    this.#expiryTimers.clear();
+    this.#injector.disposeAll();
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -175,7 +191,12 @@ export class TenantCredentialRelayHandler {
           this.#injector.dispose(handle);
           throw new TenantBoundaryError("credential_lease", "FALLBACK_FORBIDDEN");
         }
-        this.#scheduleExpiry(handle, input.lease.expires_at, input.now);
+        try {
+          await this.#scheduleExpiry(handle, input.lease.expires_at, input.now);
+        } catch (error) {
+          this.#injector.dispose(handle);
+          throw error;
+        }
         return Response.json({ result: { handle } });
       }
       if (url.pathname === "/dispose") {
