@@ -141,4 +141,42 @@ describe("durable credential relay integration", () => {
       vi.useRealTimers();
     }
   });
+
+  it("schedules a durable alarm and scrubs an unused secret after isolate suspension", async () => {
+    const setAlarm = vi.fn(async (_scheduledTime: number) => undefined);
+    const handler = new TenantCredentialRelayHandler(
+      vi.fn(async () => Response.json({ ok: true })) as unknown as typeof fetch,
+      { claim: async () => true },
+      { setAlarm },
+    );
+    const response = await handler.fetch(new Request("https://tenant-credential-relay.internal/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        handle: "A".repeat(43),
+        lease: lease(),
+        expected_binding: BINDING,
+        now: NOW,
+        allowed_hostname: "api.anthropic.com",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(setAlarm).toHaveBeenCalledWith(Date.parse(lease().expires_at) + 30_001);
+    expect(handler.activeCredentialCount()).toBe(1);
+
+    await handler.alarm();
+
+    expect(handler.activeCredentialCount()).toBe(0);
+    const forward = await handler.fetch(new Request("https://tenant-credential-relay.internal/forward", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credentialLeaseMarker("A".repeat(43))}`,
+        "x-mana-credential-target-url": "https://api.anthropic.com/v1/messages",
+        "x-mana-credential-target-method": "POST",
+        "x-mana-credential-observed-at": NOW,
+      },
+    }));
+    expect(forward.status).toBe(503);
+  });
 });
