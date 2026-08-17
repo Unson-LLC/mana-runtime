@@ -43,7 +43,9 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, showProcessing, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
-    expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({ runId: "Ev1_F1", destinationId: "mana" }));
+    expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "Ev1_F1", destinationId: "mana", threadTs: "1.0",
+    }));
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "meeting.txt の保存先に Back Office を選択しました。",
     }));
@@ -165,14 +167,15 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
       channelId: "C1", userId: "U1", actionTs: "1.2" });
   });
-  it("queues without immediate feedback when Slack omitted a valid thread timestamp", async () => {
+  it("fails closed when Slack omitted the tenant thread coordinate", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(missingThread), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, showProcessing, defer: background.defer });
-    expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(send).toHaveBeenCalledOnce(); expect(showProcessing).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await expect(Promise.all(background.work)).rejects.toThrow("meeting_minutes_thread_coordinate_missing");
+    expect(send).not.toHaveBeenCalled(); expect(showProcessing).not.toHaveBeenCalled();
   });
   it("shows immediate feedback for an existing retry button using the signed container thread", async () => {
     const retryPayload = structuredClone(payload);
