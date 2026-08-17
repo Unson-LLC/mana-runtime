@@ -135,14 +135,14 @@
     {
       "id": "C-004",
       "type": "contract",
-      "statement": "PMSとHP制作は個別に自動作成を有効化し、本番Canvas ID・チャンネル結び付き・正本タスク同期のreadbackが揃うまで完了扱いしない",
+      "statement": "登録済みの全task-board targetで自動作成を有効化し、各targetの本番Canvas ID・チャンネル結び付き・正本タスク同期のreadbackが揃うまで完了扱いしない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
         "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "移行" }],
         "code_refs": [{ "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "story-task-canvas-ownership:ac:5 enables auto-provision only for PMS and HP Sales" }]
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "story-task-canvas-ownership:ac:5 enables auto-provision for every configured task-board target" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "enables auto-provision only for PMS and HP Sales" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "enables auto-provision for every configured task-board target" }] },
       "confidence": 0.98
     }
   ]

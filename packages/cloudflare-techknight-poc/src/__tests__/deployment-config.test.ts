@@ -63,7 +63,7 @@ describe("会社別Cloudflare deployment", () => {
   const techKnight = loadConfig("wrangler.jsonc");
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
-  it("story-task-canvas-ownership:ac:5 enables auto-provision only for PMS and HP Sales", () => {
+  it("story-task-canvas-ownership:ac:5 enables auto-provision for every configured task-board target", () => {
     const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       targetId: string; organizationId: string; workspaceId: string; channelId: string; projectCodes: string[];
       enabled: boolean; autoProvision?: boolean; manaCanvasId: string | null; bindingRevision: number | null;
@@ -78,12 +78,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(targets).toHaveLength(23);
     expect(minutesTargets).toHaveLength(22);
     const autoProvisioned = targets.filter((target) => target.autoProvision);
-    expect(autoProvisioned).toEqual([
-      expect.objectContaining({ targetId: "minutes-pms", enabled: true, manaCanvasId: null, bindingRevision: 1 }),
-      expect.objectContaining({ targetId: "minutes-hp-sales", enabled: true, manaCanvasId: null, bindingRevision: 1 }),
-    ]);
-    expect(targets.filter((target) => !target.autoProvision).every((target) =>
-      target.enabled === false && target.manaCanvasId === null && target.bindingRevision === null)).toBe(true);
+    expect(autoProvisioned).toHaveLength(targets.length);
+    expect(autoProvisioned.every((target) =>
+      target.enabled === true && target.manaCanvasId === null && target.bindingRevision === 1)).toBe(true);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
       .toEqual({ "unson-business": 8, unson: 5, "tech-knight": 9 });
