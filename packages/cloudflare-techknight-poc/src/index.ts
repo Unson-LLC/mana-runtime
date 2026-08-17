@@ -39,7 +39,7 @@ import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient, TaskApiError } from "@openryoko/task-runtime-core";
-import { deterministicRuntimeUuid, isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
   processMeetingTaskEvent,
@@ -58,7 +58,7 @@ import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { requesterProfileOrFallback, resolveSlackUserProfile } from "./slack-user-profile.js";
 import { runtimeWorkspaceName } from "./runtime-workspace-key.js";
 import { executeRuntimeControlCommand, parseRuntimeControlCommand, renderRuntimeControlCommandError, RuntimeControlCommandError } from "./runtime-control-command.js";
-import { markClaudeSessionStarted, markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
+import { markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { createManualCronEvent } from "./runtime-cron-event.js";
@@ -87,6 +87,7 @@ import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
   consumeTenantQueueMessage,
+  executeTenantBoundary,
   resolveSlackWorkerIngress,
   type TenantQueueBody,
   TenantRuntimeBoundaryVerifier,
@@ -106,6 +107,7 @@ import {
   REQUIRED_TENANT_CAPABILITIES,
   type DeploymentProfileName,
   type ExpectedTenantScope,
+  type TenantContextEnvelope,
 } from "./multitenancy/contracts.js";
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
@@ -818,6 +820,20 @@ export default {
   async queue(batch: MessageBatch<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
+    const executeTenantContainerOperation = <T>(input: {
+      tenant_context: TenantContextEnvelope;
+      expected_scope: ExpectedTenantScope;
+      verifier: TenantRuntimeBoundaryVerifier;
+      now: string;
+      execute(): Promise<T>;
+    }): Promise<T> => executeTenantBoundary({
+      boundary: "container_launch",
+      tenant_context: input.tenant_context,
+      expected_scope: input.expected_scope,
+      verifier: input.verifier,
+      now: input.now,
+      execute: input.execute,
+    });
     for (const message of batch.messages) {
       if (isTaskBoardRepairEvent(message.body)) {
         await consumeTaskBoardRepair({
@@ -871,12 +887,18 @@ export default {
               ),
               resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
               now,
-              run: (credentialLeaseHandle) => processTenantMeetingMinutesRedo({
-                env,
-                config: meetingMinutesConfig,
-                command,
-                tenantId: runtimeTenantId,
-                credentialLeaseHandle,
+              run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                tenant_context: tenantContext,
+                expected_scope: expectedScope,
+                verifier,
+                now: now(),
+                execute: () => processTenantMeetingMinutesRedo({
+                  env,
+                  config: meetingMinutesConfig,
+                  command,
+                  tenantId: runtimeTenantId,
+                  credentialLeaseHandle,
+                }),
               }),
             }),
           }),
@@ -936,12 +958,18 @@ export default {
               ),
               resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
               now,
-              run: (credentialLeaseHandle) => processTenantMeetingMinutesSelection({
-                env,
-                config: meetingMinutesConfig,
-                selection,
-                tenantId: runtimeTenantId,
-                credentialLeaseHandle,
+              run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                tenant_context: tenantContext,
+                expected_scope: expectedScope,
+                verifier,
+                now: now(),
+                execute: () => processTenantMeetingMinutesSelection({
+                  env,
+                  config: meetingMinutesConfig,
+                  selection,
+                  tenantId: runtimeTenantId,
+                  credentialLeaseHandle,
+                }),
               }),
             }),
           }),
@@ -1003,25 +1031,31 @@ export default {
               ),
               resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
               now: tenantConsumerOptions.now,
-              run: async (credentialLeaseHandle) => {
-              for (const file of event.files ?? []) {
-                if (!/\.txt$/i.test(file.name)) continue;
-                const runId = `${event.eventId}_${file.id}`;
-                const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-                  runtimeTenantId, event.workspaceId, runId,
-                ));
-                const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-                await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-                  const meetingClients = meetingMinutesClients(env, credentialLeaseHandle);
-                  await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
-                    download: (fileId) => meetingClients.slack.downloadTextFile(fileId),
-                    classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations),
-                    requestDestination: (run, destinations) => meetingClients.slack.requestDestination(run, destinations),
-                  });
-                });
-              }
-              return { outcome: "awaiting_destination" };
-              },
+              run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                tenant_context: tenantContext,
+                expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+                verifier,
+                now: tenantConsumerOptions.now(),
+                execute: async () => {
+                  for (const file of event.files ?? []) {
+                    if (!/\.txt$/i.test(file.name)) continue;
+                    const runId = `${event.eventId}_${file.id}`;
+                    const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+                      runtimeTenantId, event.workspaceId, runId,
+                    ));
+                    const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+                    await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+                      const meetingClients = meetingMinutesClients(env, credentialLeaseHandle);
+                      await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
+                        download: (fileId) => meetingClients.slack.downloadTextFile(fileId),
+                        classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations),
+                        requestDestination: (run, destinations) => meetingClients.slack.requestDestination(run, destinations),
+                      });
+                    });
+                  }
+                  return { outcome: "awaiting_destination" };
+                },
+              }),
             }),
           }),
         });
@@ -1197,17 +1231,23 @@ export default {
                     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
                     now: tenantConsumerOptions.now,
                     release: "on_consumption",
-                    run: (credentialLeaseHandle) => runCloudflareDevelopmentRequest({
-                      request,
-                      placementId: placement.placementId,
-                      requesterId: event.userId!,
-                      eventId: event.eventId,
-                      workspaceId: event.workspaceId,
-                      channelId: event.channelId,
-                      threadTs: event.threadTs,
-                      credentialLeaseHandle,
-                      callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
-                      createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
+                    run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                      tenant_context: tenantBody.tenant_context,
+                      expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+                      verifier,
+                      now: tenantConsumerOptions.now(),
+                      execute: () => runCloudflareDevelopmentRequest({
+                        request,
+                        placementId: placement.placementId,
+                        requesterId: event.userId!,
+                        eventId: event.eventId,
+                        workspaceId: event.workspaceId,
+                        channelId: event.channelId,
+                        threadTs: event.threadTs,
+                        credentialLeaseHandle,
+                        callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
+                        createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
+                      }),
                     }),
                   }),
                   });
@@ -1245,23 +1285,28 @@ export default {
                 ),
                 resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
                 now: tenantConsumerOptions.now,
-                run: async (credentialLeaseHandle) => routeRuntimeEvent(event, {
-                meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
-                processMeetingTask: () => {
-                  const binding = placement;
-                  return processMeetingTaskEvent(workspace.fs, event, {
-                    binding,
-                    brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
-                    brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
-                    slackBotToken: env.SLACK_BOT_TOKEN,
-                    oauthConfigured: true,
-                    credentialLeaseHandle,
-                    claudeRuntime,
-                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-                    hydrateThreadContext,
-                  });
-                },
-                processReply: async () => runWithReplyTaskSearchBinding(event, {
+                run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                  tenant_context: tenantBody.tenant_context,
+                  expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+                  verifier,
+                  now: tenantConsumerOptions.now(),
+                  execute: () => routeRuntimeEvent(event, {
+                    meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
+                    processMeetingTask: () => {
+                      const binding = placement;
+                      return processMeetingTaskEvent(workspace.fs, event, {
+                        binding,
+                        brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+                        brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN,
+                        slackBotToken: env.SLACK_BOT_TOKEN,
+                        oauthConfigured: true,
+                        credentialLeaseHandle,
+                        claudeRuntime,
+                        createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                        hydrateThreadContext,
+                      });
+                    },
+                    processReply: async () => runWithReplyTaskSearchBinding(event, {
                     tenantId: runtimeTenantId,
                     workspaceId: runtimeWorkspaceId,
                     channelId: placement.channelId,
@@ -1304,10 +1349,7 @@ export default {
                     if (graphContext.status === "unavailable") {
                       throw new ReplyPipelineError("graph_context_unavailable");
                     }
-                    const claudeSessionId = await deterministicRuntimeUuid(
-                      `${workspaceName(event)}:generation:${workspaceSession.generation}`,
-                    );
-                    const replyResult = await processReplyEvent(workspace.fs, event, {
+                    return processReplyEvent(workspace.fs, event, {
                     expectedTenantId: runtimeTenantId,
                     expectedWorkspaceId: runtimeWorkspaceId,
                     allowedChannelId: placement.channelId,
@@ -1352,19 +1394,11 @@ export default {
                       });
                       return decision;
                     },
-                    claudeSession: {
-                      id: claudeSessionId,
-                      sandboxId: `techknight-session-${claudeSessionId}`,
-                      resume: workspaceSession.claudeSessionStartedGeneration === workspaceSession.generation,
-                    },
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
                     postReply: postTenantReply,
                     });
-                    if (replyResult.outcome === "replied") {
-                      await markClaudeSessionStarted(workspace.fs, workspaceSession.generation, new Date().toISOString());
-                    }
-                    return replyResult;
+                    }),
                   }),
                 }),
                 });
