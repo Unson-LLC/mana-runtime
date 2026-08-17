@@ -48,7 +48,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "INV-001",
@@ -113,7 +113,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "C-002",
@@ -165,7 +165,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "C-003",
@@ -209,7 +209,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "INV-002",
@@ -285,7 +285,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "C-004",
@@ -458,7 +458,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T08:00:00.000Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "C-005",
@@ -623,7 +623,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T11:42:01.148Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "C-006",
@@ -722,7 +722,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T13:00:00.000Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "C-007",
@@ -812,12 +812,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-17T08:00:00.000Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     },
     {
       "id": "C-008",
       "type": "contract",
-      "statement": "本番配備後、実Slack E2Eの前に、認証済み管理APIから本番と同じClaudeコマンド・設定・JSON Schema・Judgment Hook・Receipt注入を使う議事録生成プローブを実行する。成功時は生成内容を返さず、失敗時は許可済み診断コードだけを返し、成功するまで利用者投稿を再実行しない",
+      "statement": "本番配備後、実Slack E2Eの前に、認証済み管理APIから本番と同じClaudeコマンド・設定・JSON Schema・Judgment Hook・Receipt注入を使う議事録生成プローブを実行する。UserPromptSubmitとStopの成功Receiptを同一session・turn・event順序へ束縛できない場合は失敗とする。成功時は生成内容を返さず、失敗時は許可済み診断コードだけを返し、成功するまで利用者投稿を再実行しない",
       "origin": {
         "story_refs": [
           {
@@ -846,11 +846,27 @@
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "case": "rejects a model result when the production Judgment hooks are absent"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
             "case": "returns a bounded diagnostic code without leaking model output"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
             "case": "classifies malformed streams, missing results, Claude errors, and schema failures"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "fails closed when the Judgment lifecycle is missing or failed"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "binds Judgment receipts to one session and turn before the final result"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "requires the routed host receipt and preserves event order"
           }
         ]
       },
@@ -862,17 +878,33 @@
           },
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "must_cover": "production Judgment hooks are absent"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
             "must_cover": "bounded diagnostic code"
           },
           {
             "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
             "must_cover": "malformed streams, missing results, Claude errors, and schema failures"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "Judgment lifecycle is missing or failed"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "one session and turn before the final result"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "routed host receipt and preserves event order"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-17T04:53:06.745Z",
-      "last_revised_at": "2026-08-17T04:53:06.745Z"
+      "last_revised_at": "2026-08-17T05:15:09.078Z"
     }
   ],
   "planned_test_suites": [
@@ -895,6 +927,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-17T04:53:06.742Z",
-  "previous_spec_id": "2026-08-16T12:08:34.577Z"
+  "generated_at": "2026-08-17T05:15:09.077Z",
+  "previous_spec_id": "2026-08-17T05:13:09.161Z"
 }

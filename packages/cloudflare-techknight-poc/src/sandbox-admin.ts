@@ -8,6 +8,8 @@ export interface SandboxAdminEnv extends ClaudeRuntimeBindings {
   SANDBOX_PROBE_TOKEN?: string;
   ANTHROPIC_API_KEY?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
+  TENANT_ID?: string;
+  MEETING_MINUTES_CONTEXT_MODE?: string;
 }
 
 interface ExecResult {
@@ -52,6 +54,14 @@ function boundedVersion(output: string): string {
   return output.trim().replace(/[\r\n]+/g, " ").slice(0, 120);
 }
 
+function tenantId(env: SandboxAdminEnv): string {
+  return env.TENANT_ID?.trim() || "techknight";
+}
+
+function meetingMinutesContextMode(env: SandboxAdminEnv): "observe" | "required" {
+  return env.MEETING_MINUTES_CONTEXT_MODE === "required" ? "required" : "observe";
+}
+
 export async function handleSandboxAdminRequest(
   request: Request,
   env: SandboxAdminEnv,
@@ -74,7 +84,7 @@ export async function handleSandboxAdminRequest(
       const result = await sandbox.exec("claude --version", { timeout: 60_000 });
       return Response.json({
         ok: result.success,
-        tenant: "techknight",
+        tenant: tenantId(env),
         runtime: "claude-code",
         version: result.success ? boundedVersion(result.stdout) : undefined,
         oauthConfigured: hasAnthropicCredential(env),
@@ -100,7 +110,7 @@ export async function handleSandboxAdminRequest(
       return Response.json(
         {
           ok,
-          tenant: "techknight",
+          tenant: tenantId(env),
           auth: "anthropic-oauth",
           credentialLocation: "worker-secret",
           freshContainer: true,
@@ -145,15 +155,15 @@ export async function handleSandboxAdminRequest(
             github: { owner: "Unson-LLC", repo: "mana-runtime" },
           },
           receipt,
-          "observe",
+          meetingMinutesContextMode(env),
           resolveClaudeRuntimeConfig(env),
           sandbox,
         );
-        return Response.json({ ok: true, tenant: "techknight", probe: "meeting-minutes-generation" });
+        return Response.json({ ok: true, tenant: tenantId(env), probe: "meeting-minutes-generation" });
       } catch (error) {
         return Response.json({
           ok: false,
-          tenant: "techknight",
+          tenant: tenantId(env),
           probe: "meeting-minutes-generation",
           code: meetingMinutesGenerationDiagnosticCode(error),
         }, { status: 502 });

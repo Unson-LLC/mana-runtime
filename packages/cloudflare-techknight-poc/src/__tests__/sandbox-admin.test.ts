@@ -22,6 +22,16 @@ function sandbox(result = { success: true, stdout: "2.1.0\n", stderr: "" }) {
   };
 }
 
+function judgmentHook(event: "UserPromptSubmit" | "Stop") {
+  const receipt = {
+    schema_version: "mana_judgment_hook_receipt.v1", hook_event_name: event,
+    session_id: "probe-session", turn_id: "probe-turn", host_receipt_id: `host-${event}`,
+    ...(event === "UserPromptSubmit" ? { route_resolution_sha256: "c".repeat(64) } : {}),
+  };
+  return { type: "system", subtype: "hook_response", hook_event: event, exit_code: 0, outcome: "success",
+    stdout: JSON.stringify({ systemMessage: `__MANA_JUDGMENT_RECEIPT_V1__:${JSON.stringify(receipt)}` }) };
+}
+
 describe("handleSandboxAdminRequest", () => {
   it("rejects requests before starting a sandbox when the probe token is wrong", async () => {
     const createSandbox = vi.fn();
@@ -99,6 +109,8 @@ describe("handleSandboxAdminRequest", () => {
       success: true,
       stdout: [
         JSON.stringify({ type: "system", subtype: "init", session_id: "probe-session" }),
+        JSON.stringify(judgmentHook("UserPromptSubmit")),
+        JSON.stringify(judgmentHook("Stop")),
         JSON.stringify({ type: "result", session_id: "probe-session", structured_output: {
           title: "議事録生成プローブ", overview: "生成経路を確認した。", body: "------------\n生成経路\n本番と同じ設定を確認した。", tasks: [], used_source_refs: [], decision_candidates: [],
         } }),
@@ -107,19 +119,41 @@ describe("handleSandboxAdminRequest", () => {
     });
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/meeting-minutes-probe"),
-      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
+      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh",
+        TENANT_ID: "unson-business", MEETING_MINUTES_CONTEXT_MODE: "required" }),
       { createSandbox: () => client },
     );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      ok: true, tenant: "techknight", probe: "meeting-minutes-generation",
+      ok: true, tenant: "unson-business", probe: "meeting-minutes-generation",
     });
     expect(client.exec).toHaveBeenCalledWith(
       expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.objectContaining({ timeout: 600_000 }),
     );
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("議事録生成プローブ"));
+    expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("文脈モードはrequiredです"));
+  });
+
+  it("rejects a model result when the production Judgment hooks are absent", async () => {
+    const client = sandbox({ success: true, stdout: [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "probe-session" }),
+      JSON.stringify({ type: "result", session_id: "probe-session", structured_output: {
+        title: "議事録生成プローブ", overview: "生成経路を確認した。", body: "生成経路を確認した。",
+        tasks: [], used_source_refs: [], decision_candidates: [],
+      } }),
+    ].join("\n"), stderr: "" });
+    const response = await handleSandboxAdminRequest(
+      request("/admin/sandbox/meeting-minutes-probe"),
+      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
+      { createSandbox: () => client },
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      ok: false, code: "meeting_minutes_judgment_lifecycle_incomplete",
+    }));
   });
 
   it("returns a bounded diagnostic code without leaking model output", async () => {
