@@ -130,6 +130,22 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(calls[1])).toContain("組織を選択");
   });
 
+  it("treats an already missing shared post as idempotently withdrawn", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ ok: false, error: "message_not_found" })) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+
+    await expect(client.retractSharedMinutes("C2", "10.1", "meeting.txt")).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("does not hide other shared post retraction failures", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ ok: false, error: "not_in_channel" })) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+
+    await expect(client.retractSharedMinutes("C2", "10.1", "meeting.txt"))
+      .rejects.toThrow("slack_api_failed:chat.update:not_in_channel");
+  });
+
   it("replaces a failed result with a retry button for the selected destination", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
