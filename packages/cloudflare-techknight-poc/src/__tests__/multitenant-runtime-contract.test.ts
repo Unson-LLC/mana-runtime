@@ -590,6 +590,7 @@ describe("story-mana-multitenant-runtime contract", () => {
       persistedResponseTs = "4.0";
       return { outcome: "replied", responseTs: persistedResponseTs };
     });
+    const accountingTimes = [NOW, "2026-08-16T13:02:30.000Z"];
     const run = () => executeTenantRuntimeOperation({
       tenant_context: value,
       expected_scope: expectedScope,
@@ -598,7 +599,7 @@ describe("story-mana-multitenant-runtime contract", () => {
       accounting,
       ledger,
       quota_unit: "model_tokens",
-      now: () => NOW,
+      now: () => accountingTimes.shift() ?? "2026-08-16T13:02:30.000Z",
       process: () => persistedResponseTs
         ? Promise.resolve({ outcome: "already_completed", responseTs: persistedResponseTs })
         : postSlackOnce(),
