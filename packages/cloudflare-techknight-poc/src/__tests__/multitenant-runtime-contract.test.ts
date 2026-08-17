@@ -731,4 +731,107 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(validateNonApplicableCapabilities(nonApplicable.deployment.advertised_optional_capabilities,
       nonApplicable.expected.still_required)).toEqual(nonApplicable.expected.non_applicable_capabilities);
   });
+
+  it("production Slack ingress and queue fail closed without tenant fallback planned Red", () => {
+    const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const ingressStart = source.indexOf('url.pathname !== "/slack/events"');
+    const ingressEnd = source.indexOf("async queue(", ingressStart);
+    const ingress = source.slice(ingressStart, ingressEnd);
+    expect(ingress).toContain("handleTenantSlackRequest");
+    expect(ingress).not.toContain("handleSlackRequest(");
+    expect(ingress).not.toContain("TENANT_ID");
+    expect(source.slice(ingressEnd)).toContain("consumeTenantQueueMessage");
+    expect(source.slice(ingressEnd)).toContain("TENANT_RUNTIME_STATE");
+  });
+
+  it("mock server preserves timeout error and not_collected semantics planned Red", async () => {
+    const { createTenantRuntimeHttpClients } = await import("../multitenancy/http-clients.js");
+    const requests: Array<{ url: string; body: Record<string, unknown>; authorization: string | null }> = [];
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ url, body, authorization: new Headers(init?.headers).get("authorization") });
+      if (url.endsWith("/tenant-authority")) {
+        return Response.json({ result: snapshotA });
+      }
+      if (url.endsWith("/accounting")) {
+        return Response.json({ result_ref: "brainbase-write-a" });
+      }
+      return new Response("unavailable", { status: 503 });
+    });
+    const bindings = {
+      deployment_profile: "shared_cloud" as const,
+      tenant_authority_url: "https://mock.invalid/tenant-authority",
+      credential_broker_url: "https://mock.invalid/credential-broker",
+      quota_url: "https://mock.invalid/quota",
+      accounting_url: "https://mock.invalid/accounting",
+      api_token: "fixture-runtime-token",
+      timeout_ms: 25,
+    };
+    const clients = createTenantRuntimeHttpClients(bindings, { fetch: fetchMock });
+    await expect(clients.authority.resolve_workspace_connection({ provider: "slack", app_id: "A-MANA",
+      workspace_id: "T-A" })).resolves.toEqual(snapshotA);
+    const { value } = await envelope();
+    const usage = createUsageEvent({ usage_event_id: "usage_01ARZ3NDEKTSV4RRFFQ69G5FB8", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_id: OPERATION_A,
+      idempotency_key: value.idempotency_key, kind: "model_tokens", quantity: null, unit: "tokens",
+      collection_state: "not_collected", outcome: "failed", failure_code: "UPSTREAM_UNAVAILABLE", observed_at: NOW });
+    const receipt = createOperationReceipt({ receipt_id: "receipt_01ARZ3NDEKTSV4RRFFQ69G5FB9", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
+      deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_ids: [OPERATION_A],
+      idempotency_keys: [value.idempotency_key], actor_principal_id: "person-a", project_id: "project-a",
+      capability_id: "task.write", quota_decision: "unavailable", credential_mode: "customer_oauth",
+      collection_state: "not_collected", outcome: "failed", failure_code: "UPSTREAM_UNAVAILABLE",
+      usage_event_ids: [usage.usage_event_id], reply: { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 },
+      completed_at: NOW });
+    await expect(clients.accounting.write({ partition_key: "tp1/test", usage_events: [usage], receipt }))
+      .resolves.toEqual({ result_ref: "brainbase-write-a" });
+    expect(requests.at(-1)?.body).toMatchObject({ usage_events: [{ quantity: null,
+      collection_state: "not_collected", outcome: "failed" }], receipt: { collection_state: "not_collected",
+      outcome: "failed" } });
+    expect(requests.every((request) => request.authorization === "Bearer fixture-runtime-token")).toBe(true);
+    expect(requests.every((request) => !JSON.stringify(request.body).includes("fixture-runtime-token"))).toBe(true);
+
+    const timeoutClients = createTenantRuntimeHttpClients({ ...bindings, timeout_ms: 1 }, {
+      fetch: vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("timeout", "AbortError")), { once: true });
+      })),
+    });
+    await expect(timeoutClients.authority.resolve_workspace_connection({ provider: "slack", app_id: "A-MANA",
+      workspace_id: "T-A" })).rejects.toEqual(expect.objectContaining({ code: "WORKSPACE_CONNECTION_UNAVAILABLE" }));
+  });
+
+  it("two adapter instances share one Durable Object state and execute duplicate once planned Red", async () => {
+    const { createDurableTenantStateStore } = await import("../multitenancy/tenant-runtime-state.js");
+    const values = new Map<string, unknown>();
+    const storage = {
+      get: async <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
+      put: async (key: string, value: unknown) => { values.set(key, structuredClone(value)); },
+      delete: async (key: string) => values.delete(key),
+      transaction: async <T>(callback: (txn: typeof storage) => Promise<T>) => callback(storage),
+    };
+    const storeFromFirstIsolate = createDurableTenantStateStore(storage);
+    const storeAfterRestart = createDurableTenantStateStore(storage);
+    const claim = {
+      key: "ik1_persistent-fixture",
+      owner: "mana_runtime" as const,
+      scope: "queue_execution" as const,
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      slack_event_id: "Ev-A-001",
+      operation_id: OPERATION_A,
+      context_hash: `sha256:${"a".repeat(64)}`,
+      payload_hash: PAYLOAD_HASH,
+      connection_revision: "7",
+      updated_at: NOW,
+    };
+    const businessEffect = vi.fn(async () => undefined);
+    for (const store of [storeFromFirstIsolate, storeAfterRestart]) {
+      const result = await claimIdempotency(store, claim);
+      if (result.disposition === "claimed") await businessEffect();
+    }
+    expect(businessEffect).toHaveBeenCalledOnce();
+    expect(values.size).toBe(1);
+  });
 });

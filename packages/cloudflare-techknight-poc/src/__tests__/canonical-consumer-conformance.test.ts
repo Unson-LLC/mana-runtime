@@ -127,9 +127,9 @@ describe("mana-runtime canonical consumer", () => {
     const businessEffect = vi.fn();
 
     expect(manifest.positive).toHaveLength(1);
-    expect(manifest.negative).toHaveLength(16);
+    expect(manifest.negative).toHaveLength(21);
     expect(manifest.non_applicable).toHaveLength(1);
-    expect(await fixtureDigest(manifest)).toBe("81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454");
+    expect(await fixtureDigest(manifest)).toBe("9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833");
     expect(CANONICAL_FIXTURE_SET_SHA256).toBe(manifest.fixture_set_sha256);
 
     await validateCanonicalConsumerFlow(positive, { public_jwk: key.public_jwk });
