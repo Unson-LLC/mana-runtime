@@ -212,6 +212,7 @@ describe("runCloudflareDevelopmentRequest", () => {
     const release = vi.fn(async () => undefined);
     const armTerminalWatchdog = vi.fn(async () => undefined);
     const cancelTerminalWatchdog = vi.fn(async () => undefined);
+    const destroy = vi.fn(async () => undefined);
     const registerJobOwner = vi.fn(async () => ({
       created: true,
       release,
@@ -221,10 +222,34 @@ describe("runCloudflareDevelopmentRequest", () => {
     const createSandbox = vi.fn(() => ({
       writeFile: vi.fn(async () => undefined),
       startProcess: vi.fn(async () => { throw new Error("secret internal failure"); }),
+      destroy,
     }));
 
     await expect(runCloudflareDevelopmentRequest(input({ createSandbox, registerJobOwner })))
       .rejects.toThrow("development_runner_failed");
+
+    expect(release).toHaveBeenCalledOnce();
+    expect(cancelTerminalWatchdog).toHaveBeenCalledOnce();
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when a partially started Container cannot be sanitized", async () => {
+    const release = vi.fn(async () => undefined);
+    const cancelTerminalWatchdog = vi.fn(async () => undefined);
+    const registerJobOwner = vi.fn(async () => ({
+      created: true,
+      release,
+      armTerminalWatchdog: vi.fn(async () => undefined),
+      cancelTerminalWatchdog,
+    }));
+    const createSandbox = vi.fn(() => ({
+      writeFile: vi.fn(async () => undefined),
+      startProcess: vi.fn(async () => { throw new Error("secret startup failure"); }),
+      destroy: vi.fn(async () => { throw new Error("secret destroy failure"); }),
+    }));
+
+    await expect(runCloudflareDevelopmentRequest(input({ createSandbox, registerJobOwner })))
+      .rejects.toThrow(/^development_container_sanitization_unproven$/);
 
     expect(release).toHaveBeenCalledOnce();
     expect(cancelTerminalWatchdog).toHaveBeenCalledOnce();
