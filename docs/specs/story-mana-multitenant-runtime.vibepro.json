@@ -613,7 +613,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/trusted-provider-forwarder.integration.test.ts",
-            "case": "Brainbase trusted provider forwarder HTTP integration"
+            "case": "materializes provider credentials only inside the trusted service before a successful provider request"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/tenant-credential-fetch.integration.test.ts",

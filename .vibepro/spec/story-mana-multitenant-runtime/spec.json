@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-001",
@@ -135,12 +135,12 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-002",
       "type": "invariant",
-      "statement": "Slack token、Brainbase token、AI API key、OAuth access/refresh token、bearer valueの本文はBrainbase管理のtrusted materialization／forwarding境界の外へ出さず、WorkspaceConnectionSnapshot、TenantContextEnvelope、Queue message、Durable Object state、モデル、tool、Container input／disk／environment、通常log、fixture、UsageEvent、OperationReceiptにはopaque credential_refだけを許可する。lease_tokenとmana内部handleはprovider credentialではなく、Authorization、x-api-key、xc-token、GitHub Basicその他providerがcredentialとして解釈するfieldへの投入を禁止する。serialization guardはsecret、token、authorization、api_key、refresh_token、access_token、bearerの値を検出した時点でSECRET_ARTIFACT_FORBIDDENとして送信を拒否し、fixtureは形式だけが似た非秘密のダミー値を使う。",
+      "statement": "Slack token、Brainbase token、AI API key、OAuth access/refresh token、bearer valueの本文はBrainbase管理のtrusted forwarding境界の外へ出さず、WorkspaceConnectionSnapshot、TenantContextEnvelope、Queue message、Durable Object state、モデル、tool、Container input／disk／environment、通常log、fixture、UsageEvent、OperationReceiptにはopaque credential_refだけを許可する。lease_tokenとmana内部handleはprovider credentialではなく、Authorization、x-api-key、xc-token、GitHub Basicその他providerがcredentialとして解釈するfieldへの投入を禁止する。serialization guardはsecret、token、authorization、api_key、refresh_token、access_token、bearerの値を検出した時点でSECRET_ARTIFACT_FORBIDDENとして送信を拒否し、fixtureは形式だけが似た非秘密のダミー値を使う。",
       "origin": {
         "story_refs": [
           {
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-012",
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-003",
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-013",
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-004",
@@ -389,7 +389,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-005",
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-004",
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-006",
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-005",
@@ -577,7 +577,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-014",
@@ -613,7 +613,7 @@
         "test_refs": [
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/trusted-provider-forwarder.integration.test.ts",
-            "case": "Brainbase trusted provider forwarder HTTP integration"
+            "case": "materializes provider credentials only inside the trusted service before a successful provider request"
           },
           {
             "file": "packages/cloudflare-techknight-poc/src/__tests__/tenant-credential-fetch.integration.test.ts",
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-007",
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-007",
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-015",
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-016",
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-010",
@@ -889,7 +889,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-017",
@@ -963,7 +963,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-002",
@@ -1033,7 +1033,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "C-003",
@@ -1103,7 +1103,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     },
     {
       "id": "INV-008",
@@ -1165,7 +1165,7 @@
       },
       "confidence": 0.93,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T17:23:19.500Z"
+      "last_revised_at": "2026-08-17T18:14:52.168Z"
     }
   ],
   "multi_tenancy": {

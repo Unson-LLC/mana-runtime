@@ -130,13 +130,17 @@ Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を
    対象のWrangler設定を`--config`で明示した`wrangler secret put`で設定する。
    既存Socket Mode Appは流用しない。
 3. Queue、Durable Object、Workerが対象会社のaccountに作られることをdry-run出力で確認する。
-4. 対象会社のAnthropic OAuthだけを`CLAUDE_CODE_OAUTH_TOKEN` Secretとして設定する。
+4. Brainbase専用内部forward serviceを`BRAINBASE_TENANT_RUNTIME_SERVICE` Service Bindingで接続し、
+   `BRAINBASE_TENANT_RUNTIME_ENABLED=1`、host `127.0.0.1`、明示portを確認する。
+   Workerにはprovider credentialを置かず、サービス認証用の
+   `BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN`だけをSecretとして設定する。
 5. 対象のWrangler設定を明示したdeploy scriptを実行し、Slack URL verificationと
    重複eventの永続化を確認する。
 6. 推測されにくい値を`SANDBOX_PROBE_TOKEN` Secretとして設定する。
 7. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
-8. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
-   OAuthがWorker Secretから復帰することを確認する。
+8. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各provider requestが
+   Brainbase専用内部forward serviceで新しいsingle-use leaseを取得し、opaque handleや
+   provider credentialがWorker、Container environment、ログへ出ないことを確認する。
 9. 対象会社の八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
 10. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
     `techknight_slack_reply`の完了ログを確認する。
@@ -188,7 +192,7 @@ Socket Mode App `A0BLS5WEL2J`には変更を加えません。議事録タスク
 ```bash
 pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
 npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.unson-business.jsonc
-npx wrangler secret put CLAUDE_CODE_OAUTH_TOKEN --config wrangler.unson-business.jsonc
+npx wrangler secret put BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN --config wrangler.unson-business.jsonc
 npx wrangler secret put SANDBOX_PROBE_TOKEN --config wrangler.unson-business.jsonc
 npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.unson-business.jsonc
 npx wrangler secret put BRAINBASE_TASK_API_TOKEN --config wrangler.unson-business.jsonc
