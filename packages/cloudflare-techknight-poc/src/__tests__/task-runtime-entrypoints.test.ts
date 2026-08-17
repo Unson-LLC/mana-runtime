@@ -82,8 +82,23 @@ describe("Cloudflare task runtime entrypoints", () => {
     };
     await consumeTaskBoardRepair(failed, env, vi.fn().mockRejectedValue(new Error("boom")));
     expect(failed.retry).toHaveBeenCalledOnce();
-    await enqueueScheduledTaskBoardRepair(env, "2026-08-13T01:00:00.000Z");
-    expect(send).toHaveBeenCalledWith({ ...repair, requestedAt: "2026-08-13T01:00:00.000Z" });
+    const tenantContext = {
+      tenant: { tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+      slack: { event_id: "task-board-repair:legacy-default:2026-08-13T01:00:00.000Z",
+        channel_id: "C_BACK_OFFICE", thread_ts: "2026-08-13T01:00:00.000Z",
+        requester_id: "service_task_board" },
+    } as never;
+    const resolveTenantContext = vi.fn(async () => tenantContext);
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-13T01:00:00.000Z", resolveTenantContext);
+    expect(resolveTenantContext).toHaveBeenCalledWith(expect.objectContaining({
+      targetId: "legacy-default", channelId: "C_BACK_OFFICE",
+    }));
+    expect(send).toHaveBeenCalledWith({
+      schema_version: "1.0",
+      tenant_context: tenantContext,
+      payload: { ...repair, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        requestedAt: "2026-08-13T01:00:00.000Z" },
+    });
   });
 
   it("enqueues and refreshes each task-board-enabled placement with only its own projects", async () => {
