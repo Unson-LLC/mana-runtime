@@ -222,11 +222,16 @@ export interface TenantAccountingLedgerStore {
     receipt_id: string;
     payload_hash: string;
     artifact: AccountingArtifact;
+    operation_result?: unknown;
   }): Awaitable<AccountingLedgerResult>;
   read_pending(input: {
     tenant_context: TenantContextEnvelope;
     receipt_id: string;
   }): Awaitable<AccountingArtifact | undefined>;
+  read_pending_result(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): Awaitable<unknown | undefined>;
   complete(claim: AccountingLedgerClaim): Awaitable<void>;
   release(claim: AccountingLedgerClaim): Awaitable<void>;
 }
@@ -234,7 +239,7 @@ export interface TenantAccountingLedgerStore {
 /** Tenant-partitioned in-memory port. A Durable Object implementation can preserve these semantics. */
 export class TenantAccountingLedger implements TenantAccountingLedgerStore {
   readonly #entities = new Map<string, { batch_key: string; state: "claimed" | "written" }>();
-  readonly #outbox = new Map<string, { batch_key: string; artifact: AccountingArtifact }>();
+  readonly #outbox = new Map<string, { batch_key: string; artifact: AccountingArtifact; operation_result?: unknown }>();
   readonly #timestamps = new Map<string, string>();
 
   reserve_timestamp(input: {
@@ -263,6 +268,7 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
     receipt_id: string;
     payload_hash: string;
     artifact: AccountingArtifact;
+    operation_result?: unknown;
   }): AccountingLedgerResult {
     const resourceIds = [...input.usage_event_ids, input.receipt_id];
     const entityKeys = resourceIds.map((resourceId) => tenantPartitionKey({
@@ -290,7 +296,13 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
     }
     for (const key of entityKeys) this.#entities.set(key, { batch_key: batchKey, state: "claimed" });
     if (!outboxKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
-    this.#outbox.set(outboxKey, { batch_key: batchKey, artifact: structuredClone(input.artifact) });
+    this.#outbox.set(outboxKey, {
+      batch_key: batchKey,
+      artifact: structuredClone(input.artifact),
+      ...(input.operation_result === undefined
+        ? {}
+        : { operation_result: structuredClone(input.operation_result) }),
+    });
     return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
   }
 
@@ -309,6 +321,23 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
     });
     const pending = this.#outbox.get(key);
     return pending ? structuredClone(pending.artifact) : undefined;
+  }
+
+  read_pending_result(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): unknown | undefined {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    const pending = this.#outbox.get(key);
+    return pending?.operation_result === undefined ? undefined : structuredClone(pending.operation_result);
   }
 
   complete(claim: AccountingLedgerClaim): void {
@@ -382,6 +411,7 @@ export async function writeTenantAccounting(input: {
   ledger: TenantAccountingLedgerStore;
   usage_events: readonly UsageEvent[];
   receipt: OperationReceipt;
+  operation_result?: unknown;
   write(payload: {
     partition_key: string;
     usage_events: UsageEvent[];
@@ -409,12 +439,18 @@ export async function writeTenantAccounting(input: {
     usage_events: input.usage_events.map((event) => structuredClone(event)),
     receipt: structuredClone(input.receipt),
   });
+  const operationResult = input.operation_result === undefined
+    ? undefined
+    : assertSecretArtifactFree(structuredClone(input.operation_result));
   const claim = await input.ledger.claim({
     tenant_context: input.tenant_context,
     usage_event_ids: input.usage_events.map((event) => event.usage_event_id),
     receipt_id: input.receipt.receipt_id,
-    payload_hash: await accountingPayloadHash(artifact),
+    payload_hash: await accountingPayloadHash(operationResult === undefined
+      ? artifact
+      : { artifact, operation_result: operationResult }),
     artifact,
+    ...(operationResult === undefined ? {} : { operation_result: operationResult }),
   });
   if (claim.disposition === "duplicate") return claim;
   try {

@@ -130,6 +130,7 @@ class DurableTenantStateStore implements IdempotencyStore {
     receipt_id: string;
     payload_hash: string;
     artifact: AccountingArtifact;
+    operation_result?: unknown;
   }): Promise<AccountingLedgerResult> {
     const entityKeys = [...input.usage_event_ids, input.receipt_id].map((resourceId) => tenantPartitionKey({
       tenant_id: input.tenant_context.tenant.tenant_id,
@@ -154,6 +155,7 @@ class DurableTenantStateStore implements IdempotencyStore {
         const pending = outboxKey ? await transaction.get<{
           batch_key: string;
           artifact: AccountingArtifact;
+          operation_result?: unknown;
         }>(`accounting-outbox:${outboxKey}`) : undefined;
         if (!pending || pending.batch_key !== batchKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
         return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
@@ -166,6 +168,9 @@ class DurableTenantStateStore implements IdempotencyStore {
       await transaction.put(`accounting-outbox:${outboxKey}`, {
         batch_key: batchKey,
         artifact: clone(input.artifact),
+        ...(input.operation_result === undefined
+          ? {}
+          : { operation_result: clone(input.operation_result) }),
       });
       return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
     });
@@ -188,6 +193,25 @@ class DurableTenantStateStore implements IdempotencyStore {
       `accounting-outbox:${key}`,
     );
     return pending ? clone(pending.artifact) : undefined;
+  }
+
+  async readPendingAccountingResult(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): Promise<unknown | undefined> {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    const pending = await this.storage.get<{ batch_key: string; operation_result?: unknown }>(
+      `accounting-outbox:${key}`,
+    );
+    return pending?.operation_result === undefined ? undefined : clone(pending.operation_result);
   }
 
   async reserveAccountingTimestamp(input: {
@@ -253,6 +277,7 @@ export function createDurableTenantAccountingStore(storage: TenantStateStorage):
     reserve_timestamp: (input) => store.reserveAccountingTimestamp(input),
     claim: (input) => store.claimAccounting(input),
     read_pending: (input) => store.readPendingAccounting(input),
+    read_pending_result: (input) => store.readPendingAccountingResult(input),
     complete: (claim) => store.completeAccounting(claim),
     release: (claim) => store.releaseAccounting(claim),
   };
@@ -357,6 +382,15 @@ export function createDurableTenantAccountingClient(
       }
       return callState(stub, "accounting/read-pending", input);
     },
+    read_pending_result: (input) => {
+      if (input.tenant_context.tenant.tenant_id !== tenantId
+        || input.tenant_context.workspace_connection.connection_id
+          !== tenantContext.workspace_connection.connection_id
+        || input.tenant_context.correlation_id !== tenantContext.correlation_id) {
+        deny("durable_object", "CROSS_TENANT_CANDIDATE");
+      }
+      return callState(stub, "accounting/read-pending-result", input);
+    },
     complete: (claim) => callState(stub, "accounting/complete", claim),
     release: (claim) => callState(stub, "accounting/release", claim),
   };
@@ -402,6 +436,10 @@ export class TenantRuntimeStateHandler {
       } else if (url.pathname === "/accounting/read-pending") {
         result = await this.#accounting.read_pending(
           input as unknown as Parameters<TenantAccountingLedgerStore["read_pending"]>[0],
+        );
+      } else if (url.pathname === "/accounting/read-pending-result") {
+        result = await this.#accounting.read_pending_result(
+          input as unknown as Parameters<TenantAccountingLedgerStore["read_pending_result"]>[0],
         );
       } else if (url.pathname === "/accounting/complete") {
         await this.#accounting.complete(input as unknown as AccountingLedgerClaim);

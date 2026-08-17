@@ -429,7 +429,6 @@ function createTenantInteractionEffectResolver(env: Env) {
         quota_unit: "interaction_effect",
         now: () => new Date().toISOString(),
         process: perform,
-        replay_after_accounting: perform,
       });
       return result.value;
     };
@@ -488,7 +487,6 @@ function createTenantInteractionEffectResolver(env: Env) {
           quota_unit: "interaction_effect",
           now: () => new Date().toISOString(),
           process: perform,
-          replay_after_accounting: perform,
         });
       },
     };

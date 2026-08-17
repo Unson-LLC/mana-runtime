@@ -54,6 +54,7 @@ async function recordOperation(input: {
   outcome: "succeeded" | "failed";
   failure_code: string | null;
   response_ts?: string;
+  operation_result?: unknown;
   now: string;
 }): Promise<void> {
   const seed = `${input.tenant_context.correlation_id}:${input.tenant_context.operation_id}`;
@@ -116,6 +117,7 @@ async function recordOperation(input: {
     ledger: input.ledger,
     usage_events: [usageEvent],
     receipt,
+    ...(input.operation_result === undefined ? {} : { operation_result: input.operation_result }),
     write: (payload) => input.accounting.write(payload),
   });
 }
@@ -139,6 +141,10 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     receipt_id: receiptId,
   });
   if (pending) {
+    const pendingResult = await input.ledger.read_pending_result({
+      tenant_context: input.tenant_context,
+      receipt_id: receiptId,
+    });
     await writeTenantAccounting({
       tenant_context: input.tenant_context,
       expected_scope: input.expected_scope,
@@ -147,11 +153,13 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       ledger: input.ledger,
       usage_events: pending.usage_events,
       receipt: pending.receipt,
+      ...(pendingResult === undefined ? {} : { operation_result: pendingResult }),
       write: (payload) => input.accounting.write(payload),
     });
     if (pending.receipt.outcome !== "succeeded") {
       deny("brainbase_proxy", pending.receipt.failure_code ?? "UPSTREAM_UNAVAILABLE");
     }
+    if (pendingResult !== undefined) return structuredClone(pendingResult) as R;
     if (input.replay_after_accounting) return input.replay_after_accounting();
     const responseTs = pending.receipt.reply.slack_reply_ts;
     return {
@@ -213,6 +221,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     outcome: "succeeded",
     failure_code: null,
     ...(result.responseTs ? { response_ts: result.responseTs } : {}),
+    operation_result: result,
     now: input.now(),
   });
   return result;
