@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-const profiles = ["build", "build:unson-business"];
+const profiles = ["build:default", "build:unson-business"];
 
 for (const profile of profiles) {
   const result = spawnSync("pnpm", ["run", profile], {
