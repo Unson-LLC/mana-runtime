@@ -6,16 +6,17 @@ Claude Codeのcommand Hooksを薄い転送層としてContainerへ配置する�
 
 ## データフロー
 
-1. Workerが議事録promptとBrainbase-only MCP configをSandboxへ書く。
+1. WorkerがBrainbaseから正規の議事録文脈Receiptを取得・検証し、その内容とidentityを議事録promptへ固定してSandboxへ書く。モデル用Brainbase MCP configは書かない。
 2. Claude Codeは専用settingsを読み、`UserPromptSubmit`を転送する。
 3. Sandboxのsynthetic host proxyがBearerと`mana-runtime` bindingを付け、Brainbaseへ送る。
-4. Brainbaseが返した追加文脈に従い、Claudeが必要なら`brainbase_knowledge_resolve`を呼ぶ。
-5. `PostToolUse`を同じepisodeへ記録し、`Stop`で監査を検証する。不足時はblockしてClaudeを継続させる。
+4. Claudeはpromptへ注入された検証済みReceiptだけを文脈として使い、Brainbase MCPを直接呼ばない。
+5. `Stop`で監査を検証する。将来明示的に許可したBrainbase toolを呼ぶ場合は`PostToolUse`も同じepisodeへ記録する。不足時はblockしてClaudeを継続させる。
 6. completeな終了だけを既存JSON parserへ渡し、GitHub保存・タスク登録・Slack共有へ進む。
 
 ## 信頼境界
 
 - SandboxへBrainbase tokenを渡さない。
+- 議事録用ClaudeへBrainbase MCPを公開せず、文脈取得の認証・project binding・Receipt検証はWorkerで完結させる。
 - synthetic hostは`/mcp`と`/host/judgment/hook`以外を拒否する。
 - Sandbox由来のproject headerを削除し、Workerが`mana-runtime`へ固定する。
 - Hook stdinは1 MiBを上限とする。redirect、timeout、非2xx、不正JSON、turn identity欠落はfail closedにする。
@@ -27,7 +28,7 @@ Claude Codeのcommand Hooksを薄い転送層としてContainerへ配置する�
 1. Brainbase側の`POST /host/judgment/hook`を先にマージ・配備する。
 2. 認証ありの正常応答、認証なしの拒否、既存MCPの非回帰を本番で確認する。
 3. その確認後にmana側を配備する。順序を逆にするとHookが非2xxとなり、fail closedにより議事録生成は開始されない。
-4. mana側で実際の議事録1件を使い、判断開始、Brainbase参照、終了監査、GitHub保存までをE2E確認する。
+4. mana側で実際の議事録1件を使い、Worker Receipt取得、判断開始、モデル起点MCP呼び出し0件、終了監査、GitHub保存までをE2E確認する。
 
 どちらの配備もこのPRの自動処理には含めない。
 

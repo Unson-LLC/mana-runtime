@@ -1,7 +1,6 @@
 import {
   buildRuntimeClaudeCommand,
   runtimeTaskSearchMcpConfigPath,
-  runtimeMeetingMinutesMcpConfigPath,
   resolveClaudeRuntimeConfig,
   runtimeClaudePromptPath,
 } from "../claude-runtime-config.js";
@@ -72,11 +71,10 @@ describe("Cloudflare Claude runtime config", () => {
       .not.toContain("--mcp-config");
   });
 
-  it("story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 always enables Brainbase MCP and command Hooks for meeting-minutes", () => {
+  it("story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 story-meeting-minutes-brainbase-context:ac:8 enables command Hooks without exposing model-initiated Brainbase MCP for meeting-minutes", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
-    expect(runtimeMeetingMinutesMcpConfigPath()).toBe("/tmp/mana-meeting-minutes-mcp.json");
     expect(buildRuntimeClaudeCommand("meeting-minutes", config)).toBe(
-      "claude --print --model opus --effort xhigh --permission-mode bypassPermissions --settings /opt/mana/meeting-minutes-claude-settings.json --mcp-config /tmp/mana-meeting-minutes-mcp.json --strict-mcp-config < /tmp/meeting-minutes-prompt.txt",
+      "claude --print --model opus --effort xhigh --permission-mode bypassPermissions --settings /opt/mana/meeting-minutes-claude-settings.json < /tmp/meeting-minutes-prompt.txt",
     );
   });
 
@@ -103,6 +101,9 @@ describe("Cloudflare Claude runtime config", () => {
     });
     expect(command).toContain("--include-hook-events");
     expect(command).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
+    expect(command).not.toContain("--mcp-config");
+    expect(command).not.toContain("--strict-mcp-config");
+    expect(command).not.toContain("mana-meeting-minutes-mcp.json");
     const reply = buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true });
     expect(reply).toContain("--output-format stream-json --verbose --include-hook-events");
     expect(reply).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");

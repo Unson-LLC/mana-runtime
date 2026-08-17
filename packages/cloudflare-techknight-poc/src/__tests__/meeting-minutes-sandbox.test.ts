@@ -87,9 +87,9 @@ describe("generateMeetingMinutesInSandbox", () => {
       "/tmp/meeting-minutes-prompt.txt",
       expect.stringContaining("必須キーはtitle、overview、body、tasks"),
     );
-    expect(sandbox.writeFile).toHaveBeenCalledWith(
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(
       "/tmp/mana-meeting-minutes-mcp.json",
-      expect.stringContaining('"brainbase"'),
+      expect.anything(),
     );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({
@@ -98,6 +98,7 @@ describe("generateMeetingMinutesInSandbox", () => {
       }));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.any(Object));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--mcp-config"), expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
 
