@@ -87,6 +87,19 @@ describe("runCloudflareDevelopmentRequest", () => {
     expect(firstStart.mock.calls[0]![1]).toEqual(expect.objectContaining({ autoCleanup: true }));
   });
 
+  it("never reuses a Container even for the same tenant operation", async () => {
+    const firstCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined),
+      startProcess: vi.fn(async () => ({ id: "first" })) }));
+    const secondCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined),
+      startProcess: vi.fn(async () => ({ id: "second" })) }));
+
+    const firstJobId = await runCloudflareDevelopmentRequest(input({ createSandbox: firstCreate }));
+    const secondJobId = await runCloudflareDevelopmentRequest(input({ createSandbox: secondCreate }));
+
+    expect(firstJobId).toBe(secondJobId);
+    expect(firstCreate.mock.calls[0]![0]).not.toBe(secondCreate.mock.calls[0]![0]);
+  });
+
   it("fails closed before starting when callback configuration is missing", async () => {
     const createSandbox = vi.fn();
     await expect(runCloudflareDevelopmentRequest(input({ callbackBaseUrl: undefined, createSandbox })))

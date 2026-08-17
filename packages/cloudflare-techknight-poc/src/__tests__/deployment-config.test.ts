@@ -424,6 +424,11 @@ describe("会社別Cloudflare deployment", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain('url.pathname === "/slack/interactions"');
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
+    expect(worker).toContain("createTenantInteractionEffectResolver(env)");
+    expect(worker).toContain("createMeetingMinutesTenantEffectGuard({");
+    expect(worker).not.toContain("meetingMinutesClients(env)");
+    expect(worker).not.toContain("env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId");
+    expect(worker).toContain('release: "on_expiration"');
     expect(worker).toContain("isTenantMeetingMinutesSelectionBody(message.body)");
     expect(worker).toContain("isTenantMeetingMinutesRedoBody(message.body)");
     expect(worker).toContain("isTenantMeetingMinutesRecoveryBody(message.body)");
