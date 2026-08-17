@@ -386,6 +386,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(unson.vars.MEETING_MINUTES_CONTEXT_MODE).toBe("observe");
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD,U07B19N048G");
+    for (const name of ["MEETING_MINUTES_DESTINATIONS_JSON", "MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON"]) {
+      expect(new TextEncoder().encode(unson.vars[name]).byteLength, `${name} exceeds Cloudflare's 5 KiB text binding limit`)
+        .toBeLessThanOrEqual(5_120);
+    }
     const destinations = [
       ...JSON.parse(unson.vars.MEETING_MINUTES_DESTINATIONS_JSON),
       ...JSON.parse(unson.vars.MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON),
