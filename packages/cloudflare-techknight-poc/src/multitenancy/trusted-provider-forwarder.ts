@@ -29,6 +29,9 @@ export interface BrainbaseTrustedProviderForwarderEnv {
   BRAINBASE_TENANT_RUNTIME_PORT?: string;
   BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK?: string;
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN?: string;
+  BRAINBASE_TENANT_RUNTIME_SERVICE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_GRAPH_API_BASE_URL?: string;
@@ -107,7 +110,7 @@ function trustedServiceUrl(env: BrainbaseTrustedProviderForwarderEnv): URL {
   const portText = requiredText(env.BRAINBASE_TENANT_RUNTIME_PORT);
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65_535
-    || host === "0.0.0.0" || host === "::" || host === "[::]") {
+    || host === "0.0.0.0" || host === "::" || host === "[::]" || host === "*") {
     throw new Error("runtime_configuration_invalid");
   }
   const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
@@ -115,7 +118,8 @@ function trustedServiceUrl(env: BrainbaseTrustedProviderForwarderEnv): URL {
     throw new Error("runtime_configuration_invalid");
   }
   const hostname = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-  return new URL(`http://${hostname}:${port}/api/v1/runtime/provider-requests:forward`);
+  const protocol = loopback ? "http" : "https";
+  return new URL(`${protocol}://${hostname}:${port}/api/v1/runtime/provider-requests:forward`);
 }
 
 function configuredBase(value: string | undefined): URL | undefined {
@@ -396,13 +400,17 @@ export function createBrainbaseTrustedProviderForwarderFromEnv(
   const serviceToken = requiredText(options.env.BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN);
   const timeoutMs = Number(options.env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000");
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new Error("runtime_configuration_invalid");
-  const fetchImpl = options.fetch_impl ?? fetch;
+  const serviceFetch = options.fetch_impl
+    ?? (options.env.BRAINBASE_TENANT_RUNTIME_SERVICE
+      ? options.env.BRAINBASE_TENANT_RUNTIME_SERVICE.fetch.bind(options.env.BRAINBASE_TENANT_RUNTIME_SERVICE)
+      : undefined);
+  if (!serviceFetch) throw new Error("runtime_configuration_invalid");
   return Object.freeze({
     async forward(input: TrustedProviderForwardInput): Promise<Response> {
       const mapped = await mapProviderRequest(sanitizeTrustedProviderRequest(input.request), options.env);
       let response: Response;
       try {
-        response = await fetchImpl(endpoint, {
+        response = await serviceFetch(endpoint, {
           method: "POST",
           headers: {
             authorization: `Bearer ${serviceToken}`,

@@ -16,15 +16,14 @@ export interface RuntimeDoctorEnv {
 async function checkMcp(
   name: string,
   baseUrl: string | undefined,
-  token: string | undefined,
-  fetchImpl: typeof fetch,
+  fetchImpl: typeof fetch | undefined,
 ): Promise<Check> {
-  if (!baseUrl || !token) return { name, status: "failed", detail: "未設定" };
+  if (!baseUrl) return { name, status: "failed", detail: "未設定" };
+  if (!fetchImpl) return { name, status: "failed", detail: "tenant境界なし" };
   try {
     const response = await fetchImpl(`${baseUrl.replace(/\/$/, "")}/mcp`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${token}`,
         accept: "application/json, text/event-stream",
         "content-type": "application/json",
       },
@@ -44,7 +43,7 @@ async function checkMcp(
 export async function runRuntimeDoctor(
   env: RuntimeDoctorEnv,
   enabledMcp: readonly string[],
-  fetchImpl: typeof fetch = fetch,
+  tenantCredentialFetch?: typeof fetch,
 ): Promise<string> {
   const checks: Check[] = [
     { name: "Slack", status: env.SLACK_BOT_TOKEN ? "ok" : "failed", ...(!env.SLACK_BOT_TOKEN ? { detail: "未設定" } : {}) },
@@ -52,8 +51,8 @@ export async function runRuntimeDoctor(
       ...(!(env.BRAINBASE_TASK_API_BASE_URL && env.BRAINBASE_TASK_API_TOKEN) ? { detail: "未設定" } : {}) },
     { name: "Graph", status: env.BRAINBASE_GRAPH_API_TOKEN ? "ok" : "failed", ...(!env.BRAINBASE_GRAPH_API_TOKEN ? { detail: "未設定" } : {}) },
   ];
-  if (enabledMcp.includes("brainbase")) checks.push(await checkMcp("Brainbase MCP", env.BRAINBASE_MCP_BASE_URL, env.BRAINBASE_MCP_TOKEN, fetchImpl));
-  if (enabledMcp.includes("google-drive")) checks.push(await checkMcp("Google Drive MCP", env.GOOGLE_DRIVE_MCP_BASE_URL, env.GOOGLE_DRIVE_MCP_TOKEN, fetchImpl));
+  if (enabledMcp.includes("brainbase")) checks.push(await checkMcp("Brainbase MCP", env.BRAINBASE_MCP_BASE_URL, tenantCredentialFetch));
+  if (enabledMcp.includes("google-drive")) checks.push(await checkMcp("Google Drive MCP", env.GOOGLE_DRIVE_MCP_BASE_URL, tenantCredentialFetch));
   if (enabledMcp.includes("nocodb")) checks.push({ name: "NocoDB", status: env.NOCODB_URL && env.NOCODB_TOKEN ? "ok" : "failed",
     ...(!(env.NOCODB_URL && env.NOCODB_TOKEN) ? { detail: "未設定" } : {}) });
   const ok = checks.every((check) => check.status === "ok");

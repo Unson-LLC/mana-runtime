@@ -219,6 +219,9 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_TENANT_RUNTIME_PORT?: string;
   BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK?: string;
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN?: string;
+  BRAINBASE_TENANT_RUNTIME_SERVICE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   SLACK_INSTALLATION_LIFECYCLE_TOKEN?: string;
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
@@ -2200,7 +2203,7 @@ export default {
                   allowedModels: ["sonnet", "opus"],
                   taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED === "true",
                   taskWriteEnabled: placement.taskWriteEnabled,
-                  doctor: () => runRuntimeDoctor(env, placement.capabilities?.mcp ?? []),
+                  doctor: () => runRuntimeDoctor(env, placement.capabilities?.mcp ?? [], tenantCredentialFetch),
                   cron: (action, target) => executeRuntimeCron({
                     fs: workspace.fs,
                     jobs: parsePlacementCronJobs(env.RUNTIME_CRON_JOBS_JSON, placement.channelId),

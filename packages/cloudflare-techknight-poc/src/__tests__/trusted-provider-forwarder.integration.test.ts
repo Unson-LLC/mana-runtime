@@ -306,11 +306,11 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
   });
 
   it("uses the Brainbase Service Binding instead of the Worker global network", async () => {
-    const observed: Request[] = [];
+    const observed: Array<{ url: string; headers: Headers }> = [];
     const service = {
       fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init);
-        observed.push(request.clone());
+        observed.push({ url: request.url, headers: new Headers(request.headers) });
         const body = await request.json() as { provider_operation: string };
         return Response.json({
           provider: "anthropic",

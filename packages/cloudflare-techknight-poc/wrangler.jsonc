@@ -65,6 +65,12 @@
       "new_sqlite_classes": ["TenantRuntimeState"]
     }
   ],
+  "services": [
+    {
+      "binding": "BRAINBASE_TENANT_RUNTIME_SERVICE",
+      "service": "brainbase-tenant-runtime"
+    }
+  ],
   "containers": [
     {
       "class_name": "TechKnightSandbox",

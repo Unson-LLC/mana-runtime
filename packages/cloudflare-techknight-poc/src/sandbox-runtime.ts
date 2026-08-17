@@ -60,6 +60,9 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
   BRAINBASE_TENANT_RUNTIME_PORT?: string;
   BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK?: string;
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN?: string;
+  BRAINBASE_TENANT_RUNTIME_SERVICE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   TENANT_RUNTIME_STATE: TenantBoundaryContextNamespace;
 }
 

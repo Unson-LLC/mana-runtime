@@ -108,6 +108,10 @@ export function assessTenantRuntimeReadiness(
   if (!Number.isInteger(trustedForwardPort) || trustedForwardPort < 1 || trustedForwardPort > 65_535) {
     if (!missing.includes("BRAINBASE_TENANT_RUNTIME_PORT")) missing.push("BRAINBASE_TENANT_RUNTIME_PORT");
   }
+  const trustedService = env.BRAINBASE_TENANT_RUNTIME_SERVICE as { fetch?: unknown } | undefined;
+  if (!trustedService || typeof trustedService.fetch !== "function") {
+    missing.push("BRAINBASE_TENANT_RUNTIME_SERVICE");
+  }
   const scopes = typeof env.MANA_REQUIRED_SLACK_SCOPES === "string"
     ? env.MANA_REQUIRED_SLACK_SCOPES.split(",").map((value) => value.trim()).filter(Boolean)
     : [];

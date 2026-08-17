@@ -81,8 +81,8 @@ describe("tenant runtime readiness", () => {
       missing_bindings: [
         "BRAINBASE_TENANT_RUNTIME_ENABLED",
         "BRAINBASE_TENANT_RUNTIME_PORT",
-        "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
         "BRAINBASE_TENANT_RUNTIME_SERVICE",
+        "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
       ],
     });
     expect(assessTenantRuntimeReadiness({
