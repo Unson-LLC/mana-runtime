@@ -8,6 +8,7 @@ const hookUrl = process.env.BRAINBASE_JUDGMENT_HOOK_URL
   || "https://brainbase-mcp.internal/host/judgment/hook";
 const turnDir = process.env.BRAINBASE_JUDGMENT_TURN_DIR || "/tmp/mana-judgment-turns";
 const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
+const MAX_JUDGMENT_REQUEST_CHARS = 4_000;
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
 async function readStdin() {
@@ -97,6 +98,13 @@ async function resolveTurnId(payload) {
 
 try {
   const payload = await readStdin();
+  const trustedRequest = process.env.MANA_JUDGMENT_REQUEST;
+  if (payload.hook_event_name === "UserPromptSubmit" && trustedRequest !== undefined) {
+    if (!trustedRequest.trim() || trustedRequest.length > MAX_JUDGMENT_REQUEST_CHARS) {
+      throw new Error("judgment_request_invalid");
+    }
+    payload.prompt = trustedRequest;
+  }
   payload.turn_id = await resolveTurnId(payload);
   const response = await fetch(hookUrl, {
     method: "POST",

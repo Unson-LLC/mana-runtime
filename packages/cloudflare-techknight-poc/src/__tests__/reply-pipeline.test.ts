@@ -395,6 +395,7 @@ describe("TechKnight Slack reply pipeline", () => {
           MANA_TRACE_ID: "EvReply123",
           MANA_TRACE_PLACEMENT_ID: undefined,
           MANA_TRACE_PROJECT_CODES: undefined,
+          MANA_JUDGMENT_REQUEST: "メンションしてみる",
         },
       },
     );
