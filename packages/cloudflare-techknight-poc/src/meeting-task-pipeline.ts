@@ -1,4 +1,5 @@
 import {
+  deterministicRuntimeUuid,
   postSlackReply,
   ReplyPipelineError,
   updateSlackReply,
@@ -165,7 +166,9 @@ async function extractCandidates(
     "oauthConfigured" | "credentialLeaseHandle" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox">,
 ): Promise<TaskCandidate[]> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
-  const sandbox = options.createSandbox(`meeting-tasks-${event.eventId}`);
+  const sandbox = options.createSandbox(
+    `meeting-tasks-${await deterministicRuntimeUuid(`${options.tenantBoundaryHandle}:${event.eventId}`)}`,
+  );
   try {
     const promptPath = runtimeClaudePromptPath("meeting-task");
     await sandbox.writeFile(promptPath, buildExtractionPrompt(event));

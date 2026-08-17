@@ -5,6 +5,7 @@ import type {
 } from "./contracts.js";
 import {
   credentialLeaseMarker,
+  type CredentialInjectionHeader,
   type TenantCredentialRegistry,
   withTenantCredentialLease,
 } from "./credential-injector.js";
@@ -24,6 +25,7 @@ export interface TenantCredentialFetchOptions {
   read_authoritative_snapshot(): Promise<WorkspaceConnectionSnapshot>;
   resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
   now(): string;
+  credential_header?: CredentialInjectionHeader;
 }
 
 function credentialTarget(request: Request): URL {
@@ -59,9 +61,15 @@ export function createTenantCredentialFetch(options: TenantCredentialFetchOption
         const headers = new Headers(request.headers);
         headers.delete("authorization");
         headers.delete("x-api-key");
+        headers.delete("xc-token");
         headers.set("authorization", `Bearer ${credentialLeaseMarker(handle)}`);
         const outbound = new Request(request, { headers, redirect: "manual" });
-        return forwardTenantCredentialRequest(options.credential_relay, outbound, options.now());
+        return forwardTenantCredentialRequest(
+          options.credential_relay,
+          outbound,
+          options.now(),
+          options.credential_header,
+        );
       },
     });
   };

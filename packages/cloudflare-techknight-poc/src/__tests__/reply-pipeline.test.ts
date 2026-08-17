@@ -1,4 +1,5 @@
 import {
+  generateClaudeReply,
   isReplyEligible,
   processReplyEvent,
   ReplyPipelineError,
@@ -134,6 +135,22 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(createSandbox).toHaveBeenCalledWith("techknight-session-stable");
     expect(sandbox.exec.mock.calls[0][0]).toContain("--resume 12345678-1234-4123-8123-123456789abc");
     expect(sandbox.destroy).not.toHaveBeenCalled();
+  });
+
+  it("partitions ephemeral reply containers by the verified tenant boundary", async () => {
+    const tenantA = harness({ tenantBoundaryHandle: "tb_tenant_a" });
+    const tenantB = harness({ tenantBoundaryHandle: "tb_tenant_b" });
+
+    await generateClaudeReply(event(), tenantA.options);
+    await generateClaudeReply(event(), tenantB.options);
+
+    const tenantAId = vi.mocked(tenantA.options.createSandbox).mock.calls[0][0];
+    const tenantBId = vi.mocked(tenantB.options.createSandbox).mock.calls[0][0];
+    expect(tenantAId).toMatch(/^techknight-reply-[0-9a-f-]{36}$/);
+    expect(tenantBId).toMatch(/^techknight-reply-[0-9a-f-]{36}$/);
+    expect(tenantAId).not.toBe(tenantBId);
+    expect(tenantAId.length).toBeLessThanOrEqual(63);
+    expect(tenantBId.length).toBeLessThanOrEqual(63);
   });
 
   it("recreates the same Claude session when its persisted transcript is missing", async () => {

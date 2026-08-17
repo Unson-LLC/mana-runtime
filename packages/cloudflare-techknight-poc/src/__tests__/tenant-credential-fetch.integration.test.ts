@@ -51,6 +51,7 @@ class CredentialNamespace {
   readonly providerFetch = vi.fn(async (request: Request) => Response.json({
     authorization: request.headers.get("authorization"),
     apiKey: request.headers.get("x-api-key"),
+    xcToken: request.headers.get("xc-token"),
     url: request.url,
   }));
 
@@ -191,5 +192,48 @@ describe("tenant credential fetch integration", () => {
       code: "CREDENTIAL_LEASE_BINDING_MISMATCH",
     });
     expect(broker.acquire_lease).not.toHaveBeenCalled();
+  });
+
+  it("routes an opaque lease into the provider-specific NocoDB header without forwarding placeholders", async () => {
+    const { envelope, publicKey } = await signedEnvelope();
+    const namespace = new CredentialNamespace();
+    const broker: CredentialBrokerClient = {
+      acquire_lease: vi.fn(async (request: CredentialLeaseRequest): Promise<CredentialLease> => ({
+        message_type: "credential_lease_response",
+        protocol_version: "1.0",
+        lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        contract_revision: request.binding.contract_revision,
+        binding: request.binding,
+        issued_at: "2026-08-17T00:59:50.000Z",
+        expires_at: "2026-08-17T01:00:50.000Z",
+        max_uses: 1,
+        lease_token: "test-nocodb-token",
+      })),
+    };
+    const tenantFetch = createTenantCredentialFetch({
+      envelope,
+      expected_scope: EXPECTED_SCOPE,
+      broker,
+      credential_registry: createDurableTenantCredentialRegistry(namespace),
+      credential_relay: namespace,
+      read_authoritative_snapshot: async () => SNAPSHOT,
+      resolve_verification_key: async (keyId) => keyId === "test-key-1" ? publicKey : undefined,
+      now: () => NOW,
+      credential_header: "xc-token",
+    });
+
+    const response = await tenantFetch("https://nocodb.example.test/api/v1/db/data/noco/project/table", {
+      headers: {
+        authorization: "Bearer must-not-leak",
+        "x-api-key": "must-not-leak",
+        "xc-token": "tenant-credential-injected",
+      },
+    });
+
+    await expect(response.json()).resolves.toMatchObject({
+      authorization: null,
+      apiKey: null,
+      xcToken: "test-nocodb-token",
+    });
   });
 });

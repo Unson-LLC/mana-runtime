@@ -949,6 +949,18 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(repair).not.toContain("taskBoardSlackToken");
   });
 
+  it("routes Container provider proxies through verified per-request credential leases", () => {
+    const sandbox = readFileSync(new URL("../sandbox-runtime.ts", import.meta.url), "utf8");
+    expect(sandbox).toContain("resolveDurableTenantBoundaryContext(");
+    expect(sandbox).toContain('["mcp_gateway", "brainbase_proxy"]');
+    expect(sandbox).toContain("createTenantCredentialFetch({");
+    expect(sandbox).toContain("createTaskSearchProxyHandler(credentialFetch)");
+    expect(sandbox).toContain("createTaskWriteProxyHandler(credentialFetch)");
+    expect(sandbox).toContain("handleBrainbaseMcpProxyRequest(authorized, proxyEnv, credentialFetch)");
+    expect(sandbox).toContain("createRuntimeGatewayProxyHandler(credentialFetch)");
+    expect(sandbox).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
+  });
+
   it("keeps accounting results serializable and partitions ephemeral Containers by tenant boundary", () => {
     const worker = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
     const approvalStart = worker.indexOf("task-approval-execute:");

@@ -6,7 +6,7 @@ import {
   type TaskBoardRepairEvent,
 } from "./task-board.js";
 import type { SlackQueueEvent } from "./types.js";
-import { parseTaskBoardTargets, taskBoardSlackToken, type TaskBoardTarget } from "./task-board-targets.js";
+import { parseTaskBoardTargets, type TaskBoardTarget } from "./task-board-targets.js";
 import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
 import type { TenantQueueBody } from "./multitenancy/runtime-boundaries.js";
 
@@ -99,7 +99,8 @@ export async function processTaskBoardRepair(
   repair: TaskBoardRepairEvent,
   env: TaskBoardRuntimeEnv,
   expectedTenantId: string,
-  refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
+  credentialFetch: typeof fetch,
+  refresh: (bindings: TaskBoardEnv, options?: { fetch?: typeof fetch }) => Promise<unknown> = refreshTaskBoard,
 ): Promise<void> {
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
   if (repair.tenantId !== expectedTenantId
@@ -108,9 +109,10 @@ export async function processTaskBoardRepair(
   }
   await refresh({ ...env,
     RUNTIME_TASK_BOARD_ENABLED: "true",
-    SLACK_BOT_TOKEN: taskBoardSlackToken(target, env),
+    BRAINBASE_TASK_API_TOKEN: "tenant-credential-injected",
+    SLACK_BOT_TOKEN: "tenant-credential-injected",
     SLACK_ALLOWED_CHANNEL_ID: target.channelId,
-    RUNTIME_PROJECT_CODES: target.projectCodes.join(",") });
+    RUNTIME_PROJECT_CODES: target.projectCodes.join(",") }, { fetch: credentialFetch });
 }
 
 export async function enqueueScheduledTaskBoardRepair(

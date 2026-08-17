@@ -69,10 +69,10 @@ describe("Cloudflare task runtime entrypoints", () => {
       RUNTIME_TASK_BOARD_ENABLED: "true",
       TASK_BOARD_REPAIRS: { send: vi.fn() },
     };
-    await processTaskBoardRepair(repair, env, "unson-business", refresh);
+    await processTaskBoardRepair(repair, env, "unson-business", fetch, refresh);
     expect(refresh).toHaveBeenCalledOnce();
 
-    await expect(processTaskBoardRepair({ ...repair, channelId: "C_OTHER" }, env, "unson-business", refresh))
+    await expect(processTaskBoardRepair({ ...repair, channelId: "C_OTHER" }, env, "unson-business", fetch, refresh))
       .rejects.toThrow("task_board_scope_mismatch");
     expect(refresh).toHaveBeenCalledOnce();
   });
@@ -87,7 +87,7 @@ describe("Cloudflare task runtime entrypoints", () => {
       SLACK_BOT_TOKEN: "unson-token",
       TASK_BOARD_REPAIRS: { send },
     };
-    await expect(processTaskBoardRepair(repair, env, "unson-business",
+    await expect(processTaskBoardRepair(repair, env, "unson-business", fetch,
       vi.fn().mockRejectedValue(new Error("boom")))).rejects.toThrow("boom");
     const tenantContext = {
       tenant: { tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
@@ -122,8 +122,9 @@ describe("Cloudflare task runtime entrypoints", () => {
 
     const refresh = vi.fn().mockResolvedValue(undefined);
     await processTaskBoardRepair({ ...repair, targetId: "legacy-dev", channelId: "C_DEV" },
-      env, "unson-business", refresh);
-    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C_DEV", RUNTIME_PROJECT_CODES: "mana" }));
+      env, "unson-business", fetch, refresh);
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C_DEV", RUNTIME_PROJECT_CODES: "mana" }),
+      { fetch });
   });
 
   it("uses placement task-board flags even when the legacy global flag is off", async () => {
@@ -147,12 +148,12 @@ describe("Cloudflare task runtime entrypoints", () => {
 
     const refresh = vi.fn().mockResolvedValue(undefined);
     await processTaskBoardRepair({ ...repair, targetId: "legacy-dev", channelId: "C_DEV" },
-      env, "unson-business", refresh);
+      env, "unson-business", fetch, refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       RUNTIME_TASK_BOARD_ENABLED: "true",
       SLACK_ALLOWED_CHANNEL_ID: "C_DEV",
       RUNTIME_PROJECT_CODES: "mana",
-    }));
+    }), { fetch });
   });
 
   it("schedules every trusted workspace target and uses its isolated Slack token", async () => {
@@ -171,9 +172,10 @@ describe("Cloudflare task runtime entrypoints", () => {
 
     const refresh = vi.fn().mockResolvedValue(undefined);
     await processTaskBoardRepair({ ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB",
-      channelId: "C0BKX9Y169F" }, env, "unson-business", refresh);
-    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_BOT_TOKEN: "tech-token",
-      SLACK_ALLOWED_CHANNEL_ID: "C0BKX9Y169F", RUNTIME_PROJECT_CODES: "proj_tech" }));
+      channelId: "C0BKX9Y169F" }, env, "unson-business", fetch, refresh);
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_BOT_TOKEN: "tenant-credential-injected",
+      BRAINBASE_TASK_API_TOKEN: "tenant-credential-injected",
+      SLACK_ALLOWED_CHANNEL_ID: "C0BKX9Y169F", RUNTIME_PROJECT_CODES: "proj_tech" }), { fetch });
   });
 
   it("reports a partial scheduled fanout failure after attempting every trusted target", async () => {

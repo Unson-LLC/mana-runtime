@@ -252,7 +252,8 @@ export async function generateClaudeReply(
   const requesterIdentity = options.requesterIdentity ?? (identityOutcome.outcome === "resolved"
     ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
     : undefined);
-  const sandbox = options.createSandbox(options.claudeSession?.sandboxId ?? `techknight-reply-${event.eventId}`);
+  const sandbox = options.createSandbox(options.claudeSession?.sandboxId
+    ?? `techknight-reply-${await deterministicRuntimeUuid(`${options.tenantBoundaryHandle}:${event.eventId}`)}`);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
     const promptContent = buildPrompt(

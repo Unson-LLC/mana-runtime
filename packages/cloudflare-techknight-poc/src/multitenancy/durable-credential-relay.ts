@@ -1,6 +1,7 @@
 import type { CredentialLease, CredentialLeaseBinding } from "./contracts.js";
 import {
   TenantCredentialInjector,
+  type CredentialInjectionHeader,
   type TenantCredentialRegistry,
 } from "./credential-injector.js";
 import { TenantBoundaryError } from "./errors.js";
@@ -9,6 +10,7 @@ const RELAY_HOST = "tenant-credential-relay.internal";
 const TARGET_URL_HEADER = "x-mana-credential-target-url";
 const TARGET_METHOD_HEADER = "x-mana-credential-target-method";
 const OBSERVED_AT_HEADER = "x-mana-credential-observed-at";
+const CREDENTIAL_HEADER = "x-mana-credential-injection-header";
 const MARKER_PREFIX = "mana-credential-lease-v1:";
 const HANDLE_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const CLOCK_SKEW_MS = 30_000;
@@ -104,6 +106,7 @@ export async function forwardTenantCredentialRequest(
   namespace: TenantCredentialRelayNamespace,
   request: Request,
   now: string,
+  credentialHeader?: CredentialInjectionHeader,
 ): Promise<Response> {
   const handle = handleFromAuthorization(request.headers.get("authorization"));
   if (!handle) return new Response("credential_lease_rejected", { status: 503 });
@@ -111,6 +114,8 @@ export async function forwardTenantCredentialRequest(
   headers.set(TARGET_URL_HEADER, request.url);
   headers.set(TARGET_METHOD_HEADER, request.method);
   headers.set(OBSERVED_AT_HEADER, now);
+  headers.delete(CREDENTIAL_HEADER);
+  if (credentialHeader) headers.set(CREDENTIAL_HEADER, credentialHeader);
   headers.delete("content-length");
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   try {
@@ -212,19 +217,32 @@ export class TenantCredentialRelayHandler {
         const targetRaw = request.headers.get(TARGET_URL_HEADER);
         const observedAt = request.headers.get(OBSERVED_AT_HEADER) ?? "";
         const method = request.headers.get(TARGET_METHOD_HEADER) ?? "";
+        const credentialHeader = request.headers.get(CREDENTIAL_HEADER);
         if (!targetRaw || !/^(GET|POST|PUT|PATCH|DELETE|HEAD)$/.test(method)) {
+          return new Response("credential_lease_rejected", { status: 503 });
+        }
+        if (credentialHeader !== null
+          && credentialHeader !== "authorization"
+          && credentialHeader !== "x-api-key"
+          && credentialHeader !== "xc-token") {
           return new Response("credential_lease_rejected", { status: 503 });
         }
         const target = new URL(targetRaw);
         if (target.protocol !== "https:" || target.username || target.password) {
           return new Response("credential_lease_rejected", { status: 503 });
         }
-        const headers = this.#injector.inject({ hostname: target.hostname, headers: request.headers, now: observedAt });
+        const headers = this.#injector.inject({
+          hostname: target.hostname,
+          headers: request.headers,
+          now: observedAt,
+          credential_header: credentialHeader ?? undefined,
+        });
         const handle = handleFromAuthorization(request.headers.get("authorization"));
         if (handle) this.#clearExpiry(handle);
         headers.delete(TARGET_URL_HEADER);
         headers.delete(TARGET_METHOD_HEADER);
         headers.delete(OBSERVED_AT_HEADER);
+        headers.delete(CREDENTIAL_HEADER);
         headers.delete("content-length");
         const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
         return this.fetchImpl(new Request(target, { method, headers, body, redirect: "manual" }));

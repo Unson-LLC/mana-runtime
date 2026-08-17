@@ -20,6 +20,8 @@ const MARKER_PREFIX = "mana-credential-lease-v1:";
 const HANDLE_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const CLOCK_SKEW_MS = 30_000;
 
+export type CredentialInjectionHeader = "authorization" | "x-api-key" | "xc-token";
+
 interface ActiveCredential {
   readonly secret: SecretValue;
   readonly expires_at: string;
@@ -113,7 +115,12 @@ export class TenantCredentialInjector {
     return handle;
   }
 
-  inject(input: { hostname: string; headers: Headers; now: string }): Headers {
+  inject(input: {
+    hostname: string;
+    headers: Headers;
+    now: string;
+    credential_header?: CredentialInjectionHeader;
+  }): Headers {
     const handle = handleFromHeaders(input.headers);
     const active = this.#active.get(handle);
     if (!active) deny("credential_lease", "CREDENTIAL_LEASE_INVALID");
@@ -131,9 +138,12 @@ export class TenantCredentialInjector {
     const headers = new Headers(input.headers);
     headers.delete("authorization");
     headers.delete("x-api-key");
+    headers.delete("xc-token");
     const secret = revealSecretValue(active.secret);
-    if (active.credential_mode === "customer_api") headers.set("x-api-key", secret);
-    else headers.set("authorization", `Bearer ${secret}`);
+    const credentialHeader = input.credential_header
+      ?? (active.credential_mode === "customer_api" ? "x-api-key" : "authorization");
+    if (credentialHeader === "authorization") headers.set(credentialHeader, `Bearer ${secret}`);
+    else headers.set(credentialHeader, secret);
     return headers;
   }
 

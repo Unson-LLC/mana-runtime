@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   authorizeDurableTenantBoundaryRequest,
   createDurableTenantBoundaryRegistry,
+  resolveDurableTenantBoundaryContext,
   TenantBoundaryContextHandler,
   TENANT_BOUNDARY_HANDLE_HEADER,
 } from "../multitenancy/durable-tenant-boundary.js";
@@ -111,5 +112,26 @@ describe("durable tenant boundary integration", () => {
       boundary: "mcp_gateway",
       error: "WORKSPACE_CONNECTION_STALE_REVISION",
     });
+  });
+
+  it("returns the verified context to the Worker proxy without exposing it to the Container request", async () => {
+    const namespace = new IsolatedBoundaryNamespace();
+    const registry = createDurableTenantBoundaryRegistry(namespace);
+    const handle = await registry.register({ tenant_context: CONTEXT, expected_scope: SCOPE, now: NOW });
+    const request = new Request("https://gateway.internal/api/runtime/gateway", {
+      headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle },
+    });
+
+    const resolved = await resolveDurableTenantBoundaryContext(
+      namespace,
+      request,
+      ["mcp_gateway", "brainbase_proxy"],
+      NOW,
+    );
+
+    expect(resolved).toEqual({ tenant_context: CONTEXT, expected_scope: SCOPE });
+    expect(namespace.validate).toHaveBeenNthCalledWith(1, expect.objectContaining({ boundary: "mcp_gateway" }));
+    expect(namespace.validate).toHaveBeenNthCalledWith(2, expect.objectContaining({ boundary: "brainbase_proxy" }));
+    expect(request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER)).toBe(handle);
   });
 });

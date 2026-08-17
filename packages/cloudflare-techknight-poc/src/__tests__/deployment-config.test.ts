@@ -292,7 +292,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(sandboxRuntime).toContain('[DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv)');
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
-    expect(sandboxRuntime).toContain("authorizeDurableTenantBoundaryRequest(");
+    expect(sandboxRuntime).toContain("resolveDurableTenantBoundaryContext(");
+    expect(sandboxRuntime).toContain("createTenantCredentialFetch({");
+    expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch)");
+    expect(sandboxRuntime).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
     expect(sandboxRuntime).toContain('"mcp_gateway"');
     expect(sandboxRuntime).toContain('"brainbase_proxy"');
     expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
@@ -461,10 +464,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations)");
     expect(worker).not.toContain("resolveMeetingMinutesDestinationSlackToken");
     expect(worker).toContain("credentialFetch");
-    expect(worker).toContain("destinations.find((destination) => destination.slackChannelId === channelId)");
+    expect(worker).toContain("destinations.find((candidate) => candidate.slackChannelId === channelId)");
     expect(worker).toContain("isTenantTaskBoardRepairBody(message.body)");
     expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
-    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
     expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
   });
 
@@ -491,7 +494,7 @@ describe("会社別Cloudflare deployment", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
-    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
     expect(worker).toContain("enqueueScheduledTaskBoardRepair(");
     expect(worker).toContain("resolveTaskBoardRepairTenantContext(env, repair)");
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');

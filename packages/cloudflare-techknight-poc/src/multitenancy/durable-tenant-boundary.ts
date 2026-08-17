@@ -27,9 +27,12 @@ export interface TenantBoundaryContextStorage {
   setAlarm?(scheduledTime: number | Date): Promise<void>;
 }
 
-interface BoundaryContext {
+export interface AuthorizedTenantBoundaryContext {
   tenant_context: TenantContextEnvelope;
   expected_scope: ExpectedTenantScope;
+}
+
+interface BoundaryContext extends AuthorizedTenantBoundaryContext {
   expires_at: string;
 }
 
@@ -108,6 +111,37 @@ export async function authorizeDurableTenantBoundaryRequest(
   }
 }
 
+export async function resolveDurableTenantBoundaryContext(
+  namespace: TenantBoundaryContextNamespace,
+  request: Request,
+  boundaries: readonly ("mcp_gateway" | "brainbase_proxy")[],
+  now: string,
+): Promise<AuthorizedTenantBoundaryContext | Response> {
+  const handle = request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER) ?? "";
+  if (!HANDLE_PATTERN.test(handle) || boundaries.length === 0) {
+    return Response.json({ boundary: boundaries[0] ?? "mcp_gateway", error: "TENANT_CONTEXT_MISSING" },
+      { status: 503 });
+  }
+  try {
+    const response = await boundaryStub(namespace, handle).fetch(new Request(`https://${BOUNDARY_HOST}/resolve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ boundaries, now }),
+    }));
+    if (!response.ok) return response;
+    const resolved = await response.json() as Partial<AuthorizedTenantBoundaryContext>;
+    if (!resolved.tenant_context || !resolved.expected_scope) {
+      return Response.json({ boundary: boundaries[0], error: "TENANT_CONTEXT_INVALID" }, { status: 503 });
+    }
+    return {
+      tenant_context: structuredClone(resolved.tenant_context),
+      expected_scope: structuredClone(resolved.expected_scope),
+    };
+  } catch {
+    return Response.json({ boundary: boundaries[0], error: "WORKSPACE_CONNECTION_UNAVAILABLE" }, { status: 503 });
+  }
+}
+
 export class TenantBoundaryContextHandler {
   constructor(
     private readonly storage: TenantBoundaryContextStorage,
@@ -144,25 +178,38 @@ export class TenantBoundaryContextHandler {
         await this.storage.setAlarm?.(Date.parse(input.expires_at));
         return new Response(null, { status: 204 });
       }
-      if (url.pathname === "/authorize") {
-        const input = await request.json() as { boundary?: unknown; now?: unknown };
-        if ((input.boundary !== "mcp_gateway" && input.boundary !== "brainbase_proxy")
+      if (url.pathname === "/authorize" || url.pathname === "/resolve") {
+        const input = await request.json() as { boundary?: unknown; boundaries?: unknown; now?: unknown };
+        const boundaries = url.pathname === "/authorize"
+          ? [input.boundary]
+          : input.boundaries;
+        if (!Array.isArray(boundaries) || boundaries.length === 0
+          || boundaries.some((boundary) => boundary !== "mcp_gateway" && boundary !== "brainbase_proxy")
+          || new Set(boundaries).size !== boundaries.length
           || typeof input.now !== "string" || !Number.isFinite(Date.parse(input.now))) {
           throw new TenantBoundaryError("mcp_gateway", "SCHEMA_INVALID");
         }
         const context = await this.storage.get<BoundaryContext>(CONTEXT_KEY);
-        if (!context) throw new TenantBoundaryError(input.boundary, "TENANT_CONTEXT_MISSING");
+        const primaryBoundary = boundaries[0] as "mcp_gateway" | "brainbase_proxy";
+        if (!context) throw new TenantBoundaryError(primaryBoundary, "TENANT_CONTEXT_MISSING");
         if (Date.parse(input.now) > Date.parse(context.expires_at)) {
           await this.storage.delete(CONTEXT_KEY);
-          throw new TenantBoundaryError(input.boundary, "TENANT_CONTEXT_EXPIRED");
+          throw new TenantBoundaryError(primaryBoundary, "TENANT_CONTEXT_EXPIRED");
         }
-        await this.validate({
-          boundary: input.boundary,
-          tenant_context: context.tenant_context,
-          expected_scope: context.expected_scope,
-          now: input.now,
-        });
-        return new Response(null, { status: 204 });
+        for (const boundary of boundaries as ("mcp_gateway" | "brainbase_proxy")[]) {
+          await this.validate({
+            boundary,
+            tenant_context: context.tenant_context,
+            expected_scope: context.expected_scope,
+            now: input.now,
+          });
+        }
+        return url.pathname === "/resolve"
+          ? Response.json({
+            tenant_context: context.tenant_context,
+            expected_scope: context.expected_scope,
+          })
+          : new Response(null, { status: 204 });
       }
       return Response.json({ error: "not_found" }, { status: 404 });
     } catch (error) {

@@ -1,7 +1,7 @@
 import { TaskApiClient, type TaskListPage } from "@openryoko/task-runtime-core";
 import { verifyTaskWriteCapability } from "@openryoko/write-broker";
 import { parseRuntimePlacements, type RuntimePlacement } from "./runtime-config.js";
-import { handleTaskWriteProxyRequest, type TaskWriteProxyEnv } from "./task-write-proxy.js";
+import { createTaskWriteProxyHandler, type TaskWriteProxyEnv } from "./task-write-proxy.js";
 
 export const RUNTIME_GATEWAY_PROXY_HOST = "gateway.internal";
 export const RUNTIME_GATEWAY_PATH = "/api/runtime/gateway";
@@ -128,7 +128,7 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
 
       if (["create_task","update_task","transition_task"].includes(body.tool)) {
         const operation = body.tool.replace("_task", "");
-        return handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", { method: "POST",
+        return createTaskWriteProxyHandler(fetchImpl)(new Request("https://task-write.internal/api/task-write", { method: "POST",
           headers: { "content-type": "application/json", "x-mana-task-write-capability": token },
           body: JSON.stringify({ ...body.arguments, request_id: body.request_id, project: placement.projectCodes[0], operation, call_index: body.call_index }) }),
         { ...env, RUNTIME_PROJECT_CODES: placement.projectCodes.join(","), RUNTIME_PLACEMENT_ID: placement.placementId,

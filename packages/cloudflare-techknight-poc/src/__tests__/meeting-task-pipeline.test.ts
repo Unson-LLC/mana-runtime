@@ -178,6 +178,22 @@ describe("Cloudflare meeting task pipeline", () => {
     );
   });
 
+  it("partitions ephemeral meeting-task containers by the verified tenant boundary", async () => {
+    const tenantA = harness({ tenantBoundaryHandle: "tb_tenant_a" });
+    const tenantB = harness({ tenantBoundaryHandle: "tb_tenant_b" });
+
+    await processMeetingTaskEvent(new MemoryFs(), event(), tenantA.options);
+    await processMeetingTaskEvent(new MemoryFs(), event(), tenantB.options);
+
+    const tenantAId = vi.mocked(tenantA.options.createSandbox).mock.calls[0][0];
+    const tenantBId = vi.mocked(tenantB.options.createSandbox).mock.calls[0][0];
+    expect(tenantAId).toMatch(/^meeting-tasks-[0-9a-f-]{36}$/);
+    expect(tenantBId).toMatch(/^meeting-tasks-[0-9a-f-]{36}$/);
+    expect(tenantAId).not.toBe(tenantBId);
+    expect(tenantAId.length).toBeLessThanOrEqual(63);
+    expect(tenantBId.length).toBeLessThanOrEqual(63);
+  });
+
   it("does not repeat Claude, Brainbase, or Slack after completion", async () => {
     const fs = new MemoryFs();
     const { options, sandbox, fetchMock } = harness();
