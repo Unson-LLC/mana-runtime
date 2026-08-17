@@ -1287,7 +1287,7 @@ export default {
       let callbackTenantBody: TenantQueueBody<SlackQueueEvent> | undefined;
       let callbackClients: ReturnType<typeof tenantRuntimeClients> | undefined;
       return handleDevelopmentCallback(request, {
-        token: env.DEVELOPMENT_CALLBACK_TOKEN, workspaceId: env.SLACK_EXPECTED_TEAM_ID, placements,
+        token: env.DEVELOPMENT_CALLBACK_TOKEN, placements,
         resolve: async (event) => {
           const clients = tenantRuntimeClients(env);
           const resolved = await resolveSlackWorkerIngress({

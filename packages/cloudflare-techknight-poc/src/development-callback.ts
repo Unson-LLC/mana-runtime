@@ -34,7 +34,7 @@ function render(payload: DevelopmentCallbackPayload): string {
 }
 
 export async function handleDevelopmentCallback(request: Request, options: {
-  token?: string; workspaceId: string; placements: readonly RuntimePlacement[];
+  token?: string; placements: readonly RuntimePlacement[];
   resolve(event: SlackQueueEvent): Promise<SlackQueueEvent>;
   claim(event: SlackQueueEvent, payload: DevelopmentCallbackPayload): Promise<boolean>;
   complete(eventId: string, responseTs: string, payload: DevelopmentCallbackPayload): Promise<void>;
@@ -46,8 +46,8 @@ export async function handleDevelopmentCallback(request: Request, options: {
   const payload = parsePayload(await request.json().catch(() => undefined));
   if (!payload) return Response.json({ error: "development_callback_invalid" }, { status: 400 });
   const placement = options.placements.find((candidate) => candidate.placementId === payload.placement_id);
-  const allowed = placement?.developmentEnabled === true && payload.workspace_id === options.workspaceId &&
-    placement.channelId === payload.channel_id && placement.audience?.allowedUserIds.includes(payload.requester_id) &&
+  const allowed = placement?.developmentEnabled === true
+    && placement.channelId === payload.channel_id && placement.audience?.allowedUserIds.includes(payload.requester_id) &&
     placement.deliveryScopes?.some((scope) => scope.connector === "slack" && scope.channelId === payload.channel_id);
   if (!allowed) return Response.json({ error: "development_callback_forbidden" }, { status: 403 });
   const callbackEventId = `development:${payload.job_id}`;
