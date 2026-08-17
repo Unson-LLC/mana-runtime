@@ -1,5 +1,12 @@
 import type { DevelopmentJobOwner } from "./development-job-owner.js";
+import type {
+  ExpectedTenantScope,
+  OperationOutcome,
+  QuotaDecision,
+  TenantContextEnvelope,
+} from "./contracts.js";
 import { TenantBoundaryError } from "./errors.js";
+import { assertSecretArtifactFree } from "./secret-guard.js";
 
 const HOST = "development-terminal-outbox.internal";
 const RECORD_KEY = "development-terminal-outbox-v1";
@@ -14,6 +21,19 @@ export interface DevelopmentTerminalOutboxSubmission {
   owner_claim: { key: string; partition_key: string };
   terminal_deadline_at: string;
   observed_at: string;
+  terminal_accounting?: DevelopmentTerminalAccountingPlan;
+}
+
+export interface DevelopmentTerminalAccountingPlan {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  quota_decision: QuotaDecision["decision"];
+  unit: string;
+  outcome: OperationOutcome;
+  failure_code: string | null;
+  reply_state: "not_attempted" | "delivered" | "failed" | "unknown";
+  recorded_at: string;
+  accounting_effect_id: string;
 }
 
 export interface DevelopmentTerminalOutboxArm extends DevelopmentTerminalOutboxSubmission {
@@ -69,6 +89,23 @@ function validateSubmission(input: DevelopmentTerminalOutboxSubmission): void {
     || !Number.isFinite(Date.parse(input.terminal_deadline_at))
     || Date.parse(input.terminal_deadline_at) <= Date.parse(input.observed_at)) {
     throw new TenantBoundaryError("brainbase_proxy", "SCHEMA_INVALID");
+  }
+  if (input.terminal_accounting) {
+    const accounting = assertSecretArtifactFree(input.terminal_accounting);
+    if (accounting.tenant_context.tenant.tenant_id !== input.owner.tenantId
+      || accounting.tenant_context.workspace_connection.connection_id !== input.owner.connectionId
+      || accounting.tenant_context.operation_id !== input.owner.operationId
+      || accounting.tenant_context.workspace_connection.workspace_id !== input.owner.workspaceId
+      || accounting.tenant_context.slack.channel_id !== input.owner.channelId
+      || (accounting.tenant_context.slack.thread_ts ?? "") !== input.owner.threadTs
+      || !accounting.unit.trim()
+      || (accounting.outcome === "succeeded"
+        ? accounting.failure_code !== null
+        : !accounting.failure_code?.trim())
+      || !accounting.accounting_effect_id.trim()
+      || !Number.isFinite(Date.parse(accounting.recorded_at))) {
+      throw new TenantBoundaryError("brainbase_proxy", "SCHEMA_INVALID");
+    }
   }
 }
 
@@ -136,6 +173,9 @@ export class DevelopmentTerminalOutboxHandler {
           }
           const replacement: DevelopmentTerminalOutboxRecord = {
             ...clone(input),
+            ...(input.terminal_accounting
+              ? { terminal_accounting: clone(input.terminal_accounting) }
+              : current.terminal_accounting ? { terminal_accounting: clone(current.terminal_accounting) } : {}),
             container_id: current.container_id,
             state: "pending",
             attempts: 0,

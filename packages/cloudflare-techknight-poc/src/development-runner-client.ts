@@ -3,6 +3,7 @@ import { tenantPartitionKey } from "./multitenancy/isolation.js";
 import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 import type { DevelopmentJobOwner } from "./multitenancy/development-job-owner.js";
 import type { QuotaDecision } from "./multitenancy/contracts.js";
+import type { DevelopmentTerminalAccountingPlan } from "./multitenancy/development-terminal-outbox.js";
 import {
   developmentCallbackPayloadHash,
   type DevelopmentCallbackPayload,
@@ -80,6 +81,7 @@ export async function runCloudflareDevelopmentRequest(input: {
   tenantBoundaryHandle: string;
   contextExpiresAt: string;
   quotaDecision: QuotaDecision["decision"];
+  terminalAccounting?: Omit<DevelopmentTerminalAccountingPlan, "recorded_at" | "accounting_effect_id">;
   now(): string;
   callbackBaseUrl?: string;
   registerJobOwner(owner: DevelopmentJobOwner): Promise<{
@@ -92,6 +94,7 @@ export async function runCloudflareDevelopmentRequest(input: {
       terminal_deadline_at: string;
       observed_at: string;
       container_id: string;
+      terminal_accounting?: DevelopmentTerminalAccountingPlan;
     }): Promise<void>;
     cancelTerminalWatchdog(): Promise<void>;
   }>;
@@ -169,6 +172,13 @@ export async function runCloudflareDevelopmentRequest(input: {
       terminal_deadline_at: input.contextExpiresAt,
       observed_at: new Date(observedAt).toISOString(),
       container_id: sandboxId,
+      ...(input.terminalAccounting
+        ? { terminal_accounting: {
+            ...input.terminalAccounting,
+            recorded_at: new Date(observedAt + runnerTimeout + 1_000).toISOString(),
+            accounting_effect_id: `development_terminal:${jobId}`,
+          } }
+        : {}),
     });
     sandbox = input.createSandbox(sandboxId);
     await sandbox.writeFile(jobPath, JSON.stringify(payload));
@@ -197,11 +207,11 @@ export async function runCloudflareDevelopmentRequest(input: {
         sanitizationProven = false;
       }
     }
-    await owner.cancelTerminalWatchdog().catch(() => undefined);
-    await owner.release().catch(() => undefined);
     if (!sanitizationProven) {
       throw new Error("development_container_sanitization_unproven");
     }
+    await owner.cancelTerminalWatchdog().catch(() => undefined);
+    await owner.release().catch(() => undefined);
     throw new Error("development_runner_failed");
   }
 

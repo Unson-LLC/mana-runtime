@@ -270,7 +270,7 @@ describe("sandbox provider credential integration", () => {
         recorded_at: new Date(Date.now() + 500).toISOString(),
         accounting_effect_id: `development_terminal:${jobId}`,
       },
-    } as Parameters<typeof outbox.arm>[0] & { terminal_accounting: Record<string, unknown> });
+    });
 
     namespace.handlers.clear();
     const terminalKey = [...namespace.storages.keys()].find((key) => key.startsWith("development-terminal:"));

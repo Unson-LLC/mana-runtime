@@ -2255,6 +2255,15 @@ export default {
                       tenantBoundaryHandle,
                       contextExpiresAt: tenantBody.tenant_context.expires_at,
                       quotaDecision: quotaDecision.decision,
+                      terminalAccounting: {
+                        tenant_context: tenantBody.tenant_context,
+                        expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+                        quota_decision: quotaDecision.decision,
+                        unit: "container_seconds",
+                        outcome: "timed_out",
+                        failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
+                        reply_state: "unknown",
+                      },
                       now: tenantConsumerOptions.now,
                       callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
                       registerJobOwner: async (owner) => {

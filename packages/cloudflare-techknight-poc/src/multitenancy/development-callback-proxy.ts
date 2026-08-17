@@ -21,8 +21,10 @@ import {
 import { TenantBoundaryError } from "./errors.js";
 import {
   createDurableTenantStateClient,
+  createDurableTenantAccountingClient,
   type TenantRuntimeStateNamespace,
 } from "./tenant-runtime-state.js";
+import { persistTenantRuntimeTerminalOperation } from "./production-consumer.js";
 
 export interface DevelopmentCallbackProxyEnv {
   DEVELOPMENT_CALLBACK_BASE_URL?: string;
@@ -31,6 +33,8 @@ export interface DevelopmentCallbackProxyEnv {
 }
 
 export type DestroyDevelopmentContainer = (containerId: string) => Promise<void>;
+
+const DEVELOPMENT_CALLBACK_FORWARD_TIMEOUT_MS = 5_000;
 
 function retainedUntil(now: string): string {
   return new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString();
@@ -49,15 +53,31 @@ async function forwardDevelopmentCallback(
   if (base.protocol !== "https:" || base.username || base.password) {
     return new Response("development_callback_not_configured", { status: 503 });
   }
-  return fetchImpl(`${base.origin}${base.pathname.replace(/\/$/, "")}/development/callback`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.DEVELOPMENT_CALLBACK_TOKEN}`,
-      "content-type": "application/json",
-      "x-mana-tenant-boundary-handle": boundaryHandle,
-    },
-    body: raw,
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<Response>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new TenantBoundaryError("brainbase_proxy", "UPSTREAM_UNAVAILABLE"));
+    }, DEVELOPMENT_CALLBACK_FORWARD_TIMEOUT_MS);
   });
+  try {
+    return await Promise.race([
+      fetchImpl(`${base.origin}${base.pathname.replace(/\/$/, "")}/development/callback`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.DEVELOPMENT_CALLBACK_TOKEN}`,
+          "content-type": "application/json",
+          "x-mana-tenant-boundary-handle": boundaryHandle,
+        },
+        body: raw,
+        signal: controller.signal,
+      }),
+      timedOut,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 async function responseCompleted(response: Response): Promise<boolean> {
@@ -119,6 +139,24 @@ export async function failDevelopmentTerminalOutboxRecord(
   now: string,
   destroyContainer?: DestroyDevelopmentContainer,
 ): Promise<void> {
+  if (!record.terminal_accounting) {
+    throw new TenantBoundaryError("brainbase_proxy", "SCHEMA_INVALID");
+  }
+  await persistTenantRuntimeTerminalOperation({
+    tenant_context: record.terminal_accounting.tenant_context,
+    expected_scope: record.terminal_accounting.expected_scope,
+    ledger: createDurableTenantAccountingClient(
+      env.TENANT_RUNTIME_STATE,
+      record.terminal_accounting.tenant_context,
+    ),
+    quota_decision: record.terminal_accounting.quota_decision,
+    unit: record.terminal_accounting.unit,
+    outcome: record.terminal_accounting.outcome,
+    failure_code: record.terminal_accounting.failure_code,
+    reply_state: record.terminal_accounting.reply_state,
+    now: record.terminal_accounting.recorded_at,
+    accounting_effect_id: record.terminal_accounting.accounting_effect_id,
+  });
   await destroyRecordedContainer(record, env, destroyContainer, now);
   const store = createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, record.owner.tenantId);
   await failDevelopmentJobOwner(
@@ -198,6 +236,12 @@ export async function proxyDevelopmentCallback(
   }
   const boundaryHandle = request.headers.get("x-mana-tenant-boundary-handle") ?? "";
   const outbox = createDevelopmentTerminalOutboxClient(env.TENANT_RUNTIME_STATE, claimed.claim.partition_key);
+  const observedAt = new Date().toISOString();
+  const terminal = payload.status === "failed"
+    ? { outcome: "failed" as const, failureCode: "DEVELOPMENT_RUNNER_FAILED" }
+    : payload.status === "timed_out"
+      ? { outcome: "timed_out" as const, failureCode: "DEVELOPMENT_RUNNER_TIMED_OUT" }
+      : { outcome: "succeeded" as const, failureCode: null };
   const outboxRecord = await outbox.submit({
     job_id: payload.job_id,
     payload_hash: await developmentCallbackPayloadHash(payload),
@@ -206,7 +250,18 @@ export async function proxyDevelopmentCallback(
     owner,
     owner_claim: { key: claimed.claim.key, partition_key: claimed.claim.partition_key },
     terminal_deadline_at: resolved.tenant_context.expires_at,
-    observed_at: new Date().toISOString(),
+    observed_at: observedAt,
+    terminal_accounting: {
+      tenant_context: resolved.tenant_context,
+      expected_scope: resolved.expected_scope,
+      quota_decision: payload.quota_decision,
+      unit: "container_seconds",
+      outcome: terminal.outcome,
+      failure_code: terminal.failureCode,
+      reply_state: "unknown",
+      recorded_at: observedAt,
+      accounting_effect_id: `development_terminal:${payload.job_id}`,
+    },
   });
   if (outboxRecord.state === "completed") {
     return Response.json({ ok: true, state: "completed", duplicate: true });

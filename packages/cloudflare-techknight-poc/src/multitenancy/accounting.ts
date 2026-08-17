@@ -424,6 +424,43 @@ export async function writeTenantAccounting(input: {
     expected_scope: input.expected_scope,
     now: input.now,
   });
+  const claim = await persistTenantAccounting({
+    tenant_context: input.tenant_context,
+    expected_scope: input.expected_scope,
+    ledger: input.ledger,
+    usage_events: input.usage_events,
+    receipt: input.receipt,
+    ...(input.operation_result === undefined ? {} : { operation_result: input.operation_result }),
+  });
+  if (claim.disposition === "duplicate") return claim;
+  try {
+    const result = await input.write(claim.artifact);
+    if (!result?.result_ref) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+    await input.ledger.complete(claim.claim);
+    return { disposition: "written", result_ref: result.result_ref };
+  } catch (error) {
+    if (error instanceof TenantBoundaryError) throw error;
+    deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+  }
+}
+
+/**
+ * Persist the exact canonical payload before an external accounting write.
+ * Callers are responsible for validating the signed boundary before entering
+ * this local Durable Object boundary. The payload remains pending until a
+ * separately validated external write completes it.
+ */
+export async function persistTenantAccounting(input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  ledger: TenantAccountingLedgerStore;
+  usage_events: readonly UsageEvent[];
+  receipt: OperationReceipt;
+  operation_result?: unknown;
+}): Promise<
+  | { disposition: "duplicate" }
+  | { disposition: "claimed"; claim: AccountingLedgerClaim; artifact: AccountingArtifact }
+> {
   assertAccountingScope(input.tenant_context, input.expected_scope, input.usage_events, input.receipt);
   const partitionKey = tenantPartitionKey({
     tenant_id: input.tenant_context.tenant.tenant_id,
@@ -453,13 +490,5 @@ export async function writeTenantAccounting(input: {
     ...(operationResult === undefined ? {} : { operation_result: operationResult }),
   });
   if (claim.disposition === "duplicate") return claim;
-  try {
-    const result = await input.write(artifact);
-    if (!result?.result_ref) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
-    await input.ledger.complete(claim);
-    return { disposition: "written", result_ref: result.result_ref };
-  } catch (error) {
-    if (error instanceof TenantBoundaryError) throw error;
-    deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
-  }
+  return { disposition: "claimed", claim, artifact };
 }

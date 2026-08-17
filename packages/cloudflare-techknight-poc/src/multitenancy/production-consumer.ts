@@ -2,6 +2,7 @@ import {
   authorizeTenantQuota,
   createOperationReceipt,
   createUsageEvent,
+  persistTenantAccounting,
   writeTenantAccounting,
   type TenantAccountingLedgerStore,
 } from "./accounting.js";
@@ -61,6 +62,36 @@ async function recordOperation(input: {
   accounting_effect_id?: string;
   now: string;
 }): Promise<void> {
+  const accounting = await buildOperationAccounting(input);
+  await writeTenantAccounting({
+    tenant_context: input.tenant_context,
+    expected_scope: input.expected_scope,
+    now: input.now,
+    verifier: input.verifier,
+    ledger: input.ledger,
+    usage_events: accounting.usage_events,
+    receipt: accounting.receipt,
+    ...(input.operation_result === undefined ? {} : { operation_result: input.operation_result }),
+    write: (payload) => input.accounting.write(payload),
+  });
+}
+
+async function buildOperationAccounting(input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  ledger: TenantAccountingLedgerStore;
+  quota_decision: QuotaDecision["decision"];
+  unit: string;
+  outcome: OperationOutcome;
+  failure_code: string | null;
+  response_ts?: string;
+  reply_state?: "not_attempted" | "delivered" | "failed" | "unknown";
+  accounting_effect_id?: string;
+  now: string;
+}): Promise<{
+  usage_events: ReturnType<typeof createUsageEvent>[];
+  receipt: ReturnType<typeof createOperationReceipt>;
+}> {
   const seed = `${input.tenant_context.correlation_id}:${input.tenant_context.operation_id}:${input.accounting_effect_id ?? "operation"}`;
   const receiptId = await operationReceiptId(input.tenant_context, input.accounting_effect_id);
   const recordedAt = await input.ledger.reserve_timestamp({
@@ -115,17 +146,7 @@ async function recordOperation(input: {
         : { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 },
     completed_at: recordedAt,
   });
-  await writeTenantAccounting({
-    tenant_context: input.tenant_context,
-    expected_scope: input.expected_scope,
-    now: input.now,
-    verifier: input.verifier,
-    ledger: input.ledger,
-    usage_events: [usageEvent],
-    receipt,
-    ...(input.operation_result === undefined ? {} : { operation_result: input.operation_result }),
-    write: (payload) => input.accounting.write(payload),
-  });
+  return { usage_events: [usageEvent], receipt };
 }
 
 export async function executeTenantRuntimeOperation<R extends RuntimeProcessResult>(input: {
@@ -254,6 +275,40 @@ export async function recordTenantRuntimeTerminalOperation(input: {
   accounting_effect_id?: string;
 }): Promise<void> {
   await recordOperation({ ...input });
+}
+
+/**
+ * Freeze a terminal UsageEvent/OperationReceipt in the tenant-partitioned
+ * Durable accounting outbox. This is used when an asynchronous Container can
+ * no longer reach its callback before the signed context expires. It never
+ * performs an external Brainbase write with an expired context.
+ */
+export async function persistTenantRuntimeTerminalOperation(input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  ledger: TenantAccountingLedgerStore;
+  quota_decision: QuotaDecision["decision"];
+  unit: string;
+  outcome: OperationOutcome;
+  failure_code: string | null;
+  reply_state: "not_attempted" | "delivered" | "failed" | "unknown";
+  now: string;
+  accounting_effect_id?: string;
+}): Promise<void> {
+  const receiptId = await operationReceiptId(input.tenant_context, input.accounting_effect_id);
+  const pending = await input.ledger.read_pending({
+    tenant_context: input.tenant_context,
+    receipt_id: receiptId,
+  });
+  if (pending) return;
+  const accounting = await buildOperationAccounting(input);
+  await persistTenantAccounting({
+    tenant_context: input.tenant_context,
+    expected_scope: input.expected_scope,
+    ledger: input.ledger,
+    usage_events: accounting.usage_events,
+    receipt: accounting.receipt,
+  });
 }
 
 async function payloadHash(value: unknown): Promise<string> {

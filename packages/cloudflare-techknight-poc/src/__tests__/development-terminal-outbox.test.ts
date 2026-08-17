@@ -6,6 +6,7 @@ import {
   type DevelopmentTerminalOutboxRecord,
   type DevelopmentTerminalOutboxSubmission,
 } from "../multitenancy/development-terminal-outbox.js";
+import { retryDevelopmentTerminalOutboxRecord } from "../multitenancy/development-callback-proxy.js";
 
 class MemoryStorage {
   readonly values = new Map<string, unknown>();
@@ -156,5 +157,33 @@ describe("development terminal outbox", () => {
       failed_at: submission.terminal_deadline_at,
     });
     expect(storage.alarms).toEqual([Date.parse(submission.observed_at)]);
+  });
+
+  it("bounds a hung callback forward so the durable alarm can continue to terminal reconciliation", async () => {
+    vi.useFakeTimers();
+    try {
+      let forwardedSignal: AbortSignal | undefined;
+      const neverSettles = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        forwardedSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => undefined);
+      }) as unknown as typeof fetch;
+      const pending = retryDevelopmentTerminalOutboxRecord(
+        { ...submission, state: "pending", attempts: 1, updated_at: submission.observed_at },
+        {
+          DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
+          DEVELOPMENT_CALLBACK_TOKEN: "test-callback-token-placeholder",
+          TENANT_RUNTIME_STATE: {} as never,
+        },
+        neverSettles,
+      );
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(pending).resolves.toEqual({ state: "retry", error: "UPSTREAM_UNAVAILABLE" });
+      expect(neverSettles).toHaveBeenCalledOnce();
+      expect(forwardedSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
