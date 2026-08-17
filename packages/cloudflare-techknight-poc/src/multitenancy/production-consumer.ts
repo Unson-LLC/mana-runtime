@@ -38,6 +38,11 @@ function errorCode(error: unknown): string {
   return "UPSTREAM_UNAVAILABLE";
 }
 
+function operationReceiptId(tenantContext: TenantContextEnvelope): Promise<string> {
+  const seed = `${tenantContext.correlation_id}:${tenantContext.operation_id}`;
+  return createDeterministicSharedId("receipt_", `${seed}:receipt`);
+}
+
 async function recordOperation(input: {
   tenant_context: TenantContextEnvelope;
   expected_scope: ExpectedTenantScope;
@@ -52,7 +57,7 @@ async function recordOperation(input: {
   now: string;
 }): Promise<void> {
   const seed = `${input.tenant_context.correlation_id}:${input.tenant_context.operation_id}`;
-  const receiptId = await createDeterministicSharedId("receipt_", `${seed}:receipt`);
+  const receiptId = await operationReceiptId(input.tenant_context);
   const recordedAt = await input.ledger.reserve_timestamp({
     tenant_context: input.tenant_context,
     receipt_id: receiptId,
@@ -127,6 +132,31 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
   process(): Promise<R>;
 }): Promise<R> {
   if (!input.quota_unit.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
+  const receiptId = await operationReceiptId(input.tenant_context);
+  const pending = await input.ledger.read_pending({
+    tenant_context: input.tenant_context,
+    receipt_id: receiptId,
+  });
+  if (pending) {
+    await writeTenantAccounting({
+      tenant_context: input.tenant_context,
+      expected_scope: input.expected_scope,
+      now: input.now(),
+      verifier: input.verifier,
+      ledger: input.ledger,
+      usage_events: pending.usage_events,
+      receipt: pending.receipt,
+      write: (payload) => input.accounting.write(payload),
+    });
+    if (pending.receipt.outcome !== "succeeded") {
+      deny("brainbase_proxy", pending.receipt.failure_code ?? "UPSTREAM_UNAVAILABLE");
+    }
+    const responseTs = pending.receipt.reply.slack_reply_ts;
+    return {
+      outcome: "already_completed",
+      ...(responseTs ? { responseTs } : {}),
+    } as R;
+  }
   let quotaDecision: QuotaDecision;
   try {
     quotaDecision = await authorizeTenantQuota({

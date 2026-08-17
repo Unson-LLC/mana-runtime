@@ -1,4 +1,5 @@
 import type {
+  AccountingArtifact,
   AccountingLedgerClaim,
   AccountingLedgerResult,
   TenantAccountingLedgerStore,
@@ -128,6 +129,7 @@ class DurableTenantStateStore implements IdempotencyStore {
     usage_event_ids: readonly string[];
     receipt_id: string;
     payload_hash: string;
+    artifact: AccountingArtifact;
   }): Promise<AccountingLedgerResult> {
     const entityKeys = [...input.usage_event_ids, input.receipt_id].map((resourceId) => tenantPartitionKey({
       tenant_id: input.tenant_context.tenant.tenant_id,
@@ -138,6 +140,7 @@ class DurableTenantStateStore implements IdempotencyStore {
       thread_ts: input.tenant_context.slack.thread_ts ?? "",
       resource_id: resourceId,
     }));
+    const outboxKey = entityKeys[entityKeys.length - 1];
     const batchKey = JSON.stringify([entityKeys, input.payload_hash]);
     return this.storage.transaction(async (transaction) => {
       const entries = await Promise.all(entityKeys.map((key) => transaction.get<{
@@ -148,14 +151,43 @@ class DurableTenantStateStore implements IdempotencyStore {
         return { disposition: "duplicate" };
       }
       if (entries.every((entry) => entry?.state === "claimed" && entry.batch_key === batchKey)) {
-        return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys };
+        const pending = outboxKey ? await transaction.get<{
+          batch_key: string;
+          artifact: AccountingArtifact;
+        }>(`accounting-outbox:${outboxKey}`) : undefined;
+        if (!pending || pending.batch_key !== batchKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
+        return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
       }
       if (entries.some((entry) => entry !== undefined)) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
+      if (!outboxKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
       for (const key of entityKeys) {
         await transaction.put(`accounting:${key}`, { batch_key: batchKey, state: "claimed" });
       }
-      return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys };
+      await transaction.put(`accounting-outbox:${outboxKey}`, {
+        batch_key: batchKey,
+        artifact: clone(input.artifact),
+      });
+      return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
     });
+  }
+
+  async readPendingAccounting(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): Promise<AccountingArtifact | undefined> {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    const pending = await this.storage.get<{ batch_key: string; artifact: AccountingArtifact }>(
+      `accounting-outbox:${key}`,
+    );
+    return pending ? clone(pending.artifact) : undefined;
   }
 
   async reserveAccountingTimestamp(input: {
@@ -192,6 +224,7 @@ class DurableTenantStateStore implements IdempotencyStore {
       for (const key of claim.entity_keys) {
         await transaction.put(`accounting:${key}`, { batch_key: claim.batch_key, state: "written" });
       }
+      await transaction.delete(`accounting-outbox:${claim.outbox_key}`);
     });
   }
 
@@ -201,6 +234,10 @@ class DurableTenantStateStore implements IdempotencyStore {
         const storageKey = `accounting:${key}`;
         const entry = await transaction.get<{ batch_key: string; state: "claimed" | "written" }>(storageKey);
         if (entry?.batch_key === claim.batch_key && entry.state === "claimed") await transaction.delete(storageKey);
+      }
+      const pending = await transaction.get<{ batch_key: string }>(`accounting-outbox:${claim.outbox_key}`);
+      if (pending?.batch_key === claim.batch_key) {
+        await transaction.delete(`accounting-outbox:${claim.outbox_key}`);
       }
     });
   }
@@ -215,6 +252,7 @@ export function createDurableTenantAccountingStore(storage: TenantStateStorage):
   return {
     reserve_timestamp: (input) => store.reserveAccountingTimestamp(input),
     claim: (input) => store.claimAccounting(input),
+    read_pending: (input) => store.readPendingAccounting(input),
     complete: (claim) => store.completeAccounting(claim),
     release: (claim) => store.releaseAccounting(claim),
   };
@@ -310,6 +348,15 @@ export function createDurableTenantAccountingClient(
       }
       return callState(stub, "accounting/claim", input);
     },
+    read_pending: (input) => {
+      if (input.tenant_context.tenant.tenant_id !== tenantId
+        || input.tenant_context.workspace_connection.connection_id
+          !== tenantContext.workspace_connection.connection_id
+        || input.tenant_context.correlation_id !== tenantContext.correlation_id) {
+        deny("durable_object", "CROSS_TENANT_CANDIDATE");
+      }
+      return callState(stub, "accounting/read-pending", input);
+    },
     complete: (claim) => callState(stub, "accounting/complete", claim),
     release: (claim) => callState(stub, "accounting/release", claim),
   };
@@ -352,6 +399,10 @@ export class TenantRuntimeStateHandler {
         );
       } else if (url.pathname === "/accounting/claim") {
         result = await this.#accounting.claim(input as unknown as Parameters<TenantAccountingLedgerStore["claim"]>[0]);
+      } else if (url.pathname === "/accounting/read-pending") {
+        result = await this.#accounting.read_pending(
+          input as unknown as Parameters<TenantAccountingLedgerStore["read_pending"]>[0],
+        );
       } else if (url.pathname === "/accounting/complete") {
         await this.#accounting.complete(input as unknown as AccountingLedgerClaim);
         result = null;
