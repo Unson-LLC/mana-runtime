@@ -9,6 +9,9 @@ import {
 import type { SlackQueueEvent } from "../types.js";
 import { resolveClaudeRuntimeConfig } from "../claude-runtime-config.js";
 
+const TENANT_BOUNDARY_A = `tb_${"A".repeat(32)}`;
+const TENANT_BOUNDARY_B = `tb_${"B".repeat(32)}`;
+
 class MemoryFs {
   readonly files = new Map<string, string>();
 
@@ -79,7 +82,7 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 describe("TechKnight Slack reply pipeline", () => {
   it("rejects a persisted Container whenever a tenant boundary is active", async () => {
     const { options } = harness({
-      tenantBoundaryHandle: "tb_tenant_a",
+      tenantBoundaryHandle: TENANT_BOUNDARY_A,
       claudeSession: {
         id: "12345678-1234-4123-8123-123456789abc",
         sandboxId: "techknight-session-stable",
@@ -94,7 +97,7 @@ describe("TechKnight Slack reply pipeline", () => {
   });
 
   it("uses a fresh Container for a retry of the same tenant operation", async () => {
-    const { options } = harness({ tenantBoundaryHandle: "tb_tenant_a" });
+    const { options } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
 
     await generateClaudeReply(event(), options);
     await generateClaudeReply(event(), options);
@@ -105,7 +108,7 @@ describe("TechKnight Slack reply pipeline", () => {
   });
 
   it("fails closed when a tenant Container cannot be destroyed", async () => {
-    const { options, sandbox } = harness({ tenantBoundaryHandle: "tb_tenant_a" });
+    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     sandbox.destroy.mockRejectedValueOnce(new Error("runtime destroy detail"));
 
     await expect(generateClaudeReply(event(), options)).rejects.toEqual(
@@ -174,8 +177,8 @@ describe("TechKnight Slack reply pipeline", () => {
   });
 
   it("partitions ephemeral reply containers by the verified tenant boundary", async () => {
-    const tenantA = harness({ tenantBoundaryHandle: "tb_tenant_a" });
-    const tenantB = harness({ tenantBoundaryHandle: "tb_tenant_b" });
+    const tenantA = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    const tenantB = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_B });
 
     await generateClaudeReply(event(), tenantA.options);
     await generateClaudeReply(event(), tenantB.options);

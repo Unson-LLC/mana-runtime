@@ -1,4 +1,5 @@
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
 export interface RuntimeTriageInput {
@@ -87,9 +88,11 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
       `claude --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
       { timeout: 30_000, env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: options.credentialLeaseHandle
-          ? credentialLeaseMarker(options.credentialLeaseHandle)
-          : "proxy-injected",
+        CLAUDE_CODE_OAUTH_TOKEN: options.tenantBoundaryHandle
+          ? tenantBoundaryCredentialMarker(options.tenantBoundaryHandle)
+          : options.credentialLeaseHandle
+            ? credentialLeaseMarker(options.credentialLeaseHandle)
+            : "proxy-injected",
         MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
       } },
     );

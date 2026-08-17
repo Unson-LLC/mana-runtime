@@ -24,6 +24,7 @@ import { markWorkspaceEngaged } from "./workspace-session.js";
 import { resolveTurnActorIdentity, type ActorIdentityResolver } from "./actor-identity.js";
 import type { RuntimeTriageDecision } from "./runtime-triage.js";
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 import {
   assertFreshTenantContainer,
   destroyTenantContainer,
@@ -306,9 +307,11 @@ export async function generateClaudeReply(
       timeout: 120_000,
       env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: options.credentialLeaseHandle
-          ? credentialLeaseMarker(options.credentialLeaseHandle)
-          : "proxy-injected",
+        CLAUDE_CODE_OAUTH_TOKEN: options.tenantBoundaryHandle
+          ? tenantBoundaryCredentialMarker(options.tenantBoundaryHandle)
+          : options.credentialLeaseHandle
+            ? credentialLeaseMarker(options.credentialLeaseHandle)
+            : "proxy-injected",
         MANA_TRACE_ID: event.eventId,
         MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
         MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
