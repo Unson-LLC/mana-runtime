@@ -88,6 +88,7 @@ async function authorizeTenantRuntimeProxy(
   headers.delete(TENANT_BOUNDARY_HANDLE_HEADER);
   const proxyEnv: SandboxRuntimeEnv = {
     ...env,
+    SLACK_EXPECTED_TEAM_ID: resolved.tenant_context.workspace_connection.workspace_id,
     BRAINBASE_TASK_API_TOKEN: "tenant-credential-injected",
     SLACK_BOT_TOKEN: "tenant-credential-injected",
     NOCODB_TOKEN: "tenant-credential-injected",
