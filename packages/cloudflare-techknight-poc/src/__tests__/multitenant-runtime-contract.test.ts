@@ -919,6 +919,48 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(interactions).not.toContain("resolveMeetingMinutesDestinationSlackToken");
   });
 
+  it("resolves every Meeting Minutes destination workspace before Slack delivery", () => {
+    const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const guardStart = source.indexOf("interface MeetingMinutesTenantEffectGuard");
+    const guardEnd = source.indexOf("function requiredRuntimeBinding", guardStart);
+    const guard = source.slice(guardStart, guardEnd);
+    expect(guard).toContain("destinationSlack");
+    expect(guard).toContain("MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON");
+    expect(guard).toContain("resolveDerivedSlackTenantContext");
+    expect(guard).toContain('workspace_policy: "same_tenant"');
+    expect(guard).toContain("effects.destinationSlack");
+  });
+
+  it("routes canonical Queue and TaskBoard provider HTTP through tenant credential fetch", () => {
+    const worker = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const queueStart = worker.indexOf("async queue(");
+    const queue = worker.slice(queueStart);
+    expect(queue).toContain("const tenantCredentialFetch = createTenantCredentialFetch");
+    expect(queue).not.toContain("slackBotToken: env.SLACK_BOT_TOKEN");
+    expect(queue).not.toContain("brainbaseTaskToken: env.BRAINBASE_TASK_API_TOKEN");
+    expect(queue).not.toContain("token: env.BRAINBASE_GRAPH_API_TOKEN");
+    expect(queue).not.toContain("botToken: env.SLACK_BOT_TOKEN");
+
+    const taskBoard = readFileSync(new URL("../task-runtime-entrypoints.ts", import.meta.url), "utf8");
+    const repairStart = taskBoard.indexOf("export async function processTaskBoardRepair");
+    const repairEnd = taskBoard.indexOf("export async function enqueueScheduledTaskBoardRepair", repairStart);
+    const repair = taskBoard.slice(repairStart, repairEnd);
+    expect(repair).toContain("credentialFetch");
+    expect(repair).not.toContain("taskBoardSlackToken");
+  });
+
+  it("keeps accounting results serializable and partitions ephemeral Containers by tenant boundary", () => {
+    const worker = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const approvalStart = worker.indexOf("task-approval-execute:");
+    const approvalEnd = worker.indexOf("if (!approved.ok)", approvalStart);
+    expect(worker.slice(approvalStart, approvalEnd)).toContain("serializableResponse");
+
+    const reply = readFileSync(new URL("../reply-pipeline.ts", import.meta.url), "utf8");
+    expect(reply).toContain("tenantBoundaryHandle}:${event.eventId}");
+    const meetingTask = readFileSync(new URL("../meeting-task-pipeline.ts", import.meta.url), "utf8");
+    expect(meetingTask).toContain("tenantBoundaryHandle}:${event.eventId}");
+  });
+
   it("does not expose a raw TaskBoard queue consumer with static tenant fallback", () => {
     const source = readFileSync(new URL("../task-runtime-entrypoints.ts", import.meta.url), "utf8");
     expect(source).not.toContain("consumeTaskBoardRepair");
