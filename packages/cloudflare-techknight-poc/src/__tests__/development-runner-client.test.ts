@@ -10,6 +10,9 @@ function input(overrides: Record<string, unknown> = {}) {
     workspaceId: "T1",
     channelId: "C1",
     threadTs: "1.0",
+    tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    connectionId: "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+    operationId: "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
     credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
     tenantBoundaryHandle: "tb_opaque_operation_handle_1234567890",
     callbackBaseUrl: "https://worker.example.com",
@@ -57,6 +60,28 @@ describe("runCloudflareDevelopmentRequest", () => {
 
     expect(startProcess.mock.calls[0]![0]).not.toContain(dangerous);
     expect(JSON.parse(writeFile.mock.calls[0]![1]).request).toBe(dangerous);
+  });
+
+  it("partitions the Container by tenant, connection, and operation and auto-cleans the process record", async () => {
+    const firstStart = vi.fn(async () => ({ id: "first" }));
+    const secondStart = vi.fn(async () => ({ id: "second" }));
+    const firstCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined), startProcess: firstStart }));
+    const secondCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined), startProcess: secondStart }));
+
+    await runCloudflareDevelopmentRequest(input({ createSandbox: firstCreate }));
+    await runCloudflareDevelopmentRequest(input({
+      tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      connectionId: "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      operationId: "op_01ARZ3NDEKTSV4RRFFQ69G5FB1",
+      createSandbox: secondCreate,
+    }));
+
+    const firstSandboxId = firstCreate.mock.calls[0]![0];
+    const secondSandboxId = secondCreate.mock.calls[0]![0];
+    expect(firstSandboxId).toMatch(/^development-[A-Za-z0-9_-]{43}$/);
+    expect(secondSandboxId).toMatch(/^development-[A-Za-z0-9_-]{43}$/);
+    expect(firstSandboxId).not.toBe(secondSandboxId);
+    expect(firstStart.mock.calls[0]![1]).toEqual(expect.objectContaining({ autoCleanup: true }));
   });
 
   it("fails closed before starting when callback configuration is missing", async () => {
