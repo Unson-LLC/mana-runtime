@@ -701,6 +701,7 @@ export default {
                 allowedChannelId: placement.channelId,
                 respondPolicy: placement.respondTo,
                 isEngagedThread: workspaceSession.engaged === true,
+                botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
               });
               // Slack may emit an ordinary message before the app_mention for the
               // same post. An ineligible variant must never claim the shared
@@ -865,6 +866,7 @@ export default {
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     respondPolicy: placement.respondTo,
                     isEngagedThread: workspaceSession.engaged === true,
+                    botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
                     triage: async (triageEvent) => {
                       const hydrated = await hydrateThreadContext(triageEvent);
                       const recentThread = (hydrated.threadContext ?? "").split("\n").filter(Boolean).slice(-10)
