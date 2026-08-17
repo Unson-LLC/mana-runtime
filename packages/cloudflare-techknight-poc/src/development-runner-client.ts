@@ -1,5 +1,6 @@
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
 import { tenantPartitionKey } from "./multitenancy/isolation.js";
+import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
 export interface DevelopmentSandbox {
   writeFile(path: string, content: string): Promise<unknown>;
@@ -64,6 +65,7 @@ export async function runCloudflareDevelopmentRequest(input: {
   connectionId: string;
   operationId: string;
   credentialLeaseHandle: string;
+  githubCredentialLeaseHandle: string;
   tenantBoundaryHandle: string;
   callbackBaseUrl?: string;
   createSandbox: (id: string) => DevelopmentSandbox;
@@ -73,7 +75,7 @@ export async function runCloudflareDevelopmentRequest(input: {
   // A development operation has a deterministic job id for idempotent user
   // feedback, but every launch receives a fresh Container identity. This makes
   // cross-operation and cross-tenant Container reuse structurally impossible.
-  const sandboxId = `development-sandbox-${crypto.randomUUID()}`;
+  const sandboxId = freshTenantContainerId("development-sandbox");
   const jobPath = `/tmp/${jobId}.json`;
   const callbackPath = callback.pathname.replace(/\/$/, "");
   const payload = {
@@ -100,6 +102,9 @@ export async function runCloudflareDevelopmentRequest(input: {
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseMarker(input.credentialLeaseHandle),
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+          GIT_CONFIG_VALUE_0: `Authorization: Bearer ${credentialLeaseMarker(input.githubCredentialLeaseHandle)}`,
           MANA_TENANT_BOUNDARY_HANDLE: input.tenantBoundaryHandle,
         },
       },

@@ -102,6 +102,35 @@ describe("durable credential relay integration", () => {
     expect(namespace.providerFetch).toHaveBeenCalledOnce();
   });
 
+  it("injects a GitHub lease as Basic auth exactly once without a static Worker credential", async () => {
+    const namespace = new IsolatedCredentialNamespace();
+    const registry = createDurableTenantCredentialRegistry(namespace);
+    const githubBinding = { ...BINDING, audience: "github.com" };
+    const githubLease = {
+      ...lease(),
+      lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB1",
+      binding: githubBinding,
+    };
+    const handle = await registry.register({
+      lease: githubLease,
+      expected_binding: githubBinding,
+      now: NOW,
+      allowed_hostname: "github.com",
+    });
+    const request = () => new Request("https://github.com/Unson-LLC/mana-runtime.git", {
+      headers: { authorization: `Bearer ${credentialLeaseMarker(handle)}` },
+    });
+
+    const first = await forwardTenantCredentialRequest(namespace, request(), NOW, "github-basic");
+    await expect(first.json()).resolves.toEqual({
+      authorization: `Basic ${btoa("x-access-token:fixture-secret-never-persist")}`,
+      relayHeader: null,
+    });
+    const duplicate = await forwardTenantCredentialRequest(namespace, request(), NOW, "github-basic");
+    expect(duplicate.status).toBe(503);
+    expect(namespace.providerFetch).toHaveBeenCalledOnce();
+  });
+
   it("fails closed after a relay isolate restart instead of reacquiring or persisting the secret", async () => {
     const namespace = new IsolatedCredentialNamespace();
     const registry = createDurableTenantCredentialRegistry(namespace);

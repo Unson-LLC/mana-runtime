@@ -24,6 +24,11 @@ import { markWorkspaceEngaged } from "./workspace-session.js";
 import { resolveTurnActorIdentity, type ActorIdentityResolver } from "./actor-identity.js";
 import type { RuntimeTriageDecision } from "./runtime-triage.js";
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import {
+  assertFreshTenantContainer,
+  destroyTenantContainer,
+  freshTenantContainerId,
+} from "./multitenancy/container-lifecycle.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -235,6 +240,7 @@ export async function generateClaudeReply(
   options: Pick<ReplyPipelineOptions, "oauthConfigured" | "credentialLeaseHandle" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
+  assertFreshTenantContainer(options.tenantBoundaryHandle, options.claudeSession);
 
   const startedAt = Date.now();
   const trace = { ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort };
@@ -253,7 +259,7 @@ export async function generateClaudeReply(
     ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
     : undefined);
   const sandbox = options.createSandbox(options.claudeSession?.sandboxId
-    ?? `techknight-reply-${await deterministicRuntimeUuid(`${options.tenantBoundaryHandle}:${event.eventId}`)}`);
+    ?? freshTenantContainerId("techknight-reply"));
   try {
     const promptPath = runtimeClaudePromptPath("reply");
     const promptContent = buildPrompt(
@@ -392,7 +398,7 @@ export async function generateClaudeReply(
     // Cloudflare suspends it after inactivity; destroying it would silently turn
     // every turn back into a fresh conversation. Ephemeral event sandboxes keep
     // the previous cleanup behavior.
-    if (!options.claudeSession) await sandbox.destroy().catch(() => undefined);
+    if (!options.claudeSession) await destroyTenantContainer(sandbox);
   }
 }
 

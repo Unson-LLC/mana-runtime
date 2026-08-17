@@ -6,6 +6,7 @@ import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbas
 import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
 const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
@@ -167,7 +168,7 @@ export async function classifyMeetingMinutesDestinationInSandbox(
   } catch {
     return null;
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }
 
@@ -430,6 +431,6 @@ export async function generateMeetingMinutesInSandbox(
     if (!result.success) throw new Error("meeting_minutes_generation_failed");
     return parseReceiptBoundGeneratedMeetingMinutesOutput(result.stdout, context);
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }

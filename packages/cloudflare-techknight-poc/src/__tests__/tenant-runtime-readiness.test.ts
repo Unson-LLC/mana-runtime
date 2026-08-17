@@ -67,6 +67,7 @@ describe("tenant runtime readiness", () => {
     expect(assessTenantRuntimeReadiness({
       ...complete,
       RUNTIME_TASK_BOARD_ENABLED: "true",
+      TASK_BOARD_TARGETS_JSON: "[]",
     })).toEqual({
       ready: false,
       missing_bindings: ["MANA_TASK_BOARD_SERVICE_ACTOR_ID"],

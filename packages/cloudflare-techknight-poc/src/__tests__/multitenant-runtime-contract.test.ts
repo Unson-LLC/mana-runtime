@@ -979,16 +979,18 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(sandbox).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
   });
 
-  it("keeps accounting results serializable and partitions ephemeral Containers by tenant boundary", () => {
+  it("keeps accounting results serializable and creates a fresh Container for every tenant operation", () => {
     const worker = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
     const approvalStart = worker.indexOf("task-approval-execute:");
     const approvalEnd = worker.indexOf("if (!approved.ok)", approvalStart);
     expect(worker.slice(approvalStart, approvalEnd)).toContain("serializableResponse");
 
     const reply = readFileSync(new URL("../reply-pipeline.ts", import.meta.url), "utf8");
-    expect(reply).toContain("tenantBoundaryHandle}:${event.eventId}");
+    expect(reply).toContain('freshTenantContainerId("techknight-reply")');
+    expect(reply).toContain("assertFreshTenantContainer(options.tenantBoundaryHandle, options.claudeSession)");
     const meetingTask = readFileSync(new URL("../meeting-task-pipeline.ts", import.meta.url), "utf8");
-    expect(meetingTask).toContain("tenantBoundaryHandle}:${event.eventId}");
+    expect(meetingTask).toContain('freshTenantContainerId("meeting-tasks")');
+    expect(meetingTask).toContain("destroyTenantContainer(sandbox)");
   });
 
   it("does not expose a raw TaskBoard queue consumer with static tenant fallback", () => {

@@ -46,7 +46,6 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
   TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
-  GITHUB_TOKEN?: string;
   DEVELOPMENT_CALLBACK_BASE_URL?: string;
   DEVELOPMENT_CALLBACK_TOKEN?: string;
   MANA_DEPLOYMENT_PROFILE?: string;
@@ -160,14 +159,12 @@ TechKnightSandbox.outboundByHost = {
     return forwardTenantCredentialRequest(_env.TENANT_RUNTIME_STATE, request, new Date().toISOString());
   },
   "github.com": async (request: Request, env: SandboxRuntimeEnv) => {
-    if (!env.GITHUB_TOKEN) return new Response("github_not_configured", { status: 503 });
-    const url = new URL(request.url);
-    const headers = new Headers(request.headers);
-    // Git smart-HTTP authenticates a PAT as the HTTPS password. Keep the
-    // credential outside the container and translate the intercepted request
-    // at the Worker boundary.
-    headers.set("Authorization", `Basic ${btoa(`x-access-token:${env.GITHUB_TOKEN}`)}`);
-    return fetch(`https://github.com${url.pathname}${url.search}`, { method: request.method, headers, body: request.body });
+    return forwardTenantCredentialRequest(
+      env.TENANT_RUNTIME_STATE,
+      request,
+      new Date().toISOString(),
+      "github-basic",
+    );
   },
   [DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv) => {
     if (!env.DEVELOPMENT_CALLBACK_BASE_URL || !env.DEVELOPMENT_CALLBACK_TOKEN) {

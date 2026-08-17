@@ -1,4 +1,5 @@
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
 export interface RuntimeTriageInput {
   botName: string;
@@ -77,7 +78,7 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
   tenantBoundaryHandle?: string;
   createSandbox(id: string): TriageSandbox;
 }): Promise<RuntimeTriageDecision> {
-  const sandbox = options.createSandbox(`triage-${crypto.randomUUID()}`);
+  const sandbox = options.createSandbox(freshTenantContainerId("triage"));
   const promptPath = "/tmp/mana-triage-prompt.txt";
   try {
     await sandbox.writeFile(promptPath, buildRuntimeTriagePrompt(input));
@@ -97,6 +98,6 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
   } catch {
     return { action: "reply", reason: "triage_error" };
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }

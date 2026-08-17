@@ -20,7 +20,7 @@ const MARKER_PREFIX = "mana-credential-lease-v1:";
 const HANDLE_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const CLOCK_SKEW_MS = 30_000;
 
-export type CredentialInjectionHeader = "authorization" | "x-api-key" | "xc-token";
+export type CredentialInjectionHeader = "authorization" | "x-api-key" | "xc-token" | "github-basic";
 
 interface ActiveCredential {
   readonly secret: SecretValue;
@@ -143,7 +143,9 @@ export class TenantCredentialInjector {
     const credentialHeader = input.credential_header
       ?? (active.credential_mode === "customer_api" ? "x-api-key" : "authorization");
     if (credentialHeader === "authorization") headers.set(credentialHeader, `Bearer ${secret}`);
-    else headers.set(credentialHeader, secret);
+    else if (credentialHeader === "github-basic") {
+      headers.set("authorization", `Basic ${btoa(`x-access-token:${secret}`)}`);
+    } else headers.set(credentialHeader, secret);
     return headers;
   }
 

@@ -224,7 +224,8 @@ export class TenantCredentialRelayHandler {
         if (credentialHeader !== null
           && credentialHeader !== "authorization"
           && credentialHeader !== "x-api-key"
-          && credentialHeader !== "xc-token") {
+          && credentialHeader !== "xc-token"
+          && credentialHeader !== "github-basic") {
           return new Response("credential_lease_rejected", { status: 503 });
         }
         const target = new URL(targetRaw);

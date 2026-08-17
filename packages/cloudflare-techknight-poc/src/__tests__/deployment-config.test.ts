@@ -288,8 +288,13 @@ describe("会社別Cloudflare deployment", () => {
     const sandboxRuntime = readFileSync(sandboxPath, "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
     expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST');
-    expect(sandboxRuntime).toContain('forwardTenantCredentialRequest(env.TENANT_RUNTIME_STATE, request, new Date().toISOString(), "github-basic")');
+    expect(sandboxRuntime).toContain('"github-basic"');
+    expect(sandboxRuntime).toContain("forwardTenantCredentialRequest(");
     expect(sandboxRuntime).not.toContain("env.GITHUB_TOKEN");
+    const workerRuntime = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
+    expect(workerRuntime).toContain('audience: "github.com"');
+    expect(workerRuntime).toContain("githubCredentialLeaseHandle");
+    expect(workerRuntime).not.toContain("GITHUB_TOKEN?: string");
     expect(sandboxRuntime).toContain('[DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv)');
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");

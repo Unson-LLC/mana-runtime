@@ -50,18 +50,14 @@ export async function createCanonicalTaskBoardRepairMessage(
   };
 }
 
-function legacyTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
-  if (env.RUNTIME_PLACEMENTS_JSON) return parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
-    .filter((placement) => placement.taskBoardEnabled)
-    .map((placement) => ({ targetId: `legacy-${placement.placementId}`, organizationId: "unson-business" as const,
-      workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: placement.channelId, projectCodes: placement.projectCodes }));
-  return env.RUNTIME_TASK_BOARD_ENABLED === "true" ? [{ targetId: "legacy-default", organizationId: "unson-business",
-    workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-    projectCodes: parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES) }] : [];
-}
-
 export function taskBoardTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
-  return env.TASK_BOARD_TARGETS_JSON ? parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON) : legacyTargets(env);
+  if (env.TASK_BOARD_TARGETS_JSON?.trim()) return parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON);
+  const schedulingEnabled = env.RUNTIME_TASK_BOARD_ENABLED === "true"
+    || (env.RUNTIME_PLACEMENTS_JSON
+      ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).some((placement) => placement.taskBoardEnabled)
+      : false);
+  if (schedulingEnabled) throw new Error("task_board_targets_required");
+  return [];
 }
 
 export async function issueTaskWriteRequestContext(

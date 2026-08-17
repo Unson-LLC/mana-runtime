@@ -10,8 +10,8 @@ import {
 const event = {
   eventId: "Ev123",
   tenantId: "unson-business",
-  workspaceId: "T_UNSON",
-  channelId: "C_BACK_OFFICE",
+  workspaceId: "T0882T8N9UH",
+  channelId: "C0BKS6RL99T",
   threadTs: "1.2",
   userId: "U_REQUESTER",
 } as never;
@@ -25,12 +25,28 @@ const runtime = {
 
 const repair = {
   eventType: "task_board_repair" as const,
-  targetId: "legacy-default",
+  targetId: "business",
   tenantId: "unson-business",
-  workspaceId: "T_UNSON",
-  channelId: "C_BACK_OFFICE",
+  workspaceId: "T0882T8N9UH",
+  channelId: "C0BKS6RL99T",
   reason: "scheduled" as const,
   requestedAt: "2026-08-13T00:00:00.000Z",
+};
+
+const businessTarget = {
+  targetId: "business",
+  organizationId: "unson-business",
+  workspaceId: "T0882T8N9UH",
+  channelId: "C0BKS6RL99T",
+  projectCodes: ["back-office"],
+};
+
+const devTarget = {
+  targetId: "dev",
+  organizationId: "unson-business",
+  workspaceId: "T0882T8N9UH",
+  channelId: "C0DEV123456",
+  projectCodes: ["mana"],
 };
 
 const resolveTaskBoardTenant = async (input: TaskBoardRepairEvent) => ({
@@ -69,7 +85,7 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(result.taskWriteEnabled).toBe(true);
     const claims = await verifyTaskWriteCapability(result.taskWriteCapability!, runtime.TASK_WRITE_CAPABILITY_SECRET, {
       requestId: "Ev123",
-      workspace: "T_UNSON",
+      workspace: "T0882T8N9UH",
       placementId: "mana-accounting",
       now: 1_001,
     });
@@ -84,10 +100,11 @@ describe("Cloudflare task runtime entrypoints", () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const env = {
       TENANT_ID: "unson-business",
-      SLACK_EXPECTED_TEAM_ID: "T_UNSON",
-      SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+      SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
+      SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       SLACK_BOT_TOKEN: "unson-token",
       RUNTIME_TASK_BOARD_ENABLED: "true",
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget]),
       TASK_BOARD_REPAIRS: { send: vi.fn() },
     };
     await processTaskBoardRepair(repair, env, "unson-business", fetch, refresh);
@@ -102,24 +119,25 @@ describe("Cloudflare task runtime entrypoints", () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const env = {
       TENANT_ID: "unson-business",
-      SLACK_EXPECTED_TEAM_ID: "T_UNSON",
-      SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+      SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
+      SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       RUNTIME_TASK_BOARD_ENABLED: "true",
       SLACK_BOT_TOKEN: "unson-token",
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget]),
       TASK_BOARD_REPAIRS: { send },
     };
     await expect(processTaskBoardRepair(repair, env, "unson-business", fetch,
       vi.fn().mockRejectedValue(new Error("boom")))).rejects.toThrow("boom");
     const tenantContext = {
       tenant: { tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
-      slack: { event_id: "task-board-repair:legacy-default:2026-08-13T01:00:00.000Z",
-        channel_id: "C_BACK_OFFICE", thread_ts: "2026-08-13T01:00:00.000Z",
+      slack: { event_id: "task-board-repair:business:2026-08-13T01:00:00.000Z",
+        channel_id: "C0BKS6RL99T", thread_ts: "2026-08-13T01:00:00.000Z",
         requester_id: "service_task_board" },
     } as never;
     const resolveTenantContext = vi.fn(async () => tenantContext);
     await enqueueScheduledTaskBoardRepair(env, "2026-08-13T01:00:00.000Z", resolveTenantContext);
     expect(resolveTenantContext).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: "legacy-default", channelId: "C_BACK_OFFICE",
+      targetId: "business", channelId: "C0BKS6RL99T",
     }));
     expect(send).toHaveBeenCalledWith({
       schema_version: "1.0",
@@ -129,50 +147,51 @@ describe("Cloudflare task runtime entrypoints", () => {
     });
   });
 
-  it("enqueues and refreshes each task-board-enabled placement with only its own projects", async () => {
+  it("enqueues and refreshes each canonical target with only its own projects", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    const env = { TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+    const env = { TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH", SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       RUNTIME_TASK_BOARD_ENABLED: "true", SLACK_BOT_TOKEN: "unson-token", RUNTIME_PLACEMENTS_JSON: JSON.stringify([
-        { placementId: "accounting", channelId: "C_BACK_OFFICE", projectCodes: ["back-office"], taskBoardEnabled: true },
-        { placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true },
-        { placementId: "router", channelId: "C_ROUTER", projectCodes: ["unson"] },
-      ]), TASK_BOARD_REPAIRS: { send } };
+        { placementId: "accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskBoardEnabled: true },
+        { placementId: "dev", channelId: "C0DEV123456", projectCodes: ["mana"], taskBoardEnabled: true },
+        { placementId: "router", channelId: "C0ROUTER123", projectCodes: ["unson"] },
+      ]), TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget, devTarget]), TASK_BOARD_REPAIRS: { send } };
     await enqueueScheduledTaskBoardRepair(env, "2026-08-13T02:00:00.000Z", resolveTaskBoardTenant);
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C_DEV" }) }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C0DEV123456" }) }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
-    await processTaskBoardRepair({ ...repair, targetId: "legacy-dev", channelId: "C_DEV" },
+    await processTaskBoardRepair({ ...repair, targetId: "dev", channelId: "C0DEV123456" },
       env, "unson-business", fetch, refresh);
-    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C_DEV", RUNTIME_PROJECT_CODES: "mana" }),
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C0DEV123456", RUNTIME_PROJECT_CODES: "mana" }),
       { fetch });
   });
 
-  it("uses placement task-board flags even when the legacy global flag is off", async () => {
+  it("uses canonical targets even when the legacy global flag is off", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const env = {
       TENANT_ID: "unson-business",
-      SLACK_EXPECTED_TEAM_ID: "T_UNSON",
-      SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
+      SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
+      SLACK_ALLOWED_CHANNEL_ID: "C0LEGACY123",
       RUNTIME_TASK_BOARD_ENABLED: "false",
       SLACK_BOT_TOKEN: "unson-token",
       RUNTIME_PLACEMENTS_JSON: JSON.stringify([
-        { placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true },
-        { placementId: "router", channelId: "C_ROUTER", projectCodes: ["unson"], taskBoardEnabled: false },
+        { placementId: "dev", channelId: "C0DEV123456", projectCodes: ["mana"], taskBoardEnabled: true },
+        { placementId: "router", channelId: "C0ROUTER123", projectCodes: ["unson"], taskBoardEnabled: false },
       ]),
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([devTarget]),
       TASK_BOARD_REPAIRS: { send },
     };
 
     await enqueueScheduledTaskBoardRepair(env, "2026-08-14T00:00:00.000Z", resolveTaskBoardTenant);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C_DEV" }) }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C0DEV123456" }) }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
-    await processTaskBoardRepair({ ...repair, targetId: "legacy-dev", channelId: "C_DEV" },
+    await processTaskBoardRepair({ ...repair, targetId: "dev", channelId: "C0DEV123456" },
       env, "unson-business", fetch, refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       RUNTIME_TASK_BOARD_ENABLED: "true",
-      SLACK_ALLOWED_CHANNEL_ID: "C_DEV",
+      SLACK_ALLOWED_CHANNEL_ID: "C0DEV123456",
       RUNTIME_PROJECT_CODES: "mana",
     }), { fetch });
   });

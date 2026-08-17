@@ -51,6 +51,19 @@ function validJwks(value: unknown): boolean {
   }
 }
 
+function placementTaskBoardEnabled(value: unknown): boolean {
+  if (!nonEmpty(value)) return false;
+  try {
+    const placements = JSON.parse(value as string) as unknown;
+    return Array.isArray(placements) && placements.some((placement) =>
+      placement !== null && typeof placement === "object"
+      && !Array.isArray(placement)
+      && (placement as Record<string, unknown>).taskBoardEnabled === true);
+  } catch {
+    return false;
+  }
+}
+
 export function assessTenantRuntimeReadiness(
   env: Record<string, unknown>,
 ): TenantRuntimeReadiness {
@@ -66,7 +79,12 @@ export function assessTenantRuntimeReadiness(
     ? env.MANA_REQUIRED_SLACK_SCOPES.split(",").map((value) => value.trim()).filter(Boolean)
     : [];
   if (scopes.length === 0) missing.push("MANA_REQUIRED_SLACK_SCOPES");
-  if ((env.RUNTIME_TASK_BOARD_ENABLED === "true" || nonEmpty(env.TASK_BOARD_TARGETS_JSON))
+  const taskBoardSchedulingEnabled = env.RUNTIME_TASK_BOARD_ENABLED === "true"
+    || placementTaskBoardEnabled(env.RUNTIME_PLACEMENTS_JSON);
+  if (taskBoardSchedulingEnabled && !nonEmpty(env.TASK_BOARD_TARGETS_JSON)) {
+    missing.push("TASK_BOARD_TARGETS_JSON");
+  }
+  if ((taskBoardSchedulingEnabled || nonEmpty(env.TASK_BOARD_TARGETS_JSON))
     && !nonEmpty(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)) {
     missing.push("MANA_TASK_BOARD_SERVICE_ACTOR_ID");
   }

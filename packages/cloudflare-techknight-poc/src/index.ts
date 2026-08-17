@@ -152,7 +152,6 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_UNSON?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
-  GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   MEETING_MINUTES_CONTEXT_MODE?: string;
@@ -2189,27 +2188,41 @@ export default {
                     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
                     now: tenantConsumerOptions.now,
                     release: "on_expiration",
-                    run: (credentialLeaseHandle) => executeTenantContainerOperation({
-                      tenant_context: tenantBody.tenant_context,
+                    run: (credentialLeaseHandle) => withTenantCredentialLease({
+                      envelope: tenantBody.tenant_context,
                       expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
-                      verifier,
-                      now: tenantConsumerOptions.now(),
+                      audience: "github.com",
+                      broker: clients.credential_broker,
+                      credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
+                      read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+                        tenantBody.tenant_context.workspace_connection.connection_id,
+                      ),
+                      resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+                      now: tenantConsumerOptions.now,
                       release: "on_expiration",
-                      execute: (tenantBoundaryHandle) => runCloudflareDevelopmentRequest({
-                        request,
-                        placementId: placement.placementId,
-                        requesterId: event.userId!,
-                        eventId: event.eventId,
-                        workspaceId: event.workspaceId,
-                        channelId: event.channelId,
-                        threadTs: event.threadTs,
-                        tenantId: tenantBody.tenant_context.tenant.tenant_id,
-                        connectionId: tenantBody.tenant_context.workspace_connection.connection_id,
-                        operationId: tenantBody.tenant_context.operation_id,
-                        credentialLeaseHandle,
-                        tenantBoundaryHandle,
-                        callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
-                        createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
+                      run: (githubCredentialLeaseHandle) => executeTenantContainerOperation({
+                        tenant_context: tenantBody.tenant_context,
+                        expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+                        verifier,
+                        now: tenantConsumerOptions.now(),
+                        release: "on_expiration",
+                        execute: (tenantBoundaryHandle) => runCloudflareDevelopmentRequest({
+                          request,
+                          placementId: placement.placementId,
+                          requesterId: event.userId!,
+                          eventId: event.eventId,
+                          workspaceId: event.workspaceId,
+                          channelId: event.channelId,
+                          threadTs: event.threadTs,
+                          tenantId: tenantBody.tenant_context.tenant.tenant_id,
+                          connectionId: tenantBody.tenant_context.workspace_connection.connection_id,
+                          operationId: tenantBody.tenant_context.operation_id,
+                          credentialLeaseHandle,
+                          githubCredentialLeaseHandle,
+                          tenantBoundaryHandle,
+                          callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
+                          createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
+                        }),
                       }),
                     }),
                   }),

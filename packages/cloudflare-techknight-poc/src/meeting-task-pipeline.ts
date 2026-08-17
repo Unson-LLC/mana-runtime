@@ -1,5 +1,4 @@
 import {
-  deterministicRuntimeUuid,
   postSlackReply,
   ReplyPipelineError,
   updateSlackReply,
@@ -24,6 +23,7 @@ import {
   TaskApiError,
 } from "@openryoko/task-runtime-core";
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
 const MAX_TASKS = 20;
 const MAX_TITLE_CHARS = 200;
@@ -166,9 +166,7 @@ async function extractCandidates(
     "oauthConfigured" | "credentialLeaseHandle" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox">,
 ): Promise<TaskCandidate[]> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
-  const sandbox = options.createSandbox(
-    `meeting-tasks-${await deterministicRuntimeUuid(`${options.tenantBoundaryHandle}:${event.eventId}`)}`,
-  );
+  const sandbox = options.createSandbox(freshTenantContainerId("meeting-tasks"));
   try {
     const promptPath = runtimeClaudePromptPath("meeting-task");
     await sandbox.writeFile(promptPath, buildExtractionPrompt(event));
@@ -193,7 +191,7 @@ async function extractCandidates(
     if (!result.success) throw new ReplyPipelineError("claude_execution_failed");
     return parseCandidates(result.stdout);
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }
 
