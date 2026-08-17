@@ -39,8 +39,10 @@ describe("development callback", () => {
     expect(complete).toHaveBeenCalledWith("development:job_1", "2.0", expect.objectContaining({ job_id: "job_1" }));
   });
   it("is idempotent for a repeated job callback", async () => {
-    const post = vi.fn(); const response = await handleDevelopmentCallback(request(body), { token: "secret", placements: [placement], resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }), claim: async () => false, complete: async () => undefined, release: async () => undefined, post });
-    expect(response.status).toBe(200); expect(post).not.toHaveBeenCalled();
+    const post = vi.fn(); const response = await handleDevelopmentCallback(request(body), { token: "secret", placements: [placement], resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }), claim: async () => ({ state: "completed" }) as never, complete: async () => undefined, release: async () => undefined, post });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, state: "completed", duplicate: true });
+    expect(post).not.toHaveBeenCalled();
   });
   it("accepts timed_out as a terminal outcome without changing collection state", async () => {
     const post = vi.fn(async () => "2.0");
@@ -54,17 +56,51 @@ describe("development callback", () => {
   });
   it("claims a job before posting so concurrent callbacks cannot double-post", async () => {
     let claimed = false;
-    const claim = vi.fn(async () => claimed ? false : (claimed = true));
+    const claim = vi.fn(async () => claimed
+      ? ({ state: "in_progress" } as const)
+      : (claimed = true, { state: "claimed" } as const));
     const post = vi.fn(async () => "2.0");
     const options = { token: "secret", placements: [placement],
       resolve: async (event: SlackQueueEvent) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
-      claim, complete: vi.fn(async () => undefined), release: vi.fn(async () => undefined), post };
+      claim: claim as never, recordDelivery: vi.fn(async () => undefined),
+      complete: vi.fn(async () => undefined), release: vi.fn(async () => undefined), post };
     const [first, second] = await Promise.all([
       handleDevelopmentCallback(request(body), options),
       handleDevelopmentCallback(request(body), options),
     ]);
-    expect(first.status).toBe(200); expect(second.status).toBe(200);
+    expect(first.status).toBe(200); expect(second.status).toBe(409);
+    await expect(second.json()).resolves.toEqual({ error: "development_callback_in_progress" });
     expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes accounting from a durable delivery result without posting Slack again", async () => {
+    const post = vi.fn();
+    const complete = vi.fn(async () => undefined);
+    const response = await handleDevelopmentCallback(request(body), {
+      token: "secret", placements: [placement],
+      resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+      claim: async () => ({ state: "accounting_pending", delivery: { state: "delivered", responseTs: "2.0" } }) as never,
+      recordDelivery: vi.fn(async () => undefined), complete, release: vi.fn(async () => undefined), post,
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, state: "completed" });
+    expect(post).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledWith("development:job_1", expect.objectContaining({ job_id: "job_1" }),
+      { state: "delivered", responseTs: "2.0" });
+  });
+
+  it("rejects a different terminal payload for an existing job", async () => {
+    const post = vi.fn();
+    const response = await handleDevelopmentCallback(request(body), {
+      token: "secret", placements: [placement],
+      resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+      claim: async () => ({ state: "conflict" }) as never,
+      recordDelivery: vi.fn(async () => undefined), complete: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined), post,
+    });
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "development_callback_conflict" });
+    expect(post).not.toHaveBeenCalled();
   });
   it("releases the claim when Slack posting fails", async () => {
     const release = vi.fn(async () => undefined);
