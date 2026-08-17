@@ -580,11 +580,14 @@ describe("story-mana-multitenant-runtime contract", () => {
       if (payloads.length === 1) throw new Error("accounting unavailable after Slack");
       return { result_ref: "brainbase-write-retried" };
     }) };
-    const quota = { read_authoritative_decision: vi.fn(async (): Promise<QuotaDecision> => ({
+    const allowedQuota: QuotaDecision = {
       message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11", quota_revision: "19",
       decision: "allowed", limit: 100, used: 1, remaining: 99, unit: "model_tokens",
       window_started_at: "2026-08-01T00:00:00Z", window_ends_at: "2026-09-01T00:00:00Z", decided_at: NOW,
-    })) };
+    };
+    const quota = { read_authoritative_decision: vi.fn()
+      .mockResolvedValueOnce(allowedQuota)
+      .mockResolvedValue({ ...allowedQuota, decision: "hard_stopped", used: 100, remaining: 0 }) };
     let persistedResponseTs: string | undefined;
     const postSlackOnce = vi.fn(async () => {
       persistedResponseTs = "4.0";
@@ -607,6 +610,7 @@ describe("story-mana-multitenant-runtime contract", () => {
     await expect(run()).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
     await expect(run()).resolves.toEqual({ outcome: "already_completed", responseTs: "4.0" });
     expect(postSlackOnce).toHaveBeenCalledOnce();
+    expect(quota.read_authoritative_decision).toHaveBeenCalledOnce();
     expect(accounting.write).toHaveBeenCalledTimes(2);
     expect(payloads[1]).toEqual(payloads[0]);
   });
