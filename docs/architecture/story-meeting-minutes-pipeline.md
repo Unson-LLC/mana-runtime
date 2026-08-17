@@ -27,7 +27,7 @@ manaからの主な設計変更:
 |---|---|---|
 | 全チャンネルの.txtで発火（フィルタなし） | routerチャンネルallowlistのみ（fail closed） | 誤発火と二重動作の排除 |
 | プロジェクトは毎回ユーザーが全件からボタン選択 | LLM分類は候補提示のみ→operatorが宛先確定 | LLMの過信による誤配送を投稿前に止め、config正本1系統へ収斂 |
-| 固有名詞辞書が2箇所に不整合ハードコード、Graph不達で辞書消失 | Graph SSOT（person/project/brand aliases）から動的生成。生成失敗時も辞書なしで続行（fail-open）だがwarnを出す | 辞書の正本はGraph。構造バグ（辞書とコンテキストの融着）を分離 |
+| 固有名詞辞書が2箇所に不整合ハードコード、Graph不達で辞書消失 | Brainbase共通Entity Resolver（Graph v2 + Ontology）で解決し、portable Receiptを保存。取得がcompleteでなければ生成を止める | 解決規則を会議処理へ個別実装せず、Brainbase全体の正本と監査契約へ統合 |
 | `summarizeText`×2 + `generateMeetingMinutes`×2 の重複LLM呼び出し | 生成は1回、結果を投稿・タスク抽出へ共有 | コストとレイテンシ |
 | 状態はLambdaプロセス内Map + action.value 1900字 + Slack再DLの3重補償 | `${JINN_HOME}` 配下のstateファイル（単調遷移） | gateway再起動に耐える単一の正 |
 | タスク承認UIは独自実装（NocoDB行き） | 既存 `MeetingTaskProposalNotifier` へ直接ハンドオフ（正本=Canonical Task） | 実装1本化。register-first動線は稼働実績あり |
@@ -45,7 +45,7 @@ Eveの6段のうちv1で移植するのは①②③⑥。④決定候補・⑤�
 flowchart TD
   U[".txtアップロード @ routerチャンネル"] --> G["gate: allowlist / .txt / サイズ上限 / 冪等"]
   G --> DL["transcript取得 (files.info or url_private DL)"]
-  DL --> CTX["① コンテキスト準備（決定論・fail-open）\nGraph: person/project/brand aliases→固有名詞辞書\n進行中タスク(listTasks) / 前回議事録(state)"]
+  DL --> CTX["① コンテキスト準備（決定論）\nBrainbase共通Resolver: Graph v2 + Ontology→固有名詞・Decision・Receipt\n取得がcompleteでなければfail closed\n進行中タスク(listTasks) / 前回議事録(state)"]
   CTX --> RT["② 振り分け分類 (invokeOneShot 小モデル)\ntranscript冒頭 + destination候補一覧 → projectId"]
   RT --> ASK["router スレッドに候補+宛先select提示（常に投稿前確認）"]
   ASK -->|operator選択| GEN
@@ -120,10 +120,11 @@ flowchart TD
   既存 `sanitize()` 同等の防御（制御文字除去。ただし議事録本文はmrkdwn整形を
   保持する必要があるため `<>` 除去は `<@`/`<#`/`<http` のメンション・リンク構文
   のみを無害化する専用サニタイザにする — @channel ping と偽装リンクの防止が目的）。
-- **固有名詞辞書**: Graph SSOTのperson/project/brand entitiesの
-  `aliases → name` から動的生成し、議事録生成プロンプトへ「表記ゆれ→正式名」
-  ルールとして注入する。ハードコード辞書は持たない。Graph不達時は辞書なしで
-  生成続行（fail-open）+ warnログ。
+- **固有名詞・Decision解決**: hosted GraphをGraph v2へ写像し、
+  `@unson/brainbase-mcp` の共通Entity Resolverへ全文、project scope、as-ofを渡す。
+  会議固有のalias scoringや名前マッチは持たない。`source.status=complete` かつ
+  `resolutionStatus!=blocked` の場合だけ生成へ進み、portable Receiptを実行stateへ保存する。
+  partial / unavailable / invalid は空結果へ丸めず `failed:brainbase` とする。
 
 ## Data
 
@@ -131,7 +132,7 @@ flowchart TD
   - key: `router:<channelId>:<fileId>:<ts>`
   - value: `{ routerChannelId, fileId, sourceTs, fileName, sourceTextHash,
     status, projectId?, suggestedProjectId?, routingReason?, destinationChannelId?,
-    postedParentTs?, postedThreadTs?, shares?, controlTs?,
+    postedParentTs?, postedThreadTs?, shares?, controlTs?, brainbaseResolutionReceipt?,
     minutes?{title,overview,body}, createdAt, updatedAt, expiresAt }`
   - 生成済み議事録（title/overview/body）はTTL内stateに保持する。振り直しを
     再生成なしで決定論的に行うため（本文はSlackに公開済みの内容であり機密性は
@@ -143,14 +144,13 @@ flowchart TD
     stateファイル肥大防止と、要約+タイトルで文脈参照には足りるため）。
 - transcript本体: `downloadAttachment` で一時ディレクトリへ保存し、処理後に削除。
   stateには残さない（機密+サイズ）。hashのみ記録。
-- コンテキスト入力（すべてfail-open・上限つき）:
-  - 固有名詞辞書: Graph person/project/brand（各limit 500、5分キャッシュ —
-    `GraphPeopleClient` のキャッシュ機構を汎用化）
+- コンテキスト入力:
+  - 固有名詞・Decision: Graph person/org/project/decisionをproject scope付きで取得し、
+    共通Entity Resolverが文字起こし全文から解決。Graph取得はcomplete必須
   - 進行中タスク: `BrainbaseTaskClient.listTasks({status})` から
     pending/in_progress を最大20件（タイトルのみ）
-  - 関連Decision: Graph `type=decision` から、解決済みprojectの名前を含むものを
-    最大10件（v1は名前マッチの粗い絞り込み。Graph側にproject関連付けAPIが
-    生えたら差し替え）
+  - 関連Decision: Graph上のproject関係でscopeし最大10件。本文の名前包含による
+    会議固有検索は行わない
   - 前回議事録: state の `lastMinutesByChannel[destinationChannelId]`
 - LLM段のモデル既定: 振り分け分類= `claude-haiku-4-5`（enum選択タスク）、
   議事録生成= `claude-sonnet-4-6`（Quality Contractの物量要求。config上書き可）。
@@ -193,7 +193,9 @@ Slack投稿レイアウトはmanaの契約を維持する: **親メッセージ=
   チャンネル名と共にエラー通知（botの宛先チャンネル招待はデプロイ手順に含める）。
 - ハンドオフ失敗（タスク抽出・登録）: warnログ+routerスレッドに注記のみ。
   議事録展開は成功として扱う（タスク動線は既存UIの再試行で回復可能）。
-- Graph・タスクAPI不達: コンテキストなしで生成続行（fail-open、warnログ）。
+- Brainbase Graph不達・部分取得・project scope不成立: Receiptへ状態を残して
+  `failed:brainbase`。議事録は生成・投稿しない。タスクAPI不達と前回議事録不在は
+  best-effortコンテキストとしてwarnし、Brainbase Entity Resolverがcompleteなら生成を続ける。
 - gateway再起動: stateファイルで実行文脈は生存。処理途中（received/routed）で
   落ちた場合、再起動後の同一ファイル再アップロードは冪等キーが異なる
   （ts変化）ため再処理できる。自動レジューム はv1ではしない（要再アップロード。
@@ -209,6 +211,8 @@ Slack投稿レイアウトはmanaの契約を維持する: **親メッセージ=
 
 - Slack App権限: 既存の `files:read`（添付DL実績あり）と Interactivity
   （柱4で有効化済み）で足りる。**新スコープ追加なし**。
+- 起動条件: `BRAINBASE_GRAPH_API_BASE_URL`（task API URLへfallback可）と
+  project-scoped `BRAINBASE_GRAPH_API_TOKEN` が必須。未設定なら機能全体を起動しない。
 - botを振り分け先の各プロジェクトチャンネルへ招待する必要がある。
 - pilot config (`~ryoko/.ryoko/config.yaml`) の `connectors.slack` に追加:
 

@@ -29,6 +29,7 @@
     "@openryoko/slack-thread-context": "workspace:*",
     "@openryoko/task-runtime-core": "workspace:*",
     "@slack/bolt": "^4.3.0",
+    "@unson/brainbase-mcp": "0.3.0",
     "@whiskeysockets/baileys": "7.0.0-rc.9",
     "better-sqlite3": "^11.8.0",
     "busboy": "^1.6.0",
