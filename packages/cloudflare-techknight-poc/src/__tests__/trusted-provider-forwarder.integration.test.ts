@@ -53,6 +53,7 @@ const TENANT_CONTEXT = {
 } satisfies TenantContextEnvelope;
 
 const BASE_ENV = {
+  BRAINBASE_TENANT_RUNTIME_ENABLED: "1",
   BRAINBASE_TASK_API_BASE_URL: "https://tasks.example.test",
   BRAINBASE_GRAPH_API_BASE_URL: "https://graph.example.test",
   BRAINBASE_MCP_BASE_URL: "https://mcp.example.test",
@@ -225,11 +226,41 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
   });
 
   it.each([
+    ["disabled service", { BRAINBASE_TENANT_RUNTIME_ENABLED: "0", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
     ["missing port", { BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
     ["missing token", { BRAINBASE_TENANT_RUNTIME_PORT: "31016" }],
     ["wildcard host", { BRAINBASE_TENANT_RUNTIME_HOST: "0.0.0.0", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
   ])("rejects unsafe internal service configuration: %s", (_label, env) => {
     expect(() => createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: TENANT_CONTEXT })).toThrow("runtime_configuration_invalid");
+  });
+
+  it.each([
+    ":leading-punctuation",
+    "contains space",
+    `a${"x".repeat(200)}`,
+  ])("rejects a task idempotency key outside the producer wire grammar: %s", async (idempotencyKey) => {
+    const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
+      env: {
+        ...BASE_ENV,
+        BRAINBASE_TENANT_RUNTIME_PORT: "31016",
+        BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN,
+      },
+      tenant_context: TENANT_CONTEXT,
+      fetch_impl: async () => {
+        throw new Error("trusted service must not be reached");
+      },
+    });
+    await expect(forwarder.forward({
+      lease: LEASE,
+      expected_binding: { ...BINDING, audience: "tasks.example.test" },
+      request: jsonRequest(
+        "https://tasks.example.test/api/companion/tasks",
+        "POST",
+        { title: "A" },
+        { "idempotency-key": idempotencyKey },
+      ),
+      now: LEASE.issued_at,
+    })).rejects.toMatchObject({ boundary: "credential_lease", code: "SCHEMA_INVALID" });
   });
 
   it("passes through a valid provider non-2xx wrapper and decodes utf8/base64 bodies", async () => {

@@ -23,6 +23,7 @@ const complete = {
   BRAINBASE_QUOTA_URL: "https://quota.example.test",
   BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test",
   BRAINBASE_RUNTIME_API_TOKEN: "opaque-test-token",
+  BRAINBASE_TENANT_RUNTIME_ENABLED: "1",
   BRAINBASE_TENANT_RUNTIME_HOST: "127.0.0.1",
   BRAINBASE_TENANT_RUNTIME_PORT: "31016",
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "internal-service-token-placeholder",
@@ -70,11 +71,13 @@ describe("tenant runtime readiness", () => {
   it("requires a dedicated safe Brainbase provider-forward binding", () => {
     expect(assessTenantRuntimeReadiness({
       ...complete,
+      BRAINBASE_TENANT_RUNTIME_ENABLED: undefined,
       BRAINBASE_TENANT_RUNTIME_PORT: undefined,
       BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: undefined,
     })).toEqual({
       ready: false,
       missing_bindings: [
+        "BRAINBASE_TENANT_RUNTIME_ENABLED",
         "BRAINBASE_TENANT_RUNTIME_PORT",
         "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
       ],
