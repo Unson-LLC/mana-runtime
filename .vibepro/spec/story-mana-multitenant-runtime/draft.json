@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "INV-001",
@@ -135,7 +135,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "INV-002",
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-012",
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "INV-003",
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-013",
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "INV-004",
@@ -389,7 +389,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "INV-005",
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-004",
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "INV-006",
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-005",
@@ -577,7 +577,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-014",
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-007",
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "INV-007",
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-015",
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-016",
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-010",
@@ -889,7 +889,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
       "id": "C-017",
@@ -963,10 +963,10 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
-      "id": "C-018",
+      "id": "C-002",
       "type": "contract",
       "statement": "Cloudflare production entrypointはWrangler mainであるpackages/cloudflare-techknight-poc/src/index.tsとする。/slack/eventsはhandleTenantSlackRequestだけへ接続し、Slack署名検証後にBRAINBASE_TENANT_AUTHORITY_URLを使うauthenticated HTTP adapterでworkspace connectionを一意解決して署名済みTenantContextEnvelopeを取得・検証してからTenantQueueBodyを投入する。QueueはTenantQueueBodyをcanonical consumerで再検証してから処理し、TENANT_ID、SLACK workspace、placement、旧messageからtenantを補完しない。MANA_DEPLOYMENT_PROFILEはshared_cloud|dedicated_cloud|customer_managed_ossを明示必須とし、欠落・未知値・必須capability欠落はCONFIGURATION_INVALIDまたはPROTOCOL_CAPABILITY_UNSUPPORTEDでfail closedにする。customer_managed_ossでnon_applicableにできるのはoptional capabilityだけである。",
       "origin": {
@@ -1032,11 +1032,11 @@
         ]
       },
       "confidence": 0.96,
-      "first_seen_at": "2026-08-17T03:00:00.000Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "first_seen_at": "2026-08-17T05:26:43.529Z",
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
-      "id": "C-019",
+      "id": "C-003",
       "type": "contract",
       "statement": "Brainbase runtime HTTP adapterはBRAINBASE_TENANT_AUTHORITY_URL、BRAINBASE_CREDENTIAL_BROKER_URL、BRAINBASE_QUOTA_URL、BRAINBASE_ACCOUNTING_URLとsecret binding BRAINBASE_RUNTIME_API_TOKENを環境から受け、各requestをtenant/connection/revision/operationへ束縛する。URLまたはtoken欠落、AbortSignal timeout、非2xx、invalid JSON、schema不一致はempty snapshot、allowed quota、quantity=0、collection_state=collected、outcome=succeededへ変換せず、WORKSPACE_CONNECTION_UNAVAILABLEまたはUPSTREAM_UNAVAILABLEとして拒否する。credential leaseはbinding完全一致、max_uses=1、requested TTLと応答TTLが1〜60秒を満たす場合だけvolatile injectorへ渡す。Brainbase write前はauthoritative expected-revision readを再実行し、UsageEventとOperationReceiptのcollection_stateとoutcomeを独立に保持する。",
       "origin": {
@@ -1102,11 +1102,11 @@
         ]
       },
       "confidence": 0.94,
-      "first_seen_at": "2026-08-17T03:00:00.000Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "first_seen_at": "2026-08-17T05:26:43.529Z",
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     },
     {
-      "id": "C-020",
+      "id": "INV-008",
       "type": "invariant",
       "statement": "queue_execution、slack_delivery、UsageEvent、OperationReceiptのclaimとledgerはCloudflare Durable Object TENANT_RUNTIME_STATEに置く。Durable Object nameはTenantPartitionKeyから導出し、storage keyはidempotency:{partition_key}またはaccounting:{tenant_partition_key}としてtenant最上位を維持する。claimはstorage transaction内でowner、idempotency_key、context_hash、payload_hashを原子的に照合し、別isolate・再起動・duplicate replayでもbusiness callback、Brainbase write、Slack deliveryを各operation_idにつき最大1回にする。pending/claimedのretryは同じkeyだけを再利用し、succeeded/failed_terminalを30日以上保持する。process memoryだけのMapはproduction adapterに使用しない。",
       "origin": {
@@ -1164,8 +1164,8 @@
         ]
       },
       "confidence": 0.93,
-      "first_seen_at": "2026-08-17T03:00:00.000Z",
-      "last_revised_at": "2026-08-17T02:42:18.572Z"
+      "first_seen_at": "2026-08-17T05:26:43.529Z",
+      "last_revised_at": "2026-08-17T08:16:09.760Z"
     }
   ],
   "generated_at": "2026-08-17T00:46:42.058Z",
