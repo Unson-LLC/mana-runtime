@@ -271,6 +271,25 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   if (run.status === "completed") {
     if (run.taskRegistration?.failure && run.destination && run.transcriptSha256) {
       const retryStage = run.taskRegistration.failure.stage;
+      if (retryStage === "task_card") {
+        if (run.slack?.taskCardTs) {
+          await clearTaskIntegrationPending(fs, run, options);
+          return run;
+        }
+
+        if (!run.taskRegistration.registered.length || !run.slack?.parentTs || !options.postTaskCard) return run;
+
+        await markTaskIntegrationPending(fs, run, "task_card", options);
+        try {
+          run.slack.taskCardTs = await options.postTaskCard(run);
+          run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+        } catch (error) {
+          await deferTaskIntegration(fs, run, "task_card", error, options);
+          return run;
+        }
+        await clearTaskIntegrationPending(fs, run, options);
+        return run;
+      }
       try {
         const receipt = await options.resolveContext({ run_id: run.runId,
           project_code: meetingMinutesContextProjectCode(run.destination),
@@ -283,7 +302,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         });
         return run;
       }
-      if (retryStage !== "task_card" && run.taskRegistration.registered.length && options.repairTaskBoard) {
+      if (run.taskRegistration.registered.length && options.repairTaskBoard) {
         await markTaskIntegrationPending(fs, run, "task_board", options);
         try {
           await options.repairTaskBoard(run.destination.taskBoardTargetId);

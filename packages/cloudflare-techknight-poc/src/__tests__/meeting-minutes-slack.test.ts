@@ -410,6 +410,66 @@ describe("MeetingMinutesSlackClient", () => {
     expect(ids[0]).toBe(ids[1]);
   });
 
+  it("story-meeting-minutes-task-card-runtime:ac:1 story-meeting-minutes-task-card-runtime:ac:2 story-meeting-minutes-task-card-runtime:ac:3 scopes task card idempotency to the run revision", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: `${bodies.length}.2` });
+    }) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+    const run = { ...routedRun(), revision: 0,
+      taskRegistration: { registered: [{ index: 0, title: "確認する", taskId: "task-1", status: "registered" as const }] },
+      slack: { ...routedRun().slack, parentTs: "4.1" } };
+
+    await client.postTaskCard(run);
+    await client.postTaskCard(run);
+    await client.postTaskCard({ ...run, revision: 1 });
+    await client.postTaskCard({ ...run, revision: undefined });
+
+    expect(bodies).toHaveLength(4);
+    expect(bodies[0]).toMatchObject({
+      channel: "C2",
+      thread_ts: "4.1",
+      text: "議事録のタスク確認: 新規1件・既存0件",
+    });
+    expect(bodies[2]?.blocks).toEqual(bodies[0]?.blocks);
+    const ids = bodies.map((body) => body.client_msg_id);
+    expect(ids[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(ids[0]).toBe("1224a6fc-a576-4e61-b8fa-f3302ef61619");
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[2]).toBe("8dc542bb-b7dd-4397-abee-c94297f18d03");
+    expect(ids[3]).toBe(ids[0]);
+  });
+
+  it("explains that only the task card remains when task registration already completed", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), taskRegistration: {
+      registered: [{ index: 0, title: "確認する", taskId: "task-1", status: "registered" as const }],
+      failure: { index: 0, stage: "task_card" as const, message: "internal-slack-error",
+        failedAt: "2026-08-17T00:00:00.000Z" },
+    } };
+
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("タスク登録は完了しましたが、タスクカードの投稿が完了していません");
+    expect(serialized).toContain("未完了の処理だけ再実行できます");
+    expect(serialized).not.toContain("internal-slack-error");
+    expect(serialized).not.toContain("タスク自動登録だけ未完了");
+  });
+
+  it("propagates the exact Slack task card API error", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ ok: false, error: "invalid_blocks" })) as typeof fetch;
+    const run = { ...routedRun(), revision: 1,
+      taskRegistration: { registered: [{ index: 0, title: "確認する", taskId: "task-1", status: "registered" as const }] },
+      slack: { ...routedRun().slack, parentTs: "4.1" } };
+
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).postTaskCard(run))
+      .rejects.toThrow("slack_api_failed:chat.postMessage:invalid_blocks");
+  });
+
   it("posts the legacy summary card and detailed thread contract", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

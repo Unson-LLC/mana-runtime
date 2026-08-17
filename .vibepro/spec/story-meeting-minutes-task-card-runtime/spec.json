@@ -1,0 +1,175 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-meeting-minutes-task-card-runtime",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "implementation"
+  },
+  "clauses": [
+    {
+      "id": "INV-003",
+      "type": "invariant",
+      "statement": "タスクカードのSlack client_msg_idはrevision 0で既存seedを維持し、revision 1以降はrunIdとrevisionから決定し、同一revisionでは安定し、異なるrevisionでは一意になる",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-task-card-runtime.md",
+            "section": "決定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-contracts.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "story-meeting-minutes-task-card-runtime:ac:1 story-meeting-minutes-task-card-runtime:ac:2 story-meeting-minutes-task-card-runtime:ac:3 scopes task card idempotency to the run revision"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "scopes task card idempotency to the run revision"
+          }
+        ]
+      },
+      "confidence": 0.98,
+      "first_seen_at": "2026-08-17T07:53:02.772Z",
+      "last_revised_at": "2026-08-17T07:59:59.529Z"
+    },
+    {
+      "id": "INV-004",
+      "type": "invariant",
+      "statement": "タスクカードのみの再試行は親投稿、詳細投稿、文脈解決、Task登録、Canvas修復を重複させず、成功後にtaskCardTsを保存してfailureを解除し、投稿前提不足時はfailureを保持する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-task-card-runtime.md",
+            "section": "不変条件"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "resumes only the task card stage after task card posting fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "keeps the task card failure when a card-only retry is unavailable"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "resumes only the task card stage after task card posting fails"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-17T07:53:02.772Z",
+      "last_revised_at": "2026-08-17T07:59:59.529Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "revisionを変更しても投稿先channel、親thread、タスクカード本文、操作ボタンのBlock Kit契約を変更しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-task-card-runtime.md",
+            "section": "不変条件"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-task-cards.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "story-meeting-minutes-task-card-runtime:ac:1 story-meeting-minutes-task-card-runtime:ac:2 story-meeting-minutes-task-card-runtime:ac:3 scopes task card idempotency to the run revision"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "story-meeting-minutes-task-card-runtime:ac:3"
+          }
+        ]
+      },
+      "confidence": 0.98,
+      "first_seen_at": "2026-08-17T07:59:59.529Z",
+      "last_revised_at": "2026-08-17T07:59:59.529Z"
+    }
+  ],
+  "planned_test_suites": [
+    {
+      "layer": "unit",
+      "covers": [
+        "Slack task card payload",
+        "同一revision再試行",
+        "redo revision境界"
+      ]
+    },
+    {
+      "layer": "integration",
+      "covers": [
+        "task_card部分失敗の再開",
+        "チェックポイント非重複"
+      ]
+    },
+    {
+      "layer": "production readback",
+      "covers": [
+        "revision 0から1への実redo",
+        "新parent配下のSlack taskCardTs",
+        "Brainbase Task・Canvas・GitHub・source statusの非重複"
+      ]
+    }
+  ],
+  "open_questions": [],
+  "generated_at": "2026-08-17T07:59:59.523Z",
+  "previous_spec_id": "2026-08-17T07:54:04.094Z"
+}

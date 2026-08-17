@@ -356,9 +356,13 @@ export class MeetingMinutesSlackClient {
   }
   async postTaskCard(run: MeetingMinutesRun): Promise<string> {
     if (!run.destination || !run.slack?.parentTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
+    const revision = run.revision ?? 0;
+    const idempotencySeed = revision > 0
+      ? `${run.runId}-revision-${revision}-task-card`
+      : `${run.runId}-task-card`;
     const result = await this.post("chat.postMessage", { channel: run.destination.slackChannelId,
       thread_ts: run.slack.parentTs, ...meetingMinutesTaskCard(run),
-      client_msg_id: await clientMessageId(`${run.runId}-task-card`) });
+      client_msg_id: await clientMessageId(idempotencySeed) });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
   async updateTaskCard(run: MeetingMinutesRun): Promise<void> {

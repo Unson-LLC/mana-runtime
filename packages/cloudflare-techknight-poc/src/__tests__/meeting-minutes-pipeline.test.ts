@@ -542,6 +542,29 @@ describe("meeting minutes pipeline", () => {
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(postTaskCard).toHaveBeenCalledTimes(2);
+    expect(options.resolveContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the task card failure when a card-only retry is unavailable", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const initial = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }),
+      repairTaskBoard: vi.fn().mockResolvedValue(undefined),
+      postTaskCard: vi.fn().mockRejectedValue(new Error("task card down")),
+    });
+    await resumeMeetingMinutesRun(fs, selection, initial);
+    const unavailable = resumeOptions();
+
+    const retained = await resumeMeetingMinutesRun(fs, selection, unavailable);
+
+    expect(retained.slack?.taskCardTs).toBeUndefined();
+    expect(retained.taskRegistration?.failure).toMatchObject({
+      stage: "task_card", message: "task card down",
+    });
+    expect(unavailable.resolveContext).not.toHaveBeenCalled();
+    expect(unavailable.createTask).not.toHaveBeenCalled();
   });
 
   it("saves GitHub before Slack and completes", async () => {
