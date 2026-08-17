@@ -104,6 +104,10 @@ import {
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { withTenantCredentialLease } from "./multitenancy/credential-injector.js";
+import {
+  createDurableTenantCredentialRegistry,
+  TenantCredentialRelayHandler,
+} from "./multitenancy/durable-credential-relay.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -176,8 +180,12 @@ export class TenantRuntimeState extends DurableObject {
   readonly #handler = new TenantRuntimeStateHandler(
     this.ctx.storage as unknown as TenantStateStorage,
   );
+  readonly #credentialRelay = new TenantCredentialRelayHandler();
 
   fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).hostname === "tenant-credential-relay.internal") {
+      return this.#credentialRelay.fetch(request);
+    }
     return this.#handler.fetch(request);
   }
 }
@@ -731,6 +739,7 @@ export default {
             expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
             audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
             broker: clients.credential_broker,
+            credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
             read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
               tenantContext.workspace_connection.connection_id,
             ),
@@ -878,11 +887,13 @@ export default {
                     expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                     audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
                     broker: clients.credential_broker,
+                    credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
                     read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
                       tenantBody.tenant_context.workspace_connection.connection_id,
                     ),
                     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
                     now: tenantConsumerOptions.now,
+                    release: "on_consumption",
                     run: (credentialLeaseHandle) => runCloudflareDevelopmentRequest({
                       request,
                       placementId: placement.placementId,
@@ -919,6 +930,7 @@ export default {
                 expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                 audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
                 broker: clients.credential_broker,
+                credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
                 read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
                   tenantBody.tenant_context.workspace_connection.connection_id,
                 ),

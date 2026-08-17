@@ -34,6 +34,10 @@ function opaqueHandle(): string {
   return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
+export function createCredentialLeaseHandle(): string {
+  return opaqueHandle();
+}
+
 function assertHostname(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!normalized || normalized.includes(":") || normalized.includes("/") || normalized !== value) {
@@ -91,10 +95,12 @@ export class TenantCredentialInjector {
     expected_binding: CredentialLeaseBinding;
     now: string;
     allowed_hostname?: string;
+    handle?: string;
   }): Promise<string> {
     validateRegistration(input);
     const allowedHostname = assertHostname(input.allowed_hostname ?? input.expected_binding.audience);
-    const handle = opaqueHandle();
+    const handle = input.handle ?? opaqueHandle();
+    if (!HANDLE_PATTERN.test(handle)) deny("credential_lease", "CREDENTIAL_LEASE_INVALID");
     const secret = createSecretValue(input.lease.lease_token);
     await consumeCredentialLease(this.#usedLeases, input.lease, secret, async () => {
       this.#active.set(handle, Object.freeze({
@@ -136,6 +142,16 @@ export class TenantCredentialInjector {
   }
 }
 
+export interface TenantCredentialRegistry {
+  register(input: {
+    lease: CredentialLease;
+    expected_binding: CredentialLeaseBinding;
+    now: string;
+    allowed_hostname?: string;
+  }): Promise<string>;
+  dispose(handle: string): void | Promise<void>;
+}
+
 export const tenantCredentialInjector = new TenantCredentialInjector();
 
 export async function withTenantCredentialLease<T>(input: {
@@ -147,9 +163,11 @@ export async function withTenantCredentialLease<T>(input: {
   resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
   now(): string;
   injector?: TenantCredentialInjector;
+  credential_registry?: TenantCredentialRegistry;
+  release?: "on_completion" | "on_consumption";
   run(handle: string): Promise<T>;
 }): Promise<T> {
-  const injector = input.injector ?? tenantCredentialInjector;
+  const registry: TenantCredentialRegistry = input.credential_registry ?? input.injector ?? tenantCredentialInjector;
   const observedAt = input.now();
   const lease = await acquireEnvelopeCredentialLease({
     envelope: input.envelope,
@@ -160,7 +178,7 @@ export async function withTenantCredentialLease<T>(input: {
     now: observedAt,
     resolve_verification_key: input.resolve_verification_key,
   });
-  const handle = await injector.register({
+  const handle = await registry.register({
     lease,
     expected_binding: {
       tenant_id: input.envelope.tenant.tenant_id,
@@ -178,6 +196,6 @@ export async function withTenantCredentialLease<T>(input: {
   try {
     return await input.run(handle);
   } finally {
-    injector.dispose(handle);
+    if (input.release !== "on_consumption") await registry.dispose(handle);
   }
 }

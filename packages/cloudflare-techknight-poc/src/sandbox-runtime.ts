@@ -1,7 +1,10 @@
 import { Sandbox as BaseSandbox, getSandbox } from "@cloudflare/sandbox";
 
 import type { SandboxAdminEnv } from "./sandbox-admin.js";
-import { tenantCredentialInjector } from "./multitenancy/credential-injector.js";
+import {
+  forwardTenantCredentialRequest,
+  type TenantCredentialRelayNamespace,
+} from "./multitenancy/durable-credential-relay.js";
 import {
   handleTaskSearchProxyRequest,
   TASK_SEARCH_PROXY_HOST,
@@ -36,6 +39,7 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
   GITHUB_TOKEN?: string;
   DEVELOPMENT_CALLBACK_BASE_URL?: string;
   DEVELOPMENT_CALLBACK_TOKEN?: string;
+  TENANT_RUNTIME_STATE: TenantCredentialRelayNamespace;
 }
 
 export const DEVELOPMENT_CALLBACK_PROXY_HOST = "development-callback.internal";
@@ -48,22 +52,7 @@ export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
 
 TechKnightSandbox.outboundByHost = {
   "api.anthropic.com": async (request: Request, _env: SandboxRuntimeEnv) => {
-    const url = new URL(request.url);
-    let headers: Headers;
-    try {
-      headers = tenantCredentialInjector.inject({
-        hostname: url.hostname,
-        headers: request.headers,
-        now: new Date().toISOString(),
-      });
-    } catch {
-      return new Response("credential_lease_rejected", { status: 503 });
-    }
-    return fetch(`https://api.anthropic.com${url.pathname}${url.search}`, {
-      method: request.method,
-      headers,
-      body: request.body,
-    });
+    return forwardTenantCredentialRequest(_env.TENANT_RUNTIME_STATE, request, new Date().toISOString());
   },
   "github.com": async (request: Request, env: SandboxRuntimeEnv) => {
     if (!env.GITHUB_TOKEN) return new Response("github_not_configured", { status: 503 });
