@@ -360,6 +360,35 @@ async function childInteractionEventId(baseEventId: string, effectId: string): P
   return `tenant-effect-${btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
 }
 
+async function resolveDerivedSlackTenantContext(
+  env: Env,
+  sourceTenantContext: TenantContextEnvelope,
+  identity: TenantInteractionIdentity,
+): Promise<TenantContextEnvelope> {
+  const clients = tenantRuntimeClients(env);
+  const resolved = await resolveSlackWorkerIngress({
+    identity: { provider: "slack", ...identity },
+    required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+      .split(",").map((value) => value.trim()).filter(Boolean),
+    required_authorization: {
+      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+      project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    },
+    authority: clients.authority,
+    now: new Date().toISOString(),
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  });
+  const derived = resolved.tenant_context;
+  if (derived.tenant.tenant_id !== sourceTenantContext.tenant.tenant_id
+    || derived.workspace_connection.workspace_id !== sourceTenantContext.workspace_connection.workspace_id
+    || derived.placement.deployment_id !== sourceTenantContext.placement.deployment_id
+    || derived.placement.profile !== sourceTenantContext.placement.profile) {
+    deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+  }
+  return derived;
+}
+
 function createTenantInteractionEffectResolver(env: Env) {
   const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
     .split(",").map((value) => value.trim()).filter(Boolean);
@@ -976,12 +1005,20 @@ async function processTenantMeetingMinutesSelection(input: {
       const clients = meetingMinutesClients(env, effects, credentialLeaseHandle, tenantBoundaryHandle);
       const armed = await armMeetingMinutesRecovery(workspace.fs, selection);
       if (!armed.terminal) {
+        const recoveryTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
+          app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+          workspace_id: armed.event.workspaceId,
+          event_id: meetingMinutesRecoveryEventId(armed.event),
+          channel_id: armed.event.channelId,
+          thread_ts: armed.event.threadTs,
+          requester_id: armed.event.userId,
+        });
         await meetingMinutesDeploymentGate(env, tenantId).markActive({ runId: selection.runId,
           startedAt: now(),
           deadlineAt: new Date(Date.parse(now()) + armed.delaySeconds * 1_000).toISOString() });
         await env.TECHKNIGHT_EVENTS.send({
           schema_version: "1.0",
-          tenant_context: tenantContext,
+          tenant_context: recoveryTenantContext,
           payload: armed.event,
         }, {
           delaySeconds: Math.min(armed.delaySeconds, MEETING_MINUTES_RECOVERY_DELAY_SECONDS),
@@ -1697,33 +1734,58 @@ export default {
             ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
             quota_unit: "model_tokens",
             now: tenantConsumerOptions.now,
-            process: () => withTenantCredentialLease({
-              envelope: tenantContext,
-              expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
-              audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
-              broker: clients.credential_broker,
-              credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-              read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-                tenantContext.workspace_connection.connection_id,
-              ),
-              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-              now: tenantConsumerOptions.now,
-              run: (credentialLeaseHandle) => executeTenantContainerOperation({
-                tenant_context: tenantContext,
-                expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
-                verifier,
-                now: tenantConsumerOptions.now(),
-                execute: async (tenantBoundaryHandle) => {
-                  const expectedScope = tenantConsumerOptions.expected_scope(tenantBody);
-                  const effects = createMeetingMinutesTenantEffectGuard({
-                    env,
-                    tenant_context: tenantContext,
-                    expected_scope: expectedScope,
-                    verifier,
+            process: async () => {
+              for (const file of event.files ?? []) {
+                if (!/\.txt$/i.test(file.name)) continue;
+                const childEventId = await childInteractionEventId(event.eventId, `meeting-minutes-file:${file.id}`);
+                const childEvent: SlackQueueEvent = { ...event, eventId: childEventId, files: [file] };
+                const childTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
+                  app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+                  workspace_id: childEvent.workspaceId,
+                  event_id: childEvent.eventId,
+                  channel_id: childEvent.channelId,
+                  thread_ts: childEvent.threadTs,
+                  requester_id: childEvent.userId ?? "",
+                });
+                const childBody: TenantQueueBody<SlackQueueEvent> = {
+                  schema_version: "1.0",
+                  tenant_context: childTenantContext,
+                  payload: childEvent,
+                };
+                const childExpectedScope = expectedTenantQueueScope(env, childBody);
+                await executeTenantRuntimeOperation({
+                  tenant_context: childTenantContext,
+                  expected_scope: childExpectedScope,
+                  verifier,
+                  quota: clients.quota,
+                  accounting: clients.accounting,
+                  ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, childTenantContext),
+                  quota_unit: "model_tokens",
+                  now: tenantConsumerOptions.now,
+                  process: () => withTenantCredentialLease({
+                    envelope: childTenantContext,
+                    expected_scope: childExpectedScope,
+                    audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
+                    broker: clients.credential_broker,
+                    credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
+                    read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+                      childTenantContext.workspace_connection.connection_id,
+                    ),
+                    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
                     now: tenantConsumerOptions.now,
-                  });
-                  for (const file of event.files ?? []) {
-                    if (!/\.txt$/i.test(file.name)) continue;
+                    run: (credentialLeaseHandle) => executeTenantContainerOperation({
+                      tenant_context: childTenantContext,
+                      expected_scope: childExpectedScope,
+                      verifier,
+                      now: tenantConsumerOptions.now(),
+                      execute: async (tenantBoundaryHandle) => {
+                        const effects = createMeetingMinutesTenantEffectGuard({
+                          env,
+                          tenant_context: childTenantContext,
+                          expected_scope: childExpectedScope,
+                          verifier,
+                          now: tenantConsumerOptions.now,
+                        });
                     const runId = `${event.eventId}_${file.id}`;
                     const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
                       runtimeTenantId, event.workspaceId, runId,
@@ -1736,17 +1798,20 @@ export default {
                         credentialLeaseHandle,
                         tenantBoundaryHandle,
                       );
-                      await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
+                      await processMeetingMinutesSlackEvent(workspace.fs, childEvent, meetingMinutesConfig, {
                         download: (fileId) => meetingClients.slack.downloadTextFile(fileId),
                         classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations),
                         requestDestination: (run, destinations) => meetingClients.slack.requestDestination(run, destinations),
                       });
                     });
-                  }
-                  return { outcome: "awaiting_destination" };
-                },
-              }),
-            }),
+                        return { outcome: "awaiting_destination" };
+                      },
+                    }),
+                  }),
+                });
+              }
+              return { outcome: "awaiting_destination" };
+            },
           }),
         });
         continue;

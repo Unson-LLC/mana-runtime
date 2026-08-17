@@ -907,7 +907,8 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(selection).toContain("const recoveryTenantContext = await resolveDerivedSlackTenantContext");
     expect(selection).toContain("event_id: meetingMinutesRecoveryEventId(armed.event)");
     expect(selection).toContain("tenant_context: recoveryTenantContext");
-    expect(selection).not.toContain("tenant_context: tenantContext");
+    const recoverySend = selection.slice(selection.indexOf("await env.TECHKNIGHT_EVENTS.send"));
+    expect(recoverySend).not.toContain("tenant_context: tenantContext");
     expect(selection).toContain("payload: armed.event");
     expect(selection).not.toContain("send(armed.event");
 
