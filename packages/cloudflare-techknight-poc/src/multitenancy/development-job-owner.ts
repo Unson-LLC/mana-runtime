@@ -100,7 +100,7 @@ export async function claimDevelopmentJobOwner(
 export function releaseDevelopmentJobOwner(
   store: IdempotencyStore,
   owner: DevelopmentJobOwner,
-  claim: IdempotencyClaim,
+  claim: Pick<IdempotencyClaim, "key" | "partition_key">,
 ): Promise<void> | void {
   return releaseIdempotency(store, claim.key, owner.tenantId, claim.partition_key);
 }
@@ -108,7 +108,7 @@ export function releaseDevelopmentJobOwner(
 export function completeDevelopmentJobOwner(
   store: IdempotencyStore,
   owner: DevelopmentJobOwner,
-  claim: IdempotencyClaim,
+  claim: Pick<IdempotencyClaim, "key" | "partition_key">,
   now: string,
   retainedUntil: string,
 ): Promise<IdempotencyClaim> | IdempotencyClaim {

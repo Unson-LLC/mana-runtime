@@ -31,12 +31,16 @@ import {
   deliverTenantGatewaySlackMessage,
   type TenantGatewayDeliveryEnv,
 } from "../multitenancy/tenant-gateway-delivery.js";
-import { proxyDevelopmentCallback } from "../multitenancy/development-callback-proxy.js";
+import {
+  proxyDevelopmentCallback,
+  retryDevelopmentTerminalOutboxRecord,
+} from "../multitenancy/development-callback-proxy.js";
 import {
   claimDevelopmentJobOwner,
   developmentOwnerFromContext,
 } from "../multitenancy/development-job-owner.js";
 import { createDurableTenantStateClient } from "../multitenancy/tenant-runtime-state.js";
+import { DevelopmentTerminalOutboxHandler } from "../multitenancy/development-terminal-outbox.js";
 import { developmentJobIdForTenantOperation } from "../development-runner-client.js";
 
 const SNAPSHOT: WorkspaceConnectionSnapshot = {
@@ -69,13 +73,17 @@ const EXPECTED_SCOPE: ExpectedTenantScope = {
 
 class MemoryStorage {
   readonly values = new Map<string, unknown>();
+  alarmAt?: number;
   get<T>(key: string): Promise<T | undefined> { return Promise.resolve(this.values.get(key) as T | undefined); }
   put(key: string, value: unknown): Promise<void> {
     this.values.set(key, structuredClone(value));
     return Promise.resolve();
   }
   delete(key: string): Promise<boolean> { return Promise.resolve(this.values.delete(key)); }
-  setAlarm(_scheduledTime: number | Date): Promise<void> { return Promise.resolve(); }
+  setAlarm(scheduledTime: number | Date): Promise<void> {
+    this.alarmAt = scheduledTime instanceof Date ? scheduledTime.getTime() : scheduledTime;
+    return Promise.resolve();
+  }
   transaction<T>(callback: (transaction: MemoryStorage) => Promise<T>): Promise<T> { return callback(this); }
 }
 
@@ -110,6 +118,8 @@ class TenantRuntimeNamespace {
             );
           } else if (key.startsWith("state:") || key.startsWith("accounting:")) {
             handler = new TenantRuntimeStateHandler(storage);
+          } else if (key.startsWith("development-terminal:")) {
+            handler = new DevelopmentTerminalOutboxHandler(storage, storage);
           } else {
             handler = new TenantCredentialRelayHandler(async (providerRequest) => {
               const request = new Request(providerRequest);
@@ -468,7 +478,9 @@ describe("sandbox provider credential integration", () => {
     // Drop all handler instances to model a new Worker/DO isolate while retaining
     // the Durable Object storage that owns the callback claim.
     namespace.handlers.clear();
-    const downstream = vi.fn(async (_requestInfo: RequestInfo | URL, _init?: RequestInit) => Response.json({ ok: true }));
+    const downstream = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: "accounting_unavailable" }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ ok: true, state: "completed" }));
     const callbackBody = {
       job_id: jobId,
       event_id: envelope.slack.event_id,
@@ -498,13 +510,27 @@ describe("sandbox provider credential integration", () => {
       downstream,
     );
 
-    await expect(invoke(callbackBody).then((response) => response.json()))
-      .resolves.toEqual({ ok: true });
+    const first = await invoke(callbackBody);
+    expect(first.status).toBe(503);
+    await expect(first.json()).resolves.toEqual({ error: "accounting_unavailable" });
+
+    const terminalKey = [...namespace.storages.keys()].find((key) => key.startsWith("development-terminal:"));
+    expect(terminalKey).toBeDefined();
+    const terminalStorage = namespace.storages.get(terminalKey ?? "");
+    expect(terminalStorage).toBeDefined();
+    const restartedOutbox = new DevelopmentTerminalOutboxHandler(terminalStorage!, terminalStorage!);
+    await restartedOutbox.alarm(new Date().toISOString(), (record) => retryDevelopmentTerminalOutboxRecord(record, {
+      DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
+      DEVELOPMENT_CALLBACK_TOKEN: "test-callback-token-placeholder",
+      TENANT_RUNTIME_STATE: namespace,
+    }, downstream));
+
     namespace.handlers.clear();
     await expect(invoke(callbackBody).then((response) => response.json()))
-      .resolves.toEqual({ ok: true, duplicate: true });
-    expect(downstream).toHaveBeenCalledTimes(1);
-    const forwarded = downstream.mock.calls[0]?.[1] as RequestInit;
+      .resolves.toEqual({ ok: true, state: "completed", duplicate: true });
+    expect(downstream).toHaveBeenCalledTimes(2);
+    expect(downstream.mock.calls[1]?.[1]?.body).toBe(JSON.stringify(callbackBody));
+    const forwarded = downstream.mock.calls[1]?.[1] as RequestInit;
     expect(new Headers(forwarded.headers).get("authorization"))
       .toBe("Bearer test-callback-token-placeholder");
 
@@ -520,11 +546,11 @@ describe("sandbox provider credential integration", () => {
     const unknown = await invoke({ ...callbackBody, event_id: "Ev-A-unknown", job_id: unknownJob });
     expect(unknown.status).toBe(403);
     expect(await unknown.json()).toEqual({ error: "development_callback_owner_missing" });
-    expect(downstream).toHaveBeenCalledTimes(1);
+    expect(downstream).toHaveBeenCalledTimes(2);
 
     const crossTenant = await invoke({ ...callbackBody, workspace_id: "T-B" });
     expect(crossTenant.status).toBe(403);
     expect(await crossTenant.json()).toEqual({ error: "development_callback_forbidden" });
-    expect(downstream).toHaveBeenCalledTimes(1);
+    expect(downstream).toHaveBeenCalledTimes(2);
   });
 });

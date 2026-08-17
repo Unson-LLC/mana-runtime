@@ -68,7 +68,13 @@ import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { createCanonicalManualCronMessage } from "./runtime-cron-event.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
 import { runCloudflareDevelopmentRequest } from "./development-runner-client.js";
-import { handleDevelopmentCallback } from "./development-callback.js";
+import {
+  developmentCallbackPayloadHash,
+  handleDevelopmentCallback,
+  type DevelopmentCallbackClaim,
+  type DevelopmentCallbackDelivery,
+  type DevelopmentCallbackPayload,
+} from "./development-callback.js";
 import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
 import { hydrateSlackAttachments } from "./slack-attachments.js";
 import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolveGraphRequester } from "./brainbase-graph-runtime.js";
@@ -136,6 +142,8 @@ import {
   developmentTenantContextHash,
   releaseDevelopmentJobOwner,
 } from "./multitenancy/development-job-owner.js";
+import { DevelopmentTerminalOutboxHandler } from "./multitenancy/development-terminal-outbox.js";
+import { retryDevelopmentTerminalOutboxRecord } from "./multitenancy/development-callback-proxy.js";
 import { assessTenantRuntimeReadiness } from "./multitenancy/runtime-readiness.js";
 import { handleSlackInstallationLifecycleRequest } from "./multitenancy/slack-installation-entrypoint.js";
 import { SlackInstallationAdapter } from "./multitenancy/workspace-connection.js";
@@ -236,6 +244,10 @@ export class TenantRuntimeState extends DurableObject<Env> {
       await executeTenantBoundary({ ...input, verifier, execute: async () => undefined });
     },
   );
+  readonly #developmentTerminalOutbox = new DevelopmentTerminalOutboxHandler(
+    this.ctx.storage as unknown as TenantStateStorage,
+    { setAlarm: (scheduledTime) => this.ctx.storage.setAlarm(scheduledTime) },
+  );
 
   fetch(request: Request): Promise<Response> {
     if (new URL(request.url).hostname === "tenant-credential-relay.internal") {
@@ -244,6 +256,9 @@ export class TenantRuntimeState extends DurableObject<Env> {
     if (new URL(request.url).hostname === "tenant-boundary-context.internal") {
       return this.#boundaryContext.fetch(request);
     }
+    if (new URL(request.url).hostname === "development-terminal-outbox.internal") {
+      return this.#developmentTerminalOutbox.fetch(request);
+    }
     return this.#handler.fetch(request);
   }
 
@@ -251,6 +266,10 @@ export class TenantRuntimeState extends DurableObject<Env> {
     await Promise.all([
       this.#credentialRelay.alarm(),
       this.#boundaryContext.alarm(),
+      this.#developmentTerminalOutbox.alarm(
+        new Date().toISOString(),
+        (record) => retryDevelopmentTerminalOutboxRecord(record, this.env),
+      ),
     ]);
   }
 }
@@ -280,32 +299,79 @@ export class TechKnightWorkspace extends withWorkspace(
     await releaseRuntimeEvent(this.ctx.storage, eventId);
   }
 
-  async claimDevelopmentCallback(eventId: string): Promise<boolean> {
+  async claimDevelopmentCallback(eventId: string,
+    payload: DevelopmentCallbackPayload): Promise<DevelopmentCallbackClaim> {
     if (!/^[A-Za-z0-9:_-]{1,160}$/.test(eventId)) throw new Error("event_id_invalid");
     const key = `development-callback:${eventId}`;
+    const payloadHash = await developmentCallbackPayloadHash(payload);
+    const now = Date.now();
     return this.ctx.storage.transaction(async (transaction) => {
-      if (await transaction.get(key)) return false;
-      await transaction.put(key, { status: "pending", claimedAt: new Date().toISOString() });
-      return true;
+      const current = await transaction.get<{
+        status: "delivery_pending" | "accounting_pending" | "completed";
+        payloadHash: string;
+        delivery?: DevelopmentCallbackDelivery;
+        leaseUntil?: string;
+      }>(key);
+      if (current) {
+        if (current.payloadHash !== payloadHash) return { state: "conflict" };
+        if (current.status === "completed") return { state: "completed", delivery: current.delivery };
+        if (current.status === "accounting_pending" && current.delivery) {
+          return { state: "accounting_pending", delivery: current.delivery };
+        }
+        if (current.leaseUntil && Date.parse(current.leaseUntil) > now) return { state: "in_progress" };
+      }
+      await transaction.put(key, {
+        status: "delivery_pending",
+        payloadHash,
+        claimedAt: new Date(now).toISOString(),
+        leaseUntil: new Date(now + 10_000).toISOString(),
+      });
+      return { state: "claimed" };
     });
   }
 
-  async completeDevelopmentCallback(eventId: string, responseTs: string): Promise<void> {
+  async recordDevelopmentCallbackDelivery(eventId: string, payload: DevelopmentCallbackPayload,
+    delivery: DevelopmentCallbackDelivery): Promise<void> {
     const key = `development-callback:${eventId}`;
+    const payloadHash = await developmentCallbackPayloadHash(payload);
     await this.ctx.storage.transaction(async (transaction) => {
-      const current = await transaction.get<{ status?: string }>(key);
-      if (current?.status !== "pending") throw new Error("development_callback_claim_missing");
-      await transaction.put(key, { status: "completed", responseTs, completedAt: new Date().toISOString() });
+      const current = await transaction.get<{ status?: string; payloadHash?: string; delivery?: DevelopmentCallbackDelivery }>(key);
+      if (!current || current.payloadHash !== payloadHash) throw new Error("development_callback_conflict");
+      if (current.status === "completed" || current.status === "accounting_pending") {
+        if (JSON.stringify(current.delivery) !== JSON.stringify(delivery)) throw new Error("development_callback_conflict");
+        return;
+      }
+      if (current.status !== "delivery_pending") throw new Error("development_callback_claim_missing");
+      await transaction.put(key, {
+        status: "accounting_pending",
+        payloadHash,
+        delivery,
+        deliveredAt: new Date().toISOString(),
+      });
     });
   }
 
-  async releaseDevelopmentCallback(eventId: string): Promise<void> {
+  async completeDevelopmentCallback(eventId: string, payload: DevelopmentCallbackPayload,
+    delivery: DevelopmentCallbackDelivery): Promise<void> {
     const key = `development-callback:${eventId}`;
+    const payloadHash = await developmentCallbackPayloadHash(payload);
     await this.ctx.storage.transaction(async (transaction) => {
-      const current = await transaction.get<{ status?: string }>(key);
-      if (current?.status === "pending") await transaction.delete(key);
+      const current = await transaction.get<{ status?: string; payloadHash?: string; delivery?: DevelopmentCallbackDelivery }>(key);
+      if (!current || current.payloadHash !== payloadHash
+        || JSON.stringify(current.delivery) !== JSON.stringify(delivery)) {
+        throw new Error("development_callback_conflict");
+      }
+      if (current.status === "completed") return;
+      if (current.status !== "accounting_pending") throw new Error("development_callback_delivery_missing");
+      await transaction.put(key, {
+        ...current,
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      });
     });
   }
+
+  async releaseDevelopmentCallback(_eventId: string): Promise<void> {}
 }
 
 export class MeetingMinutesWorkspace extends withWorkspace(
@@ -1321,12 +1387,16 @@ export default {
           });
           return { ...event, tenantId: callbackBoundary.tenant_context.tenant.tenant_id };
         },
-        claim: async (event) => {
+        claim: async (event, payload) => {
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           callbackWorkspace = env.TECHKNIGHT_WORKSPACE.get(id);
-          return callbackWorkspace.claimDevelopmentCallback(event.eventId);
+          return callbackWorkspace.claimDevelopmentCallback(event.eventId, payload);
         },
-        complete: async (eventId, responseTs, payload) => {
+        recordDelivery: async (eventId, payload, delivery) => {
+          if (!callbackWorkspace) throw new Error("development_callback_workspace_missing");
+          await callbackWorkspace.recordDevelopmentCallbackDelivery(eventId, payload, delivery);
+        },
+        complete: async (eventId, payload, delivery) => {
           if (!callbackWorkspace) throw new Error("development_callback_workspace_missing");
           const terminal = payload.status === "failed"
             ? { outcome: "failed" as const, failureCode: "DEVELOPMENT_RUNNER_FAILED" }
@@ -1346,11 +1416,11 @@ export default {
             unit: "container_seconds",
             outcome: terminal.outcome,
             failure_code: terminal.failureCode,
-            response_ts: responseTs,
+            ...(delivery.state === "delivered" ? { response_ts: delivery.responseTs } : { reply_state: "failed" as const }),
             now: new Date().toISOString(),
             accounting_effect_id: `development_terminal:${payload.job_id}`,
           });
-          await callbackWorkspace.completeDevelopmentCallback(eventId, responseTs);
+          await callbackWorkspace.completeDevelopmentCallback(eventId, payload, delivery);
         },
         release: async (eventId) => {
           if (!callbackWorkspace) return;

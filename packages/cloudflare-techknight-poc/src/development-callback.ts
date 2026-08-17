@@ -1,6 +1,7 @@
 import type { RuntimePlacement } from "./runtime-config.js";
 import type { SlackQueueEvent } from "./types.js";
 import type { QuotaDecision } from "./multitenancy/contracts.js";
+import { jcsCanonicalize } from "./multitenancy/jcs.js";
 
 export type DevelopmentStatus = "completed" | "needs_decision" | "needs_input" | "failed" | "timed_out";
 export interface DevelopmentCallbackPayload {
@@ -8,6 +9,25 @@ export interface DevelopmentCallbackPayload {
   thread_ts: string; requester_id: string; status: DevelopmentStatus; summary: string;
   quota_decision: QuotaDecision["decision"];
   story_id?: string; pr_url?: string;
+}
+
+export type DevelopmentCallbackDelivery =
+  | { state: "delivered"; responseTs: string }
+  | { state: "failed" };
+
+export type DevelopmentCallbackClaim =
+  | { state: "claimed" }
+  | { state: "in_progress" }
+  | { state: "accounting_pending"; delivery: DevelopmentCallbackDelivery }
+  | { state: "completed"; delivery?: DevelopmentCallbackDelivery }
+  | { state: "conflict" };
+
+export async function developmentCallbackPayloadHash(payload: DevelopmentCallbackPayload): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(jcsCanonicalize(payload)),
+  ));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function safeEqual(left: string, right: string): boolean {
@@ -40,8 +60,11 @@ function render(payload: DevelopmentCallbackPayload): string {
 export async function handleDevelopmentCallback(request: Request, options: {
   token?: string; placements: readonly RuntimePlacement[];
   resolve(event: SlackQueueEvent): Promise<SlackQueueEvent>;
-  claim(event: SlackQueueEvent, payload: DevelopmentCallbackPayload): Promise<boolean>;
-  complete(eventId: string, responseTs: string, payload: DevelopmentCallbackPayload): Promise<void>;
+  claim(event: SlackQueueEvent, payload: DevelopmentCallbackPayload): Promise<DevelopmentCallbackClaim>;
+  recordDelivery(eventId: string, payload: DevelopmentCallbackPayload,
+    delivery: DevelopmentCallbackDelivery): Promise<void>;
+  complete(eventId: string, payload: DevelopmentCallbackPayload,
+    delivery: DevelopmentCallbackDelivery): Promise<void>;
   release(eventId: string, payload: DevelopmentCallbackPayload): Promise<void>;
   post(event: SlackQueueEvent, text: string): Promise<string>;
 }): Promise<Response> {
@@ -62,13 +85,30 @@ export async function handleDevelopmentCallback(request: Request, options: {
   if (!event.tenantId || event.eventId !== unresolvedEvent.eventId || event.workspaceId !== unresolvedEvent.workspaceId
     || event.channelId !== unresolvedEvent.channelId || event.threadTs !== unresolvedEvent.threadTs
     || event.userId !== unresolvedEvent.userId) throw new Error("development_callback_tenant_scope_mismatch");
-  if (!await options.claim(event, payload)) return Response.json({ ok: true, duplicate: true });
-  try {
-    const responseTs = await options.post(event, render(payload));
-    await options.complete(callbackEventId, responseTs, payload);
-    return Response.json({ ok: true });
-  } catch (error) {
-    await options.release(callbackEventId, payload);
-    throw error;
+  const claim = await options.claim(event, payload);
+  if (claim.state === "conflict") {
+    return Response.json({ error: "development_callback_conflict" }, { status: 403 });
   }
+  if (claim.state === "in_progress") {
+    return Response.json({ error: "development_callback_in_progress" }, {
+      status: 409,
+      headers: { "retry-after": "2" },
+    });
+  }
+  if (claim.state === "completed") {
+    return Response.json({ ok: true, state: "completed", duplicate: true });
+  }
+  let delivery: DevelopmentCallbackDelivery;
+  if (claim.state === "accounting_pending") {
+    delivery = claim.delivery;
+  } else {
+    try {
+      delivery = { state: "delivered", responseTs: await options.post(event, render(payload)) };
+    } catch {
+      delivery = { state: "failed" };
+    }
+    await options.recordDelivery(callbackEventId, payload, delivery);
+  }
+  await options.complete(callbackEventId, payload, delivery);
+  return Response.json({ ok: true, state: "completed" });
 }

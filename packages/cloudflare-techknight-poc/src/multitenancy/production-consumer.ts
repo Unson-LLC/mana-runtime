@@ -56,6 +56,7 @@ async function recordOperation(input: {
   outcome: OperationOutcome;
   failure_code: string | null;
   response_ts?: string;
+  reply_state?: "not_attempted" | "delivered" | "failed" | "unknown";
   operation_result?: unknown;
   accounting_effect_id?: string;
   now: string;
@@ -107,9 +108,11 @@ async function recordOperation(input: {
     outcome: input.outcome,
     failure_code: input.failure_code,
     usage_event_ids: [usageEvent.usage_event_id],
-    reply: input.response_ts
-      ? { state: "delivered", reply_count: 1, legacy_reply_count: 0, slack_reply_ts: input.response_ts }
-      : { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 },
+    reply: input.reply_state === "failed" || input.reply_state === "unknown"
+      ? { state: input.reply_state, reply_count: 0, legacy_reply_count: 0 }
+      : input.response_ts
+        ? { state: "delivered", reply_count: 1, legacy_reply_count: 0, slack_reply_ts: input.response_ts }
+        : { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 },
     completed_at: recordedAt,
   });
   await writeTenantAccounting({
@@ -246,6 +249,7 @@ export async function recordTenantRuntimeTerminalOperation(input: {
   outcome: OperationOutcome;
   failure_code: string | null;
   response_ts?: string;
+  reply_state?: "not_attempted" | "delivered" | "failed" | "unknown";
   now: string;
   accounting_effect_id?: string;
 }): Promise<void> {

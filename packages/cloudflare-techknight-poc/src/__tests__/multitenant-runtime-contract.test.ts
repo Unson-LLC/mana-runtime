@@ -700,7 +700,8 @@ describe("story-mana-multitenant-runtime contract", () => {
     const { value, publicKey } = await envelope();
     const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
       resolve_verification_key: async () => publicKey });
-    const writes: Array<{ receipt: { outcome: string; failure_code: string | null; collection_state: string } }> = [];
+    const writes: Array<{ receipt: { outcome: string; failure_code: string | null; collection_state: string;
+      reply: { state: string; reply_count: number } } }> = [];
 
     await recordTerminal({ tenant_context: value, expected_scope: expectedScope, verifier,
       accounting: { write: vi.fn(async (payload) => { writes.push(structuredClone(payload) as typeof writes[number]);
@@ -710,7 +711,19 @@ describe("story-mana-multitenant-runtime contract", () => {
 
     expect(writes).toHaveLength(1);
     expect(writes[0].receipt).toMatchObject({ outcome: "timed_out",
-      failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT", collection_state: "not_collected" });
+      failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT", collection_state: "not_collected",
+      reply: { state: "delivered", reply_count: 1 } });
+
+    await recordTerminal({ tenant_context: value, expected_scope: expectedScope, verifier,
+      accounting: { write: vi.fn(async (payload) => { writes.push(structuredClone(payload) as typeof writes[number]);
+        return { result_ref: "terminal-failed-delivery-written" }; }) }, ledger: new TenantAccountingLedger(),
+      quota_decision: "allowed", unit: "container_seconds", outcome: "timed_out",
+      failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT", reply_state: "failed", now: NOW,
+      accounting_effect_id: "development_terminal:failed-delivery" });
+
+    expect(writes[1].receipt).toMatchObject({ outcome: "timed_out",
+      failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT", collection_state: "not_collected",
+      reply: { state: "failed", reply_count: 0 } });
   });
 
   it("per tenant quota decisions and isolation planned Red", () => {

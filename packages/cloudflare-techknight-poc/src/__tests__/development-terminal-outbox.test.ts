@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DevelopmentTerminalOutboxHandler,
   createDevelopmentTerminalOutboxClient,
+  type DevelopmentTerminalOutboxSubmission,
 } from "../multitenancy/development-terminal-outbox.js";
 
 class MemoryStorage {
@@ -23,11 +24,17 @@ const submission = {
   payload_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   callback_body: JSON.stringify({ job_id: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", status: "timed_out" }),
   tenant_boundary_handle: "tb_opaque_operation_handle_1234567890",
-  owner: { tenantId: "tenant-a", jobId: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG" },
+  owner: {
+    tenantId: "tenant-a", connectionId: "connection-a", connectionRevision: "1",
+    operationId: "operation-a", eventId: "event-a", workspaceId: "workspace-a",
+    channelId: "channel-a", threadTs: "1.0", requesterId: "user-a", placementId: "placement-a",
+    jobId: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", quotaDecision: "allowed",
+    contextHash: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  },
   owner_claim: { key: "ik1_owner", partition_key: "tenant-partition-a" },
   terminal_deadline_at: "2026-08-17T10:04:00.000Z",
   observed_at: "2026-08-17T10:03:30.000Z",
-} as never;
+} satisfies DevelopmentTerminalOutboxSubmission;
 
 describe("development terminal outbox", () => {
   it("persists the exact callback before delivery and retries it after an isolate restart", async () => {
@@ -64,6 +71,6 @@ describe("development terminal outbox", () => {
     await expect(client.submit({ ...submission,
       payload_hash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       callback_body: JSON.stringify({ job_id: submission.job_id, status: "completed" }),
-    } as never)).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 });
