@@ -19,6 +19,11 @@ function input(overrides: Record<string, unknown> = {}) {
     contextExpiresAt: "2026-08-17T10:04:05.000Z",
     now: () => "2026-08-17T10:00:00.000Z",
     callbackBaseUrl: "https://worker.example.com",
+    quotaDecision: "allowed",
+    registerJobOwner: vi.fn(async () => ({
+      created: true,
+      release: vi.fn(async () => undefined),
+    })),
     createSandbox: vi.fn(),
     ...overrides,
   };
@@ -137,6 +142,45 @@ describe("runCloudflareDevelopmentRequest", () => {
 
     expect(firstJobId).toBe(secondJobId);
     expect(firstCreate.mock.calls[0]![0]).not.toBe(secondCreate.mock.calls[0]![0]);
+  });
+
+  it("does not launch a second Container when the durable job owner already exists", async () => {
+    const createSandbox = vi.fn();
+    const registerJobOwner = vi.fn(async () => ({
+      created: false,
+      release: vi.fn(async () => undefined),
+    }));
+
+    await expect(runCloudflareDevelopmentRequest(input({ createSandbox, registerJobOwner })))
+      .resolves.toContain("development-");
+
+    expect(registerJobOwner).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      connectionId: "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      operationId: "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      eventId: "Ev1",
+      workspaceId: "T1",
+      channelId: "C1",
+      threadTs: "1.0",
+      requesterId: "U1",
+      placementId: "mana-dev-biz",
+      quotaDecision: "allowed",
+    }));
+    expect(createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("releases the durable job owner when Container startup fails", async () => {
+    const release = vi.fn(async () => undefined);
+    const registerJobOwner = vi.fn(async () => ({ created: true, release }));
+    const createSandbox = vi.fn(() => ({
+      writeFile: vi.fn(async () => undefined),
+      startProcess: vi.fn(async () => { throw new Error("secret internal failure"); }),
+    }));
+
+    await expect(runCloudflareDevelopmentRequest(input({ createSandbox, registerJobOwner })))
+      .rejects.toThrow("development_runner_failed");
+
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("fails closed before starting when callback configuration is missing", async () => {

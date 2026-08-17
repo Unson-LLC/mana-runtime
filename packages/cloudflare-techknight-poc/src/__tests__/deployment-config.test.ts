@@ -317,6 +317,9 @@ describe("会社別Cloudflare deployment", () => {
     );
     expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
     expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch)");
+    expect(sandboxRuntime).toContain("deliverTenantGatewaySlackMessage");
+    expect(runner).toContain('"x-mana-tenant-boundary-handle"');
+    expect(runner).toContain('status: "timed_out"');
     expect(sandboxRuntime).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
     expect(sandboxRuntime).toContain('"mcp_gateway"');
     expect(sandboxRuntime).toContain('"brainbase_proxy"');

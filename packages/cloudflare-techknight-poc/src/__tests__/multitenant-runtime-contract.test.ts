@@ -673,6 +673,46 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(payloads[1]).toEqual(payloads[0]);
   });
 
+  it("defers terminal accounting when an asynchronous Container job is only accepted", async () => {
+    const { executeTenantRuntimeOperation } = await import("../multitenancy/production-consumer.js");
+    const { value, publicKey } = await envelope();
+    const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey });
+    const accounting = { write: vi.fn(async () => ({ result_ref: "must-not-be-written" })) };
+    const quota: { read_authoritative_decision(): Promise<QuotaDecision> } = {
+      read_authoritative_decision: async () => ({ message_type: "quota_decision", tenant_id: TENANT_A,
+        contract_revision: "11", quota_revision: "19", decision: "allowed", limit: 100, used: 1,
+        remaining: 99, unit: "container_seconds", window_started_at: "2026-08-01T00:00:00Z",
+        window_ends_at: "2026-09-01T00:00:00Z", decided_at: NOW }),
+    };
+
+    await expect(executeTenantRuntimeOperation({ tenant_context: value, expected_scope: expectedScope,
+      verifier, quota, accounting, ledger: new TenantAccountingLedger(), quota_unit: "container_seconds",
+      now: () => NOW, process: async () => ({ outcome: "accepted", accounting: "deferred" as const }) }))
+      .resolves.toEqual({ outcome: "accepted", accounting: "deferred" });
+    expect(accounting.write).not.toHaveBeenCalled();
+  });
+
+  it("records an exact timed_out terminal Receipt after an asynchronous Container callback", async () => {
+    const module = await import("../multitenancy/production-consumer.js");
+    const recordTerminal = (module as unknown as { recordTenantRuntimeTerminalOperation: Function })
+      .recordTenantRuntimeTerminalOperation;
+    const { value, publicKey } = await envelope();
+    const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey });
+    const writes: Array<{ receipt: { outcome: string; failure_code: string | null; collection_state: string } }> = [];
+
+    await recordTerminal({ tenant_context: value, expected_scope: expectedScope, verifier,
+      accounting: { write: vi.fn(async (payload) => { writes.push(structuredClone(payload) as typeof writes[number]);
+        return { result_ref: "terminal-written" }; }) }, ledger: new TenantAccountingLedger(),
+      quota_decision: "allowed", unit: "container_seconds", outcome: "timed_out",
+      failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT", response_ts: "4.0", now: NOW });
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].receipt).toMatchObject({ outcome: "timed_out",
+      failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT", collection_state: "not_collected" });
+  });
+
   it("per tenant quota decisions and isolation planned Red", () => {
     const cache = new TenantQuotaCache();
     const stopped: QuotaDecision = { message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11",

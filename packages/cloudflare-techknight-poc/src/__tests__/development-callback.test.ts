@@ -42,6 +42,16 @@ describe("development callback", () => {
     const post = vi.fn(); const response = await handleDevelopmentCallback(request(body), { token: "secret", placements: [placement], resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }), claim: async () => false, complete: async () => undefined, release: async () => undefined, post });
     expect(response.status).toBe(200); expect(post).not.toHaveBeenCalled();
   });
+  it("accepts timed_out as a terminal outcome without changing collection state", async () => {
+    const post = vi.fn(async () => "2.0");
+    const response = await handleDevelopmentCallback(request({ ...body, status: "timed_out" }), {
+      token: "secret", placements: [placement],
+      resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+      claim: async () => true, complete: async () => undefined, release: async () => undefined, post,
+    });
+    expect(response.status).toBe(200);
+    expect(post).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Development: timed_out"));
+  });
   it("claims a job before posting so concurrent callbacks cannot double-post", async () => {
     let claimed = false;
     const claim = vi.fn(async () => claimed ? false : (claimed = true));
