@@ -14,4 +14,5 @@ export * from "./objects.js";
 export * from "./protocol.js";
 export * from "./runtime-boundaries.js";
 export * from "./secret-guard.js";
+export * from "./tenant-credential-fetch.js";
 export * from "./workspace-connection.js";

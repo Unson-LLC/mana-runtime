@@ -227,7 +227,7 @@ export class TenantCredentialRelayHandler {
         headers.delete(OBSERVED_AT_HEADER);
         headers.delete("content-length");
         const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
-        return this.fetchImpl(new Request(target, { method, headers, body }));
+        return this.fetchImpl(new Request(target, { method, headers, body, redirect: "manual" }));
       }
       return Response.json({ error: "not_found" }, { status: 404 });
     } catch (error) {

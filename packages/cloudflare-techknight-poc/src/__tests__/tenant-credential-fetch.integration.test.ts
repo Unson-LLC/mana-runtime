@@ -9,6 +9,7 @@ import {
   createIdempotencyKey,
   signTenantContextEnvelope,
   type CredentialBrokerClient,
+  type CredentialLease,
   type CredentialLeaseRequest,
   type ExpectedTenantScope,
   type UnsignedTenantContextEnvelope,
@@ -129,7 +130,7 @@ describe("tenant credential fetch integration", () => {
     const namespace = new CredentialNamespace();
     const requests: CredentialLeaseRequest[] = [];
     const broker: CredentialBrokerClient = {
-      acquire_lease: vi.fn(async (request) => {
+      acquire_lease: vi.fn(async (request: CredentialLeaseRequest): Promise<CredentialLease> => {
         requests.push(structuredClone(request));
         const suffix = requests.length === 1 ? "B0" : "B1";
         return {
