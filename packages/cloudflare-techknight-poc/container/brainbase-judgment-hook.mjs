@@ -8,6 +8,7 @@ const hookUrl = process.env.BRAINBASE_JUDGMENT_HOOK_URL
   || "https://brainbase-mcp.internal/host/judgment/hook";
 const turnDir = process.env.BRAINBASE_JUDGMENT_TURN_DIR || "/tmp/mana-judgment-turns";
 const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
+const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
 async function readStdin() {
   const chunks = [];
@@ -31,7 +32,35 @@ function validatedOutput(envelope, payload) {
       && (typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
     throw new Error("judgment_hook_audit_not_recorded");
   }
-  return envelope.output;
+  if (payload.hook_event_name === "UserPromptSubmit"
+      && (typeof envelope.receipt_id !== "string" || !envelope.receipt_id.trim()
+        || typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
+    throw new Error("judgment_hook_route_receipt_missing");
+  }
+  const routeResolutionSha256 = payload.hook_event_name === "UserPromptSubmit"
+    && typeof envelope.output.systemMessage === "string"
+    ? createHash("sha256").update(envelope.output.systemMessage).digest("hex")
+    : undefined;
+  const { manaJudgmentReceipt: _unsupportedReceipt, ...documentedOutput } = envelope.output;
+  const receipt = {
+    schema_version: "mana_judgment_hook_receipt.v1",
+    hook_event_name: payload.hook_event_name,
+    session_id: payload.session_id,
+    turn_id: payload.turn_id,
+    ...(typeof envelope.receipt_id === "string" && envelope.receipt_id.trim()
+      ? { host_receipt_id: envelope.receipt_id } : {}),
+    ...(routeResolutionSha256 ? { route_resolution_sha256: routeResolutionSha256 } : {}),
+  };
+  const existingSystemMessage = typeof documentedOutput.systemMessage === "string"
+    ? documentedOutput.systemMessage.trim()
+    : "";
+  return {
+    ...documentedOutput,
+    // Claude Code documents systemMessage as Hook output. Keep the machine
+    // receipt inside that supported field so --include-hook-events preserves it.
+    systemMessage: [existingSystemMessage, `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`]
+      .filter(Boolean).join("\n"),
+  };
 }
 
 function statePath(payload) {

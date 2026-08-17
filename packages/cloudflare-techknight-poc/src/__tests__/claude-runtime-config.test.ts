@@ -103,10 +103,9 @@ describe("Cloudflare Claude runtime config", () => {
     });
     expect(command).toContain("--include-hook-events");
     expect(command).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
-    expect(() => buildRuntimeClaudeCommand("reply", config, {
-      structuredOutput: "meeting-minutes",
-      includeJudgmentHookEvents: true,
-    })).toThrow("runtime_claude_structured_output_invalid");
+    const reply = buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true });
+    expect(reply).toContain("--output-format stream-json --verbose --include-hook-events");
+    expect(reply).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
   });
 
   it("starts then resumes the same validated Claude session", () => {

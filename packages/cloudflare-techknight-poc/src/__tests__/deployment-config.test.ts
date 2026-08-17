@@ -297,6 +297,18 @@ describe("会社別Cloudflare deployment", () => {
     expect(readme).toContain("テストやContainer healthだけをSlack E2E完了とは扱いません");
   });
 
+  it("keeps production Slack Judgment evidence open until a fresh deployed event is collected", () => {
+    const architecturePath = fileURLToPath(new URL(
+      "../../../../docs/architecture/story-slack-mention-brainbase-judgment.md",
+      import.meta.url,
+    ));
+    const architecture = readFileSync(architecturePath, "utf8");
+    expect(architecture).toContain("fresh Slack event");
+    expect(architecture).toContain("episode receipt");
+    expect(architecture).toContain("`response_ts`");
+    expect(architecture).toContain("本Storyの実装だけでは本番配備とAC10の利用者成果確認を完了扱いにしない");
+  });
+
   it("does not place task-search credentials in deployment files", () => {
     const configs = [
       readFileSync(fileURLToPath(new URL("../../wrangler.jsonc", import.meta.url)), "utf8"),

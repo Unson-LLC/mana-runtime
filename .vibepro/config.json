@@ -6,7 +6,7 @@
     "language": "ja"
   },
   "execution": {
-    "managed_worktree": "preferred"
+    "managed_worktree": "disabled"
   },
   "flow_design": {
     "runtime_probes": [
@@ -330,8 +330,19 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-slack-mention-brainbase-judgment",
+        "title": "Slackの通常メンション回答をBrainbase判断・正本参照・監査ライフサイクルへ接続する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "month",
+        "view": "dev",
+        "period": null,
+        "started_at": null,
+        "due_at": null
       }
     ],
-    "current_story_id": "story-meeting-minutes-brainbase-context"
+    "current_story_id": "story-slack-mention-brainbase-judgment"
   }
 }
