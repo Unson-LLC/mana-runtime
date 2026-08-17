@@ -742,6 +742,12 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(ingress).toContain("handleTenantSlackRequest");
     expect(ingress).not.toContain("handleSlackRequest(");
     expect(ingress).not.toContain("TENANT_ID");
+    const commandStart = source.indexOf('url.pathname === "/slack/commands"');
+    const commandEnd = source.indexOf('url.pathname !== "/slack/events"', commandStart);
+    const commandIngress = source.slice(commandStart, commandEnd);
+    expect(commandIngress).toContain("resolveSlackWorkerIngress");
+    expect(commandIngress).toContain("tenant_context");
+    expect(commandIngress).not.toContain("tenantId: env.TENANT_ID");
     expect(source.slice(ingressEnd)).toContain("consumeTenantQueueMessage");
     expect(source.slice(ingressEnd)).toContain("TENANT_RUNTIME_STATE");
     expect(source.slice(ingressEnd)).toContain("executeTenantRuntimeOperation");
