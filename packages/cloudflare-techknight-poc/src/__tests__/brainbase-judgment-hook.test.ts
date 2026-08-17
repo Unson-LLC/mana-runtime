@@ -244,4 +244,31 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("judgment_hook_route_receipt_missing");
   });
+
+  it("reports a bounded upstream error code without echoing arbitrary response content", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        error: "judgment_hook_unavailable",
+        detail: "Bearer secret-must-not-escape",
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+
+    const result = await runHook({
+      hook_event_name: "UserPromptSubmit", session_id: "session-upstream-error",
+    }, {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    });
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("judgment_hook_http_503_judgment_hook_unavailable");
+    expect(result.stderr).not.toContain("secret-must-not-escape");
+  });
 });
