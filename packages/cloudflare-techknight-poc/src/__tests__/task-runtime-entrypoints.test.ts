@@ -1,9 +1,9 @@
 import { verifyTaskWriteCapability } from "@openryoko/write-broker";
 import type { TaskBoardRepairEvent } from "../task-board.js";
 import {
-  consumeTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
   issueTaskWriteRequestContext,
+  processTaskBoardRepair,
 } from "../task-runtime-entrypoints.js";
 
 const event = {
@@ -59,9 +59,8 @@ describe("Cloudflare task runtime entrypoints", () => {
     await expect(issueTaskWriteRequestContext(event, { ...runtime, RUNTIME_PLACEMENT_ID: undefined })).rejects.toThrow("task_write_not_configured");
   });
 
-  it("acknowledges a scoped repair after refresh and rejects a cross-scope repair", async () => {
+  it("processes a canonical scoped repair and rejects a cross-scope repair", async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
-    const good = { body: repair, ack: vi.fn(), retry: vi.fn() };
     const env = {
       TENANT_ID: "unson-business",
       SLACK_EXPECTED_TEAM_ID: "T_UNSON",
@@ -70,18 +69,15 @@ describe("Cloudflare task runtime entrypoints", () => {
       RUNTIME_TASK_BOARD_ENABLED: "true",
       TASK_BOARD_REPAIRS: { send: vi.fn() },
     };
-    await consumeTaskBoardRepair(good, env, refresh);
+    await processTaskBoardRepair(repair, env, "unson-business", refresh);
     expect(refresh).toHaveBeenCalledOnce();
-    expect(good.ack).toHaveBeenCalledOnce();
 
-    const rejected = { body: { ...repair, channelId: "C_OTHER" }, ack: vi.fn(), retry: vi.fn() };
-    await consumeTaskBoardRepair(rejected, env, refresh);
+    await expect(processTaskBoardRepair({ ...repair, channelId: "C_OTHER" }, env, "unson-business", refresh))
+      .rejects.toThrow("task_board_scope_mismatch");
     expect(refresh).toHaveBeenCalledOnce();
-    expect(rejected.ack).toHaveBeenCalledOnce();
   });
 
-  it("retries a failed repair and enqueues the scheduled scoped repair", async () => {
-    const failed = { body: repair, ack: vi.fn(), retry: vi.fn() };
+  it("propagates a failed canonical repair and enqueues the scheduled scoped repair", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const env = {
       TENANT_ID: "unson-business",
@@ -91,8 +87,8 @@ describe("Cloudflare task runtime entrypoints", () => {
       SLACK_BOT_TOKEN: "unson-token",
       TASK_BOARD_REPAIRS: { send },
     };
-    await consumeTaskBoardRepair(failed, env, vi.fn().mockRejectedValue(new Error("boom")));
-    expect(failed.retry).toHaveBeenCalledOnce();
+    await expect(processTaskBoardRepair(repair, env, "unson-business",
+      vi.fn().mockRejectedValue(new Error("boom")))).rejects.toThrow("boom");
     const tenantContext = {
       tenant: { tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
       slack: { event_id: "task-board-repair:legacy-default:2026-08-13T01:00:00.000Z",
@@ -125,8 +121,8 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C_DEV" }) }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
-    const message = { body: { ...repair, targetId: "legacy-dev", channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
-    await consumeTaskBoardRepair(message, env, refresh);
+    await processTaskBoardRepair({ ...repair, targetId: "legacy-dev", channelId: "C_DEV" },
+      env, "unson-business", refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_ALLOWED_CHANNEL_ID: "C_DEV", RUNTIME_PROJECT_CODES: "mana" }));
   });
 
@@ -150,8 +146,8 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C_DEV" }) }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
-    const message = { body: { ...repair, targetId: "legacy-dev", channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
-    await consumeTaskBoardRepair(message, env, refresh);
+    await processTaskBoardRepair({ ...repair, targetId: "legacy-dev", channelId: "C_DEV" },
+      env, "unson-business", refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       RUNTIME_TASK_BOARD_ENABLED: "true",
       SLACK_ALLOWED_CHANNEL_ID: "C_DEV",
@@ -174,9 +170,8 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(send).toHaveBeenCalledTimes(2);
 
     const refresh = vi.fn().mockResolvedValue(undefined);
-    const tech = { body: { ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB", channelId: "C0BKX9Y169F" },
-      ack: vi.fn(), retry: vi.fn() };
-    await consumeTaskBoardRepair(tech, env, refresh);
+    await processTaskBoardRepair({ ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB",
+      channelId: "C0BKX9Y169F" }, env, "unson-business", refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ SLACK_BOT_TOKEN: "tech-token",
       SLACK_ALLOWED_CHANNEL_ID: "C0BKX9Y169F", RUNTIME_PROJECT_CODES: "proj_tech" }));
   });

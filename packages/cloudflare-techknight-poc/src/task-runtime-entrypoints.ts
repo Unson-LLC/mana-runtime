@@ -24,7 +24,6 @@ interface TaskWritePlacement {
 }
 
 interface TaskBoardRuntimeEnv extends TaskBoardEnv {
-  TENANT_ID: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
   TASK_BOARD_REPAIRS: { send(message: TenantQueueBody<TaskBoardRepairEvent>): Promise<unknown> };
@@ -65,12 +64,6 @@ export function taskBoardTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
   return env.TASK_BOARD_TARGETS_JSON ? parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON) : legacyTargets(env);
 }
 
-interface QueueMessageLike<T> {
-  body: T;
-  ack(): void;
-  retry(): void;
-}
-
 export async function issueTaskWriteRequestContext(
   event: SlackQueueEvent,
   env: TaskWriteRuntimeEnv,
@@ -100,26 +93,6 @@ export async function issueTaskWriteRequestContext(
       budget: 3,
     }, env.TASK_WRITE_CAPABILITY_SECRET),
   };
-}
-
-export async function consumeTaskBoardRepair(
-  message: QueueMessageLike<TaskBoardRepairEvent>,
-  env: TaskBoardRuntimeEnv,
-  refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
-): Promise<void> {
-  const repair = message.body;
-  try {
-    await processTaskBoardRepair(repair, env, env.TENANT_ID, refresh);
-    message.ack();
-  } catch (error) {
-    if (error instanceof Error && error.message === "task_board_scope_mismatch") {
-      console.error(JSON.stringify({ event: "task_board_repair_rejected", reason: "scope_mismatch" }));
-      message.ack();
-      return;
-    }
-    console.error(JSON.stringify({ event: "task_board_repair_failed", code: error instanceof Error ? error.message : "unknown" }));
-    message.retry();
-  }
 }
 
 export async function processTaskBoardRepair(
