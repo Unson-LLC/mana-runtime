@@ -267,7 +267,7 @@ describe("sandbox provider credential integration", () => {
         outcome: "timed_out",
         failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
         reply_state: "unknown",
-        recorded_at: new Date(Date.now() + 500).toISOString(),
+        recorded_at: deadline,
         accounting_effect_id: `development_terminal:${jobId}`,
       },
     });
@@ -277,11 +277,36 @@ describe("sandbox provider credential integration", () => {
     const terminalStorage = namespace.storages.get(terminalKey ?? "");
     const restarted = new DevelopmentTerminalOutboxHandler(terminalStorage!, terminalStorage!);
     const destroyContainer = vi.fn(async (_containerId: string) => undefined);
-    const writeAccounting = vi.fn(async () => ({ result_ref: "accounting-test-result" }));
-    await restarted.alarm(deadline, async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
-      (record) => Reflect.apply(failDevelopmentTerminalOutboxRecord, undefined, [record, {
+    const writeAccounting = vi.fn()
+      .mockRejectedValueOnce(new Error("accounting unavailable"))
+      .mockResolvedValue({ result_ref: "accounting-test-result" });
+    const finalize = (finalizeAt: string) => (record: Parameters<typeof failDevelopmentTerminalOutboxRecord>[0]) =>
+      failDevelopmentTerminalOutboxRecord(record, {
         TENANT_RUNTIME_STATE: namespace,
-      }, deadline, destroyContainer, writeAccounting]));
+      }, finalizeAt, destroyContainer, writeAccounting);
+    await expect(restarted.alarm(
+      deadline,
+      async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
+      finalize(deadline),
+    )).rejects.toThrow("accounting unavailable");
+
+    await expect(outbox.read()).resolves.toMatchObject({
+      state: "failed_terminal",
+      owner_finalized: false,
+    });
+    const pendingAccountingOutboxes = [...namespace.storages.entries()]
+      .filter(([key]) => key.startsWith("accounting:"))
+      .flatMap(([, storage]) => [...storage.values.entries()])
+      .filter(([key]) => key.startsWith("accounting-outbox:"));
+    expect(pendingAccountingOutboxes).toHaveLength(1);
+    expect(terminalStorage?.alarmAt).toBe(Date.parse(deadline) + 2_000);
+
+    const retryAt = new Date(Date.parse(deadline) + 2_000).toISOString();
+    await restarted.alarm(
+      retryAt,
+      async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
+      finalize(retryAt),
+    );
 
     await expect(outbox.read()).resolves.toMatchObject({
       state: "failed_terminal",
@@ -290,7 +315,7 @@ describe("sandbox provider credential integration", () => {
       owner_finalized: true,
     });
     expect(destroyContainer).toHaveBeenCalledWith("development-sandbox-timeout-a");
-    expect(writeAccounting).toHaveBeenCalledOnce();
+    expect(writeAccounting).toHaveBeenCalledTimes(2);
     await expect(claimDevelopmentJobOwner(ownerStore, owner, deadline))
       .resolves.toMatchObject({ disposition: "failed_terminal" });
 
@@ -299,7 +324,7 @@ describe("sandbox provider credential integration", () => {
       .flatMap(([, storage]) => [...storage.values.entries()])
       .filter(([key]) => key.startsWith("accounting-outbox:"));
     expect(accountingOutboxes).toHaveLength(0);
-    expect(writeAccounting.mock.calls[0]?.[0]).toMatchObject({
+    expect(writeAccounting.mock.calls[1]?.[0]).toMatchObject({
       artifact: {
         usage_events: [{
           message_type: "usage_event",
@@ -317,17 +342,18 @@ describe("sandbox provider credential integration", () => {
         },
       },
     });
+    expect(writeAccounting.mock.calls[1]?.[0].artifact)
+      .toEqual(writeAccounting.mock.calls[0]?.[0].artifact);
+    expect(writeAccounting.mock.calls[1]?.[0].artifact.receipt.completed_at).toBe(deadline);
 
-    await restarted.alarm(deadline, async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
-      (record) => Reflect.apply(failDevelopmentTerminalOutboxRecord, undefined, [record, {
-        TENANT_RUNTIME_STATE: namespace,
-      }, deadline, destroyContainer, writeAccounting]));
+    await restarted.alarm(retryAt, async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
+      finalize(retryAt));
     const accountingOutboxesAfterReplay = [...namespace.storages.entries()]
       .filter(([key]) => key.startsWith("accounting:"))
       .flatMap(([, storage]) => [...storage.values.entries()])
       .filter(([key]) => key.startsWith("accounting-outbox:"));
-    expect(accountingOutboxesAfterReplay).toHaveLength(1);
-    expect(writeAccounting).toHaveBeenCalledOnce();
+    expect(accountingOutboxesAfterReplay).toHaveLength(0);
+    expect(writeAccounting).toHaveBeenCalledTimes(2);
   });
 
   it("acquires a different single-use lease for every Anthropic and GitHub HTTP request", async () => {

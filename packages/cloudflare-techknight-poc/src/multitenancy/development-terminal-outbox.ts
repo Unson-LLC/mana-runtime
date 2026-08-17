@@ -245,6 +245,28 @@ export class DevelopmentTerminalOutboxHandler {
     });
   }
 
+  private async finalizeFailure(
+    current: DevelopmentTerminalOutboxRecord,
+    now: string,
+    finalize: (record: DevelopmentTerminalOutboxRecord) => Promise<void>,
+  ): Promise<void> {
+    try {
+      await finalize(current);
+      await this.storage.transaction(async (transaction) => {
+        const stored = await transaction.get<DevelopmentTerminalOutboxRecord>(RECORD_KEY);
+        if (stored?.state === "failed_terminal") {
+          await transaction.put(RECORD_KEY, { ...stored, owner_finalized: true, updated_at: now });
+        }
+      });
+    } catch (error) {
+      // Keep the exact terminal artifact and owner claim pending. An explicit
+      // alarm makes recovery independent of the platform's unhandled-alarm
+      // retry policy and survives a fresh isolate.
+      await this.scheduler.setAlarm(Date.parse(now) + 2_000);
+      throw error;
+    }
+  }
+
   async alarm(now: string,
     deliver: (record: DevelopmentTerminalOutboxRecord) => Promise<DevelopmentTerminalDeliveryResult>,
     finalizeFailure: (record: DevelopmentTerminalOutboxRecord) => Promise<void> = async () => undefined,
@@ -253,13 +275,7 @@ export class DevelopmentTerminalOutboxHandler {
     if (!current || current.state === "completed") return;
     if (current.state === "failed_terminal") {
       if (!current.owner_finalized) {
-        await finalizeFailure(current);
-        await this.storage.transaction(async (transaction) => {
-          const stored = await transaction.get<DevelopmentTerminalOutboxRecord>(RECORD_KEY);
-          if (stored?.state === "failed_terminal") {
-            await transaction.put(RECORD_KEY, { ...stored, owner_finalized: true, updated_at: now });
-          }
-        });
+        await this.finalizeFailure(current, now, finalizeFailure);
       }
       return;
     }
@@ -296,13 +312,7 @@ export class DevelopmentTerminalOutboxHandler {
     });
     if (!next) return;
     if (next.state === "failed_terminal") {
-      await finalizeFailure(next);
-      await this.storage.transaction(async (transaction) => {
-        const stored = await transaction.get<DevelopmentTerminalOutboxRecord>(RECORD_KEY);
-        if (stored?.state === "failed_terminal") {
-          await transaction.put(RECORD_KEY, { ...stored, owner_finalized: true, updated_at: now });
-        }
-      });
+      await this.finalizeFailure(next, now, finalizeFailure);
       return;
     }
     const retryAt = Math.min(Date.parse(now) + 2_000, Date.parse(next.terminal_deadline_at));

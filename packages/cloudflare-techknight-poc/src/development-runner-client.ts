@@ -175,7 +175,11 @@ export async function runCloudflareDevelopmentRequest(input: {
       ...(input.terminalAccounting
         ? { terminal_accounting: {
             ...input.terminalAccounting,
-            recorded_at: new Date(observedAt + runnerTimeout + 1_000).toISOString(),
+            // This plan describes the watchdog terminal transition, not the
+            // time at which the watchdog was armed. Keep the frozen receipt
+            // timestamp at the deterministic authorization deadline so a
+            // retry cannot report completion before the job actually times out.
+            recorded_at: input.contextExpiresAt,
             accounting_effect_id: `development_terminal:${jobId}`,
           } }
         : {}),

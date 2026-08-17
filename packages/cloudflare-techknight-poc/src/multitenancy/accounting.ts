@@ -444,6 +444,84 @@ export async function writeTenantAccounting(input: {
   }
 }
 
+function assertAccountingContinuation(
+  authorizationContext: TenantContextEnvelope,
+  artifactContext: TenantContextEnvelope,
+): void {
+  const sameWorkspaceAuthority = authorizationContext.protocol_id === artifactContext.protocol_id
+    && authorizationContext.protocol_version === artifactContext.protocol_version
+    && authorizationContext.tenant.tenant_id === artifactContext.tenant.tenant_id
+    && authorizationContext.workspace_connection.connection_id
+      === artifactContext.workspace_connection.connection_id
+    && authorizationContext.workspace_connection.connection_revision
+      === artifactContext.workspace_connection.connection_revision
+    && authorizationContext.workspace_connection.workspace_id
+      === artifactContext.workspace_connection.workspace_id
+    && authorizationContext.workspace_connection.app_id === artifactContext.workspace_connection.app_id
+    && authorizationContext.workspace_connection.status === "active"
+    && authorizationContext.placement.deployment_id === artifactContext.placement.deployment_id
+    && authorizationContext.placement.profile === artifactContext.placement.profile
+    && authorizationContext.contract_revision === artifactContext.contract_revision;
+  const sameActorAndSlackScope = authorizationContext.actor.principal_id
+      === artifactContext.actor.principal_id
+    && authorizationContext.actor.authenticated_subject_id
+      === artifactContext.actor.authenticated_subject_id
+    && authorizationContext.slack.event_id === artifactContext.slack.event_id
+    && authorizationContext.slack.channel_id === artifactContext.slack.channel_id
+    && (authorizationContext.slack.thread_ts ?? "") === (artifactContext.slack.thread_ts ?? "")
+    && (authorizationContext.slack.requester_id ?? "") === (artifactContext.slack.requester_id ?? "")
+    && authorizationContext.credential.mode === artifactContext.credential.mode
+    && authorizationContext.credential.billing_principal_id
+      === artifactContext.credential.billing_principal_id;
+  if (!sameWorkspaceAuthority) deny("brainbase_proxy", "WORKSPACE_CONNECTION_STALE_REVISION");
+  if (!sameActorAndSlackScope) deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+}
+
+/**
+ * Authorize delivery of an already frozen accounting artifact with a newly
+ * issued, short-lived TenantContext. The original artifact context remains the
+ * accounting identity; the fresh context is used only for the immediate
+ * authoritative write gate and may never extend or mutate the original one.
+ */
+export async function writeTenantAccountingContinuation(input: {
+  authorization_context: TenantContextEnvelope;
+  artifact_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  now: string;
+  verifier: TenantRuntimeBoundaryVerifier;
+  artifact: AccountingArtifact;
+  write(payload: AccountingArtifact): Promise<{ result_ref: string }>;
+}): Promise<{ result_ref: string }> {
+  await input.verifier.validate({
+    boundary: "brainbase_proxy",
+    tenant_context: input.authorization_context,
+    expected_scope: input.expected_scope,
+    now: input.now,
+  });
+  assertAccountingContinuation(input.authorization_context, input.artifact_context);
+  assertAccountingScope(
+    input.artifact_context,
+    input.expected_scope,
+    input.artifact.usage_events,
+    input.artifact.receipt,
+  );
+  const expectedPartitionKey = tenantPartitionKey({
+    tenant_id: input.artifact_context.tenant.tenant_id,
+    resource_type: "usage",
+    connection_id: input.artifact_context.workspace_connection.connection_id,
+    workspace_id: input.artifact_context.workspace_connection.workspace_id,
+    channel_id: input.artifact_context.slack.channel_id,
+    thread_ts: input.artifact_context.slack.thread_ts ?? "",
+    resource_id: input.artifact.receipt.receipt_id,
+  });
+  if (input.artifact.partition_key !== expectedPartitionKey) {
+    deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  }
+  const result = await input.write(assertSecretArtifactFree(structuredClone(input.artifact)));
+  if (!result?.result_ref) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+  return result;
+}
+
 /**
  * Persist the exact canonical payload before an external accounting write.
  * Callers are responsible for validating the signed boundary before entering

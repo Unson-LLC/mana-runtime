@@ -19,6 +19,8 @@ import {
   type DevelopmentTerminalOutboxRecord,
 } from "./development-terminal-outbox.js";
 import { TenantBoundaryError } from "./errors.js";
+import type { AccountingArtifact } from "./accounting.js";
+import type { ExpectedTenantScope, TenantContextEnvelope } from "./contracts.js";
 import {
   createDurableTenantStateClient,
   createDurableTenantAccountingClient,
@@ -33,6 +35,13 @@ export interface DevelopmentCallbackProxyEnv {
 }
 
 export type DestroyDevelopmentContainer = (containerId: string) => Promise<void>;
+
+export type WriteDevelopmentTerminalAccounting = (input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  artifact: AccountingArtifact;
+  now: string;
+}) => Promise<{ result_ref: string }>;
 
 const DEVELOPMENT_CALLBACK_FORWARD_TIMEOUT_MS = 5_000;
 
@@ -138,17 +147,19 @@ export async function failDevelopmentTerminalOutboxRecord(
   env: DevelopmentCallbackProxyEnv,
   now: string,
   destroyContainer?: DestroyDevelopmentContainer,
+  writeAccounting?: WriteDevelopmentTerminalAccounting,
 ): Promise<void> {
-  if (!record.terminal_accounting) {
+  if (!record.terminal_accounting || !writeAccounting) {
     throw new TenantBoundaryError("brainbase_proxy", "SCHEMA_INVALID");
   }
-  await persistTenantRuntimeTerminalOperation({
+  const ledger = createDurableTenantAccountingClient(
+    env.TENANT_RUNTIME_STATE,
+    record.terminal_accounting.tenant_context,
+  );
+  const persisted = await persistTenantRuntimeTerminalOperation({
     tenant_context: record.terminal_accounting.tenant_context,
     expected_scope: record.terminal_accounting.expected_scope,
-    ledger: createDurableTenantAccountingClient(
-      env.TENANT_RUNTIME_STATE,
-      record.terminal_accounting.tenant_context,
-    ),
+    ledger,
     quota_decision: record.terminal_accounting.quota_decision,
     unit: record.terminal_accounting.unit,
     outcome: record.terminal_accounting.outcome,
@@ -158,6 +169,15 @@ export async function failDevelopmentTerminalOutboxRecord(
     accounting_effect_id: record.terminal_accounting.accounting_effect_id,
   });
   await destroyRecordedContainer(record, env, destroyContainer, now);
+  if (persisted.disposition === "claimed") {
+    await writeAccounting({
+      tenant_context: record.terminal_accounting.tenant_context,
+      expected_scope: record.terminal_accounting.expected_scope,
+      artifact: persisted.artifact,
+      now,
+    });
+    await ledger.complete(persisted.claim);
+  }
   const store = createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, record.owner.tenantId);
   await failDevelopmentJobOwner(
     store,

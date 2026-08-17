@@ -294,15 +294,9 @@ export async function persistTenantRuntimeTerminalOperation(input: {
   reply_state: "not_attempted" | "delivered" | "failed" | "unknown";
   now: string;
   accounting_effect_id?: string;
-}): Promise<void> {
-  const receiptId = await operationReceiptId(input.tenant_context, input.accounting_effect_id);
-  const pending = await input.ledger.read_pending({
-    tenant_context: input.tenant_context,
-    receipt_id: receiptId,
-  });
-  if (pending) return;
+}): ReturnType<typeof persistTenantAccounting> {
   const accounting = await buildOperationAccounting(input);
-  await persistTenantAccounting({
+  return persistTenantAccounting({
     tenant_context: input.tenant_context,
     expected_scope: input.expected_scope,
     ledger: input.ledger,

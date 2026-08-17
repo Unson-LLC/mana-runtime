@@ -123,6 +123,10 @@ import {
   recordTenantRuntimeTerminalOperation,
 } from "./multitenancy/production-consumer.js";
 import {
+  writeTenantAccountingContinuation,
+  type AccountingArtifact,
+} from "./multitenancy/accounting.js";
+import {
   REQUIRED_TENANT_CAPABILITIES,
   type BoundaryName,
   type DeploymentProfileName,
@@ -286,7 +290,7 @@ export class TenantRuntimeState extends DurableObject<Env> {
         }),
         (record) => failDevelopmentTerminalOutboxRecord(record, this.env, now, async (containerId) => {
           await destroyTenantContainer(createTechKnightSandbox(this.env, containerId));
-        }),
+        }, (input) => writeDevelopmentTerminalAccounting(this.env, input)),
       ),
     ]);
   }
@@ -871,6 +875,49 @@ function tenantRuntimeClients(env: Env) {
     accounting_url: requiredRuntimeBinding(env.BRAINBASE_ACCOUNTING_URL),
     api_token: requiredRuntimeBinding(env.BRAINBASE_RUNTIME_API_TOKEN),
     timeout_ms: Number(env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000"),
+  });
+}
+
+async function writeDevelopmentTerminalAccounting(env: Env, input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  artifact: AccountingArtifact;
+}): Promise<{ result_ref: string }> {
+  const clients = tenantRuntimeClients(env);
+  const artifactContext = input.tenant_context;
+  const snapshot = await clients.authority.read_workspace_connection(
+    artifactContext.workspace_connection.connection_id,
+  );
+  const authorizationContext = await clients.authority.issue_tenant_context({
+    workspace_connection: snapshot,
+    slack: {
+      event_id: artifactContext.slack.event_id,
+      channel_id: artifactContext.slack.channel_id,
+      thread_ts: artifactContext.slack.thread_ts ?? "",
+      requester_id: artifactContext.slack.requester_id
+        ?? artifactContext.actor.authenticated_subject_id,
+      ...(artifactContext.slack.enterprise_id
+        ? { enterprise_id: artifactContext.slack.enterprise_id }
+        : {}),
+    },
+    required_authorization: {
+      audience: input.expected_scope.audience,
+      project_id: input.expected_scope.project_id,
+      capability_id: input.expected_scope.capability_id,
+    },
+  });
+  const verifier = new TenantRuntimeBoundaryVerifier({
+    read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  });
+  return writeTenantAccountingContinuation({
+    authorization_context: authorizationContext,
+    artifact_context: artifactContext,
+    expected_scope: input.expected_scope,
+    now: new Date().toISOString(),
+    verifier,
+    artifact: input.artifact,
+    write: clients.accounting.write,
   });
 }
 
