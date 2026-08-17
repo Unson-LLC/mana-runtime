@@ -2,7 +2,7 @@
 
 - Status: drift_detected
 - Story: story-mana-multitenant-runtime
-- Evaluated at: 2026-08-17T11:11:17.254Z
+- Evaluated at: 2026-08-17T12:09:42.230Z
 
 | Axis | Count |
 |------|-------|
@@ -13,91 +13,91 @@
 
 ## Items
 
-### DRIFT-3QGE46 [medium] (spec_pr)
+### DRIFT-47S2LZ [medium] (spec_pr)
 - Clause: C-001
 - Title: C-001 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/slack.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-U7WZN4 [medium] (spec_pr)
+### DRIFT-NGNLSW [medium] (spec_pr)
 - Clause: INV-001
 - Title: INV-001 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/slack.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-YU2YZV [medium] (spec_pr)
+### DRIFT-GCPAKQ [medium] (spec_pr)
 - Clause: INV-003
 - Title: INV-003 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-VAU823 [medium] (spec_pr)
+### DRIFT-64AMCE [medium] (spec_pr)
 - Clause: C-013
 - Title: C-013 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/workspace-store.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-EP575S [medium] (spec_pr)
+### DRIFT-VEJYQ3 [medium] (spec_pr)
 - Clause: INV-005
 - Title: INV-005 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-YGUMZU [medium] (spec_pr)
+### DRIFT-ZCEZPX [medium] (spec_pr)
 - Clause: INV-006
 - Title: INV-006 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-CZ7LVB [medium] (spec_pr)
+### DRIFT-SFZSHY [medium] (spec_pr)
 - Clause: C-014
 - Title: C-014 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-J4QHSY [medium] (spec_pr)
+### DRIFT-RFU555 [medium] (spec_pr)
 - Clause: INV-007
 - Title: INV-007 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-HDEHJ3 [medium] (spec_pr)
+### DRIFT-HXECE4 [medium] (spec_pr)
 - Clause: C-015
 - Title: C-015 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-U6T6HB [medium] (spec_pr)
+### DRIFT-L549LM [medium] (spec_pr)
 - Clause: C-016
 - Title: C-016 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-65QNC9 [medium] (spec_pr)
+### DRIFT-DQZ4LC [medium] (spec_pr)
 - Clause: C-010
 - Title: C-010 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/reply-pipeline.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-A3LRD2 [medium] (spec_pr)
+### DRIFT-UXD2JX [medium] (spec_pr)
 - Clause: C-017
 - Title: C-017 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/index.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-R46PE2 [medium] (spec_pr)
+### DRIFT-9DZW8J [medium] (spec_pr)
 - Clause: C-002
 - Title: C-002 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/index.ts, packages/cloudflare-techknight-poc/src/index.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-QZQCUH [medium] (spec_pr)
+### DRIFT-5VBUPK [medium] (spec_pr)
 - Clause: C-003
 - Title: C-003 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/multitenancy/runtime-boundaries.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
 - Suggested action: Spec を再生成 (vibepro spec fingerprint → write) し、clause の有効性を確認する
 
-### DRIFT-Z4LKK9 [medium] (spec_pr)
+### DRIFT-4FKMYN [medium] (spec_pr)
 - Clause: INV-008
 - Title: INV-008 が参照するコードが PR で変更されている
 - Detail: packages/cloudflare-techknight-poc/src/multitenancy/idempotency.ts, packages/cloudflare-techknight-poc/src/multitenancy/accounting.ts が codex/mana-multitenant-stories と比べて変更されている。Spec の見直しが必要かもしれない
