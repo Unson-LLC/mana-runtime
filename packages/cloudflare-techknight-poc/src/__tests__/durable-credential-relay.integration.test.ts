@@ -36,6 +36,7 @@ function lease(): CredentialLease {
 
 class IsolatedCredentialNamespace {
   readonly handlers = new Map<string, TenantCredentialRelayHandler>();
+  readonly claimedLeaseIds = new Set<string>();
   readonly providerFetch = vi.fn(async (request: Request) => Response.json({
     authorization: request.headers.get("authorization"),
     relayHeader: request.headers.get("x-mana-credential-target-url"),
@@ -43,13 +44,23 @@ class IsolatedCredentialNamespace {
 
   idFromName(name: string): string { return name; }
 
+  private handler(): TenantCredentialRelayHandler {
+    return new TenantCredentialRelayHandler(this.providerFetch as unknown as typeof fetch, {
+      claim: async (leaseId) => {
+        if (this.claimedLeaseIds.has(leaseId)) return false;
+        this.claimedLeaseIds.add(leaseId);
+        return true;
+      },
+    });
+  }
+
   get(id: unknown): { fetch(request: Request): Promise<Response> } {
     const key = String(id);
     return {
       fetch: (request) => {
         let handler = this.handlers.get(key);
         if (!handler) {
-          handler = new TenantCredentialRelayHandler(this.providerFetch as unknown as typeof fetch);
+          handler = this.handler();
           this.handlers.set(key, handler);
         }
         return handler.fetch(request);
@@ -58,8 +69,7 @@ class IsolatedCredentialNamespace {
   }
 
   restart(handle: string): void {
-    this.handlers.set(`credential:${handle}`,
-      new TenantCredentialRelayHandler(this.providerFetch as unknown as typeof fetch));
+    this.handlers.set(`credential:${handle}`, this.handler());
   }
 }
 
@@ -110,6 +120,7 @@ describe("durable credential relay integration", () => {
     const namespace = new IsolatedCredentialNamespace();
     const registry = createDurableTenantCredentialRegistry(namespace);
     const firstHandle = await registry.register({ lease: lease(), expected_binding: BINDING, now: NOW });
+    namespace.restart(firstHandle);
     await expect(registry.register({ lease: lease(), expected_binding: BINDING, now: NOW }))
       .rejects.toMatchObject({ code: "FALLBACK_FORBIDDEN" });
 
