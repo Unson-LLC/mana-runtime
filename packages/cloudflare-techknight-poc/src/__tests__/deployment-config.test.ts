@@ -237,6 +237,18 @@ describe("会社別Cloudflare deployment", () => {
     }
   });
 
+  it("provider資格情報をCloudflare Worker secretとして設定する手順を残さない", () => {
+    const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).not.toMatch(
+      /wrangler secret put (?:SLACK_BOT_TOKEN|BRAINBASE_TASK_API_TOKEN)\b/,
+    );
+    expect(readme).not.toContain("Bot tokenを`SLACK_BOT_TOKEN` Secretとして設定");
+    expect(readme).not.toContain("`BRAINBASE_TASK_API_TOKEN` Secretとして設定");
+    expect(readme).toContain("BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN");
+    expect(readme).toContain("Brainbase専用内部forward service");
+  });
+
   it("開発エージェントもplacement既定と同じsonnetを明示して起動する", () => {
     const runnerPath = fileURLToPath(new URL("../../container/openryoko-development-runner.mjs", import.meta.url));
     const configPath = fileURLToPath(new URL("../../container/openryoko-development-runner.json", import.meta.url));
