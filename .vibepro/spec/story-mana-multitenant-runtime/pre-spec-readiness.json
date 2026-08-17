@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-mana-multitenant-runtime",
-  "created_at": "2026-08-17T14:27:03.964Z",
+  "created_at": "2026-08-17T14:30:24.567Z",
   "status": "ready",
   "git": {
-    "head_sha": "0a025defb51445a191edebede64b5af7fe95dad1"
+    "head_sha": "49f3b08324c597cbbec70b674d7c4884b0fcc245"
   },
   "checks": [
     {
@@ -37,7 +37,7 @@
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-17T14:27:03.912Z",
+    "created_at": "2026-08-17T14:30:24.512Z",
     "artifact": ".vibepro/pr/story-mana-multitenant-runtime/pr-prepare.json"
   },
   "next_actions": []
