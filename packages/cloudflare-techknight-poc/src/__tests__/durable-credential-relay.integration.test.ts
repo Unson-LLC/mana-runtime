@@ -105,4 +105,35 @@ describe("durable credential relay integration", () => {
     expect(response.status).toBe(503);
     expect(namespace.providerFetch).not.toHaveBeenCalled();
   });
+
+  it("owns max_uses=1 by canonical lease_id even when a broker response is replayed", async () => {
+    const namespace = new IsolatedCredentialNamespace();
+    const registry = createDurableTenantCredentialRegistry(namespace);
+    const firstHandle = await registry.register({ lease: lease(), expected_binding: BINDING, now: NOW });
+    await expect(registry.register({ lease: lease(), expected_binding: BINDING, now: NOW }))
+      .rejects.toMatchObject({ code: "FALLBACK_FORBIDDEN" });
+
+    const response = await forwardTenantCredentialRequest(namespace, new Request(
+      "https://api.anthropic.com/v1/messages",
+      { headers: { authorization: `Bearer ${credentialLeaseMarker(firstHandle)}` } },
+    ), NOW);
+    expect(response.status).toBe(200);
+    expect(namespace.providerFetch).toHaveBeenCalledOnce();
+  });
+
+  it("actively scrubs an unused secret after TTL plus clock skew", async () => {
+    vi.useFakeTimers();
+    try {
+      const namespace = new IsolatedCredentialNamespace();
+      const registry = createDurableTenantCredentialRegistry(namespace);
+      const handle = await registry.register({ lease: lease(), expected_binding: BINDING, now: NOW });
+      const handler = namespace.handlers.get(`credential:${handle}`)!;
+      expect(handler.activeCredentialCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(80_001);
+      expect(handler.activeCredentialCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
