@@ -1,6 +1,5 @@
 import {
   resolveDurableTenantBoundaryContext,
-  tenantBoundaryHandleFromCredentialAuthorization,
   TENANT_BOUNDARY_HANDLE_HEADER,
   type TenantBoundaryContextNamespace,
 } from "./durable-tenant-boundary.js";
@@ -26,6 +25,9 @@ export interface TenantProviderOutboundEnv {
   BRAINBASE_TENANT_RUNTIME_PORT?: string;
   BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK?: string;
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN?: string;
+  BRAINBASE_TENANT_RUNTIME_SERVICE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_GRAPH_API_BASE_URL?: string;
   BRAINBASE_MCP_BASE_URL?: string;
@@ -110,13 +112,11 @@ export async function authorizeTenantProviderOutbound(
   env: TenantProviderOutboundEnv,
   trustedForwarder?: TrustedProviderForwarder,
 ): Promise<Response> {
-  const handle = tenantBoundaryHandleFromCredentialAuthorization(request.headers.get("authorization"));
+  const handle = request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER)?.trim();
   if (!handle) return new Response("credential_lease_rejected", { status: 503 });
-  const boundaryHeaders = new Headers(request.headers);
-  boundaryHeaders.set(TENANT_BOUNDARY_HANDLE_HEADER, handle);
   const resolved = await resolveDurableTenantBoundaryContext(
     env.TENANT_RUNTIME_STATE,
-    new Request(request.url, { headers: boundaryHeaders }),
+    request,
     ["mcp_gateway", "brainbase_proxy"],
     new Date().toISOString(),
   );

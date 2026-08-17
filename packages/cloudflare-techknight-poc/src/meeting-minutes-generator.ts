@@ -6,7 +6,6 @@ import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbas
 import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
-import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
 const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
@@ -157,7 +156,6 @@ export async function classifyMeetingMinutesDestinationInSandbox(
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(tenantBoundaryHandle),
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
@@ -420,7 +418,6 @@ export async function generateMeetingMinutesInSandbox(
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(tenantBoundaryHandle),
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });

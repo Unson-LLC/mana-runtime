@@ -1,4 +1,3 @@
-import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 import {
   createDestroyedContainerSanitizationReceipt,
   tenantPartitionKey,
@@ -201,10 +200,9 @@ export async function runCloudflareDevelopmentRequest(input: {
         timeout: processTimeout,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(input.tenantBoundaryHandle),
           GIT_CONFIG_COUNT: "1",
           GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-          GIT_CONFIG_VALUE_0: `Authorization: Bearer ${tenantBoundaryCredentialMarker(input.tenantBoundaryHandle)}`,
+          GIT_CONFIG_VALUE_0: `X-Mana-Tenant-Boundary-Handle: ${input.tenantBoundaryHandle}`,
           MANA_TENANT_BOUNDARY_HANDLE: input.tenantBoundaryHandle,
         },
       },

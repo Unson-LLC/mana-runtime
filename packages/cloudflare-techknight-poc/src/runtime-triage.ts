@@ -1,4 +1,3 @@
-import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
 export interface RuntimeTriageInput {
@@ -84,10 +83,9 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
     await sandbox.writeFile(promptPath, buildRuntimeTriagePrompt(input));
     const effort = options.effort ? ` --effort ${options.effort}` : "";
     const result = await sandbox.exec(
-      `claude --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
+      `node /opt/mana/tenant-claude-runner.mjs -- --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
       { timeout: 30_000, env: {
         IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(options.tenantBoundaryHandle),
         MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
       } },
     );

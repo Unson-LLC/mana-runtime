@@ -52,10 +52,10 @@ describe("Cloudflare Claude runtime config", () => {
     expect(runtimeClaudePromptPath("reply")).toBe("/tmp/mana-slack-prompt.txt");
     expect(runtimeClaudePromptPath("meeting-task")).toBe("/tmp/meeting-task-prompt.txt");
     expect(buildRuntimeClaudeCommand("reply", config)).toBe(
-      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)"',
+      'node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)"',
     );
     expect(buildRuntimeClaudeCommand("meeting-task", config)).toBe(
-      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/meeting-task-prompt.txt)"',
+      'node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/meeting-task-prompt.txt)"',
     );
   });
 
@@ -66,7 +66,7 @@ describe("Cloudflare Claude runtime config", () => {
     });
     expect(runtimeTaskSearchMcpConfigPath()).toBe("/tmp/mana-task-search-mcp.json");
     expect(buildRuntimeClaudeCommand("reply", config, { taskSearchEnabled: true })).toBe(
-      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
+      'node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
     );
     expect(buildRuntimeClaudeCommand("meeting-task", config, { taskSearchEnabled: true }))
       .not.toContain("--mcp-config");
@@ -76,7 +76,7 @@ describe("Cloudflare Claude runtime config", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
     expect(runtimeMeetingMinutesMcpConfigPath()).toBe("/tmp/mana-meeting-minutes-mcp.json");
     expect(buildRuntimeClaudeCommand("meeting-minutes", config)).toBe(
-      "claude --print --model opus --effort xhigh --permission-mode bypassPermissions --settings /opt/mana/meeting-minutes-claude-settings.json --mcp-config /tmp/mana-meeting-minutes-mcp.json --strict-mcp-config < /tmp/meeting-minutes-prompt.txt",
+      "node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions --settings /opt/mana/meeting-minutes-claude-settings.json --mcp-config /tmp/mana-meeting-minutes-mcp.json --strict-mcp-config < /tmp/meeting-minutes-prompt.txt",
     );
   });
 

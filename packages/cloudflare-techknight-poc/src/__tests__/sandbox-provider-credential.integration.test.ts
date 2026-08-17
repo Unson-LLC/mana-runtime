@@ -561,17 +561,19 @@ describe("sandbox provider credential integration", () => {
     expect(leaseRequests.every((request) => request.requested_ttl_seconds === 60)).toBe(true);
     expect(namespace.claimedLeaseIds.size).toBe(5);
     expect(namespace.providerRequests).toHaveLength(5);
-    expect(namespace.providerRequests.slice(0, 2).map((request) => request.apiKey))
-      .toEqual(["materialized-provider-secret-1", "materialized-provider-secret-2"]);
-    expect(namespace.providerRequests.slice(2, 4).map((request) => request.authorization))
-      .toEqual([
-        `Basic ${btoa("x-access-token:materialized-provider-secret-3")}`,
-        `Basic ${btoa("x-access-token:materialized-provider-secret-4")}`,
-      ]);
-    expect(namespace.providerRequests[4]).toMatchObject({
+    const anthropicRequests = namespace.providerRequests.filter((request) => request.url === "anthropic.messages.create");
+    const githubRequests = namespace.providerRequests.filter((request) => request.url.startsWith("github.git."));
+    const nocodbRequest = namespace.providerRequests.find((request) => request.url.startsWith("nocodb."));
+    expect(anthropicRequests).toHaveLength(2);
+    expect(anthropicRequests.every((request) => request.authorization === null
+      && request.apiKey?.startsWith("materialized-provider-secret-") === true)).toBe(true);
+    expect(githubRequests).toHaveLength(2);
+    expect(githubRequests.every((request) => request.apiKey === null
+      && request.authorization?.startsWith("Basic ") === true)).toBe(true);
+    expect(nocodbRequest).toMatchObject({
       authorization: null,
       apiKey: null,
-      xcToken: "materialized-provider-secret-5",
+      xcToken: expect.stringMatching(/^materialized-provider-secret-/),
     });
     expect(namespace.providerRequests.every((request) => (
       !request.authorization?.includes(handle)

@@ -23,7 +23,6 @@ import {
   TaskApiError,
 } from "@openryoko/task-runtime-core";
 import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
-import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 
 const MAX_TASKS = 20;
 const MAX_TITLE_CHARS = 200;
@@ -178,7 +177,6 @@ async function extractCandidates(
           timeout: 120_000,
           env: {
             IS_SANDBOX: "1",
-            CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(options.tenantBoundaryHandle),
             MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
           },
         },
