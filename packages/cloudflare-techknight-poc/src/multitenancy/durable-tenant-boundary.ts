@@ -8,8 +8,22 @@ import { TenantBoundaryError } from "./errors.js";
 const BOUNDARY_HOST = "tenant-boundary-context.internal";
 const CONTEXT_KEY = "tenant-boundary-context-v1";
 const HANDLE_PATTERN = /^tb_[A-Za-z0-9_-]{32,128}$/;
+const BOUNDARY_CREDENTIAL_MARKER_PREFIX = "mana-tenant-boundary-v1:";
 
 export const TENANT_BOUNDARY_HANDLE_HEADER = "x-mana-tenant-boundary-handle";
+
+export function tenantBoundaryCredentialMarker(handle: string): string {
+  if (!HANDLE_PATTERN.test(handle)) {
+    throw new TenantBoundaryError("credential_lease", "TENANT_CONTEXT_INVALID");
+  }
+  return `${BOUNDARY_CREDENTIAL_MARKER_PREFIX}${handle}`;
+}
+
+export function tenantBoundaryHandleFromCredentialAuthorization(value: string | null): string | undefined {
+  if (!value?.startsWith(`Bearer ${BOUNDARY_CREDENTIAL_MARKER_PREFIX}`)) return undefined;
+  const handle = value.slice(`Bearer ${BOUNDARY_CREDENTIAL_MARKER_PREFIX}`.length);
+  return HANDLE_PATTERN.test(handle) ? handle : undefined;
+}
 
 interface BoundaryStub {
   fetch(request: Request): Promise<Response>;

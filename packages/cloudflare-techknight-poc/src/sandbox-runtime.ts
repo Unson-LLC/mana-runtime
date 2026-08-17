@@ -1,11 +1,7 @@
 import { Sandbox as BaseSandbox, getSandbox } from "@cloudflare/sandbox";
 
 import type { SandboxAdminEnv } from "./sandbox-admin.js";
-import {
-  createDurableTenantCredentialRegistry,
-  forwardTenantCredentialRequest,
-  type TenantCredentialRelayNamespace,
-} from "./multitenancy/durable-credential-relay.js";
+import type { TenantCredentialRelayNamespace } from "./multitenancy/durable-credential-relay.js";
 import {
   resolveDurableTenantBoundaryContext,
   TENANT_BOUNDARY_HANDLE_HEADER,
@@ -21,10 +17,11 @@ import { handleNocodbProxyRequest, NOCODB_PROXY_HOST, type NocodbProxyEnv } from
 import { BRAINBASE_MCP_PROXY_HOST, handleBrainbaseMcpProxyRequest, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
 import { GOOGLE_DRIVE_MCP_PROXY_HOST, handleGoogleDriveMcpProxyRequest, type GoogleDriveMcpProxyEnv } from "./google-drive-mcp-proxy.js";
 import { createRuntimeGatewayProxyHandler, RUNTIME_GATEWAY_PROXY_HOST, type RuntimeGatewayProxyEnv } from "./runtime-gateway-proxy.js";
-import { createTenantRuntimeHttpClients } from "./multitenancy/http-clients.js";
-import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
 import type { CredentialInjectionHeader } from "./multitenancy/credential-injector.js";
-import type { DeploymentProfileName } from "./multitenancy/contracts.js";
+import {
+  authorizeTenantProviderOutbound,
+  tenantCredentialFetchForResolvedContext,
+} from "./multitenancy/tenant-provider-outbound.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
 
@@ -83,28 +80,7 @@ async function authorizeTenantRuntimeProxy(
   if (resolved instanceof Response) return resolved;
   let credentialFetch: typeof fetch;
   try {
-    const clients = createTenantRuntimeHttpClients({
-      deployment_profile: runtimeDeploymentProfile(env.MANA_DEPLOYMENT_PROFILE),
-      tenant_authority_url: requiredProxyBinding(env.BRAINBASE_TENANT_AUTHORITY_URL),
-      credential_broker_url: requiredProxyBinding(env.BRAINBASE_CREDENTIAL_BROKER_URL),
-      quota_url: requiredProxyBinding(env.BRAINBASE_QUOTA_URL),
-      accounting_url: requiredProxyBinding(env.BRAINBASE_ACCOUNTING_URL),
-      api_token: requiredProxyBinding(env.BRAINBASE_RUNTIME_API_TOKEN),
-      timeout_ms: Number(env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000"),
-    });
-    credentialFetch = createTenantCredentialFetch({
-      envelope: resolved.tenant_context,
-      expected_scope: resolved.expected_scope,
-      broker: clients.credential_broker,
-      credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-      credential_relay: env.TENANT_RUNTIME_STATE,
-      read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-        resolved.tenant_context.workspace_connection.connection_id,
-      ),
-      resolve_verification_key: (keyId) => resolveProxyVerificationKey(env, keyId),
-      now: () => new Date().toISOString(),
-      credential_header: credentialHeader,
-    });
+    credentialFetch = tenantCredentialFetchForResolvedContext(env, resolved, credentialHeader);
   } catch {
     return Response.json({ boundary: "credential_lease", error: "CONFIGURATION_INVALID" }, { status: 503 });
   }
@@ -121,50 +97,12 @@ async function authorizeTenantRuntimeProxy(
   return handler(new Request(request, { headers }), credentialFetch, proxyEnv);
 }
 
-function requiredProxyBinding(value: string | undefined): string {
-  if (!value?.trim()) throw new Error("runtime_configuration_invalid");
-  return value;
-}
-
-function runtimeDeploymentProfile(value: string | undefined): DeploymentProfileName {
-  if (value !== "shared_cloud" && value !== "dedicated_cloud" && value !== "customer_managed_oss") {
-    throw new Error("runtime_configuration_invalid");
-  }
-  return value;
-}
-
-async function resolveProxyVerificationKey(env: SandboxRuntimeEnv, keyId: string): Promise<CryptoKey | undefined> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(requiredProxyBinding(env.BRAINBASE_TENANT_CONTEXT_JWKS_JSON));
-  } catch {
-    return undefined;
-  }
-  const keys = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    && Array.isArray((parsed as { keys?: unknown }).keys)
-    ? (parsed as { keys: JsonWebKey[] }).keys
-    : [];
-  const matches = keys.filter((key) => (key as JsonWebKey & { kid?: string }).kid === keyId
-    && key.kty === "OKP" && key.crv === "Ed25519" && (key.use === undefined || key.use === "sig"));
-  if (matches.length !== 1) return undefined;
-  try {
-    return await crypto.subtle.importKey("jwk", matches[0], { name: "Ed25519" }, false, ["verify"]);
-  } catch {
-    return undefined;
-  }
-}
-
 TechKnightSandbox.outboundByHost = {
-  "api.anthropic.com": async (request: Request, _env: SandboxRuntimeEnv) => {
-    return forwardTenantCredentialRequest(_env.TENANT_RUNTIME_STATE, request, new Date().toISOString());
+  "api.anthropic.com": async (request: Request, env: SandboxRuntimeEnv) => {
+    return authorizeTenantProviderOutbound(request, env);
   },
   "github.com": async (request: Request, env: SandboxRuntimeEnv) => {
-    return forwardTenantCredentialRequest(
-      env.TENANT_RUNTIME_STATE,
-      request,
-      new Date().toISOString(),
-      "github-basic",
-    );
+    return authorizeTenantProviderOutbound(request, env, "github-basic");
   },
   [DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv) => {
     if (!env.DEVELOPMENT_CALLBACK_BASE_URL || !env.DEVELOPMENT_CALLBACK_TOKEN) {

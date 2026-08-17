@@ -1,4 +1,4 @@
-import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 import { tenantPartitionKey } from "./multitenancy/isolation.js";
 import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
@@ -64,8 +64,6 @@ export async function runCloudflareDevelopmentRequest(input: {
   tenantId: string;
   connectionId: string;
   operationId: string;
-  credentialLeaseHandle: string;
-  githubCredentialLeaseHandle: string;
   tenantBoundaryHandle: string;
   callbackBaseUrl?: string;
   createSandbox: (id: string) => DevelopmentSandbox;
@@ -101,10 +99,10 @@ export async function runCloudflareDevelopmentRequest(input: {
         timeout: 4_800_000,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseMarker(input.credentialLeaseHandle),
+          CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(input.tenantBoundaryHandle),
           GIT_CONFIG_COUNT: "1",
           GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-          GIT_CONFIG_VALUE_0: `Authorization: Bearer ${credentialLeaseMarker(input.githubCredentialLeaseHandle)}`,
+          GIT_CONFIG_VALUE_0: `Authorization: Bearer ${tenantBoundaryCredentialMarker(input.tenantBoundaryHandle)}`,
           MANA_TENANT_BOUNDARY_HANDLE: input.tenantBoundaryHandle,
         },
       },

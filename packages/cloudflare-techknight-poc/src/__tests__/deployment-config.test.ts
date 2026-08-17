@@ -290,7 +290,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST');
     expect(sandboxRuntime).toContain('"github-basic"');
     expect(sandboxRuntime).toContain("authorizeTenantProviderOutbound(");
-    expect(sandboxRuntime).toContain("createTenantCredentialFetch({");
+    const tenantProviderOutbound = readFileSync(fileURLToPath(
+      new URL("../multitenancy/tenant-provider-outbound.ts", import.meta.url),
+    ), "utf8");
+    expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
     expect(sandboxRuntime).not.toContain("env.GITHUB_TOKEN");
     const workerRuntime = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(workerRuntime).not.toContain('audience: "github.com"');
@@ -300,7 +303,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).toContain("resolveDurableTenantBoundaryContext(");
-    expect(sandboxRuntime).toContain("createTenantCredentialFetch({");
+    expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
     expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch)");
     expect(sandboxRuntime).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
     expect(sandboxRuntime).toContain('"mcp_gateway"');
