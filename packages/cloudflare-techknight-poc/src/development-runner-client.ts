@@ -20,6 +20,7 @@ export interface DevelopmentSandbox {
     timeout: number;
     env?: Record<string, string | undefined>;
   }): Promise<{ id: string }>;
+  destroy(): Promise<void>;
 }
 
 function authenticatedHttpsBase(value: string | undefined): URL {
@@ -159,6 +160,7 @@ export async function runCloudflareDevelopmentRequest(input: {
   };
   const fallbackBody = JSON.stringify(fallbackCallback);
 
+  let sandbox: DevelopmentSandbox | undefined;
   try {
     await owner.armTerminalWatchdog({
       payload_hash: await developmentCallbackPayloadHash(fallbackCallback),
@@ -168,7 +170,7 @@ export async function runCloudflareDevelopmentRequest(input: {
       observed_at: new Date(observedAt).toISOString(),
       container_id: sandboxId,
     });
-    const sandbox = input.createSandbox(sandboxId);
+    sandbox = input.createSandbox(sandboxId);
     await sandbox.writeFile(jobPath, JSON.stringify(payload));
     await sandbox.startProcess(
       `node /opt/mana/cloudflare-development-runner.mjs ${jobPath}`,
@@ -187,8 +189,19 @@ export async function runCloudflareDevelopmentRequest(input: {
       },
     );
   } catch {
+    let sanitizationProven = true;
+    if (sandbox) {
+      try {
+        await sandbox.destroy();
+      } catch {
+        sanitizationProven = false;
+      }
+    }
     await owner.cancelTerminalWatchdog().catch(() => undefined);
-    await owner.release();
+    await owner.release().catch(() => undefined);
+    if (!sanitizationProven) {
+      throw new Error("development_container_sanitization_unproven");
+    }
     throw new Error("development_runner_failed");
   }
 

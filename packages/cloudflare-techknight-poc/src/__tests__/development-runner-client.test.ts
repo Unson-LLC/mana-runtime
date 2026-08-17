@@ -273,6 +273,7 @@ describe("runCloudflareDevelopmentRequest", () => {
     const createSandbox = vi.fn(() => ({
       writeFile: vi.fn(async () => undefined),
       startProcess: vi.fn(async () => { throw new Error("secret internal failure"); }),
+      destroy: vi.fn(async () => undefined),
     }));
     await expect(runCloudflareDevelopmentRequest(input({ createSandbox })))
       .rejects.toThrow(/^development_runner_failed$/);
