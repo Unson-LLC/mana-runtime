@@ -74,6 +74,7 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
   model: "sonnet" | "opus";
   effort?: "xhigh";
   credentialLeaseHandle?: string;
+  tenantBoundaryHandle?: string;
   createSandbox(id: string): TriageSandbox;
 }): Promise<RuntimeTriageDecision> {
   const sandbox = options.createSandbox(`triage-${crypto.randomUUID()}`);
@@ -88,6 +89,7 @@ export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
         CLAUDE_CODE_OAUTH_TOKEN: options.credentialLeaseHandle
           ? credentialLeaseMarker(options.credentialLeaseHandle)
           : "proxy-injected",
+        MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
       } },
     );
     if (!result.success) return { action: "reply", reason: "triage_error" };

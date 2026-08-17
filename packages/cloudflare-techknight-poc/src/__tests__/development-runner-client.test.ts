@@ -11,6 +11,7 @@ function input(overrides: Record<string, unknown> = {}) {
     channelId: "C1",
     threadTs: "1.0",
     credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
+    tenantBoundaryHandle: "tb_opaque_operation_handle_1234567890",
     callbackBaseUrl: "https://worker.example.com",
     createSandbox: vi.fn(),
     ...overrides,
@@ -40,6 +41,7 @@ describe("runCloudflareDevelopmentRequest", () => {
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: "mana-credential-lease-v1:lease_handle_abcdefghijklmnopqrstuvwxyz12",
+          MANA_TENANT_BOUNDARY_HANDLE: "tb_opaque_operation_handle_1234567890",
         },
       }),
     );

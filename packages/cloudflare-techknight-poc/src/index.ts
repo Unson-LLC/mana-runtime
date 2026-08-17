@@ -116,6 +116,10 @@ import {
   createDurableTenantCredentialRegistry,
   TenantCredentialRelayHandler,
 } from "./multitenancy/durable-credential-relay.js";
+import {
+  createDurableTenantBoundaryRegistry,
+  TenantBoundaryContextHandler,
+} from "./multitenancy/durable-tenant-boundary.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -186,7 +190,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
 
 interface WorkspaceEnv {}
 
-export class TenantRuntimeState extends DurableObject {
+export class TenantRuntimeState extends DurableObject<Env> {
   readonly #handler = new TenantRuntimeStateHandler(
     this.ctx.storage as unknown as TenantStateStorage,
   );
@@ -198,12 +202,30 @@ export class TenantRuntimeState extends DurableObject {
       return true;
     }),
   });
+  readonly #boundaryContext = new TenantBoundaryContextHandler(
+    this.ctx.storage,
+    async (input) => {
+      const clients = tenantRuntimeClients(this.env);
+      const verifier = new TenantRuntimeBoundaryVerifier({
+        read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(this.env, keyId),
+      });
+      await executeTenantBoundary({ ...input, verifier, execute: async () => undefined });
+    },
+  );
 
   fetch(request: Request): Promise<Response> {
     if (new URL(request.url).hostname === "tenant-credential-relay.internal") {
       return this.#credentialRelay.fetch(request);
     }
+    if (new URL(request.url).hostname === "tenant-boundary-context.internal") {
+      return this.#boundaryContext.fetch(request);
+    }
     return this.#handler.fetch(request);
+  }
+
+  alarm(): Promise<void> {
+    return this.#boundaryContext.alarm();
   }
 }
 
@@ -302,7 +324,11 @@ async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly
   });
 }
 
-function meetingMinutesClients(env: Env, credentialLeaseHandle?: string) {
+function meetingMinutesClients(
+  env: Env,
+  credentialLeaseHandle?: string,
+  tenantBoundaryHandle?: string,
+) {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const github = new CloudflareMeetingMinutesGitHubClient(env.GITHUB_TOKEN ?? "");
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
@@ -323,7 +349,8 @@ function meetingMinutesClients(env: Env, credentialLeaseHandle?: string) {
     classify: (transcript: string, candidates: Parameters<typeof classifyMeetingMinutesDestinationInSandbox>[1]) => {
       if (!credentialLeaseHandle) throw new Error("credential_lease_required");
       return classifyMeetingMinutesDestinationInSandbox(transcript, candidates, claudeRuntime,
-        createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`), credentialLeaseHandle);
+        createTechKnightSandbox(env, `meeting-minutes-routing-${crypto.randomUUID()}`),
+        credentialLeaseHandle, tenantBoundaryHandle);
     },
     resume: {
       contextMode,
@@ -335,7 +362,8 @@ function meetingMinutesClients(env: Env, credentialLeaseHandle?: string) {
         context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3]) => {
         if (!credentialLeaseHandle) throw new Error("credential_lease_required");
         return generateMeetingMinutesInSandbox(transcript, destination, context, mode, claudeRuntime,
-          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`), credentialLeaseHandle);
+          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`),
+          credentialLeaseHandle, tenantBoundaryHandle);
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
@@ -559,14 +587,15 @@ async function processTenantMeetingMinutesSelection(input: {
   selection: MeetingMinutesSelection;
   tenantId: string;
   credentialLeaseHandle: string;
+  tenantBoundaryHandle: string;
 }): Promise<{ outcome: "completed" }> {
-  const { env, config, selection, tenantId, credentialLeaseHandle } = input;
+  const { env, config, selection, tenantId, credentialLeaseHandle, tenantBoundaryHandle } = input;
   const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
     tenantId, selection.workspaceId, selection.runId,
   ));
   const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
   await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-    const clients = meetingMinutesClients(env, credentialLeaseHandle);
+    const clients = meetingMinutesClients(env, credentialLeaseHandle, tenantBoundaryHandle);
     const armed = await armMeetingMinutesRecovery(workspace.fs, selection);
     if (!armed.terminal) {
       await meetingMinutesDeploymentGate(env, tenantId).markActive({ runId: selection.runId,
@@ -601,14 +630,15 @@ async function processTenantMeetingMinutesRedo(input: {
   command: MeetingMinutesRedo;
   tenantId: string;
   credentialLeaseHandle: string;
+  tenantBoundaryHandle: string;
 }): Promise<{ outcome: "completed" }> {
-  const { env, config, command, tenantId, credentialLeaseHandle } = input;
+  const { env, config, command, tenantId, credentialLeaseHandle, tenantBoundaryHandle } = input;
   const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
     tenantId, command.workspaceId, command.runId,
   ));
   const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
   await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-    const clients = meetingMinutesClients(env, credentialLeaseHandle);
+    const clients = meetingMinutesClients(env, credentialLeaseHandle, tenantBoundaryHandle);
     await processMeetingMinutesRedo(workspace.fs, command, config, clients.redo);
   });
   return { outcome: "completed" };
@@ -825,14 +855,26 @@ export default {
       expected_scope: ExpectedTenantScope;
       verifier: TenantRuntimeBoundaryVerifier;
       now: string;
-      execute(): Promise<T>;
+      execute(tenantBoundaryHandle: string): Promise<T>;
     }): Promise<T> => executeTenantBoundary({
       boundary: "container_launch",
       tenant_context: input.tenant_context,
       expected_scope: input.expected_scope,
       verifier: input.verifier,
       now: input.now,
-      execute: input.execute,
+      execute: async () => {
+        const registry = createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE);
+        const handle = await registry.register({
+          tenant_context: input.tenant_context,
+          expected_scope: input.expected_scope,
+          now: input.now,
+        });
+        try {
+          return await input.execute(handle);
+        } finally {
+          await registry.dispose(handle);
+        }
+      },
     });
     for (const message of batch.messages) {
       if (isTaskBoardRepairEvent(message.body)) {
@@ -892,12 +934,13 @@ export default {
                 expected_scope: expectedScope,
                 verifier,
                 now: now(),
-                execute: () => processTenantMeetingMinutesRedo({
+                execute: (tenantBoundaryHandle) => processTenantMeetingMinutesRedo({
                   env,
                   config: meetingMinutesConfig,
                   command,
                   tenantId: runtimeTenantId,
                   credentialLeaseHandle,
+                  tenantBoundaryHandle,
                 }),
               }),
             }),
@@ -963,12 +1006,13 @@ export default {
                 expected_scope: expectedScope,
                 verifier,
                 now: now(),
-                execute: () => processTenantMeetingMinutesSelection({
+                execute: (tenantBoundaryHandle) => processTenantMeetingMinutesSelection({
                   env,
                   config: meetingMinutesConfig,
                   selection,
                   tenantId: runtimeTenantId,
                   credentialLeaseHandle,
+                  tenantBoundaryHandle,
                 }),
               }),
             }),
@@ -1036,7 +1080,7 @@ export default {
                 expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                 verifier,
                 now: tenantConsumerOptions.now(),
-                execute: async () => {
+                execute: async (tenantBoundaryHandle) => {
                   for (const file of event.files ?? []) {
                     if (!/\.txt$/i.test(file.name)) continue;
                     const runId = `${event.eventId}_${file.id}`;
@@ -1045,7 +1089,11 @@ export default {
                     ));
                     const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
                     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-                      const meetingClients = meetingMinutesClients(env, credentialLeaseHandle);
+                      const meetingClients = meetingMinutesClients(
+                        env,
+                        credentialLeaseHandle,
+                        tenantBoundaryHandle,
+                      );
                       await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
                         download: (fileId) => meetingClients.slack.downloadTextFile(fileId),
                         classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations),
@@ -1236,7 +1284,7 @@ export default {
                       expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                       verifier,
                       now: tenantConsumerOptions.now(),
-                      execute: () => runCloudflareDevelopmentRequest({
+                      execute: (tenantBoundaryHandle) => runCloudflareDevelopmentRequest({
                         request,
                         placementId: placement.placementId,
                         requesterId: event.userId!,
@@ -1245,6 +1293,7 @@ export default {
                         channelId: event.channelId,
                         threadTs: event.threadTs,
                         credentialLeaseHandle,
+                        tenantBoundaryHandle,
                         callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
                         createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
                       }),
@@ -1290,7 +1339,7 @@ export default {
                   expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                   verifier,
                   now: tenantConsumerOptions.now(),
-                  execute: () => routeRuntimeEvent(event, {
+                  execute: (tenantBoundaryHandle) => routeRuntimeEvent(event, {
                     meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
                     processMeetingTask: () => {
                       const binding = placement;
@@ -1301,6 +1350,7 @@ export default {
                         slackBotToken: env.SLACK_BOT_TOKEN,
                         oauthConfigured: true,
                         credentialLeaseHandle,
+                        tenantBoundaryHandle,
                         claudeRuntime,
                         createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                         hydrateThreadContext,
@@ -1356,6 +1406,7 @@ export default {
                     slackBotToken: env.SLACK_BOT_TOKEN,
                     oauthConfigured: true,
                     credentialLeaseHandle,
+                    tenantBoundaryHandle,
                     claudeRuntime,
                     taskSearchEnabled: taskSearch.taskSearchEnabled,
                     taskWriteEnabled,
@@ -1386,6 +1437,7 @@ export default {
                         model: claudeRuntime.model,
                         effort: claudeRuntime.effort,
                         credentialLeaseHandle,
+                        tenantBoundaryHandle,
                         createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                       });
                       emitTurnLog("log", "mana_triage_decided", triageEvent, trace, {

@@ -54,6 +54,7 @@ export interface ReplyPipelineOptions {
   slackBotToken?: string;
   oauthConfigured: boolean;
   credentialLeaseHandle?: string;
+  tenantBoundaryHandle?: string;
   claudeRuntime: ClaudeRuntimeConfig;
   taskSearchEnabled?: boolean;
   taskWriteEnabled?: boolean;
@@ -231,7 +232,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "credentialLeaseHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "credentialLeaseHandle" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
 ): Promise<string> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
@@ -266,17 +267,25 @@ export async function generateClaudeReply(
     );
     let mcpConfigContent: string | undefined;
     if (options.taskSearchEnabled || options.taskWriteEnabled || options.capabilities?.mcp.length) {
-      const placementMcp = options.capabilities ? buildRuntimeMcpConfig(options.capabilities).mcpServers : {};
+      const placementMcp = options.capabilities
+        ? buildRuntimeMcpConfig(options.capabilities, options.tenantBoundaryHandle).mcpServers
+        : {};
       mcpConfigContent = JSON.stringify({
         mcpServers: {
           ...placementMcp,
           ...(options.taskSearchEnabled ? { "task-search": {
             command: "node",
             args: ["/opt/mana/task-search-mcp-server.mjs"],
+            ...(options.tenantBoundaryHandle ? {
+              env: { MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle },
+            } : {}),
           } } : {}),
           ...(options.taskWriteEnabled ? { "task-write": {
             command: "node",
             args: ["/opt/mana/task-write-mcp-server.mjs"],
+            ...(options.tenantBoundaryHandle ? {
+              env: { MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle },
+            } : {}),
           } } : {}),
         },
       });
@@ -294,6 +303,7 @@ export async function generateClaudeReply(
           ? credentialLeaseMarker(options.credentialLeaseHandle)
           : "proxy-injected",
         MANA_TRACE_ID: event.eventId,
+        MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
         MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
         MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
         ...(options.taskSearchEnabled && requestsOwnTasks(event.text) && requesterIdentity ? {

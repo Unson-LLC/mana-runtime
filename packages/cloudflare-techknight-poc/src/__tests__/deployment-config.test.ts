@@ -284,9 +284,12 @@ describe("会社別Cloudflare deployment", () => {
     expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST');
     expect(sandboxRuntime).toContain('`Basic ${btoa(`x-access-token:${env.GITHUB_TOKEN}`)}`');
     expect(sandboxRuntime).toContain('[DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv)');
-    expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest");
-    expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest");
-    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env) => handleRuntimeGatewayProxyRequest(request, env)");
+    expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
+    expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
+    expect(sandboxRuntime).toContain("authorizeDurableTenantBoundaryRequest(");
+    expect(sandboxRuntime).toContain('"mcp_gateway"');
+    expect(sandboxRuntime).toContain('"brainbase_proxy"');
+    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).not.toContain('"bb.unson.jp"');
   });
 
@@ -424,7 +427,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
     expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
-    expect(worker).toContain("meetingMinutesClients(env, credentialLeaseHandle)");
+    expect(worker).toContain("credentialLeaseHandle,\n                        tenantBoundaryHandle");
+    expect(worker).toContain("createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE)");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");

@@ -35,6 +35,7 @@ export async function runCloudflareDevelopmentRequest(input: {
   channelId: string;
   threadTs: string;
   credentialLeaseHandle: string;
+  tenantBoundaryHandle: string;
   callbackBaseUrl?: string;
   createSandbox: (id: string) => DevelopmentSandbox;
 }): Promise<string> {
@@ -65,6 +66,7 @@ export async function runCloudflareDevelopmentRequest(input: {
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseMarker(input.credentialLeaseHandle),
+          MANA_TENANT_BOUNDARY_HANDLE: input.tenantBoundaryHandle,
         },
       },
     );

@@ -6,6 +6,11 @@ import {
   type TenantCredentialRelayNamespace,
 } from "./multitenancy/durable-credential-relay.js";
 import {
+  authorizeDurableTenantBoundaryRequest,
+  TENANT_BOUNDARY_HANDLE_HEADER,
+  type TenantBoundaryContextNamespace,
+} from "./multitenancy/durable-tenant-boundary.js";
+import {
   handleTaskSearchProxyRequest,
   TASK_SEARCH_PROXY_HOST,
 } from "./task-search-proxy.js";
@@ -39,7 +44,7 @@ export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, Brai
   GITHUB_TOKEN?: string;
   DEVELOPMENT_CALLBACK_BASE_URL?: string;
   DEVELOPMENT_CALLBACK_TOKEN?: string;
-  TENANT_RUNTIME_STATE: TenantCredentialRelayNamespace;
+  TENANT_RUNTIME_STATE: TenantCredentialRelayNamespace & TenantBoundaryContextNamespace;
 }
 
 export const DEVELOPMENT_CALLBACK_PROXY_HOST = "development-callback.internal";
@@ -48,6 +53,31 @@ export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
   interceptHttps = true;
   enableInternet = false;
   allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST, TASK_WRITE_PROXY_HOST, NOCODB_PROXY_HOST, BRAINBASE_MCP_PROXY_HOST, GOOGLE_DRIVE_MCP_PROXY_HOST, RUNTIME_GATEWAY_PROXY_HOST];
+}
+
+async function authorizeTenantRuntimeProxy(
+  request: Request,
+  env: SandboxRuntimeEnv,
+  handler: (request: Request) => Promise<Response> | Response,
+): Promise<Response> {
+  const now = new Date().toISOString();
+  const mcpFailure = await authorizeDurableTenantBoundaryRequest(
+    env.TENANT_RUNTIME_STATE,
+    request,
+    "mcp_gateway",
+    now,
+  );
+  if (mcpFailure) return mcpFailure;
+  const proxyFailure = await authorizeDurableTenantBoundaryRequest(
+    env.TENANT_RUNTIME_STATE,
+    request,
+    "brainbase_proxy",
+    now,
+  );
+  if (proxyFailure) return proxyFailure;
+  const headers = new Headers(request.headers);
+  headers.delete(TENANT_BOUNDARY_HANDLE_HEADER);
+  return handler(new Request(request, { headers }));
 }
 
 TechKnightSandbox.outboundByHost = {
@@ -80,12 +110,24 @@ TechKnightSandbox.outboundByHost = {
       body: request.body,
     });
   },
-  [TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest,
-  [TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest,
-  [NOCODB_PROXY_HOST]: (request, env) => handleNocodbProxyRequest(request, env),
-  [BRAINBASE_MCP_PROXY_HOST]: (request, env) => handleBrainbaseMcpProxyRequest(request, env),
-  [GOOGLE_DRIVE_MCP_PROXY_HOST]: (request, env) => handleGoogleDriveMcpProxyRequest(request, env),
-  [RUNTIME_GATEWAY_PROXY_HOST]: (request, env) => handleRuntimeGatewayProxyRequest(request, env),
+  [TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, (authorized) => handleTaskSearchProxyRequest(authorized, env),
+  ),
+  [TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, (authorized) => handleTaskWriteProxyRequest(authorized, env),
+  ),
+  [NOCODB_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, (authorized) => handleNocodbProxyRequest(authorized, env),
+  ),
+  [BRAINBASE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, (authorized) => handleBrainbaseMcpProxyRequest(authorized, env),
+  ),
+  [GOOGLE_DRIVE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, (authorized) => handleGoogleDriveMcpProxyRequest(authorized, env),
+  ),
+  [RUNTIME_GATEWAY_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, (authorized) => handleRuntimeGatewayProxyRequest(authorized, env),
+  ),
 };
 
 export function createTechKnightSandbox(env: SandboxRuntimeEnv, id: string, sleepAfter = "1m") {

@@ -15,13 +15,15 @@ const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const MEETING_MINUTES_CONTEXT_PROMPT_MAX_BYTES = 100_000;
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
-const MEETING_MINUTES_MCP_CONFIG = JSON.stringify(buildRuntimeMcpConfig({
-  mcp: ["brainbase"], gatewayTools: [],
-}));
-
-async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
+async function prepareMeetingMinutesRuntime(
+  sandbox: ReplySandbox,
+  prompt: string,
+  tenantBoundaryHandle?: string,
+): Promise<void> {
   await sandbox.writeFile(runtimeClaudePromptPath("meeting-minutes"), prompt);
-  await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), MEETING_MINUTES_MCP_CONFIG);
+  await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), JSON.stringify(buildRuntimeMcpConfig({
+    mcp: ["brainbase"], gatewayTools: [],
+  }, tenantBoundaryHandle)));
 }
 
 function nonEmpty(value: unknown, max: number): string | undefined {
@@ -144,9 +146,10 @@ export async function classifyMeetingMinutesDestinationInSandbox(
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
   credentialLeaseHandle?: string,
+  tenantBoundaryHandle?: string,
 ): Promise<{ destinationId: string; reason: string } | null> {
   try {
-    await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations));
+    await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations), tenantBoundaryHandle);
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
       structuredOutput: "meeting-minutes-routing",
     }), {
@@ -156,6 +159,7 @@ export async function classifyMeetingMinutesDestinationInSandbox(
         CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseHandle
           ? credentialLeaseMarker(credentialLeaseHandle)
           : "proxy-injected",
+        MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
     if (!result.success) return null;
@@ -402,9 +406,14 @@ export async function generateMeetingMinutesInSandbox(
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
   credentialLeaseHandle?: string,
+  tenantBoundaryHandle?: string,
 ): Promise<AuditedGeneratedMeetingMinutes> {
   try {
-    await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript, destination, context, mode));
+    await prepareMeetingMinutesRuntime(
+      sandbox,
+      generationPrompt(transcript, destination, context, mode),
+      tenantBoundaryHandle,
+    );
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
       structuredOutput: "meeting-minutes",
       includeJudgmentHookEvents: true,
@@ -415,6 +424,7 @@ export async function generateMeetingMinutesInSandbox(
         CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseHandle
           ? credentialLeaseMarker(credentialLeaseHandle)
           : "proxy-injected",
+        MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
     if (!result.success) throw new Error("meeting_minutes_generation_failed");

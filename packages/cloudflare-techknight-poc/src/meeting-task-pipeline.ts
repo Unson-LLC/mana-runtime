@@ -61,6 +61,7 @@ export interface MeetingTaskPipelineOptions {
   slackBotToken?: string;
   oauthConfigured: boolean;
   credentialLeaseHandle?: string;
+  tenantBoundaryHandle?: string;
   claudeRuntime: ClaudeRuntimeConfig;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
@@ -161,7 +162,7 @@ function buildExtractionPrompt(event: SlackQueueEvent): string {
 async function extractCandidates(
   event: SlackQueueEvent,
   options: Pick<MeetingTaskPipelineOptions,
-    "oauthConfigured" | "credentialLeaseHandle" | "claudeRuntime" | "createSandbox">,
+    "oauthConfigured" | "credentialLeaseHandle" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox">,
 ): Promise<TaskCandidate[]> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   const sandbox = options.createSandbox(`meeting-tasks-${event.eventId}`);
@@ -179,6 +180,7 @@ async function extractCandidates(
             CLAUDE_CODE_OAUTH_TOKEN: options.credentialLeaseHandle
               ? credentialLeaseMarker(options.credentialLeaseHandle)
               : "proxy-injected",
+            MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
           },
         },
       );

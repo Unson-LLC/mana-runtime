@@ -41,7 +41,12 @@ async function callTool(name, args, fetchImpl) {
   try {
     response = await fetchImpl(ENDPOINT, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
+          "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
+        } : {}),
+      },
       body: JSON.stringify({ tool: name, arguments: args }),
       redirect: "manual",
       signal: AbortSignal.timeout(20_000),

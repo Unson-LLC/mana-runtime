@@ -3,7 +3,11 @@ export interface RuntimeMcpStdioServerConfig {
   args: [string];
   env?: Record<string, string>;
 }
-export interface RuntimeMcpHttpServerConfig { type: "http"; url: string }
+export interface RuntimeMcpHttpServerConfig {
+  type: "http";
+  url: string;
+  headers?: Record<string, string>;
+}
 export type RuntimeMcpServerConfig = RuntimeMcpStdioServerConfig | RuntimeMcpHttpServerConfig;
 
 export interface RuntimeMcpConfig {
@@ -25,7 +29,7 @@ const SERVER_PATHS = Object.freeze({
 export function buildRuntimeMcpConfig(capabilities: {
   mcp: readonly string[];
   gatewayTools: readonly string[];
-}): RuntimeMcpConfig {
+}, tenantBoundaryHandle?: string): RuntimeMcpConfig {
   if (capabilities.gatewayTools.length > 0 && !capabilities.mcp.includes("gateway")) {
     throw new RuntimeMcpConfigError("runtime_gateway_not_enabled");
   }
@@ -37,6 +41,9 @@ export function buildRuntimeMcpConfig(capabilities: {
         url: name === "brainbase"
           ? "https://brainbase-mcp.internal/mcp"
           : "https://google-drive-mcp.internal/mcp",
+        ...(tenantBoundaryHandle ? {
+          headers: { "x-mana-tenant-boundary-handle": tenantBoundaryHandle },
+        } : {}),
       };
       continue;
     }
@@ -45,8 +52,15 @@ export function buildRuntimeMcpConfig(capabilities: {
     mcpServers[name] = {
       command: "node",
       args: [path],
-      ...(name === "gateway" ? {
-        env: { MANA_ALLOWED_GATEWAY_TOOLS: JSON.stringify([...capabilities.gatewayTools]) },
+      ...((name === "gateway" || tenantBoundaryHandle) ? {
+        env: {
+          ...(name === "gateway" ? {
+            MANA_ALLOWED_GATEWAY_TOOLS: JSON.stringify([...capabilities.gatewayTools]),
+          } : {}),
+          ...(tenantBoundaryHandle ? {
+            MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+          } : {}),
+        },
       } : {}),
     };
   }
