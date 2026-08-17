@@ -29,9 +29,11 @@ describe("runCloudflareDevelopmentRequest", () => {
 
     await expect(runCloudflareDevelopmentRequest(input({ createSandbox }))).resolves.toContain("development-");
 
-    const jobId = createSandbox.mock.calls[0]![0];
+    const sandboxId = createSandbox.mock.calls[0]![0];
+    const jobId = JSON.parse(writeFile.mock.calls[0]![1]).job_id as string;
     expect(jobId).toMatch(/^development-[A-Za-z0-9_-]{43}$/);
-    expect(createSandbox).toHaveBeenCalledWith(jobId);
+    expect(sandboxId).toMatch(/^development-sandbox-[0-9a-f-]{36}$/);
+    expect(createSandbox).toHaveBeenCalledWith(sandboxId);
     expect(writeFile).toHaveBeenCalledOnce();
     expect(JSON.parse(writeFile.mock.calls[0]![1])).toEqual(expect.objectContaining({
       request: "修正して",
@@ -81,16 +83,16 @@ describe("runCloudflareDevelopmentRequest", () => {
 
     const firstSandboxId = firstCreate.mock.calls[0]![0];
     const secondSandboxId = secondCreate.mock.calls[0]![0];
-    expect(firstSandboxId).toMatch(/^development-[A-Za-z0-9_-]{43}$/);
-    expect(secondSandboxId).toMatch(/^development-[A-Za-z0-9_-]{43}$/);
+    expect(firstSandboxId).toMatch(/^development-sandbox-[0-9a-f-]{36}$/);
+    expect(secondSandboxId).toMatch(/^development-sandbox-[0-9a-f-]{36}$/);
     expect(firstSandboxId).not.toBe(secondSandboxId);
     expect(firstStart.mock.calls[0]![1]).toEqual(expect.objectContaining({ autoCleanup: true }));
   });
 
   it("never reuses a Container even for the same tenant operation", async () => {
-    const firstCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined),
+    const firstCreate = vi.fn((_id: string) => ({ writeFile: vi.fn(async () => undefined),
       startProcess: vi.fn(async () => ({ id: "first" })) }));
-    const secondCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined),
+    const secondCreate = vi.fn((_id: string) => ({ writeFile: vi.fn(async () => undefined),
       startProcess: vi.fn(async () => ({ id: "second" })) }));
 
     const firstJobId = await runCloudflareDevelopmentRequest(input({ createSandbox: firstCreate }));

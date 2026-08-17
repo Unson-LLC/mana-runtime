@@ -172,7 +172,7 @@ export async function withTenantCredentialLease<T>(input: {
   now(): string;
   injector?: TenantCredentialInjector;
   credential_registry?: TenantCredentialRegistry;
-  release?: "on_completion" | "on_consumption";
+  release?: "on_completion" | "on_consumption" | "on_expiration";
   run(handle: string): Promise<T>;
 }): Promise<T> {
   const registry: TenantCredentialRegistry = input.credential_registry ?? input.injector ?? tenantCredentialInjector;
@@ -204,6 +204,8 @@ export async function withTenantCredentialLease<T>(input: {
   try {
     return await input.run(handle);
   } finally {
-    if (input.release !== "on_consumption") await registry.dispose(handle);
+    if (input.release !== "on_consumption" && input.release !== "on_expiration") {
+      await registry.dispose(handle);
+    }
   }
 }

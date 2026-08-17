@@ -70,6 +70,10 @@ export async function runCloudflareDevelopmentRequest(input: {
 }): Promise<string> {
   const callback = authenticatedHttpsBase(input.callbackBaseUrl);
   const jobId = await jobIdForTenantOperation(input);
+  // A development operation has a deterministic job id for idempotent user
+  // feedback, but every launch receives a fresh Container identity. This makes
+  // cross-operation and cross-tenant Container reuse structurally impossible.
+  const sandboxId = `development-sandbox-${crypto.randomUUID()}`;
   const jobPath = `/tmp/${jobId}.json`;
   const callbackPath = callback.pathname.replace(/\/$/, "");
   const payload = {
@@ -85,7 +89,7 @@ export async function runCloudflareDevelopmentRequest(input: {
   };
 
   try {
-    const sandbox = input.createSandbox(jobId);
+    const sandbox = input.createSandbox(sandboxId);
     await sandbox.writeFile(jobPath, JSON.stringify(payload));
     await sandbox.startProcess(
       `node /opt/mana/cloudflare-development-runner.mjs ${jobPath}`,
