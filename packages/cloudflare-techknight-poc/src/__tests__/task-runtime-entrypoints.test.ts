@@ -1,4 +1,5 @@
 import { verifyTaskWriteCapability } from "@openryoko/write-broker";
+import type { TaskBoardRepairEvent } from "../task-board.js";
 import {
   consumeTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
@@ -30,6 +31,16 @@ const repair = {
   reason: "scheduled" as const,
   requestedAt: "2026-08-13T00:00:00.000Z",
 };
+
+const resolveTaskBoardTenant = async (input: TaskBoardRepairEvent) => ({
+  tenant: { tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+  slack: {
+    event_id: `task-board-repair:${input.targetId}:${input.requestedAt}`,
+    channel_id: input.channelId,
+    thread_ts: input.requestedAt,
+    requester_id: "service_task_board",
+  },
+}) as never;
 
 describe("Cloudflare task runtime entrypoints", () => {
   it("issues a requester, placement, and project scoped write capability", async () => {
@@ -109,9 +120,9 @@ describe("Cloudflare task runtime entrypoints", () => {
         { placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true },
         { placementId: "router", channelId: "C_ROUTER", projectCodes: ["unson"] },
       ]), TASK_BOARD_REPAIRS: { send } };
-    await enqueueScheduledTaskBoardRepair(env, "2026-08-13T02:00:00.000Z");
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-13T02:00:00.000Z", resolveTaskBoardTenant);
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ channelId: "C_DEV" }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C_DEV" }) }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
     const message = { body: { ...repair, targetId: "legacy-dev", channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
@@ -134,9 +145,9 @@ describe("Cloudflare task runtime entrypoints", () => {
       TASK_BOARD_REPAIRS: { send },
     };
 
-    await enqueueScheduledTaskBoardRepair(env, "2026-08-14T00:00:00.000Z");
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-14T00:00:00.000Z", resolveTaskBoardTenant);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ channelId: "C_DEV" }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ channelId: "C_DEV" }) }));
 
     const refresh = vi.fn().mockResolvedValue(undefined);
     const message = { body: { ...repair, targetId: "legacy-dev", channelId: "C_DEV" }, ack: vi.fn(), retry: vi.fn() };
@@ -159,7 +170,7 @@ describe("Cloudflare task runtime entrypoints", () => {
     const env = { TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
       SLACK_BOT_TOKEN: "business-token", SLACK_BOT_TOKEN_UNSON: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
       TASK_BOARD_TARGETS_JSON: JSON.stringify(targets), TASK_BOARD_REPAIRS: { send } };
-    await enqueueScheduledTaskBoardRepair(env, "2026-08-15T00:00:00.000Z");
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-15T00:00:00.000Z", resolveTaskBoardTenant);
     expect(send).toHaveBeenCalledTimes(2);
 
     const refresh = vi.fn().mockResolvedValue(undefined);
@@ -185,7 +196,7 @@ describe("Cloudflare task runtime entrypoints", () => {
       ]),
       TASK_BOARD_REPAIRS: { send },
     };
-    await expect(enqueueScheduledTaskBoardRepair(env, "2026-08-15T01:00:00.000Z"))
+    await expect(enqueueScheduledTaskBoardRepair(env, "2026-08-15T01:00:00.000Z", resolveTaskBoardTenant))
       .rejects.toThrow("task_board_schedule_enqueue_failed");
     expect(send).toHaveBeenCalledTimes(2);
   });

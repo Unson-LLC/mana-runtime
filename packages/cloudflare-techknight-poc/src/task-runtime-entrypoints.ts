@@ -7,6 +7,8 @@ import {
 } from "./task-board.js";
 import type { SlackQueueEvent } from "./types.js";
 import { parseTaskBoardTargets, taskBoardSlackToken, type TaskBoardTarget } from "./task-board-targets.js";
+import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
+import type { TenantQueueBody } from "./multitenancy/runtime-boundaries.js";
 
 interface TaskWriteRuntimeEnv {
   RUNTIME_TASK_WRITE_ENABLED?: string;
@@ -25,8 +27,28 @@ interface TaskBoardRuntimeEnv extends TaskBoardEnv {
   TENANT_ID: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
-  TASK_BOARD_REPAIRS: { send(message: TaskBoardRepairEvent): Promise<unknown> };
+  TASK_BOARD_REPAIRS: { send(message: TenantQueueBody<TaskBoardRepairEvent>): Promise<unknown> };
   RUNTIME_PLACEMENTS_JSON?: string;
+}
+
+export function taskBoardRepairEventId(repair: TaskBoardRepairEvent): string {
+  return `task-board-repair:${repair.targetId}:${repair.requestedAt}`;
+}
+
+export async function createCanonicalTaskBoardRepairMessage(
+  repair: TaskBoardRepairEvent,
+  resolveTenantContext: (repair: TaskBoardRepairEvent) => Promise<TenantContextEnvelope>,
+): Promise<TenantQueueBody<TaskBoardRepairEvent>> {
+  const tenantContext = await resolveTenantContext(structuredClone(repair));
+  if (tenantContext.slack.event_id !== taskBoardRepairEventId(repair)
+    || tenantContext.slack.channel_id !== repair.channelId
+    || tenantContext.slack.thread_ts !== repair.requestedAt
+    || !tenantContext.slack.requester_id) throw new Error("task_board_tenant_context_scope_mismatch");
+  return {
+    schema_version: "1.0",
+    tenant_context: tenantContext,
+    payload: { ...repair, tenantId: tenantContext.tenant.tenant_id },
+  };
 }
 
 function legacyTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
@@ -86,40 +108,54 @@ export async function consumeTaskBoardRepair(
   refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
 ): Promise<void> {
   const repair = message.body;
-  const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
-  if (
-    repair.tenantId !== env.TENANT_ID ||
-    !target || repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId
-  ) {
-    console.error(JSON.stringify({ event: "task_board_repair_rejected", reason: "scope_mismatch" }));
-    message.ack();
-    return;
-  }
   try {
-    await refresh({ ...env,
-      RUNTIME_TASK_BOARD_ENABLED: "true",
-      SLACK_BOT_TOKEN: taskBoardSlackToken(target, env),
-      SLACK_ALLOWED_CHANNEL_ID: target.channelId,
-      RUNTIME_PROJECT_CODES: target.projectCodes.join(",") });
+    await processTaskBoardRepair(repair, env, env.TENANT_ID, refresh);
     message.ack();
   } catch (error) {
+    if (error instanceof Error && error.message === "task_board_scope_mismatch") {
+      console.error(JSON.stringify({ event: "task_board_repair_rejected", reason: "scope_mismatch" }));
+      message.ack();
+      return;
+    }
     console.error(JSON.stringify({ event: "task_board_repair_failed", code: error instanceof Error ? error.message : "unknown" }));
     message.retry();
   }
 }
 
+export async function processTaskBoardRepair(
+  repair: TaskBoardRepairEvent,
+  env: TaskBoardRuntimeEnv,
+  expectedTenantId: string,
+  refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
+): Promise<void> {
+  const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
+  if (repair.tenantId !== expectedTenantId
+    || !target || repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId) {
+    throw new Error("task_board_scope_mismatch");
+  }
+  await refresh({ ...env,
+    RUNTIME_TASK_BOARD_ENABLED: "true",
+    SLACK_BOT_TOKEN: taskBoardSlackToken(target, env),
+    SLACK_ALLOWED_CHANNEL_ID: target.channelId,
+    RUNTIME_PROJECT_CODES: target.projectCodes.join(",") });
+}
+
 export async function enqueueScheduledTaskBoardRepair(
   env: TaskBoardRuntimeEnv,
-  now = new Date().toISOString(),
+  now: string,
+  resolveTenantContext: (repair: TaskBoardRepairEvent) => Promise<TenantContextEnvelope>,
 ): Promise<void> {
-  const results = await Promise.allSettled(taskBoardTargets(env).map((target) => env.TASK_BOARD_REPAIRS.send({
+  const results = await Promise.allSettled(taskBoardTargets(env).map(async (target) => {
+    const repair: TaskBoardRepairEvent = {
       eventType: "task_board_repair",
-      tenantId: env.TENANT_ID,
+      tenantId: "",
       targetId: target.targetId,
       workspaceId: target.workspaceId,
       channelId: target.channelId,
       reason: "scheduled",
       requestedAt: now,
-    })));
+    };
+    await env.TASK_BOARD_REPAIRS.send(await createCanonicalTaskBoardRepairMessage(repair, resolveTenantContext));
+  }));
   if (results.some((result) => result.status === "rejected")) throw new Error("task_board_schedule_enqueue_failed");
 }

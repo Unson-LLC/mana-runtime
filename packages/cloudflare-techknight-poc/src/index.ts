@@ -70,9 +70,11 @@ import { hydrateSlackAttachments } from "./slack-attachments.js";
 import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
-  consumeTaskBoardRepair,
+  createCanonicalTaskBoardRepairMessage,
   enqueueScheduledTaskBoardRepair,
   issueTaskWriteRequestContext,
+  processTaskBoardRepair,
+  taskBoardRepairEventId,
 } from "./task-runtime-entrypoints.js";
 import {
   isTaskBoardRepairEvent,
@@ -170,6 +172,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   MANA_REQUIRED_CAPABILITY_ID?: string;
   MANA_REQUIRED_SLACK_SCOPES?: string;
   MANA_CREDENTIAL_AUDIENCE?: string;
+  MANA_TASK_BOARD_SERVICE_ACTOR_ID?: string;
   MANA_RUNTIME_CAPABILITIES?: string;
   BRAINBASE_TENANT_AUTHORITY_URL?: string;
   BRAINBASE_CREDENTIAL_BROKER_URL?: string;
@@ -183,7 +186,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
-  TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
+  TASK_BOARD_REPAIRS: Queue<TenantQueueBody<TaskBoardRepairEvent> | TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
@@ -317,11 +320,17 @@ async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly
   let targets;
   try { targets = taskBoardTargetsForProjects(parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON), projectIds); }
   catch (error) { console.error("task_board_targets_invalid", error); return; }
-  const results = await Promise.allSettled(targets.map((target) => env.TASK_BOARD_REPAIRS.send({
-    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
-    workspaceId: target.workspaceId, channelId: target.channelId, reason,
-    requestedAt: new Date().toISOString(),
-  })));
+  const results = await Promise.allSettled(targets.map(async (target) => {
+    const repair: TaskBoardRepairEvent = {
+      eventType: "task_board_repair", targetId: target.targetId, tenantId: "",
+      workspaceId: target.workspaceId, channelId: target.channelId, reason,
+      requestedAt: new Date().toISOString(),
+    };
+    await env.TASK_BOARD_REPAIRS.send(await createCanonicalTaskBoardRepairMessage(
+      repair,
+      (candidate) => resolveTaskBoardRepairTenantContext(env, candidate),
+    ));
+  }));
   results.forEach((result, index) => {
     if (result.status === "rejected") console.error("task_board_repair_enqueue_failed", {
       targetId: targets[index]?.targetId, reason, error: result.reason,
@@ -441,6 +450,35 @@ function tenantRuntimeClients(env: Env) {
   });
 }
 
+async function resolveTaskBoardRepairTenantContext(
+  env: Env,
+  repair: TaskBoardRepairEvent,
+): Promise<TenantContextEnvelope> {
+  const clients = tenantRuntimeClients(env);
+  const resolved = await resolveSlackWorkerIngress({
+    identity: {
+      provider: "slack",
+      app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+      workspace_id: repair.workspaceId,
+      event_id: taskBoardRepairEventId(repair),
+      channel_id: repair.channelId,
+      thread_ts: repair.requestedAt,
+      requester_id: requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID),
+    },
+    required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+      .split(",").map((value) => value.trim()).filter(Boolean),
+    required_authorization: {
+      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+      project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    },
+    authority: clients.authority,
+    now: repair.requestedAt,
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  });
+  return resolved.tenant_context;
+}
+
 async function resolveTenantVerificationKey(env: Env, keyId: string): Promise<CryptoKey | undefined> {
   let parsed: unknown;
   try {
@@ -471,6 +509,16 @@ function isTenantSlackQueueBody(value: unknown): value is TenantQueueBody<SlackQ
     && typeof payload.tenantId === "string" && typeof payload.eventId === "string"
     && typeof payload.workspaceId === "string" && typeof payload.channelId === "string"
     && typeof payload.threadTs === "string" && typeof payload.eventType === "string";
+}
+
+function isTenantTaskBoardRepairBody(value: unknown): value is TenantQueueBody<TaskBoardRepairEvent> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const body = value as Partial<TenantQueueBody<TaskBoardRepairEvent>>;
+  const payload = body.payload as Partial<TaskBoardRepairEvent> | undefined;
+  return body.schema_version === "1.0" && !!body.tenant_context && !!payload
+    && payload.eventType === "task_board_repair" && typeof payload.tenantId === "string"
+    && typeof payload.targetId === "string" && typeof payload.workspaceId === "string"
+    && typeof payload.channelId === "string" && typeof payload.requestedAt === "string";
 }
 
 function isTenantMeetingMinutesSelectionBody(value: unknown): value is TenantQueueBody<MeetingMinutesSelection> {
@@ -602,6 +650,34 @@ function expectedTenantQueueScope(env: Env, body: TenantQueueBody<SlackQueueEven
     app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
     channel_id: event.channelId,
     thread_ts: event.threadTs,
+    actor_principal_id: envelope.actor.principal_id,
+    project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    deployment_id: envelope.placement.deployment_id,
+  };
+}
+
+function expectedTenantTaskBoardRepairScope(
+  env: Env,
+  body: TenantQueueBody<TaskBoardRepairEvent>,
+): ExpectedTenantScope {
+  const repair = body.payload;
+  const envelope = body.tenant_context;
+  if (repair.tenantId !== envelope.tenant.tenant_id
+    || repair.workspaceId !== envelope.workspace_connection.workspace_id
+    || repair.channelId !== envelope.slack.channel_id
+    || repair.requestedAt !== envelope.slack.thread_ts
+    || taskBoardRepairEventId(repair) !== envelope.slack.event_id
+    || envelope.actor.authenticated_subject_id !== requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)
+    || envelope.placement.profile !== tenantDeploymentProfile(env)) {
+    deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
+  }
+  return {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    workspace_id: repair.workspaceId,
+    app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+    channel_id: repair.channelId,
+    thread_ts: repair.requestedAt,
     actor_principal_id: envelope.actor.principal_id,
     project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
     capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
@@ -1002,6 +1078,7 @@ export default {
   async queue(batch: MessageBatch<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
+    | TenantQueueBody<TaskBoardRepairEvent>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
     const executeTenantContainerOperation = <T>(input: {
       tenant_context: TenantContextEnvelope;
@@ -1030,12 +1107,63 @@ export default {
       },
     });
     for (const message of batch.messages) {
-      if (isTaskBoardRepairEvent(message.body)) {
-        await consumeTaskBoardRepair({
-          body: message.body,
+      if (isTenantTaskBoardRepairBody(message.body)) {
+        const tenantBody = message.body;
+        const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
+        const clients = tenantRuntimeClients(env);
+        const verifier = new TenantRuntimeBoundaryVerifier({
+          read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        });
+        const expectedScope = expectedTenantTaskBoardRepairScope(env, tenantBody);
+        const now = () => new Date().toISOString();
+        await consumeTenantQueueMessage({
+          body: tenantBody,
           ack: () => message.ack(),
           retry: () => message.retry(),
-        }, env);
+        }, {
+          verifier,
+          expected_scope: () => expectedScope,
+          now,
+          ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, runtimeTenantId),
+          payload_hash: tenantPayloadHash,
+          retention_until: tenantRetentionUntil,
+          log: (entry) => console.log(JSON.stringify(entry)),
+          log_error: (entry) => console.error(JSON.stringify(entry)),
+          process: (repair: TaskBoardRepairEvent, tenantContext) => executeTenantRuntimeOperation({
+            tenant_context: tenantContext,
+            expected_scope: expectedScope,
+            verifier,
+            quota: clients.quota,
+            accounting: clients.accounting,
+            ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
+            quota_unit: "task_board_refresh",
+            now,
+            process: () => executeTenantBoundary({
+              boundary: "brainbase_proxy",
+              tenant_context: tenantContext,
+              expected_scope: expectedScope,
+              verifier,
+              now: now(),
+              execute: () => executeTenantBoundary({
+                boundary: "slack_delivery",
+                tenant_context: tenantContext,
+                expected_scope: expectedScope,
+                verifier,
+                now: now(),
+                execute: async () => {
+                  await processTaskBoardRepair(repair, env, runtimeTenantId);
+                  return { outcome: "completed" as const };
+                },
+              }),
+            }),
+          }),
+        });
+        continue;
+      }
+      if (isTaskBoardRepairEvent(message.body)) {
+        console.error(JSON.stringify({ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }));
+        message.ack();
         continue;
       }
       const meetingMinutesConfig = meetingMinutesRuntimeConfig(env);
@@ -1717,9 +1845,14 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await enqueueScheduledTaskBoardRepair(env);
+    await enqueueScheduledTaskBoardRepair(
+      env,
+      new Date().toISOString(),
+      (repair) => resolveTaskBoardRepairTenantContext(env, repair),
+    );
   },
 } satisfies ExportedHandler<Env, TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
   | TenantQueueBody<MeetingMinutesRedo>
   | TenantQueueBody<MeetingMinutesRecovery>
+  | TenantQueueBody<TaskBoardRepairEvent>
   | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;

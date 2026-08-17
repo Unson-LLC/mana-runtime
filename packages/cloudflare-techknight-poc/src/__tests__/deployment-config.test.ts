@@ -441,7 +441,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations)");
     expect(worker).toContain("resolveMeetingMinutesDestinationSlackToken(env, organizationId)");
     expect(worker).toContain("destinations.find((destination) => destination.slackChannelId === channelId)");
-    expect(worker).toContain("consumeTaskBoardRepair({");
+    expect(worker).toContain("isTenantTaskBoardRepairBody(message.body)");
+    expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId)");
+    expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
   });
 
   it("fails deployment closed behind the authenticated meeting-minutes drain gate", () => {
@@ -467,8 +470,9 @@ describe("会社別Cloudflare deployment", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
-    expect(worker).toContain("consumeTaskBoardRepair({");
-    expect(worker).toContain("enqueueScheduledTaskBoardRepair(env)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId)");
+    expect(worker).toContain("enqueueScheduledTaskBoardRepair(");
+    expect(worker).toContain("resolveTaskBoardRepairTenantContext(env, repair)");
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');
   });
 
