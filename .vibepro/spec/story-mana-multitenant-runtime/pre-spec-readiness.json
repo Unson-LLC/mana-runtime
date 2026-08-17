@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-mana-multitenant-runtime",
-  "created_at": "2026-08-17T04:48:24.048Z",
+  "created_at": "2026-08-17T05:12:32.202Z",
   "status": "ready",
   "git": {
-    "head_sha": "aa144466c47c90c0fb0d485ab666225c33a54caf"
+    "head_sha": "1631cb590fd08914c71b9b63e025a238b052bb2b"
   },
   "checks": [
     {
@@ -15,29 +15,29 @@
     {
       "id": "graphify_context",
       "status": "pass",
-      "reason": "Graphify graph has 3078 nodes and 6904 edges"
+      "reason": "Graphify graph has 3082 nodes and 6921 edges"
     },
     {
       "id": "story_diagnosis",
       "status": "pass",
-      "reason": "Story diagnosis run exists: 2026-08-17T044756Z"
+      "reason": "Story diagnosis run exists: 2026-08-17T051001Z"
     }
   ],
   "graphify": {
     "available": true,
     "artifact": ".vibepro/graphify/graph.json",
-    "node_count": 3078,
-    "edge_count": 6904,
+    "node_count": 3082,
+    "edge_count": 6921,
     "edge_source_key": "links"
   },
   "diagnosis": {
-    "run_id": "2026-08-17T044756Z",
+    "run_id": "2026-08-17T051001Z",
     "gate_status": "pass",
-    "evidence_artifact": ".vibepro/diagnostics/2026-08-17T044756Z/evidence.json"
+    "evidence_artifact": ".vibepro/diagnostics/2026-08-17T051001Z/evidence.json"
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-17T04:48:23.997Z",
+    "created_at": "2026-08-17T05:12:32.148Z",
     "artifact": ".vibepro/pr/story-mana-multitenant-runtime/pr-prepare.json"
   },
   "next_actions": []

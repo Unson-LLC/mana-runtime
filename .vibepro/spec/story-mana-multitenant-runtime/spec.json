@@ -3,9 +3,9 @@
   "story_id": "story-mana-multitenant-runtime",
   "inputs_digest": {
     "story_sha": "sha256:e09121d6e5249256bf0b08f43e7dc40cc6684bdc2380a0ae56a75c6c067681d0",
-    "architecture_sha": "sha256:144497d6964a4819bd6283fecb6b576cdb5192fc5c0dbc19047f43f39d3e9712",
     "code_sha": "sha256:7a8dec718898c17d30bd09badc591c09f759435d17fbaa2cc8a3065bfaec2765",
-    "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925"
+    "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925",
+    "architecture_sha": "sha256:144497d6964a4819bd6283fecb6b576cdb5192fc5c0dbc19047f43f39d3e9712"
   },
   "generated_by": {
     "caller": "codex",
@@ -21,15 +21,15 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-1"
+            "ac_id": "AC-001"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-2"
+            "ac_id": "AC-002"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-3"
+            "ac_id": "AC-003"
           }
         ],
         "architecture_refs": [
@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "INV-001",
@@ -79,15 +79,15 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-4"
+            "ac_id": "AC-004"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-6"
+            "ac_id": "AC-101"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-9"
+            "ac_id": "AC-104"
           }
         ],
         "architecture_refs": [
@@ -135,7 +135,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "INV-002",
@@ -145,11 +145,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-5"
+            "ac_id": "AC-005"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-17"
+            "ac_id": "AC-302"
           }
         ],
         "architecture_refs": [
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-012",
@@ -195,7 +195,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-7"
+            "ac_id": "AC-102"
           }
         ],
         "architecture_refs": [
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "INV-003",
@@ -241,11 +241,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-8"
+            "ac_id": "AC-103"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-9"
+            "ac_id": "AC-104"
           }
         ],
         "architecture_refs": [
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-013",
@@ -299,7 +299,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-10"
+            "ac_id": "AC-105"
           }
         ],
         "architecture_refs": [
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "INV-004",
@@ -349,7 +349,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-11"
+            "ac_id": "AC-201"
           }
         ],
         "architecture_refs": [
@@ -389,7 +389,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "INV-005",
@@ -399,7 +399,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-12"
+            "ac_id": "AC-202"
           }
         ],
         "architecture_refs": [
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-004",
@@ -445,7 +445,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-13"
+            "ac_id": "AC-203"
           }
         ],
         "architecture_refs": [
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "INV-006",
@@ -487,7 +487,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-14"
+            "ac_id": "AC-204"
           }
         ],
         "architecture_refs": [
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-005",
@@ -537,7 +537,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-15"
+            "ac_id": "AC-205"
           }
         ],
         "architecture_refs": [
@@ -577,7 +577,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-014",
@@ -587,11 +587,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-16"
+            "ac_id": "AC-301"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-17"
+            "ac_id": "AC-302"
           }
         ],
         "architecture_refs": [
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-007",
@@ -641,7 +641,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-18"
+            "ac_id": "AC-303"
           }
         ],
         "architecture_refs": [
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "INV-007",
@@ -683,11 +683,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-19"
+            "ac_id": "AC-304"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-20"
+            "ac_id": "AC-305"
           }
         ],
         "architecture_refs": [
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-015",
@@ -749,11 +749,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-21"
+            "ac_id": "AC-401"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-24"
+            "ac_id": "AC-404"
           }
         ],
         "architecture_refs": [
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-016",
@@ -803,11 +803,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-22"
+            "ac_id": "AC-402"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-23"
+            "ac_id": "AC-403"
           }
         ],
         "architecture_refs": [
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-010",
@@ -853,7 +853,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-25"
+            "ac_id": "AC-405"
           }
         ],
         "architecture_refs": [
@@ -889,7 +889,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     },
     {
       "id": "C-017",
@@ -899,27 +899,27 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-1"
+            "ac_id": "AC-001"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-4"
+            "ac_id": "AC-004"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-8"
+            "ac_id": "AC-103"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-14"
+            "ac_id": "AC-204"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-19"
+            "ac_id": "AC-304"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-23"
+            "ac_id": "AC-403"
           }
         ],
         "architecture_refs": [
@@ -963,9 +963,9 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T04:48:52.915Z"
+      "last_revised_at": "2026-08-17T05:11:32.687Z"
     }
   ],
-  "generated_at": "2026-08-17T03:19:55.405Z",
+  "generated_at": "2026-08-17T05:11:32.683Z",
   "previous_spec_id": "2026-08-17T03:19:55.405Z"
 }
