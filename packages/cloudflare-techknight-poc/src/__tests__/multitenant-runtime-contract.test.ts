@@ -904,7 +904,10 @@ describe("story-mana-multitenant-runtime contract", () => {
     const selectionEnd = source.indexOf("async function processTenantMeetingMinutesRecovery", selectionStart);
     const selection = source.slice(selectionStart, selectionEnd);
     expect(selection).toContain('schema_version: "1.0"');
-    expect(selection).toContain("tenant_context: tenantContext");
+    expect(selection).toContain("const recoveryTenantContext = await resolveDerivedSlackTenantContext");
+    expect(selection).toContain("event_id: meetingMinutesRecoveryEventId(armed.event)");
+    expect(selection).toContain("tenant_context: recoveryTenantContext");
+    expect(selection).not.toContain("tenant_context: tenantContext");
     expect(selection).toContain("payload: armed.event");
     expect(selection).not.toContain("send(armed.event");
 

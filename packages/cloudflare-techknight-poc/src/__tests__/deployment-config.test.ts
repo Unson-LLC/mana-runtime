@@ -441,6 +441,15 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("meetingMinutesRecoveryEventId(recovery)");
     expect(worker).toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
     expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
+    expect(worker).toContain("const childEventId = await childInteractionEventId(event.eventId, `meeting-minutes-file:${file.id}`)");
+    expect(worker).toContain("const childTenantContext = await resolveDerivedSlackTenantContext");
+    expect(worker).toContain("envelope: childTenantContext");
+    const ingestionStart = worker.indexOf("if (isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig))");
+    const ingestionEnd = worker.indexOf("const ordinaryEvent = tenantBody.payload", ingestionStart);
+    const ingestion = worker.slice(ingestionStart, ingestionEnd);
+    expect(ingestion.indexOf("for (const file of event.files ?? [])")).toBeLessThan(
+      ingestion.indexOf("withTenantCredentialLease({"),
+    );
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("credentialLeaseHandle,\n                        tenantBoundaryHandle");
     expect(worker).toContain("createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE)");
