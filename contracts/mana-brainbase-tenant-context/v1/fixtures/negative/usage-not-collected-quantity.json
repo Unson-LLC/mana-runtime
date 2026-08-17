@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-USAGE-NOT-COLLECTED-QUANTITY",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "usage_events/3",
+  "mutations": [
+    { "operation": "set", "path": "/quantity", "value": 0 }
+  ],
+  "expected_code": "USAGE_NOT_COLLECTED_HAS_QUANTITY",
+  "business_api_called": false
+}

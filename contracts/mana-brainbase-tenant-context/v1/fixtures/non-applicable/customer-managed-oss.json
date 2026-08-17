@@ -1,0 +1,38 @@
+{
+  "fixture_id": "NA-CUSTOMER-MANAGED-OSS-001",
+  "fixture_kind": "non_applicable",
+  "description": "Only explicitly optional Cloud capabilities may be non-applicable for customer-managed OSS.",
+  "deployment_profile": "customer_managed_oss",
+  "optional_capabilities": [
+    {
+      "capability": "cloud_billing_export",
+      "status": "non_applicable",
+      "reason": "Brainbase Cloud billing export is not present in a customer-managed deployment."
+    },
+    {
+      "capability": "managed_operations",
+      "status": "non_applicable",
+      "reason": "Deployment operations are customer-owned."
+    },
+    {
+      "capability": "shared_cloud_rls_conformance",
+      "status": "non_applicable",
+      "reason": "The deployment is not a shared Cloud database."
+    }
+  ],
+  "still_required": [
+    "signed_tenant_context",
+    "connection_revision_recheck",
+    "tenant_scoped_authorization",
+    "credential_broker_v1",
+    "usage_receipt_v1",
+    "idempotent_effects_v1",
+    "container_sanitization_v1"
+  ],
+  "expected": {
+    "contract_result": "accepted",
+    "mandatory_capability_waiver_count": 0,
+    "silent_downgrade": false,
+    "tenant_or_credential_fallback": false
+  }
+}

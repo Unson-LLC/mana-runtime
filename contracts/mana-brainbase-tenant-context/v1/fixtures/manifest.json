@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "contract_id": "mana-brainbase-tenant-context/v1",
+  "fixture_set_sha256": "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454",
+  "hash_algorithm": "sha256 over UTF-8 relative_path + NUL + file_bytes in the listed order; manifest is excluded",
+  "test_key": "test-key.json",
+  "positive": [
+    "positive/canonical-flow.json"
+  ],
+  "negative": [
+    "negative/tampered-payload.json",
+    "negative/protected-header.json",
+    "negative/revision-number.json",
+    "negative/time-order.json",
+    "negative/envelope-ttl.json",
+    "negative/protocol-major.json",
+    "negative/protocol-capability.json",
+    "negative/credential-lease-legacy-shape.json",
+    "negative/credential-lease-ttl.json",
+    "negative/credential-lease-binding.json",
+    "negative/quota-revision-number.json",
+    "negative/usage-not-collected-quantity.json",
+    "negative/usage-partial-unknown.json",
+    "negative/usage-outcome-mixed.json",
+    "negative/idempotency-owner.json",
+    "negative/idempotency-key.json"
+  ],
+  "non_applicable": [
+    "non-applicable/customer-managed-oss.json"
+  ],
+  "producer_contract": "../producer.contract.json",
+  "consumer_contract": "../consumer.contract.json"
+}
