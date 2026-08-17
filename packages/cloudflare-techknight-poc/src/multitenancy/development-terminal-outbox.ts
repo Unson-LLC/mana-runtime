@@ -19,7 +19,6 @@ export interface DevelopmentTerminalOutboxSubmission {
   job_id: string;
   payload_hash: string;
   callback_body: string;
-  tenant_boundary_handle: string;
   owner: DevelopmentJobOwner;
   owner_claim: { key: string; partition_key: string };
   terminal_deadline_at: string;
@@ -86,7 +85,6 @@ function validateSubmission(input: DevelopmentTerminalOutboxSubmission): void {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(input.job_id)
     || !HASH_PATTERN.test(input.payload_hash)
     || typeof input.callback_body !== "string" || input.callback_body.length === 0
-    || !/^tb_[A-Za-z0-9_-]{32,128}$/.test(input.tenant_boundary_handle)
     || !input.owner || input.owner.jobId !== input.job_id
     || !input.owner_claim?.key || !input.owner_claim.partition_key
     || !Number.isFinite(Date.parse(input.observed_at))
@@ -111,6 +109,19 @@ function validateSubmission(input: DevelopmentTerminalOutboxSubmission): void {
       throw new TenantBoundaryError("brainbase_proxy", "SCHEMA_INVALID");
     }
   }
+}
+
+function durableSubmission(input: DevelopmentTerminalOutboxSubmission): DevelopmentTerminalOutboxSubmission {
+  return {
+    job_id: input.job_id,
+    payload_hash: input.payload_hash,
+    callback_body: input.callback_body,
+    owner: clone(input.owner),
+    owner_claim: clone(input.owner_claim),
+    terminal_deadline_at: input.terminal_deadline_at,
+    observed_at: input.observed_at,
+    ...(input.terminal_accounting ? { terminal_accounting: clone(input.terminal_accounting) } : {}),
+  };
 }
 
 function sameOwner(current: DevelopmentTerminalOutboxRecord, input: DevelopmentTerminalOutboxSubmission): boolean {
@@ -179,7 +190,9 @@ export class DevelopmentTerminalOutboxHandler {
         return current;
       }
       const created: DevelopmentTerminalOutboxRecord = {
-        ...clone(input),
+        ...durableSubmission(input),
+        activate_at: input.activate_at,
+        container_id: input.container_id,
         state: "awaiting_terminal",
         attempts: 0,
         updated_at: input.observed_at,
@@ -201,7 +214,7 @@ export class DevelopmentTerminalOutboxHandler {
             throw new TenantBoundaryError("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
           }
           const replacement: DevelopmentTerminalOutboxRecord = {
-            ...clone(input),
+            ...durableSubmission(input),
             ...(input.terminal_accounting
               ? { terminal_accounting: clone(input.terminal_accounting) }
               : current.terminal_accounting ? { terminal_accounting: clone(current.terminal_accounting) } : {}),
@@ -220,7 +233,7 @@ export class DevelopmentTerminalOutboxHandler {
         return current;
       }
       const created: DevelopmentTerminalOutboxRecord = {
-        ...clone(input),
+        ...durableSubmission(input),
         state: "pending",
         attempts: 0,
         updated_at: input.observed_at,

@@ -23,11 +23,13 @@ class MemoryStorage {
   }
 }
 
+const TRANSIENT_BOUNDARY_HANDLE = "tb_opaque_operation_handle_1234567890";
+
 const submission = {
   job_id: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
   payload_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   callback_body: JSON.stringify({ job_id: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", status: "timed_out" }),
-  tenant_boundary_handle: "tb_opaque_operation_handle_1234567890",
+  tenant_boundary_handle: TRANSIENT_BOUNDARY_HANDLE,
   owner: {
     tenantId: "tenant-a", connectionId: "connection-a", connectionRevision: "1",
     operationId: "operation-a", eventId: "event-a", workspaceId: "workspace-a",
@@ -38,7 +40,24 @@ const submission = {
   owner_claim: { key: "ik1_owner", partition_key: "tenant-partition-a" },
   terminal_deadline_at: "2026-08-17T10:04:00.000Z",
   observed_at: "2026-08-17T10:03:30.000Z",
-} satisfies DevelopmentTerminalOutboxSubmission;
+  terminal_accounting: {
+    tenant_context: {
+      tenant: { tenant_id: "tenant-a" },
+      workspace_connection: { connection_id: "connection-a", workspace_id: "workspace-a" },
+      operation_id: "operation-a",
+      slack: { channel_id: "channel-a", thread_ts: "1.0" },
+      expires_at: "2026-08-17T10:04:00.000Z",
+    } as never,
+    expected_scope: {} as never,
+    quota_decision: "allowed",
+    unit: "container_seconds",
+    outcome: "timed_out",
+    failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
+    reply_state: "unknown",
+    recorded_at: "2026-08-17T10:04:00.000Z",
+    accounting_effect_id: "development_terminal:test-job",
+  },
+} satisfies DevelopmentTerminalOutboxSubmission & { tenant_boundary_handle: string };
 
 describe("development terminal outbox", () => {
   it("arms a durable timeout before Container launch and lets the first real terminal callback win", async () => {
@@ -134,7 +153,7 @@ describe("development terminal outbox", () => {
     await client.submit(submission);
 
     expect(JSON.stringify([...storage.values.entries()]))
-      .not.toContain(submission.tenant_boundary_handle);
+      .not.toContain(TRANSIENT_BOUNDARY_HANDLE);
   });
 
   it("rejects the same job id with a different terminal payload", async () => {
@@ -184,7 +203,10 @@ describe("development terminal outbox", () => {
         {
           DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
           DEVELOPMENT_CALLBACK_TOKEN: "test-callback-token-placeholder",
-          TENANT_RUNTIME_STATE: {} as never,
+          TENANT_RUNTIME_STATE: {
+            idFromName: (name: string) => name,
+            get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+          } as never,
         },
         neverSettles,
       );

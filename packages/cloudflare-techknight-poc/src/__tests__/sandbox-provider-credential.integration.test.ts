@@ -311,7 +311,6 @@ describe("sandbox provider credential integration", () => {
       job_id: jobId,
       payload_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       callback_body: JSON.stringify({ job_id: jobId, status: "timed_out" }),
-      tenant_boundary_handle: boundaryHandle,
       owner,
       owner_claim: { key: claimed.claim.key, partition_key: claimed.claim.partition_key },
       observed_at: observedAt,
@@ -752,13 +751,23 @@ describe("sandbox provider credential integration", () => {
       job_id: jobId,
       payload_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       callback_body: JSON.stringify({ job_id: jobId, status: "timed_out" }),
-      tenant_boundary_handle: handle,
       owner,
       owner_claim: { key: claimed.claim.key, partition_key: claimed.claim.partition_key },
       observed_at: watchdogObservedAt,
       activate_at: new Date(Date.parse(watchdogObservedAt) + 1_000).toISOString(),
       terminal_deadline_at: envelope.expires_at,
       container_id: "development-sandbox-integration-a",
+      terminal_accounting: {
+        tenant_context: envelope,
+        expected_scope: EXPECTED_SCOPE,
+        quota_decision: "allowed",
+        unit: "container_seconds",
+        outcome: "timed_out",
+        failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
+        reply_state: "unknown",
+        recorded_at: envelope.expires_at,
+        accounting_effect_id: `development_terminal:${jobId}`,
+      },
     });
 
     // Drop all handler instances to model a new Worker/DO isolate while retaining

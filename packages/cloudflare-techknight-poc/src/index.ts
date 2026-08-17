@@ -2283,7 +2283,6 @@ export default {
                             await terminalOutbox.arm({
                               ...watchdog,
                               job_id: owner.jobId,
-                              tenant_boundary_handle: tenantBoundaryHandle,
                               owner,
                               owner_claim: {
                                 key: claimed.claim.key,

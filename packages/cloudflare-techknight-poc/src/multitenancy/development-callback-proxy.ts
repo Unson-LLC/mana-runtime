@@ -4,6 +4,7 @@ import {
 } from "../development-callback.js";
 import { developmentJobIdForTenantOperation } from "../development-runner-client.js";
 import {
+  createDurableTenantBoundaryRegistry,
   resolveDurableTenantBoundaryContext,
   type TenantBoundaryContextNamespace,
 } from "./durable-tenant-boundary.js";
@@ -123,12 +124,27 @@ export async function retryDevelopmentTerminalOutboxRecord(
   fetchImpl: typeof fetch = fetch,
   destroyContainer?: DestroyDevelopmentContainer,
 ): Promise<{ state: "completed" } | { state: "retry"; error: string }> {
-  const response = await forwardDevelopmentCallback(
-    record.callback_body,
-    record.tenant_boundary_handle,
-    env,
-    fetchImpl,
-  ).catch(() => undefined);
+  if (!record.terminal_accounting) return { state: "retry", error: "SCHEMA_INVALID" };
+  const registry = createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE);
+  let transientBoundaryHandle: string | undefined;
+  let response: Response | undefined;
+  try {
+    transientBoundaryHandle = await registry.register({
+      tenant_context: record.terminal_accounting.tenant_context,
+      expected_scope: record.terminal_accounting.expected_scope,
+      now: new Date().toISOString(),
+    });
+    response = await forwardDevelopmentCallback(
+      record.callback_body,
+      transientBoundaryHandle,
+      env,
+      fetchImpl,
+    ).catch(() => undefined);
+  } catch {
+    response = undefined;
+  } finally {
+    if (transientBoundaryHandle) await registry.dispose(transientBoundaryHandle).catch(() => undefined);
+  }
   if (!response || !await responseCompleted(response)) {
     return { state: "retry", error: response ? `HTTP_${response.status}` : "UPSTREAM_UNAVAILABLE" };
   }
@@ -273,7 +289,6 @@ export async function proxyDevelopmentCallback(
     job_id: payload.job_id,
     payload_hash: await developmentCallbackPayloadHash(payload),
     callback_body: raw,
-    tenant_boundary_handle: boundaryHandle,
     owner,
     owner_claim: { key: claimed.claim.key, partition_key: claimed.claim.partition_key },
     terminal_deadline_at: resolved.tenant_context.expires_at,
