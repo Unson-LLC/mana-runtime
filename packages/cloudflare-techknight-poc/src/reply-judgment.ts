@@ -2,7 +2,7 @@ import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
 const JUDGMENT_AUDIT_PREFIX = "🧠 判断参照:";
-const BRAINBASE_AUDIT_PREFIX = "📚 Brainbase参照先:";
+const BRAINBASE_AUDIT_PREFIX = "📚 Brainbase";
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
 interface StreamEvent extends Record<string, unknown> {
@@ -332,10 +332,19 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   });
   if (toolJournal.some((entry) => entry.outcome === "error")) throw new Error("reply_judgment_tool_failed");
 
-  const expectedAuditLines = hooks.flatMap((hook) => auditLines(hook.output));
+  // A successful Stop is the Host's completed-episode receipt. UserPromptSubmit
+  // only carries model context, while PostToolUse emits incremental journal
+  // lines; neither is the canonical final audit block in the real CLI stream.
+  const expectedAuditLines = auditLines(successfulStop.output);
   if (!expectedAuditLines.some((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX))
       || !expectedAuditLines.some((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX))) {
     throw new Error("reply_judgment_audit_lines_missing");
+  }
+  const postToolAuditLines = postToolHooks.flatMap((hook) => auditLines(hook.output));
+  const completedToolAuditLines = expectedAuditLines.filter((line) =>
+    line.startsWith(BRAINBASE_AUDIT_PREFIX) && !line.startsWith("📚 Brainbase未参照:"));
+  if (JSON.stringify(postToolAuditLines) !== JSON.stringify(completedToolAuditLines)) {
+    throw new Error("reply_judgment_tool_audit_mismatch");
   }
   const actualAuditLines = auditLinesInReply(final.reply);
   if (JSON.stringify(actualAuditLines) !== JSON.stringify(expectedAuditLines)) {
