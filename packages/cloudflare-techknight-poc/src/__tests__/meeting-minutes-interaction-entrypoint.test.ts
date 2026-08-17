@@ -138,11 +138,18 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
       MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
       TECHKNIGHT_EVENTS: { send: vi.fn() } };
+    const resolveTenantEffects = vi.fn(async () => {
+      throw new Error("workspace_app_binding_mismatch");
+    });
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
       method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
     }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
-    handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, tenantEffectResolver());
-    expect(response.status).toBe(403);
+    handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, resolveTenantEffects);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "TENANT_INTERACTION_UNAVAILABLE" });
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      app_id: "A-UNSON", workspace_id: "T-TECHKNIGHT",
+    }));
     expect(handleMeetingTaskAction).not.toHaveBeenCalled();
   });
 
