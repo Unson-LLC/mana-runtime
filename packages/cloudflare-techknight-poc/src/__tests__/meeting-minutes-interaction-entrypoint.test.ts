@@ -17,6 +17,34 @@ function tenantEffectResolver(overrides: Partial<TenantInteractionEffects> = {})
 }
 
 describe("meeting minutes interaction Worker entrypoint", () => {
+  it("delegates an installed workspace to canonical authority instead of a static team binding", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "primary-app-secret";
+    const payload = { api_app_id: "A-PRIMARY", team: { id: "T-INSTALLED-B" }, user: { id: "U1" },
+      channel: { id: "C-B" }, trigger_id: "trigger", actions: [{
+        action_id: "mana_meeting_minutes_task_edit",
+        value: JSON.stringify({ runId: "Ev1_F1", index: 0, organizationId: "tenant-b",
+          channelId: "C-B", sourceWorkspaceId: "T-SOURCE-B", sourceAppId: "A-PRIMARY",
+          sourceChannelId: "C-SOURCE-B", sourceThreadTs: "1.1" }),
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const handleMeetingTaskAction = vi.fn(async () => Response.json({ ok: true }));
+    const resolveTenantEffects = tenantEffectResolver();
+    const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T-STATIC-A",
+      SLACK_EXPECTED_APP_ID: "A-PRIMARY", TECHKNIGHT_EVENTS: { send: vi.fn() } };
+
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
+    handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, resolveTenantEffects);
+
+    expect(response.status).toBe(200);
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      app_id: "A-PRIMARY", workspace_id: "T-INSTALLED-B", channel_id: "C-B",
+    }));
+    expect(handleMeetingTaskAction).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when the canonical tenant effect resolver is not wired", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "tech-knight-secret";
     const payload = { api_app_id: "A-TECHKNIGHT", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },
