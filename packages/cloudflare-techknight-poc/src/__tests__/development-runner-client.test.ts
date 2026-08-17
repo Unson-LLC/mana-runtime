@@ -25,22 +25,25 @@ describe("runCloudflareDevelopmentRequest", () => {
   it("stores a bounded job and starts the bundled runner asynchronously", async () => {
     const writeFile = vi.fn(async (_path: string, _content: string) => undefined);
     const startProcess = vi.fn(async (_command: string, _options: Record<string, unknown>) => ({ id: "development-Ev1" }));
-    const createSandbox = vi.fn(() => ({ writeFile, startProcess }));
+    const createSandbox = vi.fn((_id: string) => ({ writeFile, startProcess }));
 
-    await expect(runCloudflareDevelopmentRequest(input({ createSandbox }))).resolves.toContain("development-Ev1");
+    await expect(runCloudflareDevelopmentRequest(input({ createSandbox }))).resolves.toContain("development-");
 
-    expect(createSandbox).toHaveBeenCalledWith("development-Ev1");
+    const jobId = createSandbox.mock.calls[0]![0];
+    expect(jobId).toMatch(/^development-[A-Za-z0-9_-]{43}$/);
+    expect(createSandbox).toHaveBeenCalledWith(jobId);
     expect(writeFile).toHaveBeenCalledOnce();
     expect(JSON.parse(writeFile.mock.calls[0]![1])).toEqual(expect.objectContaining({
       request: "修正して",
+      job_id: jobId,
       placement_id: "mana-dev-biz",
       callback_url: "https://worker.example.com/development/callback",
     }));
     expect(startProcess).toHaveBeenCalledWith(
-      "node /opt/mana/cloudflare-development-runner.mjs /tmp/development-Ev1.json",
+      `node /opt/mana/cloudflare-development-runner.mjs /tmp/${jobId}.json`,
       expect.objectContaining({
-        processId: "development-Ev1",
-        autoCleanup: false,
+        processId: jobId,
+        autoCleanup: true,
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: "mana-credential-lease-v1:lease_handle_abcdefghijklmnopqrstuvwxyz12",
@@ -63,10 +66,10 @@ describe("runCloudflareDevelopmentRequest", () => {
   });
 
   it("partitions the Container by tenant, connection, and operation and auto-cleans the process record", async () => {
-    const firstStart = vi.fn(async () => ({ id: "first" }));
-    const secondStart = vi.fn(async () => ({ id: "second" }));
-    const firstCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined), startProcess: firstStart }));
-    const secondCreate = vi.fn(() => ({ writeFile: vi.fn(async () => undefined), startProcess: secondStart }));
+    const firstStart = vi.fn(async (_command: string, _options: Record<string, unknown>) => ({ id: "first" }));
+    const secondStart = vi.fn(async (_command: string, _options: Record<string, unknown>) => ({ id: "second" }));
+    const firstCreate = vi.fn((_id: string) => ({ writeFile: vi.fn(async () => undefined), startProcess: firstStart }));
+    const secondCreate = vi.fn((_id: string) => ({ writeFile: vi.fn(async () => undefined), startProcess: secondStart }));
 
     await runCloudflareDevelopmentRequest(input({ createSandbox: firstCreate }));
     await runCloudflareDevelopmentRequest(input({

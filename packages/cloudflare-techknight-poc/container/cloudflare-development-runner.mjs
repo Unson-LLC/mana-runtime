@@ -53,7 +53,7 @@ async function postResult(job, runner) {
   const status = runner.status === "pr_ready" ? "completed" :
     (["needs_decision", "needs_input", "failed"].includes(runner.status) ? runner.status : "failed");
   const callback = {
-    job_id: `development-${job.event_id}`,
+    job_id: job.job_id,
     event_id: job.event_id,
     placement_id: job.placement_id,
     workspace_id: job.workspace_id,
@@ -76,6 +76,8 @@ async function main() {
   const jobPath = process.argv[2];
   if (!jobPath || !/^\/tmp\/development-[A-Za-z0-9_-]{1,96}\.json$/.test(jobPath)) throw new Error("invalid_job_path");
   const job = JSON.parse(await readFile(jobPath, "utf8"));
+  if (typeof job.job_id !== "string" || jobPath !== `/tmp/${job.job_id}.json`
+    || !/^development-[A-Za-z0-9_-]{43}$/.test(job.job_id)) throw new Error("invalid_job_id");
   let runner;
   try {
     await ensureRepository();

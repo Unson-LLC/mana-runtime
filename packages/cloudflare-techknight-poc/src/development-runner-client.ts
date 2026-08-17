@@ -1,4 +1,5 @@
 import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+import { tenantPartitionKey } from "./multitenancy/isolation.js";
 
 export interface DevelopmentSandbox {
   writeFile(path: string, content: string): Promise<unknown>;
@@ -19,11 +20,36 @@ function authenticatedHttpsBase(value: string | undefined): URL {
   return url;
 }
 
-function jobIdForEvent(eventId: string): string {
+async function jobIdForTenantOperation(input: {
+  eventId: string;
+  tenantId: string;
+  connectionId: string;
+  operationId: string;
+  workspaceId: string;
+  channelId: string;
+  threadTs: string;
+}): Promise<string> {
+  const { eventId } = input;
   if (!/^[A-Za-z0-9_-]{1,96}$/.test(eventId)) {
     throw new Error("development_runner_invalid_event_id");
   }
-  return `development-${eventId}`;
+  const partition = tenantPartitionKey({
+    tenant_id: input.tenantId,
+    resource_type: "session",
+    connection_id: input.connectionId,
+    workspace_id: input.workspaceId,
+    channel_id: input.channelId,
+    thread_ts: input.threadTs,
+    resource_id: `${input.operationId}:${eventId}`,
+  });
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(partition),
+  ));
+  let binary = "";
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  const encoded = btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  return `development-${encoded}`;
 }
 
 export async function runCloudflareDevelopmentRequest(input: {
@@ -34,16 +60,20 @@ export async function runCloudflareDevelopmentRequest(input: {
   workspaceId: string;
   channelId: string;
   threadTs: string;
+  tenantId: string;
+  connectionId: string;
+  operationId: string;
   credentialLeaseHandle: string;
   tenantBoundaryHandle: string;
   callbackBaseUrl?: string;
   createSandbox: (id: string) => DevelopmentSandbox;
 }): Promise<string> {
   const callback = authenticatedHttpsBase(input.callbackBaseUrl);
-  const jobId = jobIdForEvent(input.eventId);
+  const jobId = await jobIdForTenantOperation(input);
   const jobPath = `/tmp/${jobId}.json`;
   const callbackPath = callback.pathname.replace(/\/$/, "");
   const payload = {
+    job_id: jobId,
     request: input.request,
     placement_id: input.placementId,
     requester_id: input.requesterId,
@@ -61,7 +91,7 @@ export async function runCloudflareDevelopmentRequest(input: {
       `node /opt/mana/cloudflare-development-runner.mjs ${jobPath}`,
       {
         processId: jobId,
-        autoCleanup: false,
+        autoCleanup: true,
         timeout: 4_800_000,
         env: {
           IS_SANDBOX: "1",
