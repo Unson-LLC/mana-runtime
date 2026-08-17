@@ -125,6 +125,18 @@ describe("development terminal outbox", () => {
     await expect(client.read()).resolves.toMatchObject({ state: "completed" });
   });
 
+  it("never persists the transient tenant boundary handle in the durable callback outbox", async () => {
+    const storage = new MemoryStorage();
+    const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => handler.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a");
+
+    await client.submit(submission);
+
+    expect(JSON.stringify([...storage.values.entries()]))
+      .not.toContain(submission.tenant_boundary_handle);
+  });
+
   it("rejects the same job id with a different terminal payload", async () => {
     const storage = new MemoryStorage();
     const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
