@@ -14,6 +14,7 @@ interface StreamEvent extends Record<string, unknown> {
   result?: unknown;
   output?: unknown;
   stdout?: unknown;
+  stderr?: unknown;
   message?: { content?: unknown };
 }
 
@@ -223,7 +224,15 @@ function parseHookOutput(event: StreamEvent): Record<string, unknown> {
 
 function hookReceipt(event: StreamEvent): { output: Record<string, unknown>; receipt: EmbeddedHookReceipt } {
   if (event.type !== "system" || event.subtype !== "hook_response" || event.exit_code !== 0
-      || event.outcome !== "success") throw new Error("reply_judgment_hook_failed");
+      || event.outcome !== "success") {
+    const diagnosticText = [event.stderr, event.stdout, event.output]
+      .filter((value): value is string => typeof value === "string")
+      .join("\n");
+    const safeReason = diagnosticText.match(/\bjudgment_hook_(?:http_\d{3}|[a-z0-9_]+)\b/)?.[0];
+    throw new Error(safeReason
+      ? `reply_judgment_hook_failed_${safeReason}`
+      : "reply_judgment_hook_failed");
+  }
   const output = parseHookOutput(event);
   const receiptLines = typeof output.systemMessage === "string"
     ? output.systemMessage.split(/\r?\n/).filter((line) => line.startsWith(JUDGMENT_RECEIPT_PREFIX))
