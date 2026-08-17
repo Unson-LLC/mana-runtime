@@ -79,4 +79,15 @@ describe("tenant runtime readiness", () => {
       missing_bindings: ["MANA_TASK_BOARD_SERVICE_ACTOR_ID"],
     });
   });
+
+  it("requires canonical TaskBoard targets whenever scheduling is enabled", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      MANA_TASK_BOARD_SERVICE_ACTOR_ID: "service_task_board",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["TASK_BOARD_TARGETS_JSON"],
+    });
+  });
 });

@@ -14,6 +14,7 @@ function input(overrides: Record<string, unknown> = {}) {
     connectionId: "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
     operationId: "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
     credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
+    githubCredentialLeaseHandle: "github_lease_handle_abcdefghijklmnopqrs",
     tenantBoundaryHandle: "tb_opaque_operation_handle_1234567890",
     callbackBaseUrl: "https://worker.example.com",
     createSandbox: vi.fn(),
@@ -49,6 +50,9 @@ describe("runCloudflareDevelopmentRequest", () => {
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: "mana-credential-lease-v1:lease_handle_abcdefghijklmnopqrstuvwxyz12",
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+          GIT_CONFIG_VALUE_0: "Authorization: Bearer mana-credential-lease-v1:github_lease_handle_abcdefghijklmnopqrs",
           MANA_TENANT_BOUNDARY_HANDLE: "tb_opaque_operation_handle_1234567890",
         },
       }),

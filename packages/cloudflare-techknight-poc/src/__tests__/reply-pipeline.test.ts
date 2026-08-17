@@ -77,6 +77,42 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
+  it("rejects a persisted Container whenever a tenant boundary is active", async () => {
+    const { options } = harness({
+      tenantBoundaryHandle: "tb_tenant_a",
+      claudeSession: {
+        id: "12345678-1234-4123-8123-123456789abc",
+        sandboxId: "techknight-session-stable",
+        resume: true,
+      },
+    });
+
+    await expect(generateClaudeReply(event(), options)).rejects.toEqual(
+      expect.objectContaining({ code: "CONTAINER_REUSE_FORBIDDEN" }),
+    );
+    expect(options.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("uses a fresh Container for a retry of the same tenant operation", async () => {
+    const { options } = harness({ tenantBoundaryHandle: "tb_tenant_a" });
+
+    await generateClaudeReply(event(), options);
+    await generateClaudeReply(event(), options);
+
+    const sandboxIds = vi.mocked(options.createSandbox).mock.calls.map(([id]) => id);
+    expect(sandboxIds).toHaveLength(2);
+    expect(sandboxIds[0]).not.toBe(sandboxIds[1]);
+  });
+
+  it("fails closed when a tenant Container cannot be destroyed", async () => {
+    const { options, sandbox } = harness({ tenantBoundaryHandle: "tb_tenant_a" });
+    sandbox.destroy.mockRejectedValueOnce(new Error("runtime destroy detail"));
+
+    await expect(generateClaudeReply(event(), options)).rejects.toEqual(
+      expect.objectContaining({ code: "CONTAINER_SANITIZATION_UNPROVEN" }),
+    );
+  });
+
   it("lets triage admit an ambient channel message that can add concrete value", async () => {
     const fs = new MemoryFs();
     const triage = vi.fn().mockResolvedValue({ action: "reply" as const, reason: "業務支援対象" });

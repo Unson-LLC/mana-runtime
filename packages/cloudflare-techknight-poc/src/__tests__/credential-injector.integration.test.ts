@@ -120,4 +120,35 @@ describe("tenant credential Container outbound integration", () => {
     expect(headers.get("x-api-key")).toBe("fixture-secret-never-persist");
     expect(headers.has("authorization")).toBe(false);
   });
+
+  it("translates a GitHub-scoped opaque lease into Git smart-HTTP Basic auth exactly once", async () => {
+    const injector = new TenantCredentialInjector();
+    const githubBinding = {
+      ...BINDING,
+      audience: "github.com",
+      credential_ref: "opaque-github-credential-ref",
+    };
+    const handle = await injector.register({
+      lease: lease({
+        lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        binding: githubBinding,
+      }),
+      expected_binding: githubBinding,
+      now: NOW,
+    });
+    const headers = injector.inject({
+      hostname: "github.com",
+      headers: new Headers({ authorization: `Bearer ${credentialLeaseMarker(handle)}` }),
+      now: NOW,
+      credential_header: "github-basic",
+    });
+
+    expect(headers.get("authorization")).toBe(`Basic ${btoa("x-access-token:fixture-secret-never-persist")}`);
+    expect(() => injector.inject({
+      hostname: "github.com",
+      headers: new Headers({ authorization: `Bearer ${credentialLeaseMarker(handle)}` }),
+      now: NOW,
+      credential_header: "github-basic",
+    })).toThrow(expect.objectContaining({ code: "CREDENTIAL_LEASE_INVALID" }));
+  });
 });

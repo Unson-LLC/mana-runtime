@@ -4,6 +4,7 @@ import {
   enqueueScheduledTaskBoardRepair,
   issueTaskWriteRequestContext,
   processTaskBoardRepair,
+  taskBoardTargets,
 } from "../task-runtime-entrypoints.js";
 
 const event = {
@@ -43,6 +44,26 @@ const resolveTaskBoardTenant = async (input: TaskBoardRepairEvent) => ({
 }) as never;
 
 describe("Cloudflare task runtime entrypoints", () => {
+  it("rejects TaskBoard scheduling when canonical targets are absent instead of creating legacy targets", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const env = {
+      TENANT_ID: "unson-business",
+      SLACK_EXPECTED_TEAM_ID: "T_UNSON",
+      SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      SLACK_BOT_TOKEN: "unson-token",
+      TASK_BOARD_REPAIRS: { send },
+    };
+
+    expect(() => taskBoardTargets(env)).toThrow("task_board_targets_required");
+    await expect(enqueueScheduledTaskBoardRepair(
+      env,
+      "2026-08-17T00:00:00.000Z",
+      resolveTaskBoardTenant,
+    )).rejects.toThrow("task_board_targets_required");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("issues a requester, placement, and project scoped write capability", async () => {
     const result = await issueTaskWriteRequestContext(event, runtime, 1_000, undefined, "per_requester");
     expect(result.taskWriteEnabled).toBe(true);
