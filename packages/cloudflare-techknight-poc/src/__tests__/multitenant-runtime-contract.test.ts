@@ -969,9 +969,16 @@ describe("story-mana-multitenant-runtime contract", () => {
 
   it("routes Container provider proxies through verified per-request credential leases", () => {
     const sandbox = readFileSync(new URL("../sandbox-runtime.ts", import.meta.url), "utf8");
+    const providerOutbound = readFileSync(
+      new URL("../multitenancy/tenant-provider-outbound.ts", import.meta.url),
+      "utf8",
+    );
     expect(sandbox).toContain("resolveDurableTenantBoundaryContext(");
     expect(sandbox).toContain('["mcp_gateway", "brainbase_proxy"]');
-    expect(sandbox).toContain("createTenantCredentialFetch({");
+    expect(sandbox).toContain("tenantCredentialFetchForResolvedContext(env, resolved");
+    expect(providerOutbound).toContain("createTenantCredentialFetch({");
+    expect(providerOutbound).toContain("createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE)");
+    expect(providerOutbound).toContain("read_authoritative_snapshot:");
     expect(sandbox).toContain("createTaskSearchProxyHandler(credentialFetch)");
     expect(sandbox).toContain("createTaskWriteProxyHandler(credentialFetch)");
     expect(sandbox).toContain("handleBrainbaseMcpProxyRequest(authorized, proxyEnv, credentialFetch)");
