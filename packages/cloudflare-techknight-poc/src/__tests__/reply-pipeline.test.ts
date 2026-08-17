@@ -45,7 +45,7 @@ function event(overrides: Partial<SlackQueueEvent> = {}): SlackQueueEvent {
 }
 
 const judgmentLine = "🧠 判断参照: 「質問」を参照 → 質問として回答 ✓";
-const brainbaseLine = "📚 Brainbase参照先: 「質問」→ Brainbase呼び出し0回 ✓";
+const brainbaseLine = "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓";
 const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
 function auditedReplyStream(
@@ -61,7 +61,7 @@ function auditedReplyStream(
     session_id: "session-1",
     stdout: JSON.stringify({
       systemMessage: [
-        hook_event_name === "UserPromptSubmit" ? judgmentLine : auditLine,
+        ...(hook_event_name === "Stop" ? [judgmentLine, auditLine] : []),
         `${receiptPrefix}${JSON.stringify({
         schema_version: "mana_judgment_hook_receipt.v1",
         hook_event_name,
@@ -448,7 +448,7 @@ describe("TechKnight Slack reply pipeline", () => {
 
   it("fails closed when reply normalization truncates a required audit line", async () => {
     const fs = new MemoryFs();
-    const longAuditLine = `📚 Brainbase参照先: ${"x".repeat(12_000)}`;
+    const longAuditLine = `📚 Brainbase未参照: ${"x".repeat(12_000)}`;
     const { options, sandbox, fetchMock } = harness();
     sandbox.exec.mockResolvedValue({
       success: true,

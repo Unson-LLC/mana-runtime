@@ -26,6 +26,7 @@ class MemoryFs {
 
 const judgmentLine = "🧠 判断参照: 「質問」を参照 → 質問として回答 ✓";
 const brainbaseLine = "📚 Brainbase参照先: 「質問」→ 採用: workspace_home ✓";
+const zeroCallLine = "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓";
 const secondBrainbaseLine = "📚 Brainbase参照先: 「追加質問」→ 採用: graph ✓";
 const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
@@ -75,7 +76,7 @@ function stream(options: {
 } = {}): string {
   const events: unknown[] = [
     { type: "system", subtype: "init", session_id: "session-1" },
-    hook("UserPromptSubmit", judgmentLine),
+    hook("UserPromptSubmit", ""),
   ];
   const toolCount = options.toolCount ?? (options.withTool ? 1 : 0);
   const toolAuditLines = [brainbaseLine, secondBrainbaseLine];
@@ -92,14 +93,17 @@ function stream(options: {
     );
   }
   if (options.stop !== false) {
-    events.push(hook("Stop", toolCount > 0 ? "" : brainbaseLine, options.turn));
+    events.push(hook("Stop", [
+      judgmentLine,
+      ...(toolCount > 0 ? toolAuditLines.slice(0, toolCount) : [zeroCallLine]),
+    ].join("\n"), options.turn));
   }
   events.push({
     type: "result",
     session_id: "session-1",
     result: (options.replyLines ?? [
       judgmentLine,
-      ...(toolCount > 0 ? toolAuditLines.slice(0, toolCount) : [brainbaseLine]),
+      ...(toolCount > 0 ? toolAuditLines.slice(0, toolCount) : [zeroCallLine]),
       "回答本文",
     ]).join("\n"),
   });
@@ -119,7 +123,7 @@ describe("Slack reply Judgment lifecycle", () => {
 
   it("story-slack-mention-brainbase-judgment:ac:1 ac:2 ac:5 requires a complete Judgment lifecycle before reply", () => {
     expect(parseReplyJudgmentStream(stream())).toMatchObject({
-      reply: `${judgmentLine}\n${brainbaseLine}\n回答本文`,
+      reply: `${judgmentLine}\n${zeroCallLine}\n回答本文`,
       sessionId: "session-1",
       turnId: "turn-1",
       userPromptSubmit: "completed",
