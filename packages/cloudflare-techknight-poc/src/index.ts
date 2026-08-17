@@ -873,10 +873,29 @@ export default {
                       );
                     },
                   }),
-                  develop: (request) => runCloudflareDevelopmentRequest({ request, placementId: placement.placementId,
-                    requesterId: event.userId!, eventId: event.eventId, workspaceId: event.workspaceId,
-                    channelId: event.channelId, threadTs: event.threadTs, callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
-                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h") }),
+                  develop: (request) => withTenantCredentialLease({
+                    envelope: tenantBody.tenant_context,
+                    expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+                    audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
+                    broker: clients.credential_broker,
+                    read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+                      tenantBody.tenant_context.workspace_connection.connection_id,
+                    ),
+                    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+                    now: tenantConsumerOptions.now,
+                    run: (credentialLeaseHandle) => runCloudflareDevelopmentRequest({
+                      request,
+                      placementId: placement.placementId,
+                      requesterId: event.userId!,
+                      eventId: event.eventId,
+                      workspaceId: event.workspaceId,
+                      channelId: event.channelId,
+                      threadTs: event.threadTs,
+                      credentialLeaseHandle,
+                      callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
+                      createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
+                    }),
+                  }),
                 });
                 const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
                 await persistReplyCompletion(workspace.fs, {

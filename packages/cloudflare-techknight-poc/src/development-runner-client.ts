@@ -1,3 +1,5 @@
+import { credentialLeaseMarker } from "./multitenancy/credential-injector.js";
+
 export interface DevelopmentSandbox {
   writeFile(path: string, content: string): Promise<unknown>;
   startProcess(command: string, options: {
@@ -32,6 +34,7 @@ export async function runCloudflareDevelopmentRequest(input: {
   workspaceId: string;
   channelId: string;
   threadTs: string;
+  credentialLeaseHandle: string;
   callbackBaseUrl?: string;
   createSandbox: (id: string) => DevelopmentSandbox;
 }): Promise<string> {
@@ -61,7 +64,7 @@ export async function runCloudflareDevelopmentRequest(input: {
         timeout: 4_800_000,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+          CLAUDE_CODE_OAUTH_TOKEN: credentialLeaseMarker(input.credentialLeaseHandle),
         },
       },
     );
