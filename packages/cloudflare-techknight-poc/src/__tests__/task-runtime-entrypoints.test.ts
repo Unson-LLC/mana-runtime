@@ -88,6 +88,74 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(stale.retry).not.toHaveBeenCalled();
   });
 
+  it("story-task-canvas-ownership:ac:4 rejects untrusted auto-provision coordinates without writing to Slack", async () => {
+    const createCanvas = vi.fn().mockResolvedValue("FMANA");
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const target = {
+      ...ownedTarget,
+      autoProvision: true,
+      manaCanvasId: null,
+      bindingRevision: 1,
+    };
+    const message = {
+      body: { ...repair, channelId: "C_OTHER", manaCanvasId: null },
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    await consumeTaskBoardRepair(message, {
+      TENANT_ID: "unson-business",
+      SLACK_EXPECTED_TEAM_ID: "TUNSON",
+      SLACK_ALLOWED_CHANNEL_ID: "CBACKOFFICE",
+      SLACK_BOT_TOKEN: "unson-token",
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([target]),
+      TASK_BOARD_REPAIRS: { send: vi.fn() },
+      TASK_BOARD_BINDINGS: { idFromName: vi.fn(), get: vi.fn() },
+    }, refresh, createCanvas);
+    expect(createCanvas).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledOnce();
+  });
+
+  it("provisions and persists the trusted channel Canvas before the first refresh", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const createCanvas = vi.fn().mockResolvedValue("FMANA");
+    const bindingFetch = vi.fn(async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/reserve") return Response.json({ status: "reserved" });
+      if (path === "/complete") return new Response(null, { status: 204 });
+      return Response.json({ error: "not_found" }, { status: 404 });
+    });
+    const target = { ...ownedTarget, autoProvision: true, manaCanvasId: null, bindingRevision: 1 };
+    const message = {
+      body: { ...repair, manaCanvasId: null, bindingRevision: 1 },
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+
+    await consumeTaskBoardRepair(message, {
+      TENANT_ID: "unson-business",
+      SLACK_EXPECTED_TEAM_ID: "TUNSON",
+      SLACK_ALLOWED_CHANNEL_ID: "CBACKOFFICE",
+      SLACK_BOT_TOKEN: "unson-token",
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([target]),
+      TASK_BOARD_REPAIRS: { send: vi.fn() },
+      TASK_BOARD_BINDINGS: {
+        idFromName: vi.fn((name) => name),
+        get: vi.fn(() => ({ fetch: bindingFetch })),
+      },
+    }, refresh, createCanvas);
+
+    expect(createCanvas).toHaveBeenCalledWith("CBACKOFFICE", "unson-token");
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
+      SLACK_ALLOWED_CHANNEL_ID: "CBACKOFFICE",
+      TASK_BOARD_CANVAS_ID: "FMANA",
+    }));
+    expect(bindingFetch).toHaveBeenCalledTimes(2);
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
+
   it("retries a failed repair and enqueues the scheduled scoped repair", async () => {
     const failed = { body: repair, ack: vi.fn(), retry: vi.fn() };
     const send = vi.fn().mockResolvedValue(undefined);

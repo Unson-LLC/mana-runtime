@@ -99,6 +99,7 @@ import {
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
 export { TaskWriteApproval } from "./task-write-approval.js";
+export { TaskBoardBinding } from "./task-board-binding.js";
 export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
 export { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 
@@ -140,6 +141,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
+  TASK_BOARD_BINDINGS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
   MEETING_MINUTES_WORKSPACE: DurableObjectNamespace<MeetingMinutesWorkspace>;
   MEETING_MINUTES_DEPLOYMENT_GATE: DurableObjectNamespace<MeetingMinutesDeploymentGate>;

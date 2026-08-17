@@ -8,6 +8,7 @@ export interface TaskBoardTarget {
   channelId: string;
   projectCodes: string[];
   enabled: boolean;
+  autoProvision: boolean;
   manaCanvasId: string | null;
   bindingRevision: number | null;
 }
@@ -38,6 +39,7 @@ export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[
       ? [...new Set(candidate.projectCodes.map((entry) => typeof entry === "string" ? entry.trim() : "").filter(Boolean))]
       : [];
     const enabled = candidate.enabled === true;
+    const autoProvision = candidate.autoProvision === true;
     const manaCanvasId = typeof candidate.manaCanvasId === "string" ? candidate.manaCanvasId.trim() : "";
     const bindingRevision = typeof candidate.bindingRevision === "number" && Number.isSafeInteger(candidate.bindingRevision)
       ? candidate.bindingRevision
@@ -46,9 +48,12 @@ export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[
       !SLACK_ID.test(workspaceId) || !SLACK_ID.test(channelId) || projectCodes.length === 0 || projectCodes.length > 20) {
       throw new Error("invalid_task_board_target");
     }
-    const hasBinding = Boolean(manaCanvasId) || bindingRevision !== null;
-    if ((hasBinding && (!SLACK_ID.test(manaCanvasId) || !bindingRevision || bindingRevision < 1)) ||
-      (enabled && !hasBinding)) {
+    const hasOwnershipMode = Boolean(manaCanvasId) || autoProvision;
+    const hasBinding = hasOwnershipMode || bindingRevision !== null;
+    if ((manaCanvasId && autoProvision)
+      || (hasBinding && (!hasOwnershipMode || !bindingRevision || bindingRevision < 1))
+      || (manaCanvasId && !SLACK_ID.test(manaCanvasId))
+      || (enabled && !hasBinding)) {
       throw new Error("invalid_task_board_canvas_binding");
     }
     if (targetIds.has(targetId)) throw new Error("duplicate_task_board_target_id");
@@ -59,12 +64,13 @@ export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[
     targetIds.add(targetId); canvasKeys.add(canvasKey);
     if (manaCanvasId) ownedCanvasKeys.add(ownedCanvasKey);
     return { targetId, organizationId: organizationId as TaskBoardTarget["organizationId"], workspaceId, channelId, projectCodes,
-      enabled, manaCanvasId: manaCanvasId || null, bindingRevision };
+      enabled, autoProvision, manaCanvasId: manaCanvasId || null, bindingRevision };
   });
 }
 
 export function enabledTaskBoardTargets(targets: readonly TaskBoardTarget[]): TaskBoardTarget[] {
-  return targets.filter((target) => target.enabled && Boolean(target.manaCanvasId) && Boolean(target.bindingRevision));
+  return targets.filter((target) => target.enabled && Boolean(target.manaCanvasId || target.autoProvision)
+    && Boolean(target.bindingRevision));
 }
 
 export function taskBoardTargetsForProjects(targets: readonly TaskBoardTarget[], projects: readonly string[]): TaskBoardTarget[] {
