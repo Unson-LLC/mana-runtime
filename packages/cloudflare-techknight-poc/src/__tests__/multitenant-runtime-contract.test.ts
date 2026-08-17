@@ -615,6 +615,64 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(payloads[1]).toEqual(payloads[0]);
   });
 
+  it("replays pending accounting across isolates without consuming a one-shot effect twice", async () => {
+    const { executeTenantRuntimeOperation } = await import("../multitenancy/production-consumer.js");
+    const { createDurableTenantAccountingStore } = await import("../multitenancy/tenant-runtime-state.js");
+    const { value, publicKey } = await envelope();
+    const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey });
+    const values = new Map<string, unknown>();
+    interface FixtureStorage {
+      get<T>(key: string): Promise<T | undefined>;
+      put(key: string, value: unknown): Promise<void>;
+      delete(key: string): Promise<boolean>;
+      transaction<T>(callback: (txn: FixtureStorage) => Promise<T>): Promise<T>;
+    }
+    const storage: FixtureStorage = {
+      get: async <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
+      put: async (key: string, stored: unknown) => { values.set(key, structuredClone(stored)); },
+      delete: async (key: string) => values.delete(key),
+      transaction: async <T>(callback: (txn: FixtureStorage) => Promise<T>) => callback(storage),
+    };
+    const payloads: unknown[] = [];
+    const accounting = { write: vi.fn(async (payload: unknown) => {
+      payloads.push(structuredClone(payload));
+      if (payloads.length === 1) throw new Error("accounting unavailable after approved task write");
+      return { result_ref: "brainbase-accounting-replayed" };
+    }) };
+    const allowedQuota: QuotaDecision = {
+      message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11", quota_revision: "19",
+      decision: "allowed", limit: 100, used: 1, remaining: 99, unit: "interaction_effect",
+      window_started_at: "2026-08-01T00:00:00Z", window_ends_at: "2026-09-01T00:00:00Z", decided_at: NOW,
+    };
+    const quota = { read_authoritative_decision: vi.fn(async () => allowedQuota) };
+    const approvedTaskResult = { outcome: "completed", value: { status: 200, task_id: "task-approved-once" } };
+    const oneShotApprovedWrite = vi.fn(async () => {
+      if (oneShotApprovedWrite.mock.calls.length > 1) throw new Error("task_write_approval_consumed");
+      return structuredClone(approvedTaskResult);
+    });
+    const run = (ledger: ReturnType<typeof createDurableTenantAccountingStore>) => executeTenantRuntimeOperation({
+      tenant_context: value,
+      expected_scope: expectedScope,
+      verifier,
+      quota,
+      accounting,
+      ledger,
+      quota_unit: "interaction_effect",
+      now: () => NOW,
+      process: oneShotApprovedWrite,
+      replay_after_accounting: oneShotApprovedWrite,
+    });
+
+    await expect(run(createDurableTenantAccountingStore(storage)))
+      .rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+    await expect(run(createDurableTenantAccountingStore(storage))).resolves.toEqual(approvedTaskResult);
+    expect(oneShotApprovedWrite).toHaveBeenCalledOnce();
+    expect(quota.read_authoritative_decision).toHaveBeenCalledOnce();
+    expect(accounting.write).toHaveBeenCalledTimes(2);
+    expect(payloads[1]).toEqual(payloads[0]);
+  });
+
   it("per tenant quota decisions and isolation planned Red", () => {
     const cache = new TenantQuotaCache();
     const stopped: QuotaDecision = { message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11",
