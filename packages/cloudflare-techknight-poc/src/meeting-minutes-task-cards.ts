@@ -16,6 +16,8 @@ export function meetingMinutesTaskCard(run: MeetingMinutesRun): { text: string; 
   const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn",
     text: `📋 *議事録のタスク確認* — ${summary}` } },
     { type: "divider" }];
+  if (!run.sourceAppId) blocks.push({ type: "section", text: { type: "mrkdwn",
+    text: "⚠️ このカードは旧形式のため操作できません。議事録を再生成してください。" } });
   for (const item of [...registered].sort((left, right) => left.index - right.index)) {
     const candidate = run.generated?.tasks?.[item.index]; const removed = item.status === "removed";
     const marker = removed ? "🗑" : item.status === "reused" ? "♻️" : item.status === "needs_review" ? "⚠️" : "✅";

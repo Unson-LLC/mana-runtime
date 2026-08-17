@@ -30,6 +30,12 @@ function sourceIdentity(value: ActionMetadata | undefined): MeetingMinutesSource
     channelId: value.sourceChannelId, threadTs: value.sourceThreadTs,
   } : undefined;
 }
+function expiredLegacyAction(): Response {
+  return Response.json({
+    error: "meeting_minutes_task_action_expired",
+    user_message: "このカードは旧形式のため操作できません。議事録を再生成してください。",
+  }, { status: 409 });
+}
 export interface MeetingMinutesTaskActionDependencies {
   destinationTeamIds: Readonly<Record<string, string>>;
   operatorUserIds: ReadonlySet<string>;
@@ -75,6 +81,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
     const teamId = text(object(payload.team)?.id); const expectedTeam = value?.organizationId && deps.destinationTeamIds[value.organizationId];
     const source = sourceIdentity(value);
+    if (value && !source) return expiredLegacyAction();
     const run = value && source ? await deps.loadRun(value.runId, source) : undefined;
     if (!value || !source || !run || !candidate(run, value.index) || !allowed(payload, run, source, deps) ||
       !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam) {
@@ -102,12 +109,13 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     callbackId !== MEETING_MINUTES_TASK_EDIT_VIEW_ID) return undefined;
   const value = callbackId ? metadata(view?.private_metadata) : metadata(action?.value);
   if (!value) return Response.json({ error: "meeting_minutes_task_action_invalid" }, { status: 400 });
+  const source = sourceIdentity(value);
+  if (!source) return expiredLegacyAction();
   const userId = text(object(payload.user)?.id);
   if (!userId || !deps.operatorUserIds.has(userId)) return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
-  const source = sourceIdentity(value);
-  const run = source ? await deps.loadRun(value.runId, source) : undefined;
+  const run = await deps.loadRun(value.runId, source);
   const item = run && candidate(run, value.index);
-  if (!source || !run || !run.destination || !item || !allowed(payload, run, source, deps)) {
+  if (!run || !run.destination || !item || !allowed(payload, run, source, deps)) {
     return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
   }
   if (actionId === MEETING_MINUTES_TASK_EDIT_ACTION_ID) {
