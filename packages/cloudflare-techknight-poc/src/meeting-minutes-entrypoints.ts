@@ -51,6 +51,7 @@ export function isMeetingMinutesSelection(value: unknown): value is MeetingMinut
     typeof candidate.destinationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate.destinationId) &&
     [candidate.workspaceId, candidate.channelId, candidate.userId].every((item) =>
       typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
+    typeof candidate.threadTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.threadTs) &&
     typeof candidate.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.actionTs);
 }
 export function isMeetingMinutesRedo(value: unknown): value is MeetingMinutesRedo {

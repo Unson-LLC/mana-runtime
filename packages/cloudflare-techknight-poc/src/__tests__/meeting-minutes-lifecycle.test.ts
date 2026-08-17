@@ -12,7 +12,7 @@ const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId:
   threadTs: "1.1", messageTs: "1.1", eventType: "message", subtype: "file_share", text: "", receivedAt: "now",
   files: [{ id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 100 }] };
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana",
-  workspaceId: "T1", channelId: "CROUTER", userId: "U1", actionTs: "2.1" };
+  workspaceId: "T1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
 
 async function setup() {
   const fs = new MemoryFs();

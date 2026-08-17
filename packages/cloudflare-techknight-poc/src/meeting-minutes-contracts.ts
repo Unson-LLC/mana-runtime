@@ -159,6 +159,7 @@ export interface MeetingMinutesSelection {
   destinationId: string;
   workspaceId: string;
   channelId: string;
+  threadTs: string;
   userId: string;
   actionTs: string;
 }

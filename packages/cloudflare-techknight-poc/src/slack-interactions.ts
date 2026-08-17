@@ -82,6 +82,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
   approveTaskWrite?: InteractionOptions["approveTaskWrite"],
   resolveThreadTs?: InteractionOptions["resolveThreadTs"],
   handleMeetingTaskAction?: InteractionOptions["handleMeetingTaskAction"],
+  send?: InteractionOptions["send"],
 ): Promise<Response> {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const destinationTeamIds = (() => {
@@ -97,7 +98,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
     }] : [],
     expectedChannelId: env.MEETING_MINUTES_ROUTER_CHANNEL_ID?.trim(),
     resolveDestinations: () => meetingMinutesRuntimeConfig(env).destinations,
-    send: (selection) => env.TECHKNIGHT_EVENTS.send(selection),
+    send: send ?? ((selection) => env.TECHKNIGHT_EVENTS.send(selection)),
     showProcessing: (input) => slack.showProcessingStatus(input.channelId, input.threadTs, input.destinationName),
     clearProcessing: (input) => slack.clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
@@ -227,6 +228,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           error: error instanceof Error ? error.message : "unexpected_error" }));
       }
     }
+    if (!feedbackThreadTs || !timestampPattern.test(feedbackThreadTs)) {
+      throw new Error("meeting_minutes_thread_coordinate_missing");
+    }
     let processingShown = false;
     if (options.showProcessing && feedbackThreadTs && timestampPattern.test(feedbackThreadTs) && destination) {
       try {
@@ -247,7 +251,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         }
       }
       await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
-        channelId, userId, actionTs });
+        channelId, threadTs: feedbackThreadTs, userId, actionTs });
     } catch (error) {
       if (processingShown && options.clearProcessing && feedbackThreadTs) {
         try { await options.clearProcessing({ channelId, threadTs: feedbackThreadTs }); }

@@ -53,7 +53,7 @@ describe("meeting minutes entrypoints", () => {
     });
   it("recognizes only a complete selection Queue message", () => {
     expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1", destinationId: "mana",
-      workspaceId: "T1", channelId: "C1", userId: "U1", actionTs: "2.1" })).toBe(true);
+      workspaceId: "T1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" })).toBe(true);
     expect(isMeetingMinutesSelection({ kind: "meeting_minutes_selection", runId: "E1_F1" })).toBe(false);
   });
   it("recognizes only a complete redo Queue message", () => {

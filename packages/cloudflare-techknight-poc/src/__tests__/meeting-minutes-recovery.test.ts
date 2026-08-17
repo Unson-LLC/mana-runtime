@@ -4,7 +4,7 @@ import type { MeetingMinutesRun, MeetingMinutesSelection } from "../meeting-minu
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1",
-  destinationId: "united", workspaceId: "T1", channelId: "C1", userId: "U1", actionTs: "2.1" };
+  destinationId: "united", workspaceId: "T1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
 function run(status: MeetingMinutesRun["status"] = "routed"): MeetingMinutesRun {
   return { version: 1, runId: "Ev1_F1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
     sourceThreadTs: "1.1", sourceMessageTs: "1.1", file: { id: "F1", name: "meeting.txt" }, status,
