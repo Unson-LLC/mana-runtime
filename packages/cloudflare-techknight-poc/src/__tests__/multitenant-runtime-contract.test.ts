@@ -834,6 +834,9 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(source.slice(ingressEnd)).toContain("createDurableTenantAccountingClient");
     expect(source.slice(ingressEnd)).toContain("postTenantSlackReply");
     expect(source.slice(ingressEnd)).toContain("readReplyCompletion");
+    expect(source.slice(ingressEnd)).toContain("executeTenantBoundary({");
+    expect(source.slice(ingressEnd)).toContain('boundary: "container_launch"');
+    expect(source.slice(ingressEnd)).not.toContain("claudeSession: {");
     expect(source.slice(ingressEnd)).not.toContain("if (replyPersisted)");
   });
 
