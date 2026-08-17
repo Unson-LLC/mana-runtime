@@ -23,6 +23,7 @@ const complete = {
   BRAINBASE_QUOTA_URL: "https://quota.example.test",
   BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test",
   BRAINBASE_RUNTIME_API_TOKEN: "opaque-test-token",
+  SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
     keys: [{ kty: "OKP", crv: "Ed25519", kid: "key-1", x: "test", use: "sig" }],
   }),
@@ -50,5 +51,32 @@ describe("tenant runtime readiness", () => {
       ],
     });
     expect(JSON.stringify(result)).not.toContain("opaque-test-token");
+  });
+
+  it("fails closed when installation lifecycle authentication is not configured", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      SLACK_INSTALLATION_LIFECYCLE_TOKEN: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["SLACK_INSTALLATION_LIFECYCLE_TOKEN"],
+    });
+  });
+
+  it("requires a service actor whenever TaskBoard scheduling is enabled", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["MANA_TASK_BOARD_SERVICE_ACTOR_ID"],
+    });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      TASK_BOARD_TARGETS_JSON: "[]",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["MANA_TASK_BOARD_SERVICE_ACTOR_ID"],
+    });
   });
 });
