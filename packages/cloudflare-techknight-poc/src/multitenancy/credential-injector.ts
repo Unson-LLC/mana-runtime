@@ -79,7 +79,8 @@ function handleFromHeaders(headers: Headers): string {
 /**
  * Volatile, per-isolate credential handoff. Only an opaque handle crosses into
  * the Container. Raw lease material is never serialized or written to storage.
- * The broker remains the authority for cross-isolate single-use enforcement.
+ * The broker remains the authority for cross-isolate single-use enforcement;
+ * this injector consumes the local handle before revealing the credential.
  */
 export class TenantCredentialInjector {
   readonly #active = new Map<string, ActiveCredential>();
@@ -120,6 +121,7 @@ export class TenantCredentialInjector {
       this.#active.delete(handle);
       deny("credential_lease", "WORKSPACE_CONNECTION_REVOKED");
     }
+    this.#active.delete(handle);
     const headers = new Headers(input.headers);
     headers.delete("authorization");
     headers.delete("x-api-key");
