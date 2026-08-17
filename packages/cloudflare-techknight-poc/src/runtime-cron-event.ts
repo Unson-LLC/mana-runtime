@@ -1,5 +1,7 @@
 import type { RuntimeCronJob } from "./runtime-cron.js";
 import type { SlackQueueEvent } from "./types.js";
+import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
+import type { TenantQueueBody } from "./multitenancy/runtime-boundaries.js";
 
 /**
  * Turn an explicitly-authorized `/cron run` into an ordinary runtime turn.
@@ -28,5 +30,26 @@ export function createManualCronEvent(
     eventType: "message",
     text: job.prompt,
     receivedAt,
+  };
+}
+
+export async function createCanonicalManualCronMessage(
+  source: SlackQueueEvent,
+  job: RuntimeCronJob,
+  receivedAt: string,
+  resolveTenantContext: (event: SlackQueueEvent) => Promise<TenantContextEnvelope>,
+): Promise<TenantQueueBody<SlackQueueEvent>> {
+  const event = createManualCronEvent(source, job, receivedAt);
+  const tenantContext = await resolveTenantContext(structuredClone(event));
+  if (tenantContext.slack.event_id !== event.eventId
+    || tenantContext.slack.channel_id !== event.channelId
+    || tenantContext.slack.thread_ts !== event.threadTs
+    || tenantContext.slack.requester_id !== event.userId) {
+    throw new Error("cron_tenant_context_scope_mismatch");
+  }
+  return {
+    schema_version: "1.0",
+    tenant_context: tenantContext,
+    payload: { ...event, tenantId: tenantContext.tenant.tenant_id },
   };
 }

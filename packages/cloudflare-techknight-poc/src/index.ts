@@ -61,7 +61,7 @@ import { executeRuntimeControlCommand, parseRuntimeControlCommand, renderRuntime
 import { markWorkspaceEngaged, readWorkspaceSession, reconcilePermissionRevision } from "./workspace-session.js";
 import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
-import { createManualCronEvent } from "./runtime-cron-event.js";
+import { createCanonicalManualCronMessage } from "./runtime-cron-event.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
 import { runCloudflareDevelopmentRequest } from "./development-runner-client.js";
 import { handleDevelopmentCallback } from "./development-callback.js";
@@ -1432,9 +1432,30 @@ export default {
                     action,
                     ...(target ? { target } : {}),
                     run: async (job) => {
-                      await env.TECHKNIGHT_EVENTS.send(
-                        createManualCronEvent(event, job, new Date().toISOString()),
-                      );
+                      const receivedAt = new Date().toISOString();
+                      const message = await createCanonicalManualCronMessage(event, job, receivedAt,
+                        async (manualEvent) => (await resolveSlackWorkerIngress({
+                          identity: {
+                            provider: "slack",
+                            app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+                            workspace_id: manualEvent.workspaceId,
+                            event_id: manualEvent.eventId,
+                            channel_id: manualEvent.channelId,
+                            thread_ts: manualEvent.threadTs,
+                            requester_id: manualEvent.userId ?? "",
+                          },
+                          required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+                            .split(",").map((value) => value.trim()).filter(Boolean),
+                          required_authorization: {
+                            audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+                            project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+                            capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+                          },
+                          authority: clients.authority,
+                          now: receivedAt,
+                          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+                        })).tenant_context);
+                      await env.TECHKNIGHT_EVENTS.send(message);
                     },
                   }),
                   develop: (request) => withTenantCredentialLease({
