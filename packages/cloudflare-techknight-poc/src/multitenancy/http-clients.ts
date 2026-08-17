@@ -72,9 +72,6 @@ function endpoint(value: string): string {
 function validateBindings(bindings: TenantRuntimeHttpBindings): TenantRuntimeHttpBindings {
   if (!(["shared_cloud", "dedicated_cloud", "customer_managed_oss"] as const)
     .includes(bindings.deployment_profile)) deny("runtime_configuration", "CONFIGURATION_INVALID");
-  if (bindings.deployment_profile === "customer_managed_oss") {
-    deny("runtime_configuration", "FALLBACK_FORBIDDEN", { profile: bindings.deployment_profile });
-  }
   if (!Number.isInteger(bindings.timeout_ms) || bindings.timeout_ms < 1 || bindings.timeout_ms > 30_000) {
     deny("runtime_configuration", "CONFIGURATION_INVALID");
   }
