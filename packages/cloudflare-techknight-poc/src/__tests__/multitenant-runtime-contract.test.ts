@@ -60,6 +60,9 @@ const TENANT_B = "ten_01ARZ3NDEKTSV4RRFFQ69G5FB1";
 const CONNECTION_A = "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const DEPLOYMENT_A = "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const OPERATION_A = "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+const OPERATION_DELIVERY = "op_01ARZ3NDEKTSV4RRFFQ69G5FB7";
+const PAYLOAD_HASH = `sha256:${"c".repeat(64)}`;
+const RETENTION_UNTIL = "2026-09-16T13:02:00.000Z";
 
 const snapshotA: WorkspaceConnectionSnapshot = {
   connection_id: CONNECTION_A,
@@ -74,7 +77,7 @@ const snapshotA: WorkspaceConnectionSnapshot = {
   deployment_id: DEPLOYMENT_A,
   profile: "shared_cloud",
   credential_mode: "customer_oauth",
-  contract_revision: "contract-7",
+  contract_revision: "11",
 };
 
 const unsignedEnvelopeA: UnsignedTenantContextEnvelope = {
@@ -114,7 +117,7 @@ const unsignedEnvelopeA: UnsignedTenantContextEnvelope = {
   correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
   operation_id: OPERATION_A,
   idempotency_key: "ik1_placeholder",
-  contract_revision: "contract-7",
+  contract_revision: "11",
   credential: {
     mode: "customer_oauth",
     credential_ref: "credential-ref-a",
@@ -437,11 +440,16 @@ describe("story-mana-multitenant-runtime contract", () => {
   });
 
   it("CredentialDecisionV1 selection and injection planned Red", async () => {
-    const request = { tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7",
-      contract_revision: "contract-7", operation_id: OPERATION_A, audience: "anthropic",
-      credential_mode: "customer_oauth" as const, credential_ref: "credential-ref-a" };
-    const broker = { acquire_lease: vi.fn(async () => ({ ...request, lease_id: "lease-a", issued_at: NOW,
-      expires_at: "2026-08-16T13:03:00.000Z", max_uses: 1 as const })) };
+    const request = { message_type: "credential_lease_request" as const, protocol_version: "1.0" as const,
+      binding: { tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7",
+        contract_revision: "11", operation_id: OPERATION_A, audience: "anthropic",
+        credential_mode: "customer_oauth" as const, credential_ref: "credential-ref-a" },
+      requested_ttl_seconds: 60 };
+    const broker = { acquire_lease: vi.fn(async () => ({ message_type: "credential_lease_response" as const,
+      protocol_version: "1.0" as const, lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB1",
+      contract_revision: "11", binding: structuredClone(request.binding), issued_at: NOW,
+      expires_at: "2026-08-16T13:03:00.000Z", max_uses: 1 as const,
+      lease_token: "opaque-test-lease-handle" })) };
     const lease = await acquireCredentialLease({ broker, request, read_authoritative_snapshot: async () => snapshotA, now: NOW });
     const registry = new CredentialLeaseUseRegistry();
     const headers = await consumeCredentialLease(registry, lease, createSecretValue("fixture-runtime-value"),
@@ -460,9 +468,11 @@ describe("story-mana-multitenant-runtime contract", () => {
   });
 
   it("no credential fallback planned Red", async () => {
-    const request = { tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7",
-      contract_revision: "contract-7", operation_id: OPERATION_A, audience: "anthropic",
-      credential_mode: "customer_oauth" as const, credential_ref: "credential-ref-a" };
+    const request = { message_type: "credential_lease_request" as const, protocol_version: "1.0" as const,
+      binding: { tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7",
+        contract_revision: "11", operation_id: OPERATION_A, audience: "anthropic",
+        credential_mode: "customer_oauth" as const, credential_ref: "credential-ref-a" },
+      requested_ttl_seconds: 60 };
     const broker = { acquire_lease: vi.fn(async () => { throw new TenantBoundaryError("credential_lease", "WORKSPACE_CONNECTION_REVOKED"); }) };
     await expect(acquireCredentialLease({ broker, request, read_authoritative_snapshot: async () => snapshotA, now: NOW }))
       .rejects.toEqual(expect.objectContaining({ code: "WORKSPACE_CONNECTION_REVOKED" }));
@@ -477,39 +487,41 @@ describe("story-mana-multitenant-runtime contract", () => {
       .toThrow(expect.objectContaining({ code: "SECRET_ARTIFACT_FORBIDDEN" }));
   });
 
-  it("UsageEventV1 success failure and not measured planned Red", () => {
-    const usage = createUsageEvent({ usage_event_id: "use_01ARZ3NDEKTSV4RRFFQ69G5FB4", protocol_version: "1.0", tenant_id: TENANT_A,
-      connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
+  it("UsageEventV1 success failure and not measured planned Red", async () => {
+    const { value } = await envelope();
+    const usage = createUsageEvent({ usage_event_id: "usage_01ARZ3NDEKTSV4RRFFQ69G5FB4", protocol_version: "1.0", tenant_id: TENANT_A,
+      connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
       deployment_id: DEPLOYMENT_A, correlation_id: unsignedEnvelopeA.correlation_id, operation_id: OPERATION_A,
-      idempotency_key: "ik1_value", kind: "model_tokens", quantity: null, unit: "tokens", outcome: "failed",
+      idempotency_key: value.idempotency_key, kind: "model_tokens", quantity: null, unit: "tokens", outcome: "failed",
       collection_state: "not_collected", failure_code: "UPSTREAM_UNAVAILABLE", observed_at: NOW });
     expect(usage).toMatchObject({ quantity: null, outcome: "failed", collection_state: "not_collected" });
     expect(() => createUsageEvent({ ...usage, quantity: 0, collection_state: "not_collected" }))
       .toThrow(expect.objectContaining({ code: "USAGE_COLLECTION_INVALID" }));
-    expect(createOperationReceipt({ receipt_id: "rcp_01ARZ3NDEKTSV4RRFFQ69G5FB5", protocol_version: "1.0", tenant_id: TENANT_A,
-      connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
+    expect(createOperationReceipt({ receipt_id: "receipt_01ARZ3NDEKTSV4RRFFQ69G5FB5", protocol_version: "1.0", tenant_id: TENANT_A,
+      connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
       deployment_id: DEPLOYMENT_A, correlation_id: unsignedEnvelopeA.correlation_id,
-      operation_ids: [OPERATION_A], idempotency_keys: ["ik1_value"], actor_principal_id: "person-a",
+      operation_ids: [OPERATION_A], idempotency_keys: [value.idempotency_key], actor_principal_id: "person-a",
       project_id: "project-a", capability_id: "task.write", quota_decision: "allowed",
-      credential_mode: "customer_oauth", outcome: "succeeded", failure_code: "NO_DATA",
-      usage: { collection_state: "collected", observed_units: 0, unknown_fields: [] }, reply: { state: "not_requested" } }))
-      .toMatchObject({ outcome: "succeeded", failure_code: "NO_DATA", usage: { observed_units: 0 } });
+      credential_mode: "customer_oauth", collection_state: "collected", outcome: "succeeded", failure_code: "NO_DATA",
+      usage_event_ids: [usage.usage_event_id],
+      reply: { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 }, completed_at: NOW }))
+      .toMatchObject({ message_type: "operation_receipt", outcome: "succeeded", failure_code: "NO_DATA" });
   });
 
   it("tenant accounting ledger deduplicates before Brainbase write planned Red", async () => {
     const { value, publicKey } = await envelope();
-    const usage = createUsageEvent({ usage_event_id: "use_01ARZ3NDEKTSV4RRFFQ69G5FB6", protocol_version: "1.0",
-      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
+    const usage = createUsageEvent({ usage_event_id: "usage_01ARZ3NDEKTSV4RRFFQ69G5FB6", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
       deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_id: OPERATION_A,
       idempotency_key: value.idempotency_key, kind: "model_tokens", quantity: 12, unit: "tokens",
       outcome: "succeeded", collection_state: "collected", observed_at: NOW });
-    const receipt = createOperationReceipt({ receipt_id: "rcp_01ARZ3NDEKTSV4RRFFQ69G5FB7", protocol_version: "1.0",
-      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "contract-7",
+    const receipt = createOperationReceipt({ receipt_id: "receipt_01ARZ3NDEKTSV4RRFFQ69G5FB7", protocol_version: "1.0",
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, connection_revision: "7", contract_revision: "11",
       deployment_id: DEPLOYMENT_A, correlation_id: value.correlation_id, operation_ids: [OPERATION_A],
       idempotency_keys: [value.idempotency_key], actor_principal_id: "person-a", project_id: "project-a",
       capability_id: "task.write", quota_decision: "allowed", credential_mode: "customer_oauth",
-      outcome: "succeeded", usage: { collection_state: "collected", observed_units: 12, unknown_fields: [] },
-      reply: { state: "not_requested" } });
+      collection_state: "collected", outcome: "succeeded", usage_event_ids: [usage.usage_event_id],
+      reply: { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 }, completed_at: NOW });
     const ledger = new TenantAccountingLedger();
     const write = vi.fn(async () => ({ result_ref: "brainbase-write-a" }));
     const verifier = new TenantRuntimeBoundaryVerifier({ read_authoritative_snapshot: async () => snapshotA,
@@ -523,24 +535,25 @@ describe("story-mana-multitenant-runtime contract", () => {
 
   it("per tenant quota decisions and isolation planned Red", () => {
     const cache = new TenantQuotaCache();
-    const stopped: QuotaDecision = { tenant_id: TENANT_A, contract_revision: "contract-7", metric: "model_tokens",
-      consumed: 100, limit: 100, ratio_basis_points: 10_000, decision: "hard_stopped", overage_policy: "deny",
-      warning_thresholds_basis_points: [8_000], decision_id: "quota-a" };
-    const allowed: QuotaDecision = { ...stopped, tenant_id: TENANT_B, consumed: 1, decision: "allowed", decision_id: "quota-b" };
+    const stopped: QuotaDecision = { message_type: "quota_decision", tenant_id: TENANT_A, contract_revision: "11",
+      quota_revision: "19", decision: "hard_stopped", limit: 100, used: 100, remaining: 0, unit: "model_tokens",
+      window_started_at: "2026-08-01T00:00:00Z", window_ends_at: "2026-09-01T00:00:00Z", decided_at: NOW };
+    const allowed: QuotaDecision = { ...stopped, tenant_id: TENANT_B, used: 1, remaining: 99, decision: "allowed" };
     cache.set(stopped); cache.set(allowed);
-    expect(() => assertQuotaAllowsExecution(cache.get(TENANT_A, "contract-7", "model_tokens")))
+    expect(() => assertQuotaAllowsExecution(cache.get(TENANT_A, "11", "model_tokens")))
       .toThrow(expect.objectContaining({ code: "QUOTA_EXCEEDED" }));
-    expect(assertQuotaAllowsExecution(cache.get(TENANT_B, "contract-7", "model_tokens"))).toEqual(allowed);
+    expect(assertQuotaAllowsExecution(cache.get(TENANT_B, "11", "model_tokens"))).toEqual(allowed);
   });
 
   it("quota authority cannot default or cross tenants planned Red", async () => {
-    const read = vi.fn(async (): Promise<QuotaDecision> => ({ tenant_id: TENANT_A, contract_revision: "contract-7",
-      metric: "model_tokens", consumed: 1, limit: 100, ratio_basis_points: 100, decision: "allowed",
-      overage_policy: "deny", warning_thresholds_basis_points: [8_000], decision_id: "quota-a" }));
-    await expect(authorizeTenantQuota({ tenant_id: TENANT_A, contract_revision: "contract-7",
-      metric: "model_tokens", read_authoritative_decision: read })).resolves.toMatchObject({ decision: "allowed" });
-    await expect(authorizeTenantQuota({ tenant_id: TENANT_B, contract_revision: "contract-7",
-      metric: "model_tokens", read_authoritative_decision: read }))
+    const read = vi.fn(async (): Promise<QuotaDecision> => ({ message_type: "quota_decision", tenant_id: TENANT_A,
+      contract_revision: "11", quota_revision: "19", decision: "allowed", limit: 100, used: 1,
+      remaining: 99, unit: "model_tokens", window_started_at: "2026-08-01T00:00:00Z",
+      window_ends_at: "2026-09-01T00:00:00Z", decided_at: NOW }));
+    await expect(authorizeTenantQuota({ tenant_id: TENANT_A, contract_revision: "11",
+      unit: "model_tokens", read_authoritative_decision: read })).resolves.toMatchObject({ decision: "allowed" });
+    await expect(authorizeTenantQuota({ tenant_id: TENANT_B, contract_revision: "11",
+      unit: "model_tokens", read_authoritative_decision: read }))
       .rejects.toEqual(expect.objectContaining({ code: "CROSS_TENANT_CANDIDATE" }));
   });
 
@@ -559,11 +572,13 @@ describe("story-mana-multitenant-runtime contract", () => {
     const ownership = new IdempotencyMemoryStore();
     const result = await authorizeSlackDelivery({ envelope: value, authoritative_snapshot: snapshotA,
       expected_scope: expectedScope, now: NOW, resolve_verification_key: async () => publicKey,
-      ownership, payload_hash: "reply-a" });
+      ownership, payload_hash: PAYLOAD_HASH, delivery_operation_id: OPERATION_DELIVERY,
+      retention_until: RETENTION_UNTIL });
     expect(result.disposition).toBe("claimed");
     await expect(authorizeSlackDelivery({ envelope: value, authoritative_snapshot: { ...snapshotA, deployment_id: "dep_01ARZ3NDEKTSV4RRFFQ69G5FB3" },
       expected_scope: expectedScope, now: NOW, resolve_verification_key: async () => publicKey,
-      ownership, payload_hash: "reply-a" })).rejects
+      ownership, payload_hash: PAYLOAD_HASH, delivery_operation_id: OPERATION_DELIVERY,
+      retention_until: RETENTION_UNTIL })).rejects
       .toEqual(expect.objectContaining({ code: "REPLY_OWNERSHIP_CONFLICT" }));
   });
 
@@ -651,6 +666,9 @@ describe("story-mana-multitenant-runtime contract", () => {
       expected_scope: () => expectedScope,
       now: () => NOW,
       process,
+      ownership: new IdempotencyMemoryStore(),
+      payload_hash: () => PAYLOAD_HASH,
+      retention_until: () => RETENTION_UNTIL,
     });
     expect(process).not.toHaveBeenCalled();
     expect(message.ack).toHaveBeenCalledOnce();
@@ -676,19 +694,25 @@ describe("story-mana-multitenant-runtime contract", () => {
   it("credential lease and Slack delivery recheck authoritative revision planned Red", async () => {
     const { value, publicKey } = await envelope();
     const readSnapshot = vi.fn(async () => snapshotA);
-    const broker = { acquire_lease: vi.fn(async (request) => ({ ...request, lease_id: "lease-a", issued_at: NOW,
-      expires_at: "2026-08-16T13:03:00.000Z", max_uses: 1 as const })) };
+    const broker = { acquire_lease: vi.fn(async (request) => ({ message_type: "credential_lease_response" as const,
+      protocol_version: request.protocol_version, lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB1",
+      contract_revision: request.binding.contract_revision, binding: structuredClone(request.binding), issued_at: NOW,
+      expires_at: "2026-08-16T13:03:00.000Z", max_uses: 1 as const,
+      lease_token: "opaque-test-lease-handle" })) };
     await expect(acquireEnvelopeCredentialLease({ envelope: value, expected_scope: expectedScope,
       audience: "anthropic", broker, read_authoritative_snapshot: readSnapshot, now: NOW,
-      resolve_verification_key: async () => publicKey })).resolves.toMatchObject({ lease_id: "lease-a" });
+      resolve_verification_key: async () => publicKey }))
+      .resolves.toMatchObject({ lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB1" });
     expect(broker.acquire_lease).toHaveBeenCalledWith(expect.objectContaining({
-      tenant_id: TENANT_A, connection_revision: "7", credential_ref: "credential-ref-a",
+      message_type: "credential_lease_request", requested_ttl_seconds: 60,
+      binding: expect.objectContaining({ tenant_id: TENANT_A, connection_revision: "7", credential_ref: "credential-ref-a" }),
     }));
 
     const ownership = new IdempotencyMemoryStore();
     await expect(authorizeSlackDeliveryWithAuthority({ envelope: value, expected_scope: expectedScope,
       now: NOW, resolve_verification_key: async () => publicKey, read_authoritative_snapshot: readSnapshot,
-      ownership, payload_hash: "reply-a" })).resolves.toMatchObject({ disposition: "claimed" });
+      ownership, payload_hash: PAYLOAD_HASH, delivery_operation_id: OPERATION_DELIVERY,
+      retention_until: RETENTION_UNTIL })).resolves.toMatchObject({ disposition: "claimed" });
     expect(readSnapshot).toHaveBeenCalledTimes(3);
   });
 

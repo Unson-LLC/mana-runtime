@@ -174,7 +174,7 @@ export interface DeploymentProfile {
   runtime_version: string;
 }
 
-export interface CredentialLeaseRequest {
+export interface CredentialLeaseBinding {
   tenant_id: string;
   connection_id: string;
   connection_revision: string;
@@ -185,25 +185,39 @@ export interface CredentialLeaseRequest {
   credential_ref: string;
 }
 
-export interface CredentialLease extends CredentialLeaseRequest {
+export interface CredentialLeaseRequest {
+  message_type: "credential_lease_request";
+  protocol_version: `1.${number}`;
+  binding: CredentialLeaseBinding;
+  requested_ttl_seconds: number;
+}
+
+export interface CredentialLease {
+  message_type: "credential_lease_response";
+  protocol_version: `1.${number}`;
   lease_id: string;
+  contract_revision: string;
+  binding: CredentialLeaseBinding;
   issued_at: string;
   expires_at: string;
   max_uses: 1;
+  lease_token: string;
 }
 
 export interface QuotaDecision {
+  message_type: "quota_decision";
   tenant_id: string;
   contract_revision: string;
-  metric: string;
-  consumed: number;
-  limit: number;
-  ratio_basis_points: number;
+  quota_revision: string;
   decision: "allowed" | "warning" | "hard_stopped" | "approval_required" | "unavailable";
-  overage_policy: "deny" | "allow_and_bill" | "allow_with_approval";
-  warning_thresholds_basis_points: number[];
-  retry_after?: string;
-  decision_id: string;
+  limit: number | null;
+  used: number | null;
+  remaining: number | null;
+  unit: string;
+  window_started_at: string;
+  window_ends_at: string;
+  decided_at: string;
+  failure_code?: string | null;
 }
 
 export type CollectionState = "collected" | "partial" | "not_collected";

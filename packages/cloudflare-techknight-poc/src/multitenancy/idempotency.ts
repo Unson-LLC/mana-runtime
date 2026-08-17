@@ -12,6 +12,8 @@ export interface IdempotencyTuple {
 
 export interface IdempotencyClaimInput extends Omit<IdempotencyTuple, "protocol_id" | "protocol_major"> {
   key: string;
+  owner?: "brainbase" | "mana_runtime";
+  scope?: "credential_lease" | "quota_decision" | "business_effect" | "usage_receipt" | "queue_execution" | "slack_delivery";
   context_hash: string;
   payload_hash: string;
   connection_revision: string;
@@ -91,6 +93,13 @@ export class IdempotencyMemoryStore {
     return value ? structuredClone(value) : undefined;
   }
 
+  release(key: string, tenantId: string): void {
+    const current = this.#claims.get(key);
+    if (!current) return;
+    if (current.tenant_id !== tenantId) deny("idempotency", "CROSS_TENANT_CANDIDATE");
+    if (current.state === "claimed") this.#claims.delete(key);
+  }
+
   complete(input: {
     key: string;
     tenant_id: string;
@@ -137,6 +146,8 @@ export async function claimIdempotency(
     "operation_id",
     "context_hash",
     "payload_hash",
+    "owner",
+    "scope",
   ];
   if (invariantFields.some((field) => existing[field] !== claim[field])) {
     deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: claim.key });
@@ -147,6 +158,10 @@ export async function claimIdempotency(
       : "in_progress",
     claim: existing,
   };
+}
+
+export function releaseIdempotency(store: IdempotencyMemoryStore, key: string, tenantId: string): void {
+  store.release(key, tenantId);
 }
 
 export function completeIdempotency(

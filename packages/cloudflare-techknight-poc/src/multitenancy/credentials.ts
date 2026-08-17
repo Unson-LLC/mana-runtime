@@ -5,6 +5,7 @@ import type {
   TenantContextEnvelope,
   WorkspaceConnectionSnapshot,
 } from "./contracts.js";
+import { CanonicalContractError, validateCanonicalCredentialLease } from "./canonical-consumer.js";
 import { validateTenantBoundary } from "./envelope.js";
 import { deny } from "./errors.js";
 import { revealSecretValue, type SecretValue } from "./secret-guard.js";
@@ -18,7 +19,7 @@ function assertLeaseBinding(
   lease: CredentialLease,
   now: string,
 ): void {
-  const fields: (keyof CredentialLeaseRequest)[] = [
+  const fields = [
     "tenant_id",
     "connection_id",
     "connection_revision",
@@ -27,18 +28,15 @@ function assertLeaseBinding(
     "audience",
     "credential_mode",
     "credential_ref",
-  ];
-  if (fields.some((field) => lease[field] !== request[field])) deny("credential_lease", "CROSS_TENANT_CANDIDATE");
-  const issuedAt = Date.parse(lease.issued_at);
-  const expiresAt = Date.parse(lease.expires_at);
-  const observedAt = Date.parse(now);
-  if (![issuedAt, expiresAt, observedAt].every(Number.isFinite)
-    || expiresAt <= issuedAt
-    || expiresAt - issuedAt > 60_000
-    || issuedAt > observedAt + 30_000
-    || expiresAt < observedAt - 30_000
-    || lease.max_uses !== 1) {
-    deny("credential_lease", "CROSS_TENANT_CANDIDATE");
+  ] as const;
+  if (fields.some((field) => lease.binding[field] !== request.binding[field])) {
+    deny("credential_lease", "CREDENTIAL_LEASE_BINDING_MISMATCH");
+  }
+  try {
+    validateCanonicalCredentialLease(request, lease, { now });
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny("credential_lease", error.code, error.details);
+    throw error;
   }
 }
 
@@ -50,11 +48,11 @@ export async function acquireCredentialLease(input: {
 }): Promise<CredentialLease> {
   const snapshot = await input.read_authoritative_snapshot();
   if (snapshot.status !== "active") deny("credential_lease", "WORKSPACE_CONNECTION_REVOKED");
-  if (snapshot.tenant_id !== input.request.tenant_id
-    || snapshot.connection_id !== input.request.connection_id
-    || snapshot.connection_revision !== input.request.connection_revision
-    || snapshot.contract_revision !== input.request.contract_revision
-    || snapshot.credential_mode !== input.request.credential_mode) {
+  if (snapshot.tenant_id !== input.request.binding.tenant_id
+    || snapshot.connection_id !== input.request.binding.connection_id
+    || snapshot.connection_revision !== input.request.binding.connection_revision
+    || snapshot.contract_revision !== input.request.binding.contract_revision
+    || snapshot.credential_mode !== input.request.binding.credential_mode) {
     deny("credential_lease", "WORKSPACE_CONNECTION_STALE_REVISION");
   }
   const lease = await input.broker.acquire_lease(structuredClone(input.request));
@@ -81,14 +79,19 @@ export async function acquireEnvelopeCredentialLease(input: {
     resolve_verification_key: input.resolve_verification_key,
   });
   const request: CredentialLeaseRequest = {
-    tenant_id: input.envelope.tenant.tenant_id,
-    connection_id: input.envelope.workspace_connection.connection_id,
-    connection_revision: input.envelope.workspace_connection.connection_revision,
-    contract_revision: input.envelope.contract_revision,
-    operation_id: input.envelope.operation_id,
-    audience: input.audience,
-    credential_mode: input.envelope.credential.mode,
-    credential_ref: input.envelope.credential.credential_ref,
+    message_type: "credential_lease_request",
+    protocol_version: input.envelope.protocol_version,
+    binding: {
+      tenant_id: input.envelope.tenant.tenant_id,
+      connection_id: input.envelope.workspace_connection.connection_id,
+      connection_revision: input.envelope.workspace_connection.connection_revision,
+      contract_revision: input.envelope.contract_revision,
+      operation_id: input.envelope.operation_id,
+      audience: input.audience,
+      credential_mode: input.envelope.credential.mode,
+      credential_ref: input.envelope.credential.credential_ref,
+    },
+    requested_ttl_seconds: 60,
   };
   return acquireCredentialLease({
     broker: input.broker,

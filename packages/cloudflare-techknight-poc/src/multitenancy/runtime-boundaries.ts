@@ -7,6 +7,13 @@ import type {
 import { validateTenantBoundary } from "./envelope.js";
 import { deny, TenantBoundaryError } from "./errors.js";
 import { assertSecretArtifactFree } from "./secret-guard.js";
+import {
+  claimIdempotency,
+  completeIdempotency,
+  type IdempotencyMemoryStore,
+  releaseIdempotency,
+} from "./idempotency.js";
+import { validateCanonicalIdempotencyClaim } from "./canonical-consumer.js";
 import type { WorkspaceConnectionLookup } from "./workspace-connection.js";
 
 export interface SlackIngressIdentity extends WorkspaceConnectionLookup {
@@ -217,11 +224,16 @@ export async function consumeTenantQueueMessage<T, R>(
     expected_scope(body: TenantQueueBody<T>): ExpectedTenantScope;
     now(): string;
     process(payload: T, tenantContext: TenantContextEnvelope): Promise<R>;
+    ownership: IdempotencyMemoryStore;
+    payload_hash(payload: T): string;
+    retention_until(now: string): string;
     log?(entry: Record<string, string>): void;
     log_error?(entry: Record<string, string>): void;
   },
 ): Promise<void> {
   const eventId = message.body.tenant_context.slack.event_id;
+  const tenantContext = message.body.tenant_context;
+  let idempotencyClaimed = false;
   try {
     assertSecretArtifactFree(message.body);
     await options.verifier.validate({
@@ -230,13 +242,73 @@ export async function consumeTenantQueueMessage<T, R>(
       expected_scope: options.expected_scope(message.body),
       now: options.now(),
     });
-    await options.process(message.body.payload, message.body.tenant_context);
+    const contextDigest = new Uint8Array(await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(tenantContext.integrity.value),
+    ));
+    const contextHash = `sha256:${[...contextDigest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    const observedAt = options.now();
+    const retentionUntil = options.retention_until(observedAt);
+    const payloadHash = options.payload_hash(message.body.payload);
+    await validateCanonicalIdempotencyClaim({
+      message_type: "idempotency_claim",
+      owner: "mana_runtime",
+      scope: "queue_execution",
+      tenant_id: tenantContext.tenant.tenant_id,
+      connection_id: tenantContext.workspace_connection.connection_id,
+      slack_event_id: tenantContext.slack.event_id,
+      operation_id: tenantContext.operation_id,
+      idempotency_key: tenantContext.idempotency_key,
+      context_hash: contextHash,
+      payload_hash: payloadHash,
+      state: "claimed",
+      retention_until: retentionUntil,
+    });
+    const claim = await claimIdempotency(options.ownership, {
+      key: tenantContext.idempotency_key,
+      owner: "mana_runtime",
+      scope: "queue_execution",
+      tenant_id: tenantContext.tenant.tenant_id,
+      connection_id: tenantContext.workspace_connection.connection_id,
+      slack_event_id: tenantContext.slack.event_id,
+      operation_id: tenantContext.operation_id,
+      context_hash: contextHash,
+      payload_hash: payloadHash,
+      connection_revision: tenantContext.workspace_connection.connection_revision,
+      updated_at: observedAt,
+    });
+    if (claim.disposition !== "claimed") {
+      message.ack();
+      return;
+    }
+    idempotencyClaimed = true;
+    await options.process(message.body.payload, tenantContext);
+    completeIdempotency(options.ownership, {
+      key: tenantContext.idempotency_key,
+      tenant_id: tenantContext.tenant.tenant_id,
+      state: "succeeded",
+      updated_at: observedAt,
+      retained_until: retentionUntil,
+    });
     options.log?.({ event: "tenant_queue_completed", event_id: eventId });
     message.ack();
   } catch (error) {
     const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
     options.log_error?.({ event: "tenant_queue_failed", event_id: eventId, code });
-    if (RETRYABLE_BOUNDARY_CODES.has(code)) message.retry();
-    else message.ack();
+    if (idempotencyClaimed) {
+      if (RETRYABLE_BOUNDARY_CODES.has(code)) {
+        releaseIdempotency(options.ownership, tenantContext.idempotency_key, tenantContext.tenant.tenant_id);
+      } else {
+        const observedAt = options.now();
+        completeIdempotency(options.ownership, {
+          key: tenantContext.idempotency_key,
+          tenant_id: tenantContext.tenant.tenant_id,
+          state: "failed_terminal",
+          updated_at: observedAt,
+          retained_until: options.retention_until(observedAt),
+        });
+      }
+    }
+    if (RETRYABLE_BOUNDARY_CODES.has(code)) message.retry(); else message.ack();
   }
 }

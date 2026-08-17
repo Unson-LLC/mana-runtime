@@ -5,6 +5,12 @@ import type {
   QuotaDecision,
   TenantContextEnvelope,
 } from "./contracts.js";
+import {
+  CanonicalContractError,
+  validateCanonicalOperationReceipt,
+  validateCanonicalQuotaDecision,
+  validateCanonicalUsageEvent,
+} from "./canonical-consumer.js";
 import { deny, TenantBoundaryError } from "./errors.js";
 import { assertCanonicalSharedId } from "./ids.js";
 import { tenantPartitionKey } from "./isolation.js";
@@ -27,17 +33,19 @@ export interface UsageEventInput {
   unit: string;
   outcome: OperationOutcome;
   collection_state: CollectionState;
-  failure_code?: string;
+  failure_code?: string | null;
   observed_at: string;
   unknown_fields?: string[];
 }
 
 export interface UsageEvent extends UsageEventInput {
-  schema_version: "1.0";
+  message_type: "usage_event";
+  failure_code: string | null;
+  unknown_fields: string[];
 }
 
 export function createUsageEvent(input: UsageEventInput): UsageEvent {
-  assertCanonicalSharedId(input.usage_event_id, "use_", "usage");
+  assertCanonicalSharedId(input.usage_event_id, "usage_", "usage");
   if (input.collection_state === "not_collected" && input.quantity !== null) {
     deny("usage", "USAGE_COLLECTION_INVALID");
   }
@@ -50,7 +58,19 @@ export function createUsageEvent(input: UsageEventInput): UsageEvent {
   if (input.quantity !== null && (!Number.isFinite(input.quantity) || input.quantity < 0)) {
     deny("usage", "USAGE_COLLECTION_INVALID");
   }
-  return { schema_version: "1.0", ...structuredClone(input) };
+  const usage: UsageEvent = {
+    message_type: "usage_event",
+    ...structuredClone(input),
+    failure_code: input.failure_code ?? null,
+    unknown_fields: structuredClone(input.unknown_fields ?? []),
+  };
+  try {
+    validateCanonicalUsageEvent(usage);
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny("usage", error.code, error.details);
+    throw error;
+  }
+  return usage;
 }
 
 export interface OperationReceiptInput {
@@ -69,43 +89,57 @@ export interface OperationReceiptInput {
   capability_id: string;
   quota_decision: QuotaDecision["decision"];
   credential_mode: string;
+  collection_state: CollectionState;
   outcome: OperationOutcome;
-  failure_code?: string;
-  usage: {
-    collection_state: CollectionState;
-    observed_units: number | null;
-    unknown_fields: string[];
+  failure_code?: string | null;
+  usage_event_ids: string[];
+  reply: {
+    state: "not_attempted" | "delivered" | "failed" | "unknown";
+    reply_count: 0 | 1;
+    legacy_reply_count: 0;
+    slack_reply_ts?: string;
   };
-  reply: { state: "not_requested" | "claimed" | "delivered" | "failed" };
+  completed_at: string;
 }
 
-export function createOperationReceipt(input: OperationReceiptInput): OperationReceiptInput & { schema_version: "1.0" } {
-  assertCanonicalSharedId(input.receipt_id, "rcp_", "receipt");
+export function createOperationReceipt(input: OperationReceiptInput): OperationReceipt {
+  assertCanonicalSharedId(input.receipt_id, "receipt_", "receipt");
   if (input.operation_ids.length === 0 || input.idempotency_keys.length === 0) deny("receipt", "RECEIPT_INVALID");
-  if (input.usage.collection_state === "not_collected" && input.usage.observed_units !== null) {
-    deny("receipt", "USAGE_COLLECTION_INVALID");
+  const receipt: OperationReceipt = {
+    message_type: "operation_receipt",
+    ...structuredClone(input),
+    failure_code: input.failure_code ?? null,
+  };
+  try {
+    validateCanonicalOperationReceipt(receipt);
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny("receipt", error.code, error.details);
+    throw error;
   }
-  if (input.usage.collection_state === "collected" && input.usage.observed_units === null) {
-    deny("receipt", "USAGE_COLLECTION_INVALID");
-  }
-  return { schema_version: "1.0", ...structuredClone(input) };
+  return receipt;
 }
 
 export class TenantQuotaCache {
   readonly #decisions = new Map<string, QuotaDecision>();
 
   set(decision: QuotaDecision): void {
-    this.#decisions.set(this.#key(decision.tenant_id, decision.contract_revision, decision.metric), structuredClone(decision));
+    try {
+      validateCanonicalQuotaDecision(decision);
+    } catch (error) {
+      if (error instanceof CanonicalContractError) deny("quota", error.code, error.details);
+      throw error;
+    }
+    this.#decisions.set(this.#key(decision.tenant_id, decision.contract_revision, decision.unit), structuredClone(decision));
   }
 
-  get(tenantId: string, contractRevision: string, metric: string): QuotaDecision {
-    const decision = this.#decisions.get(this.#key(tenantId, contractRevision, metric));
+  get(tenantId: string, contractRevision: string, unit: string): QuotaDecision {
+    const decision = this.#decisions.get(this.#key(tenantId, contractRevision, unit));
     if (!decision) deny("quota", "UPSTREAM_UNAVAILABLE");
     return structuredClone(decision);
   }
 
-  #key(tenantId: string, contractRevision: string, metric: string): string {
-    return JSON.stringify([tenantId, contractRevision, metric]);
+  #key(tenantId: string, contractRevision: string, unit: string): string {
+    return JSON.stringify([tenantId, contractRevision, unit]);
   }
 }
 
@@ -119,11 +153,11 @@ export function assertQuotaAllowsExecution(decision: QuotaDecision): QuotaDecisi
 export async function authorizeTenantQuota(input: {
   tenant_id: string;
   contract_revision: string;
-  metric: string;
+  unit: string;
   read_authoritative_decision(request: {
     tenant_id: string;
     contract_revision: string;
-    metric: string;
+    unit: string;
   }): Promise<QuotaDecision>;
 }): Promise<QuotaDecision> {
   let decision: QuotaDecision;
@@ -131,7 +165,7 @@ export async function authorizeTenantQuota(input: {
     decision = await input.read_authoritative_decision({
       tenant_id: input.tenant_id,
       contract_revision: input.contract_revision,
-      metric: input.metric,
+      unit: input.unit,
     });
   } catch (error) {
     if (error instanceof TenantBoundaryError) throw error;
@@ -143,21 +177,20 @@ export async function authorizeTenantQuota(input: {
   if (decision.contract_revision !== input.contract_revision) {
     deny("quota", "WORKSPACE_CONNECTION_STALE_REVISION");
   }
-  if (decision.metric !== input.metric
-    || !decision.decision_id
-    || !Number.isFinite(decision.consumed)
-    || !Number.isFinite(decision.limit)
-    || !Number.isInteger(decision.ratio_basis_points)
-    || decision.consumed < 0
-    || decision.limit < 0
-    || decision.ratio_basis_points < 0
-    || decision.warning_thresholds_basis_points.some((value) => !Number.isInteger(value) || value < 0)) {
-    deny("quota", "UPSTREAM_UNAVAILABLE");
+  if (decision.unit !== input.unit) deny("quota", "CROSS_TENANT_CANDIDATE");
+  try {
+    validateCanonicalQuotaDecision(decision);
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny("quota", error.code, error.details);
+    throw error;
   }
   return assertQuotaAllowsExecution(structuredClone(decision));
 }
 
-export type OperationReceipt = OperationReceiptInput & { schema_version: "1.0" };
+export type OperationReceipt = OperationReceiptInput & {
+  message_type: "operation_receipt";
+  failure_code: string | null;
+};
 
 interface AccountingLedgerClaim {
   disposition: "claimed";

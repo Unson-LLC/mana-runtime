@@ -5,6 +5,7 @@ import type {
 } from "./contracts.js";
 import { validateTenantBoundary } from "./envelope.js";
 import { deny } from "./errors.js";
+import { validateCanonicalIdempotencyClaim } from "./canonical-consumer.js";
 import {
   claimIdempotency,
   createIdempotencyKey,
@@ -20,6 +21,8 @@ export async function authorizeSlackDelivery(input: {
   resolve_verification_key: (keyId: string) => Promise<CryptoKey | undefined>;
   ownership: IdempotencyMemoryStore;
   payload_hash: string;
+  delivery_operation_id: string;
+  retention_until: string;
 }): Promise<IdempotencyClaimResult> {
   if (input.authoritative_snapshot.deployment_id !== input.envelope.placement.deployment_id) {
     deny("slack_delivery", "REPLY_OWNERSHIP_CONFLICT");
@@ -32,7 +35,7 @@ export async function authorizeSlackDelivery(input: {
     now: input.now,
     resolve_verification_key: input.resolve_verification_key,
   });
-  const operationId = `${input.envelope.operation_id}:slack_delivery`;
+  const operationId = input.delivery_operation_id;
   const key = await createIdempotencyKey({
     protocol_id: input.envelope.protocol_id,
     protocol_major: "1",
@@ -41,13 +44,34 @@ export async function authorizeSlackDelivery(input: {
     slack_event_id: input.envelope.slack.event_id,
     operation_id: operationId,
   });
-  return claimIdempotency(input.ownership, {
-    key,
+  const contextDigest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input.envelope.integrity.value),
+  ));
+  const contextHash = `sha256:${[...contextDigest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  await validateCanonicalIdempotencyClaim({
+    message_type: "idempotency_claim",
+    owner: "mana_runtime",
+    scope: "slack_delivery",
     tenant_id: input.envelope.tenant.tenant_id,
     connection_id: input.envelope.workspace_connection.connection_id,
     slack_event_id: input.envelope.slack.event_id,
     operation_id: operationId,
-    context_hash: input.envelope.integrity.value,
+    idempotency_key: key,
+    context_hash: contextHash,
+    payload_hash: input.payload_hash,
+    state: "claimed",
+    retention_until: input.retention_until,
+  });
+  return claimIdempotency(input.ownership, {
+    key,
+    owner: "mana_runtime",
+    scope: "slack_delivery",
+    tenant_id: input.envelope.tenant.tenant_id,
+    connection_id: input.envelope.workspace_connection.connection_id,
+    slack_event_id: input.envelope.slack.event_id,
+    operation_id: operationId,
+    context_hash: contextHash,
     payload_hash: input.payload_hash,
     connection_revision: input.envelope.workspace_connection.connection_revision,
     updated_at: input.now,
@@ -68,5 +92,7 @@ export async function authorizeSlackDeliveryWithAuthority(input: Omit<
     resolve_verification_key: input.resolve_verification_key,
     ownership: input.ownership,
     payload_hash: input.payload_hash,
+    delivery_operation_id: input.delivery_operation_id,
+    retention_until: input.retention_until,
   });
 }
