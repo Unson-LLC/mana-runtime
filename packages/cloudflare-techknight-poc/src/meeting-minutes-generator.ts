@@ -12,6 +12,7 @@ const MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES = 10_000_000;
 const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const MEETING_MINUTES_CONTEXT_PROMPT_MAX_BYTES = 100_000;
 const MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES = new Set([
+  "meeting_minutes_context_mode_invalid",
   "meeting_minutes_generation_failed",
   "meeting_minutes_generation_invalid",
   "meeting_minutes_generation_placeholder_output",

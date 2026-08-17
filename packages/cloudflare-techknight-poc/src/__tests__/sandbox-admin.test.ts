@@ -156,6 +156,25 @@ describe("handleSandboxAdminRequest", () => {
     }));
   });
 
+  it("fails closed before generation when the production context mode is invalid", async () => {
+    const client = sandbox();
+    const response = await handleSandboxAdminRequest(
+      request("/admin/sandbox/meeting-minutes-probe"),
+      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", MEETING_MINUTES_CONTEXT_MODE: "invalid" }),
+      { createSandbox: () => client },
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      tenant: "techknight",
+      probe: "meeting-minutes-generation",
+      code: "meeting_minutes_context_mode_invalid",
+    });
+    expect(client.exec).not.toHaveBeenCalled();
+    expect(client.destroy).toHaveBeenCalledOnce();
+  });
+
   it("returns a bounded diagnostic code without leaking model output", async () => {
     const client = sandbox({ success: true, stdout: "not-json", stderr: "private-stderr" });
     const response = await handleSandboxAdminRequest(

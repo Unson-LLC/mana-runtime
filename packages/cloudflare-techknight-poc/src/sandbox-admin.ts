@@ -1,5 +1,6 @@
 import { hasAnthropicCredential } from "./anthropic-auth.js";
 import { resolveClaudeRuntimeConfig, type ClaudeRuntimeBindings } from "./claude-runtime-config.js";
+import { resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { generateMeetingMinutesInSandbox, meetingMinutesGenerationDiagnosticCode } from "./meeting-minutes-generator.js";
 
 const OAUTH_OK_MARKER = "TECHKNIGHT_OAUTH_OK";
@@ -56,10 +57,6 @@ function boundedVersion(output: string): string {
 
 function tenantId(env: SandboxAdminEnv): string {
   return env.TENANT_ID?.trim() || "techknight";
-}
-
-function meetingMinutesContextMode(env: SandboxAdminEnv): "observe" | "required" {
-  return env.MEETING_MINUTES_CONTEXT_MODE === "required" ? "required" : "observe";
 }
 
 export async function handleSandboxAdminRequest(
@@ -155,7 +152,7 @@ export async function handleSandboxAdminRequest(
             github: { owner: "Unson-LLC", repo: "mana-runtime" },
           },
           receipt,
-          meetingMinutesContextMode(env),
+          resolveMeetingMinutesContextMode(env.MEETING_MINUTES_CONTEXT_MODE),
           resolveClaudeRuntimeConfig(env),
           sandbox,
         );
