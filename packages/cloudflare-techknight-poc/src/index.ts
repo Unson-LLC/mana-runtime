@@ -768,16 +768,46 @@ export default {
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       let callbackWorkspace: DurableObjectStub<TechKnightWorkspace> | undefined;
+      let callbackTenantBody: TenantQueueBody<SlackQueueEvent> | undefined;
+      let callbackClients: ReturnType<typeof tenantRuntimeClients> | undefined;
       return handleDevelopmentCallback(request, {
-        token: env.DEVELOPMENT_CALLBACK_TOKEN, tenantId: env.TENANT_ID,
-        workspaceId: env.SLACK_EXPECTED_TEAM_ID, placements,
-        claim: async (eventId, payload) => {
-          const callbackEvent: SlackQueueEvent = { tenantId: env.TENANT_ID, eventId, workspaceId: payload.workspace_id,
-            channelId: payload.channel_id, threadTs: payload.thread_ts, messageTs: payload.thread_ts,
-            userId: payload.requester_id, eventType: "development_result", text: "", receivedAt: new Date().toISOString() };
-          const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(callbackEvent));
+        token: env.DEVELOPMENT_CALLBACK_TOKEN, workspaceId: env.SLACK_EXPECTED_TEAM_ID, placements,
+        resolve: async (event) => {
+          const clients = tenantRuntimeClients(env);
+          const resolved = await resolveSlackWorkerIngress({
+            identity: {
+              provider: "slack",
+              app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+              workspace_id: event.workspaceId,
+              event_id: event.eventId,
+              channel_id: event.channelId,
+              thread_ts: event.threadTs,
+              requester_id: event.userId ?? "",
+            },
+            required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+              .split(",").map((value) => value.trim()).filter(Boolean),
+            required_authorization: {
+              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            },
+            authority: clients.authority,
+            now: event.receivedAt,
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          const canonicalEvent = { ...event, tenantId: resolved.tenant_context.tenant.tenant_id };
+          callbackTenantBody = {
+            schema_version: "1.0",
+            tenant_context: resolved.tenant_context,
+            payload: canonicalEvent,
+          };
+          callbackClients = clients;
+          return canonicalEvent;
+        },
+        claim: async (event) => {
+          const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           callbackWorkspace = env.TECHKNIGHT_WORKSPACE.get(id);
-          return callbackWorkspace.claimDevelopmentCallback(eventId);
+          return callbackWorkspace.claimDevelopmentCallback(event.eventId);
         },
         complete: async (eventId, responseTs) => {
           if (!callbackWorkspace) throw new Error("development_callback_workspace_missing");
@@ -787,7 +817,33 @@ export default {
           if (!callbackWorkspace) return;
           await callbackWorkspace.releaseDevelopmentCallback(eventId);
         },
-        post: (event, text) => postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN }),
+        post: (event, text) => {
+          if (!callbackTenantBody || !callbackClients
+            || callbackTenantBody.payload.eventId !== event.eventId) {
+            deny("slack_delivery", "CROSS_TENANT_CANDIDATE");
+          }
+          const tenantBody = callbackTenantBody;
+          const clients = callbackClients;
+          const expectedScope = expectedTenantQueueScope(env, tenantBody);
+          const now = new Date().toISOString();
+          return postTenantSlackReply({
+            tenant_context: tenantBody.tenant_context,
+            expected_scope: expectedScope,
+            ownership: createDurableTenantStateClient(
+              env.TENANT_RUNTIME_STATE,
+              tenantBody.tenant_context.tenant.tenant_id,
+            ),
+            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+              tenantBody.tenant_context.workspace_connection.connection_id,
+            ),
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            now,
+            retention_until: tenantRetentionUntil(now),
+            event,
+            text,
+            post: () => postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN }),
+          });
+        },
       });
     }
     if (request.method === "POST" && url.pathname === "/slack/interactions") {

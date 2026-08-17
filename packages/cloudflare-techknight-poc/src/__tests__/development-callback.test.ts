@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleDevelopmentCallback } from "../development-callback.js";
+import type { SlackQueueEvent } from "../types.js";
 
 const placement = { placementId: "mana-dev-biz", channelId: "C1", projectCodes: ["mana"], taskWriteEnabled: true,
   developmentEnabled: true, audience: { type: "operator" as const, allowedUserIds: ["U1"] },
@@ -25,7 +26,7 @@ describe("development callback", () => {
     const claim = vi.fn(async () => claimed ? false : (claimed = true));
     const post = vi.fn(async () => "2.0");
     const options = { token: "secret", workspaceId: "T1", placements: [placement],
-      resolve: async (event: Parameters<typeof post>[0]) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+      resolve: async (event: SlackQueueEvent) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
       claim, complete: vi.fn(async () => undefined), release: vi.fn(async () => undefined), post };
     const [first, second] = await Promise.all([
       handleDevelopmentCallback(request(body), options),

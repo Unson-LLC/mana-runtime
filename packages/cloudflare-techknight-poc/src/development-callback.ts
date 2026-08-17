@@ -34,8 +34,9 @@ function render(payload: DevelopmentCallbackPayload): string {
 }
 
 export async function handleDevelopmentCallback(request: Request, options: {
-  token?: string; tenantId: string; workspaceId: string; placements: readonly RuntimePlacement[];
-  claim(eventId: string, payload: DevelopmentCallbackPayload): Promise<boolean>;
+  token?: string; workspaceId: string; placements: readonly RuntimePlacement[];
+  resolve(event: SlackQueueEvent): Promise<SlackQueueEvent>;
+  claim(event: SlackQueueEvent, payload: DevelopmentCallbackPayload): Promise<boolean>;
   complete(eventId: string, responseTs: string, payload: DevelopmentCallbackPayload): Promise<void>;
   release(eventId: string, payload: DevelopmentCallbackPayload): Promise<void>;
   post(event: SlackQueueEvent, text: string): Promise<string>;
@@ -50,10 +51,14 @@ export async function handleDevelopmentCallback(request: Request, options: {
     placement.deliveryScopes?.some((scope) => scope.connector === "slack" && scope.channelId === payload.channel_id);
   if (!allowed) return Response.json({ error: "development_callback_forbidden" }, { status: 403 });
   const callbackEventId = `development:${payload.job_id}`;
-  if (!await options.claim(callbackEventId, payload)) return Response.json({ ok: true, duplicate: true });
-  const event: SlackQueueEvent = { tenantId: options.tenantId, eventId: callbackEventId, workspaceId: payload.workspace_id,
+  const unresolvedEvent: SlackQueueEvent = { tenantId: "", eventId: callbackEventId, workspaceId: payload.workspace_id,
     channelId: payload.channel_id, threadTs: payload.thread_ts, messageTs: payload.thread_ts, userId: payload.requester_id,
     eventType: "development_result", text: "", receivedAt: new Date().toISOString() };
+  const event = await options.resolve(unresolvedEvent);
+  if (!event.tenantId || event.eventId !== unresolvedEvent.eventId || event.workspaceId !== unresolvedEvent.workspaceId
+    || event.channelId !== unresolvedEvent.channelId || event.threadTs !== unresolvedEvent.threadTs
+    || event.userId !== unresolvedEvent.userId) throw new Error("development_callback_tenant_scope_mismatch");
+  if (!await options.claim(event, payload)) return Response.json({ ok: true, duplicate: true });
   try {
     const responseTs = await options.post(event, render(payload));
     await options.complete(callbackEventId, responseTs, payload);
