@@ -978,6 +978,20 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(interactions).not.toContain("resolveMeetingMinutesDestinationSlackToken");
   });
 
+  it("never substitutes fake credentials for the tenant provider control channel", () => {
+    const productionSources = [
+      "../index.ts",
+      "../sandbox-runtime.ts",
+      "../slack-interactions.ts",
+      "../task-runtime-entrypoints.ts",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+
+    for (const source of productionSources) {
+      expect(source).not.toContain("tenant-credential-injected");
+      expect(source).not.toContain("proxy-injected");
+    }
+  });
+
   it("keeps the authenticated Slack app across every Meeting Minutes derived boundary", () => {
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
     const interactionsStart = source.indexOf('url.pathname === "/slack/interactions"');
