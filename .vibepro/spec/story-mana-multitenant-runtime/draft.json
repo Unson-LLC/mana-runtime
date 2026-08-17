@@ -11,7 +11,12 @@
     "caller": "codex",
     "stage": "ai_synthesis"
   },
-  "open_questions": [],
+  "open_questions": [
+    {
+      "id": "OQ-001",
+      "question": "PR #237で、opaque lease handleをprovider credentialとして送らずにrequest単位でmaterializeまたはforwardするtrusted wireのURL、認証、request／response schema、provider別header責務、replay応答を確定する。確定・source-lock同期まではmana-runtime production outboundをCREDENTIAL_FORWARDING_UNAVAILABLEでfail closedにする。"
+    }
+  ],
   "clauses": [
     {
       "id": "C-001",
@@ -69,7 +74,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-001",
@@ -135,12 +140,12 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-002",
       "type": "invariant",
-      "statement": "Slack token、Brainbase token、AI API key、OAuth access/refresh token、bearer valueの本文はtrusted volatile injectorのSecretValue以外へ出さず、WorkspaceConnectionSnapshot、TenantContextEnvelope、Queue message、Durable Object state、モデル、tool、Container input／disk、通常log、fixture、UsageEvent、OperationReceiptにはopaque credential_refだけを許可する。serialization guardはsecret、token、authorization、api_key、refresh_token、access_token、bearerの値を検出した時点でSECRET_ARTIFACT_FORBIDDENとして送信を拒否し、fixtureは形式だけが似た非秘密のダミー値を使う。",
+      "statement": "Slack token、Brainbase token、AI API key、OAuth access/refresh token、bearer valueの本文はBrainbase管理のtrusted materialization／forwarding境界の外へ出さず、WorkspaceConnectionSnapshot、TenantContextEnvelope、Queue message、Durable Object state、モデル、tool、Container input／disk／environment、通常log、fixture、UsageEvent、OperationReceiptにはopaque credential_refだけを許可する。lease_tokenとmana内部handleはprovider credentialではなく、Authorization、x-api-key、xc-token、GitHub Basicその他providerがcredentialとして解釈するfieldへの投入を禁止する。serialization guardはsecret、token、authorization、api_key、refresh_token、access_token、bearerの値を検出した時点でSECRET_ARTIFACT_FORBIDDENとして送信を拒否し、fixtureは形式だけが似た非秘密のダミー値を使う。",
       "origin": {
         "story_refs": [
           {
@@ -185,7 +190,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-012",
@@ -231,7 +236,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-003",
@@ -289,7 +294,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-013",
@@ -339,7 +344,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-004",
@@ -389,7 +394,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-005",
@@ -435,7 +440,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-004",
@@ -477,7 +482,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-006",
@@ -527,7 +532,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-005",
@@ -577,12 +582,12 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-014",
       "type": "contract",
-      "statement": "CredentialBrokerClient.acquire_leaseはCredentialLeaseRequest {message_type:'credential_lease_request',protocol_version:'1.0',binding:{tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref},requested_ttl_seconds:1..60}だけを送る。応答はCredentialLeaseResponse {message_type:'credential_lease_response',protocol_version:'1.0',lease_id:'lease_'+ULID,contract_revision,binding,issued_at,expires_at,max_uses:1,lease_token:opaque}のexact schemaとし、全binding、contract_revision、TTL、時刻、single-useを検証する。入口解決結果とauthoritative expected revisionをlease直前に再照合し、Brainbaseだけが所有するopaque credential_refを使用する。trusted volatile injectorだけがlease_tokenをraw secretへ交換し、mana-runtimeはrefresh token、OAuth refresh state、credential本文を保存・更新しない。",
+      "statement": "CredentialBrokerClient.acquire_leaseはCredentialLeaseRequest {message_type:'credential_lease_request',protocol_version:'1.0',binding:{tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref},requested_ttl_seconds:1..60}だけを送る。応答はCredentialLeaseResponse {message_type:'credential_lease_response',protocol_version:'1.0',lease_id:'lease_'+ULID,contract_revision,binding,issued_at,expires_at,max_uses:1,lease_token:opaque}のexact schemaとし、全binding、contract_revision、TTL、時刻、single-useを検証する。入口解決結果とauthoritative expected revisionをlease直前に再照合し、Brainbaseだけが所有するopaque credential_refを使用する。lease_tokenはprovider secretではないためprovider標準header、URL、Container environmentへ入れない。各provider requestはPR #237で確定するtrusted materialization／forwarding adapterだけへ渡し、adapterはtenant、connection、revision、contract、operation、audience、provider、credential mode、TTL、single-useをrequestごとに照合する。wire未確定・adapter未設定・replay・expired・revision mismatch・cross-tenant・provider mismatchはCREDENTIAL_FORWARDING_UNAVAILABLEまたはcanonical tenant/lease errorでprovider network前にfail closedとし、旧volatile injectorやopaque注入へfallbackしない。mana-runtimeはrefresh token、OAuth refresh state、credential本文を保存・更新しない。",
       "origin": {
         "story_refs": [
           {
@@ -631,7 +636,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-007",
@@ -673,7 +678,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-007",
@@ -739,7 +744,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-015",
@@ -793,7 +798,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-016",
@@ -843,7 +848,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-010",
@@ -889,12 +894,12 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-017",
       "type": "contract",
-      "statement": "mana-runtime consumer conformanceはPR #237 HEAD 2bcb70e1b6c7a65c44cc9fa303a3fb64a98b8589のcontracts/mana-brainbase-tenant-context/v1を固定入力とし、manifest記載のfixture 23件を複製せず直接読む。fixture set SHA-256は9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833と一致しなければ実行しない。positive 1件はschema、exact protected header、RFC 8785+Ed25519、TTL/skew、revision、protocol/capability、credential lease、quota/usage/Receipt/idempotencyを全検証後に受理し、negative 21件はexpected_codeでbusiness API前に拒否し、non-applicable 1件は必須capability waiver 0・fallback 0を確認する。横断契約D-001〜D-009とschema/reference implementationを正本とし、本Specのopen questionは0件である。TDDはcanonical manifest adapter Redを意図した未実装理由で固定した後に最小Greenを実装する。",
+      "statement": "mana-runtime consumer conformanceはPR #237のsource-lockが固定するcontracts/mana-brainbase-tenant-context/v1を入力とし、manifest記載のfixture 23件を複製せず直接読む。fixture set SHA-256は9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833と一致しなければ実行しない。positive 1件はschema、exact protected header、RFC 8785+Ed25519、TTL/skew、revision、protocol/capability、credential lease、quota/usage/Receipt/idempotencyを全検証後に受理し、negative 21件はexpected_codeでbusiness API前に拒否し、non-applicable 1件は必須capability waiver 0・fallback 0を確認する。横断契約D-001〜D-009とschema/reference implementationを正本とする。fixture集合は現行hashで固定済みだが、trusted materialization／forwarding wireはPR #237 HEAD 38e13adde56dbd398cea914aec69c831194353c9にも未定義のためblocking open questionとして保持し、確定後にsource-lockとvendorを同期する。TDDはopaque handleのprovider header投入を禁止するconsumer Redを先行し、wire未確定中のproductionはfail closedにする。",
       "origin": {
         "story_refs": [
           {
@@ -963,7 +968,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-002",
@@ -1033,12 +1038,12 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "Brainbase runtime HTTP adapterはBRAINBASE_TENANT_AUTHORITY_URL、BRAINBASE_CREDENTIAL_BROKER_URL、BRAINBASE_QUOTA_URL、BRAINBASE_ACCOUNTING_URLとsecret binding BRAINBASE_RUNTIME_API_TOKENを環境から受け、各requestをtenant/connection/revision/operationへ束縛する。URLまたはtoken欠落、AbortSignal timeout、非2xx、invalid JSON、schema不一致はempty snapshot、allowed quota、quantity=0、collection_state=collected、outcome=succeededへ変換せず、WORKSPACE_CONNECTION_UNAVAILABLEまたはUPSTREAM_UNAVAILABLEとして拒否する。credential leaseはbinding完全一致、max_uses=1、requested TTLと応答TTLが1〜60秒を満たす場合だけvolatile injectorへ渡す。Brainbase write前はauthoritative expected-revision readを再実行し、UsageEventとOperationReceiptのcollection_stateとoutcomeを独立に保持する。",
+      "statement": "Brainbase runtime HTTP adapterはBRAINBASE_TENANT_AUTHORITY_URL、BRAINBASE_CREDENTIAL_BROKER_URL、BRAINBASE_QUOTA_URL、BRAINBASE_ACCOUNTING_URLとsecret binding BRAINBASE_RUNTIME_API_TOKENを環境から受け、各requestをtenant/connection/revision/operationへ束縛する。URLまたはtoken欠落、AbortSignal timeout、非2xx、invalid JSON、schema不一致はempty snapshot、allowed quota、quantity=0、collection_state=collected、outcome=succeededへ変換せず、WORKSPACE_CONNECTION_UNAVAILABLEまたはUPSTREAM_UNAVAILABLEとして拒否する。credential leaseはbinding完全一致、max_uses=1、requested TTLと応答TTLが1〜60秒を満たす場合だけtrusted forwarding adapterへ渡し、lease_tokenをprovider認証欄やContainer environmentへ流用しない。trusted wire未設定または未確定時はCREDENTIAL_FORWARDING_UNAVAILABLEとしてprovider requestを送らない。Brainbase write前はauthoritative expected-revision readを再実行し、UsageEventとOperationReceiptのcollection_stateとoutcomeを独立に保持する。",
       "origin": {
         "story_refs": [
           {
@@ -1103,7 +1108,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     },
     {
       "id": "INV-008",
@@ -1165,7 +1170,7 @@
       },
       "confidence": 0.93,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T14:26:51.785Z"
+      "last_revised_at": "2026-08-17T15:23:56.073Z"
     }
   ],
   "multi_tenancy": {

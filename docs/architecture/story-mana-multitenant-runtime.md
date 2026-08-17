@@ -84,7 +84,9 @@ contextが欠落、曖昧、改ざん、失効、古い場合はその場で停�
 
 ## AI Credential Router
 
-Brainbaseが返す契約revisionとcredential modeから、Cloud標準API、顧客OAuth、顧客APIのいずれかを決定論的に選択する。Brainbaseだけがcredential本文とrefreshを所有する。mana-runtimeは`credential_ref`からtenant、connection、revision、operation、audience、credential modeへ束縛された単回leaseを取得し、60秒以下のtrusted volatile injectorだけへ渡す。秘密値をQueue、Durable Object、モデル、tool、disk、log、fixture、Receiptへ渡さない。
+Brainbaseが返す契約revisionとcredential modeから、Cloud標準API、顧客OAuth、顧客APIのいずれかを決定論的に選択する。Brainbaseだけがcredential本文とrefreshを所有する。mana-runtimeは`credential_ref`からtenant、connection、revision、operation、audience、credential modeへ束縛された60秒以下・単回のopaque lease handleを取得する。このhandleはprovider credentialではないため、`Authorization`、`x-api-key`、`xc-token`、GitHub Basic、Container環境変数その他providerがcredentialとして解釈する場所へ入れない。
+
+provider requestは、Brainbaseが公開契約として定義するtrusted materializationまたはtrusted forwarding境界だけへ渡す。その境界はrequestごとに署名済みTenant Context、現行revision、tenant、connection、operation、audience、provider、credential mode、lease expiry、`max_uses=1`を再検証し、providerごとの認証headerをBrainbase管理の信頼領域でだけ生成する。mana-runtimeへ生credentialを返すmaterialization方式を採る場合でも、値は永続化・log・Receipt・Queue・Container環境へ出さないconsumer契約が必要であり、公開wire未確定中は全provider outboundを`CREDENTIAL_FORWARDING_UNAVAILABLE`でfail closedにする。URL、request／response schema、trusted service identityは横断契約PR #237の決定待ちで、mana-runtime側が独自互換wireや旧opaque注入fallbackを定義しない。
 
 認証失敗、更新競合、失効、scope不足では、別mode、運営者credential、別tenantへfallbackしない。顧客credential利用時の課金主体も同じ契約revisionから決まり、推測しない。
 
