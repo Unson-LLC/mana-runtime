@@ -63,9 +63,21 @@ describe("tenant credential Container outbound integration", () => {
   it("enforces max_uses=1 and never falls back for an invalid or expired handle", async () => {
     const injector = new TenantCredentialInjector();
     const value = lease();
-    await injector.register({ lease: value, expected_binding: BINDING, now: NOW });
+    const handle = await injector.register({ lease: value, expected_binding: BINDING, now: NOW });
     await expect(injector.register({ lease: value, expected_binding: BINDING, now: NOW }))
       .rejects.toMatchObject({ code: "FALLBACK_FORBIDDEN" });
+
+    const marker = credentialLeaseMarker(handle);
+    injector.inject({
+      hostname: "api.anthropic.com",
+      headers: new Headers({ authorization: `Bearer ${marker}` }),
+      now: NOW,
+    });
+    expect(() => injector.inject({
+      hostname: "api.anthropic.com",
+      headers: new Headers({ authorization: `Bearer ${marker}` }),
+      now: NOW,
+    })).toThrow(expect.objectContaining({ code: "CREDENTIAL_LEASE_INVALID" }));
 
     expect(() => injector.inject({
       hostname: "api.anthropic.com",
@@ -74,10 +86,10 @@ describe("tenant credential Container outbound integration", () => {
     })).toThrow(expect.objectContaining({ code: "CREDENTIAL_LEASE_INVALID" }));
 
     const expiring = new TenantCredentialInjector();
-    const handle = await expiring.register({ lease: lease(), expected_binding: BINDING, now: NOW });
+    const expiringHandle = await expiring.register({ lease: lease(), expected_binding: BINDING, now: NOW });
     expect(() => expiring.inject({
       hostname: "api.anthropic.com",
-      headers: new Headers({ authorization: `Bearer ${credentialLeaseMarker(handle)}` }),
+      headers: new Headers({ authorization: `Bearer ${credentialLeaseMarker(expiringHandle)}` }),
       now: "2026-08-17T01:01:21.000Z",
     })).toThrow(expect.objectContaining({ code: "WORKSPACE_CONNECTION_REVOKED" }));
   });
