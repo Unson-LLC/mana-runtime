@@ -15,6 +15,7 @@ import {
   createTechKnightSandbox,
   type SandboxRuntimeEnv,
 } from "./sandbox-runtime.js";
+import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
   isMeetingMinutesSelection,
@@ -69,12 +70,17 @@ import { createCanonicalManualCronMessage } from "./runtime-cron-event.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
 import { runCloudflareDevelopmentRequest } from "./development-runner-client.js";
 import {
-  developmentCallbackPayloadHash,
   handleDevelopmentCallback,
   type DevelopmentCallbackClaim,
   type DevelopmentCallbackDelivery,
   type DevelopmentCallbackPayload,
 } from "./development-callback.js";
+import {
+  claimDevelopmentCallbackState,
+  completeDevelopmentCallbackState,
+  recordDevelopmentCallbackDeliveryState,
+  releaseDevelopmentCallbackState,
+} from "./multitenancy/development-callback-state.js";
 import { appendSlackThreadParticipantProfiles } from "./slack-thread-participants.js";
 import { hydrateSlackAttachments } from "./slack-attachments.js";
 import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolveGraphRequester } from "./brainbase-graph-runtime.js";
@@ -142,8 +148,14 @@ import {
   developmentTenantContextHash,
   releaseDevelopmentJobOwner,
 } from "./multitenancy/development-job-owner.js";
-import { DevelopmentTerminalOutboxHandler } from "./multitenancy/development-terminal-outbox.js";
-import { retryDevelopmentTerminalOutboxRecord } from "./multitenancy/development-callback-proxy.js";
+import {
+  createDevelopmentTerminalOutboxClient,
+  DevelopmentTerminalOutboxHandler,
+} from "./multitenancy/development-terminal-outbox.js";
+import {
+  failDevelopmentTerminalOutboxRecord,
+  retryDevelopmentTerminalOutboxRecord,
+} from "./multitenancy/development-callback-proxy.js";
 import { assessTenantRuntimeReadiness } from "./multitenancy/runtime-readiness.js";
 import { handleSlackInstallationLifecycleRequest } from "./multitenancy/slack-installation-entrypoint.js";
 import { SlackInstallationAdapter } from "./multitenancy/workspace-connection.js";
@@ -263,12 +275,18 @@ export class TenantRuntimeState extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    const now = new Date().toISOString();
     await Promise.all([
       this.#credentialRelay.alarm(),
       this.#boundaryContext.alarm(),
       this.#developmentTerminalOutbox.alarm(
-        new Date().toISOString(),
-        (record) => retryDevelopmentTerminalOutboxRecord(record, this.env),
+        now,
+        (record) => retryDevelopmentTerminalOutboxRecord(record, this.env, fetch, async (containerId) => {
+          await destroyTenantContainer(createTechKnightSandbox(this.env, containerId));
+        }),
+        (record) => failDevelopmentTerminalOutboxRecord(record, this.env, now, async (containerId) => {
+          await destroyTenantContainer(createTechKnightSandbox(this.env, containerId));
+        }),
       ),
     ]);
   }
@@ -301,77 +319,22 @@ export class TechKnightWorkspace extends withWorkspace(
 
   async claimDevelopmentCallback(eventId: string,
     payload: DevelopmentCallbackPayload): Promise<DevelopmentCallbackClaim> {
-    if (!/^[A-Za-z0-9:_-]{1,160}$/.test(eventId)) throw new Error("event_id_invalid");
-    const key = `development-callback:${eventId}`;
-    const payloadHash = await developmentCallbackPayloadHash(payload);
-    const now = Date.now();
-    return this.ctx.storage.transaction(async (transaction) => {
-      const current = await transaction.get<{
-        status: "delivery_pending" | "accounting_pending" | "completed";
-        payloadHash: string;
-        delivery?: DevelopmentCallbackDelivery;
-        leaseUntil?: string;
-      }>(key);
-      if (current) {
-        if (current.payloadHash !== payloadHash) return { state: "conflict" };
-        if (current.status === "completed") return { state: "completed", delivery: current.delivery };
-        if (current.status === "accounting_pending" && current.delivery) {
-          return { state: "accounting_pending", delivery: current.delivery };
-        }
-        if (current.leaseUntil && Date.parse(current.leaseUntil) > now) return { state: "in_progress" };
-      }
-      await transaction.put(key, {
-        status: "delivery_pending",
-        payloadHash,
-        claimedAt: new Date(now).toISOString(),
-        leaseUntil: new Date(now + 10_000).toISOString(),
-      });
-      return { state: "claimed" };
-    });
+    return claimDevelopmentCallbackState(this.ctx.storage, eventId, payload);
   }
 
   async recordDevelopmentCallbackDelivery(eventId: string, payload: DevelopmentCallbackPayload,
-    delivery: DevelopmentCallbackDelivery): Promise<void> {
-    const key = `development-callback:${eventId}`;
-    const payloadHash = await developmentCallbackPayloadHash(payload);
-    await this.ctx.storage.transaction(async (transaction) => {
-      const current = await transaction.get<{ status?: string; payloadHash?: string; delivery?: DevelopmentCallbackDelivery }>(key);
-      if (!current || current.payloadHash !== payloadHash) throw new Error("development_callback_conflict");
-      if (current.status === "completed" || current.status === "accounting_pending") {
-        if (JSON.stringify(current.delivery) !== JSON.stringify(delivery)) throw new Error("development_callback_conflict");
-        return;
-      }
-      if (current.status !== "delivery_pending") throw new Error("development_callback_claim_missing");
-      await transaction.put(key, {
-        status: "accounting_pending",
-        payloadHash,
-        delivery,
-        deliveredAt: new Date().toISOString(),
-      });
-    });
+    delivery: DevelopmentCallbackDelivery, fence?: number): Promise<void> {
+    await recordDevelopmentCallbackDeliveryState(this.ctx.storage, eventId, payload, delivery, fence);
   }
 
   async completeDevelopmentCallback(eventId: string, payload: DevelopmentCallbackPayload,
-    delivery: DevelopmentCallbackDelivery): Promise<void> {
-    const key = `development-callback:${eventId}`;
-    const payloadHash = await developmentCallbackPayloadHash(payload);
-    await this.ctx.storage.transaction(async (transaction) => {
-      const current = await transaction.get<{ status?: string; payloadHash?: string; delivery?: DevelopmentCallbackDelivery }>(key);
-      if (!current || current.payloadHash !== payloadHash
-        || JSON.stringify(current.delivery) !== JSON.stringify(delivery)) {
-        throw new Error("development_callback_conflict");
-      }
-      if (current.status === "completed") return;
-      if (current.status !== "accounting_pending") throw new Error("development_callback_delivery_missing");
-      await transaction.put(key, {
-        ...current,
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      });
-    });
+    delivery: DevelopmentCallbackDelivery, fence?: number): Promise<void> {
+    await completeDevelopmentCallbackState(this.ctx.storage, eventId, payload, delivery, fence);
   }
 
-  async releaseDevelopmentCallback(_eventId: string): Promise<void> {}
+  async releaseDevelopmentCallback(eventId: string, payload: DevelopmentCallbackPayload, fence?: number): Promise<void> {
+    await releaseDevelopmentCallbackState(this.ctx.storage, eventId, payload, fence);
+  }
 }
 
 export class MeetingMinutesWorkspace extends withWorkspace(
@@ -1392,11 +1355,11 @@ export default {
           callbackWorkspace = env.TECHKNIGHT_WORKSPACE.get(id);
           return callbackWorkspace.claimDevelopmentCallback(event.eventId, payload);
         },
-        recordDelivery: async (eventId, payload, delivery) => {
+        recordDelivery: async (eventId, payload, delivery, fence) => {
           if (!callbackWorkspace) throw new Error("development_callback_workspace_missing");
-          await callbackWorkspace.recordDevelopmentCallbackDelivery(eventId, payload, delivery);
+          await callbackWorkspace.recordDevelopmentCallbackDelivery(eventId, payload, delivery, fence);
         },
-        complete: async (eventId, payload, delivery) => {
+        complete: async (eventId, payload, delivery, fence) => {
           if (!callbackWorkspace) throw new Error("development_callback_workspace_missing");
           const terminal = payload.status === "failed"
             ? { outcome: "failed" as const, failureCode: "DEVELOPMENT_RUNNER_FAILED" }
@@ -1420,11 +1383,11 @@ export default {
             now: new Date().toISOString(),
             accounting_effect_id: `development_terminal:${payload.job_id}`,
           });
-          await callbackWorkspace.completeDevelopmentCallback(eventId, payload, delivery);
+          await callbackWorkspace.completeDevelopmentCallback(eventId, payload, delivery, fence);
         },
-        release: async (eventId) => {
+        release: async (eventId, payload, fence) => {
           if (!callbackWorkspace) return;
-          await callbackWorkspace.releaseDevelopmentCallback(eventId);
+          await callbackWorkspace.releaseDevelopmentCallback(eventId, payload, fence);
         },
         post: (event, text) => {
           if (event.tenantId !== callbackBoundary.tenant_context.tenant.tenant_id) {
@@ -2297,8 +2260,30 @@ export default {
                       registerJobOwner: async (owner) => {
                         const store = createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, owner.tenantId);
                         const claimed = await claimDevelopmentJobOwner(store, owner, tenantConsumerOptions.now());
+                        const terminalOutbox = createDevelopmentTerminalOutboxClient(
+                          env.TENANT_RUNTIME_STATE,
+                          claimed.claim.partition_key,
+                        );
                         return {
                           created: claimed.disposition === "claimed",
+                          armTerminalWatchdog: async (watchdog) => {
+                            if (claimed.disposition !== "claimed") return;
+                            await terminalOutbox.arm({
+                              ...watchdog,
+                              job_id: owner.jobId,
+                              tenant_boundary_handle: tenantBoundaryHandle,
+                              owner,
+                              owner_claim: {
+                                key: claimed.claim.key,
+                                partition_key: claimed.claim.partition_key,
+                              },
+                            });
+                          },
+                          cancelTerminalWatchdog: async () => {
+                            if (claimed.disposition === "claimed") {
+                              await terminalOutbox.cancel(owner.jobId);
+                            }
+                          },
                           release: async () => {
                             if (claimed.disposition === "claimed") {
                               await releaseDevelopmentJobOwner(store, owner, claimed.claim);

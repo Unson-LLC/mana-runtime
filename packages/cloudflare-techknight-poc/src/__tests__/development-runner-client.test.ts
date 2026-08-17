@@ -38,7 +38,7 @@ describe("runCloudflareDevelopmentRequest", () => {
     const startProcess = vi.fn(async (_command: string, _options: Record<string, unknown>) => (
       { id: "development-Ev1" }
     ));
-    const createSandbox = vi.fn(() => ({
+    const createSandbox = vi.fn((_id: string) => ({
       writeFile: vi.fn(async () => undefined),
       startProcess,
     }));
@@ -102,7 +102,11 @@ describe("runCloudflareDevelopmentRequest", () => {
   });
 
   it("arms an exact durable timeout callback before the Container can start", async () => {
-    const armTerminalWatchdog = vi.fn(async () => undefined);
+    const armTerminalWatchdog = vi.fn(async (_watchdog: {
+      callback_body: string;
+      activate_at: string;
+      terminal_deadline_at: string;
+    }) => undefined);
     const cancelTerminalWatchdog = vi.fn(async () => undefined);
     const registerJobOwner = vi.fn(async () => ({
       created: true,
@@ -110,7 +114,7 @@ describe("runCloudflareDevelopmentRequest", () => {
       armTerminalWatchdog,
       cancelTerminalWatchdog,
     }));
-    const createSandbox = vi.fn(() => ({
+    const createSandbox = vi.fn((_id: string) => ({
       writeFile: vi.fn(async () => undefined),
       startProcess: vi.fn(async () => ({ id: "development-Ev1" })),
     }));
@@ -118,11 +122,9 @@ describe("runCloudflareDevelopmentRequest", () => {
     await runCloudflareDevelopmentRequest(input({ registerJobOwner, createSandbox }));
 
     expect(armTerminalWatchdog).toHaveBeenCalledOnce();
-    const armed = armTerminalWatchdog.mock.calls[0]![0] as {
-      callback_body: string;
-      activate_at: string;
-      terminal_deadline_at: string;
-    };
+    const armed = armTerminalWatchdog.mock.calls[0]![0];
+    expect((armed as typeof armed & { container_id?: string }).container_id)
+      .toBe(createSandbox.mock.calls[0]![0]);
     expect(JSON.parse(armed.callback_body)).toEqual(expect.objectContaining({
       status: "timed_out",
       quota_decision: "allowed",

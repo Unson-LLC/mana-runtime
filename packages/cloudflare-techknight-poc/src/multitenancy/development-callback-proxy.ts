@@ -11,6 +11,7 @@ import {
   claimDevelopmentJobOwner,
   completeDevelopmentJobOwner,
   developmentOwnerFromContext,
+  failDevelopmentJobOwner,
   releaseDevelopmentJobOwner,
 } from "./development-job-owner.js";
 import {
@@ -28,6 +29,8 @@ export interface DevelopmentCallbackProxyEnv {
   DEVELOPMENT_CALLBACK_TOKEN?: string;
   TENANT_RUNTIME_STATE: TenantBoundaryContextNamespace & TenantRuntimeStateNamespace;
 }
+
+export type DestroyDevelopmentContainer = (containerId: string) => Promise<void>;
 
 function retainedUntil(now: string): string {
   return new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString();
@@ -63,10 +66,26 @@ async function responseCompleted(response: Response): Promise<boolean> {
   return body?.ok === true && body.state === "completed";
 }
 
+async function destroyRecordedContainer(
+  record: DevelopmentTerminalOutboxRecord,
+  env: DevelopmentCallbackProxyEnv,
+  destroyContainer: DestroyDevelopmentContainer | undefined,
+  now: string,
+): Promise<void> {
+  if (record.container_destroyed_at) return;
+  if (!record.container_id || !destroyContainer) {
+    throw new TenantBoundaryError("container_launch", "CONTAINER_SANITIZATION_UNPROVEN");
+  }
+  await destroyContainer(record.container_id);
+  await createDevelopmentTerminalOutboxClient(env.TENANT_RUNTIME_STATE, record.owner_claim.partition_key)
+    .recordContainerDestroyed(now);
+}
+
 export async function retryDevelopmentTerminalOutboxRecord(
   record: DevelopmentTerminalOutboxRecord,
   env: DevelopmentCallbackProxyEnv,
   fetchImpl: typeof fetch = fetch,
+  destroyContainer?: DestroyDevelopmentContainer,
 ): Promise<{ state: "completed" } | { state: "retry"; error: string }> {
   const response = await forwardDevelopmentCallback(
     record.callback_body,
@@ -79,6 +98,11 @@ export async function retryDevelopmentTerminalOutboxRecord(
   }
   const store = createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, record.owner.tenantId);
   const completedAt = new Date().toISOString();
+  try {
+    await destroyRecordedContainer(record, env, destroyContainer, completedAt);
+  } catch {
+    return { state: "retry", error: "CONTAINER_SANITIZATION_UNPROVEN" };
+  }
   await completeDevelopmentJobOwner(
     store,
     record.owner,
@@ -87,6 +111,23 @@ export async function retryDevelopmentTerminalOutboxRecord(
     retainedUntil(completedAt),
   );
   return { state: "completed" };
+}
+
+export async function failDevelopmentTerminalOutboxRecord(
+  record: DevelopmentTerminalOutboxRecord,
+  env: DevelopmentCallbackProxyEnv,
+  now: string,
+  destroyContainer?: DestroyDevelopmentContainer,
+): Promise<void> {
+  await destroyRecordedContainer(record, env, destroyContainer, now);
+  const store = createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, record.owner.tenantId);
+  await failDevelopmentJobOwner(
+    store,
+    record.owner,
+    record.owner_claim,
+    now,
+    retainedUntil(now),
+  );
 }
 
 export async function proxyDevelopmentCallback(
@@ -171,10 +212,9 @@ export async function proxyDevelopmentCallback(
     return Response.json({ ok: true, state: "completed", duplicate: true });
   }
   const response = await forwardDevelopmentCallback(raw, boundaryHandle, env, fetchImpl);
-  if (await responseCompleted(response)) {
-    const completedAt = new Date().toISOString();
-    await completeDevelopmentJobOwner(store, owner, claimed.claim, completedAt, retainedUntil(completedAt));
-    await outbox.complete(completedAt);
-  }
+  // The terminal outbox remains the only completion owner. Even a synchronous
+  // callback success is replayed by its Durable Object alarm, which destroys
+  // the Container from a different Durable Object before completing the job.
+  // This avoids destroying the sandbox from inside its own outbound handler.
   return response;
 }

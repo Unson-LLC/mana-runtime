@@ -32,6 +32,7 @@ import {
   type TenantGatewayDeliveryEnv,
 } from "../multitenancy/tenant-gateway-delivery.js";
 import {
+  failDevelopmentTerminalOutboxRecord,
   proxyDevelopmentCallback,
   retryDevelopmentTerminalOutboxRecord,
 } from "../multitenancy/development-callback-proxy.js";
@@ -40,7 +41,10 @@ import {
   developmentOwnerFromContext,
 } from "../multitenancy/development-job-owner.js";
 import { createDurableTenantStateClient } from "../multitenancy/tenant-runtime-state.js";
-import { DevelopmentTerminalOutboxHandler } from "../multitenancy/development-terminal-outbox.js";
+import {
+  createDevelopmentTerminalOutboxClient,
+  DevelopmentTerminalOutboxHandler,
+} from "../multitenancy/development-terminal-outbox.js";
 import { developmentJobIdForTenantOperation } from "../development-runner-client.js";
 
 const SNAPSHOT: WorkspaceConnectionSnapshot = {
@@ -212,6 +216,72 @@ afterEach(() => {
 });
 
 describe("sandbox provider credential integration", () => {
+  it("reconciles a Container callback that never reached the proxy as durable failed_terminal", async () => {
+    const { envelope } = await signedEnvelope();
+    const namespace = new TenantRuntimeNamespace();
+    const registry = createDurableTenantBoundaryRegistry(namespace);
+    const boundaryHandle = await registry.register({
+      tenant_context: envelope,
+      expected_scope: EXPECTED_SCOPE,
+      now: new Date().toISOString(),
+    });
+    const jobId = await developmentJobIdForTenantOperation({
+      eventId: envelope.slack.event_id,
+      tenantId: envelope.tenant.tenant_id,
+      connectionId: envelope.workspace_connection.connection_id,
+      operationId: envelope.operation_id,
+      workspaceId: envelope.workspace_connection.workspace_id,
+      channelId: envelope.slack.channel_id,
+      threadTs: envelope.slack.thread_ts ?? "",
+    });
+    const owner = await developmentOwnerFromContext({
+      tenant_context: envelope,
+      jobId,
+      eventId: envelope.slack.event_id,
+      requesterId: envelope.actor.authenticated_subject_id,
+      placementId: "placement-a",
+      quotaDecision: "allowed",
+    });
+    const ownerStore = createDurableTenantStateClient(namespace, owner.tenantId);
+    const claimed = await claimDevelopmentJobOwner(ownerStore, owner, new Date().toISOString());
+    expect(claimed.disposition).toBe("claimed");
+    const observedAt = new Date().toISOString();
+    const deadline = new Date(Date.now() + 1_000).toISOString();
+    const outbox = createDevelopmentTerminalOutboxClient(namespace, claimed.claim.partition_key);
+    await outbox.arm({
+      job_id: jobId,
+      payload_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      callback_body: JSON.stringify({ job_id: jobId, status: "timed_out" }),
+      tenant_boundary_handle: boundaryHandle,
+      owner,
+      owner_claim: { key: claimed.claim.key, partition_key: claimed.claim.partition_key },
+      observed_at: observedAt,
+      activate_at: new Date(Date.now() + 500).toISOString(),
+      terminal_deadline_at: deadline,
+      container_id: "development-sandbox-timeout-a",
+    });
+
+    namespace.handlers.clear();
+    const terminalKey = [...namespace.storages.keys()].find((key) => key.startsWith("development-terminal:"));
+    const terminalStorage = namespace.storages.get(terminalKey ?? "");
+    const restarted = new DevelopmentTerminalOutboxHandler(terminalStorage!, terminalStorage!);
+    const destroyContainer = vi.fn(async (_containerId: string) => undefined);
+    await restarted.alarm(deadline, async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
+      (record) => failDevelopmentTerminalOutboxRecord(record, {
+        TENANT_RUNTIME_STATE: namespace,
+      }, deadline, destroyContainer));
+
+    await expect(outbox.read()).resolves.toMatchObject({
+      state: "failed_terminal",
+      collection_state: "not_collected",
+      terminal_outcome: "timed_out",
+      owner_finalized: true,
+    });
+    expect(destroyContainer).toHaveBeenCalledWith("development-sandbox-timeout-a");
+    await expect(claimDevelopmentJobOwner(ownerStore, owner, deadline))
+      .resolves.toMatchObject({ disposition: "failed_terminal" });
+  });
+
   it("acquires a different single-use lease for every Anthropic and GitHub HTTP request", async () => {
     const { envelope, jwks } = await signedEnvelope();
     const namespace = new TenantRuntimeNamespace();
@@ -472,8 +542,22 @@ describe("sandbox provider credential integration", () => {
       quotaDecision: "allowed",
     });
     const ownerStore = createDurableTenantStateClient(namespace, owner.tenantId);
-    await expect(claimDevelopmentJobOwner(ownerStore, owner, new Date().toISOString()))
-      .resolves.toMatchObject({ disposition: "claimed" });
+    const claimed = await claimDevelopmentJobOwner(ownerStore, owner, new Date().toISOString());
+    expect(claimed).toMatchObject({ disposition: "claimed" });
+    const terminalOutbox = createDevelopmentTerminalOutboxClient(namespace, claimed.claim.partition_key);
+    const watchdogObservedAt = new Date().toISOString();
+    await terminalOutbox.arm({
+      job_id: jobId,
+      payload_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      callback_body: JSON.stringify({ job_id: jobId, status: "timed_out" }),
+      tenant_boundary_handle: handle,
+      owner,
+      owner_claim: { key: claimed.claim.key, partition_key: claimed.claim.partition_key },
+      observed_at: watchdogObservedAt,
+      activate_at: new Date(Date.parse(watchdogObservedAt) + 1_000).toISOString(),
+      terminal_deadline_at: envelope.expires_at,
+      container_id: "development-sandbox-integration-a",
+    });
 
     // Drop all handler instances to model a new Worker/DO isolate while retaining
     // the Durable Object storage that owns the callback claim.
@@ -481,6 +565,7 @@ describe("sandbox provider credential integration", () => {
     const downstream = vi.fn()
       .mockResolvedValueOnce(Response.json({ error: "accounting_unavailable" }, { status: 503 }))
       .mockResolvedValueOnce(Response.json({ ok: true, state: "completed" }));
+    const destroyContainer = vi.fn(async (_containerId: string) => undefined);
     const callbackBody = {
       job_id: jobId,
       event_id: envelope.slack.event_id,
@@ -523,12 +608,14 @@ describe("sandbox provider credential integration", () => {
       DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
       DEVELOPMENT_CALLBACK_TOKEN: "test-callback-token-placeholder",
       TENANT_RUNTIME_STATE: namespace,
-    }, downstream));
+    }, downstream, destroyContainer));
 
     namespace.handlers.clear();
     await expect(invoke(callbackBody).then((response) => response.json()))
       .resolves.toEqual({ ok: true, state: "completed", duplicate: true });
     expect(downstream).toHaveBeenCalledTimes(2);
+    expect(destroyContainer).toHaveBeenCalledOnce();
+    expect(destroyContainer).toHaveBeenCalledWith("development-sandbox-integration-a");
     expect(downstream.mock.calls[1]?.[1]?.body).toBe(JSON.stringify(callbackBody));
     const forwarded = downstream.mock.calls[1]?.[1] as RequestInit;
     expect(new Headers(forwarded.headers).get("authorization"))

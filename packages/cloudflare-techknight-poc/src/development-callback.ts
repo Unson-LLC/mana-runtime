@@ -2,6 +2,7 @@ import type { RuntimePlacement } from "./runtime-config.js";
 import type { SlackQueueEvent } from "./types.js";
 import type { QuotaDecision } from "./multitenancy/contracts.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
+import { TenantBoundaryError } from "./multitenancy/errors.js";
 
 export type DevelopmentStatus = "completed" | "needs_decision" | "needs_input" | "failed" | "timed_out";
 export interface DevelopmentCallbackPayload {
@@ -16,10 +17,10 @@ export type DevelopmentCallbackDelivery =
   | { state: "failed" };
 
 export type DevelopmentCallbackClaim =
-  | { state: "claimed" }
+  | { state: "claimed"; fence?: number }
   | { state: "in_progress" }
-  | { state: "accounting_pending"; delivery: DevelopmentCallbackDelivery }
-  | { state: "completed"; delivery?: DevelopmentCallbackDelivery }
+  | { state: "accounting_pending"; delivery: DevelopmentCallbackDelivery; fence?: number }
+  | { state: "completed"; delivery?: DevelopmentCallbackDelivery; fence?: number }
   | { state: "conflict" };
 
 export async function developmentCallbackPayloadHash(payload: DevelopmentCallbackPayload): Promise<string> {
@@ -62,10 +63,10 @@ export async function handleDevelopmentCallback(request: Request, options: {
   resolve(event: SlackQueueEvent): Promise<SlackQueueEvent>;
   claim(event: SlackQueueEvent, payload: DevelopmentCallbackPayload): Promise<DevelopmentCallbackClaim>;
   recordDelivery(eventId: string, payload: DevelopmentCallbackPayload,
-    delivery: DevelopmentCallbackDelivery): Promise<void>;
+    delivery: DevelopmentCallbackDelivery, fence?: number): Promise<void>;
   complete(eventId: string, payload: DevelopmentCallbackPayload,
-    delivery: DevelopmentCallbackDelivery): Promise<void>;
-  release(eventId: string, payload: DevelopmentCallbackPayload): Promise<void>;
+    delivery: DevelopmentCallbackDelivery, fence?: number): Promise<void>;
+  release(eventId: string, payload: DevelopmentCallbackPayload, fence?: number): Promise<void>;
   post(event: SlackQueueEvent, text: string): Promise<string>;
 }): Promise<Response> {
   const bearer = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? "";
@@ -104,11 +105,20 @@ export async function handleDevelopmentCallback(request: Request, options: {
   } else {
     try {
       delivery = { state: "delivered", responseTs: await options.post(event, render(payload)) };
-    } catch {
+    } catch (error) {
+      if (error instanceof TenantBoundaryError && error.code === "REPLY_OWNERSHIP_CONFLICT") {
+        await options.release(callbackEventId, payload, claim.fence);
+        return Response.json({ error: "development_callback_in_progress" }, {
+          status: 409,
+          headers: { "retry-after": "2" },
+        });
+      }
       delivery = { state: "failed" };
     }
-    await options.recordDelivery(callbackEventId, payload, delivery);
+    if (claim.fence === undefined) await options.recordDelivery(callbackEventId, payload, delivery);
+    else await options.recordDelivery(callbackEventId, payload, delivery, claim.fence);
   }
-  await options.complete(callbackEventId, payload, delivery);
+  if (claim.fence === undefined) await options.complete(callbackEventId, payload, delivery);
+  else await options.complete(callbackEventId, payload, delivery, claim.fence);
   return Response.json({ ok: true, state: "completed" });
 }

@@ -24,6 +24,7 @@ const complete = {
   BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test",
   BRAINBASE_RUNTIME_API_TOKEN: "opaque-test-token",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
+  SLACK_EXPECTED_APP_ID: "A-MANA",
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
     keys: [{ kty: "OKP", crv: "Ed25519", kid: "key-1", x: "test", use: "sig" }],
   }),
@@ -90,5 +91,21 @@ describe("tenant runtime readiness", () => {
       ready: false,
       missing_bindings: ["TASK_BOARD_TARGETS_JSON"],
     });
+  });
+
+  it("fails health closed when an enabled development placement cannot receive terminal callbacks", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([{ developmentEnabled: true }]),
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["DEVELOPMENT_CALLBACK_BASE_URL", "DEVELOPMENT_CALLBACK_TOKEN"],
+    });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([{ developmentEnabled: true }]),
+      DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
+      DEVELOPMENT_CALLBACK_TOKEN: "opaque-callback-token",
+    })).toEqual({ ready: true, missing_bindings: [] });
   });
 });

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DevelopmentTerminalOutboxHandler,
   createDevelopmentTerminalOutboxClient,
+  type DevelopmentTerminalOutboxRecord,
   type DevelopmentTerminalOutboxSubmission,
 } from "../multitenancy/development-terminal-outbox.js";
 
@@ -51,6 +52,7 @@ describe("development terminal outbox", () => {
     const fallback = {
       ...submission,
       activate_at: "2026-08-17T10:03:45.000Z",
+      container_id: "development-sandbox-test-a",
     };
 
     await expect(client.arm(fallback)).resolves.toMatchObject({ state: "awaiting_terminal" });
@@ -66,6 +68,7 @@ describe("development terminal outbox", () => {
       state: "pending",
       payload_hash: actual.payload_hash,
       callback_body: actual.callback_body,
+      container_id: fallback.container_id,
     });
   });
 
@@ -78,11 +81,15 @@ describe("development terminal outbox", () => {
     > & {
       arm(input: DevelopmentTerminalOutboxSubmission & { activate_at: string }): Promise<unknown>;
     };
-    const fallback = { ...submission, activate_at: "2026-08-17T10:03:45.000Z" };
+    const fallback = {
+      ...submission,
+      activate_at: "2026-08-17T10:03:45.000Z",
+      container_id: "development-sandbox-test-b",
+    };
     await client.arm(fallback);
 
     const restarted = new DevelopmentTerminalOutboxHandler(storage, storage);
-    const deliver = vi.fn(async () => ({ state: "completed" as const }));
+    const deliver = vi.fn(async (_record: DevelopmentTerminalOutboxRecord) => ({ state: "completed" as const }));
     await restarted.alarm(fallback.activate_at, deliver);
 
     expect(deliver).toHaveBeenCalledOnce();

@@ -3,6 +3,10 @@ import { tenantPartitionKey } from "./multitenancy/isolation.js";
 import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 import type { DevelopmentJobOwner } from "./multitenancy/development-job-owner.js";
 import type { QuotaDecision } from "./multitenancy/contracts.js";
+import {
+  developmentCallbackPayloadHash,
+  type DevelopmentCallbackPayload,
+} from "./development-callback.js";
 
 const DEVELOPMENT_PROCESS_MAX_TIMEOUT_MS = 4_800_000;
 const TENANT_CONTEXT_SHUTDOWN_RESERVE_MS = 5_000;
@@ -80,6 +84,15 @@ export async function runCloudflareDevelopmentRequest(input: {
   registerJobOwner(owner: DevelopmentJobOwner): Promise<{
     created: boolean;
     release(): Promise<void>;
+    armTerminalWatchdog(input: {
+      payload_hash: string;
+      callback_body: string;
+      activate_at: string;
+      terminal_deadline_at: string;
+      observed_at: string;
+      container_id: string;
+    }): Promise<void>;
+    cancelTerminalWatchdog(): Promise<void>;
   }>;
   createSandbox: (id: string) => DevelopmentSandbox;
 }): Promise<string> {
@@ -132,8 +145,29 @@ export async function runCloudflareDevelopmentRequest(input: {
     runner_timeout_ms: runnerTimeout,
     quota_decision: input.quotaDecision,
   };
+  const fallbackCallback: DevelopmentCallbackPayload = {
+    job_id: jobId,
+    event_id: input.eventId,
+    placement_id: input.placementId,
+    workspace_id: input.workspaceId,
+    channel_id: input.channelId,
+    thread_ts: input.threadTs,
+    requester_id: input.requesterId,
+    status: "timed_out",
+    summary: "開発runnerから終端callbackを受信できませんでした。",
+    quota_decision: input.quotaDecision,
+  };
+  const fallbackBody = JSON.stringify(fallbackCallback);
 
   try {
+    await owner.armTerminalWatchdog({
+      payload_hash: await developmentCallbackPayloadHash(fallbackCallback),
+      callback_body: fallbackBody,
+      activate_at: new Date(observedAt + runnerTimeout + 1_000).toISOString(),
+      terminal_deadline_at: input.contextExpiresAt,
+      observed_at: new Date(observedAt).toISOString(),
+      container_id: sandboxId,
+    });
     const sandbox = input.createSandbox(sandboxId);
     await sandbox.writeFile(jobPath, JSON.stringify(payload));
     await sandbox.startProcess(
@@ -153,6 +187,7 @@ export async function runCloudflareDevelopmentRequest(input: {
       },
     );
   } catch {
+    await owner.cancelTerminalWatchdog().catch(() => undefined);
     await owner.release();
     throw new Error("development_runner_failed");
   }

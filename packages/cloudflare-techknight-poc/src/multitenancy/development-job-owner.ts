@@ -122,3 +122,21 @@ export function completeDevelopmentJobOwner(
     partition_key: claim.partition_key,
   });
 }
+
+export function failDevelopmentJobOwner(
+  store: IdempotencyStore,
+  owner: DevelopmentJobOwner,
+  claim: Pick<IdempotencyClaim, "key" | "partition_key">,
+  now: string,
+  retainedUntil: string,
+): Promise<IdempotencyClaim> | IdempotencyClaim {
+  return completeIdempotency(store, {
+    key: claim.key,
+    tenant_id: owner.tenantId,
+    state: "failed_terminal",
+    result_ref: `${owner.jobId}:terminal_not_collected`,
+    updated_at: now,
+    retained_until: retainedUntil,
+    partition_key: claim.partition_key,
+  });
+}

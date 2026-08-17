@@ -12,6 +12,7 @@ const REQUIRED_TEXT_BINDINGS = [
   "MANA_CREDENTIAL_AUDIENCE",
   "BRAINBASE_RUNTIME_API_TOKEN",
   "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
+  "SLACK_EXPECTED_APP_ID",
 ] as const;
 
 const REQUIRED_HTTPS_BINDINGS = [
@@ -64,6 +65,19 @@ function placementTaskBoardEnabled(value: unknown): boolean {
   }
 }
 
+function placementDevelopmentEnabled(value: unknown): boolean {
+  if (!nonEmpty(value)) return false;
+  try {
+    const placements = JSON.parse(value as string) as unknown;
+    return Array.isArray(placements) && placements.some((placement) =>
+      placement !== null && typeof placement === "object"
+      && !Array.isArray(placement)
+      && (placement as Record<string, unknown>).developmentEnabled === true);
+  } catch {
+    return false;
+  }
+}
+
 export function assessTenantRuntimeReadiness(
   env: Record<string, unknown>,
 ): TenantRuntimeReadiness {
@@ -87,6 +101,10 @@ export function assessTenantRuntimeReadiness(
   if ((taskBoardSchedulingEnabled || nonEmpty(env.TASK_BOARD_TARGETS_JSON))
     && !nonEmpty(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)) {
     missing.push("MANA_TASK_BOARD_SERVICE_ACTOR_ID");
+  }
+  if (placementDevelopmentEnabled(env.RUNTIME_PLACEMENTS_JSON)) {
+    if (!safeHttpsUrl(env.DEVELOPMENT_CALLBACK_BASE_URL)) missing.push("DEVELOPMENT_CALLBACK_BASE_URL");
+    if (!nonEmpty(env.DEVELOPMENT_CALLBACK_TOKEN)) missing.push("DEVELOPMENT_CALLBACK_TOKEN");
   }
   const capabilities = new Set(typeof env.MANA_RUNTIME_CAPABILITIES === "string"
     ? env.MANA_RUNTIME_CAPABILITIES.split(",").map((value) => value.trim()).filter(Boolean)
