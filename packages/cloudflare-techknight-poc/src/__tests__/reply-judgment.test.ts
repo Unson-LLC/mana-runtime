@@ -123,6 +123,19 @@ describe("Slack reply Judgment lifecycle", () => {
       .toThrow("reply_judgment_route_receipt_missing");
   });
 
+  it("preserves a safe Hook failure reason for production diagnosis", () => {
+    const failedHook = JSON.stringify({
+      type: "system",
+      subtype: "hook_response",
+      hook_event: "UserPromptSubmit",
+      exit_code: 2,
+      outcome: "error",
+      stderr: "judgment_hook_http_401\nsecret-value-must-not-be-repeated",
+    });
+    expect(() => parseReplyJudgmentStream(failedHook))
+      .toThrow("reply_judgment_hook_failed_judgment_hook_http_401");
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity", () => {
     const result = parseReplyJudgmentStream(stream({ toolCount: 2 }));
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
