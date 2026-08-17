@@ -106,7 +106,15 @@ try {
     signal: AbortSignal.timeout(30_000),
   });
   const body = await response.text();
-  if (!response.ok) throw new Error(`judgment_hook_http_${response.status}`);
+  if (!response.ok) {
+    let upstreamCode = "";
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === "object" && typeof parsed.error === "string"
+          && /^[a-z0-9_]{1,80}$/.test(parsed.error)) upstreamCode = `_${parsed.error}`;
+    } catch { /* Preserve the status-only fail-closed reason for non-JSON responses. */ }
+    throw new Error(`judgment_hook_http_${response.status}${upstreamCode}`);
+  }
   const output = validatedOutput(JSON.parse(body), payload);
   process.stdout.write(JSON.stringify(output));
 } catch (error) {
