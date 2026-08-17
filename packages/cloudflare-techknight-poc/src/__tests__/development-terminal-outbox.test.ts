@@ -8,6 +8,7 @@ import {
 
 class MemoryStorage {
   readonly values = new Map<string, unknown>();
+  readonly alarms: number[] = [];
   alarmAt?: number;
   get<T>(key: string): Promise<T | undefined> { return Promise.resolve(this.values.get(key) as T | undefined); }
   put(key: string, value: unknown): Promise<void> { this.values.set(key, structuredClone(value)); return Promise.resolve(); }
@@ -15,6 +16,7 @@ class MemoryStorage {
   transaction<T>(callback: (transaction: MemoryStorage) => Promise<T>): Promise<T> { return callback(this); }
   setAlarm(value: number | Date): Promise<void> {
     this.alarmAt = value instanceof Date ? value.getTime() : value;
+    this.alarms.push(this.alarmAt);
     return Promise.resolve();
   }
 }
@@ -37,6 +39,60 @@ const submission = {
 } satisfies DevelopmentTerminalOutboxSubmission;
 
 describe("development terminal outbox", () => {
+  it("arms a durable timeout before Container launch and lets the first real terminal callback win", async () => {
+    const storage = new MemoryStorage();
+    const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => handler.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a") as ReturnType<
+      typeof createDevelopmentTerminalOutboxClient
+    > & {
+      arm(input: DevelopmentTerminalOutboxSubmission & { activate_at: string }): Promise<unknown>;
+    };
+    const fallback = {
+      ...submission,
+      activate_at: "2026-08-17T10:03:45.000Z",
+    };
+
+    await expect(client.arm(fallback)).resolves.toMatchObject({ state: "awaiting_terminal" });
+    expect(storage.alarmAt).toBe(Date.parse(fallback.activate_at));
+
+    const actual = {
+      ...submission,
+      payload_hash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      callback_body: JSON.stringify({ job_id: submission.job_id, status: "completed" }),
+      observed_at: "2026-08-17T10:03:40.000Z",
+    };
+    await expect(client.submit(actual)).resolves.toMatchObject({
+      state: "pending",
+      payload_hash: actual.payload_hash,
+      callback_body: actual.callback_body,
+    });
+  });
+
+  it("delivers the armed timeout when no Container callback reaches the proxy", async () => {
+    const storage = new MemoryStorage();
+    const first = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => first.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a") as ReturnType<
+      typeof createDevelopmentTerminalOutboxClient
+    > & {
+      arm(input: DevelopmentTerminalOutboxSubmission & { activate_at: string }): Promise<unknown>;
+    };
+    const fallback = { ...submission, activate_at: "2026-08-17T10:03:45.000Z" };
+    await client.arm(fallback);
+
+    const restarted = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const deliver = vi.fn(async () => ({ state: "completed" as const }));
+    await restarted.alarm(fallback.activate_at, deliver);
+
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(deliver.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      callback_body: fallback.callback_body,
+      payload_hash: fallback.payload_hash,
+    }));
+    await expect(client.read()).resolves.toMatchObject({ state: "completed" });
+  });
+
   it("persists the exact callback before delivery and retries it after an isolate restart", async () => {
     const storage = new MemoryStorage();
     const first = new DevelopmentTerminalOutboxHandler(storage, storage);
@@ -72,5 +128,26 @@ describe("development terminal outbox", () => {
       payload_hash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       callback_body: JSON.stringify({ job_id: submission.job_id, status: "completed" }),
     })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  });
+
+  it("persists retry exhaustion as failed_terminal and stops scheduling alarms at the deadline", async () => {
+    const storage = new MemoryStorage();
+    const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => handler.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a");
+    await client.submit(submission);
+
+    await handler.alarm(submission.terminal_deadline_at, async () => ({
+      state: "retry",
+      error: "UPSTREAM_UNAVAILABLE",
+    }));
+
+    await expect(client.read()).resolves.toMatchObject({
+      state: "failed_terminal",
+      attempts: 1,
+      failure_code: "UPSTREAM_UNAVAILABLE",
+      failed_at: submission.terminal_deadline_at,
+    });
+    expect(storage.alarms).toEqual([Date.parse(submission.observed_at)]);
   });
 });

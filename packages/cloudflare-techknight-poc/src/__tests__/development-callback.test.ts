@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleDevelopmentCallback } from "../development-callback.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 import type { SlackQueueEvent } from "../types.js";
 
 const placement = { placementId: "mana-dev-biz", channelId: "C1", projectCodes: ["mana"], taskWriteEnabled: true,
@@ -119,6 +120,24 @@ describe("development callback", () => {
     expect(complete).toHaveBeenCalledWith("development:job_1", expect.objectContaining({ job_id: "job_1" }),
       { state: "failed" });
     expect(release).not.toHaveBeenCalled();
+  });
+  it("keeps a callback retryable when an earlier fenced Slack delivery still owns the effect", async () => {
+    const release = vi.fn(async () => undefined);
+    const recordDelivery = vi.fn(async () => undefined);
+    const complete = vi.fn(async () => undefined);
+    const response = await handleDevelopmentCallback(request(body), {
+      token: "secret", placements: [placement],
+      resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+      claim: async () => ({ state: "claimed", fence: 2 } as never),
+      recordDelivery, complete, release,
+      post: async () => { throw new TenantBoundaryError("slack_delivery", "REPLY_OWNERSHIP_CONFLICT"); },
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "development_callback_in_progress" });
+    expect(recordDelivery).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
   });
   it.each([
     ["bad token", request(body, "wrong")],
