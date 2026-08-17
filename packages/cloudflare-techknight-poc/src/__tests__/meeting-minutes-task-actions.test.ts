@@ -52,6 +52,31 @@ describe("meeting minutes task cards", () => {
     expect(serialized).toContain("似た既存タスクあり・要確認");
     expect(serialized).not.toContain("mana_meeting_minutes_task_cancel");
   });
+  it("marks legacy cards as expired instead of exposing tenant-ambiguous controls", () => {
+    const legacy = run(); delete legacy.sourceAppId;
+    const card = meetingMinutesTaskCard(legacy); const serialized = JSON.stringify(card.blocks);
+    expect(serialized).toContain("旧形式のため操作できません");
+    expect(serialized).toContain("議事録を再生成してください");
+    expect(serialized).not.toContain("mana_meeting_minutes_task_edit");
+    expect(serialized).not.toContain("mana_meeting_minutes_task_cancel");
+  });
+  it("expires legacy task actions before loading tenant state or invoking effects", async () => {
+    const legacy = run(); delete legacy.sourceAppId; const options = deps(legacy);
+    const legacyPayload = payload("mana_meeting_minutes_task_cancel");
+    legacyPayload.actions[0]!.value = JSON.stringify({ runId: "Ev_Fv", index: 0,
+      organizationId: "tech-knight", channelId: "CDEST" });
+    const response = await handleMeetingMinutesTaskAction(legacyPayload, options);
+    expect(response?.status).toBe(409);
+    await expect(response?.json()).resolves.toEqual({
+      error: "meeting_minutes_task_action_expired",
+      user_message: "このカードは旧形式のため操作できません。議事録を再生成してください。",
+    });
+    expect(options.loadRun).not.toHaveBeenCalled();
+    expect(options.getTask).not.toHaveBeenCalled();
+    expect(options.updateTask).not.toHaveBeenCalled();
+    expect(options.deleteTask).not.toHaveBeenCalled();
+    expect(options.updateCard).not.toHaveBeenCalled();
+  });
   it("deletes only a task in the run destination project and redraws the card", async () => {
     const current = run(); const options = deps(current);
     const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
