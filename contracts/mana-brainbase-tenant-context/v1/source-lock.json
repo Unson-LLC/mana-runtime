@@ -4,7 +4,7 @@
   "cross_contract": {
     "repository": "Unson-LLC/mana-runtime",
     "pull_request": 237,
-    "input_head": "37dd9f5eee783b9b3ba94c31c9c7e32f7afa3351"
+    "input_head": "2bcb70e1b6c7a65c44cc9fa303a3fb64a98b8589"
   },
   "producer_audit_input": {
     "repository": "Unson-LLC/brainbase-unson",
