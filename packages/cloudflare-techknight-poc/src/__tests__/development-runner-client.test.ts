@@ -10,6 +10,7 @@ function input(overrides: Record<string, unknown> = {}) {
     workspaceId: "T1",
     channelId: "C1",
     threadTs: "1.0",
+    credentialLeaseHandle: "lease_handle_abcdefghijklmnopqrstuvwxyz12",
     callbackBaseUrl: "https://worker.example.com",
     createSandbox: vi.fn(),
     ...overrides,
@@ -38,7 +39,7 @@ describe("runCloudflareDevelopmentRequest", () => {
         autoCleanup: false,
         env: {
           IS_SANDBOX: "1",
-          CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+          CLAUDE_CODE_OAUTH_TOKEN: "mana-credential-lease-v1:lease_handle_abcdefghijklmnopqrstuvwxyz12",
         },
       }),
     );
