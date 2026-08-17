@@ -305,6 +305,15 @@ async function callState<T>(stub: DurableObjectStubLike, operation: string, inpu
   return body.result;
 }
 
+async function callOptionalState<T>(
+  stub: DurableObjectStubLike,
+  operation: string,
+  input: unknown,
+): Promise<T | undefined> {
+  const result = await callState<T | null>(stub, operation, input);
+  return result === null ? undefined : result;
+}
+
 export function createDurableTenantStateClient(
   namespace: TenantRuntimeStateNamespace,
   tenantId: string,
@@ -321,7 +330,7 @@ export function createDurableTenantStateClient(
     read: (key) => {
       const partitionKey = partitionKeys.get(key);
       if (!partitionKey) return undefined;
-      return callState(stub(partitionKey), "idempotency/read", { key, partition_key: partitionKey });
+      return callOptionalState(stub(partitionKey), "idempotency/read", { key, partition_key: partitionKey });
     },
     release: (key, claimTenantId, inputPartitionKey) => {
       if (claimTenantId !== tenantId) deny("durable_object", "CROSS_TENANT_CANDIDATE");
@@ -380,7 +389,7 @@ export function createDurableTenantAccountingClient(
         || input.tenant_context.correlation_id !== tenantContext.correlation_id) {
         deny("durable_object", "CROSS_TENANT_CANDIDATE");
       }
-      return callState(stub, "accounting/read-pending", input);
+      return callOptionalState(stub, "accounting/read-pending", input);
     },
     read_pending_result: (input) => {
       if (input.tenant_context.tenant.tenant_id !== tenantId
@@ -389,7 +398,7 @@ export function createDurableTenantAccountingClient(
         || input.tenant_context.correlation_id !== tenantContext.correlation_id) {
         deny("durable_object", "CROSS_TENANT_CANDIDATE");
       }
-      return callState(stub, "accounting/read-pending-result", input);
+      return callOptionalState(stub, "accounting/read-pending-result", input);
     },
     complete: (claim) => callState(stub, "accounting/complete", claim),
     release: (claim) => callState(stub, "accounting/release", claim),
@@ -450,7 +459,7 @@ export class TenantRuntimeStateHandler {
       } else {
         return Response.json({ error: "not_found" }, { status: 404 });
       }
-      return Response.json({ result });
+      return Response.json({ result: result ?? null });
     } catch (error) {
       const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
       return Response.json({ error: code }, { status: code === "UPSTREAM_UNAVAILABLE" ? 503 : 409 });

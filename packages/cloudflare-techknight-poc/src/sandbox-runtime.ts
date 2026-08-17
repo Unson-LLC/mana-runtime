@@ -5,6 +5,7 @@ import type { TenantCredentialRelayNamespace } from "./multitenancy/durable-cred
 import {
   resolveDurableTenantBoundaryContext,
   TENANT_BOUNDARY_HANDLE_HEADER,
+  type AuthorizedTenantBoundaryContext,
   type TenantBoundaryContextNamespace,
 } from "./multitenancy/durable-tenant-boundary.js";
 import {
@@ -22,8 +23,11 @@ import {
   authorizeTenantProviderOutbound,
   tenantCredentialFetchForResolvedContext,
 } from "./multitenancy/tenant-provider-outbound.js";
+import { deliverTenantGatewaySlackMessage } from "./multitenancy/tenant-gateway-delivery.js";
+import { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
+export { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
 
 export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv, GoogleDriveMcpProxyEnv, RuntimeGatewayProxyEnv {
   TECHKNIGHT_SANDBOX: DurableObjectNamespace<TechKnightSandbox>;
@@ -67,7 +71,8 @@ export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
 async function authorizeTenantRuntimeProxy(
   request: Request,
   env: SandboxRuntimeEnv,
-  handler: (request: Request, credentialFetch: typeof fetch, proxyEnv: SandboxRuntimeEnv) => Promise<Response> | Response,
+  handler: (request: Request, credentialFetch: typeof fetch, proxyEnv: SandboxRuntimeEnv,
+    resolved: AuthorizedTenantBoundaryContext) => Promise<Response> | Response,
   credentialHeader?: CredentialInjectionHeader,
 ): Promise<Response> {
   const now = new Date().toISOString();
@@ -95,7 +100,7 @@ async function authorizeTenantRuntimeProxy(
     BRAINBASE_MCP_TOKEN: "tenant-credential-injected",
     GOOGLE_DRIVE_MCP_TOKEN: "tenant-credential-injected",
   };
-  return handler(new Request(request, { headers }), credentialFetch, proxyEnv);
+  return handler(new Request(request, { headers }), credentialFetch, proxyEnv, resolved);
 }
 
 TechKnightSandbox.outboundByHost = {
@@ -106,20 +111,7 @@ TechKnightSandbox.outboundByHost = {
     return authorizeTenantProviderOutbound(request, env, "github-basic");
   },
   [DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv) => {
-    if (!env.DEVELOPMENT_CALLBACK_BASE_URL || !env.DEVELOPMENT_CALLBACK_TOKEN) {
-      return new Response("development_callback_not_configured", { status: 503 });
-    }
-    const base = new URL(env.DEVELOPMENT_CALLBACK_BASE_URL);
-    if (base.protocol !== "https:" || base.username || base.password) {
-      return new Response("development_callback_not_configured", { status: 503 });
-    }
-    const headers = new Headers(request.headers);
-    headers.set("Authorization", `Bearer ${env.DEVELOPMENT_CALLBACK_TOKEN}`);
-    return fetch(`${base.origin}${base.pathname.replace(/\/$/, "")}/development/callback`, {
-      method: request.method,
-      headers,
-      body: request.body,
-    });
+    return proxyDevelopmentCallback(request, env);
   },
   [TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
     request, env, (authorized, credentialFetch, proxyEnv) =>
@@ -143,8 +135,15 @@ TechKnightSandbox.outboundByHost = {
       handleGoogleDriveMcpProxyRequest(authorized, proxyEnv, credentialFetch),
   ),
   [RUNTIME_GATEWAY_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
-    request, env, (authorized, credentialFetch, proxyEnv) =>
-      createRuntimeGatewayProxyHandler(credentialFetch)(authorized, proxyEnv),
+    request, env, (authorized, credentialFetch, proxyEnv, resolved) =>
+      createRuntimeGatewayProxyHandler(credentialFetch, {
+        deliverSlackMessage: (input) => deliverTenantGatewaySlackMessage(
+          input,
+          proxyEnv,
+          resolved,
+          credentialFetch,
+        ),
+      })(authorized, proxyEnv),
   ),
 };
 

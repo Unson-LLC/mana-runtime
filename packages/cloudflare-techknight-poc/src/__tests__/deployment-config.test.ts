@@ -295,6 +295,9 @@ describe("会社別Cloudflare deployment", () => {
   it("keeps Sandbox internet off with only explicit runtime proxy hosts", () => {
     const sandboxPath = fileURLToPath(new URL("../sandbox-runtime.ts", import.meta.url));
     const sandboxRuntime = readFileSync(sandboxPath, "utf8");
+    const runner = readFileSync(fileURLToPath(
+      new URL("../../container/cloudflare-development-runner.mjs", import.meta.url),
+    ), "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
     expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST');
     expect(sandboxRuntime).toContain('"github-basic"');
@@ -316,7 +319,7 @@ describe("会社別Cloudflare deployment", () => {
       "SLACK_EXPECTED_TEAM_ID: resolved.tenant_context.workspace_connection.workspace_id",
     );
     expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
-    expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch)");
+    expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch, {");
     expect(sandboxRuntime).toContain("deliverTenantGatewaySlackMessage");
     expect(runner).toContain('"x-mana-tenant-boundary-handle"');
     expect(runner).toContain('status: "timed_out"');

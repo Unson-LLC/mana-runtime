@@ -82,7 +82,7 @@ async function ensureRepository(deadlineAt) {
 
 async function postResult(job, runner) {
   const status = runner.status === "pr_ready" ? "completed" :
-    (["needs_decision", "needs_input", "failed"].includes(runner.status) ? runner.status : "failed");
+    (["needs_decision", "needs_input", "failed", "timed_out"].includes(runner.status) ? runner.status : "failed");
   const callback = {
     job_id: job.job_id,
     event_id: job.event_id,
@@ -92,12 +92,16 @@ async function postResult(job, runner) {
     thread_ts: job.thread_ts,
     requester_id: job.requester_id,
     status,
+    quota_decision: job.quota_decision,
     summary: String(runner.summary ?? "Development runner failed safely.").slice(0, MAX_OUTPUT),
     ...(typeof runner.storyId === "string" ? { story_id: runner.storyId } : {}),
   };
   const response = await fetch(CALLBACK_PROXY, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE ?? "",
+    },
     body: JSON.stringify(callback),
     signal: AbortSignal.timeout(CALLBACK_TIMEOUT_MS),
   });
@@ -122,7 +126,7 @@ async function main() {
       timeoutMs: remainingTime(runnerDeadlineAt),
     });
     if (result.timedOut) {
-      runner = { status: "failed", summary: "Cloudflare development runner reached its signed tenant-context deadline. No PR or deployment was performed." };
+      runner = { status: "timed_out", summary: "Cloudflare development runner reached its signed tenant-context deadline. No PR or deployment was performed." };
     } else {
       runner = parseRunnerResult(result.stdout);
       if (runner.status === "failed") {
@@ -131,7 +135,8 @@ async function main() {
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "development_runner_failed";
-    runner = { status: "failed", summary: `Cloudflare development runner stopped safely (${reason}). No PR or deployment was performed.` };
+    runner = { status: reason === "development_runner_timed_out" ? "timed_out" : "failed",
+      summary: `Cloudflare development runner stopped safely (${reason}). No PR or deployment was performed.` };
   }
   await postResult(job, runner);
 }

@@ -11,6 +11,7 @@ import {
 import {
   TenantCredentialRelayHandler,
 } from "../multitenancy/durable-credential-relay.js";
+import { TenantRuntimeStateHandler } from "../multitenancy/tenant-runtime-state.js";
 import {
   createIdempotencyKey,
   signTenantContextEnvelope,
@@ -23,8 +24,20 @@ import {
 } from "../multitenancy/index.js";
 import {
   authorizeTenantProviderOutbound,
+  tenantCredentialFetchForResolvedContext,
   type TenantProviderOutboundEnv,
 } from "../multitenancy/tenant-provider-outbound.js";
+import {
+  deliverTenantGatewaySlackMessage,
+  type TenantGatewayDeliveryEnv,
+} from "../multitenancy/tenant-gateway-delivery.js";
+import { proxyDevelopmentCallback } from "../multitenancy/development-callback-proxy.js";
+import {
+  claimDevelopmentJobOwner,
+  developmentOwnerFromContext,
+} from "../multitenancy/development-job-owner.js";
+import { createDurableTenantStateClient } from "../multitenancy/tenant-runtime-state.js";
+import { developmentJobIdForTenantOperation } from "../development-runner-client.js";
 
 const SNAPSHOT: WorkspaceConnectionSnapshot = {
   connection_id: "wsc_01ARZ3NDEKTSV4RRFFQ69G5FAW",
@@ -63,10 +76,12 @@ class MemoryStorage {
   }
   delete(key: string): Promise<boolean> { return Promise.resolve(this.values.delete(key)); }
   setAlarm(_scheduledTime: number | Date): Promise<void> { return Promise.resolve(); }
+  transaction<T>(callback: (transaction: MemoryStorage) => Promise<T>): Promise<T> { return callback(this); }
 }
 
 class TenantRuntimeNamespace {
   readonly handlers = new Map<string, { fetch(request: Request): Promise<Response> }>();
+  readonly storages = new Map<string, MemoryStorage>();
   readonly claimedLeaseIds = new Set<string>();
   readonly providerRequests: Array<{ url: string; authorization: string | null }> = [];
 
@@ -78,9 +93,14 @@ class TenantRuntimeNamespace {
       fetch: (request) => {
         let handler = this.handlers.get(key);
         if (!handler) {
+          let storage = this.storages.get(key);
+          if (!storage) {
+            storage = new MemoryStorage();
+            this.storages.set(key, storage);
+          }
           if (key.startsWith("boundary:")) {
             handler = new TenantBoundaryContextHandler(
-              new MemoryStorage(),
+              storage,
               async (_input: {
                 boundary: BoundaryName;
                 tenant_context: TenantContextEnvelope;
@@ -88,6 +108,8 @@ class TenantRuntimeNamespace {
                 now: string;
               }) => undefined,
             );
+          } else if (key.startsWith("state:") || key.startsWith("accounting:")) {
+            handler = new TenantRuntimeStateHandler(storage);
           } else {
             handler = new TenantCredentialRelayHandler(async (providerRequest) => {
               const request = new Request(providerRequest);
@@ -95,7 +117,9 @@ class TenantRuntimeNamespace {
                 url: request.url,
                 authorization: request.headers.get("authorization"),
               });
-              return Response.json({ ok: true });
+              return Response.json(request.url.startsWith("https://slack.com/")
+                ? { ok: true, ts: "1723800000.000009" }
+                : { ok: true });
             }, {
               claim: async (leaseId) => {
                 if (this.claimedLeaseIds.has(leaseId)) return false;
@@ -288,5 +312,219 @@ describe("sandbox provider credential integration", () => {
         `Basic ${btoa("x-access-token:test-provider-token-4")}`,
       ]);
     expect(namespace.providerRequests.every((request) => !request.authorization?.includes(handle))).toBe(true);
+  });
+
+  it("replays the exact Gateway accounting outbox without posting Slack twice and rejects stale revision", async () => {
+    const { envelope, jwks } = await signedEnvelope();
+    const namespace = new TenantRuntimeNamespace();
+    const accountingPayloads: unknown[] = [];
+    const quotaRequests: unknown[] = [];
+    const leaseRequests: CredentialLeaseRequest[] = [];
+    let activeSnapshot = structuredClone(SNAPSHOT);
+    let failAccounting = true;
+    const upstreamFetch = vi.fn(async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(requestInfo, init);
+      const url = new URL(request.url);
+      if (url.hostname === "authority.example.test") {
+        return Response.json({ result: activeSnapshot });
+      }
+      if (url.hostname === "quota.example.test") {
+        const quota = await request.json() as { unit: string };
+        quotaRequests.push(structuredClone(quota));
+        const now = new Date().toISOString();
+        return Response.json({ result: {
+          message_type: "quota_decision",
+          tenant_id: SNAPSHOT.tenant_id,
+          contract_revision: SNAPSHOT.contract_revision,
+          quota_revision: "19",
+          decision: "allowed",
+          limit: 100,
+          used: 1,
+          remaining: 99,
+          unit: quota.unit,
+          window_started_at: new Date(Date.now() - 60_000).toISOString(),
+          window_ends_at: new Date(Date.now() + 60_000).toISOString(),
+          decided_at: now,
+          failure_code: null,
+        } });
+      }
+      if (url.hostname === "broker.example.test") {
+        const leaseRequest = await request.json() as CredentialLeaseRequest;
+        leaseRequests.push(structuredClone(leaseRequest));
+        const leaseNow = Date.now();
+        return Response.json({ result: {
+          message_type: "credential_lease_response",
+          protocol_version: "1.0",
+          lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB0",
+          contract_revision: leaseRequest.binding.contract_revision,
+          binding: leaseRequest.binding,
+          issued_at: new Date(leaseNow).toISOString(),
+          expires_at: new Date(leaseNow + 59_000).toISOString(),
+          max_uses: 1,
+          lease_token: "test-gateway-provider-token",
+        } });
+      }
+      if (url.hostname === "accounting.example.test") {
+        accountingPayloads.push(await request.json());
+        if (failAccounting) {
+          failAccounting = false;
+          return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
+        }
+        return Response.json({ result: { result_ref: "accounting-result-1" } });
+      }
+      return new Response("unexpected upstream", { status: 500 });
+    });
+    vi.stubGlobal("fetch", upstreamFetch);
+
+    const boundaryHandle = await createDurableTenantBoundaryRegistry(namespace).register({
+      tenant_context: envelope,
+      expected_scope: EXPECTED_SCOPE,
+      now: new Date().toISOString(),
+    });
+    const resolved = await resolveDurableTenantBoundaryContext(
+      namespace,
+      new Request("https://gateway.internal/api/runtime/gateway", {
+        headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: boundaryHandle },
+      }),
+      ["mcp_gateway", "brainbase_proxy"],
+      new Date().toISOString(),
+    );
+    if (resolved instanceof Response) throw new Error("test_tenant_boundary_unavailable");
+    const env = {
+      TENANT_RUNTIME_STATE: namespace,
+      MANA_DEPLOYMENT_PROFILE: "shared_cloud",
+      BRAINBASE_TENANT_AUTHORITY_URL: "https://authority.example.test/runtime",
+      BRAINBASE_CREDENTIAL_BROKER_URL: "https://broker.example.test/runtime",
+      BRAINBASE_QUOTA_URL: "https://quota.example.test/runtime",
+      BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test/runtime",
+      BRAINBASE_RUNTIME_API_TOKEN: "test-runtime-auth-placeholder",
+      BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
+      BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
+    } as unknown as TenantGatewayDeliveryEnv;
+    const input = {
+      requestId: "gateway-request-1",
+      callIndex: 0,
+      channel: "C-A",
+      threadTs: "1723800000.000001",
+      text: "canonical gateway delivery",
+    };
+    const deliver = () => deliverTenantGatewaySlackMessage(
+      input,
+      env,
+      resolved,
+      tenantCredentialFetchForResolvedContext(env, resolved),
+    );
+
+    await expect(deliver()).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+    await expect(deliver()).resolves.toEqual({ channel: "C-A", ts: "1723800000.000009" });
+
+    expect(namespace.providerRequests.filter((entry) => entry.url.includes("chat.postMessage"))).toHaveLength(1);
+    expect(leaseRequests).toHaveLength(1);
+    expect(quotaRequests).toHaveLength(1);
+    expect(accountingPayloads).toHaveLength(2);
+    expect(accountingPayloads[1]).toEqual(accountingPayloads[0]);
+    expect(JSON.stringify(accountingPayloads)).not.toContain("test-gateway-provider-token");
+
+    activeSnapshot = { ...activeSnapshot, connection_revision: "8" };
+    await expect(deliverTenantGatewaySlackMessage(
+      { ...input, requestId: "gateway-request-stale", callIndex: 1 },
+      env,
+      resolved,
+      tenantCredentialFetchForResolvedContext(env, resolved),
+    )).rejects.toMatchObject({ code: "WORKSPACE_CONNECTION_STALE_REVISION" });
+    expect(namespace.providerRequests.filter((entry) => entry.url.includes("chat.postMessage"))).toHaveLength(1);
+    expect(accountingPayloads).toHaveLength(2);
+  });
+
+  it("binds development callbacks to a durable tenant job owner across isolate restarts", async () => {
+    const { envelope } = await signedEnvelope();
+    const namespace = new TenantRuntimeNamespace();
+    const handle = await createDurableTenantBoundaryRegistry(namespace).register({
+      tenant_context: envelope,
+      expected_scope: EXPECTED_SCOPE,
+      now: new Date().toISOString(),
+    });
+    const jobId = await developmentJobIdForTenantOperation({
+      eventId: envelope.slack.event_id,
+      tenantId: envelope.tenant.tenant_id,
+      connectionId: envelope.workspace_connection.connection_id,
+      operationId: envelope.operation_id,
+      workspaceId: envelope.workspace_connection.workspace_id,
+      channelId: envelope.slack.channel_id,
+      threadTs: envelope.slack.thread_ts ?? "",
+    });
+    const owner = await developmentOwnerFromContext({
+      tenant_context: envelope,
+      jobId,
+      eventId: envelope.slack.event_id,
+      requesterId: envelope.actor.authenticated_subject_id,
+      placementId: "placement-a",
+      quotaDecision: "allowed",
+    });
+    const ownerStore = createDurableTenantStateClient(namespace, owner.tenantId);
+    await expect(claimDevelopmentJobOwner(ownerStore, owner, new Date().toISOString()))
+      .resolves.toMatchObject({ disposition: "claimed" });
+
+    // Drop all handler instances to model a new Worker/DO isolate while retaining
+    // the Durable Object storage that owns the callback claim.
+    namespace.handlers.clear();
+    const downstream = vi.fn(async (_requestInfo: RequestInfo | URL, _init?: RequestInit) => Response.json({ ok: true }));
+    const callbackBody = {
+      job_id: jobId,
+      event_id: envelope.slack.event_id,
+      placement_id: "placement-a",
+      workspace_id: envelope.workspace_connection.workspace_id,
+      channel_id: envelope.slack.channel_id,
+      thread_ts: envelope.slack.thread_ts,
+      requester_id: envelope.actor.authenticated_subject_id,
+      status: "completed",
+      summary: "done",
+      quota_decision: "allowed",
+    } as const;
+    const invoke = (body: object, boundaryHandle = handle) => proxyDevelopmentCallback(
+      new Request("https://development-callback.internal/callback", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [TENANT_BOUNDARY_HANDLE_HEADER]: boundaryHandle,
+        },
+        body: JSON.stringify(body),
+      }),
+      {
+        DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
+        DEVELOPMENT_CALLBACK_TOKEN: "test-callback-token-placeholder",
+        TENANT_RUNTIME_STATE: namespace,
+      },
+      downstream,
+    );
+
+    await expect(invoke(callbackBody).then((response) => response.json()))
+      .resolves.toEqual({ ok: true });
+    namespace.handlers.clear();
+    await expect(invoke(callbackBody).then((response) => response.json()))
+      .resolves.toEqual({ ok: true, duplicate: true });
+    expect(downstream).toHaveBeenCalledTimes(1);
+    const forwarded = downstream.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(forwarded.headers).get("authorization"))
+      .toBe("Bearer test-callback-token-placeholder");
+
+    const unknownJob = await developmentJobIdForTenantOperation({
+      eventId: "Ev-A-unknown",
+      tenantId: envelope.tenant.tenant_id,
+      connectionId: envelope.workspace_connection.connection_id,
+      operationId: envelope.operation_id,
+      workspaceId: envelope.workspace_connection.workspace_id,
+      channelId: envelope.slack.channel_id,
+      threadTs: envelope.slack.thread_ts ?? "",
+    });
+    const unknown = await invoke({ ...callbackBody, event_id: "Ev-A-unknown", job_id: unknownJob });
+    expect(unknown.status).toBe(403);
+    expect(await unknown.json()).toEqual({ error: "development_callback_owner_missing" });
+    expect(downstream).toHaveBeenCalledTimes(1);
+
+    const crossTenant = await invoke({ ...callbackBody, workspace_id: "T-B" });
+    expect(crossTenant.status).toBe(403);
+    expect(await crossTenant.json()).toEqual({ error: "development_callback_forbidden" });
+    expect(downstream).toHaveBeenCalledTimes(1);
   });
 });

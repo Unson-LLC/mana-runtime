@@ -1,10 +1,12 @@
 import type { RuntimePlacement } from "./runtime-config.js";
 import type { SlackQueueEvent } from "./types.js";
+import type { QuotaDecision } from "./multitenancy/contracts.js";
 
-type DevelopmentStatus = "completed" | "needs_decision" | "needs_input" | "failed";
-interface DevelopmentCallbackPayload {
+export type DevelopmentStatus = "completed" | "needs_decision" | "needs_input" | "failed" | "timed_out";
+export interface DevelopmentCallbackPayload {
   job_id: string; event_id: string; placement_id: string; workspace_id: string; channel_id: string;
   thread_ts: string; requester_id: string; status: DevelopmentStatus; summary: string;
+  quota_decision: QuotaDecision["decision"];
   story_id?: string; pr_url?: string;
 }
 
@@ -13,13 +15,15 @@ function safeEqual(left: string, right: string): boolean {
   for (let index = 0; index < length; index += 1) difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
   return difference === 0;
 }
-function parsePayload(value: unknown): DevelopmentCallbackPayload | undefined {
+export function parseDevelopmentCallbackPayload(value: unknown): DevelopmentCallbackPayload | undefined {
   if (!value || typeof value !== "object") return undefined;
   const p = value as Record<string, unknown>;
   for (const key of ["job_id", "event_id", "placement_id", "workspace_id", "channel_id", "thread_ts", "requester_id", "status", "summary"] as const) {
     if (typeof p[key] !== "string" || !p[key]) return undefined;
   }
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(p.job_id as string) || !["completed", "needs_decision", "needs_input", "failed"].includes(p.status as string)) return undefined;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(p.job_id as string)
+    || !["completed", "needs_decision", "needs_input", "failed", "timed_out"].includes(p.status as string)
+    || !["allowed", "warning"].includes(p.quota_decision as string)) return undefined;
   if ((p.summary as string).length > 12_000) return undefined;
   if (p.story_id !== undefined && (typeof p.story_id !== "string" || p.story_id.length > 200)) return undefined;
   if (p.pr_url !== undefined) {
@@ -43,7 +47,7 @@ export async function handleDevelopmentCallback(request: Request, options: {
 }): Promise<Response> {
   const bearer = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? "";
   if (!options.token || !safeEqual(bearer, options.token)) return Response.json({ error: "development_callback_unauthorized" }, { status: 401 });
-  const payload = parsePayload(await request.json().catch(() => undefined));
+  const payload = parseDevelopmentCallbackPayload(await request.json().catch(() => undefined));
   if (!payload) return Response.json({ error: "development_callback_invalid" }, { status: 400 });
   const placement = options.placements.find((candidate) => candidate.placementId === payload.placement_id);
   const allowed = placement?.developmentEnabled === true

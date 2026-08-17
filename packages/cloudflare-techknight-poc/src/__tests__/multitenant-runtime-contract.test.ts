@@ -1022,7 +1022,7 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(sandbox).toContain("createTaskSearchProxyHandler(credentialFetch)");
     expect(sandbox).toContain("createTaskWriteProxyHandler(credentialFetch)");
     expect(sandbox).toContain("handleBrainbaseMcpProxyRequest(authorized, proxyEnv, credentialFetch)");
-    expect(sandbox).toContain("createRuntimeGatewayProxyHandler(credentialFetch)");
+    expect(sandbox).toContain("createRuntimeGatewayProxyHandler(credentialFetch, {");
     expect(sandbox).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
   });
 

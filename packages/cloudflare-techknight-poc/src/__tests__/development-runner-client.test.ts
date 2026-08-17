@@ -19,7 +19,7 @@ function input(overrides: Record<string, unknown> = {}) {
     contextExpiresAt: "2026-08-17T10:04:05.000Z",
     now: () => "2026-08-17T10:00:00.000Z",
     callbackBaseUrl: "https://worker.example.com",
-    quotaDecision: "allowed",
+    quotaDecision: "allowed" as const,
     registerJobOwner: vi.fn(async () => ({
       created: true,
       release: vi.fn(async () => undefined),

@@ -7,6 +7,7 @@ import {
 } from "./accounting.js";
 import type {
   ExpectedTenantScope,
+  OperationOutcome,
   QuotaDecision,
   TenantContextEnvelope,
   WorkspaceConnectionSnapshot,
@@ -22,6 +23,7 @@ import type { TenantRuntimeBoundaryVerifier } from "./runtime-boundaries.js";
 interface RuntimeProcessResult {
   outcome?: string;
   responseTs?: string;
+  accounting?: "deferred" | "already_recorded";
 }
 
 function quotaDisposition(code: string): QuotaDecision["decision"] {
@@ -38,8 +40,8 @@ function errorCode(error: unknown): string {
   return "UPSTREAM_UNAVAILABLE";
 }
 
-function operationReceiptId(tenantContext: TenantContextEnvelope): Promise<string> {
-  const seed = `${tenantContext.correlation_id}:${tenantContext.operation_id}`;
+function operationReceiptId(tenantContext: TenantContextEnvelope, effectId?: string): Promise<string> {
+  const seed = `${tenantContext.correlation_id}:${tenantContext.operation_id}:${effectId ?? "operation"}`;
   return createDeterministicSharedId("receipt_", `${seed}:receipt`);
 }
 
@@ -51,14 +53,15 @@ async function recordOperation(input: {
   accounting: TenantAccountingHttpClient;
   quota_decision: QuotaDecision["decision"];
   unit: string;
-  outcome: "succeeded" | "failed";
+  outcome: OperationOutcome;
   failure_code: string | null;
   response_ts?: string;
   operation_result?: unknown;
+  accounting_effect_id?: string;
   now: string;
 }): Promise<void> {
-  const seed = `${input.tenant_context.correlation_id}:${input.tenant_context.operation_id}`;
-  const receiptId = await operationReceiptId(input.tenant_context);
+  const seed = `${input.tenant_context.correlation_id}:${input.tenant_context.operation_id}:${input.accounting_effect_id ?? "operation"}`;
+  const receiptId = await operationReceiptId(input.tenant_context, input.accounting_effect_id);
   const recordedAt = await input.ledger.reserve_timestamp({
     tenant_context: input.tenant_context,
     receipt_id: receiptId,
@@ -131,11 +134,12 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
   ledger: TenantAccountingLedgerStore;
   quota_unit: string;
   now(): string;
-  process(): Promise<R>;
+  process(quotaDecision: QuotaDecision): Promise<R>;
   replay_after_accounting?(): Promise<R>;
+  accounting_effect_id?: string;
 }): Promise<R> {
   if (!input.quota_unit.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
-  const receiptId = await operationReceiptId(input.tenant_context);
+  const receiptId = await operationReceiptId(input.tenant_context, input.accounting_effect_id);
   const pending = await input.ledger.read_pending({
     tenant_context: input.tenant_context,
     receipt_id: receiptId,
@@ -187,13 +191,14 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       unit: input.quota_unit,
       outcome: "failed",
       failure_code: code,
+      ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
       now: input.now(),
     });
     throw error;
   }
   let result: R;
   try {
-    result = await input.process();
+    result = await input.process(quotaDecision);
   } catch (error) {
     const code = errorCode(error);
     await recordOperation({
@@ -206,10 +211,12 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       unit: input.quota_unit,
       outcome: "failed",
       failure_code: code,
+      ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
       now: input.now(),
     });
     throw error;
   }
+  if (result.accounting === "deferred" || result.accounting === "already_recorded") return result;
   await recordOperation({
     tenant_context: input.tenant_context,
     expected_scope: input.expected_scope,
@@ -222,9 +229,27 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     failure_code: null,
     ...(result.responseTs ? { response_ts: result.responseTs } : {}),
     operation_result: result,
+    ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
     now: input.now(),
   });
   return result;
+}
+
+export async function recordTenantRuntimeTerminalOperation(input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  verifier: TenantRuntimeBoundaryVerifier;
+  accounting: TenantAccountingHttpClient;
+  ledger: TenantAccountingLedgerStore;
+  quota_decision: QuotaDecision["decision"];
+  unit: string;
+  outcome: OperationOutcome;
+  failure_code: string | null;
+  response_ts?: string;
+  now: string;
+  accounting_effect_id?: string;
+}): Promise<void> {
+  await recordOperation({ ...input });
 }
 
 async function payloadHash(value: unknown): Promise<string> {

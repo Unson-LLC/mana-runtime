@@ -18,6 +18,15 @@ export interface RuntimeGatewayProxyEnv extends TaskWriteProxyEnv {
 }
 
 type GatewayBody = { tool: string; arguments: Record<string, unknown>; request_id: string; call_index?: number };
+export interface RuntimeGatewayProxyDependencies {
+  deliverSlackMessage?(input: {
+    requestId: string;
+    callIndex: number;
+    channel: string;
+    threadTs?: string;
+    text: string;
+  }): Promise<{ channel: string; ts?: string }>;
+}
 const responseError = (error: string, status: number) => Response.json({ error }, { status });
 
 function decodePlacementId(token: string): string {
@@ -108,7 +117,10 @@ function authorizedTaskChannels(source: RuntimePlacement, placements: readonly R
   return { channels, scope: { mode: "authorized_channels" as const } };
 }
 
-export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch) {
+export function createRuntimeGatewayProxyHandler(
+  fetchImpl: typeof fetch = fetch,
+  dependencies: RuntimeGatewayProxyDependencies = {},
+) {
   return async (request: Request, env: RuntimeGatewayProxyEnv): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method !== "POST" || url.protocol !== "https:" || url.hostname !== RUNTIME_GATEWAY_PROXY_HOST || url.pathname !== RUNTIME_GATEWAY_PATH) return responseError("not_found", 404);
@@ -163,11 +175,18 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
       if (body.tool === "send_message") {
         const args = body.arguments;
         const delivery = placement.deliveryScopes ?? [];
-        if (args.connector !== "slack" || typeof args.channel !== "string" || !delivery.some((scope) => scope.connector === "slack" && scope.channelId === args.channel) || typeof args.text !== "string" || !args.text.trim() || !env.SLACK_BOT_TOKEN) return responseError("gateway_delivery_denied", 403);
-        const upstream = await fetchImpl("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: args.channel, text: args.text.trim(), ...(typeof args.thread === "string" ? { thread_ts: args.thread } : {}) }) });
-        const payload = await upstream.json().catch(() => null) as { ok?: boolean; ts?: string; error?: string } | null;
-        if (!upstream.ok || !payload?.ok) return responseError("gateway_delivery_failed", 502);
-        return Response.json({ ok: true, channel: args.channel, ts: payload.ts });
+        if (args.connector !== "slack" || typeof args.channel !== "string" || !delivery.some((scope) => scope.connector === "slack" && scope.channelId === args.channel) || typeof args.text !== "string" || !args.text.trim()) return responseError("gateway_delivery_denied", 403);
+        if (!dependencies.deliverSlackMessage) return responseError("gateway_delivery_not_configured", 503);
+        const delivered = await dependencies.deliverSlackMessage({
+          requestId: body.request_id,
+          callIndex: Number.isInteger(body.call_index) && Number(body.call_index) >= 0
+            ? Number(body.call_index)
+            : 0,
+          channel: args.channel,
+          ...(typeof args.thread === "string" ? { threadTs: args.thread } : {}),
+          text: args.text.trim(),
+        });
+        return Response.json({ ok: true, channel: delivered.channel, ...(delivered.ts ? { ts: delivered.ts } : {}) });
       }
       if (body.tool === "list_sessions" || body.tool === "get_session") {
         if (!env.RUNTIME_SESSION_REGISTRY) return responseError("gateway_not_configured", 503);

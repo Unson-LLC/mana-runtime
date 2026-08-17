@@ -37,7 +37,7 @@ function deploymentProfile(value: string | undefined): DeploymentProfileName {
   return value;
 }
 
-async function resolveVerificationKey(
+export async function resolveTenantProviderVerificationKey(
   env: TenantProviderOutboundEnv,
   keyId: string,
 ): Promise<CryptoKey | undefined> {
@@ -61,12 +61,8 @@ async function resolveVerificationKey(
   }
 }
 
-export function tenantCredentialFetchForResolvedContext(
-  env: TenantProviderOutboundEnv,
-  resolved: Exclude<Awaited<ReturnType<typeof resolveDurableTenantBoundaryContext>>, Response>,
-  credentialHeader?: CredentialInjectionHeader,
-): typeof fetch {
-  const clients = createTenantRuntimeHttpClients({
+export function tenantRuntimeHttpClientsForEnv(env: TenantProviderOutboundEnv) {
+  return createTenantRuntimeHttpClients({
     deployment_profile: deploymentProfile(env.MANA_DEPLOYMENT_PROFILE),
     tenant_authority_url: requiredBinding(env.BRAINBASE_TENANT_AUTHORITY_URL),
     credential_broker_url: requiredBinding(env.BRAINBASE_CREDENTIAL_BROKER_URL),
@@ -75,6 +71,14 @@ export function tenantCredentialFetchForResolvedContext(
     api_token: requiredBinding(env.BRAINBASE_RUNTIME_API_TOKEN),
     timeout_ms: Number(env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000"),
   });
+}
+
+export function tenantCredentialFetchForResolvedContext(
+  env: TenantProviderOutboundEnv,
+  resolved: Exclude<Awaited<ReturnType<typeof resolveDurableTenantBoundaryContext>>, Response>,
+  credentialHeader?: CredentialInjectionHeader,
+): typeof fetch {
+  const clients = tenantRuntimeHttpClientsForEnv(env);
   return createTenantCredentialFetch({
     envelope: resolved.tenant_context,
     expected_scope: resolved.expected_scope,
@@ -84,7 +88,7 @@ export function tenantCredentialFetchForResolvedContext(
     read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
       resolved.tenant_context.workspace_connection.connection_id,
     ),
-    resolve_verification_key: (keyId) => resolveVerificationKey(env, keyId),
+    resolve_verification_key: (keyId) => resolveTenantProviderVerificationKey(env, keyId),
     now: () => new Date().toISOString(),
     credential_header: credentialHeader,
   });

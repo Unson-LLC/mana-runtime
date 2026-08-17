@@ -108,12 +108,14 @@ import {
 import {
   executeTenantRuntimeOperation,
   postTenantSlackReply,
+  recordTenantRuntimeTerminalOperation,
 } from "./multitenancy/production-consumer.js";
 import {
   REQUIRED_TENANT_CAPABILITIES,
   type BoundaryName,
   type DeploymentProfileName,
   type ExpectedTenantScope,
+  type QuotaDecision,
   type TenantContextEnvelope,
 } from "./multitenancy/contracts.js";
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
@@ -126,8 +128,14 @@ import {
 } from "./multitenancy/durable-credential-relay.js";
 import {
   createDurableTenantBoundaryRegistry,
+  resolveDurableTenantBoundaryContext,
   TenantBoundaryContextHandler,
 } from "./multitenancy/durable-tenant-boundary.js";
+import {
+  claimDevelopmentJobOwner,
+  developmentTenantContextHash,
+  releaseDevelopmentJobOwner,
+} from "./multitenancy/development-job-owner.js";
 import { assessTenantRuntimeReadiness } from "./multitenancy/runtime-readiness.js";
 import { handleSlackInstallationLifecycleRequest } from "./multitenancy/slack-installation-entrypoint.js";
 import { SlackInstallationAdapter } from "./multitenancy/workspace-connection.js";
@@ -1283,50 +1291,65 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      const callbackBoundary = await resolveDurableTenantBoundaryContext(
+        env.TENANT_RUNTIME_STATE,
+        request,
+        ["mcp_gateway", "brainbase_proxy"],
+        new Date().toISOString(),
+      );
+      if (callbackBoundary instanceof Response) return callbackBoundary;
+      const callbackClients = tenantRuntimeClients(env);
+      const callbackVerifier = new TenantRuntimeBoundaryVerifier({
+        read_authoritative_snapshot: (connectionId) => callbackClients.authority.read_workspace_connection(connectionId),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+      });
       let callbackWorkspace: DurableObjectStub<TechKnightWorkspace> | undefined;
-      let callbackTenantBody: TenantQueueBody<SlackQueueEvent> | undefined;
-      let callbackClients: ReturnType<typeof tenantRuntimeClients> | undefined;
       return handleDevelopmentCallback(request, {
         token: env.DEVELOPMENT_CALLBACK_TOKEN, placements,
         resolve: async (event) => {
-          const clients = tenantRuntimeClients(env);
-          const resolved = await resolveSlackWorkerIngress({
-            identity: {
-              provider: "slack",
-              app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
-              workspace_id: event.workspaceId,
-              event_id: event.eventId,
-              channel_id: event.channelId,
-              thread_ts: event.threadTs,
-              requester_id: event.userId ?? "",
-            },
-            required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
-              .split(",").map((value) => value.trim()).filter(Boolean),
-            required_authorization: {
-              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
-              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
-            },
-            authority: clients.authority,
+          if (event.workspaceId !== callbackBoundary.tenant_context.workspace_connection.workspace_id
+            || event.channelId !== callbackBoundary.tenant_context.slack.channel_id
+            || event.threadTs !== callbackBoundary.tenant_context.slack.thread_ts
+            || event.userId !== callbackBoundary.tenant_context.actor.authenticated_subject_id) {
+            deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+          }
+          await callbackVerifier.validate({
+            boundary: "worker_ingress",
+            tenant_context: callbackBoundary.tenant_context,
+            expected_scope: callbackBoundary.expected_scope,
             now: event.receivedAt,
-            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
           });
-          const canonicalEvent = { ...event, tenantId: resolved.tenant_context.tenant.tenant_id };
-          callbackTenantBody = {
-            schema_version: "1.0",
-            tenant_context: resolved.tenant_context,
-            payload: canonicalEvent,
-          };
-          callbackClients = clients;
-          return canonicalEvent;
+          return { ...event, tenantId: callbackBoundary.tenant_context.tenant.tenant_id };
         },
         claim: async (event) => {
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           callbackWorkspace = env.TECHKNIGHT_WORKSPACE.get(id);
           return callbackWorkspace.claimDevelopmentCallback(event.eventId);
         },
-        complete: async (eventId, responseTs) => {
+        complete: async (eventId, responseTs, payload) => {
           if (!callbackWorkspace) throw new Error("development_callback_workspace_missing");
+          const terminal = payload.status === "failed"
+            ? { outcome: "failed" as const, failureCode: "DEVELOPMENT_RUNNER_FAILED" }
+            : payload.status === "timed_out"
+              ? { outcome: "timed_out" as const, failureCode: "DEVELOPMENT_RUNNER_TIMED_OUT" }
+              : { outcome: "succeeded" as const, failureCode: null };
+          await recordTenantRuntimeTerminalOperation({
+            tenant_context: callbackBoundary.tenant_context,
+            expected_scope: callbackBoundary.expected_scope,
+            verifier: callbackVerifier,
+            accounting: callbackClients.accounting,
+            ledger: createDurableTenantAccountingClient(
+              env.TENANT_RUNTIME_STATE,
+              callbackBoundary.tenant_context,
+            ),
+            quota_decision: payload.quota_decision,
+            unit: "container_seconds",
+            outcome: terminal.outcome,
+            failure_code: terminal.failureCode,
+            response_ts: responseTs,
+            now: new Date().toISOString(),
+            accounting_effect_id: `development_terminal:${payload.job_id}`,
+          });
           await callbackWorkspace.completeDevelopmentCallback(eventId, responseTs);
         },
         release: async (eventId) => {
@@ -1334,40 +1357,37 @@ export default {
           await callbackWorkspace.releaseDevelopmentCallback(eventId);
         },
         post: (event, text) => {
-          if (!callbackTenantBody || !callbackClients
-            || callbackTenantBody.payload.eventId !== event.eventId) {
+          if (event.tenantId !== callbackBoundary.tenant_context.tenant.tenant_id) {
             deny("slack_delivery", "CROSS_TENANT_CANDIDATE");
           }
-          const tenantBody = callbackTenantBody;
-          const clients = callbackClients;
-          const expectedScope = expectedTenantQueueScope(env, tenantBody);
           const now = new Date().toISOString();
           const tenantCredentialFetch = createTenantCredentialFetch({
-            envelope: tenantBody.tenant_context,
-            expected_scope: expectedScope,
-            broker: clients.credential_broker,
+            envelope: callbackBoundary.tenant_context,
+            expected_scope: callbackBoundary.expected_scope,
+            broker: callbackClients.credential_broker,
             credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
             credential_relay: env.TENANT_RUNTIME_STATE,
-            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-              tenantBody.tenant_context.workspace_connection.connection_id),
+            read_authoritative_snapshot: () => callbackClients.authority.read_workspace_connection(
+              callbackBoundary.tenant_context.workspace_connection.connection_id),
             resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
             now: () => new Date().toISOString(),
           });
           return postTenantSlackReply({
-            tenant_context: tenantBody.tenant_context,
-            expected_scope: expectedScope,
+            tenant_context: callbackBoundary.tenant_context,
+            expected_scope: callbackBoundary.expected_scope,
             ownership: createDurableTenantStateClient(
               env.TENANT_RUNTIME_STATE,
-              tenantBody.tenant_context.tenant.tenant_id,
+              callbackBoundary.tenant_context.tenant.tenant_id,
             ),
-            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-              tenantBody.tenant_context.workspace_connection.connection_id,
+            read_authoritative_snapshot: () => callbackClients.authority.read_workspace_connection(
+              callbackBoundary.tenant_context.workspace_connection.connection_id,
             ),
             resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
             now,
             retention_until: tenantRetentionUntil(now),
             event,
             text,
+            effect_id: `development_delivery:${event.eventId}`,
             post: () => postSlackReply(event, text, {
               slackBotToken: "tenant-credential-injected",
               fetch: tenantCredentialFetch,
@@ -2085,8 +2105,13 @@ export default {
                   }),
                 });
               };
-              const runTenantOperation = <R extends { outcome?: string; responseTs?: string }>(
-                process: () => Promise<R>,
+              const runTenantOperation = <R extends {
+                outcome?: string;
+                responseTs?: string;
+                accounting?: "deferred" | "already_recorded";
+              }>(
+                process: (quotaDecision: QuotaDecision) => Promise<R>,
+                quotaUnit = "model_tokens",
               ) => executeTenantRuntimeOperation({
                 tenant_context: tenantContext,
                 expected_scope: expectedScope,
@@ -2094,7 +2119,7 @@ export default {
                 quota: clients.quota,
                 accounting: clients.accounting,
                 ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
-                quota_unit: "model_tokens",
+                quota_unit: quotaUnit,
                 now: tenantConsumerOptions.now,
                 process,
               });
@@ -2129,7 +2154,7 @@ export default {
                     responseTs: completedReply.responseTs,
                   }));
                 }
-                return runTenantOperation(async () => {
+                return runTenantOperation(async (quotaDecision) => {
                   const text = await executeRuntimeControlCommand({
                   fs: workspace.fs,
                   command: controlCommand,
@@ -2181,7 +2206,7 @@ export default {
                     verifier,
                     now: tenantConsumerOptions.now(),
                     release: "on_expiration",
-                    execute: (tenantBoundaryHandle) => runCloudflareDevelopmentRequest({
+                    execute: async (tenantBoundaryHandle) => runCloudflareDevelopmentRequest({
                       request,
                       placementId: placement.placementId,
                       requesterId: event.userId!,
@@ -2191,11 +2216,26 @@ export default {
                       threadTs: event.threadTs,
                       tenantId: tenantBody.tenant_context.tenant.tenant_id,
                       connectionId: tenantBody.tenant_context.workspace_connection.connection_id,
+                      connectionRevision: tenantBody.tenant_context.workspace_connection.connection_revision,
                       operationId: tenantBody.tenant_context.operation_id,
+                      contextHash: await developmentTenantContextHash(tenantBody.tenant_context),
                       tenantBoundaryHandle,
                       contextExpiresAt: tenantBody.tenant_context.expires_at,
+                      quotaDecision: quotaDecision.decision,
                       now: tenantConsumerOptions.now,
                       callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
+                      registerJobOwner: async (owner) => {
+                        const store = createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, owner.tenantId);
+                        const claimed = await claimDevelopmentJobOwner(store, owner, tenantConsumerOptions.now());
+                        return {
+                          created: claimed.disposition === "claimed",
+                          release: async () => {
+                            if (claimed.disposition === "claimed") {
+                              await releaseDevelopmentJobOwner(store, owner, claimed.claim);
+                            }
+                          },
+                        };
+                      },
                       createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
                     }),
                   }),
@@ -2207,8 +2247,10 @@ export default {
                     completedAt: new Date().toISOString(),
                   });
                   await markWorkspaceEngaged(workspace.fs, new Date().toISOString());
-                  return { outcome: "replied" as const, responseTs };
-                });
+                  return controlCommand.name === "develop"
+                    ? { outcome: "accepted" as const, responseTs, accounting: "deferred" as const }
+                    : { outcome: "replied" as const, responseTs };
+                }, controlCommand.name === "develop" ? "container_seconds" : "model_tokens");
               }
               const hydrateThreadContext = async (input: SlackQueueEvent) => {
                 const hydrated = await hydrateSlackQueueEventThreadContext(input, {

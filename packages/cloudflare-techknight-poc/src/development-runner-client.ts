@@ -1,6 +1,8 @@
 import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
 import { tenantPartitionKey } from "./multitenancy/isolation.js";
 import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
+import type { DevelopmentJobOwner } from "./multitenancy/development-job-owner.js";
+import type { QuotaDecision } from "./multitenancy/contracts.js";
 
 const DEVELOPMENT_PROCESS_MAX_TIMEOUT_MS = 4_800_000;
 const TENANT_CONTEXT_SHUTDOWN_RESERVE_MS = 5_000;
@@ -25,7 +27,7 @@ function authenticatedHttpsBase(value: string | undefined): URL {
   return url;
 }
 
-async function jobIdForTenantOperation(input: {
+export async function developmentJobIdForTenantOperation(input: {
   eventId: string;
   tenantId: string;
   connectionId: string;
@@ -67,11 +69,18 @@ export async function runCloudflareDevelopmentRequest(input: {
   threadTs: string;
   tenantId: string;
   connectionId: string;
+  connectionRevision?: string;
   operationId: string;
+  contextHash?: string;
   tenantBoundaryHandle: string;
   contextExpiresAt: string;
+  quotaDecision: QuotaDecision["decision"];
   now(): string;
   callbackBaseUrl?: string;
+  registerJobOwner(owner: DevelopmentJobOwner): Promise<{
+    created: boolean;
+    release(): Promise<void>;
+  }>;
   createSandbox: (id: string) => DevelopmentSandbox;
 }): Promise<string> {
   const callback = authenticatedHttpsBase(input.callbackBaseUrl);
@@ -85,7 +94,25 @@ export async function runCloudflareDevelopmentRequest(input: {
   if (!Number.isFinite(contextExpiresAt) || !Number.isFinite(observedAt) || runnerTimeout <= 0) {
     throw new Error("development_tenant_context_expiring");
   }
-  const jobId = await jobIdForTenantOperation(input);
+  const jobId = await developmentJobIdForTenantOperation(input);
+  const owner = await input.registerJobOwner({
+    tenantId: input.tenantId,
+    connectionId: input.connectionId,
+    connectionRevision: input.connectionRevision ?? "",
+    operationId: input.operationId,
+    eventId: input.eventId,
+    workspaceId: input.workspaceId,
+    channelId: input.channelId,
+    threadTs: input.threadTs,
+    requesterId: input.requesterId,
+    placementId: input.placementId,
+    jobId,
+    quotaDecision: input.quotaDecision,
+    contextHash: input.contextHash ?? "",
+  });
+  if (!owner.created) {
+    return `開発依頼を受け付けました。job: ${jobId}\n完了または判断が必要になった時点で、このスレッドへ通知します。`;
+  }
   // A development operation has a deterministic job id for idempotent user
   // feedback, but every launch receives a fresh Container identity. This makes
   // cross-operation and cross-tenant Container reuse structurally impossible.
@@ -103,6 +130,7 @@ export async function runCloudflareDevelopmentRequest(input: {
     thread_ts: input.threadTs,
     callback_url: `${callback.origin}${callbackPath}/development/callback`,
     runner_timeout_ms: runnerTimeout,
+    quota_decision: input.quotaDecision,
   };
 
   try {
@@ -125,6 +153,7 @@ export async function runCloudflareDevelopmentRequest(input: {
       },
     );
   } catch {
+    await owner.release();
     throw new Error("development_runner_failed");
   }
 

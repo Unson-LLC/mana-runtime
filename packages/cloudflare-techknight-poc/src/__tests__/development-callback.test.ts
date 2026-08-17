@@ -6,7 +6,7 @@ const placement = { placementId: "mana-dev-biz", channelId: "C1", projectCodes: 
   developmentEnabled: true, audience: { type: "operator" as const, allowedUserIds: ["U1"] },
   deliveryScopes: [{ connector: "slack" as const, channelId: "C1" }] };
 function request(body: Record<string, unknown>, token = "secret") { return new Request("https://worker.test/development/callback", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) }); }
-const body = { job_id: "job_1", event_id: "Ev1", placement_id: "mana-dev-biz", workspace_id: "T1", channel_id: "C1", thread_ts: "1.0", requester_id: "U1", status: "completed", summary: "完了", story_id: "STR-1", pr_url: "https://github.com/x/y/pull/1" };
+const body = { job_id: "job_1", event_id: "Ev1", placement_id: "mana-dev-biz", workspace_id: "T1", channel_id: "C1", thread_ts: "1.0", requester_id: "U1", status: "completed", summary: "完了", quota_decision: "allowed", story_id: "STR-1", pr_url: "https://github.com/x/y/pull/1" };
 
 describe("development callback", () => {
   it("authorizes an installed workspace through tenant authority instead of a static workspace binding", async () => {
