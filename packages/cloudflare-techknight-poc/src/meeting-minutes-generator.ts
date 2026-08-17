@@ -11,6 +11,16 @@ const MEETING_MINUTES_ROUTING_HEAD_CHARS = 4_000;
 const MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES = 10_000_000;
 const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const MEETING_MINUTES_CONTEXT_PROMPT_MAX_BYTES = 100_000;
+const MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES = new Set([
+  "meeting_minutes_generation_failed",
+  "meeting_minutes_generation_placeholder_output",
+  "meeting_minutes_generation_stream_too_large",
+  "meeting_minutes_generation_stream_too_many_events",
+  "meeting_minutes_generation_stream_malformed",
+  "meeting_minutes_generation_result_error",
+  "meeting_minutes_generation_result_missing",
+  "meeting_minutes_generation_result_schema_invalid",
+]);
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
 async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
@@ -53,6 +63,16 @@ export function assertGeneratedMeetingMinutesNotPlaceholder(value: unknown): voi
   if (containsMeetingMinutesPlaceholder(record)) {
     throw new Error("meeting_minutes_generation_placeholder_output");
   }
+}
+
+export function meetingMinutesGenerationDiagnosticCode(error: unknown): string {
+  const message = error && typeof error === "object" && "message" in error
+    && typeof (error as { message?: unknown }).message === "string"
+    ? (error as { message: string }).message
+    : "";
+  return MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES.has(message)
+    ? message
+    : "meeting_minutes_generation_probe_failed";
 }
 
 export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMinutes {
@@ -222,18 +242,22 @@ const BRAINBASE_CONTEXT_TOOL = "mcp__brainbase__brainbase_get_meeting_minutes_co
 
 function streamEvents(stdout: string): Array<Record<string, unknown>> {
   if (stdout.length > MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES) {
-    throw new Error("meeting_minutes_generation_invalid");
+    throw new Error("meeting_minutes_generation_stream_too_large");
   }
   const lines = stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
   if (lines.length > MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS) {
-    throw new Error("meeting_minutes_generation_invalid");
+    throw new Error("meeting_minutes_generation_stream_too_many_events");
   }
-  return lines.map((line) => {
+  const events = lines.map((line) => {
     try {
       const value = JSON.parse(line) as unknown;
       return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
     } catch { return undefined; }
   }).filter((value): value is Record<string, unknown> => Boolean(value));
+  if (lines.length > 0 && events.length === 0) {
+    throw new Error("meeting_minutes_generation_stream_malformed");
+  }
+  return events;
 }
 
 function contentItems(event: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -275,15 +299,21 @@ function resultMinutes(events: Array<Record<string, unknown>>): {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!;
     if (event.type !== "result") continue;
-    if (event.is_error === true) throw new Error("meeting_minutes_generation_invalid");
+    if (event.is_error === true) throw new Error("meeting_minutes_generation_result_error");
     const structured = event.structured_output ?? event.structuredOutput;
     const sessionId = event.session_id ?? event.sessionId;
-    if (structured !== undefined) return { minutes: parseGeneratedMeetingMinutes(structured), index,
-      ...(typeof sessionId === "string" ? { sessionId } : {}) };
-    if (typeof event.result === "string") return { minutes: parseGeneratedMeetingMinutesOutput(event.result), index,
-      ...(typeof sessionId === "string" ? { sessionId } : {}) };
+    try {
+      if (structured !== undefined) return { minutes: parseGeneratedMeetingMinutes(structured), index,
+        ...(typeof sessionId === "string" ? { sessionId } : {}) };
+      if (typeof event.result === "string") return { minutes: parseGeneratedMeetingMinutesOutput(event.result), index,
+        ...(typeof sessionId === "string" ? { sessionId } : {}) };
+    } catch (error) {
+      if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+      throw new Error("meeting_minutes_generation_result_schema_invalid");
+    }
+    throw new Error("meeting_minutes_generation_result_schema_invalid");
   }
-  throw new Error("meeting_minutes_generation_invalid");
+  throw new Error("meeting_minutes_generation_result_missing");
 }
 
 /** Parses the audited Claude stream after the Worker has deterministically resolved the Receipt. */

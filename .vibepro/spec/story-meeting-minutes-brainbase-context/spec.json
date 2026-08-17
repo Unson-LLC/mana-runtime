@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-meeting-minutes-brainbase-context",
   "generated_by": {
-    "caller": "codex",
+    "caller": "unknown",
     "stage": "architecture"
   },
   "clauses": [
@@ -48,7 +48,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "INV-001",
@@ -113,7 +113,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "C-002",
@@ -165,7 +165,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "C-003",
@@ -209,7 +209,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "INV-002",
@@ -285,7 +285,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "C-004",
@@ -458,7 +458,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T08:00:00.000Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "C-005",
@@ -623,7 +623,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T11:42:01.148Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "C-006",
@@ -722,7 +722,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T13:00:00.000Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     },
     {
       "id": "C-007",
@@ -812,7 +812,67 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-17T08:00:00.000Z",
-      "last_revised_at": "2026-08-16T23:18:28.638Z"
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
+    },
+    {
+      "id": "C-008",
+      "type": "contract",
+      "statement": "本番配備後、実Slack E2Eの前に、認証済み管理APIから本番と同じClaudeコマンド・設定・JSON Schema・Judgment Hook・Receipt注入を使う議事録生成プローブを実行する。成功時は生成内容を返さず、失敗時は許可済み診断コードだけを返し、成功するまで利用者投稿を再実行しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-19"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "生成診断"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/sandbox-admin.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "case": "runs the production meeting-minutes command and returns only a safe success result"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "case": "returns a bounded diagnostic code without leaking model output"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "classifies malformed streams, missing results, Claude errors, and schema failures"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "must_cover": "production meeting-minutes command"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "must_cover": "bounded diagnostic code"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "malformed streams, missing results, Claude errors, and schema failures"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-17T04:53:06.745Z",
+      "last_revised_at": "2026-08-17T04:53:06.745Z"
     }
   ],
   "planned_test_suites": [
@@ -835,6 +895,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-16T12:08:34.577Z",
+  "generated_at": "2026-08-17T04:53:06.742Z",
   "previous_spec_id": "2026-08-16T12:08:34.577Z"
 }

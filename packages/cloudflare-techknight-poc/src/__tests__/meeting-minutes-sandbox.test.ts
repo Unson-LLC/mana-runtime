@@ -1,5 +1,6 @@
 import { classifyMeetingMinutesDestinationInSandbox, generateMeetingMinutesInSandbox,
   parseAuditedGeneratedMeetingMinutesOutput, parseGeneratedMeetingMinutesOutput,
+  parseReceiptBoundGeneratedMeetingMinutesOutput,
   parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
 
 const destinations = [
@@ -123,8 +124,22 @@ describe("generateMeetingMinutesInSandbox", () => {
     destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
       { model: "opus", effort: "xhigh" }, sandbox))
-      .rejects.toThrow("meeting_minutes_generation_invalid");
+      .rejects.toThrow("meeting_minutes_generation_result_schema_invalid");
     expect(sandbox.destroy).toHaveBeenCalled();
+  });
+
+  it("classifies malformed streams, missing results, Claude errors, and schema failures", () => {
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput("not-json", context))
+      .toThrow("meeting_minutes_generation_stream_malformed");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      JSON.stringify({ type: "system", subtype: "init", session_id: "session-1" }), context,
+    )).toThrow("meeting_minutes_generation_result_missing");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      JSON.stringify({ type: "result", is_error: true, session_id: "session-1" }), context,
+    )).toThrow("meeting_minutes_generation_result_error");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream({
+      title: "", overview: "", body: "", tasks: [],
+    }), context)).toThrow("meeting_minutes_generation_result_schema_invalid");
   });
 
   it("fails closed unless the exact Brainbase call, Receipt, and PostToolUse audit are all present", () => {

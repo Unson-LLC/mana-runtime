@@ -16,6 +16,7 @@ function request(path: string, token = "probe-secret") {
 
 function sandbox(result = { success: true, stdout: "2.1.0\n", stderr: "" }) {
   return {
+    writeFile: vi.fn().mockResolvedValue(undefined),
     exec: vi.fn().mockResolvedValue(result),
     destroy: vi.fn().mockResolvedValue(undefined),
   };
@@ -91,5 +92,48 @@ describe("handleSandboxAdminRequest", () => {
     const body = JSON.stringify(await response.json());
     expect(body).not.toContain("oauth-secret-must-not-leak");
     expect(client.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("runs the production meeting-minutes command and returns only a safe success result", async () => {
+    const client = sandbox({
+      success: true,
+      stdout: [
+        JSON.stringify({ type: "system", subtype: "init", session_id: "probe-session" }),
+        JSON.stringify({ type: "result", session_id: "probe-session", structured_output: {
+          title: "議事録生成プローブ", overview: "生成経路を確認した。", body: "------------\n生成経路\n本番と同じ設定を確認した。", tasks: [], used_source_refs: [], decision_candidates: [],
+        } }),
+      ].join("\n"),
+      stderr: "secret-output-must-not-leak",
+    });
+    const response = await handleSandboxAdminRequest(
+      request("/admin/sandbox/meeting-minutes-probe"),
+      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
+      { createSandbox: () => client },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true, tenant: "techknight", probe: "meeting-minutes-generation",
+    });
+    expect(client.exec).toHaveBeenCalledWith(
+      expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
+      expect.objectContaining({ timeout: 600_000 }),
+    );
+    expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("議事録生成プローブ"));
+  });
+
+  it("returns a bounded diagnostic code without leaking model output", async () => {
+    const client = sandbox({ success: true, stdout: "not-json", stderr: "private-stderr" });
+    const response = await handleSandboxAdminRequest(
+      request("/admin/sandbox/meeting-minutes-probe"),
+      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
+      { createSandbox: () => client },
+    );
+
+    expect(response.status).toBe(502);
+    const body = JSON.stringify(await response.json());
+    expect(body).toContain("meeting_minutes_generation_stream_malformed");
+    expect(body).not.toContain("not-json");
+    expect(body).not.toContain("private-stderr");
   });
 });
