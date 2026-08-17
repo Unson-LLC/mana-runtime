@@ -26,7 +26,9 @@ function input(overrides: Record<string, unknown> = {}) {
 
 describe("runCloudflareDevelopmentRequest", () => {
   it("bounds the asynchronous process lifetime below the signed tenant context expiry", async () => {
-    const startProcess = vi.fn(async () => ({ id: "development-Ev1" }));
+    const startProcess = vi.fn(async (_command: string, _options: Record<string, unknown>) => (
+      { id: "development-Ev1" }
+    ));
     const createSandbox = vi.fn(() => ({
       writeFile: vi.fn(async () => undefined),
       startProcess,

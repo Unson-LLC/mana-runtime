@@ -2193,6 +2193,8 @@ export default {
                       connectionId: tenantBody.tenant_context.workspace_connection.connection_id,
                       operationId: tenantBody.tenant_context.operation_id,
                       tenantBoundaryHandle,
+                      contextExpiresAt: tenantBody.tenant_context.expires_at,
+                      now: tenantConsumerOptions.now,
                       callbackBaseUrl: env.DEVELOPMENT_CALLBACK_BASE_URL,
                       createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
                     }),

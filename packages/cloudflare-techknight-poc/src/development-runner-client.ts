@@ -2,6 +2,9 @@ import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-bo
 import { tenantPartitionKey } from "./multitenancy/isolation.js";
 import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
+const DEVELOPMENT_PROCESS_MAX_TIMEOUT_MS = 4_800_000;
+const TENANT_CONTEXT_SHUTDOWN_RESERVE_MS = 5_000;
+
 export interface DevelopmentSandbox {
   writeFile(path: string, content: string): Promise<unknown>;
   startProcess(command: string, options: {
@@ -65,10 +68,21 @@ export async function runCloudflareDevelopmentRequest(input: {
   connectionId: string;
   operationId: string;
   tenantBoundaryHandle: string;
+  contextExpiresAt: string;
+  now(): string;
   callbackBaseUrl?: string;
   createSandbox: (id: string) => DevelopmentSandbox;
 }): Promise<string> {
   const callback = authenticatedHttpsBase(input.callbackBaseUrl);
+  const contextExpiresAt = Date.parse(input.contextExpiresAt);
+  const observedAt = Date.parse(input.now());
+  const processTimeout = Math.min(
+    DEVELOPMENT_PROCESS_MAX_TIMEOUT_MS,
+    contextExpiresAt - observedAt - TENANT_CONTEXT_SHUTDOWN_RESERVE_MS,
+  );
+  if (!Number.isFinite(contextExpiresAt) || !Number.isFinite(observedAt) || processTimeout <= 0) {
+    throw new Error("development_tenant_context_expiring");
+  }
   const jobId = await jobIdForTenantOperation(input);
   // A development operation has a deterministic job id for idempotent user
   // feedback, but every launch receives a fresh Container identity. This makes
@@ -96,7 +110,7 @@ export async function runCloudflareDevelopmentRequest(input: {
       {
         processId: jobId,
         autoCleanup: true,
-        timeout: 4_800_000,
+        timeout: processTimeout,
         env: {
           IS_SANDBOX: "1",
           CLAUDE_CODE_OAUTH_TOKEN: tenantBoundaryCredentialMarker(input.tenantBoundaryHandle),
