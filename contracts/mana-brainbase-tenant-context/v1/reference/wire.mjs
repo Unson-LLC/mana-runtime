@@ -60,6 +60,19 @@ function assertExactKeys(value, expected, path) {
   }
 }
 
+function assertRequiredAllowedKeys(value, required, optional, path) {
+  assertObject(value, path);
+  const allowed = new Set([...required, ...optional]);
+  const missing = required.filter((key) => !Object.hasOwn(value, key));
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(
+      'SCHEMA_INVALID',
+      `${path} has missing keys [${missing.join(',')}] and unexpected keys [${unexpected.join(',')}]`,
+    );
+  }
+}
+
 function assertNoLoneSurrogate(value) {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -316,7 +329,28 @@ export function negotiateProtocol(request, local) {
 }
 
 export function validateEnvelope(envelope, { now, publicJwk } = {}) {
-  assertObject(envelope, 'envelope');
+  assertRequiredAllowedKeys(envelope, [
+    'schema_version',
+    'protocol_id',
+    'protocol_version',
+    'issuer',
+    'audience',
+    'tenant',
+    'workspace_connection',
+    'actor',
+    'authorization',
+    'placement',
+    'slack',
+    'correlation_id',
+    'operation_id',
+    'idempotency_key',
+    'contract_revision',
+    'credential',
+    'issued_at',
+    'expires_at',
+    'integrity',
+  ], [], 'envelope');
+  assertExactKeys(envelope.integrity, ['method', 'algorithm', 'key_id', 'value'], 'envelope.integrity');
   assertRevision(envelope?.tenant?.tenant_revision, 'tenant.tenant_revision');
   assertRevision(envelope?.workspace_connection?.connection_revision, 'workspace_connection.connection_revision');
   assertRevision(envelope?.contract_revision, 'contract_revision');
@@ -381,6 +415,30 @@ export function validateCredentialLease(request, response, { now } = {}) {
 }
 
 export function validateUsageEvent(event) {
+  assertRequiredAllowedKeys(event, [
+    'message_type',
+    'usage_event_id',
+    'protocol_version',
+    'tenant_id',
+    'connection_id',
+    'connection_revision',
+    'contract_revision',
+    'deployment_id',
+    'correlation_id',
+    'operation_id',
+    'idempotency_key',
+    'kind',
+    'quantity',
+    'unit',
+    'collection_state',
+    'outcome',
+    'failure_code',
+    'unknown_fields',
+    'observed_at',
+  ], [], 'usage_event');
+  if (event.message_type !== 'usage_event') {
+    fail('SCHEMA_INVALID', 'usage event message type is invalid');
+  }
   assertRevision(event?.connection_revision, 'connection_revision');
   assertRevision(event?.contract_revision, 'contract_revision');
   if (!['collected', 'partial', 'not_collected'].includes(event?.collection_state)) {
@@ -429,9 +487,39 @@ export function validateQuotaDecision(decision) {
 }
 
 export function validateOperationReceipt(receipt) {
+  assertRequiredAllowedKeys(receipt, [
+    'message_type',
+    'receipt_id',
+    'protocol_version',
+    'tenant_id',
+    'connection_id',
+    'connection_revision',
+    'contract_revision',
+    'deployment_id',
+    'correlation_id',
+    'operation_ids',
+    'idempotency_keys',
+    'actor_principal_id',
+    'project_id',
+    'capability_id',
+    'quota_decision',
+    'credential_mode',
+    'collection_state',
+    'outcome',
+    'failure_code',
+    'usage_event_ids',
+    'reply',
+    'completed_at',
+  ], [], 'operation_receipt');
   if (receipt?.message_type !== 'operation_receipt') {
     fail('SCHEMA_INVALID', 'operation receipt message type is invalid');
   }
+  assertRequiredAllowedKeys(
+    receipt.reply,
+    ['state', 'reply_count', 'legacy_reply_count'],
+    ['slack_reply_ts'],
+    'operation_receipt.reply',
+  );
   assertRevision(receipt.connection_revision, 'connection_revision');
   assertRevision(receipt.contract_revision, 'contract_revision');
   if (!['collected', 'partial', 'not_collected'].includes(receipt.collection_state)) {
@@ -453,6 +541,23 @@ export function validateOperationReceipt(receipt) {
 }
 
 export function validateIdempotencyClaim(claim) {
+  assertRequiredAllowedKeys(claim, [
+    'message_type',
+    'owner',
+    'scope',
+    'tenant_id',
+    'connection_id',
+    'slack_event_id',
+    'operation_id',
+    'idempotency_key',
+    'context_hash',
+    'payload_hash',
+    'state',
+    'retention_until',
+  ], [], 'idempotency_claim');
+  if (claim.message_type !== 'idempotency_claim') {
+    fail('SCHEMA_INVALID', 'idempotency claim message type is invalid');
+  }
   const expectedOwner = IDEMPOTENCY_OWNER_BY_SCOPE[claim?.scope];
   if (!expectedOwner || claim.owner !== expectedOwner) {
     fail('IDEMPOTENCY_OWNER_INVALID', 'claim scope is assigned to the wrong canonical owner');

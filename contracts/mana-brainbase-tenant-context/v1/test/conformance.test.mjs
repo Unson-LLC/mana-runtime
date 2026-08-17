@@ -100,6 +100,9 @@ async function validateNegative(fixture, base, key) {
   if (fixture.target.startsWith('usage_events/')) {
     return validateUsageEvent(mutated);
   }
+  if (fixture.target === 'operation_receipt') {
+    return validateOperationReceipt(mutated);
+  }
   if (fixture.target.startsWith('idempotency_claims/')) {
     return validateIdempotencyClaim(mutated);
   }
@@ -155,7 +158,7 @@ test('fixture manifest fingerprint is shared by producer and consumer contracts'
   assert.equal(producer.fixture_set_sha256, manifest.fixture_set_sha256);
   assert.equal(consumer.fixture_set_sha256, manifest.fixture_set_sha256);
   assert.equal(manifest.positive.length, 1);
-  assert.equal(manifest.negative.length, 16);
+  assert.equal(manifest.negative.length, 21);
   assert.equal(manifest.non_applicable.length, 1);
 });
 

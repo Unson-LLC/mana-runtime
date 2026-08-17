@@ -6,9 +6,9 @@
 
 | 対象 | PR | 固定 HEAD |
 |---|---:|---|
-| 横断契約 | #237 | `ba1942e15935e00d1c603f57284439384bc95cac` |
+| 横断契約（今回の入力） | #237 | `37dd9f5eee783b9b3ba94c31c9c7e32f7afa3351` |
 | Brainbase producer 草案 | #1229 | `2c996d955609434e1ac205fe46a38f2920b815fd` |
-| mana-runtime consumer 草案 | #236 | `b6c3fb5e46fe86e1cd77e02a5494151974a5a9e5` |
+| mana-runtime consumer 草案 | #236 | `b08546305baa1d6fe37dc57ee0e80364cd975fac` |
 
 `source-lock.json` はこの比較基準を機械可読に固定します。以後の producer / consumer 追従は、このキットを変更せず同じ fixture を読んで行います。
 
@@ -21,6 +21,8 @@
 - `producer.contract.json`: Brainbase producer conformance の入出力契約
 - `consumer.contract.json`: mana-runtime consumer conformance の受入・拒否契約
 - `P0-FOLLOW-UP.md`: D-001、D-003〜D-006 の期待修正表
+
+fixture manifest は positive 1件、negative 21件、non-applicable 1件の計23件です。fixture set SHA-256 は `9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833` に固定します。
 
 ## 一意な署名方式
 

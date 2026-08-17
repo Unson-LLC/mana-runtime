@@ -3,7 +3,7 @@
   "role": "brainbase_producer",
   "canonical_owner": "Brainbase",
   "fixture_manifest": "fixtures/manifest.json",
-  "fixture_set_sha256": "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454",
+  "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
   "required_adapter_behavior": [
     "Load fixtures/manifest.json from the pinned PR #237 kit commit; do not copy fixtures.",
     "For POS-CANONICAL-FLOW-001, negotiate version 1.0 and emit messages matching schema.json definitions.",
