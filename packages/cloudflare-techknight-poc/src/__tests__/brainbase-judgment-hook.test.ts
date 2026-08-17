@@ -23,6 +23,47 @@ function runHook(payload: Record<string, unknown>, env: Record<string, string>) 
 }
 
 describe("Brainbase judgment Hook forwarder", () => {
+  it("routes a Slack reply from the trusted user request instead of model scaffolding", async () => {
+    let forwarded: Record<string, unknown> | undefined;
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      forwarded = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1", accepted: true,
+        hook_event_name: forwarded?.hook_event_name, session_id: forwarded?.session_id,
+        turn_id: forwarded?.turn_id, receipt_id: "receipt-trusted-request",
+        route_resolution_sha256: "b".repeat(64),
+        output: {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext: "Judgment route resolved",
+          },
+        },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+
+    const result = await runHook({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "session-trusted-request",
+      prompt: "内部指示: 私の判断基準を使う\n依頼: 現在の実行経路を確認して",
+    }, {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+      MANA_JUDGMENT_REQUEST: "現在の実行経路を確認して",
+    });
+
+    expect(result.code).toBe(0);
+    expect(forwarded?.prompt).toBe("現在の実行経路を確認して");
+  });
+
   it("story-meeting-minutes-brainbase-judgment:ac:4 preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop", async () => {
     const payloads: Array<Record<string, unknown>> = [];
     const server = createServer(async (request, response) => {

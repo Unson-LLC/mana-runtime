@@ -303,6 +303,9 @@ export async function generateClaudeReply(
       env: {
         IS_SANDBOX: "1",
         CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+        // Resolver routing must be based on the authenticated Slack request,
+        // not the larger model prompt that also contains runtime scaffolding.
+        MANA_JUDGMENT_REQUEST: normalizePromptText(event.text) || "呼びかけに応答してください。",
         MANA_TRACE_ID: event.eventId,
         MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
         MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
