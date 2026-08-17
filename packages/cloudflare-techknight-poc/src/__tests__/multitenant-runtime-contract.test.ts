@@ -376,7 +376,11 @@ describe("story-mana-multitenant-runtime contract", () => {
     ].map((name) => [name, true]));
     await expect(prepareContainerReuse(lease, TENANT_A, OPERATION_A, {
       image_digest: "sha256:image", completed_at: NOW, sanitation_receipt_id: "sanitation-b", checks, destroy,
-    })).resolves.toMatchObject({ result: "passed", sanitation_receipt_id: "sanitation-b",
+    })).resolves.toMatchObject({
+      result: "passed",
+      purpose: "reuse_sanitization",
+      reuse_eligible: true,
+      sanitation_receipt_id: "sanitation-b",
       lease_id: "lease-a", operation_id: OPERATION_A, tenant_hash: expect.stringMatching(/^sha256:/) });
   });
 

@@ -2335,6 +2335,11 @@ export default {
                               },
                             });
                           },
+                          recordContainerDestroyed: async ({ now, receipt }) => {
+                            if (claimed.disposition === "claimed") {
+                              await terminalOutbox.recordContainerDestroyed(now, receipt);
+                            }
+                          },
                           cancelTerminalWatchdog: async () => {
                             if (claimed.disposition === "claimed") {
                               await terminalOutbox.cancel(owner.jobId);

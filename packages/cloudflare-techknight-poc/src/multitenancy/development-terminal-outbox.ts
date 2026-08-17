@@ -1,15 +1,18 @@
 import type { DevelopmentJobOwner } from "./development-job-owner.js";
 import type {
+  ContainerSanitizationReceipt,
   ExpectedTenantScope,
   OperationOutcome,
   QuotaDecision,
   TenantContextEnvelope,
 } from "./contracts.js";
 import { TenantBoundaryError } from "./errors.js";
+import { assertCanonicalSharedId } from "./ids.js";
 import { assertSecretArtifactFree } from "./secret-guard.js";
 
 const HOST = "development-terminal-outbox.internal";
 const RECORD_KEY = "development-terminal-outbox-v1";
+const SANITIZATION_RECEIPT_PREFIX = "container-sanitization-receipt:";
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export interface DevelopmentTerminalOutboxSubmission {
@@ -53,6 +56,7 @@ export interface DevelopmentTerminalOutboxRecord extends DevelopmentTerminalOutb
   owner_finalized?: boolean;
   container_id?: string;
   container_destroyed_at?: string;
+  container_sanitization_receipt?: ContainerSanitizationReceipt;
 }
 
 export interface DevelopmentTerminalOutboxTransaction {
@@ -118,6 +122,31 @@ function sameOwner(current: DevelopmentTerminalOutboxRecord, input: DevelopmentT
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function validateContainerSanitizationReceipt(
+  record: DevelopmentTerminalOutboxRecord,
+  receipt: ContainerSanitizationReceipt,
+  now: string,
+): ContainerSanitizationReceipt {
+  const safe = assertSecretArtifactFree(receipt);
+  assertCanonicalSharedId(safe.sanitation_receipt_id, "csr_", "container_launch");
+  assertCanonicalSharedId(safe.lease_id, "lease_", "container_launch");
+  assertCanonicalSharedId(safe.operation_id, "op_", "container_launch");
+  if (safe.operation_id !== record.owner.operationId
+    || safe.completed_at !== now
+    || safe.purpose !== "final_destruction"
+    || safe.reuse_eligible !== false
+    || safe.result !== "passed"
+    || safe.image_digest !== "not_applicable:destroyed_without_reuse"
+    || !/^sha256:[0-9a-f]{64}$/.test(safe.tenant_hash)
+    || safe.checks.container_destroyed !== true
+    || safe.checks.fresh_container_per_attempt !== true
+    || safe.checks.no_reuse !== true
+    || safe.checks.cross_tenant_reuse_forbidden !== true) {
+    throw new TenantBoundaryError("container_launch", "CONTAINER_SANITIZATION_UNPROVEN");
+  }
+  return safe;
 }
 
 export class DevelopmentTerminalOutboxHandler {
@@ -222,15 +251,35 @@ export class DevelopmentTerminalOutboxHandler {
     });
   }
 
-  async recordContainerDestroyed(now: string): Promise<DevelopmentTerminalOutboxRecord> {
+  async recordContainerDestroyed(
+    now: string,
+    receipt: ContainerSanitizationReceipt,
+  ): Promise<DevelopmentTerminalOutboxRecord> {
     return this.storage.transaction(async (transaction) => {
       const current = await transaction.get<DevelopmentTerminalOutboxRecord>(RECORD_KEY);
       if (!current) throw new TenantBoundaryError("container_launch", "IDEMPOTENCY_CLAIM_MISSING");
       if (!current.container_id) {
         throw new TenantBoundaryError("container_launch", "CONTAINER_SANITIZATION_UNPROVEN");
       }
-      if (current.container_destroyed_at) return clone(current);
-      const destroyed = { ...current, container_destroyed_at: now, updated_at: now };
+      const safeReceipt = validateContainerSanitizationReceipt(current, receipt, now);
+      if (current.container_destroyed_at) {
+        if (JSON.stringify(current.container_sanitization_receipt) !== JSON.stringify(safeReceipt)) {
+          throw new TenantBoundaryError("container_launch", "IDEMPOTENCY_CONFLICT");
+        }
+        return clone(current);
+      }
+      const receiptKey = `${SANITIZATION_RECEIPT_PREFIX}${safeReceipt.sanitation_receipt_id}`;
+      const existing = await transaction.get<ContainerSanitizationReceipt>(receiptKey);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(safeReceipt)) {
+        throw new TenantBoundaryError("container_launch", "IDEMPOTENCY_CONFLICT");
+      }
+      const destroyed = {
+        ...current,
+        container_destroyed_at: now,
+        container_sanitization_receipt: safeReceipt,
+        updated_at: now,
+      };
+      await transaction.put(receiptKey, safeReceipt);
       await transaction.put(RECORD_KEY, destroyed);
       return clone(destroyed);
     });
@@ -346,11 +395,17 @@ export class DevelopmentTerminalOutboxHandler {
         return Response.json({ result: await this.complete(input.now) });
       }
       if (url.pathname === "/container-destroyed") {
-        const input = await request.json() as { now?: unknown };
-        if (typeof input.now !== "string" || !Number.isFinite(Date.parse(input.now))) {
+        const input = await request.json() as { now?: unknown; receipt?: unknown };
+        if (typeof input.now !== "string" || !Number.isFinite(Date.parse(input.now))
+          || !input.receipt || typeof input.receipt !== "object") {
           throw new TenantBoundaryError("container_launch", "SCHEMA_INVALID");
         }
-        return Response.json({ result: await this.recordContainerDestroyed(input.now) });
+        return Response.json({
+          result: await this.recordContainerDestroyed(
+            input.now,
+            input.receipt as ContainerSanitizationReceipt,
+          ),
+        });
       }
       return Response.json({ error: "not_found" }, { status: 404 });
     } catch (error) {
@@ -383,8 +438,8 @@ export function createDevelopmentTerminalOutboxClient(
       call<DevelopmentTerminalOutboxRecord>(stub, "submit", input),
     read: () => call<DevelopmentTerminalOutboxRecord | null>(stub, "read", {}).then((value) => value ?? undefined),
     complete: (now: string) => call<DevelopmentTerminalOutboxRecord>(stub, "complete", { now }),
-    recordContainerDestroyed: (now: string) =>
-      call<DevelopmentTerminalOutboxRecord>(stub, "container-destroyed", { now }),
+    recordContainerDestroyed: (now: string, receipt: ContainerSanitizationReceipt) =>
+      call<DevelopmentTerminalOutboxRecord>(stub, "container-destroyed", { now, receipt }),
     cancel: (jobId: string) => call<null>(stub, "cancel", { job_id: jobId }).then(() => undefined),
   };
 }

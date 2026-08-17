@@ -4,6 +4,7 @@ import { runCloudflareDevelopmentRequest } from "../development-runner-client.js
 function input(overrides: Record<string, unknown> = {}) {
   const armTerminalWatchdog = vi.fn(async () => undefined);
   const cancelTerminalWatchdog = vi.fn(async () => undefined);
+  const recordContainerDestroyed = vi.fn(async () => undefined);
   return {
     request: "修正して",
     placementId: "mana-dev-biz",
@@ -26,6 +27,7 @@ function input(overrides: Record<string, unknown> = {}) {
       created: true,
       release: vi.fn(async () => undefined),
       armTerminalWatchdog,
+      recordContainerDestroyed,
       cancelTerminalWatchdog,
     })),
     createSandbox: vi.fn(),
@@ -112,6 +114,7 @@ describe("runCloudflareDevelopmentRequest", () => {
       created: true,
       release: vi.fn(async () => undefined),
       armTerminalWatchdog,
+      recordContainerDestroyed: vi.fn(async () => undefined),
       cancelTerminalWatchdog,
     }));
     const createSandbox = vi.fn((_id: string) => ({
@@ -187,6 +190,7 @@ describe("runCloudflareDevelopmentRequest", () => {
       created: false,
       release: vi.fn(async () => undefined),
       armTerminalWatchdog: vi.fn(async () => undefined),
+      recordContainerDestroyed: vi.fn(async () => undefined),
       cancelTerminalWatchdog: vi.fn(async () => undefined),
     }));
 
@@ -211,12 +215,14 @@ describe("runCloudflareDevelopmentRequest", () => {
   it("releases the durable job owner when Container startup fails", async () => {
     const release = vi.fn(async () => undefined);
     const armTerminalWatchdog = vi.fn(async () => undefined);
+    const recordContainerDestroyed = vi.fn(async () => undefined);
     const cancelTerminalWatchdog = vi.fn(async () => undefined);
     const destroy = vi.fn(async () => undefined);
     const registerJobOwner = vi.fn(async () => ({
       created: true,
       release,
       armTerminalWatchdog,
+      recordContainerDestroyed,
       cancelTerminalWatchdog,
     }));
     const createSandbox = vi.fn(() => ({
@@ -231,6 +237,19 @@ describe("runCloudflareDevelopmentRequest", () => {
     expect(release).toHaveBeenCalledOnce();
     expect(cancelTerminalWatchdog).toHaveBeenCalledOnce();
     expect(destroy).toHaveBeenCalledOnce();
+    expect(recordContainerDestroyed).toHaveBeenCalledOnce();
+    expect(recordContainerDestroyed).toHaveBeenCalledWith({
+      now: "2026-08-17T10:00:00.000Z",
+      receipt: expect.objectContaining({
+        operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        purpose: "final_destruction",
+        reuse_eligible: false,
+        result: "passed",
+        checks: expect.objectContaining({ container_destroyed: true, no_reuse: true }),
+      }),
+    });
+    expect(recordContainerDestroyed.mock.invocationCallOrder[0])
+      .toBeLessThan(cancelTerminalWatchdog.mock.invocationCallOrder[0]!);
   });
 
   it("fails closed when a partially started Container cannot be sanitized", async () => {
@@ -240,6 +259,7 @@ describe("runCloudflareDevelopmentRequest", () => {
       created: true,
       release,
       armTerminalWatchdog: vi.fn(async () => undefined),
+      recordContainerDestroyed: vi.fn(async () => undefined),
       cancelTerminalWatchdog,
     }));
     const createSandbox = vi.fn(() => ({

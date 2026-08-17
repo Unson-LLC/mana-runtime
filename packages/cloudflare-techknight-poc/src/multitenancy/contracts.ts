@@ -163,6 +163,8 @@ export interface ContainerSanitizationReceipt {
   checks: Record<string, boolean>;
   completed_at: string;
   image_digest: string;
+  purpose: "reuse_sanitization" | "final_destruction";
+  reuse_eligible: boolean;
   result: "passed" | "failed" | "unobservable";
 }
 

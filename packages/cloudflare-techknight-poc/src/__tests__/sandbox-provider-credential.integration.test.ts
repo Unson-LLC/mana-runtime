@@ -315,12 +315,14 @@ describe("sandbox provider credential integration", () => {
       owner_finalized: true,
       container_sanitization_receipt: {
         operation_id: envelope.operation_id,
+        purpose: "final_destruction",
+        reuse_eligible: false,
         result: "passed",
         checks: {
           container_destroyed: true,
           fresh_container_per_attempt: true,
+          no_reuse: true,
           cross_tenant_reuse_forbidden: true,
-          credential_material_not_persisted: true,
         },
       },
     });
@@ -360,6 +362,8 @@ describe("sandbox provider credential integration", () => {
     expect(sanitationReceipts).toHaveLength(1);
     expect(sanitationReceipts[0]?.[1]).toEqual(expect.objectContaining({
       operation_id: envelope.operation_id,
+      purpose: "final_destruction",
+      reuse_eligible: false,
       result: "passed",
       completed_at: deadline,
     }));

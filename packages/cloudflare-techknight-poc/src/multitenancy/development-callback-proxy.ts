@@ -21,6 +21,7 @@ import {
 import { TenantBoundaryError } from "./errors.js";
 import type { AccountingArtifact } from "./accounting.js";
 import type { ExpectedTenantScope, TenantContextEnvelope } from "./contracts.js";
+import { createDestroyedContainerSanitizationReceipt } from "./isolation.js";
 import {
   createDurableTenantStateClient,
   createDurableTenantAccountingClient,
@@ -106,8 +107,14 @@ async function destroyRecordedContainer(
     throw new TenantBoundaryError("container_launch", "CONTAINER_SANITIZATION_UNPROVEN");
   }
   await destroyContainer(record.container_id);
+  const receipt = await createDestroyedContainerSanitizationReceipt({
+    tenant_id: record.owner.tenantId,
+    operation_id: record.owner.operationId,
+    container_id: record.container_id,
+    completed_at: now,
+  });
   await createDevelopmentTerminalOutboxClient(env.TENANT_RUNTIME_STATE, record.owner_claim.partition_key)
-    .recordContainerDestroyed(now);
+    .recordContainerDestroyed(now, receipt);
 }
 
 export async function retryDevelopmentTerminalOutboxRecord(

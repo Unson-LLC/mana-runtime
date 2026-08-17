@@ -1,8 +1,11 @@
 import { tenantBoundaryCredentialMarker } from "./multitenancy/durable-tenant-boundary.js";
-import { tenantPartitionKey } from "./multitenancy/isolation.js";
+import {
+  createDestroyedContainerSanitizationReceipt,
+  tenantPartitionKey,
+} from "./multitenancy/isolation.js";
 import { freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 import type { DevelopmentJobOwner } from "./multitenancy/development-job-owner.js";
-import type { QuotaDecision } from "./multitenancy/contracts.js";
+import type { ContainerSanitizationReceipt, QuotaDecision } from "./multitenancy/contracts.js";
 import type { DevelopmentTerminalAccountingPlan } from "./multitenancy/development-terminal-outbox.js";
 import {
   developmentCallbackPayloadHash,
@@ -95,6 +98,10 @@ export async function runCloudflareDevelopmentRequest(input: {
       observed_at: string;
       container_id: string;
       terminal_accounting?: DevelopmentTerminalAccountingPlan;
+    }): Promise<void>;
+    recordContainerDestroyed(input: {
+      now: string;
+      receipt: ContainerSanitizationReceipt;
     }): Promise<void>;
     cancelTerminalWatchdog(): Promise<void>;
   }>;
@@ -207,6 +214,16 @@ export async function runCloudflareDevelopmentRequest(input: {
     if (sandbox) {
       try {
         await sandbox.destroy();
+        const completedAt = input.now();
+        await owner.recordContainerDestroyed({
+          now: completedAt,
+          receipt: await createDestroyedContainerSanitizationReceipt({
+            tenant_id: input.tenantId,
+            operation_id: input.operationId,
+            container_id: sandboxId,
+            completed_at: completedAt,
+          }),
+        });
       } catch {
         sanitizationProven = false;
       }
