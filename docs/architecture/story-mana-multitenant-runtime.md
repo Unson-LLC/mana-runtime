@@ -4,7 +4,7 @@ story_id: story-mana-multitenant-runtime
 title: 八雲まなマルチテナントランタイムアーキテクチャ
 status: accepted
 date: 2026-08-16
-cross_contract: mana-runtime#237@2bcb70e1b6c7a65c44cc9fa303a3fb64a98b8589
+cross_contract: mana-runtime#237@38e13adde56dbd398cea914aec69c831194353c9
 ---
 
 # 八雲まなマルチテナントランタイムアーキテクチャ
@@ -86,7 +86,9 @@ contextが欠落、曖昧、改ざん、失効、古い場合はその場で停�
 
 Brainbaseが返す契約revisionとcredential modeから、Cloud標準API、顧客OAuth、顧客APIのいずれかを決定論的に選択する。Brainbaseだけがcredential本文とrefreshを所有する。mana-runtimeは`credential_ref`からtenant、connection、revision、operation、audience、credential modeへ束縛された60秒以下・単回のopaque lease handleを取得する。このhandleはprovider credentialではないため、`Authorization`、`x-api-key`、`xc-token`、GitHub Basic、Container環境変数その他providerがcredentialとして解釈する場所へ入れない。
 
-provider requestは、Brainbaseが公開契約として定義するtrusted materializationまたはtrusted forwarding境界だけへ渡す。その境界はrequestごとに署名済みTenant Context、現行revision、tenant、connection、operation、audience、provider、credential mode、lease expiry、`max_uses=1`を再検証し、providerごとの認証headerをBrainbase管理の信頼領域でだけ生成する。mana-runtimeへ生credentialを返すmaterialization方式を採る場合でも、値は永続化・log・Receipt・Queue・Container環境へ出さないconsumer契約が必要であり、公開wire未確定中は全provider outboundを`CREDENTIAL_FORWARDING_UNAVAILABLE`でfail closedにする。URL、request／response schema、trusted service identityは横断契約PR #237の決定待ちで、mana-runtime側が独自互換wireや旧opaque注入fallbackを定義しない。
+provider requestは、Brainbase PR #1229 HEAD `06e3b1df6af18ff3dd5213bf6b337fac1a57509a`が定義する内部trusted forwarding serviceだけへ渡す。mana-runtimeは`BRAINBASE_TENANT_RUNTIME_ENABLED=1`、既定host `127.0.0.1`、明示port、secret binding `BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN`から`POST /api/v1/runtime/provider-requests:forward`を構成する。wildcard bindは拒否し、非loopbackは`BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK=1`の明示時だけ許可する。request headerは`Authorization: Bearer <service token>`、`Brainbase-Protocol-Version: 1.0`、`Brainbase-Deployment-Id: <deployment_id>`、`Content-Type: application/json`に固定し、bodyは`{tenant_context,lease_id,lease_token,audience,provider_operation,request:{path_params?,query?,body?,target_url?,idempotency_key?}}`のexact wireとする。`idempotency_key`は`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$`だけを許可する。応答は`{provider,operation_id,provider_operation,status,response_encoding:'json'|'utf8'|'base64',content_type:string|null,body}`の7 fieldだけを受理し、provider credential、lease token、service tokenの反射、field追加、operation不一致、status不一致は`UPSTREAM_INVALID_RESPONSE`として502相当で拒否する。
+
+Brainbase trusted serviceはrequestごとに署名済みTenant Context、authoritative revision、tenant、connection、contract、operation、audience、provider、credential mode、lease expiry、`max_uses=1`を再検証し、providerごとの認証headerをBrainbase管理の信頼領域でだけ生成する。mana-runtimeへ生credentialを返さず、opaque lease handleもprovider credentialとして送らない。service未設定・認証失敗・replay・expired・revision mismatch・cross-tenant・provider mismatch・資格情報反射ではprovider network前またはconsumer response境界でfail closedとし、旧volatile injector、静的provider secret、opaque header注入へfallbackしない。wireのsource-lockは`contracts/brainbase-trusted-provider-forwarder/v1/source-lock.json`を正本とし、conformance kitはPR #237 HEAD `38e13adde56dbd398cea914aec69c831194353c9`／fixture SHA-256 `9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833`を維持する。
 
 認証失敗、更新競合、失効、scope不足では、別mode、運営者credential、別tenantへfallbackしない。顧客credential利用時の課金主体も同じ契約revisionから決まり、推測しない。
 

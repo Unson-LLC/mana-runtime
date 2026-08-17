@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0",
+  "contract_role": "brainbase_trusted_provider_forwarder_consumer",
+  "producer": {
+    "repository": "Unson-LLC/brainbase-unson",
+    "pull_request": 1229,
+    "head": "06e3b1df6af18ff3dd5213bf6b337fac1a57509a",
+    "files": {
+      "server/services/multitenant/trusted-provider-forwarder.js": "79053f662fb590027ca4d259a7ef4a73054e18be2e023e96177022395073020a",
+      "server/routes/tenant-runtime.js": "3ef09a579cf27b62d03f085b8e15f378bd6d0416ba2f70f6d4466cd4b85521a3",
+      "server/bootstrap/tenant-runtime-internal-server.js": "2f9b75b54d478f836ecf3b315b80375352f5bc50373933a9495153882b752c62",
+      "server/services/multitenant/tenant-runtime-services.js": "222e9871b3c8ad61f283225f6f219692512015ecbe6d49116279e8a8e09a34de"
+    }
+  },
+  "tenant_context_contract": {
+    "repository": "Unson-LLC/mana-runtime",
+    "pull_request": 237,
+    "current_head": "38e13adde56dbd398cea914aec69c831194353c9",
+    "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833"
+  },
+  "wire": {
+    "method": "POST",
+    "path": "/api/v1/runtime/provider-requests:forward",
+    "protocol_version": "1.0",
+    "configuration": {
+      "enabled_env": "BRAINBASE_TENANT_RUNTIME_ENABLED",
+      "enabled_value": "1",
+      "host_env": "BRAINBASE_TENANT_RUNTIME_HOST",
+      "default_host": "127.0.0.1",
+      "port_env": "BRAINBASE_TENANT_RUNTIME_PORT",
+      "explicit_port_required": true,
+      "non_loopback_opt_in_env": "BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK",
+      "wildcard_bind_allowed_by_default": false,
+      "service_token_env": "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN"
+    },
+    "headers": {
+      "Authorization": "Bearer ${BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN}",
+      "Brainbase-Protocol-Version": "1.0",
+      "Brainbase-Deployment-Id": "${tenant_context.placement.deployment_id}",
+      "Content-Type": "application/json"
+    },
+    "idempotency_key_pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$",
+    "request_fields": [
+      "tenant_context",
+      "lease_id",
+      "lease_token",
+      "audience",
+      "provider_operation",
+      "request"
+    ],
+    "request_optional_fields": [
+      "path_params",
+      "query",
+      "body",
+      "target_url",
+      "idempotency_key"
+    ],
+    "response_fields": [
+      "provider",
+      "operation_id",
+      "provider_operation",
+      "status",
+      "response_encoding",
+      "content_type",
+      "body"
+    ],
+    "response_encoding_values": [
+      "json",
+      "utf8",
+      "base64"
+    ],
+    "canonical_error_codes": [
+      "SCHEMA_INVALID",
+      "SERVICE_AUTH_REQUIRED",
+      "CREDENTIAL_LEASE_SCOPE_MISMATCH",
+      "CREDENTIAL_LEASE_ALREADY_USED",
+      "UPSTREAM_INVALID_RESPONSE",
+      "UPSTREAM_UNAVAILABLE"
+    ]
+  },
+  "security": {
+    "raw_credential_returned_to_consumer": false,
+    "credential_reflection_rejected": true,
+    "provider_auth_headers_owned_by": "brainbase_trusted_service",
+    "consumer_fallback_allowed": false
+  },
+  "merge_allowed": false,
+  "deploy_allowed": false
+}
