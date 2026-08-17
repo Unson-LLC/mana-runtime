@@ -744,6 +744,9 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(ingress).not.toContain("TENANT_ID");
     expect(source.slice(ingressEnd)).toContain("consumeTenantQueueMessage");
     expect(source.slice(ingressEnd)).toContain("TENANT_RUNTIME_STATE");
+    expect(source.slice(ingressEnd)).toContain("executeTenantRuntimeOperation");
+    expect(source.slice(ingressEnd)).toContain("createDurableTenantAccountingClient");
+    expect(source.slice(ingressEnd)).toContain("postTenantSlackReply");
   });
 
   it("mock server preserves timeout error and not_collected semantics planned Red", async () => {
