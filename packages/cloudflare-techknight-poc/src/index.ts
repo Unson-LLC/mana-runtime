@@ -93,10 +93,15 @@ import {
 } from "./multitenancy/runtime-boundaries.js";
 import { createTenantRuntimeHttpClients } from "./multitenancy/http-clients.js";
 import {
+  createDurableTenantAccountingClient,
   createDurableTenantStateClient,
   TenantRuntimeStateHandler,
   type TenantStateStorage,
 } from "./multitenancy/tenant-runtime-state.js";
+import {
+  executeTenantRuntimeOperation,
+  postTenantSlackReply,
+} from "./multitenancy/production-consumer.js";
 import {
   REQUIRED_TENANT_CAPABILITIES,
   type DeploymentProfileName,
@@ -799,23 +804,33 @@ export default {
           retention_until: tenantRetentionUntil,
           log: (entry) => console.log(JSON.stringify(entry)),
           log_error: (entry) => console.error(JSON.stringify(entry)),
-          process: async (selection: MeetingMinutesSelection, tenantContext) => withTenantCredentialLease({
-            envelope: tenantContext,
+          process: async (selection: MeetingMinutesSelection, tenantContext) => executeTenantRuntimeOperation({
+            tenant_context: tenantContext,
             expected_scope: expectedScope,
-            audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
-            broker: clients.credential_broker,
-            credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-              tenantContext.workspace_connection.connection_id,
-            ),
-            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            verifier,
+            quota: clients.quota,
+            accounting: clients.accounting,
+            ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
+            quota_unit: "model_tokens",
             now,
-            run: (credentialLeaseHandle) => processTenantMeetingMinutesSelection({
-              env,
-              config: meetingMinutesConfig,
-              selection,
-              tenantId: runtimeTenantId,
-              credentialLeaseHandle,
+            process: () => withTenantCredentialLease({
+              envelope: tenantContext,
+              expected_scope: expectedScope,
+              audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
+              broker: clients.credential_broker,
+              credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
+              read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+                tenantContext.workspace_connection.connection_id,
+              ),
+              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+              now,
+              run: (credentialLeaseHandle) => processTenantMeetingMinutesSelection({
+                env,
+                config: meetingMinutesConfig,
+                selection,
+                tenantId: runtimeTenantId,
+                credentialLeaseHandle,
+              }),
             }),
           }),
         });
@@ -856,18 +871,27 @@ export default {
           retry: () => message.retry(),
         }, {
           ...tenantConsumerOptions,
-          process: async (event: SlackQueueEvent, tenantContext) => withTenantCredentialLease({
-            envelope: tenantContext,
+          process: async (event: SlackQueueEvent, tenantContext) => executeTenantRuntimeOperation({
+            tenant_context: tenantContext,
             expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
-            audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
-            broker: clients.credential_broker,
-            credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
-            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
-              tenantContext.workspace_connection.connection_id,
-            ),
-            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            verifier,
+            quota: clients.quota,
+            accounting: clients.accounting,
+            ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
+            quota_unit: "model_tokens",
             now: tenantConsumerOptions.now,
-            run: async (credentialLeaseHandle) => {
+            process: () => withTenantCredentialLease({
+              envelope: tenantContext,
+              expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
+              audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
+              broker: clients.credential_broker,
+              credential_registry: createDurableTenantCredentialRegistry(env.TENANT_RUNTIME_STATE),
+              read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+                tenantContext.workspace_connection.connection_id,
+              ),
+              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+              now: tenantConsumerOptions.now,
+              run: async (credentialLeaseHandle) => {
               for (const file of event.files ?? []) {
                 if (!/\.txt$/i.test(file.name)) continue;
                 const runId = `${event.eventId}_${file.id}`;
@@ -885,7 +909,8 @@ export default {
                 });
               }
               return { outcome: "awaiting_destination" };
-            },
+              },
+            }),
           }),
         });
         continue;
@@ -912,7 +937,7 @@ export default {
         retry: () => message.retry(),
       }, {
         ...tenantConsumerOptions,
-        process: async (event: SlackQueueEvent) => {
+        process: async (event: SlackQueueEvent, tenantContext) => {
           const placement = resolvedPlacement;
           const placementClaudeRuntime = resolveClaudeRuntimeConfig(env, placement.agent?.model);
           const trace: TurnRuntimeTrace = { placementId: placement.placementId, projectCodes: placement.projectCodes,
@@ -957,6 +982,41 @@ export default {
                 return { outcome: "already_processing" as const };
               }
               deliveryClaimed = true;
+              const expectedScope = tenantConsumerOptions.expected_scope(tenantBody);
+              const deliveryOwnership = createDurableTenantStateClient(
+                env.TENANT_RUNTIME_STATE,
+                tenantContext.tenant.tenant_id,
+              );
+              const postTenantReply = (replyEvent: SlackQueueEvent, text: string) => {
+                const deliveryNow = tenantConsumerOptions.now();
+                return postTenantSlackReply({
+                  tenant_context: tenantContext,
+                  expected_scope: expectedScope,
+                  ownership: deliveryOwnership,
+                  read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+                    tenantContext.workspace_connection.connection_id,
+                  ),
+                  resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+                  now: deliveryNow,
+                  retention_until: tenantRetentionUntil(deliveryNow),
+                  event: replyEvent,
+                  text,
+                  post: () => postSlackReply(replyEvent, text, { slackBotToken: env.SLACK_BOT_TOKEN }),
+                });
+              };
+              const runTenantOperation = <R extends { outcome?: string; responseTs?: string }>(
+                process: () => Promise<R>,
+              ) => executeTenantRuntimeOperation({
+                tenant_context: tenantContext,
+                expected_scope: expectedScope,
+                verifier,
+                quota: clients.quota,
+                accounting: clients.accounting,
+                ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
+                quota_unit: "model_tokens",
+                now: tenantConsumerOptions.now,
+                process,
+              });
               const sessionModel = workspaceSession.modelOverride;
               const claudeRuntime = resolveClaudeRuntimeConfig(
                 env,
@@ -969,18 +1029,21 @@ export default {
                 controlCommand = parseRuntimeControlCommand(event.text);
               } catch (error) {
                 if (!(error instanceof RuntimeControlCommandError)) throw error;
-                const responseTs = await postSlackReply(event, renderRuntimeControlCommandError(error), { slackBotToken: env.SLACK_BOT_TOKEN });
-                await persistReplyCompletion(workspace.fs, {
-                  eventId: event.eventId,
-                  responseTs,
-                  completedAt: new Date().toISOString(),
+                return runTenantOperation(async () => {
+                  const responseTs = await postTenantReply(event, renderRuntimeControlCommandError(error));
+                  await persistReplyCompletion(workspace.fs, {
+                    eventId: event.eventId,
+                    responseTs,
+                    completedAt: new Date().toISOString(),
+                  });
+                  await markWorkspaceEngaged(workspace.fs, new Date().toISOString());
+                  return { outcome: "replied" as const, responseTs };
                 });
-                await markWorkspaceEngaged(workspace.fs, new Date().toISOString());
-                return { outcome: "replied" as const, responseTs };
               }
               if (controlCommand) {
                 if (await isReplyCompleted(workspace.fs, event.eventId)) return { outcome: "already_completed" as const };
-                const text = await executeRuntimeControlCommand({
+                return runTenantOperation(async () => {
+                  const text = await executeRuntimeControlCommand({
                   fs: workspace.fs,
                   command: controlCommand,
                   commandId: event.eventId,
@@ -1029,15 +1092,16 @@ export default {
                       createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId, "2h"),
                     }),
                   }),
+                  });
+                  const responseTs = await postTenantReply(event, text);
+                  await persistReplyCompletion(workspace.fs, {
+                    eventId: event.eventId,
+                    responseTs,
+                    completedAt: new Date().toISOString(),
+                  });
+                  await markWorkspaceEngaged(workspace.fs, new Date().toISOString());
+                  return { outcome: "replied" as const, responseTs };
                 });
-                const responseTs = await postSlackReply(event, text, { slackBotToken: env.SLACK_BOT_TOKEN });
-                await persistReplyCompletion(workspace.fs, {
-                  eventId: event.eventId,
-                  responseTs,
-                  completedAt: new Date().toISOString(),
-                });
-                await markWorkspaceEngaged(workspace.fs, new Date().toISOString());
-                return { outcome: "replied" as const, responseTs };
               }
               const hydrateThreadContext = async (input: SlackQueueEvent) => {
                 const hydrated = await hydrateSlackQueueEventThreadContext(input, { botToken: env.SLACK_BOT_TOKEN,
@@ -1047,7 +1111,7 @@ export default {
                     { botToken: env.SLACK_BOT_TOKEN }) };
                 return hydrateSlackAttachments(withParticipants, { botToken: env.SLACK_BOT_TOKEN });
               };
-              return withTenantCredentialLease({
+              return runTenantOperation(() => withTenantCredentialLease({
                 envelope: tenantBody.tenant_context,
                 expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
                 audience: requiredRuntimeBinding(env.MANA_CREDENTIAL_AUDIENCE),
@@ -1172,6 +1236,7 @@ export default {
                     },
                     createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
                     hydrateThreadContext,
+                    postReply: postTenantReply,
                     });
                     if (replyResult.outcome === "replied") {
                       await markClaudeSessionStarted(workspace.fs, workspaceSession.generation, new Date().toISOString());
@@ -1179,7 +1244,7 @@ export default {
                     return replyResult;
                   }),
                 }),
-              });
+              }));
               },
             );
             if (deliveryClaimed) await workspaceStub.completeRuntimeEvent(deliveryId,

@@ -74,6 +74,7 @@ export interface ReplyPipelineOptions {
   fetch?: typeof fetch;
   now?: () => string;
   hydrateThreadContext?(event: SlackQueueEvent): Promise<SlackQueueEvent>;
+  postReply?(event: SlackQueueEvent, text: string): Promise<string>;
 }
 
 export interface ReplyProcessResult {
@@ -649,7 +650,9 @@ export async function processReplyEvent(
     }, { outcome: "success", contextPresent: Boolean(hydratedEvent.threadContext),
       contextChars: hydratedEvent.threadContext?.length ?? 0 });
     const reply = await generateClaudeReply(hydratedEvent, { ...options, requesterIdentity });
-    const responseTs = await postSlackReply(hydratedEvent, reply, options);
+    const responseTs = options.postReply
+      ? await options.postReply(hydratedEvent, reply)
+      : await postSlackReply(hydratedEvent, reply, options);
     emitTurnLog("log", "mana_slack_reply_posted", event, {
       ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
     }, { outcome: "success", responseTs });
