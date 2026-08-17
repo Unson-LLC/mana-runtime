@@ -6,7 +6,7 @@
 
 | 対象 | PR | 固定 HEAD |
 |---|---:|---|
-| 横断契約（今回の入力） | #237 | `37dd9f5eee783b9b3ba94c31c9c7e32f7afa3351` |
+| 横断契約（今回の入力） | #237 | `2bcb70e1b6c7a65c44cc9fa303a3fb64a98b8589` |
 | Brainbase producer 草案 | #1229 | `2c996d955609434e1ac205fe46a38f2920b815fd` |
 | mana-runtime consumer 草案 | #236 | `b08546305baa1d6fe37dc57ee0e80364cd975fac` |
 
