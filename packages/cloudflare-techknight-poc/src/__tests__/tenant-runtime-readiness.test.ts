@@ -23,6 +23,9 @@ const complete = {
   BRAINBASE_QUOTA_URL: "https://quota.example.test",
   BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test",
   BRAINBASE_RUNTIME_API_TOKEN: "opaque-test-token",
+  BRAINBASE_TENANT_RUNTIME_HOST: "127.0.0.1",
+  BRAINBASE_TENANT_RUNTIME_PORT: "31016",
+  BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "internal-service-token-placeholder",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   SLACK_EXPECTED_APP_ID: "A-MANA",
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
@@ -61,6 +64,27 @@ describe("tenant runtime readiness", () => {
     })).toEqual({
       ready: false,
       missing_bindings: ["SLACK_INSTALLATION_LIFECYCLE_TOKEN"],
+    });
+  });
+
+  it("requires a dedicated safe Brainbase provider-forward binding", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_TENANT_RUNTIME_PORT: undefined,
+      BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: [
+        "BRAINBASE_TENANT_RUNTIME_PORT",
+        "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
+      ],
+    });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_TENANT_RUNTIME_HOST: "0.0.0.0",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_TENANT_RUNTIME_HOST"],
     });
   });
 
