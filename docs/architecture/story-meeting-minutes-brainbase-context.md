@@ -52,6 +52,14 @@ Receiptの未完了task候補と生成taskを、project、正規化title、正�
 
 GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を、本文末尾へ利用source refsと判断候補を決定的に描画する。Slack完了表示には「Brainbase参照済み」と、Receipt外参照を除外した場合の警告を示す。生Graph contextは保存・投稿しない。
 
+## 生成診断
+
+本番配備後の実Slack E2Eより先に、認証済み管理APIから議事録生成プローブを実行する。プローブは本番と同じClaudeコマンド、モデル・effort設定、JSON Schema、Judgment Hook、検証済みBrainbase Receipt注入を使い、固定の無害な文字起こしだけを処理する。これにより、OAuth疎通だけでは検出できないstream-json形式、schema、Hook、Receipt境界の不一致を利用者の投稿前に検出する。
+
+UserPromptSubmitとStopのJudgment Receiptは、最終resultと同じsession・turnに属し、UserPromptSubmit→Stop→resultの順で成功していることを必須にする。UserPromptSubmit ReceiptにはHost Receipt IDと正規ルーティングSHAが必要で、Hook欠落・失敗・Receipt不正・identity不一致・順序不正を成功へ丸めない。
+
+応答は成功可否と許可済み診断コードだけに限定する。文字起こし、生成本文、Claudeのstdout・stderr、資格情報は返さない。streamが大きすぎる、event数超過、JSON不正、result欠落、Claude result error、schema不一致、Judgment lifecycle不成立を別の診断コードとして保持し、それ以外は汎用コードへ丸める。プローブが成功するまで実Slack E2Eへ進まない。
+
 ## 失敗
 
 requiredモードのReceipt失敗またはReceipt外参照は「Brainbaseの正本文脈を取得できなかったため保存していません」と同じ処理中投稿へ表示する。GitHub・Task・配信先Slackへ副作用を残さない。observeモードのReceipt外参照は警告として保存し、Slack完了表示とGitHub議事録へ警告を出したうえで、正規参照だけで処理を継続する。

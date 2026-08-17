@@ -11,6 +11,25 @@ const MEETING_MINUTES_ROUTING_HEAD_CHARS = 4_000;
 const MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES = 10_000_000;
 const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const MEETING_MINUTES_CONTEXT_PROMPT_MAX_BYTES = 100_000;
+const MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES = new Set([
+  "meeting_minutes_context_mode_invalid",
+  "meeting_minutes_generation_failed",
+  "meeting_minutes_generation_invalid",
+  "meeting_minutes_generation_placeholder_output",
+  "meeting_minutes_generation_stream_too_large",
+  "meeting_minutes_generation_stream_too_many_events",
+  "meeting_minutes_generation_stream_malformed",
+  "meeting_minutes_generation_result_error",
+  "meeting_minutes_generation_result_missing",
+  "meeting_minutes_generation_result_schema_invalid",
+  "meeting_minutes_judgment_hook_failed",
+  "meeting_minutes_judgment_hook_receipt_invalid",
+  "meeting_minutes_judgment_lifecycle_incomplete",
+  "meeting_minutes_judgment_event_order_invalid",
+  "meeting_minutes_judgment_identity_mismatch",
+  "meeting_minutes_judgment_route_receipt_missing",
+]);
+const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
 async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
@@ -53,6 +72,16 @@ export function assertGeneratedMeetingMinutesNotPlaceholder(value: unknown): voi
   if (containsMeetingMinutesPlaceholder(record)) {
     throw new Error("meeting_minutes_generation_placeholder_output");
   }
+}
+
+export function meetingMinutesGenerationDiagnosticCode(error: unknown): string {
+  const message = error && typeof error === "object" && "message" in error
+    && typeof (error as { message?: unknown }).message === "string"
+    ? (error as { message: string }).message
+    : "";
+  return MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES.has(message)
+    ? message
+    : "meeting_minutes_generation_probe_failed";
 }
 
 export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMinutes {
@@ -222,18 +251,22 @@ const BRAINBASE_CONTEXT_TOOL = "mcp__brainbase__brainbase_get_meeting_minutes_co
 
 function streamEvents(stdout: string): Array<Record<string, unknown>> {
   if (stdout.length > MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES) {
-    throw new Error("meeting_minutes_generation_invalid");
+    throw new Error("meeting_minutes_generation_stream_too_large");
   }
   const lines = stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
   if (lines.length > MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS) {
-    throw new Error("meeting_minutes_generation_invalid");
+    throw new Error("meeting_minutes_generation_stream_too_many_events");
   }
-  return lines.map((line) => {
+  const events = lines.map((line) => {
     try {
       const value = JSON.parse(line) as unknown;
       return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
     } catch { return undefined; }
   }).filter((value): value is Record<string, unknown> => Boolean(value));
+  if (lines.length > 0 && events.length === 0) {
+    throw new Error("meeting_minutes_generation_stream_malformed");
+  }
+  return events;
 }
 
 function contentItems(event: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -275,22 +308,110 @@ function resultMinutes(events: Array<Record<string, unknown>>): {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!;
     if (event.type !== "result") continue;
-    if (event.is_error === true) throw new Error("meeting_minutes_generation_invalid");
+    if (event.is_error === true) throw new Error("meeting_minutes_generation_result_error");
     const structured = event.structured_output ?? event.structuredOutput;
     const sessionId = event.session_id ?? event.sessionId;
-    if (structured !== undefined) return { minutes: parseGeneratedMeetingMinutes(structured), index,
-      ...(typeof sessionId === "string" ? { sessionId } : {}) };
-    if (typeof event.result === "string") return { minutes: parseGeneratedMeetingMinutesOutput(event.result), index,
-      ...(typeof sessionId === "string" ? { sessionId } : {}) };
+    try {
+      if (structured !== undefined) return { minutes: parseGeneratedMeetingMinutes(structured), index,
+        ...(typeof sessionId === "string" ? { sessionId } : {}) };
+      if (typeof event.result === "string") return { minutes: parseGeneratedMeetingMinutesOutput(event.result), index,
+        ...(typeof sessionId === "string" ? { sessionId } : {}) };
+    } catch (error) {
+      if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+      throw new Error("meeting_minutes_generation_result_schema_invalid");
+    }
+    throw new Error("meeting_minutes_generation_result_schema_invalid");
   }
-  throw new Error("meeting_minutes_generation_invalid");
+  throw new Error("meeting_minutes_generation_result_missing");
+}
+
+interface JudgmentHookReceipt {
+  schema_version: "mana_judgment_hook_receipt.v1";
+  hook_event_name: "UserPromptSubmit" | "Stop";
+  session_id: string;
+  turn_id: string;
+  host_receipt_id?: string;
+  route_resolution_sha256?: string;
+}
+
+function nestedStrings(value: unknown, depth = 0): string[] {
+  if (depth > 6 || value === null || value === undefined) return [];
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length <= 1_000_000) {
+      try { return [value, ...nestedStrings(JSON.parse(trimmed), depth + 1)]; } catch { /* plain text */ }
+    }
+    return [value];
+  }
+  if (typeof value !== "object") return [];
+  return (Array.isArray(value) ? value : Object.values(value as Record<string, unknown>))
+    .flatMap((item) => nestedStrings(item, depth + 1));
+}
+
+function judgmentReceipt(event: Record<string, unknown>): JudgmentHookReceipt {
+  const eventName = event.hook_event ?? event.hookEvent;
+  if ((event.exit_code ?? event.exitCode) !== 0 || event.outcome !== "success") {
+    throw new Error("meeting_minutes_judgment_hook_failed");
+  }
+  for (const text of [...nestedStrings(event.stdout), ...nestedStrings(event.output)]) {
+    const line = text.split(/\r?\n/u).find((item) => item.startsWith(JUDGMENT_RECEIPT_PREFIX));
+    if (!line) continue;
+    try {
+      const value = JSON.parse(line.slice(JUDGMENT_RECEIPT_PREFIX.length)) as Record<string, unknown>;
+      const receiptEvent = value.hook_event_name;
+      if (value.schema_version !== "mana_judgment_hook_receipt.v1"
+        || (receiptEvent !== "UserPromptSubmit" && receiptEvent !== "Stop")
+        || receiptEvent !== eventName
+        || !nonEmpty(value.session_id, 200) || !nonEmpty(value.turn_id, 200)) {
+        throw new Error("meeting_minutes_judgment_hook_receipt_invalid");
+      }
+      return value as unknown as JudgmentHookReceipt;
+    } catch (error) {
+      if (error instanceof Error && error.message === "meeting_minutes_judgment_hook_receipt_invalid") throw error;
+      throw new Error("meeting_minutes_judgment_hook_receipt_invalid");
+    }
+  }
+  throw new Error("meeting_minutes_judgment_hook_receipt_invalid");
+}
+
+function assertMeetingMinutesJudgmentLifecycle(events: Array<Record<string, unknown>>,
+  generated: { index: number; sessionId?: string }): void {
+  const hooks: Array<{ index: number; receipt: JudgmentHookReceipt }> = [];
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]!;
+    if (event.type !== "system" || event.subtype !== "hook_response") continue;
+    const eventName = event.hook_event ?? event.hookEvent;
+    if (eventName !== "UserPromptSubmit" && eventName !== "Stop") continue;
+    hooks.push({ index, receipt: judgmentReceipt(event) });
+  }
+  const prompts = hooks.filter((item) => item.receipt.hook_event_name === "UserPromptSubmit");
+  const stops = hooks.filter((item) => item.receipt.hook_event_name === "Stop");
+  if (prompts.length !== 1 || stops.length < 1) {
+    throw new Error("meeting_minutes_judgment_lifecycle_incomplete");
+  }
+  const prompt = prompts[0]!;
+  const stop = stops.at(-1)!;
+  if (prompt.index >= stop.index || stop.index >= generated.index) {
+    throw new Error("meeting_minutes_judgment_event_order_invalid");
+  }
+  const sessionId = generated.sessionId;
+  if (!sessionId || prompt.receipt.session_id !== sessionId || stop.receipt.session_id !== sessionId
+    || prompt.receipt.turn_id !== stop.receipt.turn_id) {
+    throw new Error("meeting_minutes_judgment_identity_mismatch");
+  }
+  if (!nonEmpty(prompt.receipt.host_receipt_id, 300)
+    || !/^[a-f0-9]{64}$/iu.test(prompt.receipt.route_resolution_sha256 ?? "")) {
+    throw new Error("meeting_minutes_judgment_route_receipt_missing");
+  }
 }
 
 /** Parses the audited Claude stream after the Worker has deterministically resolved the Receipt. */
 export function parseReceiptBoundGeneratedMeetingMinutesOutput(stdout: string,
   expected: MeetingMinutesContextReceipt): AuditedGeneratedMeetingMinutes {
-  const generated = resultMinutes(streamEvents(stdout));
+  const events = streamEvents(stdout);
+  const generated = resultMinutes(events);
   if (!generated.sessionId) throw new Error("meeting_minutes_brainbase_session_missing");
+  assertMeetingMinutesJudgmentLifecycle(events, generated);
   return { ...generated.minutes, brainbase_context_attestation: {
     schema_version: "meeting_minutes_context_attestation.v2",
     source: "worker_context_receipt",

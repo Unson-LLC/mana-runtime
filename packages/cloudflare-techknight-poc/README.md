@@ -137,22 +137,25 @@ Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を
 7. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
 8. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
    OAuthがWorker Secretから復帰することを確認する。
-9. 対象会社の八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
-10. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
+9. 認証付き`POST /admin/sandbox/meeting-minutes-probe`を実行し、本番と同じClaude設定、
+   JSON Schema、Judgment Hook、Brainbase Receipt注入を使った固定文字起こしの生成が成功することを確認する。
+   応答は成功可否と許可済み診断コードだけを扱い、成功するまで実Slack E2Eへ進まない。
+10. 対象会社の八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
+11. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
     `techknight_slack_reply`の完了ログを確認する。
-11. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
+12. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
     未設定時はタスク登録を行わず`project_binding_missing`で停止する。
-12. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
+13. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
     `BRAINBASE_TASK_API_TOKEN` Secretとして設定する。Token値はWrangler設定へ書かない。
-13. 「私の」「自分の」タスク検索を有効にする場合は、`workspaceId:SlackUserId`から
+14. 「私の」「自分の」タスク検索を有効にする場合は、`workspaceId:SlackUserId`から
     Brainbase正規`person_id`への対応表(JSON)を`BRAINBASE_SLACK_PERSON_MAP_JSON` Secretとして
     設定する。レガシーAWS/Jimmy実装の静的対応表と同じ直接bridgeであり、対応表の内容・実際の
     person_id・Slack IDは設定ファイル、ログ、テストfixtureへ書かない。identity解決はこの
     Secretだけに依存し、Slack APIは呼ばない。未設定の間はidentity解決が無効のまま
     一般返信を継続する。
-14. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
+15. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
     `project_codes`とSlackの同一スレッドへの登録結果を照合する。
-15. PR #120を含むLightsail releaseでは `GITHUB_TOKEN` をsecretとして設定し、
+16. PR #120を含むLightsail releaseでは `GITHUB_TOKEN` をsecretとして設定し、
     `meetingMinutesPipeline.destination.github` のowner/repo/baseBranch/pathTemplateを確認する。
     GitHub保存の本番確認が終わるまで議事録pipelineを停止しない。タスク運用の切替では
     `mana-accounting` Placementとその `taskCanvas` だけを無効化し、議事録pipelineの

@@ -1,11 +1,16 @@
 import { hasAnthropicCredential } from "./anthropic-auth.js";
+import { resolveClaudeRuntimeConfig, type ClaudeRuntimeBindings } from "./claude-runtime-config.js";
+import { resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
+import { generateMeetingMinutesInSandbox, meetingMinutesGenerationDiagnosticCode } from "./meeting-minutes-generator.js";
 
 const OAUTH_OK_MARKER = "TECHKNIGHT_OAUTH_OK";
 
-export interface SandboxAdminEnv {
+export interface SandboxAdminEnv extends ClaudeRuntimeBindings {
   SANDBOX_PROBE_TOKEN?: string;
   ANTHROPIC_API_KEY?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
+  TENANT_ID?: string;
+  MEETING_MINUTES_CONTEXT_MODE?: string;
 }
 
 interface ExecResult {
@@ -16,6 +21,7 @@ interface ExecResult {
 }
 
 interface ProbeSandbox {
+  writeFile(path: string, content: string): Promise<unknown>;
   exec(
     command: string,
     options?: { env?: Record<string, string | undefined>; timeout?: number },
@@ -49,6 +55,10 @@ function boundedVersion(output: string): string {
   return output.trim().replace(/[\r\n]+/g, " ").slice(0, 120);
 }
 
+function tenantId(env: SandboxAdminEnv): string {
+  return env.TENANT_ID?.trim() || "techknight";
+}
+
 export async function handleSandboxAdminRequest(
   request: Request,
   env: SandboxAdminEnv,
@@ -71,7 +81,7 @@ export async function handleSandboxAdminRequest(
       const result = await sandbox.exec("claude --version", { timeout: 60_000 });
       return Response.json({
         ok: result.success,
-        tenant: "techknight",
+        tenant: tenantId(env),
         runtime: "claude-code",
         version: result.success ? boundedVersion(result.stdout) : undefined,
         oauthConfigured: hasAnthropicCredential(env),
@@ -97,13 +107,64 @@ export async function handleSandboxAdminRequest(
       return Response.json(
         {
           ok,
-          tenant: "techknight",
+          tenant: tenantId(env),
           auth: "anthropic-oauth",
           credentialLocation: "worker-secret",
           freshContainer: true,
         },
         { status: ok ? 200 : 502 },
       );
+    }
+
+    if (pathname === "/admin/sandbox/meeting-minutes-probe") {
+      if (!hasAnthropicCredential(env)) {
+        return Response.json({ error: "oauth_not_configured" }, { status: 503 });
+      }
+      const receipt = {
+        schema_version: "meeting_minutes_context_receipt.v1" as const,
+        receipt_id: "mmctx_probe_v1",
+        identity: {
+          run_id: "meeting_minutes_probe_v1",
+          project_code: "mana",
+          transcript_sha256: "a".repeat(64),
+        },
+        status: "resolved" as const,
+        checksum: "b".repeat(64),
+        resolved_at: "2026-01-01T00:00:00.000Z",
+        context: { source_refs: [], open_tasks: [] },
+      };
+      try {
+        await generateMeetingMinutesInSandbox(
+          [
+            "2026-01-01 Mana 議事録生成プローブ",
+            "参加者は議事録生成経路が本番と同じ設定で動くことを確認した。",
+            "結果は利用者データを含めず、診断コードだけを管理APIへ返すことに合意した。",
+          ].join("\n"),
+          {
+            id: "meeting-minutes-probe",
+            projectId: "mana",
+            contextProjectCode: "mana",
+            taskProjectCodes: ["mana"],
+            taskBoardTargetId: "meeting-minutes-probe",
+            name: "議事録生成プローブ",
+            organization: { id: "unson-business", name: "雲孫 事業運営" },
+            slackChannelId: "C0000000000",
+            github: { owner: "Unson-LLC", repo: "mana-runtime" },
+          },
+          receipt,
+          resolveMeetingMinutesContextMode(env.MEETING_MINUTES_CONTEXT_MODE),
+          resolveClaudeRuntimeConfig(env),
+          sandbox,
+        );
+        return Response.json({ ok: true, tenant: tenantId(env), probe: "meeting-minutes-generation" });
+      } catch (error) {
+        return Response.json({
+          ok: false,
+          tenant: tenantId(env),
+          probe: "meeting-minutes-generation",
+          code: meetingMinutesGenerationDiagnosticCode(error),
+        }, { status: 502 });
+      }
     }
 
     return Response.json({ error: "not_found" }, { status: 404 });

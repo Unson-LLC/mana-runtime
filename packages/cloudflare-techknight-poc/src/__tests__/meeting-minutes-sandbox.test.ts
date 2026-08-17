@@ -1,5 +1,6 @@
 import { classifyMeetingMinutesDestinationInSandbox, generateMeetingMinutesInSandbox,
   parseAuditedGeneratedMeetingMinutesOutput, parseGeneratedMeetingMinutesOutput,
+  parseReceiptBoundGeneratedMeetingMinutesOutput,
   parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
 
 const destinations = [
@@ -38,10 +39,39 @@ function auditedStream(minutes: Record<string, unknown>, options: { receipt?: un
   ].map((event) => JSON.stringify(event)).join("\n");
 }
 
-function receiptBoundStream(minutes: Record<string, unknown>): string {
+const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+function judgmentHook(event: "UserPromptSubmit" | "Stop", options: {
+  session?: string; turn?: string; success?: boolean; route?: boolean;
+} = {}): Record<string, unknown> {
+  const receipt = {
+    schema_version: "mana_judgment_hook_receipt.v1",
+    hook_event_name: event,
+    session_id: options.session ?? "session-1",
+    turn_id: options.turn ?? "turn-1",
+    host_receipt_id: `host-${event}`,
+    ...(event === "UserPromptSubmit" && options.route !== false
+      ? { route_resolution_sha256: "c".repeat(64) } : {}),
+  };
+  return {
+    type: "system", subtype: "hook_response", hook_event: event,
+    exit_code: options.success === false ? 2 : 0,
+    outcome: options.success === false ? "error" : "success",
+    stdout: JSON.stringify({ systemMessage: `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}` }),
+  };
+}
+
+function receiptBoundStream(minutes: Record<string, unknown>, options: {
+  prompt?: Record<string, unknown> | false; stop?: Record<string, unknown> | false;
+  resultSession?: string; stopAfterResult?: boolean;
+} = {}): string {
+  const prompt = options.prompt === false ? [] : [options.prompt ?? judgmentHook("UserPromptSubmit")];
+  const stop = options.stop === false ? [] : [options.stop ?? judgmentHook("Stop")];
+  const result = { type: "result", structured_output: minutes,
+    session_id: options.resultSession ?? "session-1" };
   return [
     { type: "system", subtype: "init", session_id: "session-1" },
-    { type: "result", structured_output: minutes, session_id: "session-1" },
+    ...prompt,
+    ...(options.stopAfterResult ? [result, ...stop] : [...stop, result]),
   ].map((event) => JSON.stringify(event)).join("\n");
 }
 
@@ -123,8 +153,52 @@ describe("generateMeetingMinutesInSandbox", () => {
     destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
       { model: "opus", effort: "xhigh" }, sandbox))
-      .rejects.toThrow("meeting_minutes_generation_invalid");
+      .rejects.toThrow("meeting_minutes_generation_result_schema_invalid");
     expect(sandbox.destroy).toHaveBeenCalled();
+  });
+
+  it("classifies malformed streams, missing results, Claude errors, and schema failures", () => {
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput("not-json", context))
+      .toThrow("meeting_minutes_generation_stream_malformed");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      JSON.stringify({ type: "system", subtype: "init", session_id: "session-1" }), context,
+    )).toThrow("meeting_minutes_generation_result_missing");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      JSON.stringify({ type: "result", is_error: true, session_id: "session-1" }), context,
+    )).toThrow("meeting_minutes_generation_result_error");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream({
+      title: "", overview: "", body: "", tasks: [],
+    }), context)).toThrow("meeting_minutes_generation_result_schema_invalid");
+  });
+
+  it("fails closed when the Judgment lifecycle is missing or failed", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes, { prompt: false, stop: false }), context,
+    )).toThrow("meeting_minutes_judgment_lifecycle_incomplete");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes, { prompt: judgmentHook("UserPromptSubmit", { success: false }) }), context,
+    )).toThrow("meeting_minutes_judgment_hook_failed");
+  });
+
+  it("binds Judgment receipts to one session and turn before the final result", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      stop: judgmentHook("Stop", { session: "session-2" }),
+    }), context)).toThrow("meeting_minutes_judgment_identity_mismatch");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      stop: judgmentHook("Stop", { turn: "turn-2" }),
+    }), context)).toThrow("meeting_minutes_judgment_identity_mismatch");
+  });
+
+  it("requires the routed host receipt and preserves event order", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      prompt: judgmentHook("UserPromptSubmit", { route: false }),
+    }), context)).toThrow("meeting_minutes_judgment_route_receipt_missing");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes, { stopAfterResult: true }), context,
+    )).toThrow("meeting_minutes_judgment_event_order_invalid");
   });
 
   it("fails closed unless the exact Brainbase call, Receipt, and PostToolUse audit are all present", () => {
