@@ -608,7 +608,7 @@ describe("story-mana-multitenant-runtime contract", () => {
         : postSlackOnce(),
     });
     await expect(run()).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
-    await expect(run()).resolves.toEqual({ outcome: "already_completed", responseTs: "4.0" });
+    await expect(run()).resolves.toEqual({ outcome: "replied", responseTs: "4.0" });
     expect(postSlackOnce).toHaveBeenCalledOnce();
     expect(quota.read_authoritative_decision).toHaveBeenCalledOnce();
     expect(accounting.write).toHaveBeenCalledTimes(2);
@@ -903,7 +903,7 @@ describe("story-mana-multitenant-runtime contract", () => {
     const clientsStart = source.indexOf("function meetingMinutesClients(");
     const clientsEnd = source.indexOf("function requiredRuntimeBinding", clientsStart);
     const clients = source.slice(clientsStart, clientsEnd);
-    expect(clients).toContain("createTenantCredentialFetch");
+    expect(clients).toContain("credentialFetch");
     expect(clients).not.toContain("env.SLACK_BOT_TOKEN");
     expect(clients).not.toContain("env.GITHUB_TOKEN");
     expect(clients).not.toContain("env.BRAINBASE_TASK_API_TOKEN");

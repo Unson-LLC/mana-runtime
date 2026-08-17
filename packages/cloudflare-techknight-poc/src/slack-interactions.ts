@@ -22,15 +22,16 @@ interface InteractionOptions {
   resolveDestinations?(): readonly MeetingMinutesDestination[];
   nowMs?: number;
   send(selection: MeetingMinutesSelection | MeetingMinutesRedo): Promise<unknown>;
-  showProcessing?(input: { channelId: string; threadTs: string; destinationName: string }): Promise<void>;
-  clearProcessing?(input: { channelId: string; threadTs: string }): Promise<void>;
+  showProcessing?(input: { channelId: string; threadTs: string; destinationName: string },
+    credentialFetch: typeof fetch): Promise<void>;
+  clearProcessing?(input: { channelId: string; threadTs: string }, credentialFetch: typeof fetch): Promise<void>;
   resolveThreadTs?(runId: string): Promise<string | undefined>;
-  updateOriginal?(responseUrl: string, message: SlackInteractionMessage): Promise<void>;
+  updateOriginal?(responseUrl: string, message: SlackInteractionMessage, credentialFetch: typeof fetch): Promise<void>;
   defer?(work: Promise<void>): void;
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string },
-    effects?: TenantInteractionEffects): Promise<Response>;
-  handleMeetingTaskAction?(payload: Record<string, unknown>, effects?: TenantInteractionEffects): Promise<Response | undefined>;
-  resolveTenantEffects?(identity: TenantInteractionIdentity): Promise<TenantInteractionEffects>;
+    effects: TenantInteractionEffects): Promise<Response>;
+  handleMeetingTaskAction?(payload: Record<string, unknown>, effects: TenantInteractionEffects): Promise<Response | undefined>;
+  resolveTenantEffects(identity: TenantInteractionIdentity): Promise<TenantInteractionEffects>;
 }
 
 export interface TenantInteractionIdentity {
@@ -50,9 +51,9 @@ export interface TenantInteractionEffects {
   readonly source: TenantInteractionIdentity;
   durableObject<T>(effectId: string, target: TenantInteractionTarget, execute: () => Promise<T>): Promise<T>;
   brainbaseProxy<T>(effectId: string, target: TenantInteractionTarget, mode: "read" | "write",
-    execute: () => Promise<T>): Promise<T>;
+    execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T>;
   slackDelivery(effectId: string, target: TenantInteractionTarget, event: unknown,
-    execute: () => Promise<void>): Promise<void>;
+    execute: (credentialFetch: typeof fetch) => Promise<void>): Promise<void>;
 }
 
 export type SlackInteractionMessage = SlackSelectionMessage;
@@ -96,13 +97,13 @@ function target(channelId: string | undefined, threadTs: string | undefined): Te
 }
 
 function guardedSlackEffect(
-  effects: TenantInteractionEffects | undefined,
+  effects: TenantInteractionEffects,
   effectId: string,
   effectTarget: TenantInteractionTarget,
   event: unknown,
-  execute: () => Promise<void>,
+  execute: (credentialFetch: typeof fetch) => Promise<void>,
 ): Promise<void> {
-  return effects ? effects.slackDelivery(effectId, effectTarget, event, execute) : execute();
+  return effects.slackDelivery(effectId, effectTarget, event, execute);
 }
 
 function slackResponseUrl(value: unknown): string | undefined {
@@ -140,7 +141,6 @@ export function handleMeetingMinutesInteractionEntrypoint(
   resolveTenantEffects?: InteractionOptions["resolveTenantEffects"],
 ): Promise<Response> {
   if (!send || !resolveTenantEffects) return Promise.resolve(response("FALLBACK_FORBIDDEN", 503));
-  const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const destinationTeamIds = (() => {
     try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
     catch { return {}; }
@@ -155,10 +155,14 @@ export function handleMeetingMinutesInteractionEntrypoint(
     expectedChannelId: env.MEETING_MINUTES_ROUTER_CHANNEL_ID?.trim(),
     resolveDestinations: () => meetingMinutesRuntimeConfig(env).destinations,
     send,
-    showProcessing: (input) => slack.showProcessingStatus(input.channelId, input.threadTs, input.destinationName),
-    clearProcessing: (input) => slack.clearProcessingStatus(input.channelId, input.threadTs),
+    showProcessing: (input, credentialFetch) => new MeetingMinutesSlackClient(
+      "tenant-credential-injected", credentialFetch).showProcessingStatus(
+      input.channelId, input.threadTs, input.destinationName),
+    clearProcessing: (input, credentialFetch) => new MeetingMinutesSlackClient(
+      "tenant-credential-injected", credentialFetch).clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
-    updateOriginal: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
+    updateOriginal: (responseUrl, message, credentialFetch) => updateSlackInteractionMessage(
+      responseUrl, message, credentialFetch),
     defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction, resolveTenantEffects });
 }
 
@@ -202,29 +206,26 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const interactionThreadTs = string(sourceMessage?.thread_ts) ?? string(sourceContainer?.thread_ts)
     ?? string(sourceMessage?.ts) ?? string(actionValue?.sourceThreadTs) ?? string(action?.action_ts)
     ?? `interaction:${interactionId.slice("slack-interaction-".length)}`;
-  let tenantEffects: TenantInteractionEffects | undefined;
-  if (options.resolveTenantEffects) {
-    if (!interactionWorkspaceId || !appId || !interactionRequesterId || !interactionChannelId) {
-      return response("slack_interaction_invalid", 400);
-    }
-    try {
-      tenantEffects = await options.resolveTenantEffects({
-        app_id: appId,
-        workspace_id: interactionWorkspaceId,
-        event_id: interactionId,
-        channel_id: interactionChannelId,
-        thread_ts: interactionThreadTs,
-        requester_id: interactionRequesterId,
-        ...(string(object(payload?.enterprise)?.id) ? { enterprise_id: string(object(payload?.enterprise)?.id) } : {}),
-      });
-    } catch {
-      return response("TENANT_INTERACTION_UNAVAILABLE", 503);
-    }
+  if (!options.resolveTenantEffects) return response("FALLBACK_FORBIDDEN", 503);
+  if (!interactionWorkspaceId || !appId || !interactionRequesterId || !interactionChannelId) {
+    return response("slack_interaction_invalid", 400);
+  }
+  let tenantEffects: TenantInteractionEffects;
+  try {
+    tenantEffects = await options.resolveTenantEffects({
+      app_id: appId,
+      workspace_id: interactionWorkspaceId,
+      event_id: interactionId,
+      channel_id: interactionChannelId,
+      thread_ts: interactionThreadTs,
+      requester_id: interactionRequesterId,
+      ...(string(object(payload?.enterprise)?.id) ? { enterprise_id: string(object(payload?.enterprise)?.id) } : {}),
+    });
+  } catch {
+    return response("TENANT_INTERACTION_UNAVAILABLE", 503);
   }
   if (options.handleMeetingTaskAction) {
-    const taskResponse = tenantEffects
-      ? await options.handleMeetingTaskAction(payload!, tenantEffects)
-      : await options.handleMeetingTaskAction(payload!);
+    const taskResponse = await options.handleMeetingTaskAction(payload!, tenantEffects);
     if (taskResponse) return taskResponse;
   }
   if (string(team?.id) !== options.expectedTeamId) return response("slack_team_forbidden", 403);
@@ -235,9 +236,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
     const approvalId = string(value?.approvalId); const payloadHash = string(value?.payloadHash);
     if (!userId || !channelId || !approvalId || !payloadHash) return response("slack_interaction_invalid", 400);
-    return tenantEffects
-      ? options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId }, tenantEffects)
-      : options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId });
+    return options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId }, tenantEffects);
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
   if (options.expectedChannelId && channelId !== options.expectedChannelId) return response("slack_channel_forbidden", 403);
@@ -272,7 +271,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
     options.defer(guardedSlackEffect(tenantEffects, `redo-confirm:${runId}`,
       target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId },
-      () => options.updateOriginal!(responseUrl, redoConfirmationMessage(runId, fileName))));
+      (credentialFetch) => options.updateOriginal!(
+        responseUrl, redoConfirmationMessage(runId, fileName), credentialFetch)));
     return Response.json({ ok: true });
   }
   if (confirmRedoAction) {
@@ -300,7 +300,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     } catch { return response("slack_interaction_invalid", 400); }
     options.defer(guardedSlackEffect(tenantEffects, `destination-menu:${runId}:${organizationId ?? "root"}`,
       target(channelId, sourceThreadTs), { kind: organizationAction ? "project_selection" : "organization_selection", runId },
-      () => options.updateOriginal!(responseUrl, message)));
+      (credentialFetch) => options.updateOriginal!(responseUrl, message, credentialFetch)));
     return Response.json({ ok: true });
   }
   if (!runId || !destinationId || !channelId || !actionTs || !options.defer) {
@@ -318,10 +318,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     let feedbackThreadTs: string | undefined = sourceThreadTs;
     if (!feedbackThreadTs && options.resolveThreadTs) {
       try {
-        feedbackThreadTs = tenantEffects
-          ? await tenantEffects.durableObject(`resolve-thread:${runId}`, target(channelId, interactionThreadTs),
-              () => options.resolveThreadTs!(runId))
-          : await options.resolveThreadTs(runId);
+        feedbackThreadTs = await tenantEffects.durableObject(
+          `resolve-thread:${runId}`, target(channelId, interactionThreadTs),
+          () => options.resolveThreadTs!(runId));
       }
       catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_lookup_failed", runId,
@@ -336,7 +335,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       try {
         await guardedSlackEffect(tenantEffects, `processing-show:${runId}:${destination.id}`,
           target(channelId, feedbackThreadTs), { kind: "processing_status", runId, destinationId: destination.id },
-          () => options.showProcessing!({ channelId, threadTs: feedbackThreadTs!, destinationName: destination.name }));
+          (credentialFetch) => options.showProcessing!(
+            { channelId, threadTs: feedbackThreadTs!, destinationName: destination.name }, credentialFetch));
         processingShown = true;
       } catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
@@ -349,7 +349,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         try {
           await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
             target(channelId, feedbackThreadTs), { kind: "destination_confirmation", runId, destinationId: destination.id },
-            () => options.updateOriginal!(responseUrl, destinationSelectedMessage(runId, fileName, destination)));
+            (credentialFetch) => options.updateOriginal!(
+              responseUrl, destinationSelectedMessage(runId, fileName, destination), credentialFetch));
         }
         catch (error) {
           console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
@@ -363,7 +364,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         try {
           await guardedSlackEffect(tenantEffects, `processing-clear:${runId}:${destinationId}`,
             target(channelId, feedbackThreadTs), { kind: "processing_status_clear", runId, destinationId },
-            () => options.clearProcessing!({ channelId, threadTs: feedbackThreadTs! }));
+            (credentialFetch) => options.clearProcessing!(
+              { channelId, threadTs: feedbackThreadTs! }, credentialFetch));
         }
         catch (clearError) {
           console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_clear_failed", runId,
