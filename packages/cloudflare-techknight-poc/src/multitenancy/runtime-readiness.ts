@@ -99,7 +99,7 @@ export function assessTenantRuntimeReadiness(
   const trustedForwardHost = nonEmpty(env.BRAINBASE_TENANT_RUNTIME_HOST)
     ? String(env.BRAINBASE_TENANT_RUNTIME_HOST).trim()
     : "127.0.0.1";
-  if (["0.0.0.0", "::", "[::]"].includes(trustedForwardHost)
+  if (["0.0.0.0", "::", "[::]", "*"].includes(trustedForwardHost)
     || (!new Set(["127.0.0.1", "localhost", "::1", "[::1]"]).has(trustedForwardHost)
       && env.BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK !== "1")) {
     missing.push("BRAINBASE_TENANT_RUNTIME_HOST");
