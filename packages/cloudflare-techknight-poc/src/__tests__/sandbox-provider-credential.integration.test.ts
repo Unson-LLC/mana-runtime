@@ -313,6 +313,16 @@ describe("sandbox provider credential integration", () => {
       collection_state: "not_collected",
       terminal_outcome: "timed_out",
       owner_finalized: true,
+      container_sanitization_receipt: {
+        operation_id: envelope.operation_id,
+        result: "passed",
+        checks: {
+          container_destroyed: true,
+          fresh_container_per_attempt: true,
+          cross_tenant_reuse_forbidden: true,
+          credential_material_not_persisted: true,
+        },
+      },
     });
     expect(destroyContainer).toHaveBeenCalledWith("development-sandbox-timeout-a");
     expect(writeAccounting).toHaveBeenCalledTimes(2);
@@ -345,6 +355,15 @@ describe("sandbox provider credential integration", () => {
     expect(writeAccounting.mock.calls[1]?.[0].artifact)
       .toEqual(writeAccounting.mock.calls[0]?.[0].artifact);
     expect(writeAccounting.mock.calls[1]?.[0].artifact.receipt.completed_at).toBe(deadline);
+    const sanitationReceipts = [...terminalStorage!.values.entries()]
+      .filter(([key]) => key.startsWith("container-sanitization-receipt:"));
+    expect(sanitationReceipts).toHaveLength(1);
+    expect(sanitationReceipts[0]?.[1]).toEqual(expect.objectContaining({
+      operation_id: envelope.operation_id,
+      result: "passed",
+      completed_at: deadline,
+    }));
+    expect(JSON.stringify(sanitationReceipts[0]?.[1])).not.toMatch(/token|secret|authorization/i);
 
     await restarted.alarm(retryAt, async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
       finalize(retryAt));
