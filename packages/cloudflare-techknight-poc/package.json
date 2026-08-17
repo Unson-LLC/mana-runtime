@@ -11,6 +11,7 @@
     "verify:production-task-migration-evidence": "vitest run src/__tests__/production-task-migration-evidence.test.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "integration": "vitest run",
     "clean": "rm -rf dist .wrangler"
   },
   "dependencies": {

@@ -16,7 +16,6 @@
     "test:integration:deploy": "scripts/test-google-drive-mcp-protocol.sh",
     "test:e2e:deploy": "playwright test --config playwright.deploy.config.ts",
     "test:integration": "pnpm --filter openryoko test:integration",
-    "integration:mana-multitenancy": "pnpm --filter @openryoko/cloudflare-techknight-poc exec vitest run src/__tests__/canonical-consumer-conformance.test.ts src/__tests__/multitenant-runtime-contract.test.ts",
     "integration:cloudflare-task-migration": "pnpm --filter @openryoko/cloudflare-techknight-poc exec vitest run src/__tests__/task-write-mcp-jsonrpc.test.ts src/__tests__/task-board.test.ts",
     "verify:cloudflare-task-migration-evidence": "pnpm --filter @openryoko/cloudflare-techknight-poc verify:production-task-migration-evidence",
     "test:e2e": "node -e \"console.log(JSON.stringify({ node_arch: process.arch, node_version: process.version }))\" && playwright test",
