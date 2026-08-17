@@ -4,7 +4,7 @@ story_id: story-mana-multitenant-runtime
 title: 八雲まなマルチテナントランタイムアーキテクチャ
 status: accepted
 date: 2026-08-16
-cross_contract: mana-runtime#237@ba1942e15935e00d1c603f57284439384bc95cac
+cross_contract: mana-runtime#237@2bcb70e1b6c7a65c44cc9fa303a3fb64a98b8589
 ---
 
 # 八雲まなマルチテナントランタイムアーキテクチャ

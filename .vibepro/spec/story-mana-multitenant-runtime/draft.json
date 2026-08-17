@@ -3,12 +3,12 @@
   "story_id": "story-mana-multitenant-runtime",
   "inputs_digest": {
     "story_sha": "sha256:e09121d6e5249256bf0b08f43e7dc40cc6684bdc2380a0ae56a75c6c067681d0",
-    "architecture_sha": "sha256:c4610ec8db5d7532d537e2aabfb33429ff2000dbf9c3c73fe341468bc161a23f",
+    "architecture_sha": "sha256:144497d6964a4819bd6283fecb6b576cdb5192fc5c0dbc19047f43f39d3e9712",
     "code_sha": "sha256:7a8dec718898c17d30bd09badc591c09f759435d17fbaa2cc8a3065bfaec2765",
     "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925"
   },
   "generated_by": {
-    "caller": "codex-mana-runtime",
+    "caller": "codex",
     "stage": "ai_synthesis"
   },
   "open_questions": [],
@@ -21,15 +21,15 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-001"
+            "ac_id": "AC-1"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-002"
+            "ac_id": "AC-2"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-003"
+            "ac_id": "AC-3"
           }
         ],
         "architecture_refs": [
@@ -50,26 +50,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
-            "case": "Planned Red: registers and revises a Brainbase workspace connection without deriving tenant from team id"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "WorkspaceConnectionSnapshotV1 lifecycle planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
-            "case": "Planned Red: records reauthorization scope change uninstall and revocation state transitions"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "Slack installation lifecycle uses authenticated revision port planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "WorkspaceConnectionSnapshotV1 lifecycle planned Red"
           }
         ]
       },
       "confidence": 0.9,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "INV-001",
@@ -79,15 +79,15 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-004"
+            "ac_id": "AC-4"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-101"
+            "ac_id": "AC-6"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-104"
+            "ac_id": "AC-9"
           }
         ],
         "architecture_refs": [
@@ -116,26 +116,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
-            "case": "Planned Red: rejects every unresolved revoked stale ambiguous app or scope state before enqueue"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "fail closed before enqueue and LLM planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
-            "case": "Planned Red: never falls back to a static tenant or alternate placement"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "authoritative worker ingress resolution planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "fail closed before enqueue and LLM planned Red"
           }
         ]
       },
       "confidence": 0.96,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "INV-002",
@@ -145,11 +145,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-005"
+            "ac_id": "AC-5"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-302"
+            "ac_id": "AC-17"
           }
         ],
         "architecture_refs": [
@@ -170,32 +170,32 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
-            "case": "Planned Red: rejects secret material in every envelope state log and receipt serializer"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "no credential body crosses a persisted or observable boundary planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "no credential body crosses a persisted or observable boundary planned Red"
           }
         ]
       },
       "confidence": 0.98,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
-      "id": "C-002",
+      "id": "C-012",
       "type": "contract",
-      "statement": "TenantContextEnvelopeはcanonical snake_caseで、schema_version:'1.0'、protocol_id:'mana-brainbase-tenant-context'、protocol_version:'1.0'、issuer:'brainbase'、audience:string[]、tenant:{tenant_id:'ten_'+ULID,tenant_revision:string}、workspace_connection:{connection_id:'wsc_'+ULID,connection_revision:string,provider:'slack',installation_id:string,workspace_id:string,app_id:string,status:'active'}、actor:{principal_id:string,principal_type:'person'|'service',authenticated_subject_id:string,delegated_by?:string}、authorization:{organization_ids:string[],project_ids:string[],data_scopes:string[],capability_ids:string[]}、placement:{deployment_id:'dep_'+ULID,profile:'shared_cloud'|'dedicated_cloud'|'customer_managed_oss'}、slack:{event_id:string,channel_id:string,enterprise_id?:string,thread_ts?:string,requester_id?:string}、correlation_id:'cor_'+ULID、operation_id:'op_'+ULID、idempotency_key:'ik1_'+base64url、contract_revision:string、credential:{mode:'cloud_standard'|'customer_oauth'|'customer_api',credential_ref:string,billing_principal_id:string}、issued_at、expires_at、integrity:{method:'jws_detached',algorithm:'EdDSA',key_id:string,value:string}を必須とする。integrityを除くJSONをRFC 8785 JCSでcanonicalizeし、BrainbaseのEd25519 detached compact JWS（protected header alg=EdDSA、kid、typ='application/mana-tenant-context+jws'）で検証する。TTLは300秒以下、clock skewは30秒以下とし、validatorはfieldを変更・補完・延命しない。raw secret類は禁止する。",
+      "statement": "TenantContextEnvelopeはcanonical snake_caseでPR #237のschema.jsonとreference/types.tsのexact object schemaを満たし、全revisionは/^(0|[1-9][0-9]*)$/のcanonical decimal stringとする。integrityを除くJSONをRFC 8785 JCSでcanonicalizeし、RFC 7797 unencoded payloadのEd25519 detached compact JWSを検証する。protected headerは{alg:'EdDSA',b64:false,crit:['b64'],kid:key_id,typ:'application/mana-brainbase-tenant-context+jws'}の5 keyだけを許可し、key追加、順序・値・kid不一致、非canonical base64urlを拒否する。TTLは1〜300秒、clock skewは±30秒とし、validatorはfieldを変更・補完・延命しない。raw secret類は禁止する。",
       "origin": {
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-102"
+            "ac_id": "AC-7"
           }
         ],
         "architecture_refs": [
@@ -212,26 +212,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts",
-            "case": "Planned Red: round trips the complete typed v1 envelope with deterministic canonical payload"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "TenantContextEnvelopeV1 schema and integrity planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts",
-            "case": "Planned Red: rejects missing malformed expired or mutated fields"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "TenantContextEnvelopeV1 schema and integrity planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "TenantContextEnvelopeV1 schema and integrity planned Red"
           }
         ]
       },
       "confidence": 0.88,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-17T00:28:16.289Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "INV-003",
@@ -241,11 +241,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-103"
+            "ac_id": "AC-8"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-104"
+            "ac_id": "AC-9"
           }
         ],
         "architecture_refs": [
@@ -270,36 +270,36 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
-            "case": "Planned Red: revalidates the envelope at all seven boundaries"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "Worker Queue DO Container MCP Brainbase proxy delivery validators planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
-            "case": "Planned Red: rejects tampered and stale context independently at every boundary"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "DO Container MCP and Brainbase write recheck revision planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "Worker Queue DO Container MCP Brainbase proxy delivery validators planned Red"
           }
         ]
       },
       "confidence": 0.94,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
-      "id": "C-003",
+      "id": "C-013",
       "type": "contract",
-      "statement": "idempotency_keyはLP(v)=uint32be(UTF8 byte length)+UTF8として、'ik1_'+base64url_no_padding(SHA-256(LP(protocol_id)||LP(protocol_major)||LP(tenant_id)||LP(connection_id)||LP(slack_event_id)||LP(operation_id)))で生成する。IdempotencyClaim {key,tenant_id,connection_id,slack_event_id,operation_id,context_hash,payload_hash,state:'pending'|'claimed'|'succeeded'|'failed_terminal',lease_until?,result_ref?,connection_revision,updated_at}をtenant partition内で原子的にclaimし、terminal stateを30日以上保持する。Brainbase writeとSlack deliveryは同じcorrelation配下の別operation_idで最大1回にする。retryは同じkeyを維持し、claim後のcontext_hashまたはpayload_hash不一致はIDEMPOTENCY_CONFLICT、revision変更はfresh contextへ再解決する。",
+      "statement": "idempotency_keyはLP(v)=uint32be(UTF8 byte length)+UTF8として、'ik1_'+base64url_no_padding(SHA-256(LP(protocol_id)||LP(protocol_major)||LP(tenant_id)||LP(connection_id)||LP(slack_event_id)||LP(operation_id)))で生成する。IdempotencyClaimはmessage_type:'idempotency_claim'、owner、scope、tenant_id、connection_id、slack_event_id、operation_id、idempotency_key、context_hash、payload_hash、state、retention_untilのexact schemaとする。Brainbaseだけがcredential_lease、quota_decision、business_effect、usage_receiptを所有し、mana_runtimeはqueue_executionとslack_deliveryだけを所有する。claimはtenant partition内で原子的に行い、Brainbase writeとSlack deliveryは同じcorrelation配下の別operation_idで最大1回にする。retryは同じkeyを維持し、owner/key/context_hash/payload_hash不一致をbusiness API前に拒否する。",
       "origin": {
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-105"
+            "ac_id": "AC-10"
           }
         ],
         "architecture_refs": [
@@ -320,26 +320,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-event-claim.test.ts",
-            "case": "Planned Red: claims per tenant event operation and delivers each side effect at most once across retries"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "tenant event operation atomic idempotency planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-event-claim.test.ts",
-            "case": "Planned Red: does not collide on delimiter-like identifiers or share claims across tenants"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "tenant event operation atomic idempotency planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-event-claim.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "tenant event operation atomic idempotency planned Red"
           }
         ]
       },
       "confidence": 0.95,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-17T00:28:16.289Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "INV-004",
@@ -349,7 +349,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-201"
+            "ac_id": "AC-11"
           }
         ],
         "architecture_refs": [
@@ -370,26 +370,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-workspace-key-red.test.ts",
-            "case": "Planned Red: isolates every resource type for identical workspace channel user thread and resource ids"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "TenantPartitionKeyV1 matrix planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-workspace-key-red.test.ts",
-            "case": "Planned Red: rejects resource lookup when partition tenant differs from the envelope"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "TenantPartitionKeyV1 matrix planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-workspace-key-red.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "TenantPartitionKeyV1 matrix planned Red"
           }
         ]
       },
       "confidence": 0.96,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "INV-005",
@@ -399,7 +399,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-202"
+            "ac_id": "AC-12"
           }
         ],
         "architecture_refs": [
@@ -416,26 +416,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/disposable-resource.test.ts",
-            "case": "Planned Red: sanitizes process filesystem environment credential transcript and handles before cross tenant reuse"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "ContainerSanitizationReceiptV1 planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/disposable-resource.test.ts",
-            "case": "Planned Red: destroys an unverifiable dirty container instead of leasing it to another tenant"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "ContainerSanitizationReceiptV1 planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/disposable-resource.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "ContainerSanitizationReceiptV1 planned Red"
           }
         ]
       },
       "confidence": 0.86,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "C-004",
@@ -445,7 +445,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-203"
+            "ac_id": "AC-13"
           }
         ],
         "architecture_refs": [
@@ -462,22 +462,22 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "Planned Red: runs one tenant contract suite for shared dedicated and customer hosted profiles"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "common external contract across deployment profiles planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "common external contract across deployment profiles planned Red"
           }
         ]
       },
       "confidence": 0.94,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "INV-006",
@@ -487,7 +487,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-204"
+            "ac_id": "AC-14"
           }
         ],
         "architecture_refs": [
@@ -508,26 +508,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
-            "case": "Planned fixture: tenant A and B collision tamper retry and dirty container"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "concurrent A B negative matrix planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
-            "case": "Planned Red: denies every cross tenant effect under concurrency retry and reuse"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "concurrent A B negative matrix planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "concurrent A B negative matrix planned Red"
           }
         ]
       },
       "confidence": 0.98,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "C-005",
@@ -537,7 +537,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-205"
+            "ac_id": "AC-15"
           }
         ],
         "architecture_refs": [
@@ -558,40 +558,40 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack-attachments.test.ts",
-            "case": "Planned Red: enforces tenant size MIME TTL and records deletion outcomes"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "tenant temporary object validation and deletion receipt planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack-attachments.test.ts",
-            "case": "Planned Red: never exposes download URL or secret to the model"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "temporary object lifecycle and deletion receipt planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack-attachments.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "temporary object lifecycle and deletion receipt planned Red"
           }
         ]
       },
       "confidence": 0.9,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
-      "id": "C-006",
+      "id": "C-014",
       "type": "contract",
-      "statement": "CredentialBrokerClient.acquire_lease({tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref})はCredentialLease {lease_id,credential_ref,tenant_id,connection_id,connection_revision,operation_id,audience,credential_mode,issued_at,expires_at,max_uses:1}またはCredentialErrorを返す。入口解決結果とauthoritative expected revisionをlease直前に再照合し、Brainbaseだけが所有するopaque credential_refを使用する。leaseは60秒以下、operation/audience-bound、single-useとし、trusted volatile injectorだけがraw secretへ交換してheader/envへ注入する。mana-runtimeはrefresh token、OAuth refresh state、credential本文を保存・更新しない。",
+      "statement": "CredentialBrokerClient.acquire_leaseはCredentialLeaseRequest {message_type:'credential_lease_request',protocol_version:'1.0',binding:{tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref},requested_ttl_seconds:1..60}だけを送る。応答はCredentialLeaseResponse {message_type:'credential_lease_response',protocol_version:'1.0',lease_id:'lease_'+ULID,contract_revision,binding,issued_at,expires_at,max_uses:1,lease_token:opaque}のexact schemaとし、全binding、contract_revision、TTL、時刻、single-useを検証する。入口解決結果とauthoritative expected revisionをlease直前に再照合し、Brainbaseだけが所有するopaque credential_refを使用する。trusted volatile injectorだけがlease_tokenをraw secretへ交換し、mana-runtimeはrefresh token、OAuth refresh state、credential本文を保存・更新しない。",
       "origin": {
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-301"
+            "ac_id": "AC-16"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-302"
+            "ac_id": "AC-17"
           }
         ],
         "architecture_refs": [
@@ -612,26 +612,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
-            "case": "Planned Red: deterministically selects cloud customer oauth or customer api from the contract revision"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "CredentialDecisionV1 selection and injection planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
-            "case": "Planned Red: injects an opaque tenant matched credential only at execution time"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "credential lease and Slack delivery recheck authoritative revision planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "CredentialDecisionV1 selection and injection planned Red"
           }
         ]
       },
       "confidence": 0.89,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-17T00:28:16.289Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "C-007",
@@ -641,7 +641,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-303"
+            "ac_id": "AC-18"
           }
         ],
         "architecture_refs": [
@@ -658,22 +658,22 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
-            "case": "Planned Red: refreshes with revision CAS and audits success conflict failure and revocation per tenant"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "tenant OAuth lifecycle and concurrent refresh planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "tenant OAuth lifecycle and concurrent refresh planned Red"
           }
         ]
       },
       "confidence": 0.94,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "INV-007",
@@ -683,11 +683,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-304"
+            "ac_id": "AC-19"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-305"
+            "ac_id": "AC-20"
           }
         ],
         "architecture_refs": [
@@ -712,48 +712,48 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
-            "case": "Planned Red: never falls back across mode operator credential or tenant after authentication failure"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "no credential fallback planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "Planned non-applicable fixture: customer hosted without cloud standard returns explicit unsupported"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "positive negative and non applicable fixture suites planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
-            "case": "Planned Red: shared runtime has no direct singleton credential file or env source"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "no singleton credential source on shared path planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "no credential fallback planned Red"
           },
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/anthropic-auth.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "no singleton credential source on shared path planned Red"
           }
         ]
       },
       "confidence": 0.98,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
-      "id": "C-008",
+      "id": "C-015",
       "type": "contract",
-      "statement": "UsageEvent {usage_event_id,protocol_version:'1.0',tenant_id,connection_id,connection_revision,contract_revision,deployment_id,correlation_id,operation_id,idempotency_key,kind,quantity:number|null,unit,outcome:'succeeded'|'failed'|'cancelled'|'timed_out',collection_state:'collected'|'partial'|'not_collected',failure_code,observed_at}を各実消費点から発行する。OperationReceipt {receipt_id,protocol_version:'1.0',tenant_id,connection_id,connection_revision,contract_revision,deployment_id,correlation_id,operation_ids,idempotency_keys,actor_principal_id,project_id,capability_id,quota_decision,credential_mode,outcome,failure_code,usage:{collection_state,observed_units,unknown_fields},reply:{state}}を副作用結果としてBrainbaseへ送る。失敗時も既知quantityを記録し、取得不能はnot_collected、部分取得はpartialとして0と区別する。取得済み0件はsucceeded/collected/observed_units=0/NO_DATAとする。Brainbase write直前にrevisionを再確認し、usage_event_idとreceipt_idをtenant ledgerで重複排除する。",
+      "statement": "UsageEventはPR #237のexact schema（message_type:'usage_event'、usage_event_id、protocol_version、tenant/connection/contract/deployment/correlation/operation/idempotency、kind、quantity、unit、collection_state、outcome、failure_code:string|null、unknown_fields:string[]、observed_at）で各実消費点から発行する。OperationReceiptもexact schema（message_type:'operation_receipt'、receipt_id、同一scope、operation_ids、idempotency_keys、actor/project/capability/quota/credential、collection_state、outcome、failure_code、usage_event_ids、reply:{state,reply_count,legacy_reply_count,slack_reply_ts?}、completed_at）でBrainbaseへ送る。collection_stateとoutcomeは独立し、not_collectedはquantity=null、partialはunknown_fields非空、collectedの0はNO_DATAとして0と未取得を区別する。Brainbase write直前にauthoritative revisionを再確認し、usage_event_idとreceipt_idをtenant ledgerで重複排除する。",
       "origin": {
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-401"
+            "ac_id": "AC-21"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-404"
+            "ac_id": "AC-24"
           }
         ],
         "architecture_refs": [
@@ -774,40 +774,40 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
-            "case": "Planned Red: attributes token model tool MCP container storage and retry usage to tenant and correlation"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "UsageEventV1 success failure and not measured planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
-            "case": "Planned Red: records failed consumption and preserves not measured separately from zero"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "tenant accounting ledger deduplicates before Brainbase write planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "UsageEventV1 success failure and not measured planned Red"
           }
         ]
       },
       "confidence": 0.9,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-17T00:28:16.289Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
-      "id": "C-009",
+      "id": "C-016",
       "type": "contract",
-      "statement": "QuotaDecision {tenant_id,contract_revision,metric,consumed,limit,ratio_basis_points,decision:'allowed'|'warning'|'hard_stopped'|'approval_required'|'unavailable',overage_policy:'deny'|'allow_and_bill'|'allow_with_approval',warning_thresholds_basis_points:number[],retry_after?,decision_id}をLLM/tool/Container起動前に現行Brainbase contractから取得する。thresholdとoverage policyはrevision付き正本値だけを使い、runtime defaultで補わない。quota stateとdecision cacheはtenant partitionに置き、Tenant Aのhard_stoppedはAの新規operationだけを止めTenant Bへ波及させない。quota拒否をQUOTA_EXCEEDED、正本取得不能をUPSTREAM_UNAVAILABLEとしてoutcomeとcollection_stateから分離する。",
+      "statement": "QuotaDecision {message_type:'quota_decision',tenant_id,contract_revision,quota_revision,decision:'allowed'|'warning'|'hard_stopped'|'approval_required'|'unavailable',limit:number|null,used:number|null,remaining:number|null,unit,window_started_at,window_ends_at,decided_at,failure_code?:string|null}をLLM/tool/Container起動前に現行Brainbase contractから取得する。全revisionをcanonical decimal stringとして検証し、runtime defaultで補わない。quota stateとdecision cacheはtenant partitionに置き、Tenant Aのhard_stoppedはAの新規operationだけを止めTenant Bへ波及させない。quota拒否をQUOTA_EXCEEDED、正本取得不能をUPSTREAM_UNAVAILABLEとしてoutcomeとcollection_stateから分離する。",
       "origin": {
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-402"
+            "ac_id": "AC-22"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-403"
+            "ac_id": "AC-23"
           }
         ],
         "architecture_refs": [
@@ -824,26 +824,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts",
-            "case": "Planned Red: applies warn hard stop and overage decisions from the current plan revision"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "per tenant quota decisions and isolation planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts",
-            "case": "Planned Red: stops tenant A at quota while tenant B continues concurrently"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "quota authority cannot default or cross tenants planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/runtime-config.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "per tenant quota decisions and isolation planned Red"
           }
         ]
       },
       "confidence": 0.91,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-17T00:28:16.289Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
       "id": "C-010",
@@ -853,7 +853,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-405"
+            "ac_id": "AC-25"
           }
         ],
         "architecture_refs": [
@@ -870,56 +870,56 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
-            "case": "Planned Red: returns actionable public failures without contract credential quota or tenant internals"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "UserFailure exposes only actionable public fields planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
-            "case": "Planned Red: validates original delivery scope and sends at most once"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "safe actionable failure and scoped delivery planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-pipeline.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "safe actionable failure and scoped delivery planned Red"
           }
         ]
       },
       "confidence": 0.97,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-16T13:34:39.243Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     },
     {
-      "id": "C-011",
+      "id": "C-017",
       "type": "contract",
-      "statement": "positive fixture contracted-active-v1はactive connection、protocol 1.0、shared_cloud、customer_oauth、quota allowedを与え、tenant/connection/revision/credential lease/Brainbase write/usage/Slack deliveryが同じcorrelationで各1回完了する。negative fixturesはINV-204の全失敗codeと、collection_state/outcome分離、tenant変更Container destroy、single-use lease、queue／delivery idempotencyを網羅する。non-applicable fixture customer-managed-oss-optional-cloud-opsはoptional capabilityだけを理由付きnon_applicableとし、全mandatory contractを実行してcredentialやprotocolをfallbackしない。横断契約D-001〜D-009はmana-runtime PR #237 HEAD ba1942e15935e00d1c603f57284439384bc95cacを正本とし、本Specのopen questionは0件である。TDDは各planned Redを先に追加して意図した未実装理由で失敗させ、その後に最小Greenを実装する。",
+      "statement": "mana-runtime consumer conformanceはPR #237 HEAD 2bcb70e1b6c7a65c44cc9fa303a3fb64a98b8589のcontracts/mana-brainbase-tenant-context/v1を固定入力とし、manifest記載のfixture 23件を複製せず直接読む。fixture set SHA-256は9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833と一致しなければ実行しない。positive 1件はschema、exact protected header、RFC 8785+Ed25519、TTL/skew、revision、protocol/capability、credential lease、quota/usage/Receipt/idempotencyを全検証後に受理し、negative 21件はexpected_codeでbusiness API前に拒否し、non-applicable 1件は必須capability waiver 0・fallback 0を確認する。横断契約D-001〜D-009とschema/reference implementationを正本とし、本Specのopen questionは0件である。TDDはcanonical manifest adapter Redを意図した未実装理由で固定した後に最小Greenを実装する。",
       "origin": {
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-001"
+            "ac_id": "AC-1"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-004"
+            "ac_id": "AC-4"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-103"
+            "ac_id": "AC-8"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-204"
+            "ac_id": "AC-14"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-304"
+            "ac_id": "AC-19"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC-403"
+            "ac_id": "AC-23"
           }
         ],
         "architecture_refs": [
@@ -940,32 +940,234 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/reply-runtime-wiring.test.ts",
-            "case": "Planned positive fixture: contracted active v1"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "positive negative and non applicable fixture suites planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/queue-consumer.test.ts",
-            "case": "Planned negative fixtures: all fail closed boundary cases"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "positive negative and non applicable fixture suites planned Red"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
-            "case": "Planned non-applicable fixture: explicit unsupported without fallback"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "positive negative and non applicable fixture suites planned Red"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/reply-runtime-wiring.test.ts",
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
             "must_cover": "positive negative and non applicable fixture suites planned Red"
           }
         ]
       },
       "confidence": 0.95,
-      "first_seen_at": "2026-08-16T13:33:53.621Z",
-      "last_revised_at": "2026-08-16T13:33:53.621Z"
+      "first_seen_at": "2026-08-17T00:28:16.289Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
+    },
+    {
+      "id": "C-018",
+      "type": "contract",
+      "statement": "Cloudflare production entrypointはWrangler mainであるpackages/cloudflare-techknight-poc/src/index.tsとする。/slack/eventsはhandleTenantSlackRequestだけへ接続し、Slack署名検証後にBRAINBASE_TENANT_AUTHORITY_URLを使うauthenticated HTTP adapterでworkspace connectionを一意解決して署名済みTenantContextEnvelopeを取得・検証してからTenantQueueBodyを投入する。QueueはTenantQueueBodyをcanonical consumerで再検証してから処理し、TENANT_ID、SLACK workspace、placement、旧messageからtenantを補完しない。MANA_DEPLOYMENT_PROFILEはshared_cloud|dedicated_cloud|customer_managed_ossを明示必須とし、欠落・未知値・必須capability欠落はCONFIGURATION_INVALIDまたはPROTOCOL_CAPABILITY_UNSUPPORTEDでfail closedにする。customer_managed_ossでnon_applicableにできるのはoptional capabilityだけである。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-8"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-13"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "Tenant Contextの流れ"
+          },
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "配置profile"
+          },
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "現行Cloudflareからの移行"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/index.ts",
+            "anchor": "fetch"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/index.ts",
+            "anchor": "queue"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "production Slack ingress and queue fail closed without tenant fallback planned Red"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "must_cover": "production Slack ingress and queue fail closed without tenant fallback planned Red"
+          }
+        ]
+      },
+      "confidence": 0.96,
+      "first_seen_at": "2026-08-17T03:00:00.000Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
+    },
+    {
+      "id": "C-019",
+      "type": "contract",
+      "statement": "Brainbase runtime HTTP adapterはBRAINBASE_TENANT_AUTHORITY_URL、BRAINBASE_CREDENTIAL_BROKER_URL、BRAINBASE_QUOTA_URL、BRAINBASE_ACCOUNTING_URLとsecret binding BRAINBASE_RUNTIME_API_TOKENを環境から受け、各requestをtenant/connection/revision/operationへ束縛する。URLまたはtoken欠落、AbortSignal timeout、非2xx、invalid JSON、schema不一致はempty snapshot、allowed quota、quantity=0、collection_state=collected、outcome=succeededへ変換せず、WORKSPACE_CONNECTION_UNAVAILABLEまたはUPSTREAM_UNAVAILABLEとして拒否する。credential leaseはbinding完全一致、max_uses=1、requested TTLと応答TTLが1〜60秒を満たす場合だけvolatile injectorへ渡す。Brainbase write前はauthoritative expected-revision readを再実行し、UsageEventとOperationReceiptのcollection_stateとoutcomeを独立に保持する。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-17"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-19"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-21"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-22"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-24"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "AI Credential Router"
+          },
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "利用上限・原価"
+          },
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "障害の意味"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/multitenancy/runtime-boundaries.ts",
+            "anchor": "TenantAuthorityClient"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "mock server preserves timeout error and not_collected semantics planned Red"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "must_cover": "mock server preserves timeout error and not_collected semantics planned Red"
+          }
+        ]
+      },
+      "confidence": 0.94,
+      "first_seen_at": "2026-08-17T03:00:00.000Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
+    },
+    {
+      "id": "C-020",
+      "type": "invariant",
+      "statement": "queue_execution、slack_delivery、UsageEvent、OperationReceiptのclaimとledgerはCloudflare Durable Object TENANT_RUNTIME_STATEに置く。Durable Object nameはTenantPartitionKeyから導出し、storage keyはidempotency:{partition_key}またはaccounting:{tenant_partition_key}としてtenant最上位を維持する。claimはstorage transaction内でowner、idempotency_key、context_hash、payload_hashを原子的に照合し、別isolate・再起動・duplicate replayでもbusiness callback、Brainbase write、Slack deliveryを各operation_idにつき最大1回にする。pending/claimedのretryは同じkeyだけを再利用し、succeeded/failed_terminalを30日以上保持する。process memoryだけのMapはproduction adapterに使用しない。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-11"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-14"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-21"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "実行分離"
+          },
+          {
+            "file": "docs/architecture/story-mana-multitenant-runtime.md",
+            "section": "Sessionと冪等性"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/multitenancy/idempotency.ts",
+            "anchor": "IdempotencyMemoryStore"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/multitenancy/accounting.ts",
+            "anchor": "TenantAccountingLedger"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "case": "two adapter instances share one Durable Object state and execute duplicate once planned Red"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
+            "must_cover": "two adapter instances share one Durable Object state and execute duplicate once planned Red"
+          }
+        ]
+      },
+      "confidence": 0.93,
+      "first_seen_at": "2026-08-17T03:00:00.000Z",
+      "last_revised_at": "2026-08-17T02:42:18.572Z"
     }
   ],
-  "generated_at": "2026-08-16T13:33:53.620Z",
-  "previous_spec_id": null
+  "generated_at": "2026-08-17T00:46:42.058Z",
+  "previous_spec_id": "2026-08-17T00:46:42.058Z"
 }
