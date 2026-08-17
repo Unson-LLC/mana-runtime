@@ -72,6 +72,7 @@ describe("runCloudflareDevelopmentRequest", () => {
       job_id: jobId,
       placement_id: "mana-dev-biz",
       callback_url: "https://worker.example.com/development/callback",
+      runner_timeout_ms: 230_000,
     }));
     expect(startProcess).toHaveBeenCalledWith(
       `node /opt/mana/cloudflare-development-runner.mjs /tmp/${jobId}.json`,

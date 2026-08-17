@@ -251,6 +251,15 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).not.toContain("summary: result.stderr");
   });
 
+  it("開発ランナーは外側watchdogより先に停止してterminal callbackを試行する", () => {
+    const runner = readFileSync(fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url)), "utf8");
+    expect(runner).toContain("job.runner_timeout_ms");
+    expect(runner).toContain("result.timedOut");
+    expect(runner).toContain("AbortSignal.timeout(CALLBACK_TIMEOUT_MS)");
+    expect(runner).toContain('child.kill("SIGTERM")');
+    expect(runner).toContain('child.kill("SIGKILL")');
+  });
+
   it("keeps task search off by default and documents the staged rollout", () => {
     expect(techKnight.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("false");
     expect(unson.vars.RUNTIME_TASK_SEARCH_ENABLED).toBe("true");
