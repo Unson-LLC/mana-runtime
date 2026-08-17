@@ -434,7 +434,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("recoverStaleMeetingMinutesRun(");
     expect(worker).toContain("resolveSlackWorkerIngress({");
     expect(worker).toContain("meetingMinutesRecoveryEventId(recovery)");
-    expect(worker).not.toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
+    expect(worker).toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
     expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).toContain("credentialLeaseHandle,\n                        tenantBoundaryHandle");
