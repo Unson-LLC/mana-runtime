@@ -1,9 +1,8 @@
 import type { AuditedGeneratedMeetingMinutes, GeneratedMeetingMinutes, MeetingMinutesDestination,
   MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
   MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
-import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinutesMcpConfigPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
-import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
@@ -14,13 +13,8 @@ const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const MEETING_MINUTES_CONTEXT_PROMPT_MAX_BYTES = 100_000;
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
-const MEETING_MINUTES_MCP_CONFIG = JSON.stringify(buildRuntimeMcpConfig({
-  mcp: ["brainbase"], gatewayTools: [],
-}));
-
 async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
   await sandbox.writeFile(runtimeClaudePromptPath("meeting-minutes"), prompt);
-  await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), MEETING_MINUTES_MCP_CONFIG);
 }
 
 function nonEmpty(value: unknown, max: number): string | undefined {
