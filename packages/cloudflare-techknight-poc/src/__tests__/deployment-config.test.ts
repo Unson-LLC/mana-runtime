@@ -83,7 +83,7 @@ describe("会社別Cloudflare deployment", () => {
       target.enabled === true && target.manaCanvasId === null && target.bindingRevision === 1)).toBe(true);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
-      .toEqual({ "unson-business": 8, unson: 5, "tech-knight": 9 });
+      .toEqual({ "unson-business": 7, unson: 6, "tech-knight": 9 });
     for (const destination of destinations) {
       expect(minutesTargets).toContainEqual(expect.objectContaining({ targetId: destination.taskBoardTargetId,
         channelId: destination.slackChannelId, projectCodes: destination.taskProjectCodes }));
@@ -408,7 +408,7 @@ describe("会社別Cloudflare deployment", () => {
       expect.objectContaining({ id: "legal-affairs", projectId: "proj_legal_affairs",
         contextProjectCode: "unson", taskProjectCodes: ["unson"],
         taskBoardTargetId: "minutes-legal-affairs", name: "Legal Affairs", slackChannelId: "C09AR3H5VAL",
-        organization: { id: "unson-business", name: "雲孫 事業運営" },
+        organization: { id: "unson", name: "雲孫" },
         github: expect.objectContaining({ owner: "Unson-LLC", repo: "Drive", branch: "main",
           pathPrefix: "meetings/legal-affairs/" }) }),
       expect.objectContaining({ id: "brainbase", projectId: "proj_brainbase", slackChannelId: "C0BKE4D0TK9",
@@ -455,7 +455,7 @@ describe("会社別Cloudflare deployment", () => {
       targetId: "minutes-kartz", channelId: "C0BQA5BGTEH", projectCodes: ["kartz"],
     }));
     expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
-      targetId: "minutes-legal-affairs", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
+      targetId: "minutes-legal-affairs", organizationId: "unson", workspaceId: "T07LL5WV7N1",
       channelId: "C09AR3H5VAL", projectCodes: ["unson"],
     }));
     expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
