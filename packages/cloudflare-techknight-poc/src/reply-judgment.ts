@@ -196,7 +196,16 @@ function parseEvents(stdout: string): StreamEvent[] {
       if (!event || typeof event !== "object" || Array.isArray(event)) throw new Error();
       return event;
     } catch {
-      throw new Error("reply_judgment_stream_invalid");
+      let reason = "text";
+      if (line.codePointAt(0) === 0xfeff) reason = "bom";
+      else if (/^\x1b\[[0-9;?]*[ -/]*[@-~]/.test(line)) reason = "ansi";
+      else {
+        const firstObject = line.indexOf("{");
+        const lastObject = line.lastIndexOf("}");
+        if (firstObject > 0 && lastObject > firstObject) reason = "json_prefixed";
+        else if (firstObject === 0 && lastObject >= 0 && lastObject < line.length - 1) reason = "json_suffixed";
+      }
+      throw new Error(`reply_judgment_stream_invalid_${reason}`);
     }
   });
 }

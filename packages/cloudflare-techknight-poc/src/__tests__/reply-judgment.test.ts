@@ -107,6 +107,16 @@ function stream(options: {
 }
 
 describe("Slack reply Judgment lifecycle", () => {
+  it.each([
+    ["\uFEFFnot-json", "reply_judgment_stream_invalid_bom"],
+    ["\u001b[31mnot-json", "reply_judgment_stream_invalid_ansi"],
+    ["notice {\"type\":\"result\"}", "reply_judgment_stream_invalid_json_prefixed"],
+    ["{\"type\":\"result\"} notice", "reply_judgment_stream_invalid_json_suffixed"],
+    ["not-json", "reply_judgment_stream_invalid_text"],
+  ])("classifies invalid stream lines without exposing their contents", (line, code) => {
+    expect(() => parseReplyJudgmentStream(line)).toThrow(code);
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:1 ac:2 ac:5 requires a complete Judgment lifecycle before reply", () => {
     expect(parseReplyJudgmentStream(stream())).toMatchObject({
       reply: `${judgmentLine}\n${brainbaseLine}\n回答本文`,
