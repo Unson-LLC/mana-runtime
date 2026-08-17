@@ -121,6 +121,8 @@ import {
   TenantBoundaryContextHandler,
 } from "./multitenancy/durable-tenant-boundary.js";
 import { assessTenantRuntimeReadiness } from "./multitenancy/runtime-readiness.js";
+import { handleSlackInstallationLifecycleRequest } from "./multitenancy/slack-installation-entrypoint.js";
+import { SlackInstallationAdapter } from "./multitenancy/workspace-connection.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -176,6 +178,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_RUNTIME_API_TOKEN?: string;
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
+  SLACK_INSTALLATION_LIFECYCLE_TOKEN?: string;
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
@@ -738,6 +741,18 @@ export default {
         taskBoardEnabled: env.RUNTIME_TASK_BOARD_ENABLED === "true",
         meetingMinutesEnabled: env.MEETING_MINUTES_ENABLED === "true",
       }, { status: readiness.ready ? 200 : 503 });
+    }
+    if (url.pathname === "/internal/slack/installations/lifecycle") {
+      let clients;
+      try {
+        clients = tenantRuntimeClients(env);
+      } catch {
+        return Response.json({ error: "CONFIGURATION_INVALID" }, { status: 503 });
+      }
+      return handleSlackInstallationLifecycleRequest(request, {
+        token: env.SLACK_INSTALLATION_LIFECYCLE_TOKEN,
+        adapter: new SlackInstallationAdapter(clients.workspace_connections),
+      });
     }
     if (url.pathname.startsWith("/admin/sandbox/")) {
       return handleSandboxAdminRequest(request, env, {

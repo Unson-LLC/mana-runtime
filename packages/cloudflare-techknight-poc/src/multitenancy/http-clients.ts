@@ -9,7 +9,7 @@ import type {
 import type { OperationReceipt, UsageEvent } from "./accounting.js";
 import type { CredentialBrokerClient } from "./credentials.js";
 import type { TenantAuthorityClient, TenantContextIssueRequest } from "./runtime-boundaries.js";
-import type { WorkspaceConnectionLookup } from "./workspace-connection.js";
+import type { WorkspaceConnectionLookup, WorkspaceConnectionManagementPort } from "./workspace-connection.js";
 import {
   CanonicalContractError,
   validateCanonicalCredentialLease,
@@ -48,6 +48,7 @@ export interface TenantAccountingHttpClient {
 
 export interface TenantRuntimeHttpClients {
   authority: TenantAuthorityClient;
+  workspace_connections: WorkspaceConnectionManagementPort;
   credential_broker: CredentialBrokerClient;
   quota: TenantQuotaHttpClient;
   accounting: TenantAccountingHttpClient;
@@ -169,6 +170,25 @@ export function createTenantRuntimeHttpClients(
       async issue_tenant_context(request: TenantContextIssueRequest): Promise<TenantContextEnvelope> {
         const result = await authorityCall<unknown>("issue_tenant_context", request, "UPSTREAM_UNAVAILABLE");
         return structuredClone(responseRecord(result, "worker_ingress")) as unknown as TenantContextEnvelope;
+      },
+    },
+    workspace_connections: {
+      async register_slack_installation(installation, expectedRevision): Promise<WorkspaceConnectionSnapshot> {
+        return assertSnapshot(await authorityCall("register_slack_installation", {
+          installation,
+          expected_revision: expectedRevision,
+        }, "WORKSPACE_CONNECTION_UNAVAILABLE"));
+      },
+      async revise_workspace_connection(connectionId, expectedRevision, update): Promise<WorkspaceConnectionSnapshot> {
+        return assertSnapshot(await authorityCall("revise_workspace_connection", {
+          connection_id: connectionId,
+          expected_revision: expectedRevision,
+          update,
+        }, "WORKSPACE_CONNECTION_UNAVAILABLE"));
+      },
+      async resolve_workspace_connection(lookup: WorkspaceConnectionLookup): Promise<WorkspaceConnectionSnapshot> {
+        return assertSnapshot(await authorityCall("resolve_workspace_connection", lookup,
+          "WORKSPACE_CONNECTION_UNAVAILABLE"));
       },
     },
     credential_broker: {
