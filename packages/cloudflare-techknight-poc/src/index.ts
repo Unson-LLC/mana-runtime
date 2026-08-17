@@ -34,7 +34,7 @@ import {
 } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
-import { handleMeetingMinutesTaskAction } from "./meeting-minutes-task-actions.js";
+import { handleMeetingMinutesTaskAction, type MeetingMinutesSourceIdentity } from "./meeting-minutes-task-actions.js";
 import { createTaskWriteProxyHandler } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
@@ -946,6 +946,7 @@ function expectedTenantMeetingMinutesSelectionScope(
   const selection = body.payload;
   const envelope = body.tenant_context;
   if (selection.workspaceId !== envelope.workspace_connection.workspace_id
+    || selection.appId !== envelope.workspace_connection.app_id
     || selection.channelId !== envelope.slack.channel_id
     || selection.threadTs !== envelope.slack.thread_ts
     || meetingMinutesSelectionEventId(selection) !== envelope.slack.event_id
@@ -956,7 +957,7 @@ function expectedTenantMeetingMinutesSelectionScope(
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: selection.workspaceId,
-    app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+    app_id: selection.appId,
     channel_id: selection.channelId,
     thread_ts: selection.threadTs,
     actor_principal_id: envelope.actor.principal_id,
@@ -973,6 +974,7 @@ function expectedTenantMeetingMinutesRedoScope(
   const command = body.payload;
   const envelope = body.tenant_context;
   if (command.workspaceId !== envelope.workspace_connection.workspace_id
+    || command.appId !== envelope.workspace_connection.app_id
     || command.channelId !== envelope.slack.channel_id
     || command.threadTs !== envelope.slack.thread_ts
     || meetingMinutesRedoEventId(command) !== envelope.slack.event_id
@@ -983,7 +985,7 @@ function expectedTenantMeetingMinutesRedoScope(
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: command.workspaceId,
-    app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+    app_id: command.appId,
     channel_id: command.channelId,
     thread_ts: command.threadTs,
     actor_principal_id: envelope.actor.principal_id,
@@ -1000,6 +1002,7 @@ function expectedTenantMeetingMinutesRecoveryScope(
   const recovery = body.payload;
   const envelope = body.tenant_context;
   if (recovery.workspaceId !== envelope.workspace_connection.workspace_id
+    || recovery.appId !== envelope.workspace_connection.app_id
     || recovery.channelId !== envelope.slack.channel_id
     || recovery.threadTs !== envelope.slack.thread_ts
     || meetingMinutesRecoveryEventId(recovery) !== envelope.slack.event_id
@@ -1010,7 +1013,7 @@ function expectedTenantMeetingMinutesRecoveryScope(
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: recovery.workspaceId,
-    app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+    app_id: recovery.appId,
     channel_id: recovery.channelId,
     thread_ts: recovery.threadTs,
     actor_principal_id: envelope.actor.principal_id,
@@ -1127,7 +1130,7 @@ async function processTenantMeetingMinutesSelection(input: {
       const armed = await armMeetingMinutesRecovery(workspace.fs, selection);
       if (!armed.terminal) {
         const recoveryTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
-          app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+          app_id: armed.event.appId,
           workspace_id: armed.event.workspaceId,
           event_id: meetingMinutesRecoveryEventId(armed.event),
           channel_id: armed.event.channelId,
@@ -1396,17 +1399,18 @@ export default {
         }, undefined, async (payload, effects) => {
           const parsedTeamIds = (() => { try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
             catch { return {}; } })();
-          const sourceWorkspaceId = requiredRuntimeBinding(env.SLACK_EXPECTED_TEAM_ID);
-          const sourceTarget: TenantInteractionTarget = {
-            workspace_id: sourceWorkspaceId,
-            app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
-          };
-          const loadWorkspace = async <T>(runId: string, operationName: string,
+          const sourceTarget = (source: MeetingMinutesSourceIdentity): TenantInteractionTarget => ({
+            workspace_id: source.workspaceId,
+            app_id: source.appId,
+            channel_id: source.channelId,
+            thread_ts: source.threadTs,
+          });
+          const loadWorkspace = async <T>(source: MeetingMinutesSourceIdentity, runId: string, operationName: string,
             operation: (workspace: { fs: Parameters<typeof loadMeetingMinutesRun>[0] }) => Promise<T>) => {
             const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-              effects.tenant_id, sourceWorkspaceId, runId));
+              effects.tenant_id, source.workspaceId, runId));
             const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-            return effects.durableObject(`meeting-run:${operationName}:${runId}`, sourceTarget,
+            return effects.durableObject(`meeting-run:${operationName}:${runId}`, sourceTarget(source),
               () => withDisposableResource(() => getWorkspace(handle), operation));
           };
           const taskClient = (tenantFetch: typeof fetch) => new TaskApiClient({
@@ -1415,21 +1419,31 @@ export default {
             fetchImpl: tenantFetch,
           });
           let cachedRun: MeetingMinutesRun | undefined;
-          return handleMeetingMinutesTaskAction(payload, { sourceTeamId: env.SLACK_EXPECTED_TEAM_ID,
+          let cachedSource: MeetingMinutesSourceIdentity | undefined;
+          const canonicalSource = (): MeetingMinutesSourceIdentity => {
+            if (!cachedRun || !cachedSource || cachedRun.workspaceId !== cachedSource.workspaceId ||
+              cachedRun.sourceAppId !== cachedSource.appId || cachedRun.sourceChannelId !== cachedSource.channelId ||
+              cachedRun.sourceThreadTs !== cachedSource.threadTs) deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+            return cachedSource;
+          };
+          return handleMeetingMinutesTaskAction(payload, {
             destinationTeamIds: parsedTeamIds,
             operatorUserIds: config.operatorUserIds,
-            loadRun: async (runId) => {
-              cachedRun = await loadWorkspace(runId, "load",
+            loadRun: async (runId, source) => {
+              cachedRun = await loadWorkspace(source, runId, "load",
                 (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+              cachedSource = source;
               return cachedRun;
             },
-            saveRun: (run) => loadWorkspace(run.runId, "save",
+            saveRun: (run) => loadWorkspace(canonicalSource(), run.runId, "save",
               async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); }),
-            getTask: (taskId) => effects.brainbaseProxy(`task-read:${taskId}`, {}, "read",
+            getTask: (taskId) => effects.brainbaseProxy(`task-read:${taskId}`, sourceTarget(canonicalSource()), "read",
               (tenantFetch) => taskClient(tenantFetch).getTask(taskId)),
-            updateTask: (taskId, input, key) => effects.brainbaseProxy(`task-update:${key}`, {}, "write",
+            updateTask: (taskId, input, key) => effects.brainbaseProxy(
+              `task-update:${key}`, sourceTarget(canonicalSource()), "write",
               (tenantFetch) => taskClient(tenantFetch).updateTask(taskId, input, key)),
-            deleteTask: (taskId, version, key) => effects.brainbaseProxy(`task-delete:${key}`, {}, "write",
+            deleteTask: (taskId, version, key) => effects.brainbaseProxy(
+              `task-delete:${key}`, sourceTarget(canonicalSource()), "write",
               (tenantFetch) => taskClient(tenantFetch).deleteTask(taskId, version, key)),
             updateCard: async (run) => {
               await effects.slackDelivery(`task-card:${run.runId}`, {
@@ -1444,7 +1458,8 @@ export default {
                 (tenantFetch) => new MeetingMinutesSlackClient(
                   "tenant-credential-injected", tenantFetch).openTaskEditView(triggerId, view));
             },
-            listPeople: () => effects.brainbaseProxy("task-assignee-list", {}, "read",
+            listPeople: () => effects.brainbaseProxy(
+              "task-assignee-list", sourceTarget(canonicalSource()), "read",
               (tenantFetch) => listGraphPeople(undefined, {
                 baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
                 token: "tenant-credential-injected",
@@ -1452,7 +1467,7 @@ export default {
               })),
             repairTaskBoard: (projectCodes) => effects.durableObject(
               `task-board-repair:${[...projectCodes].sort().join(",")}`,
-              sourceTarget,
+              sourceTarget(canonicalSource()),
               () => enqueueTaskBoardRepairsForProjects(env, projectCodes, "task_write"),
             ),
             defer: (work) => ctx.waitUntil(work),
@@ -1464,7 +1479,7 @@ export default {
           const resolved = await resolveSlackWorkerIngress({
             identity: {
               provider: "slack",
-              app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+              app_id: command.appId,
               workspace_id: command.workspaceId,
               event_id: command.kind === "meeting_minutes_selection"
                 ? meetingMinutesSelectionEventId(command)
@@ -1891,7 +1906,7 @@ export default {
                 const childEventId = await childInteractionEventId(event.eventId, `meeting-minutes-file:${file.id}`);
                 const childEvent: SlackQueueEvent = { ...event, eventId: childEventId, files: [file] };
                 const childTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
-                  app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+                  app_id: tenantContext.workspace_connection.app_id,
                   workspace_id: childEvent.workspaceId,
                   event_id: childEvent.eventId,
                   channel_id: childEvent.channelId,
@@ -1950,6 +1965,7 @@ export default {
                         tenantBoundaryHandle,
                       );
                       await processMeetingMinutesSlackEvent(workspace.fs, childEvent, meetingMinutesConfig, {
+                        sourceAppId: childTenantContext.workspace_connection.app_id,
                         download: (fileId) => meetingClients.slack.downloadTextFile(fileId),
                         classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations),
                         requestDestination: (run, destinations) => meetingClients.slack.requestDestination(run, destinations),

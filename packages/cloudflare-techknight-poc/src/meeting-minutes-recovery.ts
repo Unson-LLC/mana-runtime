@@ -8,7 +8,8 @@ export function isMeetingMinutesRecovery(value: unknown): value is MeetingMinute
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<MeetingMinutesRecovery>;
   return candidate.kind === "meeting_minutes_recovery" && typeof candidate.runId === "string" &&
-    typeof candidate.workspaceId === "string" && typeof candidate.channelId === "string" &&
+    typeof candidate.workspaceId === "string" && typeof candidate.appId === "string" &&
+    typeof candidate.channelId === "string" &&
     typeof candidate.threadTs === "string" && typeof candidate.userId === "string" &&
     typeof candidate.actionTs === "string";
 }
@@ -17,9 +18,14 @@ export async function armMeetingMinutesRecovery(fs: WorkspaceFs, selection: Meet
   now = Date.now()): Promise<{ event: MeetingMinutesRecovery; delaySeconds: number; terminal: boolean }> {
   const run = await loadMeetingMinutesRun(fs, selection.runId);
   if (!run) throw new Error("meeting_minutes_run_not_found");
+  if (!run.sourceAppId || run.workspaceId !== selection.workspaceId || run.sourceAppId !== selection.appId ||
+    run.sourceChannelId !== selection.channelId || run.sourceThreadTs !== selection.threadTs) {
+    throw new Error("meeting_minutes_recovery_boundary_mismatch");
+  }
   if (run.status === "completed") {
     return { event: { kind: "meeting_minutes_recovery", runId: run.runId,
-      workspaceId: run.workspaceId, channelId: selection.channelId, threadTs: selection.threadTs,
+      workspaceId: run.workspaceId, appId: run.sourceAppId,
+      channelId: selection.channelId, threadTs: selection.threadTs,
       userId: selection.userId, actionTs: selection.actionTs }, delaySeconds: 0, terminal: true };
   }
   if (run.lifecycle?.actionTs !== selection.actionTs) {
@@ -31,7 +37,8 @@ export async function armMeetingMinutesRecovery(fs: WorkspaceFs, selection: Meet
   const deadline = Date.parse(run.lifecycle.deadlineAt);
   const delaySeconds = Math.max(1, Math.ceil((deadline - now) / 1_000));
   return { event: { kind: "meeting_minutes_recovery", runId: run.runId,
-    workspaceId: run.workspaceId, channelId: selection.channelId, threadTs: selection.threadTs,
+    workspaceId: run.workspaceId, appId: run.sourceAppId,
+    channelId: selection.channelId, threadTs: selection.threadTs,
     userId: selection.userId, actionTs: selection.actionTs }, delaySeconds, terminal: false };
 }
 

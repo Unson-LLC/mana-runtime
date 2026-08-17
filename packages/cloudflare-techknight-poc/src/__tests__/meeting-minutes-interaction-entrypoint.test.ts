@@ -79,7 +79,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const send = vi.fn().mockResolvedValue(undefined); const deferred: Promise<unknown>[] = [];
     const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
-      MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C-SOURCE",
+      MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "CSOURCE",
       MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
       MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
       MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1", name: "ボード定例",

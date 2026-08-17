@@ -12,9 +12,9 @@ const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId:
   threadTs: "1.1", messageTs: "1.1", eventType: "message", subtype: "file_share", text: "", receivedAt: "now",
   files: [{ id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 100 }] };
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana",
-  workspaceId: "T1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
+  workspaceId: "T1", appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
 const redo: MeetingMinutesRedo = { kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
-  channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "20.1" };
+  appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "20.1" };
 function audited(minutes: GeneratedMeetingMinutes, context: MeetingMinutesContextReceipt) {
   return { ...minutes, brainbase_context_attestation: {
     schema_version: "meeting_minutes_context_attestation.v1" as const,
@@ -46,13 +46,13 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 describe("meeting minutes pipeline", () => {
   it("persists the canonical source Slack app with every new run", async () => {
     const fs = new MemoryFs();
-    const [created] = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
-      sourceAppId: "A1", destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const [created] = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     expect(created).toMatchObject({ workspaceId: "T1", sourceAppId: "A1", sourceChannelId: "CROUTER" });
   });
 
   it("persists one processing reply before generation and reuses it on retry", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const postProcessingStatus = vi.fn().mockResolvedValue("3.1");
     const generate = vi.fn().mockRejectedValueOnce(new Error("generator down"))
@@ -75,7 +75,7 @@ describe("meeting minutes pipeline", () => {
     const fs = new MemoryFs();
     const kartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
       taskProjectCodes: ["unson"] };
-    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [kartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: "receipt-kartz", identity, status: "resolved" as const, checksum: "checksum-kartz",
@@ -91,7 +91,7 @@ describe("meeting minutes pipeline", () => {
     const fs = new MemoryFs();
     const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz" };
     const configuredKartz = { ...legacyKartz, contextProjectCode: "unson", taskProjectCodes: ["unson"] };
-    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
     await expect(resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
       destinations: [legacyKartz],
@@ -112,8 +112,8 @@ describe("meeting minutes pipeline", () => {
 
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
     const fs = new MemoryFs(); const requestDestination = vi.fn().mockResolvedValue("2.1");
-    const first = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", destinations: [destination], requestDestination });
-    const second = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", destinations: [destination], requestDestination });
+    const first = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1", destinations: [destination], requestDestination });
+    const second = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1", destinations: [destination], requestDestination });
     expect(first[0]).toMatchObject({ runId: "Ev1_F1", status: "awaiting_destination" });
     expect(second[0]?.runId).toBe("Ev1_F1"); expect(requestDestination).toHaveBeenCalledTimes(1);
   });
@@ -123,7 +123,7 @@ describe("meeting minutes pipeline", () => {
     const download = vi.fn().mockResolvedValue("SalesTailorの定例です");
     const classifyDestination = vi.fn().mockResolvedValue({ destinationId: "mana", reason: "案件名が一致" });
     const requestDestination = vi.fn().mockResolvedValue("2.1");
-    const options = { enabled: true, routerChannelId: "CROUTER", destinations: [destination],
+    const options = { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1", destinations: [destination],
       download, classifyDestination, requestDestination };
     const first = await startMeetingMinutesRuns(fs, event, options);
     const second = await startMeetingMinutesRuns(fs, event, options);
@@ -136,7 +136,7 @@ describe("meeting minutes pipeline", () => {
 
   it("falls back to the manual selector when classification cannot decide", async () => {
     const fs = new MemoryFs(); const requestDestination = vi.fn().mockResolvedValue("2.1");
-    const run = (await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const run = (await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], download: vi.fn().mockResolvedValue("曖昧な会議"),
       classifyDestination: vi.fn().mockResolvedValue(null), requestDestination }))[0];
     expect(run?.routing).toEqual({ evaluated: true });
@@ -145,7 +145,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("shares minutes before registering tasks with stable idempotency and trusted project scope", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const order: string[] = [];
     const createTask = vi.fn(async () => { order.push("task"); return { id: "task-42" }; });
@@ -174,7 +174,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("posts the parent summary, narrative chunks, then the task card last", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const visibleOrder: string[] = [];
     const options = resumeOptions({
@@ -189,7 +189,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("retries only the task card after it fails without duplicating narrative chunks", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const postParent = vi.fn().mockResolvedValue("10.1");
     const postThreadChunk = vi.fn().mockResolvedValue("10.2");
@@ -212,7 +212,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("resolves a named assignee to the canonical person id before task creation", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn().mockResolvedValue({ id: "task-42" });
     const resolveAssignee = vi.fn().mockResolvedValue({ status: "resolved", personId: "per_umeda" });
@@ -227,7 +227,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it.each(["unknown", "ambiguous"])("registers the task without guessing when named assignee is %s", async (status) => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn().mockResolvedValue({ id: "task-42" });
     const run = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
@@ -242,7 +242,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("completes the minutes and defers the task when the assignee graph is unavailable", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn();
     const run = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
@@ -256,7 +256,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("accepts minutes with no explicit tasks without creating a task", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [] }),
@@ -270,7 +270,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("retries only the unregistered tasks after a partial task API failure", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
       .mockResolvedValueOnce({ id: "task-1" })
@@ -302,7 +302,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("shares GitHub-saved minutes even when canonical task registration is unavailable", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
       .mockRejectedValueOnce(new Error("project_code_not_allowed"))
@@ -340,7 +340,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("keeps the task-only retry until board repair and the final task card both complete", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn().mockResolvedValue({ id: "task-kartz" });
     const repairTaskBoard = vi.fn().mockRejectedValueOnce(new Error("board down")).mockResolvedValueOnce(undefined);
@@ -369,7 +369,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("resumes only the task card stage after task card posting fails", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn().mockResolvedValue({ id: "task-kartz" });
     const repairTaskBoard = vi.fn().mockResolvedValue(undefined);
@@ -400,7 +400,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("saves GitHub before Slack and completes", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const order: string[] = []; const options = resumeOptions({
       saveGitHub: vi.fn(async () => { order.push("github"); return { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" }; }),
@@ -422,7 +422,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("does not duplicate a leading narrative separator", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "------------\n議題" }),
@@ -440,7 +440,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("reuses generation and posted parent after partial Slack failure", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const generate = vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" });
     const saveGitHub = vi.fn().mockResolvedValue({ transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "mu" });
@@ -454,7 +454,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("never posts to Slack when GitHub fails", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const options = resumeOptions({ saveGitHub: vi.fn().mockRejectedValue(new Error("github down")) });
     await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("github down");
@@ -462,7 +462,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("rejects a changed transcript on a GitHub retry without regenerating", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const download = vi.fn().mockResolvedValueOnce("original").mockResolvedValueOnce("changed");
     const generate = vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文" });
@@ -473,7 +473,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("rejects a selection from a different operator after approval", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const options = resumeOptions({ postThreadChunk: vi.fn().mockRejectedValue(new Error("slack down")) });
     await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("slack down");
@@ -482,7 +482,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("removes persisted outputs and reopens destination selection for a completed run", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const generated = { title: "定例", overview: "概要", body: "本文", tasks: [{ title: "確認する" }] };
     await resumeMeetingMinutesRun(fs, selection, resumeOptions({ generate: vi.fn().mockResolvedValue(generated) }));
@@ -503,7 +503,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("uses fresh external idempotency keys after a redo", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn().mockResolvedValueOnce({ id: "task-1" }).mockResolvedValueOnce({ id: "task-2" });
     const options = resumeOptions({ createTask,
@@ -518,7 +518,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("binds required generation to the persisted Brainbase context Receipt", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: "receipt-required", identity, status: "resolved" as const, checksum: "context-checksum",
@@ -538,7 +538,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("regenerates a persisted legacy output mismatch so Brainbase use is attested", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const poisoned = (await loadMeetingMinutesRun(fs, selection.runId))!;
     poisoned.destination = structuredClone(destination);
@@ -561,7 +561,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("regenerates a legacy output mismatch with an unknown source reference in one retry", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const poisoned = (await loadMeetingMinutesRun(fs, selection.runId))!;
     poisoned.destination = structuredClone(destination);
@@ -583,7 +583,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("does not persist an untrusted source reference before rejecting required generation", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: "receipt-source", identity, status: "resolved" as const, checksum: "checksum-source",
@@ -597,7 +597,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("removes an untrusted source reference and completes observe generation", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: "receipt-source", identity, status: "resolved" as const, checksum: "checksum-source",
@@ -617,7 +617,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("fails closed before generation when required Brainbase context is partial", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const generate = vi.fn();
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
@@ -630,7 +630,7 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("reuses exact tasks and flags similar open tasks instead of creating duplicates", async () => {
-    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn();
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,

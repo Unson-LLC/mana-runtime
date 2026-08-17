@@ -228,7 +228,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     const taskResponse = await options.handleMeetingTaskAction(payload!, tenantEffects);
     if (taskResponse) return taskResponse;
   }
-  if (string(team?.id) !== options.expectedTeamId) return response("slack_team_forbidden", 403);
   const userId = string(user?.id);
   const channelId = string(channel?.id);
   if (string(action?.action_id) === "mana_task_write_approve" && options.approveTaskWrite) {
@@ -239,7 +238,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId }, tenantEffects);
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
-  if (options.expectedChannelId && channelId !== options.expectedChannelId) return response("slack_channel_forbidden", 403);
+  if (options.expectedChannelId && interactionWorkspaceId === options.expectedTeamId &&
+    channelId !== options.expectedChannelId) return response("slack_channel_forbidden", 403);
   const actionId = string(action?.action_id);
   const destinationAction = actionId === MEETING_MINUTES_CHOOSE_ACTION_ID || actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`);
   const organizationAction = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`);
@@ -279,7 +279,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     if (!runId || !channelId || !sourceThreadTs || !actionTs || !options.defer) {
       return response("slack_interaction_invalid", 400);
     }
-    options.defer(options.send({ kind: "meeting_minutes_redo", runId, workspaceId: options.expectedTeamId,
+    options.defer(options.send({ kind: "meeting_minutes_redo", runId,
+      workspaceId: interactionWorkspaceId, appId,
       channelId, threadTs: sourceThreadTs, userId, actionTs }).then(() => undefined));
     return Response.json({ ok: true });
   }
@@ -357,7 +358,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
             error: error instanceof Error ? error.message : "unexpected_error" }));
         }
       }
-      await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
+      await options.send({ kind: "meeting_minutes_selection", runId, destinationId,
+        workspaceId: interactionWorkspaceId, appId,
         channelId, threadTs: feedbackThreadTs, userId, actionTs });
     } catch (error) {
       if (processingShown && options.clearProcessing && feedbackThreadTs) {
