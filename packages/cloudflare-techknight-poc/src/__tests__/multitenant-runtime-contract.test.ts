@@ -840,6 +840,23 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(source.slice(ingressEnd)).not.toContain("if (replyPersisted)");
   });
 
+  it("publishes recovery only as a canonical tenant queue body and rejects legacy recovery", () => {
+    const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    const selectionStart = source.indexOf("async function processTenantMeetingMinutesSelection");
+    const selectionEnd = source.indexOf("async function processTenantMeetingMinutesRecovery", selectionStart);
+    const selection = source.slice(selectionStart, selectionEnd);
+    expect(selection).toContain('schema_version: "1.0"');
+    expect(selection).toContain("tenant_context: tenantContext");
+    expect(selection).toContain("payload: armed.event");
+    expect(selection).not.toContain("send(armed.event");
+
+    const legacyStart = source.indexOf("if (isMeetingMinutesRecovery(message.body))");
+    const legacyEnd = source.indexOf("if (isTenantMeetingMinutesSelectionBody(message.body))", legacyStart);
+    const legacy = source.slice(legacyStart, legacyEnd);
+    expect(legacy).toContain("FALLBACK_FORBIDDEN");
+    expect(legacy).not.toContain("resolveSlackWorkerIngress");
+  });
+
   it("mock server preserves timeout error and not_collected semantics planned Red", async () => {
     const { createTenantRuntimeHttpClients } = await import("../multitenancy/http-clients.js");
     const requests: Array<{ url: string; body: Record<string, unknown>; authorization: string | null }> = [];
