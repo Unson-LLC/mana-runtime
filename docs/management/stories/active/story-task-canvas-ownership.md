@@ -10,7 +10,7 @@ Manaを招待したSlackチャンネルの利用者として、管理Canvas ID�
 - [x] AC-2: 保存済みbindingがある場合は同じCanvas IDを再利用し、チャンネルに元からあるCanvasや先頭のCanvasを自動採用・更新しない。
 - [x] AC-3: 作成応答が不明な場合や同時実行では二重作成せず、bindingが確定するまで安全側で停止する。Slackが作成していないと確定できるエラーだけ再試行可能にする。
 - [x] AC-4: consumerはtenant、target、workspace、channel、binding revisionを信頼済み設定と照合し、不一致・無効・token未設定ではCanvasを作成・更新しない。
-- [ ] AC-5: PMSとHP制作を対象別に有効化し、本番readbackで各チャンネルにMana管理タスクボードが1つだけ存在し、Brainbaseの正本タスクと同期したことを確認する。
+- [ ] AC-5: 登録済みの全task-board targetを自動作成対象として有効化し、本番readbackで各チャンネルにMana管理タスクボードが1つだけ存在し、Brainbaseの正本タスクと同期したことを確認する。招待・scope不足などで作成できないtargetは成功に含めず、対象別に未完了として残す。
 
 ## 成功指標
 
@@ -21,9 +21,9 @@ Manaを招待したSlackチャンネルの利用者として、管理Canvas ID�
 ## リリース条件
 
 - Canvas作成、binding永続化、再利用、曖昧失敗、scope不一致のテストと型検査を通す。
-- PMS、HP制作を1件ずつ有効化し、対象workspaceへのMana bot参加と`canvases:write`、チャンネル参照権限を確認する。
+- 登録済みの全targetを自動作成対象として有効化し、workspace別tokenに`canvases:write`とチャンネル参照権限があることを確認する。Mana bot未参加などで失敗したtargetは他targetの成功と分けて扱う。
 - 配備後、各targetについて作成されたCanvas ID、チャンネルへの結び付き、`task_board_refreshed`、Canvas本文の正本タスクをreadbackする。CI、Queue受付、HTTP 200だけでは完了にしない。
 
 ## 現在地
 
-現行実装は所有権事故を避けるため、手作業で`manaCanvasId`を設定するまで全targetを停止している。この安全条件を保ったまま、静的設定は作成許可範囲、Durable ObjectはManaが実際に作成したCanvas IDの正本へ責務を分ける。
+PMSとHP制作ではMana管理Canvasの自動作成・同期を本番確認済みである。同じ所有権境界を登録済みの全targetへ展開し、既存Canvasを採用せず、Manaが作成できたCanvasだけをDurable Objectのbindingとして同期する。

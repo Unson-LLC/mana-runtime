@@ -25,7 +25,7 @@ date: 2026-08-17
 
 ## 移行
 
-既存targetは一括有効化しない。Mana botのチャンネル参加と必要scopeを確認したtargetだけ、`autoProvision: true`、正の`bindingRevision`、`enabled: true`へ変更する。初回Queue処理でCanvasを作成し、その返却IDを実行時bindingの正本にする。まずPMSとHP制作を個別に有効化し、本番readback後に他targetへ展開する。
+PMSとHP制作で自動作成・再利用・同期を本番確認した実装を、登録済みの全targetへ展開する。全targetを`autoProvision: true`、正の`bindingRevision`、`enabled: true`にし、初回Queue処理でMana botが参加済みのチャンネルにCanvasを作成する。作成できないtargetは既存Canvasを採用せず、対象別の失敗として残す。作成時に返されたIDだけを実行時bindingの正本にする。
 
 ## 切戻しと検証
 
