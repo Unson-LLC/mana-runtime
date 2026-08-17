@@ -165,7 +165,7 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
-      channelId: "C1", userId: "U1", actionTs: "1.2" });
+      channelId: "C1", threadTs: "1.0", userId: "U1", actionTs: "1.2" });
   });
   it("fails closed when Slack omitted the tenant thread coordinate", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;

@@ -416,6 +416,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('url.pathname === "/slack/interactions"');
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
     expect(worker).toContain("isTenantMeetingMinutesSelectionBody(message.body)");
+    expect(worker).toContain("isTenantMeetingMinutesRedoBody(message.body)");
+    expect(worker).toContain("expectedTenantMeetingMinutesRedoScope(env, tenantBody)");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
     expect(worker).toContain("recoverStaleMeetingMinutesRun(");
