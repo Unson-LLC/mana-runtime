@@ -286,6 +286,36 @@
       "confidence": 0.99,
       "first_seen_at": "2026-08-16T23:34:38.398Z",
       "last_revised_at": "2026-08-16T23:44:04.050Z"
+    },
+    {
+      "id": "INV-003",
+      "type": "invariant",
+      "statement": "UserPromptSubmitはBrainbase Hostのcanonical additionalContextとroute receipt ID・digestを検証し、Host digestを再生成せずepisodeへ引き継ぐ",
+      "origin": {
+        "story_refs": [
+          { "kind": "acceptance_criteria", "ac_id": "AC-1" },
+          { "kind": "acceptance_criteria", "ac_id": "AC-7" }
+        ],
+        "architecture_refs": [
+          { "file": "docs/architecture/story-slack-mention-brainbase-judgment.md", "section": "信頼境界" }
+        ],
+        "code_refs": [
+          { "file": "packages/cloudflare-techknight-poc/container/brainbase-judgment-hook.mjs" }
+        ],
+        "test_refs": [
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-judgment-hook.test.ts", "case": "story-meeting-minutes-brainbase-judgment:ac:4 preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop" },
+          { "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-judgment-hook.test.ts", "case": "fails closed when UserPromptSubmit has an invalid Host route digest" }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-judgment-hook.test.ts", "must_cover": "story-meeting-minutes-brainbase-judgment:ac:4 preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop" },
+          { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-judgment-hook.test.ts", "must_cover": "fails closed when UserPromptSubmit has an invalid Host route digest" }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-17T01:28:17.000Z",
+      "last_revised_at": "2026-08-17T01:28:17.000Z"
     }
   ],
   "planned_test_suites": [

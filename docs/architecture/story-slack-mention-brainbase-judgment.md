@@ -10,7 +10,7 @@ mana-runtimeはClaudeの`stream-json`を検証し、同じsession・turnに属�
 
 1. Workerがplacement認可、依頼者identity、Graph文脈、thread文脈を従来どおり確定する。
 2. Workerがpromptとplacement由来のMCP configを書き、通常回答用Claude commandをJudgment settings、`stream-json`、`--include-hook-events`付きで起動する。
-3. `UserPromptSubmit` Hookがtrusted proxy経由でBrainbase Hostを呼び、Hostが初期route、active nodes、追加指示を同じturnへ束縛する。
+3. `UserPromptSubmit` Hookがtrusted proxy経由でBrainbase Hostを呼び、Hostが初期route、active nodes、追加指示を同じturnへ束縛する。Hostが返すcanonical `hookSpecificOutput.additionalContext`、route receipt ID、route receipt SHA-256 digestをforwarderが検証し、digestを表示文から再生成せず同じturnへ引き継ぐ。
 4. ClaudeはHostの指示に従って必要なBrainbase MCP toolと、そのrouting receiptが返した取得capabilityを実行する。各Brainbase tool call後の`PostToolUse`を同じturnへ記録する。
 5. `Stop` Hookが必須node、取得、監査をBrainbase Hostで検証する。不足があればHook exit 2で停止または継続させ、未完了出力を通常回答として採用しない。
 6. Workerがstreamを解析し、Hook event順序、session、turn、監査行、tool journal、最終resultを検証する。成功時だけepisode attemptを`audited`として保存する。
@@ -37,6 +37,7 @@ Slack投稿成功後にepisodeの完了保存が失敗した場合も、再試�
 - SandboxへBrainbase tokenを渡さず、proxyが認証と`mana-runtime` project bindingを固定する。
 - Hookのtimeout、非2xx、不正JSON、session・turn・event不一致、必要な監査行欠落、Stop未完了はfail closedとする。
 - routing receiptは取得完了の証拠にしない。必要な取得capabilityの実tool callとHostのStop判定を完了条件にする。
+- route receipt IDとdigestはBrainbase Hostを正本とし、欠落、不正digest、canonical `additionalContext`欠落はfail closedにする。
 - 監査行はHost応答からそのまま取得し、mana-runtimeで生成、要約、重複排除、補完しない。
 - receiptへSlack本文、prompt、tool入出力本文、token、secretを保存しない。
 
