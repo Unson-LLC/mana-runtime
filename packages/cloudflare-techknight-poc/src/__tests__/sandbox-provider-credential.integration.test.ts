@@ -259,7 +259,18 @@ describe("sandbox provider credential integration", () => {
       activate_at: new Date(Date.now() + 500).toISOString(),
       terminal_deadline_at: deadline,
       container_id: "development-sandbox-timeout-a",
-    });
+      terminal_accounting: {
+        tenant_context: envelope,
+        expected_scope: EXPECTED_SCOPE,
+        quota_decision: "allowed",
+        unit: "container_seconds",
+        outcome: "timed_out",
+        failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
+        reply_state: "unknown",
+        recorded_at: new Date(Date.now() + 500).toISOString(),
+        accounting_effect_id: `development_terminal:${jobId}`,
+      },
+    } as Parameters<typeof outbox.arm>[0] & { terminal_accounting: Record<string, unknown> });
 
     namespace.handlers.clear();
     const terminalKey = [...namespace.storages.keys()].find((key) => key.startsWith("development-terminal:"));
@@ -280,6 +291,40 @@ describe("sandbox provider credential integration", () => {
     expect(destroyContainer).toHaveBeenCalledWith("development-sandbox-timeout-a");
     await expect(claimDevelopmentJobOwner(ownerStore, owner, deadline))
       .resolves.toMatchObject({ disposition: "failed_terminal" });
+
+    const accountingOutboxes = [...namespace.storages.entries()]
+      .filter(([key]) => key.startsWith("accounting:"))
+      .flatMap(([, storage]) => [...storage.values.entries()])
+      .filter(([key]) => key.startsWith("accounting-outbox:"));
+    expect(accountingOutboxes).toHaveLength(1);
+    expect(accountingOutboxes[0]?.[1]).toMatchObject({
+      artifact: {
+        usage_events: [{
+          message_type: "usage_event",
+          quantity: null,
+          collection_state: "not_collected",
+          outcome: "timed_out",
+          failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
+        }],
+        receipt: {
+          message_type: "operation_receipt",
+          collection_state: "not_collected",
+          outcome: "timed_out",
+          failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
+          reply: { state: "unknown", reply_count: 0, legacy_reply_count: 0 },
+        },
+      },
+    });
+
+    await restarted.alarm(deadline, async () => ({ state: "retry", error: "UPSTREAM_UNAVAILABLE" }),
+      (record) => failDevelopmentTerminalOutboxRecord(record, {
+        TENANT_RUNTIME_STATE: namespace,
+      }, deadline, destroyContainer));
+    const accountingOutboxesAfterReplay = [...namespace.storages.entries()]
+      .filter(([key]) => key.startsWith("accounting:"))
+      .flatMap(([, storage]) => [...storage.values.entries()])
+      .filter(([key]) => key.startsWith("accounting-outbox:"));
+    expect(accountingOutboxesAfterReplay).toHaveLength(1);
   });
 
   it("acquires a different single-use lease for every Anthropic and GitHub HTTP request", async () => {

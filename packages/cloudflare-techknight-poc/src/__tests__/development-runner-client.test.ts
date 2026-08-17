@@ -251,8 +251,8 @@ describe("runCloudflareDevelopmentRequest", () => {
     await expect(runCloudflareDevelopmentRequest(input({ createSandbox, registerJobOwner })))
       .rejects.toThrow(/^development_container_sanitization_unproven$/);
 
-    expect(release).toHaveBeenCalledOnce();
-    expect(cancelTerminalWatchdog).toHaveBeenCalledOnce();
+    expect(release).not.toHaveBeenCalled();
+    expect(cancelTerminalWatchdog).not.toHaveBeenCalled();
   });
 
   it("fails closed before starting when callback configuration is missing", async () => {
