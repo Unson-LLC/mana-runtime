@@ -178,6 +178,9 @@ export interface MeetingMinutesRecovery {
   kind: "meeting_minutes_recovery";
   runId: string;
   workspaceId: string;
+  channelId: string;
+  threadTs: string;
+  userId: string;
   actionTs: string;
 }
 

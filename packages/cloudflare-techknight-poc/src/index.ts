@@ -82,7 +82,7 @@ import { parseTaskBoardTargets, taskBoardTargetsForProjects } from "./task-board
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
-import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
+import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, recoverStaleMeetingMinutesRun,
   MEETING_MINUTES_RECOVERY_DELAY_SECONDS } from "./meeting-minutes-recovery.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
@@ -178,6 +178,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
+    | TenantQueueBody<MeetingMinutesRecovery>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
@@ -481,12 +482,22 @@ function isTenantMeetingMinutesRedoBody(value: unknown): value is TenantQueueBod
   return body.schema_version === "1.0" && !!body.tenant_context && isMeetingMinutesRedo(body.payload);
 }
 
+function isTenantMeetingMinutesRecoveryBody(value: unknown): value is TenantQueueBody<MeetingMinutesRecovery> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const body = value as Partial<TenantQueueBody<MeetingMinutesRecovery>>;
+  return body.schema_version === "1.0" && !!body.tenant_context && isMeetingMinutesRecovery(body.payload);
+}
+
 function meetingMinutesSelectionEventId(selection: MeetingMinutesSelection): string {
   return `meeting_minutes_selection:${selection.runId}:${selection.actionTs}`;
 }
 
 function meetingMinutesRedoEventId(command: MeetingMinutesRedo): string {
   return `meeting_minutes_redo:${command.runId}:${command.actionTs}`;
+}
+
+function meetingMinutesRecoveryEventId(recovery: MeetingMinutesRecovery): string {
+  return `meeting_minutes_recovery:${recovery.runId}:${recovery.actionTs}`;
 }
 
 function expectedTenantMeetingMinutesSelectionScope(
@@ -536,6 +547,33 @@ function expectedTenantMeetingMinutesRedoScope(
     app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
     channel_id: command.channelId,
     thread_ts: command.threadTs,
+    actor_principal_id: envelope.actor.principal_id,
+    project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    deployment_id: envelope.placement.deployment_id,
+  };
+}
+
+function expectedTenantMeetingMinutesRecoveryScope(
+  env: Env,
+  body: TenantQueueBody<MeetingMinutesRecovery>,
+): ExpectedTenantScope {
+  const recovery = body.payload;
+  const envelope = body.tenant_context;
+  if (recovery.workspaceId !== envelope.workspace_connection.workspace_id
+    || recovery.channelId !== envelope.slack.channel_id
+    || recovery.threadTs !== envelope.slack.thread_ts
+    || meetingMinutesRecoveryEventId(recovery) !== envelope.slack.event_id
+    || recovery.userId !== envelope.actor.authenticated_subject_id
+    || envelope.placement.profile !== tenantDeploymentProfile(env)) {
+    deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
+  }
+  return {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    workspace_id: recovery.workspaceId,
+    app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+    channel_id: recovery.channelId,
+    thread_ts: recovery.threadTs,
     actor_principal_id: envelope.actor.principal_id,
     project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
     capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
@@ -623,6 +661,46 @@ async function processTenantMeetingMinutesSelection(input: {
   });
   await meetingMinutesDeploymentGate(env, tenantId).markTerminal(selection.runId);
   return { outcome: "completed" };
+}
+
+async function processTenantMeetingMinutesRecovery(input: {
+  env: Env;
+  recovery: MeetingMinutesRecovery;
+  tenantContext: TenantContextEnvelope;
+  expectedScope: ExpectedTenantScope;
+  verifier: TenantRuntimeBoundaryVerifier;
+  now(): string;
+}): Promise<{ outcome: "recovered" | "terminal" | "superseded" }> {
+  const { env, recovery, tenantContext, expectedScope, verifier, now } = input;
+  return executeTenantBoundary({
+    boundary: "durable_object",
+    tenant_context: tenantContext,
+    expected_scope: expectedScope,
+    verifier,
+    now: now(),
+    execute: async () => {
+      const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+        tenantContext.tenant.tenant_id, recovery.workspaceId, recovery.runId,
+      ));
+      const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+      return withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+        const outcome = await recoverStaleMeetingMinutesRun(workspace.fs, recovery, {
+          now: () => Date.parse(now()),
+          updateStatus: async (run) => executeTenantBoundary({
+            boundary: "slack_delivery",
+            tenant_context: tenantContext,
+            expected_scope: expectedScope,
+            verifier,
+            now: now(),
+            execute: () => meetingMinutesClients(env).slack.updateRunStatus(run, "failed"),
+          }),
+        });
+        if (outcome === "not_due") deny("queue_consumer", "UPSTREAM_UNAVAILABLE");
+        await meetingMinutesDeploymentGate(env, tenantContext.tenant.tenant_id).markTerminal(recovery.runId);
+        return { outcome };
+      });
+    },
+  });
 }
 
 async function processTenantMeetingMinutesRedo(input: {
@@ -852,6 +930,7 @@ export default {
 
   async queue(batch: MessageBatch<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
+    | TenantQueueBody<MeetingMinutesRecovery>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
     const executeTenantContainerOperation = <T>(input: {
       tenant_context: TenantContextEnvelope;
@@ -956,9 +1035,82 @@ export default {
         message.ack();
         continue;
       }
+      if (isTenantMeetingMinutesRecoveryBody(message.body)) {
+        const tenantBody = message.body;
+        const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
+        const clients = tenantRuntimeClients(env);
+        const verifier = new TenantRuntimeBoundaryVerifier({
+          read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        });
+        const expectedScope = expectedTenantMeetingMinutesRecoveryScope(env, tenantBody);
+        const now = () => new Date().toISOString();
+        await consumeTenantQueueMessage({
+          body: tenantBody,
+          ack: () => message.ack(),
+          retry: () => message.retry(),
+        }, {
+          verifier,
+          expected_scope: () => expectedScope,
+          now,
+          ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, runtimeTenantId),
+          payload_hash: tenantPayloadHash,
+          retention_until: tenantRetentionUntil,
+          log: (entry) => console.log(JSON.stringify(entry)),
+          log_error: (entry) => console.error(JSON.stringify(entry)),
+          process: (recovery: MeetingMinutesRecovery, tenantContext: TenantContextEnvelope) =>
+            processTenantMeetingMinutesRecovery({
+            env,
+            recovery,
+            tenantContext,
+            expectedScope,
+            verifier,
+            now,
+          }),
+        });
+        continue;
+      }
       if (isMeetingMinutesRecovery(message.body)) {
-        console.error(JSON.stringify({ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }));
-        message.ack();
+        const recovery = message.body;
+        try {
+          const clients = tenantRuntimeClients(env);
+          const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+            .split(",").map((value) => value.trim()).filter(Boolean);
+          const resolved = await resolveSlackWorkerIngress({
+            identity: {
+              provider: "slack",
+              app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+              workspace_id: recovery.workspaceId,
+              event_id: meetingMinutesRecoveryEventId(recovery),
+              channel_id: recovery.channelId,
+              thread_ts: recovery.threadTs,
+              requester_id: recovery.userId,
+            },
+            required_scopes: requiredScopes,
+            required_authorization: {
+              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            },
+            authority: clients.authority,
+            now: new Date().toISOString(),
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          await env.TECHKNIGHT_EVENTS.send({
+            schema_version: "1.0",
+            tenant_context: resolved.tenant_context,
+            payload: recovery,
+          });
+          message.ack();
+        } catch (error) {
+          const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
+          console.error(JSON.stringify({ event: "meeting_minutes_recovery_trigger_failed", code }));
+          if (code === "WORKSPACE_CONNECTION_UNAVAILABLE" || code === "UPSTREAM_UNAVAILABLE") {
+            message.retry();
+          } else {
+            message.ack();
+          }
+        }
         continue;
       }
       if (isTenantMeetingMinutesSelectionBody(message.body)) {
@@ -1477,4 +1629,5 @@ export default {
   },
 } satisfies ExportedHandler<Env, TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
   | TenantQueueBody<MeetingMinutesRedo>
+  | TenantQueueBody<MeetingMinutesRecovery>
   | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;

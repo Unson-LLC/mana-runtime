@@ -8,7 +8,9 @@ export function isMeetingMinutesRecovery(value: unknown): value is MeetingMinute
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<MeetingMinutesRecovery>;
   return candidate.kind === "meeting_minutes_recovery" && typeof candidate.runId === "string" &&
-    typeof candidate.workspaceId === "string" && typeof candidate.actionTs === "string";
+    typeof candidate.workspaceId === "string" && typeof candidate.channelId === "string" &&
+    typeof candidate.threadTs === "string" && typeof candidate.userId === "string" &&
+    typeof candidate.actionTs === "string";
 }
 
 export async function armMeetingMinutesRecovery(fs: WorkspaceFs, selection: MeetingMinutesSelection,
@@ -17,7 +19,8 @@ export async function armMeetingMinutesRecovery(fs: WorkspaceFs, selection: Meet
   if (!run) throw new Error("meeting_minutes_run_not_found");
   if (run.status === "completed") {
     return { event: { kind: "meeting_minutes_recovery", runId: run.runId,
-      workspaceId: run.workspaceId, actionTs: selection.actionTs }, delaySeconds: 0, terminal: true };
+      workspaceId: run.workspaceId, channelId: selection.channelId, threadTs: selection.threadTs,
+      userId: selection.userId, actionTs: selection.actionTs }, delaySeconds: 0, terminal: true };
   }
   if (run.lifecycle?.actionTs !== selection.actionTs) {
     run.lifecycle = { actionTs: selection.actionTs,
@@ -28,7 +31,8 @@ export async function armMeetingMinutesRecovery(fs: WorkspaceFs, selection: Meet
   const deadline = Date.parse(run.lifecycle.deadlineAt);
   const delaySeconds = Math.max(1, Math.ceil((deadline - now) / 1_000));
   return { event: { kind: "meeting_minutes_recovery", runId: run.runId,
-    workspaceId: run.workspaceId, actionTs: selection.actionTs }, delaySeconds, terminal: false };
+    workspaceId: run.workspaceId, channelId: selection.channelId, threadTs: selection.threadTs,
+    userId: selection.userId, actionTs: selection.actionTs }, delaySeconds, terminal: false };
 }
 
 export interface MeetingMinutesRecoveryOptions {
