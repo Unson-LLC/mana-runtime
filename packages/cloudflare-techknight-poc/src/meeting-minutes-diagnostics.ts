@@ -38,6 +38,12 @@ export function classifyMeetingMinutesFailure(stage: MeetingMinutesDiagnosticSta
     if (taskError.code === "task_scope_not_configured" || message === "task_scope_not_configured") {
       return { stage, code: "TASK_SCOPE_NOT_CONFIGURED", retryable: false };
     }
+    if (taskError.code === "idempotency_conflict") {
+      return { stage, code: "TASK_IDEMPOTENCY_CONFLICT", retryable: false };
+    }
+    if (taskError.code === "canonical_task_operation_in_progress") {
+      return { stage, code: "TASK_OPERATION_IN_PROGRESS", retryable: true };
+    }
     if (taskError.status === 401) return { stage, code: "TASK_AUTHENTICATION_FAILED", retryable: false };
     if (taskError.status === 403) return { stage, code: "TASK_PROJECT_FORBIDDEN", retryable: false };
   }

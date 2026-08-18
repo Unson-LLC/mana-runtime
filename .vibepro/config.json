@@ -353,8 +353,20 @@
         "started_at": null,
         "due_at": null,
         "contract_type": null
+      },
+      {
+        "story_id": "bug-meeting-task-idempotency-409",
+        "title": "議事録タスク登録の409競合を重複なしで回復する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "contract_type": null
       }
     ],
-    "current_story_id": "story-task-canvas-ownership"
+    "current_story_id": "bug-meeting-task-idempotency-409"
   }
 }
