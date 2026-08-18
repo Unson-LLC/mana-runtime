@@ -1,7 +1,7 @@
 import { classifyMeetingMinutesDestinationInSandbox, generateMeetingMinutesInSandbox,
   parseAuditedGeneratedMeetingMinutesOutput, parseGeneratedMeetingMinutesOutput,
   parseReceiptBoundGeneratedMeetingMinutesOutput,
-  parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
+  parseMeetingMinutesRoutingOutput, selectMeetingMinutesContextWorkingSet } from "../meeting-minutes-generator.js";
 
 const destinations = [
   { id: "sales-tailor", projectId: "proj_salestailor", contextProjectCode: "salestailor",
@@ -132,7 +132,33 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(sandbox.destroy).toHaveBeenCalled();
   });
 
-  it("projects an oversized canonical Receipt context into the prompt boundary", async () => {
+  it("selects mandatory anchors and topic evidence independent of source order", async () => {
+    const relevant = [
+      { kind: "decision", id: "decision-retry", title: "再実行の継続点",
+        body: "GitHub保存済みならSlack投稿から再開する", source_ref: { type: "decision", id: "decision-retry" } },
+      { kind: "open_task", id: "task-token", title: "UNSON token権限確認",
+        body: "対象channelへの参加権限を確認する", source_ref: { type: "task", id: "task-token" } },
+    ];
+    const noise = Array.from({ length: 80 }, (_, index) => ({ kind: "document", id: `noise-${index}`,
+      title: `無関係な営業資料${index}`, body: "広告施策と請求処理".repeat(200),
+      source_ref: { type: "document", id: `noise-${index}` } }));
+    const baseContext = { project_invariants: [{ kind: "project_invariant", id: "project-mana",
+      title: "Legal Affairs配送座標", body: "organization=unson channel=C09AR3H5VAL",
+      source_ref: { type: "project", id: "project-mana" } }],
+    source_refs: [...relevant, ...noise].map((item) => item.source_ref).concat([{ type: "project", id: "project-mana" }]),
+    evidence: [] as Array<Record<string, unknown>>, open_tasks: [] as Array<Record<string, unknown>> };
+    const transcript = "Legal Affairsの再実行はGitHubを再保存せずSlack投稿へ進める。UNSON tokenとchannel権限を確認する。";
+    for (const evidence of [[...relevant, ...noise], [...noise.slice(0, 40), ...relevant, ...noise.slice(40)]]) {
+      const selected = selectMeetingMinutesContextWorkingSet(transcript, { ...baseContext, evidence });
+      const serialized = JSON.stringify(selected);
+      expect(serialized).toContain("project-mana");
+      expect(serialized).toContain("decision-retry");
+      expect(serialized).toContain("task-token");
+      expect(JSON.stringify(selected.evidence)).not.toContain("noise-79");
+    }
+  });
+
+  it("selects an oversized Receipt working set within the prompt transport boundary", async () => {
     const oversizedContext = {
       ...context,
       context: { ...context.context,
@@ -151,9 +177,20 @@ describe("generateMeetingMinutesInSandbox", () => {
       { model: "opus", effort: "xhigh" }, sandbox);
     const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
       path === "/tmp/meeting-minutes-prompt.txt")?.[1]);
-    expect(prompt).toContain('"context_projection_truncated":true');
+    expect(prompt).toContain('"context_selection_strategy":"mandatory_anchors_and_topic_relevance.v1"');
     const projectedReceipt = prompt.match(/<brainbase_context_receipt>\n(.*)\n<\/brainbase_context_receipt>/)?.[1] ?? "";
     expect(new TextEncoder().encode(projectedReceipt).byteLength).toBeLessThanOrEqual(100_000);
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("fails before generation when mandatory anchors alone exceed the transport boundary", async () => {
+    const oversizedMandatoryContext = { ...context, context: { ...context.context,
+      project_invariants: [{ id: "project-mana", body: "z".repeat(110_000) }] } };
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn(), destroy: vi.fn().mockResolvedValue(undefined) };
+    await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedMandatoryContext,
+      "required", { model: "opus", effort: "xhigh" }, sandbox))
+      .rejects.toThrow("meeting_minutes_brainbase_context_prompt_too_large");
+    expect(sandbox.exec).not.toHaveBeenCalled();
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
   it("destroys the Sandbox and rejects invalid model output", async () => {

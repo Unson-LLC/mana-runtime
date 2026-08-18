@@ -6,3 +6,4 @@
 4. prompt/parser/GitHub/Slack/task reconcileをReceipt基準へ変更する。
 5. 再試行、redo、watchdog、task/Canvas非回帰を検証する。
 6. Brainbase配備後にobserve E2E、required E2Eを順に行う。
+7. Receipt全量・先頭からの機械的切り詰め・必須アンカー＋関連証拠working setを同じ文字起こしで比較し、固定した品質基準でworking setが劣化しないことを確認してから選別を有効化する。
