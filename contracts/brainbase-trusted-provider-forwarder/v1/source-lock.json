@@ -14,8 +14,8 @@
   },
   "tenant_context_contract": {
     "repository": "Unson-LLC/mana-runtime",
-    "pull_request": 237,
-    "current_head": "dd9a9f7d0183caa4db7719628adea2c79db35718",
+    "pull_request": 292,
+    "current_head": "1b015def50a1ee21b616c87b717e821655bf2a48",
     "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833"
   },
   "wire": {
