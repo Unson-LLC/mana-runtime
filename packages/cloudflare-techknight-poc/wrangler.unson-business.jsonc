@@ -26,7 +26,7 @@
     "BRAINBASE_GRAPH_API_BASE_URL": "https://bb.unson.jp",
     "BRAINBASE_MCP_BASE_URL": "https://bb.unson.jp/runtime-mcp",
     "GOOGLE_DRIVE_MCP_BASE_URL": "https://bb.unson.jp/runtime-google-drive",
-    "CONTRACT_LEDGER_ENABLED": "false",
+    "CONTRACT_LEDGER_ENABLED": "true",
     "CONTRACT_LEDGER_WRITE_MODE": "audit",
     "CONTRACT_LEDGER_SPREADSHEET_ID": "1wVt_Cgj3P1cYXCiC8nyn1RmHOKpPTOaIGfGuPjPCNFk",
     "CONTRACT_LEDGER_SHEET_NAME": "契約台帳",
