@@ -21,6 +21,7 @@ const completeConfig = {
   vars: {
     TENANT_ID: "unson-business",
     MANA_DEPLOYMENT_PROFILE: "shared_cloud",
+    SLACK_EXPECTED_APP_ID: "A-MANA",
     MANA_REQUIRED_AUDIENCE: "mana-runtime",
     MANA_REQUIRED_PROJECT_ID: "mana",
     MANA_REQUIRED_CAPABILITY_ID: "runtime.execute",
@@ -97,6 +98,18 @@ describe("tenant runtime deploy readiness", () => {
       ready: false,
       missing_bindings: ["SLACK_SIGNING_SECRET"],
     });
+  });
+
+  it("requires the expected Slack app ID in the deployment preflight", () => {
+    const config = structuredClone(completeConfig);
+    delete (config.vars as Record<string, unknown>).SLACK_EXPECTED_APP_ID;
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["SLACK_EXPECTED_APP_ID"],
+    });
+    expect(() => assertTenantRuntimeDeploymentConfig(config, completeSecrets))
+      .toThrow("tenant_runtime_deploy_preflight_failed:SLACK_EXPECTED_APP_ID");
   });
 
   it("accepts a complete deployment config and parses Wrangler secret metadata", () => {

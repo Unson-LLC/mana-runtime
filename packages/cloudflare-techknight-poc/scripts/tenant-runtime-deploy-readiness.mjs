@@ -7,6 +7,7 @@ const execFileAsync = promisify(execFile);
 
 const REQUIRED_TEXT_VARS = [
   "TENANT_ID",
+  "SLACK_EXPECTED_APP_ID",
   "MANA_REQUIRED_AUDIENCE",
   "MANA_REQUIRED_PROJECT_ID",
   "MANA_REQUIRED_CAPABILITY_ID",
