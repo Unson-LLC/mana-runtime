@@ -335,6 +335,11 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     }
     return run;
   }
+  if (!run.github && options.contextMode === "required" && run.context &&
+    (run.context.status === "partial" || run.context.status === "unavailable")) {
+    delete run.context;
+    delete run.generated;
+  }
   if (run.status === "failed") {
     if (!run.github && run.failure?.message === "meeting_minutes_context_source_ref_unknown") {
       delete run.generated;

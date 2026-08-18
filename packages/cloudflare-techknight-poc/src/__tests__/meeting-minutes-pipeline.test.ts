@@ -905,6 +905,40 @@ describe("meeting minutes pipeline", () => {
     expect(options.postThreadChunk).not.toHaveBeenCalled();
   });
 
+  it.each(["partial", "unavailable"] as const)(
+    "refreshes a persisted %s observe Receipt before retrying in required mode",
+    async (status) => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.context = { receiptId: `receipt-${status}`, checksum: `${status}-checksum`, status, mode: "observe",
+      sourceRefs: [], resolvedAt: "2026-08-15T00:00:00.000Z" };
+    persisted.generated = { title: "古い文脈の定例", overview: "古い概要", body: "古い本文", tasks: [] };
+    persisted.failure = { stage: "routed", message: `meeting_minutes_context_${status}` };
+    await saveMeetingMinutesRun(fs, persisted);
+    const resolveContext = vi.fn(async (identity, receiptId?: string) => ({
+      schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: receiptId ?? "receipt-fresh", identity,
+      status: receiptId ? status : "resolved" as const,
+      checksum: receiptId ? `${status}-checksum` : "fresh-checksum",
+      resolved_at: "2026-08-18T00:00:00.000Z", context: { source_refs: [], open_tasks: [] },
+    }));
+    const generate = vi.fn().mockResolvedValue({ title: "新しい文脈の定例", overview: "概要", body: "本文", tasks: [] });
+
+    const retried = await resumeMeetingMinutesRun(fs, selection,
+      resumeOptions({ contextMode: "required", resolveContext, generate }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ run_id: selection.runId }), undefined);
+    expect(resolveContext).not.toHaveBeenCalledWith(expect.anything(), `receipt-${status}`);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-fresh",
+      checksum: "fresh-checksum", status: "resolved", mode: "required" },
+      generated: { title: "新しい文脈の定例", brainbase_context_receipt_id: "receipt-fresh" } });
+  });
+
   it("reuses exact tasks and flags similar open tasks instead of creating duplicates", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
