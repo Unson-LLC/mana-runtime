@@ -35,7 +35,7 @@ Cloudflare WorkerのHTTP 200やCI成功だけでは全体移行済みと判定�
 | 変更前バックアップ | `/home/ryoko/.ryoko/config-history/2026-08-18T01-33-11Z-before-lightsail-meeting-router-disable.yaml` |
 | 実行中セッション | `ryoko status`でactive 0 / running 0 |
 | Lightsail Action | workflow ID `327103360`、最終成功run `32042941321` |
-| workflow状態 | 2026-08-18 10:44 JSTに`active`から`disabled_manually`へ変更 |
+| workflow状態 | 2026-08-18 10:44 JSTに無効化。PR #265のmerge後、workflow ID `327103360`はGitHub APIで`deleted`を確認 |
 
 関連unitは個別に扱う。
 
@@ -81,10 +81,35 @@ Lightsail設定には24 placementがある。旧Unsonワークスペースが2�
 
 これらはCloudflareの議事録・task board機能へ配置名だけ追加しても同等機能にならない。通常エージェント応答、tools、data scopeなどの能力差を責務ごとに確認する必要がある。
 
+2026-07-19から2026-08-18までのLightsail journalをchannel ID単位で確認した。設定読込だけとは扱えない実利用があり、例として`mana-test`は471件、`mana-backoffice`は71件、`mana-accounting`は411件、`biz-ncom`は38件だった。`biz-ncom`の最新記録は2026-08-18 10:47 JSTである。したがって、20 placementと旧Unson 2 placementを利用実績なしとして廃止しない。
+
+## Cloudflare本番E2E（2026-08-18 11:08-11:16 JST）
+
+Cloudflare Worker Version `8d8e9077-37d4-442e-b4eb-3863ee561101`に対し、専用テストユーザーから`9940-meeting-router`へ一意なテキスト議事録を投入した。実際のBlock Kitからrun IDを取得し、署名済みinteractionで保存先Brainbaseを選択した。Slack UIからの実クリック配送はこの検証に含めていない。
+
+| 項目 | readback |
+|---|---|
+| correlation | `mana-minutes-e2e-20260818T020853905Z` |
+| run | `Ev0BQE5U8KCP_F0BQVFY9P5Y` |
+| router thread | `1787018935.115339` |
+| 入力 | 専用ユーザー`U088D1HBY6L` / file `F0BQVFY9P5Y` |
+| 受信・返信App | Cloudflare `A0BPM2J33SN` / bot `B0BP5T7M5AT` |
+| Lightsail返信 | 0件 |
+| 終端 | 成功0件 / 理由付き失敗1件 |
+| Receipt | `mmctx_400d955ca524ecce63c186105a3b0310` / `partial` / source refs 73件 |
+| Receipt source status | Graph `resolved` / Canonical Task `unavailable` |
+| 失敗理由 | `canonical_tasks_unavailable`。Brainbase project scopeとinternal clearanceが不足 |
+| GitHub保存 | `Unson-LLC/brainbase-unson` `develop`でcorrelation一致0件 |
+| 配信先Slack | Brainbase channelでcorrelation一致0件 |
+| タスク副作用 | Canonical Task検索でrun ID一致0件、next cursorなし |
+| 再送 | 同じinteractionを1回再送。同じrunで`meeting_minutes_context_partial`、追加の失敗終端なし |
+| 配備ゲート | `allowed=true` / `activeRuns=0` / intake停止なし |
+
+PR #267で、Brainbase文脈が`partial`または`unavailable`なら生成、GitHub保存、Slack配信、タスク作成へ進まないfail-closed版を配備した。このE2Eはその停止境界が本番で機能した証跡であり、議事録処理成功の証跡ではない。Canonical Task文脈の認可境界を修復し、同じ条件の新規runでReceipt `resolved`、GitHub保存1組、Slack親投稿1件、重複0件を確認するまで、9940の移行完了ゲートは未通過とする。
+
 ## 未確認のまま0件にしない項目
 
 - Cloudflare QueueとDLQの滞留件数。bindingとconsumerの存在は確認したが、CLIからdepthを取得できていない。
-- 最新Cloudflare配備後の処理中議事録run。2026-08-18 10:16 JSTの配備前ゲートでは0件だったが、その後に別配備が続いているため再確認が必要。
 - 旧UnsonワークスペースとCloudflare未登録placementの利用継続要否。
 - Slackコネクタから対象チャンネルを読めず`channel_not_found`だった。これはチャンネル不存在や0件の証拠ではない。
 
