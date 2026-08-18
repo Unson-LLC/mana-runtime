@@ -4,6 +4,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   type MeetingMinutesRedo, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
 import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
+  redoFailedMessage, redoProcessingMessage,
   MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { verifySlackRequest } from "./slack.js";
 
@@ -29,6 +30,7 @@ interface InteractionOptions {
   defer?(work: Promise<void>): void;
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string }): Promise<Response>;
   handleMeetingTaskAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
+  isIntakePaused?(): Promise<boolean>;
 }
 
 export type SlackInteractionMessage = SlackSelectionMessage;
@@ -82,6 +84,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
   approveTaskWrite?: InteractionOptions["approveTaskWrite"],
   resolveThreadTs?: InteractionOptions["resolveThreadTs"],
   handleMeetingTaskAction?: InteractionOptions["handleMeetingTaskAction"],
+  isIntakePaused?: InteractionOptions["isIntakePaused"],
 ): Promise<Response> {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const destinationTeamIds = (() => {
@@ -102,7 +105,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
     clearProcessing: (input) => slack.clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
     updateOriginal: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
-    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction });
+    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction, isIntakePaused });
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
@@ -172,6 +175,18 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return response("slack_interaction_invalid", 400);
   }
   const sourceThreadTs = threadTsCandidates[0];
+  if (options.isIntakePaused && await options.isIntakePaused()) {
+    const responseUrl = string(payload?.response_url);
+    if (responseUrl && options.updateOriginal && options.defer) {
+      options.defer(options.updateOriginal(responseUrl, {
+        replace_original: true,
+        text: "議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。",
+        blocks: [{ type: "section", text: { type: "mrkdwn",
+          text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。" } }],
+      }));
+    }
+    return Response.json({ ok: true, intake_paused: true });
+  }
   let destinations: readonly MeetingMinutesDestination[] | undefined;
   try { destinations = options.destinations ?? options.resolveDestinations?.(); }
   catch { return response("slack_interaction_invalid", 400); }
@@ -184,9 +199,29 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     return Response.json({ ok: true });
   }
   if (confirmRedoAction) {
-    if (!runId || !channelId || !actionTs || !options.defer) return response("slack_interaction_invalid", 400);
-    options.defer(options.send({ kind: "meeting_minutes_redo", runId, workspaceId: options.expectedTeamId,
-      channelId, userId, actionTs }).then(() => undefined));
+    const responseUrl = string(payload?.response_url);
+    if (!runId || !fileName || !channelId || !actionTs || !responseUrl || !options.updateOriginal || !options.defer) {
+      return response("slack_interaction_invalid", 400);
+    }
+    options.defer((async () => {
+      try { await options.updateOriginal!(responseUrl, redoProcessingMessage(fileName)); }
+      catch (error) {
+        console.error(JSON.stringify({ event: "meeting_minutes_redo_processing_projection_failed", runId,
+          error: error instanceof Error ? error.message : "unexpected_error" }));
+      }
+      try {
+        await options.send({ kind: "meeting_minutes_redo", runId, workspaceId: options.expectedTeamId,
+          channelId, userId, actionTs });
+      } catch (error) {
+        console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failed", runId,
+          error: error instanceof Error ? error.message : "unexpected_error" }));
+        try { await options.updateOriginal!(responseUrl, redoFailedMessage(runId, fileName)); }
+        catch (projectionError) {
+          console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failure_projection_failed", runId,
+            error: projectionError instanceof Error ? projectionError.message : "unexpected_error" }));
+        }
+      }
+    })());
     return Response.json({ ok: true });
   }
   if ((organizationAction || backAction)) {
@@ -224,7 +259,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       try { feedbackThreadTs = await options.resolveThreadTs(runId); }
       catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_lookup_failed", runId,
-          error: error instanceof Error ? error.message : "unexpected_error" }));
+          stage: "interaction_enqueue", code: "THREAD_COORDINATE_LOOKUP_FAILED", retryable: true }));
       }
     }
     let processingShown = false;
@@ -234,7 +269,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         processingShown = true;
       } catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
-          error: error instanceof Error ? error.message : "unexpected_error" }));
+          stage: "interaction_enqueue", code: "IMMEDIATE_STATUS_FAILED", retryable: true }));
       }
     }
     try {
@@ -243,7 +278,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         try { await options.updateOriginal(responseUrl, destinationSelectedMessage(runId, fileName, destination)); }
         catch (error) {
           console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
-            error: error instanceof Error ? error.message : "unexpected_error" }));
+            stage: "interaction_enqueue", code: "SELECTION_CONFIRMATION_FAILED", retryable: true }));
         }
       }
       await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
@@ -253,9 +288,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         try { await options.clearProcessing({ channelId, threadTs: feedbackThreadTs }); }
         catch (clearError) {
           console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_clear_failed", runId,
-            error: clearError instanceof Error ? clearError.message : "unexpected_error" }));
+            stage: "interaction_enqueue", code: "IMMEDIATE_STATUS_CLEAR_FAILED", retryable: true }));
         }
       }
+      console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failed", runId,
+        stage: "interaction_enqueue", code: "INTERACTION_ENQUEUE_FAILED", retryable: true }));
       throw error;
     }
   })());

@@ -1,26 +1,23 @@
-import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
 
 const repoRoot = path.resolve(__dirname, '..')
 
-// This spec is intentionally a headless contract boundary. It does not claim
-// to exercise GitHub Environment approval, workflow UI state, SSH, or Lightsail.
-test('S-001 S-002 S-003 S-004: headless contract; production journey remains a release gate', () => {
-  const output = execFileSync(
-    path.join(repoRoot, 'scripts/deploy/test-deploy-scripts.sh'),
-    { cwd: repoRoot, encoding: 'utf8' },
+test('Lightsail通常デプロイ経路は廃止され、復旧境界だけが記録されている', () => {
+  const workflow = path.join(repoRoot, '.github/workflows/deploy-lightsail.yml')
+  const runbook = fs.readFileSync(
+    path.join(repoRoot, 'docs/operations/lightsail-deploy-workflow.md'),
+    'utf8',
+  )
+  const decommissionRecord = fs.readFileSync(
+    path.join(repoRoot, 'docs/operations/lightsail-runtime-decommission-2026-08-18.md'),
+    'utf8',
   )
 
-  expect(output, 'vibepro: ac:1 manual workflow contract').toContain('deploy workflow semantic contract passed')
-  expect(output, 'vibepro: ac:2 main commit resolution').toContain('commit resolution fixtures passed')
-  expect(output, 'vibepro: ac:3 restricted installer artifacts').toContain('installer artifact fixtures passed')
-  expect(output, 'vibepro: ac:4 compiler failure propagation').toContain('Jimmy build failure propagation fixture passed')
-  expect(output, 'vibepro: ac:4 forced SSH command validation').toContain('deploy script, workflow contract, and rollback validation passed')
-  expect(output, 'vibepro: ac:5 build failure safety').toContain('rollback validation passed')
-  expect(output, 'vibepro: ac:6 guarded restart safety').toContain('rollback validation passed')
-  expect(output, 'vibepro: ac:7 systemd activation safety').toContain('rollback validation passed')
-  expect(output, 'vibepro: ac:8 entrypoint identity safety').toContain('rollback validation passed')
-  expect(output, 'vibepro: ac:9 process identity safety').toContain('rollback validation passed')
-  expect(output, 'vibepro: ac:10 post-activation cleanup semantics').toContain('rollback validation passed')
+  expect(fs.existsSync(workflow)).toBe(false)
+  expect(runbook).toContain('Lightsailデプロイ経路（廃止済み）')
+  expect(runbook).toContain('通常の配備や検証に使わない')
+  expect(decommissionRecord).toContain('過去のLightsail版を直接再起動しない')
+  expect(decommissionRecord).toContain('同じSlack入力に対するCloudflare/Lightsailの重複件数が0')
 })

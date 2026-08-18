@@ -18,9 +18,10 @@ import {
 } from "./sandbox-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
+  currentMeetingMinutesActionTs,
   isMeetingMinutesSelection,
   isMeetingMinutesRedo,
-  isMeetingMinutesSlackEvent,
+  isMeetingMinutesRouterFileEvent,
   meetingMinutesRuntimeConfig,
   processMeetingMinutesSlackEvent,
   processMeetingMinutesRedo,
@@ -30,6 +31,7 @@ import type { MeetingMinutesDestination, MeetingMinutesRecovery, MeetingMinutesR
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
+import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
 import { handleMeetingMinutesTaskAction } from "./meeting-minutes-task-actions.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
@@ -73,24 +75,33 @@ import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolve
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
   consumeTaskBoardRepair,
+  enqueueMeetingMinutesTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
+  enqueueTaskBoardRepairsForProjects,
   issueTaskWriteRequestContext,
 } from "./task-runtime-entrypoints.js";
 import {
   isTaskBoardRepairEvent,
   type TaskBoardRepairEvent,
 } from "./task-board.js";
-import { parseTaskBoardTargets, taskBoardTargetsForProjects } from "./task-board-targets.js";
+import { parseTaskBoardTargets } from "./task-board-targets.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
 import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, MEETING_MINUTES_RECOVERY_DELAY_SECONDS,
   recoverStaleMeetingMinutesRun } from "./meeting-minutes-recovery.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
+import {
+  gateMeetingMinutesCommandQueueMessage,
+  gateMeetingMinutesRouterQueueMessage,
+  handleMeetingMinutesIntakeAdminRequest,
+  interceptMeetingMinutesIntakePause,
+} from "./meeting-minutes-intake-entrypoints.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
 export { TaskWriteApproval } from "./task-write-approval.js";
+export { TaskBoardBinding } from "./task-board-binding.js";
 export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
 export { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 
@@ -132,6 +143,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
+  TASK_BOARD_BINDINGS: DurableObjectNamespace;
   TECHKNIGHT_WORKSPACE: DurableObjectNamespace<TechKnightWorkspace>;
   MEETING_MINUTES_WORKSPACE: DurableObjectNamespace<MeetingMinutesWorkspace>;
   MEETING_MINUTES_DEPLOYMENT_GATE: DurableObjectNamespace<MeetingMinutesDeploymentGate>;
@@ -218,21 +230,24 @@ function meetingMinutesDeploymentGate(env: Env): DurableObjectStub<MeetingMinute
   return env.MEETING_MINUTES_DEPLOYMENT_GATE.get(env.MEETING_MINUTES_DEPLOYMENT_GATE.idFromName(env.TENANT_ID));
 }
 
-async function enqueueTaskBoardRepairsForProjects(env: Env, projectIds: readonly string[],
-  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
-  let targets;
-  try { targets = taskBoardTargetsForProjects(parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON), projectIds); }
-  catch (error) { console.error("task_board_targets_invalid", error); return; }
-  const results = await Promise.allSettled(targets.map((target) => env.TASK_BOARD_REPAIRS.send({
-    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
-    workspaceId: target.workspaceId, channelId: target.channelId, reason,
-    requestedAt: new Date().toISOString(),
-  })));
-  results.forEach((result, index) => {
-    if (result.status === "rejected") console.error("task_board_repair_enqueue_failed", {
-      targetId: targets[index]?.targetId, reason, error: result.reason,
-    });
-  });
+function meetingMinutesCommandGateDependencies(env: Env, enabled: boolean) {
+  return {
+    enabled,
+    isPaused: () => meetingMinutesDeploymentGate(env).isIntakePaused(),
+    notify: (command: MeetingMinutesSelection | MeetingMinutesRedo) =>
+      meetingMinutesClients(env).slack.postIntakePausedToUser(command.channelId, command.userId),
+    logPaused: (command: MeetingMinutesSelection | MeetingMinutesRedo) => console.warn(JSON.stringify({
+      event: "meeting_minutes_command_intake_paused", kind: command.kind, runId: command.runId,
+    })),
+    logDisabled: (command: MeetingMinutesSelection | MeetingMinutesRedo) => console.warn(JSON.stringify({
+      event: "meeting_minutes_command_intake_disabled", kind: command.kind, runId: command.runId,
+    })),
+    logNotificationFailure: (command: MeetingMinutesSelection | MeetingMinutesRedo, error: unknown) =>
+      console.warn(JSON.stringify({
+        event: "meeting_minutes_command_intake_notice_failed", kind: command.kind, runId: command.runId,
+        error: error instanceof Error ? error.message : "unexpected_error",
+      })),
+  };
 }
 
 function meetingMinutesClients(env: Env) {
@@ -241,8 +256,11 @@ function meetingMinutesClients(env: Env) {
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
   const destinations = meetingMinutesRuntimeConfig(env).destinations;
   const destinationSlack = (channelId: string) => {
-    const organizationId = destinations.find((destination) => destination.slackChannelId === channelId)
-      ?.organization.id ?? "unson-business";
+    const organizationIds = [...new Set(destinations
+      .filter((destination) => destination.slackChannelId === channelId)
+      .map((destination) => destination.organization.id))];
+    if (organizationIds.length !== 1) throw new Error("meeting_minutes_destination_slack_routing_invalid");
+    const [organizationId] = organizationIds;
     return new MeetingMinutesSlackClient(resolveMeetingMinutesDestinationSlackToken(env, organizationId));
   };
   const taskClient = () => new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
@@ -265,14 +283,31 @@ function meetingMinutesClients(env: Env) {
       postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
       download: (fileId: string) => slack.downloadTextFile(fileId),
       generate: (transcript: string, destination: MeetingMinutesDestination,
-        context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3]) => {
+        context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3],
+        observe?: Parameters<typeof generateMeetingMinutesInSandbox>[6]) => {
         if (!hasAnthropicCredential(env)) throw new Error("oauth_not_configured");
         return generateMeetingMinutesInSandbox(transcript, destination, context, mode, claudeRuntime,
-          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
+          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`), observe);
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
         return taskClient().createTask(input, idempotencyKey);
+      },
+      findExistingTask: async (title: string, projectCodes: readonly string[]) => {
+        const normalizedTitle = title.trim().toLocaleLowerCase("ja");
+        const exact: Array<{ id: string }> = [];
+        let cursor: string | undefined;
+        for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+          const page = await taskClient().listTasks({ project_code: [...projectCodes], limit: 50,
+            ...(cursor ? { cursor } : {}) });
+          exact.push(...page.items
+            .filter((task) => task.title.trim().toLocaleLowerCase("ja") === normalizedTitle)
+            .map((task) => ({ id: task.id })));
+          if (exact.length > 1) return undefined;
+          if (!page.next_cursor) return exact.length === 1 ? exact[0] : undefined;
+          cursor = page.next_cursor;
+        }
+        return undefined;
       },
       // Destination project IDs belong to the task destination contract and are
       // not Graph person scopes. Resolve globally, then let non-unique names
@@ -284,8 +319,8 @@ function meetingMinutesClients(env: Env) {
       postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
         destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
       postTaskCard: (run: MeetingMinutesRun) => destinationSlack(run.destination!.slackChannelId).postTaskCard(run),
-      repairTaskBoard: (projectCodes: readonly string[]) =>
-        enqueueTaskBoardRepairsForProjects(env, projectCodes, "task_write"),
+      repairTaskBoard: (targetId: string) =>
+        enqueueMeetingMinutesTaskBoardRepair(env, targetId, "task_write"),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
@@ -308,6 +343,7 @@ function meetingMinutesClients(env: Env) {
         destinationSlack(destination.slackChannelId).retractSharedMinutes(destination.slackChannelId, parentTs, fileName),
       showDestinationSelection: (run: MeetingMinutesRun, destinations: Parameters<typeof slack.showDestinationSelection>[1]) =>
         slack.showDestinationSelection(run, destinations),
+      showRedoFailure: (run: MeetingMinutesRun) => slack.showRedoFailure(run),
     },
   };
 }
@@ -336,6 +372,88 @@ export default {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
       return Response.json(await meetingMinutesDeploymentGate(env).status());
+    }
+    if (request.method === "POST" && url.pathname === "/admin/meeting-minutes/intake") {
+      const gate = meetingMinutesDeploymentGate(env);
+      return handleMeetingMinutesIntakeAdminRequest(request, {
+        authorize: (candidate) => isSandboxAdminAuthorized(candidate, env.SANDBOX_PROBE_TOKEN),
+        setPaused: (paused) => gate.setIntakePaused(paused),
+        status: () => gate.status(),
+      });
+    }
+    const runAdminMatch = url.pathname.match(/^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})(\/retry|\/adopt-tasks)?$/);
+    if (runAdminMatch && (request.method === "GET" || request.method === "POST")) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const runId = runAdminMatch[1]!;
+      const workspaceId = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+        env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId,
+      ));
+      const handle = env.MEETING_MINUTES_WORKSPACE.get(workspaceId) as unknown as WorkspaceHandle;
+      let run = await withDisposableResource(() => getWorkspace(handle),
+        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
+      if (request.method === "POST") {
+        if (!runAdminMatch[2] || !run.destination) {
+          return Response.json({ error: "meeting_minutes_retry_not_available" }, { status: 409 });
+        }
+        if (runAdminMatch[2] === "/adopt-tasks") {
+          const payload = await request.json().catch(() => null) as { taskIds?: unknown } | null;
+          const taskIds = Array.isArray(payload?.taskIds) && payload.taskIds.every((id) =>
+            typeof id === "string" && id.length >= 3 && id.length <= 512)
+            ? [...new Set(payload.taskIds)] : [];
+          const generatedTasks = run.generated?.tasks ?? [];
+          const conflictRepair = run.taskRegistration?.failure?.status === 409;
+          const incompleteAdoption = run.taskRegistration?.registered.length === generatedTasks.length &&
+            run.diagnostics?.stage === "task_registration";
+          if ((!conflictRepair && !incompleteAdoption) ||
+            taskIds.length !== generatedTasks.length) {
+            return Response.json({ error: "meeting_minutes_task_adoption_invalid" }, { status: 409 });
+          }
+          const taskApi = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
+            token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (input, init) =>
+              fetch(input, { ...init, signal: AbortSignal.timeout(15_000) }) });
+          const tasks = await Promise.all(taskIds.map((taskId) => taskApi.getTask(taskId)));
+          const projectCodes = run.destination.taskProjectCodes;
+          if (tasks.some((task) => !projectCodes.every((code) => (task.project_codes ?? []).includes(code)))) {
+            return Response.json({ error: "meeting_minutes_task_adoption_scope_mismatch" }, { status: 409 });
+          }
+          run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+            const current = (await loadMeetingMinutesRun(workspace.fs, runId))!;
+            const repairFailure = current.taskRegistration?.failure ?? { index: 0, stage: "task_registration" as const,
+              message: "meeting_minutes_task_registration_failed", status: 409,
+              failedAt: new Date().toISOString() };
+            current.taskRegistration = { registered: tasks.map((task, index) => ({ index,
+              title: task.title, taskId: task.id, status: "reused" as const,
+              projectCodes: [...projectCodes] })), failure: repairFailure };
+            current.updatedAt = new Date().toISOString();
+            await saveMeetingMinutesRun(workspace.fs, current);
+            return current;
+          });
+        }
+        const selection = { kind: "meeting_minutes_selection", runId,
+          destinationId: run.destination!.id, workspaceId: run.workspaceId,
+          channelId: run.sourceChannelId, userId: run.approvedBy ?? "admin-retry",
+          actionTs: currentMeetingMinutesActionTs() } satisfies MeetingMinutesSelection;
+        run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+          const clients = meetingMinutesClients(env);
+          await processMeetingMinutesSelectionWithStatus(workspace.fs, selection,
+            meetingMinutesRuntimeConfig(env), clients.resume, {
+              updateStatus: (candidate, outcome) => clients.slack.updateRunStatus(candidate, outcome),
+            });
+          return (await loadMeetingMinutesRun(workspace.fs, runId))!;
+        });
+      }
+      return Response.json({ runId: run.runId, status: run.status,
+        destinationId: run.destination?.id, diagnostics: run.diagnostics,
+        taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
+          failure: run.taskRegistration?.failure,
+          failedCandidateTitle: run.taskRegistration?.failure
+            ? run.generated?.tasks?.[run.taskRegistration.failure.index]?.title : undefined },
+        checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
+          postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 },
+        ...(request.method === "POST" ? { enqueued: true } : {}) });
     }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
@@ -399,6 +517,7 @@ export default {
           let cachedRun: MeetingMinutesRun | undefined;
           return handleMeetingMinutesTaskAction(payload, { sourceTeamId: env.SLACK_EXPECTED_TEAM_ID,
             destinationTeamIds: parsedTeamIds,
+            destinations: config.destinations,
             operatorUserIds: config.operatorUserIds,
             loadRun: async (runId) => { cachedRun = await loadWorkspace(runId, (workspace) => loadMeetingMinutesRun(workspace.fs, runId)); return cachedRun; },
             saveRun: (run) => loadWorkspace(run.runId, async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); }),
@@ -409,17 +528,21 @@ export default {
               const token = resolveMeetingMinutesDestinationSlackToken(env, run.destination!.organization.id);
               const client = new MeetingMinutesSlackClient(token);
               await client.updateTaskCard(run); },
+            notifyScopeMismatch: async (run, userId) => {
+              const token = resolveMeetingMinutesDestinationSlackToken(env, run.destination!.organization.id);
+              await new MeetingMinutesSlackClient(token).postTaskScopeMismatch(run, userId);
+            },
             openView: async (organizationId, triggerId, view) => {
               const token = resolveMeetingMinutesDestinationSlackToken(env, organizationId);
               await new MeetingMinutesSlackClient(token).openTaskEditView(triggerId, view);
             }, listPeople: () => listGraphPeople(undefined, {
               baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
               token: env.BRAINBASE_GRAPH_API_TOKEN,
-            }), repairTaskBoard: (projectCodes) => enqueueTaskBoardRepairsForProjects(
-              env, projectCodes, "task_write",
+            }), repairTaskBoard: (targetId) => enqueueMeetingMinutesTaskBoardRepair(
+              env, targetId, "task_write",
             ), defer: (work) => ctx.waitUntil(work),
           });
-        });
+        }, () => meetingMinutesDeploymentGate(env).isIntakePaused());
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
@@ -438,6 +561,21 @@ export default {
       tenantId: env.TENANT_ID,
       expectedTeamId: env.SLACK_EXPECTED_TEAM_ID,
       expectedAppId: env.SLACK_EXPECTED_APP_ID,
+      intercept: async (event) => {
+        const config = meetingMinutesRuntimeConfig(env);
+        if (!isMeetingMinutesRouterFileEvent(event, config.routerChannelId)) return false;
+        return interceptMeetingMinutesIntakePause(event, {
+          isPaused: () => meetingMinutesDeploymentGate(env).isIntakePaused(),
+          notify: (channelId, threadTs) => new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "")
+            .postIntakePaused(channelId, threadTs),
+          defer: (work) => ctx.waitUntil(work),
+          logPaused: (eventId) => console.warn(JSON.stringify({ event: "meeting_minutes_intake_paused", eventId })),
+          logNotificationFailure: (eventId, error) => console.warn(JSON.stringify({
+            event: "meeting_minutes_intake_pause_notice_failed", eventId,
+            error: error instanceof Error ? error.message : "unexpected_error",
+          })),
+        });
+      },
       send: (event) => env.TECHKNIGHT_EVENTS.send(event),
     });
   },
@@ -455,6 +593,10 @@ export default {
       const meetingMinutesConfig = meetingMinutesRuntimeConfig(env);
       if (isMeetingMinutesRedo(message.body)) {
         const command = message.body;
+        const commandGate = await gateMeetingMinutesCommandQueueMessage({
+          body: command, ack: () => message.ack(), retry: () => message.retry(),
+        }, meetingMinutesCommandGateDependencies(env, meetingMinutesConfig.enabled));
+        if (commandGate === "blocked") continue;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
             env.TENANT_ID, command.workspaceId, command.runId,
@@ -506,6 +648,11 @@ export default {
           message.ack();
           continue;
         }
+        const commandGate = await gateMeetingMinutesCommandQueueMessage({
+          body: selection, ack: () => message.ack(), retry: () => message.retry(),
+        }, meetingMinutesCommandGateDependencies(env, meetingMinutesConfig.enabled));
+        if (commandGate === "blocked") continue;
+        let failedMeetingMinutesRun: MeetingMinutesRun | undefined;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
             env.TENANT_ID, selection.workspaceId, selection.runId,
@@ -529,6 +676,7 @@ export default {
               });
             } catch (error) {
               const persisted = await loadMeetingMinutesRun(workspace.fs, selection.runId);
+              failedMeetingMinutesRun = persisted;
               if (persisted?.status === "completed" || persisted?.lifecycle?.recoveryProjectedAt) {
                 await meetingMinutesDeploymentGate(env).markTerminal(selection.runId);
               }
@@ -538,13 +686,32 @@ export default {
           await meetingMinutesDeploymentGate(env).markTerminal(selection.runId);
           message.ack();
         } catch (error) {
-          console.error(JSON.stringify({ event: "meeting_minutes_selection_failed", runId: selection.runId,
-            error: error instanceof Error ? error.message : "unexpected_error" }));
+          console.error(JSON.stringify({ event: "meeting_minutes_selection_failed",
+            ...(failedMeetingMinutesRun ? meetingMinutesFailureLog(failedMeetingMinutesRun) : {
+              runId: selection.runId, stage: "unknown", code: "UNCLASSIFIED_FAILURE", retryable: true,
+            }) }));
           message.retry();
         }
         continue;
       }
-      if (isMeetingMinutesSlackEvent(message.body, meetingMinutesConfig)) {
+      const meetingMinutesRouterGate = await gateMeetingMinutesRouterQueueMessage({
+          body: message.body,
+          ack: () => message.ack(),
+          retry: () => message.retry(),
+        }, {
+          enabled: meetingMinutesConfig.enabled,
+          routerChannelId: meetingMinutesConfig.routerChannelId,
+          isPaused: () => meetingMinutesDeploymentGate(env).isIntakePaused(),
+          notify: (channelId, threadTs) => meetingMinutesClients(env).slack.postIntakePaused(channelId, threadTs),
+          logPaused: (eventId) => console.warn(JSON.stringify({ event: "meeting_minutes_intake_paused", eventId })),
+          logDisabled: (eventId) => console.warn(JSON.stringify({ event: "meeting_minutes_intake_disabled", eventId })),
+          logNotificationFailure: (eventId, error) => console.warn(JSON.stringify({
+            event: "meeting_minutes_intake_pause_notice_failed", eventId,
+            error: error instanceof Error ? error.message : "unexpected_error",
+          })),
+        });
+      if (meetingMinutesRouterGate === "blocked") continue;
+      if (meetingMinutesRouterGate === "ready") {
         await consumeTechKnightMessage({
           body: message.body,
           ack: () => message.ack(),
@@ -636,6 +803,7 @@ export default {
                 allowedChannelId: placement.channelId,
                 respondPolicy: placement.respondTo,
                 isEngagedThread: workspaceSession.engaged === true,
+                botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
               });
               // Slack may emit an ordinary message before the app_mention for the
               // same post. An ineligible variant must never claim the shared
@@ -800,6 +968,7 @@ export default {
                     trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
                     respondPolicy: placement.respondTo,
                     isEngagedThread: workspaceSession.engaged === true,
+                    botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
                     triage: async (triageEvent) => {
                       const hydrated = await hydrateThreadContext(triageEvent);
                       const recentThread = (hydrated.threadContext ?? "").split("\n").filter(Boolean).slice(-10)

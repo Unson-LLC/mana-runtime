@@ -96,7 +96,13 @@ function makeContext(overrides: Partial<MinutesContext> = {}): MinutesContext {
 
 describe("buildMinutesPrompt", () => {
   it("injects the Graph-derived dictionary, tasks, decisions, previous minutes", () => {
-    const prompt = buildMinutesPrompt("文字起こし本文", makeContext());
+    const prompt = buildMinutesPrompt("文字起こし本文", makeContext({
+      brainbaseResolution: {
+        sourceStatus: "complete",
+        resolutionStatus: "complete",
+        digest: "b".repeat(64),
+      },
+    }));
     expect(prompt).toContain("「運送」「運尊」→「UNSON」");
     expect(prompt).not.toContain("エイリアスなし"); // alias-less entities add noise only
     expect(prompt).toContain("見積書を送付する");
@@ -105,6 +111,10 @@ describe("buildMinutesPrompt", () => {
     expect(prompt).toContain("narrative_minutes.v1");
     expect(prompt).toContain("@未確認");
     expect(prompt).toContain("[TBD]");
+    expect(prompt).toContain("# Brainbase参照状態");
+    expect(prompt).toContain("- 情報源: complete");
+    expect(prompt).toContain("- 固有名詞解決: complete");
+    expect(prompt).toContain("- Receipt: " + "b".repeat(12));
   });
 
   it("omits empty context sections", () => {

@@ -14,9 +14,11 @@ export interface MeetingMinutesDestination {
   id: string;
   projectId: string;
   /** Canonical Brainbase project code used to resolve meeting context. */
-  contextProjectCode?: string;
+  contextProjectCode: string;
   /** Canonical Brainbase project codes used only for task integration. */
-  taskProjectCodes?: string[];
+  taskProjectCodes: string[];
+  /** Exact task-board destination; never inferred from a Brainbase project code. */
+  taskBoardTargetId: string;
   name: string;
   organization: { id: string; name: string };
   slackChannelId: string;
@@ -24,11 +26,11 @@ export interface MeetingMinutesDestination {
 }
 
 export function meetingMinutesContextProjectCode(destination: MeetingMinutesDestination): string {
-  return destination.contextProjectCode ?? destination.projectId;
+  return destination.contextProjectCode;
 }
 
 export function meetingMinutesTaskProjectCodes(destination: MeetingMinutesDestination): string[] {
-  return destination.taskProjectCodes ? [...destination.taskProjectCodes] : [destination.projectId];
+  return [...destination.taskProjectCodes];
 }
 
 export interface GeneratedMeetingMinutes {
@@ -43,6 +45,29 @@ export interface GeneratedMeetingMinutes {
   brainbase_context_warnings?: Array<"unknown_source_ref_removed">;
   /** Worker-derived proof that the generation run actually read the canonical Brainbase Receipt. */
   brainbase_context_attestation?: MeetingMinutesContextAttestation;
+  /** Safe, content-free execution metadata. The pipeline moves this into durable run diagnostics. */
+  generationDiagnostics?: MeetingMinutesGenerationDiagnostics;
+}
+
+export interface MeetingMinutesGenerationDiagnostics {
+  schemaVersion: "meeting_minutes_generation_diagnostics.v1";
+  startedAt: string;
+  finishedAt?: string;
+  elapsedMs?: number;
+  model: string;
+  timeoutMs: number;
+  outcome?: "success" | "timeout" | "nonzero_exit" | "transport_failure";
+  exitCode?: number;
+  stderrCode?: "TIMEOUT" | "RATE_LIMITED" | "AUTHENTICATION_FAILED" | "HOOK_FAILED" | "CLI_ERROR" | "UNKNOWN";
+  progress: {
+    prompt_written: boolean;
+    exec_started: boolean;
+    stdout_observed?: boolean;
+    hook_observed?: boolean;
+    result_observed?: boolean;
+  };
+  stdoutBytes?: number;
+  streamEventCount?: number;
 }
 
 export interface MeetingMinutesMcpContextAttestation {
@@ -119,6 +144,20 @@ export type MeetingMinutesRunStatus =
   | "completed"
   | "failed";
 
+export type MeetingMinutesDiagnosticStage = "interaction_enqueue" | "transcript_download" | "context_resolve"
+  | "context_gate" | "generation" | "github_save" | "slack_publish" | "task_registration" | "status_projection";
+
+export interface MeetingMinutesDiagnostics {
+  schemaVersion: "meeting_minutes_diagnostics.v1";
+  stage?: MeetingMinutesDiagnosticStage;
+  code?: string;
+  retryable?: boolean;
+  failedAt?: string;
+  receiptSnapshot?: { receiptId?: string; status: MeetingMinutesContextStatus; errorCodes: string[] };
+  checkpoint?: { hasGitHub: boolean; hasSlackParent: boolean; postedChunkCount: number };
+  generation?: MeetingMinutesGenerationDiagnostics;
+}
+
 export interface MeetingMinutesRun {
   version: 1;
   runId: string;
@@ -137,10 +176,18 @@ export interface MeetingMinutesRun {
   generated?: GeneratedMeetingMinutes;
   github?: { transcriptPath: string; minutesPath: string; transcriptUrl: string; minutesUrl: string };
   taskRegistration?: { registered: Array<{ index: number; title: string; taskId: string; status?: "registered" | "reused" | "needs_review" | "removed";
+    /** Canonical Task project scope used when this item was created or last migrated. */
+    projectCodes?: string[];
     assigneePersonId?: string; assigneeDisplayName?: string }>;
-    failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string; failedAt: string } };
+    failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string;
+      /** Stable Task API classification retained so Slack can distinguish configuration errors from retryable failures. */
+      code?: string; status?: number; failedAt: string } };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
+  /** Sanitized diagnostics only; never store upstream bodies, transcript text, hashes, or credentials. */
+  diagnostics?: MeetingMinutesDiagnostics;
+  /** A projection failure is secondary and must not overwrite the processing failure or completed result. */
+  projectionFailure?: Required<Pick<MeetingMinutesDiagnostics, "stage" | "code" | "retryable" | "failedAt">>;
   lifecycle?: {
     actionTs: string;
     deadlineAt: string;
@@ -149,6 +196,15 @@ export interface MeetingMinutesRun {
   };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */
   revision?: number;
+  /** Durable checkpoints for a completed-run redo. Each external cleanup is performed at most once per revision. */
+  redo?: {
+    revision: number;
+    requestedAt: string;
+    githubDeletedAt?: string;
+    deletedTaskIds: string[];
+    sharedRetractedAt?: string;
+    failure?: { message: string; failedAt: string };
+  };
   createdAt: string;
   updatedAt: string;
 }

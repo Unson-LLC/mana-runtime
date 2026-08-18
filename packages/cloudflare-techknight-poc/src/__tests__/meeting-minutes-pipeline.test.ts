@@ -1,11 +1,14 @@
-import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
+import { redoMeetingMinutesRun, resumeMeetingMinutesRun, startMeetingMinutesRuns,
+  validateMeetingMinutesDestinations } from "../meeting-minutes-pipeline.js";
 import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
   MeetingMinutesRedo, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
+import { TaskApiError } from "@openryoko/task-runtime-core";
 
-const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", name: "mana",
+const destination: MeetingMinutesDestination = { id: "mana", projectId: "mana", contextProjectCode: "mana",
+  taskProjectCodes: ["mana"], taskBoardTargetId: "minutes-mana", name: "mana",
   organization: { id: "unson", name: "雲孫" }, slackChannelId: "CDEST",
   github: { owner: "Unson-LLC", repo: "mana", pathPrefix: "docs" } };
 const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId: "T1", channelId: "CROUTER",
@@ -44,6 +47,86 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("meeting minutes pipeline", () => {
+  it("rejects ambiguous Slack credential routing across organizations", () => {
+    expect(() => validateMeetingMinutesDestinations([
+      destination,
+      { ...destination, id: "other", organization: { id: "unson-business", name: "雲孫 事業運営" } },
+    ])).toThrow("meeting_minutes_destinations_invalid");
+  });
+
+  it("stops a placeholder generation before GitHub, Slack, task, or board side effects", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const saveGitHub = vi.fn(); const createTask = vi.fn(); const repairTaskBoard = vi.fn();
+    const postParent = vi.fn(); const postThreadChunk = vi.fn();
+    const options = resumeOptions({
+      generate: vi.fn().mockRejectedValue(new Error("meeting_minutes_generation_placeholder_output")),
+      saveGitHub, createTask, repairTaskBoard, postParent, postThreadChunk,
+    });
+
+    await expect(resumeMeetingMinutesRun(fs, selection, options))
+      .rejects.toThrow("meeting_minutes_generation_placeholder_output");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      status: "failed",
+      failure: { message: "meeting_minutes_generation_placeholder_output" },
+    });
+    expect(saveGitHub).not.toHaveBeenCalled(); expect(createTask).not.toHaveBeenCalled();
+    expect(repairTaskBoard).not.toHaveBeenCalled(); expect(postParent).not.toHaveBeenCalled();
+    expect(postThreadChunk).not.toHaveBeenCalled();
+  });
+
+  it("regenerates an unsaved persisted placeholder before any external side effect", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.generated = { title: "YYYY-MM-DD 会議トピック-要約", overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない", tasks: [] };
+    persisted.failure = { stage: "generated", message: "meeting_minutes_generation_placeholder_output" };
+    await saveMeetingMinutesRun(fs, persisted);
+    const generate = vi.fn().mockResolvedValue({ title: "評議会", overview: "方針を確認しました。",
+      body: "## 方針\n参加者は次の運用方針を確認しました。", tasks: [] });
+    const options = resumeOptions({ generate });
+
+    const repaired = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(repaired).toMatchObject({ status: "completed", generated: { title: "評議会" } });
+    expect(repaired.failure).toBeUndefined();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(options.saveGitHub).toHaveBeenCalledWith(expect.objectContaining({
+      destination,
+      transcript: "transcript",
+      minutes: expect.objectContaining({ title: "評議会" }),
+    }));
+    expect(options.postParent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reuse an already saved placeholder and requires an explicit redo", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions());
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.generated = { title: "YYYY-MM-DD 会議トピック-要約", overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない", tasks: [] };
+    await saveMeetingMinutesRun(fs, persisted);
+    const options = resumeOptions();
+
+    const guarded = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(guarded).toMatchObject({ status: "completed",
+      failure: { stage: "generated", message: "meeting_minutes_persisted_placeholder_output" } });
+    expect(options.generate).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+  });
+
   it("persists one processing reply before generation and reuses it on retry", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
@@ -64,10 +147,70 @@ describe("meeting minutes pipeline", () => {
     }));
   });
 
+  it("retries a failed run after only its destination organization routing was corrected", async () => {
+    const fs = new MemoryFs();
+    const legacyDestination = { ...destination,
+      organization: { id: "unson-business", name: "雲孫 事業運営" } };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyDestination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(legacyDestination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.failure = { stage: "github_saved", message: "slack_api_failed:channel_not_found" };
+    persisted.generated = { title: "法務定例", overview: "概要", body: "本文" };
+    persisted.github = { transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
+      transcriptUrl: "https://github/t", minutesUrl: "https://github/m" };
+    persisted.context = { receiptId: "receipt-1", checksum: "checksum-1", status: "resolved", mode: "observe",
+      resolvedAt: "2026-08-17T09:27:00.000Z", sourceRefs: [] };
+    persisted.transcriptSha256 = "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6";
+    await saveMeetingMinutesRun(fs, persisted);
+    const options = resumeOptions();
+
+    const retried = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(retried).toMatchObject({ status: "completed",
+      destination: { organization: { id: "unson", name: "雲孫" } } });
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects a persisted run when its Slack delivery channel changed", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.failure = { stage: "routed", message: "generator down" };
+    await saveMeetingMinutesRun(fs, persisted);
+
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      destinations: [{ ...destination, slackChannelId: "COTHER" }],
+    }))).rejects.toThrow("meeting_minutes_destination_changed");
+  });
+
+  it("still rejects a persisted run when its GitHub delivery path changed", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.failure = { stage: "routed", message: "generator down" };
+    await saveMeetingMinutesRun(fs, persisted);
+
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      destinations: [{ ...destination, github: { ...destination.github, pathPrefix: "other" } }],
+    }))).rejects.toThrow("meeting_minutes_destination_changed");
+  });
+
   it("uses the explicit Brainbase context project without changing task or destination identity", async () => {
     const fs = new MemoryFs();
     const kartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
-      taskProjectCodes: ["unson"] };
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [kartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
@@ -77,13 +220,14 @@ describe("meeting minutes pipeline", () => {
     const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, options);
     expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
     expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
-      taskProjectCodes: ["unson"] });
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
   });
 
   it("refreshes a persisted Kartz run from the legacy context project before retrying", async () => {
     const fs = new MemoryFs();
     const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz" };
-    const configuredKartz = { ...legacyKartz, contextProjectCode: "unson", taskProjectCodes: ["unson"] };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "unson", taskProjectCodes: ["unson"],
+      taskBoardTargetId: "minutes-kartz" };
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
     await expect(resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
@@ -100,7 +244,79 @@ describe("meeting minutes pipeline", () => {
 
     expect(resolveContext).toHaveBeenLastCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
     expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
-      taskProjectCodes: ["unson"] });
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
+  });
+
+  it("discards an unsaved legacy context and generation before retrying with the corrected project", async () => {
+    const fs = new MemoryFs();
+    const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "kartz", taskProjectCodes: ["kartz"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(persisted).toBeDefined();
+    persisted!.destination = legacyKartz;
+    persisted!.status = "failed";
+    persisted!.transcriptSha256 = "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6";
+    persisted!.context = { receiptId: "receipt-legacy", checksum: "checksum-legacy", status: "resolved",
+      mode: "observe", resolvedAt: "2026-08-15T00:00:00.000Z", sourceRefs: [] };
+    persisted!.generated = audited({ title: "旧議事録", overview: "旧概要", body: "旧本文" }, {
+      schema_version: "meeting_minutes_context_receipt.v1", receipt_id: "receipt-legacy",
+      identity: { run_id: selection.runId, project_code: "unson",
+        transcript_sha256: "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6" },
+      status: "resolved", checksum: "checksum-legacy", resolved_at: "2026-08-15T00:00:00.000Z",
+      context: { source_refs: [], open_tasks: [] },
+    });
+    persisted!.failure = { stage: "routed", message: "meeting_minutes_context_project_changed" };
+    await saveMeetingMinutesRun(fs, persisted!);
+
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-kartz", identity, status: "resolved" as const, checksum: "checksum-kartz",
+      resolved_at: "2026-08-16T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const generate = vi.fn().mockResolvedValue({ title: "新議事録", overview: "新概要", body: "新本文" });
+    const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [configuredKartz], resolveContext, generate,
+    }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "kartz" }), undefined);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(run).toMatchObject({ status: "completed", context: { receiptId: "receipt-kartz" },
+      destination: { contextProjectCode: "kartz", taskProjectCodes: ["kartz"] }, generated: { title: "新議事録" } });
+  });
+
+  it("keeps an immutable saved Receipt while correcting task bindings on an existing run", async () => {
+    const fs = new MemoryFs();
+    const legacyKartz = { ...destination, id: "kartz", projectId: "proj_kartz", contextProjectCode: "unson",
+      taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" };
+    const configuredKartz = { ...legacyKartz, contextProjectCode: "kartz", taskProjectCodes: ["kartz"] };
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "project code is not allowed"))
+      .mockResolvedValueOnce({ id: "task-kartz" });
+    const original = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [legacyKartz],
+      generate: vi.fn().mockResolvedValue({ title: "Kartz定例", overview: "概要", body: "本文",
+        tasks: [{ title: "確認する" }] }),
+      createTask,
+    }));
+    expect(original).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
+      destination: { contextProjectCode: "unson" }, taskRegistration: { failure: { status: 403 } } });
+
+    const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
+      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+    const retried = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
+      destinations: [configuredKartz], resolveContext, createTask,
+    }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1");
+    expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["kartz"] }), expect.any(String));
+    expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
+      destination: { contextProjectCode: "unson", taskProjectCodes: ["kartz"] } });
+    expect(retried.taskRegistration).not.toHaveProperty("failure");
+    expect(retried.github).toEqual(original.github);
   });
 
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
@@ -154,12 +370,13 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(order).toEqual(["github", "slack", "task", "canvas"]);
-    expect(repairTaskBoard).toHaveBeenCalledWith(["mana"]);
+    expect(repairTaskBoard).toHaveBeenCalledWith("minutes-mana");
     expect(createTask).toHaveBeenCalledWith(
       expect.objectContaining({ title: "請求書を送る", project_codes: ["mana"] }),
       expect.stringMatching(/^meeting-minutes-/),
     );
-    expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42" }]);
+    expect(run.taskRegistration?.registered).toEqual([{ index: 0, title: "請求書を送る", taskId: "task-42",
+      projectCodes: ["mana"] }]);
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST", "10.1", "meeting.txt", expect.not.stringContaining("Brainbaseへタスクを1件登録しました"),
       expect.any(Number), expect.any(Number), expect.any(String),
@@ -194,7 +411,7 @@ describe("meeting minutes pipeline", () => {
     const deferred = await resumeMeetingMinutesRun(fs, selection, options);
     expect(deferred).toMatchObject({
       status: "completed", slack: { parentTs: "10.1", postedChunkIndexes: [0] },
-      taskRegistration: { failure: { stage: "task_card", message: "task card down" } },
+      taskRegistration: { failure: { stage: "task_card", message: "meeting_minutes_task_card_failed" } },
     });
 
     const retried = await resumeMeetingMinutesRun(fs, selection, options);
@@ -263,11 +480,12 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("retries only the unregistered tasks after a partial task API failure", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
       .mockResolvedValueOnce({ id: "task-1" })
-      .mockRejectedValueOnce(new Error("task api down"))
+      .mockRejectedValueOnce(new Error("task api Authorization Bearer secret"))
       .mockResolvedValueOnce({ id: "task-2" });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
@@ -280,7 +498,11 @@ describe("meeting minutes pipeline", () => {
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(first).toMatchObject({ status: "completed",
       slack: { parentTs: "10.1", postedChunkIndexes: [0] },
-      taskRegistration: { failure: { index: 1, message: "task api down" } } });
+      taskRegistration: { failure: { index: 1, message: "meeting_minutes_task_registration_failed" } } });
+    expect(first.diagnostics).toMatchObject({ stage: "task_registration", code: "TASK_REGISTRATION_FAILED",
+      checkpoint: { hasGitHub: true, hasSlackParent: true, postedChunkCount: 1 } });
+    expect(JSON.stringify(first)).not.toContain("Bearer secret");
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
     expect(first).not.toHaveProperty("failure");
     const retried = await resumeMeetingMinutesRun(fs, selection, options);
     expect(retried.taskRegistration?.registered.map((task) => task.taskId)).toEqual(["task-1", "task-2"]);
@@ -292,13 +514,17 @@ describe("meeting minutes pipeline", () => {
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(retried.taskRegistration).not.toHaveProperty("failure");
+    expect(retried.diagnostics).not.toHaveProperty("stage");
+    expect(retried.diagnostics).not.toHaveProperty("code");
+    expect(retried.diagnostics).not.toHaveProperty("failedAt");
+    consoleError.mockRestore();
   });
 
   it("shares GitHub-saved minutes even when canonical task registration is unavailable", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
-      .mockRejectedValueOnce(new Error("project_code_not_allowed"))
+      .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "project code is not allowed"))
       .mockResolvedValueOnce({ id: "task-kartz" });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
@@ -311,18 +537,23 @@ describe("meeting minutes pipeline", () => {
 
     expect(deferred).toMatchObject({ status: "completed",
       slack: { parentTs: "10.1", postedChunkIndexes: [0] },
-      taskRegistration: { failure: { index: 0, message: "project_code_not_allowed" } } });
+      taskRegistration: { failure: { index: 0, stage: "task_registration", code: "project_code_not_allowed",
+        status: 403, message: "meeting_minutes_task_registration_failed" } } });
+    expect(deferred.diagnostics).toMatchObject({ stage: "task_registration",
+      code: "TASK_PROJECT_CODE_NOT_ALLOWED", retryable: false });
     expect(deferred).not.toHaveProperty("failure");
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
-    const canonicalTaskDestination = { ...destination, taskProjectCodes: ["unson"] };
+    const canonicalTaskDestination = { ...destination, taskProjectCodes: ["unson"],
+      taskBoardTargetId: "minutes-unson" };
     const retried = await resumeMeetingMinutesRun(fs, selection, {
       ...options, destinations: [canonicalTaskDestination],
     });
     expect(retried.status).toBe("completed");
-    expect(retried.destination).toMatchObject({ projectId: "mana", taskProjectCodes: ["unson"] });
+    expect(retried.destination).toMatchObject({ projectId: "mana", taskProjectCodes: ["unson"],
+      taskBoardTargetId: "minutes-unson" });
     expect(retried.taskRegistration?.registered).toEqual([
-      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-kartz" },
+      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-kartz", projectCodes: ["unson"] },
     ]);
     expect(retried.taskRegistration).not.toHaveProperty("failure");
     expect(options.postParent).toHaveBeenCalledTimes(1);
@@ -330,6 +561,45 @@ describe("meeting minutes pipeline", () => {
     expect(createTask.mock.calls[0]?.[1]).toBe(createTask.mock.calls[1]?.[1]);
     expect(createTask.mock.calls[0]?.[0]).toMatchObject({ project_codes: ["mana"] });
     expect(createTask.mock.calls[1]?.[0]).toMatchObject({ project_codes: ["unson"] });
+  });
+
+  it("recovers a 409 by adopting the one exact task already created by the failed attempt", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const initialReceipt = { schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-stale", identity: { run_id: selection.runId, project_code: "mana",
+        transcript_sha256: "ignored-by-mock" }, status: "resolved" as const, checksum: "checksum-stale",
+      resolved_at: "2026-08-18T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } };
+    const resolveContext = vi.fn().mockResolvedValue(initialReceipt);
+    const createTask = vi.fn().mockRejectedValue(new TaskApiError(409, "idempotency_conflict", "conflict"));
+    const findExistingTask = vi.fn().mockResolvedValue({ id: "task-existing" });
+    const options = resumeOptions({ resolveContext, createTask, findExistingTask,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }) });
+
+    const recovered = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(findExistingTask).toHaveBeenCalledWith("Kartzの確認事項を進める", ["mana"]);
+    expect(recovered.taskRegistration?.registered).toEqual([
+      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-existing",
+        status: "reused", projectCodes: ["mana"] },
+    ]);
+    expect(recovered.taskRegistration).not.toHaveProperty("failure");
+  });
+
+  it("keeps a 409 failure when no unique exact existing task can be found", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn().mockRejectedValue(new TaskApiError(409, "idempotency_conflict", "conflict"));
+    const findExistingTask = vi.fn().mockResolvedValue(undefined);
+    const run = await resumeMeetingMinutesRun(fs, selection, resumeOptions({ createTask, findExistingTask,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "同名候補が複数あるタスク" }] }) }));
+
+    expect(findExistingTask).toHaveBeenCalledWith("同名候補が複数あるタスク", ["mana"]);
+    expect(run.taskRegistration?.registered).toEqual([]);
+    expect(run.taskRegistration?.failure).toMatchObject({ index: 0, stage: "task_registration", status: 409 });
   });
 
   it("keeps the task-only retry until board repair and the final task card both complete", async () => {
@@ -347,7 +617,7 @@ describe("meeting minutes pipeline", () => {
     const deferred = await resumeMeetingMinutesRun(fs, selection, options);
     expect(deferred).toMatchObject({ status: "completed",
       taskRegistration: { registered: [{ taskId: "task-kartz" }],
-        failure: { stage: "task_board", message: "board down" } } });
+        failure: { stage: "task_board", message: "meeting_minutes_task_board_failed" } } });
     expect(postTaskCard).not.toHaveBeenCalled();
 
     const recovered = await resumeMeetingMinutesRun(fs, selection, options);
@@ -378,7 +648,7 @@ describe("meeting minutes pipeline", () => {
     const deferred = await resumeMeetingMinutesRun(fs, selection, options);
     expect(deferred).toMatchObject({ status: "completed",
       taskRegistration: { registered: [{ taskId: "task-kartz" }],
-        failure: { stage: "task_card", message: "task card down" } } });
+        failure: { stage: "task_card", message: "meeting_minutes_task_card_failed" } } });
     expect(deferred.slack?.taskCardTs).toBeUndefined();
 
     const recovered = await resumeMeetingMinutesRun(fs, selection, options);
@@ -390,6 +660,29 @@ describe("meeting minutes pipeline", () => {
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(postTaskCard).toHaveBeenCalledTimes(2);
+    expect(options.resolveContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the task card failure when a card-only retry is unavailable", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const initial = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }),
+      repairTaskBoard: vi.fn().mockResolvedValue(undefined),
+      postTaskCard: vi.fn().mockRejectedValue(new Error("task card down")),
+    });
+    await resumeMeetingMinutesRun(fs, selection, initial);
+    const unavailable = resumeOptions();
+
+    const retained = await resumeMeetingMinutesRun(fs, selection, unavailable);
+
+    expect(retained.slack?.taskCardTs).toBeUndefined();
+    expect(retained.taskRegistration?.failure).toMatchObject({
+      stage: "task_card", message: "meeting_minutes_task_card_failed",
+    });
+    expect(unavailable.resolveContext).not.toHaveBeenCalled();
+    expect(unavailable.createTask).not.toHaveBeenCalled();
   });
 
   it("saves GitHub before Slack and completes", async () => {
@@ -479,6 +772,13 @@ describe("meeting minutes pipeline", () => {
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const generated = { title: "定例", overview: "概要", body: "本文", tasks: [{ title: "確認する" }] };
     await resumeMeetingMinutesRun(fs, selection, resumeOptions({ generate: vi.fn().mockResolvedValue(generated) }));
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.generated = { title: "YYYY-MM-DD 会議トピック-要約", overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない", tasks: [] };
+    await saveMeetingMinutesRun(fs, persisted);
+    expect(await resumeMeetingMinutesRun(fs, selection, resumeOptions())).toMatchObject({
+      status: "completed", failure: { message: "meeting_minutes_persisted_placeholder_output" },
+    });
     const deleteGitHub = vi.fn(); const deleteTask = vi.fn(); const retractSharedMinutes = vi.fn();
     const showDestinationSelection = vi.fn().mockResolvedValue("3.1");
     const reopened = await redoMeetingMinutesRun(fs, redo, { destinations: [destination], deleteGitHub, deleteTask,
@@ -493,6 +793,33 @@ describe("meeting minutes pipeline", () => {
     expect(reopened).not.toHaveProperty("generated");
     expect(reopened).not.toHaveProperty("github");
     expect(reopened).not.toHaveProperty("taskRegistration");
+    expect(reopened).not.toHaveProperty("failure");
+  });
+
+  it("resumes a partially completed redo without repeating finished cleanup", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "確認する" }] }),
+    }));
+    const deleteGitHub = vi.fn(); const deleteTask = vi.fn();
+    const retractSharedMinutes = vi.fn().mockRejectedValueOnce(new Error("Slack unavailable")).mockResolvedValue(undefined);
+    const showDestinationSelection = vi.fn().mockResolvedValue("3.1"); const showRedoFailure = vi.fn();
+    const options = { destinations: [destination], deleteGitHub, deleteTask, retractSharedMinutes,
+      showDestinationSelection, showRedoFailure };
+    await expect(redoMeetingMinutesRun(fs, redo, options)).rejects.toThrow("Slack unavailable");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed", redo: {
+      revision: 0, githubDeletedAt: expect.any(String), deletedTaskIds: ["task-1"],
+      failure: { message: "Slack unavailable" },
+    } });
+    expect(showRedoFailure).toHaveBeenCalledOnce();
+    const reopened = await redoMeetingMinutesRun(fs, redo, options);
+    expect(deleteGitHub).toHaveBeenCalledOnce(); expect(deleteTask).toHaveBeenCalledOnce();
+    expect(retractSharedMinutes).toHaveBeenCalledTimes(2); expect(showDestinationSelection).toHaveBeenCalledOnce();
+    expect(reopened).toMatchObject({ status: "awaiting_destination", revision: 1,
+      slack: { selectionTs: "3.1", postedChunkIndexes: [] } });
+    expect(reopened).not.toHaveProperty("redo");
   });
 
   it("uses fresh external idempotency keys after a redo", async () => {
@@ -609,17 +936,93 @@ describe("meeting minutes pipeline", () => {
     } });
   });
 
-  it("fails closed before generation when required Brainbase context is partial", async () => {
+  it.each(["partial", "unavailable"] as const)(
+    "fails closed before generation and external persistence when required Brainbase context is %s",
+    async (status) => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
-    const generate = vi.fn();
+    const options = resumeOptions({ contextMode: "required" });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
-      receipt_id: "receipt-partial", identity, status: "partial" as const, checksum: "partial-checksum",
-      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+      receipt_id: `receipt-${status}`, identity, status, checksum: `${status}-checksum`,
+      resolved_at: "2026-08-15T00:00:00.000Z", errors: [
+        { code: "graph_timeout", message: "Authorization: Bearer secret-value" },
+        { code: "not safe!", message: "raw upstream response" },
+      ], context: { source_refs: [], open_tasks: [] } }));
     await expect(resumeMeetingMinutesRun(fs, selection,
-      resumeOptions({ contextMode: "required", resolveContext, generate })))
-      .rejects.toThrow("meeting_minutes_context_partial");
-    expect(generate).not.toHaveBeenCalled();
+      { ...options, resolveContext }))
+      .rejects.toThrow(`meeting_minutes_context_${status}`);
+    expect(options.generate).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      status: "failed",
+      diagnostics: {
+        schemaVersion: "meeting_minutes_diagnostics.v1",
+        stage: "context_gate",
+        code: status === "partial" ? "CONTEXT_PARTIAL" : "CONTEXT_UNAVAILABLE",
+        receiptSnapshot: { receiptId: `receipt-${status}`, status, errorCodes: ["GRAPH_TIMEOUT"] },
+      },
+    });
+    expect(JSON.stringify(await loadMeetingMinutesRun(fs, selection.runId))).not.toContain("secret-value");
+  });
+
+  it.each([
+    ["generation", "GENERATION_FAILED", { generate: vi.fn().mockRejectedValue(new Error("model secret output")) }],
+    ["github", "GITHUB_SAVE_FAILED", { saveGitHub: vi.fn().mockRejectedValue(new Error("github secret output")) }],
+    ["slack", "SLACK_PUBLISH_FAILED", { postParent: vi.fn().mockRejectedValue(new Error("slack secret output")) }],
+  ] as const)("persists a stable %s failure stage and safe code", async (_name, code, overrides) => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions(overrides))).rejects.toThrow();
+    const failed = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(failed?.diagnostics).toMatchObject({ code });
+    expect(["generation", "github_save", "slack_publish"]).toContain(failed?.diagnostics?.stage);
+  });
+
+  it("persists a Slack publish diagnostic when the processing status post fails", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const options = resumeOptions({ postProcessingStatus: vi.fn().mockRejectedValue(new Error("Bearer secret")) });
+    await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("Bearer secret");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "failed",
+      diagnostics: { stage: "slack_publish", code: "SLACK_PUBLISH_FAILED" } });
+    expect(options.download).not.toHaveBeenCalled();
+  });
+
+  it.each(["partial", "unavailable"] as const)(
+    "refreshes a persisted %s observe Receipt before retrying in required mode",
+    async (status) => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.context = { receiptId: `receipt-${status}`, checksum: `${status}-checksum`, status, mode: "observe",
+      sourceRefs: [], resolvedAt: "2026-08-15T00:00:00.000Z" };
+    persisted.generated = { title: "古い文脈の定例", overview: "古い概要", body: "古い本文", tasks: [] };
+    persisted.failure = { stage: "routed", message: `meeting_minutes_context_${status}` };
+    await saveMeetingMinutesRun(fs, persisted);
+    const resolveContext = vi.fn(async (identity, receiptId?: string) => ({
+      schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: receiptId ?? "receipt-fresh", identity,
+      status: receiptId ? status : "resolved" as const,
+      checksum: receiptId ? `${status}-checksum` : "fresh-checksum",
+      resolved_at: "2026-08-18T00:00:00.000Z", context: { source_refs: [], open_tasks: [] },
+    }));
+    const generate = vi.fn().mockResolvedValue({ title: "新しい文脈の定例", overview: "概要", body: "本文", tasks: [] });
+
+    const retried = await resumeMeetingMinutesRun(fs, selection,
+      resumeOptions({ contextMode: "required", resolveContext, generate }));
+
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ run_id: selection.runId }), undefined);
+    expect(resolveContext).not.toHaveBeenCalledWith(expect.anything(), `receipt-${status}`);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-fresh",
+      checksum: "fresh-checksum", status: "resolved", mode: "required" },
+      generated: { title: "新しい文脈の定例", brainbase_context_receipt_id: "receipt-fresh" } });
   });
 
   it("reuses exact tasks and flags similar open tasks instead of creating duplicates", async () => {
@@ -637,8 +1040,9 @@ describe("meeting minutes pipeline", () => {
       ] }) }));
     expect(createTask).not.toHaveBeenCalled();
     expect(run.taskRegistration?.registered).toEqual([
-      { index: 0, title: "請求書を送る", taskId: "task-exact", status: "reused" },
-      { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review" },
+      { index: 0, title: "請求書を送る", taskId: "task-exact", status: "reused", projectCodes: ["mana"] },
+      { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review",
+        projectCodes: ["mana"] },
     ]);
   });
 });

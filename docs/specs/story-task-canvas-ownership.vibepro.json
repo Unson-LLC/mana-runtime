@@ -1,0 +1,149 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-task-canvas-ownership",
+  "generated_by": { "caller": "codex", "stage": "red" },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "dedicated",
+    "tenant_identity": {
+      "canonical_key": "tenantId",
+      "resolved_from": ["Worker TENANT_ID", "trusted task-board target"],
+      "resolution_point": "consumeTaskBoardRepair before any Slack API call",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": ["Queue repair event", "TaskBoardBinding partition", "Slack token resolution"],
+      "verified_surfaces": ["Queue repair event", "TaskBoardBinding partition", "Slack token resolution"]
+    },
+    "resources": [
+      {
+        "name": "task board binding state",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenantId",
+        "partition_key": "tenantId/workspaceId/targetId/bindingRevision",
+        "trust_zone": "Cloudflare Durable Object",
+        "residue_policy": "retention until operator rebind or delete",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and trusted target workspace"
+      },
+      {
+        "name": "Slack task board Canvas projection",
+        "sharing": "dedicated",
+        "tenant_key": "tenantId",
+        "trust_zone": "trusted Slack workspace and channel",
+        "residue_policy": "retention in Slack until operator delete",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and trusted target organization and workspace"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenantId",
+      "scope": "tenantId plus trusted target organization and workspace",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": ["mana-runtime"],
+      "residency": "binding in tenant-partitioned Durable Object; projection in target Slack workspace",
+      "migration": "bindingRevision creates a new partition; only one editable legacy task board owned by the same Mana bot may be reused when Slack free plan blocks creation",
+      "rollback": "disable the individual target; retained binding prevents accidental reassignment"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": ["managed_dedicated"],
+    "negative_scenarios": ["unknown_tenant", "ambiguous_tenant", "unavailable_connection", "no_data", "cross_tenant_candidate"],
+    "graph_metadata": {
+      "tenant_entities": ["Worker tenant", "Slack workspace", "trusted task-board target"],
+      "boundary_edges": ["Queue event to target resolver", "target resolver to workspace-scoped Slack token", "target to binding partition"]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected",
+      "evidence": {
+        "propagation_surfaces": ["Queue repair event", "TaskBoardBinding partition", "Slack token resolution"],
+        "negative_scenarios": ["unknown_tenant", "ambiguous_tenant", "unavailable_connection", "no_data", "cross_tenant_candidate"],
+        "scanner_results": {
+          "tenant_boundary": "inconclusive",
+          "tenant_key_propagation": "inconclusive",
+          "cross_tenant_authorization": "inconclusive",
+          "state_partitioning": "inconclusive",
+          "sandbox_isolation": "inconclusive",
+          "connection_routing": "inconclusive",
+          "secret_scope": "inconclusive",
+          "canonical_data_owner": "inconclusive",
+          "deployment_topology": "inconclusive",
+          "cross_tenant_negative_evidence": "inconclusive"
+        },
+        "graph": {
+          "tenant_key": "tenantId",
+          "sharing_modes": ["dedicated", "tenant_partitioned"],
+          "deployment_modes": ["managed_dedicated"],
+          "tenant_entities": [{ "tenant_scope": "Worker tenant", "tenant_key_source": "TENANT_ID", "trust_zone": "Cloudflare Worker", "data_owner": "mana-runtime" }],
+          "boundary_edges": [{ "tenant_scope": "Worker tenant to Slack workspace", "tenant_key_source": "TENANT_ID and trusted target", "sharing_mode": "tenant_partitioned", "credential_scope": "target organization and workspace", "connection_mode": "Slack API", "deployment_mode": "managed_dedicated" }]
+        },
+        "spec": { "tenant_key": "tenantId", "sharing_modes": ["dedicated", "tenant_partitioned"], "deployment_modes": ["managed_dedicated"] },
+        "implementation": { "tenant_key": "tenantId", "sharing_modes": ["dedicated", "tenant_partitioned"], "deployment_modes": ["managed_dedicated"] }
+      }
+    }
+  },
+  "clauses": [
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "Manaは信頼済みtargetで作成したCanvasを再利用する。無料プランで作成不能な場合だけ、同じMana bot所有・編集可能・タスクボード名称・一意候補を満たす既存Canvasを継続利用し、人所有・別用途・複数候補は採用しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }, { "kind": "acceptance_criteria", "ac_id": "AC-2" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "所有権境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-board-binding.ts" }, { "file": "packages/cloudflare-techknight-poc/src/task-board.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "case": "story-task-canvas-ownership:ac:1 creates a Mana-owned Canvas in the trusted channel" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board.test.ts", "case": "story-task-canvas-ownership:ac:2 reuses the only legacy task board owned by the same Mana bot" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board-binding.test.ts", "case": "story-task-canvas-ownership:ac:2 reuses only the Canvas ID completed by Mana" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-board*.test.ts", "must_cover": "story-task-canvas-ownership" }] },
+      "confidence": 0.98
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "Canvas作成はtargetごとに直列化し、作成応答が不明な場合は予約を保持して二重作成しない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "所有権境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-board-binding.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-board-binding.test.ts", "case": "story-task-canvas-ownership:ac:3 serializes provisioning and preserves an uncertain reservation" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-board-binding.test.ts", "must_cover": "serializes provisioning" }] },
+      "confidence": 0.97
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "consumerはtenant、target、workspace、channel、binding revisionを信頼済み設定と照合し、対象別に許可されたtokenだけで作成・更新する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-4" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "所有権境界" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/task-runtime-entrypoints.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/task-runtime-entrypoints.test.ts", "case": "story-task-canvas-ownership:ac:4 rejects untrusted auto-provision coordinates without writing to Slack" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/task-runtime-entrypoints.test.ts", "must_cover": "rejects untrusted auto-provision" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "登録済みの全task-board targetで自動作成を有効化し、各targetの本番Canvas ID・チャンネル結び付き・正本タスク同期のreadbackが揃うまで完了扱いしない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-task-canvas-ownership.md", "section": "移行" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "case": "story-task-canvas-ownership:ac:5 enables auto-provision for every configured task-board target" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts", "must_cover": "enables auto-provision for every configured task-board target" }] },
+      "confidence": 0.98
+    }
+  ]
+}

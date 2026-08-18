@@ -8,7 +8,9 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
 function run(status: MeetingMinutesRun["status"] = "routed"): MeetingMinutesRun {
   return { version: 1, runId: "Ev1_F1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
     sourceThreadTs: "1.1", sourceMessageTs: "1.1", file: { id: "F1", name: "meeting.txt" }, status,
-    destination: { id: "united", projectId: "united", name: "United", organization: { id: "tech-knight", name: "Tech Knight" },
+    destination: { id: "united", projectId: "united", contextProjectCode: "techknight",
+      taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-united", name: "United",
+      organization: { id: "tech-knight", name: "Tech Knight" },
       slackChannelId: "CD", github: { owner: "o", repo: "r" } },
     slack: { processingTs: "3.1", postedChunkIndexes: [] }, createdAt: "2026-08-14T00:00:00.000Z",
     updatedAt: "2026-08-14T00:00:00.000Z" };

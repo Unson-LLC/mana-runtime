@@ -1,5 +1,7 @@
 # Lightsail deploy workflow specification
 
+> 状態: 2026-08-18に廃止。本文は過去の仕様記録であり、実装対象ではない。
+
 Story: `story-lightsail-deploy-workflow`
 
 ## Authority boundary

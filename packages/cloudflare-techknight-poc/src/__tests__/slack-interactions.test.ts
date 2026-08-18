@@ -14,9 +14,11 @@ const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, chan
   actions: [{ action_id: "mana_meeting_minutes_choose_destination", action_ts: "1.2",
     value: JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", fileName: "meeting.txt" }) }] };
 const destinations = [
-  { id: "mana", projectId: "p1", name: "Back Office", organization: { id: "unson-business", name: "雲孫 事業運営" },
+  { id: "mana", projectId: "p1", contextProjectCode: "back-office", taskProjectCodes: ["back-office"],
+    taskBoardTargetId: "minutes-back-office", name: "Back Office", organization: { id: "unson-business", name: "雲孫 事業運営" },
     slackChannelId: "C2", github: { owner: "Unson-LLC", repo: "back_office" } },
-  { id: "board", projectId: "p2", name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" },
+  { id: "board", projectId: "p2", contextProjectCode: "techknight", taskProjectCodes: ["techknight"],
+    taskBoardTargetId: "minutes-board", name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" },
     slackChannelId: "C3", github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } },
 ];
 
@@ -112,33 +114,48 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).not.toHaveBeenCalled();
   });
   it("clears processing when the queue rejects the selection", async () => {
-    const send = vi.fn().mockRejectedValue(new Error("queue unavailable")); const updateOriginal = vi.fn();
-    const showProcessing = vi.fn(); const clearProcessing = vi.fn(); const background = deferred();
+    const send = vi.fn().mockRejectedValue(new Error("queue Authorization Bearer secret")); const updateOriginal = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const showProcessing = vi.fn(); const clearProcessing = vi.fn().mockRejectedValue(new Error("clear Bearer secret"));
+    const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
-    await expect(Promise.all(background.work)).rejects.toThrow("queue unavailable");
+    await expect(Promise.all(background.work)).rejects.toThrow("queue Authorization Bearer secret");
     expect(updateOriginal).toHaveBeenCalledOnce();
     expect(showProcessing).toHaveBeenCalledOnce(); expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" });
+    const serialized = consoleError.mock.calls.flat().join(" ");
+    expect(serialized).toContain('"stage":"interaction_enqueue"');
+    expect(serialized).toContain('"code":"INTERACTION_ENQUEUE_FAILED"');
+    expect(serialized).not.toContain("Bearer secret");
+    consoleError.mockRestore();
   });
   it("still queues when immediate Slack feedback fails", async () => {
-    const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("Slack unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("Slack Bearer secret"));
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, showProcessing, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledOnce(); expect(showProcessing).toHaveBeenCalledOnce();
+    expect(consoleError.mock.calls.flat().join(" ")).toContain('"code":"IMMEDIATE_STATUS_FAILED"');
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
+    consoleError.mockRestore();
   });
   it("still queues when the selection confirmation update fails", async () => {
-    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValue(new Error("Slack unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValue(new Error("Slack Bearer secret"));
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(updateOriginal).toHaveBeenCalledOnce(); expect(send).toHaveBeenCalledOnce();
+    expect(consoleError.mock.calls.flat().join(" ")).toContain('"code":"SELECTION_CONFIRMATION_FAILED"');
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
+    consoleError.mockRestore();
   });
   it("shows a confirmation before queueing a redo", async () => {
     const redoPayload = structuredClone(payload);
@@ -156,14 +173,29 @@ describe("handleMeetingMinutesInteraction", () => {
   it("queues a confirmed redo command", async () => {
     const confirmPayload = structuredClone(payload);
     confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
-    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1" });
-    const send = vi.fn().mockResolvedValue(undefined); const background = deferred();
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn().mockResolvedValue(undefined); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
-      destinations, send, defer: background.defer });
+      destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
     expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
       channelId: "C1", userId: "U1", actionTs: "1.2" });
+  });
+  it("replaces the confirmation with a durable retry when redo enqueue fails", async () => {
+    const confirmPayload = structuredClone(payload);
+    confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn().mockRejectedValue(new Error("queue unavailable"));
+    const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
+    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("取り消しを再実行");
   });
   it("queues without immediate feedback when Slack omitted a valid thread timestamp", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;
@@ -220,6 +252,19 @@ describe("handleMeetingMinutesInteraction", () => {
     const send = vi.fn(); const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, send });
     expect(response.status).toBe(403); expect(send).not.toHaveBeenCalled();
+  });
+  it("shows the durable pause reason to an authorized operator without queueing even when minutes are disabled", async () => {
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", expectedChannelId: "C1",
+      operatorUserIds: new Set(["U1"]), nowMs: now * 1000, destinations: [], send, updateOriginal,
+      isIntakePaused: vi.fn().mockResolvedValue(true), defer: background.defer });
+    expect(response.status).toBe(200); expect(await response.json()).toEqual({ ok: true, intake_paused: true });
+    await Promise.all(background.work);
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
+      text: expect.stringContaining("受付は一時停止中"),
+    }));
   });
   it("rejects selections outside the configured router channel before feedback or queueing", async () => {
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();

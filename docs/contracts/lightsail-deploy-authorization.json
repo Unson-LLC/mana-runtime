@@ -1,16 +1,17 @@
 {
   "schema_version": "0.1.0",
-  "domain": "mana-runtime-lightsail-deployment",
+  "domain": "mana-runtime-lightsail-decommission",
   "clauses": [
     {
-      "id": "LIGHTSAIL-DEPLOY-AUTH-001",
-      "statement": "GitHub Actions may request deployment only for a full application commit SHA contained in origin/main, and the Lightsail principal may execute only the restricted deploy command when the workflow commit control-plane digest matches the installed deployer.",
+      "id": "LIGHTSAIL-DECOMMISSION-AUTH-001",
+      "statement": "The repository must not provide a normal GitHub Actions deployment path to the retired Lightsail mana-runtime. Recovery assets may be used only after the Cloudflare entry is stopped and an incident owner explicitly authorizes a single recovery run.",
       "applies_to": {
-        "responsibility": "mana_runtime.lightsail_deployment.authorization_boundary",
+        "responsibility": "mana_runtime.lightsail_decommission.authorization_boundary",
         "paths": [
-          ".github/workflows/deploy-lightsail.yml",
+          ".github/workflows/**",
           "scripts/deploy/**",
-          "playwright.deploy.config.ts",
+          "docs/operations/lightsail-deploy-workflow.md",
+          "docs/operations/lightsail-runtime-decommission-2026-08-18.md",
           "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts"
         ],
         "symbols": [],
@@ -21,20 +22,19 @@
         ]
       },
       "forbidden_patterns": [
-        "deploy a commit not contained in origin/main",
-        "accept a short or malformed commit SHA",
-        "execute an arbitrary SSH command",
-        "run an installed deploy control plane whose digest differs from the workflow commit",
-        "resolve or checkout a moving deployment target after production approval",
-        "bypass the production Environment approval boundary",
-        "treat systemd active as proof of Slack or Web outcome"
+        "provide a workflow_dispatch path for Lightsail deployment",
+        "restart the previous Lightsail runtime while the same Cloudflare binding is enabled",
+        "treat HTTP health or CI success as proof of production outcome",
+        "stop the Lightsail instance or unrelated services",
+        "treat unavailable queue, run, or receipt evidence as zero"
       ],
       "evidence_requirements": [
-        "auth_denied",
-        "real_byte_replay",
-        "deployment_version_stamp",
-        "workflow_state_regression",
-        "current_head_verification"
+        "workflow_absent",
+        "entry_disabled_readback",
+        "active_run_readback",
+        "same_run_receipt",
+        "duplicate_count_readback",
+        "rollback_boundary_record"
       ]
     }
   ]

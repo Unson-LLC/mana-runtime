@@ -18,6 +18,7 @@ interface HandleSlackRequestOptions {
   expectedTeamId: string;
   expectedAppId?: string;
   nowMs?: number;
+  intercept?(event: SlackQueueEvent): Promise<boolean>;
   send(event: SlackQueueEvent): Promise<unknown>;
 }
 
@@ -201,6 +202,7 @@ export async function handleSlackRequest(
       new Date(options.nowMs ?? Date.now()).toISOString(),
       options.tenantId,
     );
+    if (await options.intercept?.(event)) return jsonResponse({ ok: true }, 200);
     await options.send(event);
     return jsonResponse({ ok: true }, 200);
   } catch (error) {

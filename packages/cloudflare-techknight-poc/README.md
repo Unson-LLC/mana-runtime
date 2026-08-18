@@ -137,22 +137,25 @@ Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を
 7. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
 8. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
    OAuthがWorker Secretから復帰することを確認する。
-9. 対象会社の八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
-10. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
+9. 認証付き`POST /admin/sandbox/meeting-minutes-probe`を実行し、本番と同じClaude設定、
+   JSON Schema、Judgment Hook、Brainbase Receipt注入を使った固定文字起こしの生成が成功することを確認する。
+   応答は成功可否と許可済み診断コードだけを扱い、成功するまで実Slack E2Eへ進まない。
+10. 対象会社の八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
+11. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
     `techknight_slack_reply`の完了ログを確認する。
-11. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
+12. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
     未設定時はタスク登録を行わず`project_binding_missing`で停止する。
-12. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
+13. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
     `BRAINBASE_TASK_API_TOKEN` Secretとして設定する。Token値はWrangler設定へ書かない。
-13. 「私の」「自分の」タスク検索を有効にする場合は、`workspaceId:SlackUserId`から
+14. 「私の」「自分の」タスク検索を有効にする場合は、`workspaceId:SlackUserId`から
     Brainbase正規`person_id`への対応表(JSON)を`BRAINBASE_SLACK_PERSON_MAP_JSON` Secretとして
     設定する。レガシーAWS/Jimmy実装の静的対応表と同じ直接bridgeであり、対応表の内容・実際の
     person_id・Slack IDは設定ファイル、ログ、テストfixtureへ書かない。identity解決はこの
     Secretだけに依存し、Slack APIは呼ばない。未設定の間はidentity解決が無効のまま
     一般返信を継続する。
-14. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
+15. 許可チャンネルで「議事録」と「タスク」を含むメンションを送り、Brainbase正本の
     `project_codes`とSlackの同一スレッドへの登録結果を照合する。
-15. PR #120を含むLightsail releaseでは `GITHUB_TOKEN` をsecretとして設定し、
+16. PR #120を含むLightsail releaseでは `GITHUB_TOKEN` をsecretとして設定し、
     `meetingMinutesPipeline.destination.github` のowner/repo/baseBranch/pathTemplateを確認する。
     GitHub保存の本番確認が終わるまで議事録pipelineを停止しない。タスク運用の切替では
     `mana-accounting` Placementとその `taskCanvas` だけを無効化し、議事録pipelineの
@@ -201,6 +204,39 @@ pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
 `SANDBOX_PROBE_TOKEN`を実行環境へ渡します。応答不能、10秒超過、認証失敗、処理中ありは
 すべて配備を停止します。ゲートを初めて導入する1回だけは、処理中がないことを別途確認したうえで
 `MEETING_MINUTES_DEPLOY_GATE_BOOTSTRAP=true`を指定できます。導入後は指定しません。
+BrainbaseのProject一覧と照合する認証情報も必要なため、ローカル環境へ値を手入力せず、
+正規のInfisicalラッパーから実行します。
+
+```bash
+/Users/ksato/workspace/code/brainbase/scripts/infisical-target-run.sh \
+  --target brainbase-mana-prod -- \
+  pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
+```
+
+配備前検査は全保存先の`contextProjectCode`、`taskProjectCodes`、タスクボードのProjectコードを
+Brainbaseの認可済みProject集合と一括照合します。未登録、権限不足、認証失敗、到達不能のいずれも
+Worker更新前に配備を停止します。
+
+今回のProject紐付けを含む版からrollbackする場合、旧Worker versionをそのままpromoteしてはいけません。
+Worker versionには`MEETING_MINUTES_ENABLED`も含まれるため、旧versionの`true`まで復元され、新規受付が
+再開してしまいます。まず稼働中runが残っていても実行できる受付停止APIを正規Infisicalラッパーから呼びます。
+
+```bash
+/Users/ksato/workspace/code/brainbase/scripts/infisical-target-run.sh \
+  --target brainbase-mana-prod -- \
+  pnpm --filter @openryoko/cloudflare-techknight-poc meeting-minutes:intake:pause
+```
+
+ファイル投入と保存先選択が停止した状態で処理中runが0件になるのを待ち、受付停止API、Slack受信抑止、
+Queue抑止を備えた現行commitの設定を`MEETING_MINUTES_ENABLED=false`にして正規Infisicalラッパーから配備します。
+修復中はこの停止版artifactを維持します。受付停止機構を持たない過去commitやCloudflareの既存versionを
+known-goodとして配備・promoteしてはいけません。
+
+修正版も同じ受付停止機構を保持した新しいartifactとして、まず`false`で配備します。受付停止状態のreadback、
+routerへの`.txt`投入がQueueへ入らないこと、既存の保存先ボタンが「受付停止中」を表示することを確認します。
+その後、全保存先の配備前検査を通した修正版を`true`で再配備し、readback後に同じラッパーから
+`meeting-minutes:intake:resume`を実行します。GitHub保存済みrunのReceiptは
+書き換えず、未保存runは修正版で正規Projectから文脈を取り直します。
 
 ## Sandbox security boundary
 

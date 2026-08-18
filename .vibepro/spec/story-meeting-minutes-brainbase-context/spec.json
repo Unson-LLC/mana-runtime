@@ -3,7 +3,7 @@
   "story_id": "story-meeting-minutes-brainbase-context",
   "generated_by": {
     "caller": "codex",
-    "stage": "architecture"
+    "stage": "implementation"
   },
   "clauses": [
     {
@@ -48,7 +48,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
     },
     {
       "id": "INV-001",
@@ -113,7 +113,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
     },
     {
       "id": "C-002",
@@ -165,7 +165,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
     },
     {
       "id": "C-003",
@@ -209,7 +209,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
     },
     {
       "id": "INV-002",
@@ -285,7 +285,706 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-15T08:20:56.246Z",
-      "last_revised_at": "2026-08-16T06:37:13.776Z"
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "全保存先はBrainbase文脈コード、Task登録コード、タスクボード共有先を明示し、内部projectIdへフォールバックしない。401は認証情報の未設定・無効・期限切れ、403または未認可Projectコードは紐付け・権限不足として区別し、いずれも内部エラーや無効な再実行を提示しない。公式配備は全設定コードをBrainbaseの認可済みProject集合とTask・Graph両資格情報で一括照合し、不一致があれば配備前に停止する。Project紐付け変更前に登録されたTaskは、明示的な旧範囲または当時の内部projectId範囲と完全一致する場合だけ編集・取消を許可し、編集時は現行の正規範囲へ移行する。無関係な範囲は操作せずSlackへ理由を表示する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-10"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-11"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-12"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-13"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-14"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "プロジェクト紐付け"
+          },
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "失敗"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-contracts.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/scripts/brainbase-project-binding-check.mjs"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/wrangler.unson-business.jsonc"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "case": "rejects destinations without every explicit Brainbase binding"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "case": "enables Cloudflare meeting minutes with the confirmed cutover authority"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a permanent Brainbase project binding failure without offering retry"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a Brainbase authentication failure without mislabeling it as a project binding"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a task API authentication failure after sharing minutes without offering task retry"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "case": "allows deployment only when every configured code is authorized"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "case": "validates both runtime Task and Graph credentials before deployment"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/deploy-unson-business.test.ts",
+            "case": "stops before deployment when Brainbase project preflight fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "cancels an old Kartz task using its trusted legacy scope while minutes are disabled"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "migrates a legacy completed run before cancelling its task"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "migrates a legacy completed run before editing its task"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "rejects an unrelated task scope while migrating an old run"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "notifies the operator when editing a task from an unrelated project scope"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a canonical task project scope mismatch to the operator"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "must_cover": "rejects destinations without every explicit Brainbase binding"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deployment-config.test.ts",
+            "must_cover": "enables Cloudflare meeting minutes with the confirmed cutover authority"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "permanent Brainbase project binding failure"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "Brainbase authentication failure without mislabeling it as a project binding"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "task API authentication failure after sharing minutes"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "must_cover": "allows deployment only when every configured code is authorized"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-project-binding-check.test.ts",
+            "must_cover": "both runtime Task and Graph credentials"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/deploy-unson-business.test.ts",
+            "must_cover": "stops before deployment when Brainbase project preflight fails"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "old Kartz task"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "legacy completed run"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "unrelated task scope"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "canonical task project scope mismatch"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T08:00:00.000Z",
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "障害対応では処理中runを中断せず新規受付だけを永続的に停止できる。停止中の新規ファイルと保存先選択はQueueへ送らず、停止前後にQueueへ到達したrouterファイル・保存先選択・やり直しも通常処理や再試行へ流さずACKし、Slackへ停止理由と復旧後の操作案内を表示する。runが0件になった後だけ、受付停止機構を保持した停止版を通常のDeployment Gateで配備する。停止版は検証済みの保存先設定を参照用に保持し、新規runを開始せずに既存完了runのTask編集・取消と信頼できる旧Project範囲から現行範囲への移行を継続する。再開は明示操作とする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-15"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-16"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "配備・rollback"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-deployment-gate.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-intake-entrypoints.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-entrypoints.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-task-actions.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/slack-interactions.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/index.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/scripts/deploy-gate-check.mjs"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-deploy-gate.test.ts",
+            "case": "pauses new intake even while active runs are still draining"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "persists an authenticated intake pause and returns the durable status"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a paused file event without running downstream work or requesting a retry"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "still acks a paused file event when the Slack notice fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
+            "case": "does not enqueue a file received while paused even after intake resumes"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "case": "explains that intake is paused without enqueueing a destination selection"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a queued destination selection instead of retrying it in a disabled Worker"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "acks a queued redo instead of retrying it while intake is paused"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "case": "still acks a blocked command when the private Slack notice fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains an intake pause in the source thread"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains a blocked queued command privately to the operator"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "case": "retains trusted destinations while disabled so existing task controls keep working"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "case": "cancels an old Kartz task using its trusted legacy scope while minutes are disabled"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-deploy-gate.test.ts",
+            "must_cover": "pauses new intake even while active runs are still draining"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "persists an authenticated intake pause"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "acks a paused file event"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts",
+            "must_cover": "does not enqueue a file received while paused even after intake resumes"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "must_cover": "intake is paused without enqueueing a destination selection"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "queued destination selection instead of retrying it in a disabled Worker"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "queued redo instead of retrying it while intake is paused"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-intake-entrypoints.test.ts",
+            "must_cover": "blocked command when the private Slack notice fails"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "blocked queued command privately to the operator"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-entrypoints.test.ts",
+            "must_cover": "retains trusted destinations while disabled"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "moves an old Kartz task from unson into the current kartz scope while minutes are disabled"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-task-actions.test.ts",
+            "must_cover": "cancels an old Kartz task using its trusted legacy scope while minutes are disabled"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T11:42:01.148Z",
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-006",
+      "type": "contract",
+      "statement": "生成結果はプロンプトの見本・説明文・型の選択肢を値として含まない。新規生成とrunへ保存済みの見本文を副作用前に再検証する。未共有なら見本文を破棄して再生成し、共有済みなら自動上書きせず利用者へ理由と保存先をやり直す方法を表示する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-17"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "生成契約"
+          },
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "失敗"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "rejects the production prompt example when it is copied as meeting minutes"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "stops a placeholder generation before GitHub, Slack, task, or board side effects"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "regenerates an unsaved persisted placeholder before any external side effect"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "does not reuse an already saved placeholder and requires an explicit redo"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "removes persisted outputs and reopens destination selection for a completed run"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "explains that placeholder output was rejected before it was shared"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "requires an explicit redo when a saved meeting minutes file contains placeholders"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "production prompt example"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "placeholder generation before GitHub, Slack, task, or board side effects"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "unsaved persisted placeholder"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "already saved placeholder"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "reopens destination selection for a completed run"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "placeholder output was rejected before it was shared"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "saved meeting minutes file contains placeholders"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-16T13:00:00.000Z",
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-007",
+      "type": "contract",
+      "statement": "保存先やり直しの確認後は同じSlack投稿を処理中へ即時更新する。GitHub・Canonical Task・共有Slackの取り消しをrunへ工程別に永続化し、途中失敗後は完了済み工程を重複させず再開する。旧共有Slack投稿が既に存在しない場合は撤回済みとして継続し、それ以外のSlackエラーは失敗として保持する。成功時は同じ投稿を保存先選択へ、失敗時は再実行表示へ必ず切り替える",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-18"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "保存先のやり直し"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-contracts.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/slack-interactions.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts",
+            "case": "queues a confirmed redo command"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts",
+            "case": "replaces the confirmation with a durable retry when redo enqueue fails"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "resumes a partially completed redo without repeating finished cleanup"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "keeps a failed redo visible with a durable retry action"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "treats an already missing shared post as idempotently withdrawn"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "does not hide other shared post retraction failures"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "confirmed redo command"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "durable retry when redo enqueue fails"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "partially completed redo"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "failed redo visible"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "already missing shared post"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts",
+            "must_cover": "other shared post retraction failures"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-17T08:00:00.000Z",
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-008",
+      "type": "contract",
+      "statement": "本番配備後、実Slack E2Eの前に、認証済み管理APIから本番と同じClaudeコマンド・設定・JSON Schema・Judgment Hook・Receipt注入を使う議事録生成プローブを実行する。UserPromptSubmitとStopの成功Receiptを同一session・turn・event順序へ束縛できない場合は失敗とする。成功時は生成内容を返さず、失敗時は許可済み診断コードだけを返し、成功するまで利用者投稿を再実行しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-19"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "生成診断"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/sandbox-admin.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "case": "runs the production meeting-minutes command and returns only a safe success result"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "case": "rejects a model result when the production Judgment hooks are absent"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "case": "returns a bounded diagnostic code without leaking model output"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "classifies malformed streams, missing results, Claude errors, and schema failures"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "fails closed when the Judgment lifecycle is missing or failed"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "binds Judgment receipts to one session and turn before the final result"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "requires the routed host receipt and preserves event order"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "must_cover": "production meeting-minutes command"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "must_cover": "production Judgment hooks are absent"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/sandbox-admin.test.ts",
+            "must_cover": "bounded diagnostic code"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "malformed streams, missing results, Claude errors, and schema failures"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "Judgment lifecycle is missing or failed"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "one session and turn before the final result"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "routed host receipt and preserves event order"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-17T04:53:06.745Z",
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-009",
+      "type": "contract",
+      "statement": "保存済みrunのorganizationだけが現行設定と異なる場合、SlackチャンネルとGitHub保存先が一致するときに限り、organizationを現行の認証経路へ更新して再実行する。SlackチャンネルまたはGitHub保存先が異なる場合はmeeting_minutes_destination_changedで拒否する。同じSlackチャンネルを複数organizationへ割り当てた設定と、現行設定に存在しないチャンネルの資格情報解決はfail closedにする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-20"
+          }
+        ],
+        "architecture_refs": [],
+        "code_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/index.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "retries a failed run after only its destination organization routing was corrected"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "still rejects a persisted run when its Slack delivery channel changed"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "still rejects a persisted run when its GitHub delivery path changed"
+          },
+          {
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "rejects ambiguous Slack credential routing across organizations"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "destination organization routing was corrected"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "Slack delivery channel changed"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "GitHub delivery path changed"
+          },
+          {
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "ambiguous Slack credential routing"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-17T15:58:57.657Z",
+      "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-010",
+      "type": "contract",
+      "statement": "Claudeへ渡すBrainbase文脈は、必須アンカーと文字起こしに関連する証拠から入力順序に依存しないworking setを構成し、100KBを品質目標ではなく搬送上限として扱う。選別後も超過する場合は本文の機械的圧縮を行わず生成前に拒否する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-21" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "selects mandatory anchors and topic evidence independent of source order" }]
+      },
+      "verifiable_by": {
+        "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "selects mandatory anchors and topic evidence independent of source order" }]
+      },
+      "confidence": 0.95,
+      "first_seen_at": "2026-08-18T05:45:00.000Z",
+      "last_revised_at": "2026-08-18T05:45:00.000Z"
     }
   ],
   "planned_test_suites": [
@@ -308,6 +1007,174 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-16T06:37:13.774Z",
-  "previous_spec_id": "2026-08-15T08:34:02.386Z"
+  "generated_at": "2026-08-17T05:15:09.077Z",
+  "previous_spec_id": "2026-08-17T05:15:09.077Z",
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "dedicated",
+    "tenant_identity": {
+      "canonical_key": "tenantId",
+      "resolved_from": [
+        "Worker TENANT_ID",
+        "trusted meeting-minutes destination"
+      ],
+      "resolution_point": "Slack Queue eventのtenantId確定後、保存済みrunのimmutable Slack/GitHub座標を照合してorganization認証経路を解決する",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "Queue event tenantId",
+        "meeting-minutes run destination snapshot",
+        "Slack organization token resolution"
+      ],
+      "verified_surfaces": [
+        "Queue event tenantId",
+        "meeting-minutes run destination snapshot",
+        "Slack organization token resolution"
+      ]
+    },
+    "resources": [
+      {
+        "name": "meeting-minutes run destination snapshot",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenantId",
+        "partition_key": "tenantId/workspaceId/runId",
+        "trust_zone": "tenant workspace storage",
+        "residue_policy": "retention with the meeting-minutes run",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and trusted meeting-minutes destination"
+      },
+      {
+        "name": "Slack meeting-minutes delivery",
+        "sharing": "dedicated",
+        "tenant_key": "tenantId",
+        "trust_zone": "trusted Slack workspace and channel",
+        "residue_policy": "retention in Slack under workspace policy",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and current configured destination organization"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenantId",
+      "scope": "tenantId plus current configured destination organization and immutable Slack/GitHub coordinates",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "mana-runtime"
+      ],
+      "residency": "run snapshot in tenant workspace storage; delivery in the configured Slack workspace",
+      "migration": "legacy organization routing is refreshed only when destination id, project, Slack channel, and GitHub coordinates match current trusted configuration",
+      "rollback": "revert the code change; mismatched delivery coordinates remain denied by meeting_minutes_destination_changed"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_dedicated"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "no_data",
+      "cross_tenant_candidate"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "Worker tenant",
+        "Slack workspace",
+        "trusted meeting-minutes destination"
+      ],
+      "boundary_edges": [
+        "Queue event to meeting-minutes run",
+        "configured organization to workspace-scoped Slack token",
+        "run destination snapshot to Slack and GitHub coordinates"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected",
+      "evidence": {
+        "propagation_surfaces": [
+          "Queue event tenantId",
+          "meeting-minutes run destination snapshot",
+          "Slack organization token resolution"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "no_data",
+          "cross_tenant_candidate"
+        ],
+        "scanner_results": {
+          "tenant_boundary": "inconclusive",
+          "tenant_key_propagation": "inconclusive",
+          "cross_tenant_authorization": "inconclusive",
+          "state_partitioning": "inconclusive",
+          "sandbox_isolation": "inconclusive",
+          "connection_routing": "inconclusive",
+          "secret_scope": "inconclusive",
+          "canonical_data_owner": "inconclusive",
+          "deployment_topology": "inconclusive",
+          "cross_tenant_negative_evidence": "inconclusive"
+        },
+        "graph": {
+          "tenant_key": "tenantId",
+          "sharing_modes": [
+            "dedicated",
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_dedicated"
+          ],
+          "tenant_entities": [
+            {
+              "tenant_scope": "Worker tenant",
+              "tenant_key_source": "TENANT_ID",
+              "trust_zone": "Cloudflare Worker",
+              "data_owner": "mana-runtime"
+            }
+          ],
+          "boundary_edges": [
+            {
+              "tenant_scope": "Worker tenant to Slack workspace",
+              "tenant_key_source": "TENANT_ID and trusted target",
+              "sharing_mode": "tenant_partitioned",
+              "credential_scope": "target organization and workspace",
+              "connection_mode": "Slack API",
+              "deployment_mode": "managed_dedicated"
+            }
+          ]
+        },
+        "spec": {
+          "tenant_key": "tenantId",
+          "sharing_modes": [
+            "dedicated",
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_dedicated"
+          ]
+        },
+        "implementation": {
+          "tenant_key": "tenantId",
+          "sharing_modes": [
+            "dedicated",
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_dedicated"
+          ]
+        }
+      }
+    }
+  }
 }

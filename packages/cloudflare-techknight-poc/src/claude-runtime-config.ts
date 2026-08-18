@@ -24,7 +24,6 @@ const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.free
   "meeting-minutes": "/tmp/meeting-minutes-prompt.txt",
 });
 const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
-const MEETING_MINUTES_MCP_CONFIG_PATH = "/tmp/mana-meeting-minutes-mcp.json";
 const MEETING_MINUTES_SETTINGS_PATH = "/opt/mana/meeting-minutes-claude-settings.json";
 const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, string>> = Object.freeze({
   "meeting-minutes": JSON.stringify({
@@ -88,10 +87,6 @@ export function runtimeTaskSearchMcpConfigPath(): string {
   return TASK_SEARCH_MCP_CONFIG_PATH;
 }
 
-export function runtimeMeetingMinutesMcpConfigPath(): string {
-  return MEETING_MINUTES_MCP_CONFIG_PATH;
-}
-
 export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
@@ -119,17 +114,20 @@ export function buildRuntimeClaudeCommand(
   if (options.auditBrainbaseToolUse && (purpose !== "meeting-minutes" || options.structuredOutput !== "meeting-minutes")) {
     throw new ClaudeRuntimeConfigError("runtime_claude_audit_output_invalid");
   }
-  if (options.includeJudgmentHookEvents && (purpose !== "meeting-minutes" || options.structuredOutput !== "meeting-minutes")) {
+  if (options.includeJudgmentHookEvents && purpose === "meeting-minutes"
+      && options.structuredOutput !== "meeting-minutes") {
     throw new ClaudeRuntimeConfigError("runtime_claude_audit_output_invalid");
   }
   const structuredOutputArg = options.structuredOutput
     ? options.auditBrainbaseToolUse || options.includeJudgmentHookEvents
       ? ` --output-format stream-json --verbose --include-hook-events --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
-    : "";
+    : options.includeJudgmentHookEvents ? " --output-format stream-json --verbose --include-hook-events" : "";
   const base = purpose === "meeting-minutes"
-    ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH} --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config${structuredOutputArg} < ${promptPath}`
-    : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg} "$(cat ${promptPath})"`;
+    ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg} < ${promptPath}`
+    : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}`
+      + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${MEETING_MINUTES_SETTINGS_PATH}` : ""}`
+      + `${structuredOutputArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
     : base;

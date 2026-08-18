@@ -1,7 +1,7 @@
 ---
 story_id: story-lightsail-deploy-workflow
 title: 共同開発者がGitHub ActionsからMana Runtimeを安全にLightsailへデプロイできる
-status: active
+status: retired
 pr_scope_strategy: atomic_single_pr
 pr_scope_reason: "本Storyは、GitHub workflow、restricted SSH principal、server-side main再検証、isolated build、guarded activation、automatic rollback、検証fixture、権限正本、運用runbookを一つのデプロイ契約として出荷する。workflowだけを先行するとサーバー側の制限とrollbackを欠き、runtimeだけを先行すると承認・監査可能な入口を欠くため、同一HEADで初めて安全条件が成立する。"
 pr_scope_review_facets:
@@ -10,6 +10,9 @@ pr_scope_review_facets:
   - runtime-behavior
   - e2e-gate
   - misc-follow-up
+
+retired_at: 2026-08-18
+retired_reason: "Cloudflare Workerを正規実行環境とし、Lightsail通常デプロイを廃止したため"
 pr_scope_dependency_boundaries:
   - "repo-control -> runtime-behavior"
   - "repo-control -> e2e-gate"

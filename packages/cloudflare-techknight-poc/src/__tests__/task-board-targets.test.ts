@@ -2,11 +2,11 @@ import { parseTaskBoardTargets, taskBoardSlackToken, taskBoardTargetsForProjects
 
 const targets = [
   { targetId: "unson-board", organizationId: "unson", workspaceId: "T07LL5WV7N1",
-    channelId: "C0A9ESC81UZ", projectCodes: ["proj_salestailor"] },
+    channelId: "C0A9ESC81UZ", projectCodes: ["proj_salestailor"], enabled: true, manaCanvasId: "FUNSON", bindingRevision: 1 },
   { targetId: "business-board", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
-    channelId: "C0BKXCVSDCH", projectCodes: ["proj_unson_board"] },
+    channelId: "C0BKXCVSDCH", projectCodes: ["proj_unson_board"], enabled: false, manaCanvasId: null, bindingRevision: null },
   { targetId: "tech-pms", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
-    channelId: "C0BKX9Y169F", projectCodes: ["proj_pms"] },
+    channelId: "C0BKX9Y169F", projectCodes: ["proj_pms"], enabled: true, manaCanvasId: "FTECH", bindingRevision: 3 },
 ] as const;
 
 describe("task-board targets", () => {
@@ -18,6 +18,36 @@ describe("task-board targets", () => {
   it("rejects duplicate canvas coordinates", () => {
     expect(() => parseTaskBoardTargets(JSON.stringify([...targets, { ...targets[2], targetId: "duplicate" }])))
       .toThrow("duplicate_task_board_canvas");
+  });
+
+  it("requires an explicit Canvas binding before a target can be enabled", () => {
+    expect(() => parseTaskBoardTargets(JSON.stringify([{ ...targets[0], manaCanvasId: null, bindingRevision: null }])))
+      .toThrow("invalid_task_board_canvas_binding");
+    expect(() => parseTaskBoardTargets(JSON.stringify([{ ...targets[0], enabled: false, bindingRevision: null }])))
+      .toThrow("invalid_task_board_canvas_binding");
+  });
+
+  it("allows an enabled target to provision a new Mana-owned Canvas", () => {
+    const parsed = parseTaskBoardTargets(JSON.stringify([{
+      ...targets[2],
+      autoProvision: true,
+      manaCanvasId: null,
+      bindingRevision: 1,
+    }]));
+    expect(parsed[0]).toMatchObject({
+      enabled: true,
+      autoProvision: true,
+      manaCanvasId: null,
+      bindingRevision: 1,
+    });
+    expect(taskBoardTargetsForProjects(parsed, ["proj_pms"])).toEqual(parsed);
+  });
+
+
+  it("rejects one owned Canvas being bound to two target channels", () => {
+    expect(() => parseTaskBoardTargets(JSON.stringify([targets[0], {
+      ...targets[0], targetId: "duplicate-owner", channelId: "C0A9ESC81UX",
+    }]))).toThrow("duplicate_task_board_canvas_binding");
   });
 
   it("isolates Slack tokens by the trusted organization without fallback", () => {

@@ -3,6 +3,7 @@ import {
   assertMeetingMinutesContextUsable,
   bindGeneratedMeetingMinutesContext,
   reconcileMeetingMinutesTask,
+  resolveMeetingMinutesContextMode,
   validateGeneratedMeetingMinutesContext,
 } from "../meeting-minutes-brainbase-context.js";
 import type { MeetingMinutesContextReceipt } from "../meeting-minutes-contracts.js";
@@ -35,6 +36,14 @@ const receiptAttestation = {
 };
 
 describe("meeting minutes Brainbase context", () => {
+  it("defaults missing context mode to required while preserving explicit observe", () => {
+    expect(resolveMeetingMinutesContextMode(undefined)).toBe("required");
+    expect(resolveMeetingMinutesContextMode("")).toBe("required");
+    expect(resolveMeetingMinutesContextMode("required")).toBe("required");
+    expect(resolveMeetingMinutesContextMode("observe")).toBe("observe");
+    expect(() => resolveMeetingMinutesContextMode("optional")).toThrow("meeting_minutes_context_mode_invalid");
+  });
+
   it("invokes the runtime fetch with the global receiver required by Cloudflare Workers", async () => {
     const runtimeFetch = vi.fn(function (this: unknown) {
       if (this !== globalThis) throw new TypeError("Illegal invocation");

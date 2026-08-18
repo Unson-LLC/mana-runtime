@@ -1,11 +1,14 @@
 import { classifyMeetingMinutesDestinationInSandbox, generateMeetingMinutesInSandbox,
   parseAuditedGeneratedMeetingMinutesOutput, parseGeneratedMeetingMinutesOutput,
-  parseMeetingMinutesRoutingOutput } from "../meeting-minutes-generator.js";
+  parseReceiptBoundGeneratedMeetingMinutesOutput,
+  parseMeetingMinutesRoutingOutput, selectMeetingMinutesContextWorkingSet } from "../meeting-minutes-generator.js";
 
 const destinations = [
-  { id: "sales-tailor", projectId: "proj_salestailor", contextProjectCode: "unson", name: "SalesTailor",
+  { id: "sales-tailor", projectId: "proj_salestailor", contextProjectCode: "salestailor",
+    taskProjectCodes: ["salestailor"], taskBoardTargetId: "minutes-salestailor", name: "SalesTailor",
     organization: { id: "unson", name: "雲孫" }, slackChannelId: "C1", github: { owner: "o", repo: "r" } },
-  { id: "united", projectId: "proj_united", name: "United",
+  { id: "united", projectId: "proj_united", contextProjectCode: "techknight",
+    taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-united", name: "United",
     organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2", github: { owner: "o", repo: "r2" } },
 ];
 const context = { schema_version: "meeting_minutes_context_receipt.v1" as const, receipt_id: "mmctx_1",
@@ -36,10 +39,39 @@ function auditedStream(minutes: Record<string, unknown>, options: { receipt?: un
   ].map((event) => JSON.stringify(event)).join("\n");
 }
 
-function receiptBoundStream(minutes: Record<string, unknown>): string {
+const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+function judgmentHook(event: "UserPromptSubmit" | "Stop", options: {
+  session?: string; turn?: string; success?: boolean; route?: boolean;
+} = {}): Record<string, unknown> {
+  const receipt = {
+    schema_version: "mana_judgment_hook_receipt.v1",
+    hook_event_name: event,
+    session_id: options.session ?? "session-1",
+    turn_id: options.turn ?? "turn-1",
+    host_receipt_id: `host-${event}`,
+    ...(event === "UserPromptSubmit" && options.route !== false
+      ? { route_resolution_sha256: "c".repeat(64) } : {}),
+  };
+  return {
+    type: "system", subtype: "hook_response", hook_event: event,
+    exit_code: options.success === false ? 2 : 0,
+    outcome: options.success === false ? "error" : "success",
+    stdout: JSON.stringify({ systemMessage: `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}` }),
+  };
+}
+
+function receiptBoundStream(minutes: Record<string, unknown>, options: {
+  prompt?: Record<string, unknown> | false; stop?: Record<string, unknown> | false;
+  resultSession?: string; stopAfterResult?: boolean;
+} = {}): string {
+  const prompt = options.prompt === false ? [] : [options.prompt ?? judgmentHook("UserPromptSubmit")];
+  const stop = options.stop === false ? [] : [options.stop ?? judgmentHook("Stop")];
+  const result = { type: "result", structured_output: minutes,
+    session_id: options.resultSession ?? "session-1" };
   return [
     { type: "system", subtype: "init", session_id: "session-1" },
-    { type: "result", structured_output: minutes, session_id: "session-1" },
+    ...prompt,
+    ...(options.stopAfterResult ? [result, ...stop] : [...stop, result]),
   ].map((event) => JSON.stringify(event)).join("\n");
 }
 
@@ -69,6 +101,9 @@ describe("generateMeetingMinutesInSandbox", () => {
     );
     const prompt = String(sandbox.writeFile.mock.calls.find((call) => call[0] === "/tmp/meeting-minutes-prompt.txt")?.[1]);
     expect(prompt).toContain("1段落・3〜5文・200〜400字");
+    expect(prompt).not.toContain('"title":"YYYY-MM-DD 会議トピック-要約"');
+    expect(prompt).not.toContain('"overview":"1段落・3〜5文の短い概要"');
+    expect(prompt).toContain("見本・説明文・型の選択肢を値として出力してはいけません");
     expect(prompt).not.toContain("bodyの最後には必ず「*アクションアイテム*」");
     expect(prompt).not.toContain("brainbase_get_meeting_minutes_contextを必ず1回呼び");
     expect(prompt).toContain(`receipt_id=${context.receipt_id}`);
@@ -80,33 +115,82 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(prompt).not.toContain("project_code=proj_salestailor");
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
-      expect.stringContaining('"tasks"'),
+      expect.stringContaining("必須キーはtitle、overview、body、tasks"),
     );
-    expect(sandbox.writeFile).toHaveBeenCalledWith(
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(
       "/tmp/mana-meeting-minutes-mcp.json",
-      expect.stringContaining('"brainbase"'),
+      expect.anything(),
     );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({
-        timeout: 600_000,
+        timeout: 780_000,
         env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
       }));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.any(Object));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--model sonnet"), expect.any(Object));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--effort xhigh"), expect.any(Object));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--mcp-config"), expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
 
-  it("fails closed before Claude when the canonical Receipt context exceeds the prompt boundary", async () => {
+  it("selects mandatory anchors and topic evidence independent of source order", async () => {
+    const relevant = [
+      { kind: "decision", id: "decision-retry", title: "再実行の継続点",
+        body: "GitHub保存済みならSlack投稿から再開する", source_ref: { type: "decision", id: "decision-retry" } },
+      { kind: "open_task", id: "task-token", title: "UNSON token権限確認",
+        body: "対象channelへの参加権限を確認する", source_ref: { type: "task", id: "task-token" } },
+    ];
+    const noise = Array.from({ length: 80 }, (_, index) => ({ kind: "document", id: `noise-${index}`,
+      title: `無関係な営業資料${index}`, body: "広告施策と請求処理".repeat(200),
+      source_ref: { type: "document", id: `noise-${index}` } }));
+    const baseContext = { project_invariants: [{ kind: "project_invariant", id: "project-mana",
+      title: "Legal Affairs配送座標", body: "organization=unson channel=C09AR3H5VAL",
+      source_ref: { type: "project", id: "project-mana" } }],
+    source_refs: [...relevant, ...noise].map((item) => item.source_ref).concat([{ type: "project", id: "project-mana" }]),
+    evidence: [] as Array<Record<string, unknown>>, open_tasks: [] as Array<Record<string, unknown>> };
+    const transcript = "Legal Affairsの再実行はGitHubを再保存せずSlack投稿へ進める。UNSON tokenとchannel権限を確認する。";
+    for (const evidence of [[...relevant, ...noise], [...noise.slice(0, 40), ...relevant, ...noise.slice(40)]]) {
+      const selected = selectMeetingMinutesContextWorkingSet(transcript, { ...baseContext, evidence });
+      const serialized = JSON.stringify(selected);
+      expect(serialized).toContain("project-mana");
+      expect(serialized).toContain("decision-retry");
+      expect(serialized).toContain("task-token");
+      expect(JSON.stringify(selected.evidence)).not.toContain("noise-79");
+    }
+  });
+
+  it("selects an oversized Receipt working set within the prompt transport boundary", async () => {
     const oversizedContext = {
       ...context,
-      context: { ...context.context, source_refs: [
-        { type: "graph_entity", id: "x".repeat(100_001) },
-      ] },
+      context: { ...context.context,
+        source_refs: Array.from({ length: 100 }, (_, index) =>
+          ({ type: "graph_entity", id: `${index}-${"x".repeat(2_000)}` })),
+        open_tasks: Array.from({ length: 100 }, (_, index) =>
+          ({ id: `task-${index}`, title: "y".repeat(2_000) })),
+      },
     };
-    const sandbox = { writeFile: vi.fn(), exec: vi.fn(), destroy: vi.fn().mockResolvedValue(undefined) };
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
+      stdout: receiptBoundStream({ title: "title", overview: "overview", body: "body", tasks: [],
+        ...auditOutput }), stderr: "" }),
+    destroy: vi.fn().mockResolvedValue(undefined) };
 
-    await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedContext, "required",
-      { model: "opus", effort: "xhigh" }, sandbox))
+    await generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedContext, "required",
+      { model: "opus", effort: "xhigh" }, sandbox);
+    const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
+      path === "/tmp/meeting-minutes-prompt.txt")?.[1]);
+    expect(prompt).toContain('"context_selection_strategy":"mandatory_anchors_and_topic_relevance.v1"');
+    const projectedReceipt = prompt.match(/<brainbase_context_receipt>\n(.*)\n<\/brainbase_context_receipt>/)?.[1] ?? "";
+    expect(new TextEncoder().encode(projectedReceipt).byteLength).toBeLessThanOrEqual(100_000);
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("fails before generation when mandatory anchors alone exceed the transport boundary", async () => {
+    const oversizedMandatoryContext = { ...context, context: { ...context.context,
+      project_invariants: [{ id: "project-mana", body: "z".repeat(110_000) }] } };
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn(), destroy: vi.fn().mockResolvedValue(undefined) };
+    await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedMandatoryContext,
+      "required", { model: "opus", effort: "xhigh" }, sandbox))
       .rejects.toThrow("meeting_minutes_brainbase_context_prompt_too_large");
     expect(sandbox.exec).not.toHaveBeenCalled();
     expect(sandbox.destroy).toHaveBeenCalledOnce();
@@ -117,8 +201,67 @@ describe("generateMeetingMinutesInSandbox", () => {
     destroy: vi.fn().mockResolvedValue(undefined) };
     await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, context, "required",
       { model: "opus", effort: "xhigh" }, sandbox))
-      .rejects.toThrow("meeting_minutes_generation_invalid");
+      .rejects.toThrow("meeting_minutes_generation_result_schema_invalid");
     expect(sandbox.destroy).toHaveBeenCalled();
+  });
+
+  it("classifies malformed streams, missing results, Claude errors, and schema failures", () => {
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput("not-json", context))
+      .toThrow("meeting_minutes_generation_stream_malformed");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      JSON.stringify({ type: "system", subtype: "init", session_id: "session-1" }), context,
+    )).toThrow("meeting_minutes_generation_result_missing");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      JSON.stringify({ type: "result", is_error: true, session_id: "session-1" }), context,
+    )).toThrow("meeting_minutes_generation_result_error");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream({
+      title: "", overview: "", body: "", tasks: [],
+    }), context)).toThrow("meeting_minutes_generation_result_schema_invalid");
+  });
+
+  it.each([
+    ["title", { title: " ", overview: "概要", body: "本文", tasks: [], ...auditOutput }],
+    ["overview", { title: "定例", overview: " ", body: "本文", tasks: [], ...auditOutput }],
+    ["body", { title: "定例", overview: "概要", body: " ", tasks: [], ...auditOutput }],
+    ["tasks", { title: "定例", overview: "概要", body: "本文", tasks: [{ title: " " }], ...auditOutput }],
+    ["used_source_refs", { title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [{ type: "graph_entity", id: " " }], decision_candidates: [] }],
+    ["decision_candidates", { title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [], decision_candidates: [{ title: " " }] }],
+  ])("reports a bounded field diagnostic for invalid %s", (field, minutes) => {
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes), context,
+    )).toThrow(`meeting_minutes_generation_result_schema_invalid_${field}`);
+  });
+
+  it("fails closed when the Judgment lifecycle is missing or failed", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes, { prompt: false, stop: false }), context,
+    )).toThrow("meeting_minutes_judgment_lifecycle_incomplete");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes, { prompt: judgmentHook("UserPromptSubmit", { success: false }) }), context,
+    )).toThrow("meeting_minutes_judgment_hook_failed");
+  });
+
+  it("binds Judgment receipts to one session and turn before the final result", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      stop: judgmentHook("Stop", { session: "session-2" }),
+    }), context)).toThrow("meeting_minutes_judgment_identity_mismatch");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      stop: judgmentHook("Stop", { turn: "turn-2" }),
+    }), context)).toThrow("meeting_minutes_judgment_identity_mismatch");
+  });
+
+  it("requires the routed host receipt and preserves event order", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      prompt: judgmentHook("UserPromptSubmit", { route: false }),
+    }), context)).toThrow("meeting_minutes_judgment_route_receipt_missing");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes, { stopAfterResult: true }), context,
+    )).toThrow("meeting_minutes_judgment_event_order_invalid");
   });
 
   it("fails closed unless the exact Brainbase call, Receipt, and PostToolUse audit are all present", () => {
@@ -185,6 +328,23 @@ describe("generateMeetingMinutesInSandbox", () => {
     }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
   });
 
+  it("rejects the production prompt example when it is copied as meeting minutes", () => {
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({
+      title: "YYYY-MM-DD 会議トピック-要約",
+      overview: "1段落・3〜5文の短い概要",
+      body: "区切り線とトピック別の物語的本文。アクションアイテム一覧は含めない",
+      tasks: [{
+        title: "実行内容",
+        description: "会議で確認できた背景",
+        assignee_name: "文字起こしで明示された担当者名。未確認なら省略",
+        priority: "low|medium|high|urgent",
+        due_at: "YYYY-MM-DD",
+      }],
+      used_source_refs: [],
+      decision_candidates: [],
+    }))).toThrow("meeting_minutes_generation_placeholder_output");
+  });
+
   it("enforces the overview hard limit and strips a legacy action-item tail", () => {
     const minutes = parseGeneratedMeetingMinutesOutput(JSON.stringify({
       title: "定例", overview: "あ".repeat(601),
@@ -224,6 +384,11 @@ describe("classifyMeetingMinutesDestinationInSandbox", () => {
       expect.objectContaining({ timeout: 60_000 }));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining('"required":["projectId","reason"]'),
       expect.any(Object));
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(
+      "/tmp/mana-meeting-minutes-mcp.json",
+      expect.anything(),
+    );
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--mcp-config"), expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
 });

@@ -44,12 +44,51 @@ function event(overrides: Partial<SlackQueueEvent> = {}): SlackQueueEvent {
   };
 }
 
+const judgmentLine = "🧠 判断参照: 「質問」を参照 → 質問として回答 ✓";
+const brainbaseLine = "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓";
+const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
+
+function auditedReplyStream(
+  reply = "はい、Cloudflare上の八雲まなです。",
+  auditLine = brainbaseLine,
+): string {
+  const receipt = (hook_event_name: "UserPromptSubmit" | "Stop") => ({
+    type: "system",
+    subtype: "hook_response",
+    hook_event: hook_event_name,
+    exit_code: 0,
+    outcome: "success",
+    session_id: "session-1",
+    stdout: JSON.stringify({
+      systemMessage: [
+        ...(hook_event_name === "Stop" ? [judgmentLine, auditLine] : []),
+        `${receiptPrefix}${JSON.stringify({
+        schema_version: "mana_judgment_hook_receipt.v1",
+        hook_event_name,
+        session_id: "session-1",
+        turn_id: "turn-1",
+        ...(hook_event_name === "UserPromptSubmit" ? {
+          host_receipt_id: "receipt-route-1",
+          route_resolution_sha256: "a".repeat(64),
+        } : {}),
+        })}`,
+      ].join("\n"),
+    }),
+  });
+  return [
+    { type: "system", subtype: "init", session_id: "session-1" },
+    receipt("UserPromptSubmit"),
+    receipt("Stop"),
+    { type: "result", session_id: "session-1", result: [judgmentLine, auditLine, reply].join("\n") },
+  ].map((entry) => JSON.stringify(entry)).join("\n");
+}
+
 function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
   const sandbox = {
     writeFile: vi.fn().mockResolvedValue(undefined),
     exec: vi.fn().mockResolvedValue({
       success: true,
-      stdout: "はい、Cloudflare上の八雲まなです。\n",
+      stdout: auditedReplyStream(),
       stderr: "",
     }),
     destroy: vi.fn().mockResolvedValue(undefined),
@@ -151,7 +190,7 @@ describe("TechKnight Slack reply pipeline", () => {
         stderr: "No conversation found with session ID: 12345678-1234-4123-8123-123456789abc",
         exitCode: 1,
       })
-      .mockResolvedValueOnce({ success: true, stdout: "復旧しました。", stderr: "", exitCode: 0 });
+      .mockResolvedValueOnce({ success: true, stdout: auditedReplyStream("復旧しました。"), stderr: "", exitCode: 0 });
 
     await processReplyEvent(fs, event(), options);
 
@@ -166,7 +205,9 @@ describe("TechKnight Slack reply pipeline", () => {
     const { options, sandbox } = harness();
     const recoverySandbox = {
       writeFile: vi.fn().mockResolvedValue(undefined),
-      exec: vi.fn().mockResolvedValue({ success: true, stdout: "本人のタスクです。", stderr: "", exitCode: 0 }),
+      exec: vi.fn().mockResolvedValue({
+        success: true, stdout: auditedReplyStream("本人のタスクです。"), stderr: "", exitCode: 0,
+      }),
       destroy: vi.fn().mockResolvedValue(undefined),
     };
     const createSandbox = vi.fn()
@@ -194,7 +235,7 @@ describe("TechKnight Slack reply pipeline", () => {
     const recoverySandboxId = createSandbox.mock.calls[1][0] as string;
     expect(recoverySandboxId).toMatch(/^tkr-[0-9a-f-]{36}$/);
     expect(recoverySandboxId.length).toBeLessThanOrEqual(63);
-    expect(recoverySandbox.writeFile).toHaveBeenCalledOnce();
+    expect(recoverySandbox.writeFile).toHaveBeenCalledTimes(2);
     expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--resume");
     expect(recoverySandbox.exec.mock.calls[0][0]).not.toContain("--session-id");
     expect(recoverySandbox.destroy).toHaveBeenCalledOnce();
@@ -331,7 +372,7 @@ describe("TechKnight Slack reply pipeline", () => {
       responseTs: "1786455000.000001",
     });
 
-    expect(sandbox.writeFile).toHaveBeenCalledOnce();
+    expect(sandbox.writeFile).toHaveBeenCalledTimes(2);
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("メンションしてみる");
     expect(prompt).toContain("契約更新について");
@@ -342,7 +383,10 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("TechKnight");
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
-      'claude --print --model opus --effort xhigh --permission-mode bypassPermissions "$(cat /tmp/mana-slack-prompt.txt)"',
+      "claude --print --model opus --effort xhigh --permission-mode bypassPermissions" +
+        " --settings /opt/mana/meeting-minutes-claude-settings.json" +
+        " --output-format stream-json --verbose --include-hook-events" +
+        ' "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
       {
         timeout: 120_000,
         env: {
@@ -351,6 +395,7 @@ describe("TechKnight Slack reply pipeline", () => {
           MANA_TRACE_ID: "EvReply123",
           MANA_TRACE_PLACEMENT_ID: undefined,
           MANA_TRACE_PROJECT_CODES: undefined,
+          MANA_JUDGMENT_REQUEST: "メンションしてみる",
         },
       },
     );
@@ -395,10 +440,97 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(body).toMatchObject({
       channel: "C_MANA_TEST",
       thread_ts: "1786454600.000001",
-      text: "はい、Cloudflare上の八雲まなです。",
+      text: [judgmentLine, brainbaseLine, "はい、Cloudflare上の八雲まなです。"].join("\n"),
     });
     expect(body.client_msg_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when reply normalization truncates a required audit line", async () => {
+    const fs = new MemoryFs();
+    const longAuditLine = `📚 Brainbase未参照: ${"x".repeat(12_000)}`;
+    const { options, sandbox, fetchMock } = harness();
+    sandbox.exec.mockResolvedValue({
+      success: true,
+      stdout: auditedReplyStream("本文", longAuditLine),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toMatchObject({
+      code: "reply_judgment_audit_truncated",
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
+  });
+
+  it("preserves safe judgment diagnostics containing HTTP status digits", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox, fetchMock } = harness();
+    sandbox.exec.mockResolvedValue({
+      success: true,
+      stdout: JSON.stringify({
+        type: "system",
+        subtype: "hook_response",
+        hook_event: "UserPromptSubmit",
+        exit_code: 2,
+        outcome: "error",
+        stderr: "judgment_hook_http_500",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toMatchObject({
+      code: "reply_judgment_hook_failed_judgment_hook_http_500",
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat.postMessage"))).toBe(false);
+  });
+
+  it("reuses the deterministic Slack client message ID after a post-success receipt failure", async () => {
+    class FailCompletedReceiptOnceFs extends MemoryFs {
+      private shouldFail = true;
+
+      override async writeFile(path: string, value: string): Promise<void> {
+        if (path === "/judgment-episodes/EvReply123.json"
+          && value.includes('"status":"completed"') && this.shouldFail) {
+          this.shouldFail = false;
+          throw new Error("simulated_completed_receipt_write_failure");
+        }
+        await super.writeFile(path, value);
+      }
+    }
+
+    const fs = new FailCompletedReceiptOnceFs();
+    const postedClientMessageIds: string[] = [];
+    const visibleMessages = new Map<string, string>();
+    const fetchMock = vi.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("chat.postMessage")) {
+        const body = JSON.parse(String(init?.body)) as { client_msg_id: string };
+        postedClientMessageIds.push(body.client_msg_id);
+        const responseTs = visibleMessages.get(body.client_msg_id) ?? "1786455000.000001";
+        visibleMessages.set(body.client_msg_id, responseTs);
+        return new Response(JSON.stringify({ ok: true, ts: responseTs }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const { options } = harness({ fetch: fetchMock });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toThrow(
+      "simulated_completed_receipt_write_failure",
+    );
+    await expect(processReplyEvent(fs, event(), options)).resolves.toEqual({
+      outcome: "replied",
+      responseTs: "1786455000.000001",
+    });
+
+    expect(postedClientMessageIds).toHaveLength(2);
+    expect(new Set(postedClientMessageIds).size).toBe(1);
+    expect(visibleMessages.size).toBe(1);
+    const episode = JSON.parse(fs.files.get("/judgment-episodes/EvReply123.json")!);
+    expect(episode.attempts.map((attempt: { status: string }) => attempt.status)).toEqual([
+      "failed",
+      "completed",
+    ]);
   });
 
   it("configures only the bounded search MCP when task search is enabled", async () => {
@@ -415,6 +547,10 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("API障害");
     expect(mcpConfig).toBe(JSON.stringify({
       mcpServers: {
+        brainbase: {
+          type: "http",
+          url: "https://brainbase-mcp.internal/mcp",
+        },
         "task-search": {
           command: "node",
           args: ["/opt/mana/task-search-mcp-server.mjs"],
@@ -443,6 +579,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(String(writes["/tmp/mana-slack-prompt.txt"])).toContain("transition_task");
     expect(JSON.parse(String(writes["/tmp/mana-task-search-mcp.json"]))).toEqual({
       mcpServers: {
+        brainbase: { type: "http", url: "https://brainbase-mcp.internal/mcp" },
         "task-search": { command: "node", args: ["/opt/mana/task-search-mcp-server.mjs"] },
         "task-write": { command: "node", args: ["/opt/mana/task-write-mcp-server.mjs"] },
       },
@@ -579,6 +716,20 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
+  it("uses a completed Judgment episode when the legacy reply marker was not persisted", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox, fetchMock } = harness();
+
+    await processReplyEvent(fs, event(), options);
+    fs.files.delete(`/replies/${event().eventId}.json`);
+
+    await expect(processReplyEvent(fs, event(), options)).resolves.toEqual({
+      outcome: "already_completed",
+    });
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
   it.each([
     ["another workspace", { workspaceId: "T_OTHER" }],
     ["another channel", { channelId: "C_OTHER" }],
@@ -595,6 +746,34 @@ describe("TechKnight Slack reply pipeline", () => {
     await expect(processReplyEvent(fs, input, options)).resolves.toEqual({ outcome: "ignored" });
     expect(sandbox.exec).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a bot-attributed app mention only for an explicitly trusted human user", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      botAttributedAppMentionUserIds: ["U_USER"],
+    });
+    const input = event({ botId: "B_FILE_UPLOAD_APP" });
+
+    expect(isReplyEligible(input, options)).toBe(true);
+    await expect(processReplyEvent(fs, input, options)).resolves.toMatchObject({ outcome: "replied" });
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["an untrusted user", { userId: "U_OTHER" }],
+    ["an ambient message", { eventType: "message" }],
+    ["a bot subtype", { subtype: "bot_message" }],
+  ])("rejects a bot-attributed event even with the trusted-user escape hatch: %s", async (_name, change) => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      botAttributedAppMentionUserIds: ["U_USER"],
+    });
+    const input = event({ botId: "B_FILE_UPLOAD_APP", ...change });
+
+    expect(isReplyEligible(input, options)).toBe(false);
+    await expect(processReplyEvent(fs, input, options)).resolves.toEqual({ outcome: "ignored" });
+    expect(sandbox.exec).not.toHaveBeenCalled();
   });
 
   it("keeps worker secrets out of sandbox input and completion records", async () => {

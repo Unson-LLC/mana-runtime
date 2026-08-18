@@ -14,14 +14,56 @@ Workerは生成結果へ正規Receipt identityを結合し、parserはidentity�
 
 source refsの照合はWorkerを正本境界とする。observeモードではReceipt外参照を生成結果から除外し、`unknown_source_ref_removed`警告をrunへ永続化して処理を継続する。判断候補の根拠IDも同じ許可集合へ正規化する。requiredモードではReceipt外参照を副作用前に拒否する。
 
+生成結果はプロンプト内の見本・説明文・型の選択肢を値として含めない。Workerは既知の見本値をJSON parse直後に検出し、`run.generated`への永続化およびGitHub・Slack・Task・タスクボードの副作用前に拒否する。再実行では既存の`run.generated`も同じ境界で再検証する。まだGitHubへ保存していない見本文は破棄して同一実行内で再生成する。すでに保存・共有した見本文は自動上書きせず、completed runへ修復理由を永続化し、明示的なやり直しで撤回してから再生成する。
+
 ## タスク照合
 
 Receiptの未完了task候補と生成taskを、project、正規化title、正規化担当者で比較する。完全一致は既存task idをrunへ記録する。類似だけの候補は`needs_review`にして自動作成しない。一致しないものだけ既存のidempotency keyで作成する。
+
+## プロジェクト紐付け
+
+議事録保存先は、画面とrunを識別する内部`projectId`、Brainbase文脈取得に使う`contextProjectCode`、Canonical Task登録に使う`taskProjectCodes`、タスクボード共有先を一意に示す`taskBoardTargetId`を別々の責務として保持する。いずれも全保存先で明示し、内部`projectId`や他用途の値へフォールバックしない。
+
+専用のBrainbaseプロジェクトが存在する保存先はその正規コードへ結ぶ。専用プロジェクトがない会議は、所属Workspaceの正規プロジェクト（`unson`または`techknight`）へ明示的に結ぶ。存在を確認できない`proj_*`コードを推測で作らない。設定欠落はWorkerの起動時検証で拒否し、タスクボードはproject codeの部分一致ではなく`taskBoardTargetId`で解決する。
+
+公式デプロイは、全保存先の`contextProjectCode`、`taskProjectCodes`と、それぞれが参照するタスクボードの`projectCodes`を本番Brainbase Graphの認可済みProject一覧と比較する。用途間の不一致、未登録、実行主体の権限不足、Brainbaseへの到達不能はいずれもfail closedとし、Workerの更新へ進まない。個別の保存先だけを例外扱いしたり、別Projectへ暗黙にフォールバックしたりしない。
+
+この配備前検証は、Canonical Task登録に使うTask API資格情報と、担当者・Project解決に使うGraph API資格情報をそれぞれ本番と同じ経路で検証する。片方だけ有効な状態を配備可能と判定しない。
+
+保存先の正規Project紐付けを変更しても、既存runが登録したCanonical Taskを無関係な範囲へ付け替えない。Task項目ごとに登録時の`projectCodes`を永続化する。編集時はTask APIで取得した現在範囲が、現行設定または既存runに保存された旧範囲と完全一致する場合だけ、同じ更新要求で現行範囲へ移行する。取消時は現行範囲または旧範囲と完全一致するTaskだけを削除する。それ以外は拒否する。
+
+`taskProjectCodes`導入前のrunでは、当時の契約どおり`destination.projectId`を旧Task範囲として復元する。現在のTask API応答がその旧範囲と完全一致する場合だけ移行を許可する。現在範囲・保存済み旧範囲・歴史的`projectId`範囲のいずれにも一致しないTaskは操作せず、操作した利用者へSlackで紐付け不一致を通知する。
+
+## 配備・rollback
+
+通常のDeployment Gateは、処理中runがある間のWorker更新を拒否する。障害時に新規受付だけを先に止めるため、Durable Objectへ永続化する受付停止状態を認証済み管理APIから変更できるようにする。この操作はWorkerの配備を伴わず、処理中runと再試行を継続させる。
+
+受付停止中は、新規ファイルと保存先選択をQueueへ送らない。停止前後にQueueへ到達したrouterファイル・保存先選択・やり直しも通常処理や再試行へ流さずACKする。routerファイルには再投稿案内を、保存先選択・やり直しには復旧後の再操作案内をSlackへ表示する。処理中runが0件になった後、通常のDeployment Gateを通して、同じ受付停止機構を保持した`MEETING_MINUTES_ENABLED=false`の停止版を配備する。再開は本番readback後の明示操作とし、受付停止機構を持たない過去commitや過去versionの再昇格は行わない。
+
+停止版でも、保存先とoperatorの設定は検証して参照用に保持する。新規runの開始可否と既存runの操作に必要な正規設定を分離し、既存完了runのCanonical Task編集・取消を継続する。Task範囲は現在範囲または保存済みの信頼できる旧範囲と完全一致する場合だけ操作し、旧範囲から現行範囲への移行契約を停止中も維持する。
+
+## 保存先のやり直し
+
+「取り消して選び直す」の確認後は、HTTP応答を待たせず同じSlack投稿を「保存先をやり直しています」へ更新してからQueueへ送る。Queue投入に失敗した場合も確認画面へ戻さず、同じ投稿へ理由を伏せた再実行ボタンを表示する。
+
+取り消し処理はrunのrevisionごとに、GitHub削除、Canonical Task削除、共有Slack撤回を工程別チェックポイントとして保存する。各外部副作用の成功直後に状態を永続化し、途中失敗後は完了済み工程を再実行しない。共有Slack撤回で`chat.update:message_not_found`が返った場合は、対象投稿が既に存在しないため撤回済みとしてチェックポイントを保存する。それ以外のSlackエラーは成功へ丸めない。全工程の成功後だけ同じSlack投稿を組織・保存先選択へ更新してrevisionを進める。失敗時はrunへ失敗情報を保存し、同じ投稿へ「取り消しを再実行」を表示する。
 
 ## 保存と表示
 
 GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を、本文末尾へ利用source refsと判断候補を決定的に描画する。Slack完了表示には「Brainbase参照済み」と、Receipt外参照を除外した場合の警告を示す。生Graph contextは保存・投稿しない。
 
+## 生成診断
+
+本番配備後の実Slack E2Eより先に、認証済み管理APIから議事録生成プローブを実行する。プローブは本番と同じClaudeコマンド、モデル・effort設定、JSON Schema、Judgment Hook、検証済みBrainbase Receipt注入を使い、固定の無害な文字起こしだけを処理する。これにより、OAuth疎通だけでは検出できないstream-json形式、schema、Hook、Receipt境界の不一致を利用者の投稿前に検出する。
+
+UserPromptSubmitとStopのJudgment Receiptは、最終resultと同じsession・turnに属し、UserPromptSubmit→Stop→resultの順で成功していることを必須にする。UserPromptSubmit ReceiptにはHost Receipt IDと正規ルーティングSHAが必要で、Hook欠落・失敗・Receipt不正・identity不一致・順序不正を成功へ丸めない。
+
+応答は成功可否と許可済み診断コードだけに限定する。文字起こし、生成本文、Claudeのstdout・stderr、資格情報は返さない。streamが大きすぎる、event数超過、JSON不正、result欠落、Claude result error、schema不一致、Judgment lifecycle不成立を別の診断コードとして保持し、それ以外は汎用コードへ丸める。プローブが成功するまで実Slack E2Eへ進まない。
+
 ## 失敗
 
 requiredモードのReceipt失敗またはReceipt外参照は「Brainbaseの正本文脈を取得できなかったため保存していません」と同じ処理中投稿へ表示する。GitHub・Task・配信先Slackへ副作用を残さない。observeモードのReceipt外参照は警告として保存し、Slack完了表示とGitHub議事録へ警告を出したうえで、正規参照だけで処理を継続する。
+
+Brainbaseの401は、Project紐付けではなく認証情報の未設定・無効・期限切れとして扱う。同じ処理中投稿へ「Brainbaseの認証設定を確認できませんでした」と表示する。403または未認可Projectコードは、Project紐付け・権限不足として「Brainbaseのプロジェクト紐付けを確認できませんでした」と表示する。どちらも一時的な生成失敗と区別し、内部エラーと再実行ボタンは表示しない。
+
+新規生成結果がプロンプトの見本を含む場合は、「見本の文章が混ざったため、議事録として保存・共有しませんでした」と処理中投稿へ表示する。内部エラーは表示せず、同じ保存先で安全に再生成できる再実行操作を提示する。すでに保存・共有済みの見本文を検出した場合は、現在のGitHub・共有先を示し、自動上書きせず「保存先をやり直す」で撤回・再生成するよう案内する。

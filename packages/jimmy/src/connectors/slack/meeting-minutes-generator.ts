@@ -17,6 +17,7 @@
 import { spawn } from "node:child_process";
 import { logger } from "../../shared/logger.js";
 import type { GraphEntity } from "../../shared/brainbase-graph.js";
+import type { ResolutionReceiptV1 } from "../../shared/brainbase-entity-resolution.js";
 import {
   defaultBinForEngine,
   invokeOneShot,
@@ -151,6 +152,14 @@ export interface MinutesContext {
   projectName: string;
   /** Meeting date as YYYY-MM-DD (JST). */
   dateStr: string;
+  /** Compact status exposed to the prompt; no raw transcript or candidate surfaces. */
+  brainbaseResolution?: {
+    sourceStatus: ResolutionReceiptV1["source"]["status"];
+    resolutionStatus: ResolutionReceiptV1["resolutionStatus"];
+    digest: string;
+  };
+  /** Persisted by the pipeline, but never serialized wholesale into the prompt. */
+  brainbaseResolutionReceipt?: ResolutionReceiptV1;
 }
 
 function properNounSection(entities: GraphEntity[]): string {
@@ -172,6 +181,15 @@ export function buildMinutesPrompt(transcript: string, ctx: MinutesContext): str
       : transcript;
 
   const contextParts: string[] = [];
+  if (ctx.brainbaseResolution) {
+    const resolution = ctx.brainbaseResolution;
+    contextParts.push(
+      `# Brainbase参照状態\n- 情報源: ${resolution.sourceStatus}\n- 固有名詞解決: ${resolution.resolutionStatus}\n- Receipt: ${resolution.digest.slice(0, 12)}\n` +
+        (resolution.sourceStatus === "partial"
+          ? "取得できなかった情報を推測で補完せず、確定できない固有名詞は @未確認 とすること。\n"
+          : ""),
+    );
+  }
   const nouns = properNounSection(ctx.properNouns);
   if (nouns) contextParts.push(nouns);
   if (ctx.decisions.length > 0) {

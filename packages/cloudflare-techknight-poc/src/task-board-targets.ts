@@ -7,6 +7,10 @@ export interface TaskBoardTarget {
   workspaceId: string;
   channelId: string;
   projectCodes: string[];
+  enabled: boolean;
+  autoProvision: boolean;
+  manaCanvasId: string | null;
+  bindingRevision: number | null;
 }
 
 export interface TaskBoardTargetEnv {
@@ -23,6 +27,7 @@ export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[
   if (!Array.isArray(value) || value.length === 0 || value.length > 50) throw new Error("invalid_task_board_targets");
   const targetIds = new Set<string>();
   const canvasKeys = new Set<string>();
+  const ownedCanvasKeys = new Set<string>();
   return value.map((item) => {
     if (!item || typeof item !== "object") throw new Error("invalid_task_board_target");
     const candidate = item as Record<string, unknown>;
@@ -33,21 +38,44 @@ export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[
     const projectCodes = Array.isArray(candidate.projectCodes)
       ? [...new Set(candidate.projectCodes.map((entry) => typeof entry === "string" ? entry.trim() : "").filter(Boolean))]
       : [];
+    const enabled = candidate.enabled === true;
+    const autoProvision = candidate.autoProvision === true;
+    const manaCanvasId = typeof candidate.manaCanvasId === "string" ? candidate.manaCanvasId.trim() : "";
+    const bindingRevision = typeof candidate.bindingRevision === "number" && Number.isSafeInteger(candidate.bindingRevision)
+      ? candidate.bindingRevision
+      : null;
     if (!TARGET_ID.test(targetId) || !["unson", "unson-business", "tech-knight"].includes(String(organizationId)) ||
       !SLACK_ID.test(workspaceId) || !SLACK_ID.test(channelId) || projectCodes.length === 0 || projectCodes.length > 20) {
       throw new Error("invalid_task_board_target");
     }
+    const hasOwnershipMode = Boolean(manaCanvasId) || autoProvision;
+    const hasBinding = hasOwnershipMode || bindingRevision !== null;
+    if ((manaCanvasId && autoProvision)
+      || (hasBinding && (!hasOwnershipMode || !bindingRevision || bindingRevision < 1))
+      || (manaCanvasId && !SLACK_ID.test(manaCanvasId))
+      || (enabled && !hasBinding)) {
+      throw new Error("invalid_task_board_canvas_binding");
+    }
     if (targetIds.has(targetId)) throw new Error("duplicate_task_board_target_id");
     const canvasKey = `${workspaceId}:${channelId}`;
     if (canvasKeys.has(canvasKey)) throw new Error("duplicate_task_board_canvas");
+    const ownedCanvasKey = `${workspaceId}:${manaCanvasId}`;
+    if (manaCanvasId && ownedCanvasKeys.has(ownedCanvasKey)) throw new Error("duplicate_task_board_canvas_binding");
     targetIds.add(targetId); canvasKeys.add(canvasKey);
-    return { targetId, organizationId: organizationId as TaskBoardTarget["organizationId"], workspaceId, channelId, projectCodes };
+    if (manaCanvasId) ownedCanvasKeys.add(ownedCanvasKey);
+    return { targetId, organizationId: organizationId as TaskBoardTarget["organizationId"], workspaceId, channelId, projectCodes,
+      enabled, autoProvision, manaCanvasId: manaCanvasId || null, bindingRevision };
   });
+}
+
+export function enabledTaskBoardTargets(targets: readonly TaskBoardTarget[]): TaskBoardTarget[] {
+  return targets.filter((target) => target.enabled && Boolean(target.manaCanvasId || target.autoProvision)
+    && Boolean(target.bindingRevision));
 }
 
 export function taskBoardTargetsForProjects(targets: readonly TaskBoardTarget[], projects: readonly string[]): TaskBoardTarget[] {
   const affected = new Set(projects);
-  return targets.filter((target) => target.projectCodes.some((project) => affected.has(project)));
+  return enabledTaskBoardTargets(targets).filter((target) => target.projectCodes.some((project) => affected.has(project)));
 }
 
 export function taskBoardSlackToken(target: TaskBoardTarget, env: TaskBoardTargetEnv): string {

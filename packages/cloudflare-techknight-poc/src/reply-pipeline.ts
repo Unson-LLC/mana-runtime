@@ -23,6 +23,15 @@ import { evaluateRuntimeRespondPolicy, type RuntimeRespondPolicy } from "./runti
 import { markWorkspaceEngaged } from "./workspace-session.js";
 import { resolveTurnActorIdentity, type ActorIdentityResolver } from "./actor-identity.js";
 import type { RuntimeTriageDecision } from "./runtime-triage.js";
+import {
+  auditReplyJudgmentAttempt,
+  completeReplyJudgmentAttempt,
+  failReplyJudgmentAttempt,
+  isReplyJudgmentCompleted,
+  parseReplyJudgmentStream,
+  startReplyJudgmentAttempt,
+  type ReplyJudgmentResult,
+} from "./reply-judgment.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -35,6 +44,8 @@ interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode?: number;
+  outcome?: string;
+  elapsedMs?: number;
 }
 
 export interface ReplySandbox {
@@ -64,6 +75,7 @@ export interface ReplyPipelineOptions {
   trace?: TurnRuntimeTrace;
   respondPolicy?: RuntimeRespondPolicy;
   isEngagedThread?: boolean;
+  botAttributedAppMentionUserIds?: readonly string[];
   triage?(event: SlackQueueEvent): Promise<RuntimeTriageDecision>;
   runtimeContext?: { persona: string; instructions: readonly string[]; skills: readonly string[]; escalationEmployee?: string };
   claudeSession?: { id: string; sandboxId: string; resume: boolean };
@@ -88,13 +100,16 @@ export class ReplyPipelineError extends Error {
 
 export function isReplyEligible(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId" | "respondPolicy" | "isEngagedThread">,
+  options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId" | "respondPolicy" | "isEngagedThread" | "botAttributedAppMentionUserIds">,
 ): boolean {
+  const trustedBotAttributedAppMention = event.eventType === "app_mention"
+    && typeof event.userId === "string"
+    && options.botAttributedAppMentionUserIds?.includes(event.userId) === true;
   const boundaryAllowed = (
     event.tenantId === (options.expectedTenantId ?? "techknight") &&
     event.workspaceId === options.expectedWorkspaceId &&
     event.channelId === options.allowedChannelId &&
-    !event.botId &&
+    (!event.botId || trustedBotAttributedAppMention) &&
     event.subtype !== "bot_message" &&
     Boolean(event.userId)
   );
@@ -229,7 +244,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 export async function generateClaudeReply(
   event: SlackQueueEvent,
   options: Pick<ReplyPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
-): Promise<string> {
+): Promise<ReplyJudgmentResult> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
 
   const startedAt = Date.now();
@@ -261,26 +276,28 @@ export async function generateClaudeReply(
       options.runtimeContext,
       options.capabilities?.gatewayTools.includes("list_authorized_task_channels") === true,
     );
-    let mcpConfigContent: string | undefined;
-    if (options.taskSearchEnabled || options.taskWriteEnabled || options.capabilities?.mcp.length) {
-      const placementMcp = options.capabilities ? buildRuntimeMcpConfig(options.capabilities).mcpServers : {};
-      mcpConfigContent = JSON.stringify({
-        mcpServers: {
-          ...placementMcp,
-          ...(options.taskSearchEnabled ? { "task-search": {
-            command: "node",
-            args: ["/opt/mana/task-search-mcp-server.mjs"],
-          } } : {}),
-          ...(options.taskWriteEnabled ? { "task-write": {
-            command: "node",
-            args: ["/opt/mana/task-write-mcp-server.mjs"],
-          } } : {}),
-        },
-      });
-    }
+    const placementCapabilities = options.capabilities ?? { mcp: [], gatewayTools: [] };
+    const judgmentCapabilities = {
+      ...placementCapabilities,
+      mcp: [...new Set([...placementCapabilities.mcp, "brainbase"])],
+    };
+    const placementMcp = buildRuntimeMcpConfig(judgmentCapabilities).mcpServers;
+    const mcpConfigContent = JSON.stringify({
+      mcpServers: {
+        ...placementMcp,
+        ...(options.taskSearchEnabled ? { "task-search": {
+          command: "node",
+          args: ["/opt/mana/task-search-mcp-server.mjs"],
+        } } : {}),
+        ...(options.taskWriteEnabled ? { "task-write": {
+          command: "node",
+          args: ["/opt/mana/task-write-mcp-server.mjs"],
+        } } : {}),
+      },
+    });
     const prepareSandbox = async (target: typeof sandbox) => {
       await target.writeFile(promptPath, promptContent);
-      if (mcpConfigContent) await target.writeFile(runtimeTaskSearchMcpConfigPath(), mcpConfigContent);
+      await target.writeFile(runtimeTaskSearchMcpConfigPath(), mcpConfigContent);
     };
     await prepareSandbox(sandbox);
     const execOptions = {
@@ -288,6 +305,9 @@ export async function generateClaudeReply(
       env: {
         IS_SANDBOX: "1",
         CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+        // Resolver routing must be based on the authenticated Slack request,
+        // not the larger model prompt that also contains runtime scaffolding.
+        MANA_JUDGMENT_REQUEST: normalizePromptText(event.text) || "呼びかけに応答してください。",
         MANA_TRACE_ID: event.eventId,
         MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
         MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
@@ -304,7 +324,8 @@ export async function generateClaudeReply(
       buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
-        mcpEnabled: Boolean(options.capabilities?.mcp.length),
+        mcpEnabled: true,
+        includeJudgmentHookEvents: true,
         sessionId: options.claudeSession?.id,
         resumeSession: options.claudeSession?.resume,
       }),
@@ -320,7 +341,8 @@ export async function generateClaudeReply(
         buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
           taskSearchEnabled: options.taskSearchEnabled,
           taskWriteEnabled: options.taskWriteEnabled,
-          mcpEnabled: Boolean(options.capabilities?.mcp.length),
+          mcpEnabled: true,
+          includeJudgmentHookEvents: true,
           sessionId: options.claudeSession.id,
           resumeSession: false,
         }),
@@ -345,7 +367,8 @@ export async function generateClaudeReply(
           buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
             taskSearchEnabled: options.taskSearchEnabled,
             taskWriteEnabled: options.taskWriteEnabled,
-            mcpEnabled: Boolean(options.capabilities?.mcp.length),
+            mcpEnabled: true,
+            includeJudgmentHookEvents: true,
           }),
           execOptions,
         );
@@ -363,14 +386,27 @@ export async function generateClaudeReply(
       });
       throw new ReplyPipelineError("claude_execution_failed");
     }
-    const reply = normalizeReply(result.stdout);
+    let judgment: ReplyJudgmentResult;
+    try {
+      judgment = parseReplyJudgmentStream(result.stdout);
+    } catch (error) {
+      const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
+        ? error.message
+        : "reply_judgment_stream_invalid";
+      throw new ReplyPipelineError(code);
+    }
+    const reply = normalizeReply(judgment.reply);
     if (!reply) throw new ReplyPipelineError("claude_empty_response");
+    const normalizedLeadingLines = reply.split(/\r?\n/).slice(0, judgment.auditLines.length);
+    if (JSON.stringify(normalizedLeadingLines) !== JSON.stringify(judgment.auditLines)) {
+      throw new ReplyPipelineError("reply_judgment_audit_truncated");
+    }
     emitTurnLog("log", "mana_claude_completed", event, trace, {
       outcome: "success",
       durationMs: Date.now() - startedAt,
       outputChars: reply.length,
     });
-    return reply;
+    return { ...judgment, reply };
   } finally {
     // A thread-generation sandbox owns the Claude transcript used by --resume.
     // Cloudflare suspends it after inactivity; destroying it would silently turn
@@ -628,7 +664,8 @@ export async function processReplyEvent(
     return { outcome: "reacted", responseTs: event.messageTs };
   }
   if (!eligible) return { outcome: "ignored" };
-  if (await isReplyCompleted(fs, event.eventId)) return { outcome: "already_completed" };
+  if (await isReplyCompleted(fs, event.eventId)
+    || await isReplyJudgmentCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
   const requesterIdentity = options.taskSearchEnabled && requestsOwnTasks(event.text)
     ? options.requesterIdentity ?? (options.requesterIdentityBindings
@@ -644,17 +681,39 @@ export async function processReplyEvent(
       ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
     }, { outcome: "success", contextPresent: Boolean(hydratedEvent.threadContext),
       contextChars: hydratedEvent.threadContext?.length ?? 0 });
-    const reply = await generateClaudeReply(hydratedEvent, { ...options, requesterIdentity });
-    const responseTs = await postSlackReply(hydratedEvent, reply, options);
-    emitTurnLog("log", "mana_slack_reply_posted", event, {
-      ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
-    }, { outcome: "success", responseTs });
-    await persistReplyCompletion(fs, {
-      eventId: event.eventId,
-      responseTs,
-      completedAt: options.now?.() ?? new Date().toISOString(),
-    });
-    await markWorkspaceEngaged(fs, options.now?.() ?? new Date().toISOString());
-    return { outcome: "replied", responseTs };
+    const attemptId = await startReplyJudgmentAttempt(
+      fs,
+      hydratedEvent,
+      options.now?.() ?? new Date().toISOString(),
+    );
+    try {
+      const judgment = await generateClaudeReply(hydratedEvent, { ...options, requesterIdentity });
+      await auditReplyJudgmentAttempt(
+        fs,
+        event.eventId,
+        attemptId,
+        judgment,
+        options.now?.() ?? new Date().toISOString(),
+      );
+      const responseTs = await postSlackReply(hydratedEvent, judgment.reply, options);
+      emitTurnLog("log", "mana_slack_reply_posted", event, {
+        ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
+      }, { outcome: "success", responseTs });
+      const completedAt = options.now?.() ?? new Date().toISOString();
+      await completeReplyJudgmentAttempt(fs, event.eventId, attemptId, responseTs, completedAt);
+      await persistReplyCompletion(fs, { eventId: event.eventId, responseTs, completedAt });
+      await markWorkspaceEngaged(fs, completedAt);
+      return { outcome: "replied", responseTs };
+    } catch (error) {
+      const failureCode = error instanceof ReplyPipelineError ? error.code : "reply_judgment_attempt_failed";
+      await failReplyJudgmentAttempt(
+        fs,
+        event.eventId,
+        attemptId,
+        failureCode,
+        options.now?.() ?? new Date().toISOString(),
+      ).catch(() => undefined);
+      throw error;
+    }
   });
 }

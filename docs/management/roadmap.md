@@ -1,87 +1,212 @@
 # mana-runtime ロードマップ（正本）
 
-**策定日**: 2026-07-29
-**根拠**: ユニバーサルアーツ安部様・グローウィン様との2会議（2026-07-29抽出）で語られたビジョンと、mana-runtimeの現在地のギャップ分析
-**維持**: 方針変更はこのファイルを更新してからタスク化する。会議・Slackでの発言はこのファイルに反映されるまで正本ではない
+- **初版**: 2026-07-29
+- **最終更新**: 2026-08-17
+- **現在地の基準**: `main` `ab65b7fa5b6cc25d61c088676430fc446ff47e34`
+**維持**: 方針変更はこのファイルを更新してからStory・Spec・Canonical Taskへ展開する。会議・Slackでの発言は、ここへ反映されるまでロードマップの正本ではない。
 
----
+## 1. 北極星
 
-## ビジョン（上位目標）
+「会社の脳」をBrainbaseに置き、Slack上の単一窓口AI社員「マナ」が、判断後の仕事を成果確認まで回す。
 
-「会社の脳」（SSOT→グラフ→オントロジー）を作り、Slack上の単一窓口AI社員「マナ」で全業務を回す。
+mana-runtimeの目的は、AIとの会話量や利用ツール数を増やすことではない。人間がトレードオフ判断・創造・例外対応に集中できるように、マナが次の循環を閉じることである。
 
-- 表の窓口はマナ1体。裏でサブエージェント・モデル・権限を振り分ける（専門エージェント乱立の否定）
-- チャンネル単位で見える範囲・使えるツール・権限を分ける
-- 定常業務はイベント/時間トリガーでAIが勝手に動き、人間は確認だけ
-- 仕事が生まれる場所（会議・Slack）でタスク登録→リマインドまで完結
-- 質の証明は「自社でやって数字を出す」。その型を安部様（人柱導入）・グローウィン様（商品化）へ展開
+```text
+Decision（人間が決める）
+  → Work（マナが担当・期限・次の行動を進める）
+  → Ship（成果物と本番結果を確認する）
+  → Learn（結果を次の判断・仕組みへ戻す）
+```
 
-## 現在地（2026-07-29時点、実装済みの土台)
+北極星指標は、週次の **「人間の判断介入1回あたりに完了した成果数」** とする。AI実行回数、会話数、登録タスク数は補助指標であり、成功判定には使わない。
 
-- チャンネル単位の権限境界: placement profiles 実効状態（PR #10で復元、PR #11でtask route束縛追加）。3層ゲート = コード内route束縛 → placement `gatewayTools` → `interactiveAllowedTools`
-- タスク正本接続: Canonical Task（Brainbase PostgreSQL）の create/list/update がSlackから動作。エージェントにdelete権限なし（E2E確認済み）。Slack Canvasミラーあり（PR #8/#9）
-- Slack常駐挙動: 空気読みトリアージ / 自然言語`/goal` / Agents Canvas / 発言者認識 / コスト・予算計測 / cronコネクタ / セキュリティイベント（`mcp_denied`等）
+## 2. 正本と責務の境界
 
----
+mana-runtimeに第二の業務正本を作らない。
 
-## 5本柱
-
-### 1. 「マナ=単一窓口」の完成 — 表は1体、裏で振り分け
-
-- **裏側ルーティング層**: 依頼内容→適切なサブエージェント/モデル/effortを裏で選ぶ動的ディスパッチ（経理系依頼→freee系サブエージェント、開発依頼→/ryoko-develop 等）。窓口の人格は1つのまま
-- **placement設定の一元化**: 現状はツール追加のたびに3箇所への登録が必要。設定1箇所から派生させる仕組みに変え、権限・文脈作りをスケールさせる
-- **チャンネル文脈の注入強化**: ツール面に加え、そのチャンネルの業務文脈（プロジェクト・顧客・判断基準）をplacementごとにsystem promptへ注入する層
-
-### 2. 「会社の脳」との接続 — Graph SSOT/オントロジーを実行時に読む
-
-- **実行時Graph参照**: 返答・判断の前にGraph SSOT（固有名詞・RACI・意思決定）を引く経路をランタイムに組み込む
-- **オントロジー→placementの写像**: 「誰が何を承認できるか」の定義からplacementの権限・停止条件を生成し、二重管理を排す
-- **個人KG→会社オントロジー昇格のフック**: 会話・作業ログから昇格候補を検出しSlackで提案する入口
-
-### 3. 定常業務ワークフローの量産基盤 — 「人間は確認だけ」
-
-- **イベントトリガーの受け口拡張**: cronに加え、イベント駆動（Gmail着信・freee締め日・会議終了・Canonical Task期限到来）で発火
-- **人間確認ステップの型化**: 承認待ち→Slackで選択肢カード提示→承認で続行、のhuman-in-the-loopプリミティブを内蔵
-- **ワークフロー定義の量産フォーマット**: 1業務=1定義（トリガー・placement・手順・確認ポイント）。第1号は月次経理
-
-### 4. 会議→タスク→リマインドの動線完結 — ✅完了(2026-07-30)
-
-- **議事録→タスク自動抽出→ワンタップ登録** — ✅完了(2026-07-30): mana `meeting-flow-integration.js`を設計の正に`MeetingTaskProposalNotifier`をmana-runtimeへ移植（PR #18、設計は`docs/architecture/story-meeting-task-proposal.md`）。議事録メッセージ検知→LLM抽出→Slack Blocks提案→承認ボタンでcompanion APIへ冪等登録（キー`meeting:<ch>:<ts>:<index>`）。pilot E2Eで mana bot投稿の議事録→2候補提示→承認→bb.unson.jp正本実在まで確認済み。承認者は`ApproverResolver`で抽象化（柱2のGraph RACI解決の差し替え点）。manaのLambda版承認フローは凍結対象（発火条件が.txtアップロードで本実装と重ならないことを確認済み。実チャンネル展開時はmana botを対象チャンネルからleave）
-- **期限リマインド**: canonical storeを定期クエリし、期限接近・超過をチャンネルへ通知（cron + Canonical Task API）
-- **Canvasミラーの運用定着**: タスクCanvasを「見える正本ビュー」として磨く
-- **議事録パイプラインのmana-runtime移植（Eve設計資産のDAG化組み込み）** — 承認(2026-07-30): transcript(.txt)が`9940-meeting-router`に届く→デフォルト振り分け（register-first思想: 間違いはワンタップ振り直し）→議事録生成（Graph SSOT・関連Decision・進行中タスク・前回議事録を参照、Eveの Meeting Minutes Quality Contract を採用）→プロジェクトチャンネルへ展開→既存タスク自動登録動線へ接続。DAG段構成はEve `meeting-agent` の設計を移植し、段の直列制御は決定論的コード・各段のみ`invokeOneShot`。正はmana-runtime、Eveは設計ドナー、mana Lambdaは移植完了後に凍結
-
-### 5. 他社展開できる形にする — 安部様人柱・グローウィン様商品化の裏付け
-
-- **Slack Connect対応**: 外部ワークスペースのユーザーを識別し、placementで外部者権限を絞る
-- **オンボーディングの型化**: setup wizardに導入ヒアリング項目（チャンネル権限・停止条件・監査先）を組み込み、他社でも再現可能に。安部様導入をv1検証にする（次回定例 2026-08-25 15:00）
-- **エージェント台帳・監査の製品化**: 台帳=placement一覧、監査=セキュリティイベントの可視化、停止=budget/kill switch。「AIエージェントガバナンス診断」の診断項目を自社でまず満たす
-- **委任率ダッシュボード**: どの業務がどれだけAIに委任され、人間は何回確認しただけかを計測・表示
-
----
-
-## 依存インフラの脱属人化（brainbase側、2026-07-29追記）
-
-柱4以降をチーム運用に載せるための前提。着手時点では、Canonical Taskの**データ本体（MacローカルHomebrew PostgreSQL）とwriter**（launchd `com.brainbase.ui`、port 31013）の両方が佐藤ローカルMacにあり、pilotは`https://bb.brain-base.work`（Cloudflareトンネル経由で同Macに着地）へ書いていた。single-writer設計（writer lease・readiness・冪等・監査・他所fail-closed）は正しく維持し、置き場所だけをサーバーへ移す。
-
-1. **writer移設** — ✅完了(2026-07-29): データ本体+writer leaseをLightsail（bb.unson.jp、PostgreSQL 16.14）へ移設。pilotの`BRAINBASE_TASK_API_BASE_URL`は`https://bb.unson.jp`へ切替済み、Mac側31013のmutationは`writer_migrated_to_lightsail_20260729`でfail-closed。移設後のSlack経由E2E作成も実証済み。Macのcloudflared ingressからの`bb.brain-base.work`除去も完了(2026-07-29、`~/.cloudflared/config.yml`から当該hostnameのみ削除、`line.mana-bot.win`は継続稼働を確認)。E2E検証行も削除済み(2026-07-29、companion API DELETE経由・GET 404確認)
-2. **Brainbase MCPへのtask mutationツール追加** — ✅完了(2026-07-29): `create_task`/`update_task`/`transition_task`をBrainbase MCPサーバーに追加（deleteは非公開のまま）。companion task API（bb.unson.jp）の薄いクライアント実装で、認証は専用サービストークン`svc_brainbase_mcp`（member role、Infisical `brainbase-mcp` target管理、期限2026-10-27）。MCP stdio E2Eでcreate→update→transition→completedのLightsail正本反映を検証済み（brainbase-unson PR #1094）
-
-## 優先順位
-
-| 順 | 項目 | 理由 |
+| 対象 | 正本 | mana-runtimeの責務 |
 |---|---|---|
-| 1 | 柱4: タスク動線完結（リマインド・抽出提示） | 部品が揃っており最短で循環が閉じる。実タスク流入が始まった今が定着の勝負どころ |
-| 2 | 柱3: ワークフロー量産の型 + 月次経理第1号 | 「人間は確認だけ」の実証が全提案の説得力の源泉 |
-| 3 | 柱1: placement一元化と裏側ルーティング | 量産前に権限設定のスケール障害を除去 |
-| 4 | 柱5: Slack Connect + オンボーディング型化 | 2026-08-25の安部様定例までに見せられる形へ |
-| 5 | 柱2: Graph実行時参照 | 効果は大きいがbrainbase側との共同設計が必要で足が長い |
+| 顧客・プロジェクト・人物・RACI・意思決定 | Brainbase Graph SSOT | 実行前に参照し、候補をBrainbaseへ返す |
+| 作業項目・担当・期限・状態 | Brainbase Canonical Task | 作成・更新・検索・リマインド・Slack投影 |
+| 手順・分岐・承認・実行履歴・証跡 | Brainbase DAG / Automation Run | イベント受付、実行、承認UI、結果表示 |
+| 会話・チャンネル・一時セッション | mana-runtime | tenant境界内で保持し、業務事実の正本にしない |
+| 監査・停止・予算 | placement policy / receipt | 実行時に強制し、状態と理由を可視化する |
 
-上位3項目と脱属人化2項目（writer移設・MCP taskツール追加）はCanonical Taskに登録済み（2026-07-29、冪等キー`mana-roadmap-2026-07-29-*`）。
+## 3. 現在地
 
-### 進捗記録
+### リポジトリ上で確認できる実装
 
-- 2026-07-29: 柱4第1弾の期限リマインダー（`TaskReminderNotifier`）実装・pilot稼働・実投稿確認（PR #13）。柱4の残りは議事録→タスク候補提示→ワンタップ登録のmana-runtime移植（設計はmana `meeting-flow-integration.js` を参照実装として移す。manaのLambda版は移行後に凍結）
-- 2026-07-30: 柱4完了。議事録→タスク候補提示→ワンタップ登録を移植（PR #18）、pilot E2E成立（候補提示→承認→正本実在確認）。Canonical Task `mana-roadmap-2026-07-29-pillar4-task-loop` をcompletedへ遷移
-- 2026-07-30: 同日中にregister-first化＋Graph担当者解決・編集モーダル（PR #20）、議事録パイプライン移植（PR #22、Eve DAG資産組み込み）までpilot E2E成立。transcript.txt→振り分け→narrative議事録→展開→タスク正本入りが50秒・人手ゼロで動作。残りは本番切替（routerを`9940-meeting-router`へ・destinations実プロジェクト転記・mana bot leave・mana Lambda凍結）
-- 2026-07-30: **本番切替実施**。routerChannels=`9940-meeting-router`(C08SYTDR7R8)、destinations=10（unsonのbot在籍済みチャンネル。私有6チャンネルは手動招待後に追加、暫定受け皿はproj_other=9999-manaテスト）、mana botはmeeting-routerからleave済み（議事録intakeの二重処理停止）。残作業はCanonical Task `mana-roadmap-2026-07-30-minutes-pipeline-rollout`（私有チャンネル招待・mana Lambda凍結・初週監視〜08-08）に集約
+- Slack上の単一窓口、placementごとの権限・文脈・ツール境界
+- Canonical Taskの作成・更新・遷移・検索、期限リマインド、Task Canvas投影
+- 議事録の生成、保存先選択、タスク抽出・承認・登録、再実行・復旧
+- 実行前のBrainbase Graph文脈取得と、取得失敗を`未確認`として残す境界
+- Slack通常回答をBrainbase Judgment lifecycleへ接続し、回答前の判断・参照と実呼出を監査する境界
+- 成功ターンをreview-required候補としてBrainbase Candidate Storeへ送るdurable outbox
+- placement台帳、予算、kill switch、security event、実行receipt
+- cron、Slackイベント、会議終了などを起点に処理を動かす土台
+
+### 完了済みとして扱う旧ロードマップ項目
+
+- Canonical Task writerのLightsail移設とBrainbase MCP task mutation
+- 会議→議事録→タスク候補→承認→Canonical Task登録の基本動線
+- 期限リマインドと複数workspaceのTask Canvas同期
+- 実行前Graph文脈取得のランタイム実装
+- 学習候補をGraphへ直接書かずCandidate Storeへ送る境界
+- placement単位の台帳・予算・停止機構
+
+### 未完・未確認
+
+- GraphのRACIからplacementの権限・承認者・停止条件を生成する写像は未実装
+- 人間確認は個別フローに実装されており、汎用HITLプリミティブになっていない
+- 複数の専門実行先を選ぶ動的ディスパッチは未実装
+- 学習候補の意味分類・機微区分・成果との関連付けは未完成
+- マルチテナントStory [#234](https://github.com/Unson-LLC/mana-runtime/pull/234)、runtime Spec [#236](https://github.com/Unson-LLC/mana-runtime/pull/236)、横断E2E Spec [#237](https://github.com/Unson-LLC/mana-runtime/pull/237) は未マージ
+- Slack通常回答のBrainbase Judgment lifecycle [#241](https://github.com/Unson-LLC/mana-runtime/pull/241) はmainへ統合済みだが、本番のfresh Slack E2Eは未取得
+- Lightsail・Cloudflare・各Slack tenantの機能同等性は、Storyごとのfresh本番E2Eがない限り確認済みにしない
+
+## 4. 優先成果
+
+### P0-A. 経営実行ループ
+
+**目的**: 人間が仕事の一覧を見張らなくても、マナが「次に進まない理由」を検知し、適切な人へ働きかけ、成果確認まで閉じる。
+
+マナはプロジェクトごとに次を追跡する。
+
+- 達成すべき成果と成功条件
+- 責任者、実行担当、承認者
+- 次の行動、期限、依存関係
+- 判断待ち、担当不在、停滞理由
+- 成果物、実行receipt、本番readback
+
+通常時は自律的に進め、次の例外だけを適切なRACIへ上げる。
+
+- 人間にしか決められないトレードオフ
+- 顧客・契約・予算・権限へ影響する変更
+- 期限超過、担当不在、依存先停止
+- 完了報告はあるが成果物または本番結果を確認できない状態
+
+**最小受入条件**:
+
+1. 1つの社内実プロジェクトで、成果→Task→担当→期限→証拠→完了を同一の相関IDで追える。
+2. 期限超過・担当不在・判断待ち・証拠不足を決定論的に検出できる。
+3. 人間へは全件一覧ではなく、判断または例外対応が必要な項目だけを提示する。
+4. 完了は自己申告ではなく、成果物・API readback・receiptのいずれかで確認する。未取得は`未確認`のまま残す。
+
+### P0-B. マルチテナント安全境界
+
+**目的**: 顧客ごとの特注運用を増やさず、複数社へ安全に同じmana-runtimeを提供する。
+
+実装順は [#234](https://github.com/Unson-LLC/mana-runtime/pull/234) → [#236](https://github.com/Unson-LLC/mana-runtime/pull/236) → [#237](https://github.com/Unson-LLC/mana-runtime/pull/237) の依存関係を維持する。
+
+**必須境界**:
+
+- Slack workspace connectionの導入・再認証・解除・権限変更
+- Worker / Queue / Durable Object / Container / MCP / Brainbaseまでtenant情報を強制伝播
+- セッション、ファイル、資格情報、キャッシュ、予算、receiptのtenant分離
+- tenant不明・接続失効・binding不一致をモデル実行前にfail closed
+- 再配送・再試行時の二重実行と二重返信の防止
+- A社のデータをB社から取得できない否定E2E
+- tenant別の利用量、警告、hard stop
+
+機能実装やCIだけでは完了にしない。少なくとも2 tenantを使い、成功経路・境界拒否・再試行・予算分離を同一契約で本番readbackする。
+
+### P1-A. 汎用ワークフロー・HITL
+
+**目的**: 業務ごとの個別コードを減らし、「人間は確認だけ」の仕事を量産する。
+
+```text
+イベント
+  → 正本から事実を取得
+  → 実行案を作成
+  → policyとRACIで auto / approval / deny を決定
+  → 実行
+  → readback
+  → receipt
+  → 失敗時の再試行・補償・差し戻し
+```
+
+手順・分岐・実行状態はBrainbase DAG / Automation Runを正本とし、mana-runtimeはSlack入力、実行adapter、承認表示を担う。mana-runtime内に別のDAG正本を作らない。
+
+第1号は月次経理、第2号は顧客案件の週次進行管理とする。両者で同じ承認・再試行・readback契約を再利用できた時点で「量産可能」と判定する。
+
+### P1-B. 顧客案件の共通運用テンプレート
+
+**目的**: 案件を受けるほど、個別対応ではなく再利用可能なmana-runtime資産が増える状態を作る。
+
+共通化する範囲:
+
+- 導入ヒアリングとworkspace connection
+- 顧客・プロジェクト・RACI・停止条件のGraph登録
+- 会議・Slack・メールからの仕事の捕捉
+- 週次の進行、停滞検知、判断依頼
+- 成果物確認、顧客報告、継続・追加提案
+- tenantごとのコスト・品質・委任実績
+
+固有コードを追加する前に、共通Storyへ昇格できるかを確認する。1社だけに必要な処理はadapterまたは設定として隔離し、runtime coreへ混ぜない。
+
+### P2-A. 成果から学ぶ仕組み
+
+**目的**: 会話を大量保存するのではなく、成果につながった判断と失敗した実行を次の仕組みへ戻す。
+
+- 判断と成果の関連付け
+- 手戻り・失敗・停止理由の分類
+- 委任先・ワークフロー・条件別の成功率
+- 自動実行可能な条件の候補化
+- 人間レビュー後のGraph、Skill、DAGへの昇格
+
+候補は自動で真理や実行ルールへ昇格させない。証拠、機微区分、影響範囲、推奨を提示し、人間承認を必須とする。
+
+### P2-B. 委任の経営指標
+
+委任率ダッシュボードは表示だけで終わらせず、経営実行ループの改善判断へ接続する。
+
+| 指標 | 意味 |
+|---|---|
+| 人間の判断介入1回あたりの完了成果数 | 北極星。認知帯域を成果へ変換できたか |
+| 無介入完了率 | 定常業務が人間の見張りなしに閉じた割合 |
+| 判断から実行までの時間 | 決定後の停滞を減らせたか |
+| 期限超過時間 | 問題の長期放置を減らせたか |
+| 証拠付き完了率 | 完了自己申告ではなく成果を確認できたか |
+| 手戻り率 | 自動化が仕事を増やしていないか |
+| 成果単位のAI費用 | 安い会話ではなく効率的な成果を出せたか |
+| tenant境界事故件数 | 複数社提供の安全性。目標は0件 |
+
+## 5. 実装順
+
+| 順 | 成果 | 完了判定 |
+|---|---|---|
+| 1 | マルチテナントStory・runtime Spec・横断E2E Specを確定 | #234→#236→#237がmainへ統合され、未解決条項が0件 |
+| 2 | 社内1案件で経営実行ループの最小縦断を作る | 判断キュー、停滞検知、働きかけ、証拠付き完了を同一案件で確認 |
+| 3 | 汎用HITLとAutomation Run接続を作る | 月次経理と顧客週次の2業務が同じ契約を再利用 |
+| 4 | 外部tenant pilotを行う | tenant分離、通常成功、拒否、再試行、予算をfresh本番E2Eでreadback |
+| 5 | 顧客案件テンプレートを複数案件へ展開 | 固有コードを増やさず、導入から報告まで再現 |
+| 6 | 成果学習と委任指標を接続 | 実行結果から改善候補が生まれ、レビュー後に仕組みへ戻る |
+
+P0-AとP0-Bは並行可能だが、外部顧客への展開はP0-Bの本番否定E2Eが成立するまで行わない。
+
+## 6. 今は優先しないもの
+
+- 表に見える専門エージェントや人格の追加
+- 顧客ごとの一回限りのコネクタをruntime coreへ追加すること
+- 成果との関係を説明できない会話メモリの拡大
+- 人間レビューを経ない自己改変・自己開発
+- 行動・承認・readbackへ接続しない閲覧専用ダッシュボード
+- production evidenceのない「対応済み」「同等」「自動化済み」という表現
+
+新機能は「人間の判断介入を減らしながら、証拠付きの成果を増やすか」で採否を決める。
+
+## 7. 進捗記録
+
+- 2026-07-29: Canonical Task writerをLightsailへ移設し、Brainbase MCPへtask mutationを追加。
+- 2026-07-30: 会議→議事録→タスク提案→承認→Canonical Task登録、期限リマインド、議事録パイプラインのpilotを成立。
+- 2026-08-04: 実行前Graph文脈取得、学習候補outbox、人格・Skill・memory境界の現在地をアーキテクチャへ反映。
+- 2026-08-14〜16: 複数workspaceのTask Canvas、権限内タスク横断取得、議事録のBrainbase文脈・証跡・停止境界、復旧動線をmainへ統合。
+- 2026-08-17: 完了済みの旧優先順位を廃止。北極星を「判断介入1回あたりの完了成果数」とし、経営実行ループ、マルチテナント安全境界、汎用ワークフロー、顧客案件テンプレート、成果学習の順へ更新。
+
+## 8. 更新時の証拠規則
+
+- `main`へ存在すること、CI成功、デプロイ、process health、利用者成果を別々に記録する。
+- 本番確認のない実装は「リポジトリ実装済み」と書き、「本番稼働済み」と書かない。
+- timeout、権限不足、部分取得、接続失敗は0件や成功へ丸めず、`未確認`として残す。
+- 完了条件はStoryの利用者成果、実行receipt、本番readbackで固定する。
+- 進行状態はCanonical TaskまたはAutomation Runへ置き、この文書へ日々の状態を重複保存しない。

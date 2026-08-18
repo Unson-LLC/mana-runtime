@@ -22,7 +22,15 @@ import { createHash } from "node:crypto";
 import type { App } from "@slack/bolt";
 import { JINN_HOME } from "../../shared/paths.js";
 import { logger } from "../../shared/logger.js";
-import { GraphEntityClient } from "../../shared/brainbase-graph.js";
+import {
+  isBrainbaseGraphConfigured,
+  type GraphEntityClient,
+} from "../../shared/brainbase-graph.js";
+import {
+  BrainbaseEntityResolverClient,
+  type BrainbaseEntityResolver,
+  type ResolutionReceiptV1,
+} from "../../shared/brainbase-entity-resolution.js";
 import {
   BrainbaseTaskClient,
   isBrainbaseTaskStoreConfigured,
@@ -124,6 +132,8 @@ export interface MinutesRun {
   controlTs?: string;
   /** Persisted so reroute can repost without regenerating. */
   minutes?: GeneratedMinutes;
+  /** Portable evidence that identifies the Brainbase revision used for generation. */
+  brainbaseResolutionReceipt?: ResolutionReceiptV1;
   /** Canonical two-layer GitHub record, persisted before any Slack delivery. */
   github?: SavedMeetingRecords;
   shares?: Record<string, MinutesShareRecord>;
@@ -344,6 +354,9 @@ export interface MeetingMinutesPipelineDeps {
   generateImpl?: typeof generateMinutes;
   /** Injectable GitHub writer. Defaults to the GitHub Contents API client. */
   saveMeetingRecords?: (request: SaveMeetingRecordsRequest) => Promise<SavedMeetingRecords>;
+  /** Shared Brainbase canonical resolver. Never replace with meeting-specific matching. */
+  entityResolver?: BrainbaseEntityResolver;
+  /** @deprecated Kept for constructor compatibility; meeting generation uses entityResolver. */
   graphClient?: GraphEntityClient;
   taskClientFactory?: () => BrainbaseTaskClient;
   approverResolver?: ApproverResolver;
@@ -446,6 +459,10 @@ export class MeetingMinutesPipeline {
       // Only the open-task context and the task handoff need the store, but a
       // pilot without it configured is misdeployed — better to stay off loud.
       logger.warn("[meeting-minutes] Brainbase task store not configured — feature not started");
+      return;
+    }
+    if (!this.deps.entityResolver && !isBrainbaseGraphConfigured()) {
+      logger.warn("[meeting-minutes] Brainbase Graph resolver not configured — feature not started");
       return;
     }
 
@@ -641,8 +658,17 @@ export class MeetingMinutesPipeline {
     // Stage: generation (with one automatic retry on contract violations).
     if (!run.minutes) {
       const generated = await this.generateWithRetry(transcript.text, destination, state, now);
+      if (generated.resolutionReceipt) {
+        run.brainbaseResolutionReceipt = generated.resolutionReceipt;
+        run.updatedAt = now;
+        saveState(state);
+      }
       if ("error" in generated) {
-        await this.failRun(state, key, "generate", "議事録生成に失敗しました");
+        const stage = generated.error.stage ?? "generate";
+        const message = stage === "brainbase"
+          ? "Brainbaseの参照に失敗したため、議事録を生成しませんでした"
+          : "議事録生成に失敗しました";
+        await this.failRun(state, key, stage, message);
         return;
       }
       run.minutes = generated.minutes;
@@ -812,34 +838,57 @@ export class MeetingMinutesPipeline {
     destination: MinutesDestination,
     state: PipelineState,
     now: number,
-  ): Promise<{ minutes: GeneratedMinutes } | { error: { reason: string } }> {
-    const ctx = await this.buildContext(destination, now);
+  ): Promise<
+    | { minutes: GeneratedMinutes; resolutionReceipt: ResolutionReceiptV1 }
+    | { error: { reason: string; stage?: "brainbase" }; resolutionReceipt?: ResolutionReceiptV1 }
+  > {
+    let ctx: MinutesContext;
+    try {
+      ctx = await this.buildContext(transcript, destination, now);
+    } catch {
+      logger.warn("[meeting-minutes] code=brainbase_resolution_failed");
+      return { error: { reason: "brainbase resolution failed", stage: "brainbase" } };
+    }
+    const resolutionReceipt = ctx.brainbaseResolutionReceipt;
+    if (
+      !resolutionReceipt
+      || resolutionReceipt.source.status !== "complete"
+      || resolutionReceipt.resolutionStatus === "blocked"
+    ) {
+      logger.warn("[meeting-minutes] code=brainbase_resolution_blocked");
+      return {
+        error: { reason: "brainbase resolution blocked", stage: "brainbase" },
+        ...(resolutionReceipt ? { resolutionReceipt } : {}),
+      };
+    }
     const generate = this.deps.generateImpl ?? generateMinutes;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const result = await generate(transcript, ctx, this.generationOptions);
-        if ("minutes" in result) return result;
+        if ("minutes" in result) return { ...result, resolutionReceipt };
         logger.warn(`[meeting-minutes] code=generation_contract_invalid attempt=${attempt}`);
-        if (attempt === 2) return result;
+        if (attempt === 2) return { ...result, resolutionReceipt };
       } catch (err) {
         logger.warn(`[meeting-minutes] code=generation_attempt_failed attempt=${attempt}`);
-        if (attempt === 2) return { error: { reason: String(err) } };
+        if (attempt === 2) return { error: { reason: String(err) }, resolutionReceipt };
       }
     }
-    return { error: { reason: "unreachable" } };
+    return { error: { reason: "unreachable" }, resolutionReceipt };
   }
 
-  /** Context prep — every source fails open with a warn. */
-  private async buildContext(destination: MinutesDestination, now: number): Promise<MinutesContext> {
-    const graph = this.deps.graphClient ?? new GraphEntityClient();
-    const [people, projects, brands, decisions] = await Promise.all([
-      graph.listEntities("person"),
-      graph.listEntities("project"),
-      graph.listEntities("brand"),
-      graph.listEntities("decision"),
-    ]);
-    if (people.length + projects.length + brands.length === 0) {
-      logger.warn("[meeting-minutes] Graph unavailable — generating without the proper-noun dictionary");
+  /** Context prep — Brainbase resolution fails closed; other context remains best-effort. */
+  private async buildContext(
+    transcript: string,
+    destination: MinutesDestination,
+    now: number,
+  ): Promise<MinutesContext> {
+    const resolver = this.deps.entityResolver ?? new BrainbaseEntityResolverClient();
+    const resolution = await resolver.resolve(transcript, {
+      projectId: destination.projectId,
+      asOf: new Date(now).toISOString(),
+    });
+    if (resolution.receipt.source.status === "partial") {
+      logger.warn("[meeting-minutes] code=brainbase_resolution_partial");
     }
 
     let openTasks: string[] = [];
@@ -854,22 +903,22 @@ export class MeetingMinutesPipeline {
       logger.warn("[meeting-minutes] code=open_task_context_unavailable");
     }
 
-    const projectNeedle = destination.name.toLowerCase();
-    const relatedDecisions = decisions
-      .filter((d) => d.name.toLowerCase().includes(projectNeedle))
-      .map((d) => d.name)
-      .slice(0, 10);
-
     const state = loadState();
     const previous = state.lastMinutesByChannel[destination.channelId];
 
     return {
-      properNouns: [...people, ...projects, ...brands],
+      properNouns: resolution.properNouns,
       openTasks,
-      decisions: relatedDecisions,
+      decisions: resolution.decisions,
       previousMinutes: previous ? { title: previous.title, overview: previous.overview } : undefined,
       projectName: destination.name,
       dateStr: jstDateStr(now),
+      brainbaseResolution: {
+        sourceStatus: resolution.receipt.source.status,
+        resolutionStatus: resolution.receipt.resolutionStatus,
+        digest: resolution.receipt.digest,
+      },
+      brainbaseResolutionReceipt: resolution.receipt,
     };
   }
 

@@ -6,7 +6,7 @@
     "language": "ja"
   },
   "execution": {
-    "managed_worktree": "preferred"
+    "managed_worktree": "disabled"
   },
   "flow_design": {
     "runtime_probes": [
@@ -332,6 +332,17 @@
         "due_at": null
       },
       {
+        "story_id": "story-task-canvas-ownership",
+        "title": "Mana管理Canvasだけを安全に自動更新する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null
+      },
+      {
         "story_id": "story-slack-mana-brainbase-multitenant-e2e",
         "title": "SlackからBrainbaseまでテナントを越境せず完了する",
         "ssot": "local",
@@ -341,6 +352,29 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "story-slack-mention-brainbase-judgment",
+        "title": "Slackの通常メンション回答をBrainbase判断・正本参照・監査ライフサイクルへ接続する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "month",
+        "view": "dev",
+        "period": null,
+        "started_at": null,
+        "due_at": null
+      },
+      {
+        "story_id": "story-meeting-minutes-task-card-runtime",
+        "title": "redo後も議事録のタスクカードを投稿できる",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "contract_type": null
       }
     ],
     "current_story_id": "story-slack-mana-brainbase-multitenant-e2e"
