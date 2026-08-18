@@ -968,6 +968,23 @@
       "confidence": 0.99,
       "first_seen_at": "2026-08-17T15:58:57.657Z",
       "last_revised_at": "2026-08-17T15:58:57.657Z"
+    },
+    {
+      "id": "C-010",
+      "type": "contract",
+      "statement": "Claudeへ渡すBrainbase文脈は、必須アンカーと文字起こしに関連する証拠から入力順序に依存しないworking setを構成し、100KBを品質目標ではなく搬送上限として扱う。選別後も超過する場合は本文の機械的圧縮を行わず生成前に拒否する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-21" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" }],
+        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }],
+        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "selects mandatory anchors and topic evidence independent of source order" }]
+      },
+      "verifiable_by": {
+        "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "selects mandatory anchors and topic evidence independent of source order" }]
+      },
+      "confidence": 0.95,
+      "first_seen_at": "2026-08-18T05:45:00.000Z",
+      "last_revised_at": "2026-08-18T05:45:00.000Z"
     }
   ],
   "planned_test_suites": [
