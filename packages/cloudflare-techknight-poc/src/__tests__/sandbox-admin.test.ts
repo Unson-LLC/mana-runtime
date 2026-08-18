@@ -130,7 +130,7 @@ describe("handleSandboxAdminRequest", () => {
     });
     expect(client.exec).toHaveBeenCalledWith(
       expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
-      expect.objectContaining({ timeout: 600_000 }),
+      expect.objectContaining({ timeout: 780_000 }),
     );
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("議事録生成プローブ"));
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("文脈モードはrequiredです"));

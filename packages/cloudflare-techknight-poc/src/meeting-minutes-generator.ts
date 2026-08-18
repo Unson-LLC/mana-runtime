@@ -5,7 +5,10 @@ import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeC
 import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
-const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
+// Opus/xhigh can exceed ten minutes for long transcripts once structured-output
+// validation and judgment hooks are included. Keep this below the Queue's
+// fifteen-minute wall-clock ceiling while leaving time for persistence and Slack.
+const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 780_000;
 const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
 const MEETING_MINUTES_ROUTING_HEAD_CHARS = 4_000;
 const MEETING_MINUTES_AUDIT_STREAM_MAX_BYTES = 10_000_000;

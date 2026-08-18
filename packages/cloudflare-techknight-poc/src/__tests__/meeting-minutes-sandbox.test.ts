@@ -123,7 +123,7 @@ describe("generateMeetingMinutesInSandbox", () => {
     );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({
-        timeout: 600_000,
+        timeout: 780_000,
         env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
       }));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
