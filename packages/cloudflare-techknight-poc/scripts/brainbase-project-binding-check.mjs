@@ -25,7 +25,7 @@ export function collectMeetingMinutesProjectBindings(config) {
     if (!contextCode || taskCodes.length === 0 || !targetId) throw new Error(`meeting_minutes_brainbase_project_check_binding_missing:${id}`);
     const target = targetsById.get(targetId);
     const targetCodes = Array.isArray(target?.projectCodes) ? target.projectCodes.map(clean).filter(Boolean) : [];
-    if (!target || JSON.stringify([...new Set(targetCodes)].sort()) !== JSON.stringify([...new Set(taskCodes)].sort())) {
+    if (!target || taskCodes.some((code) => !targetCodes.includes(code))) {
       throw new Error(`meeting_minutes_brainbase_project_check_target_mismatch:${id}:${targetId}`);
     }
     requiredCodes.add(contextCode);

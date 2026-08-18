@@ -33,6 +33,15 @@ describe("Brainbase meeting-minutes project deployment check", () => {
       .toThrow("meeting_minutes_brainbase_project_check_target_mismatch:kartz:minutes-kartz");
   });
 
+  it("allows a board to read an explicit legacy scope while new tasks use only the canonical scope", () => {
+    const bindings = collectMeetingMinutesProjectBindings(config({
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([{
+        targetId: "minutes-kartz", projectCodes: ["kartz", "proj_kartz"],
+      }]),
+    }));
+    expect(bindings.requiredCodes).toEqual(["kartz", "proj_kartz"]);
+  });
+
   it("allows deployment only when every configured code is authorized", async () => {
     const path = await configFile(config());
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [{ id: "project:kartz", payload: { project_code: "kartz" } }] }));

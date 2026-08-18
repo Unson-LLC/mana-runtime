@@ -80,13 +80,15 @@ describe("会社別Cloudflare deployment", () => {
     const autoProvisioned = targets.filter((target) => target.autoProvision);
     expect(autoProvisioned).toHaveLength(targets.length);
     expect(autoProvisioned.every((target) =>
-      target.enabled === true && target.manaCanvasId === null && target.bindingRevision === 1)).toBe(true);
+      target.enabled === true && (target.manaCanvasId ?? null) === null && target.bindingRevision === 1)).toBe(true);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
       .toEqual({ "unson-business": 8, unson: 5, "tech-knight": 9 });
     for (const destination of destinations) {
-      expect(minutesTargets).toContainEqual(expect.objectContaining({ targetId: destination.taskBoardTargetId,
-        channelId: destination.slackChannelId, projectCodes: destination.taskProjectCodes }));
+      const target = minutesTargets.find((candidate) => candidate.targetId === destination.taskBoardTargetId);
+      expect(target).toEqual(expect.objectContaining({ channelId: destination.slackChannelId }));
+      expect(destination.taskProjectCodes).toHaveLength(1);
+      expect(target?.projectCodes).toEqual(expect.arrayContaining(destination.taskProjectCodes));
     }
     expect(Object.fromEntries(destinations.map((destination) => [destination.id, {
       context: destination.contextProjectCode, tasks: destination.taskProjectCodes[0],
@@ -99,21 +101,32 @@ describe("会社別Cloudflare deployment", () => {
       "back-office": { context: "back-office", tasks: "back-office", board: "minutes-back-office" },
       "legal-affairs": { context: "unson", tasks: "unson", board: "minutes-legal-affairs" },
       brainbase: { context: "brainbase", tasks: "brainbase", board: "minutes-brainbase" },
-      "tech-knight": { context: "techknight", tasks: "techknight", board: "minutes-tech-knight" },
+      "tech-knight": { context: "techknight", tasks: "proj_techknight_board", board: "minutes-tech-knight" },
       aitle: { context: "aitle", tasks: "aitle", board: "minutes-aitle" },
-      aitel: { context: "techknight", tasks: "techknight", board: "minutes-aitel" },
-      council: { context: "techknight", tasks: "techknight", board: "minutes-council" },
-      pms: { context: "techknight", tasks: "techknight", board: "minutes-pms" },
-      "hp-sales": { context: "techknight", tasks: "techknight", board: "minutes-hp-sales" },
+      aitel: { context: "techknight", tasks: "smart-front", board: "minutes-aitel" },
+      council: { context: "techknight", tasks: "techknight-leisure-hotel-future-competition-council", board: "minutes-council" },
+      pms: { context: "techknight", tasks: "techknight-staye-business-succession-pms", board: "minutes-pms" },
+      "hp-sales": { context: "techknight", tasks: "techknight-hotel-website-production", board: "minutes-hp-sales" },
       senpainurse: { context: "senpainurse", tasks: "senpainurse", board: "minutes-senpainurse" },
-      "techknight-board": { context: "techknight", tasks: "techknight", board: "minutes-techknight-board" },
+      "techknight-board": { context: "techknight", tasks: "proj_techknight_board", board: "minutes-techknight-board" },
       salestailor: { context: "salestailor", tasks: "salestailor", board: "minutes-salestailor" },
       baao: { context: "baao", tasks: "baao", board: "minutes-baao" },
       yakumokai: { context: "unson", tasks: "unson", board: "minutes-yakumokai" },
       "other-meetings": { context: "unson", tasks: "unson", board: "minutes-other" },
       cursorvers: { context: "unson", tasks: "unson", board: "minutes-cursorvers" },
       kartz: { context: "kartz", tasks: "kartz", board: "minutes-kartz" },
-      united: { context: "techknight", tasks: "techknight", board: "minutes-united" },
+      united: { context: "techknight", tasks: "techknight-hotel-united-phase2-marketing", board: "minutes-united" },
+    });
+    expect(Object.fromEntries(minutesTargets
+      .filter((target) => target.organizationId === "tech-knight")
+      .map((target) => [target.targetId, target.projectCodes]))).toMatchObject({
+      "minutes-tech-knight": ["proj_techknight_board"],
+      "minutes-aitel": ["smart-front"],
+      "minutes-council": ["techknight-leisure-hotel-future-competition-council", "proj_council"],
+      "minutes-pms": ["techknight-staye-business-succession-pms", "proj_pms"],
+      "minutes-hp-sales": ["techknight-hotel-website-production"],
+      "minutes-techknight-board": ["proj_techknight_board"],
+      "minutes-united": ["techknight-hotel-united-phase2-marketing", "proj_united"],
     });
     expect(targets.find((target) => target.targetId === "runtime-mana-dev-biz")).toMatchObject({
       workspaceId: "T0882T8N9UH", channelId: "C0BMNSP6C80", projectCodes: ["mana"],
