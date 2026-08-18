@@ -625,7 +625,13 @@ export async function generateMeetingMinutesInSandbox(
 ): Promise<AuditedGeneratedMeetingMinutes> {
   try {
     await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript, destination, context, mode));
-    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
+    // Opus/xhigh repeatedly reaches the Queue wall-clock budget on long
+    // transcripts. Keep the same audited prompt/schema contract, but execute
+    // meeting-minutes generation with Sonnet so the job can finish in-band.
+    const generationRuntime: ClaudeRuntimeConfig = claudeRuntime.model === "opus"
+      ? { model: "sonnet" }
+      : claudeRuntime;
+    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", generationRuntime, {
       structuredOutput: "meeting-minutes",
       includeJudgmentHookEvents: true,
     }), {
