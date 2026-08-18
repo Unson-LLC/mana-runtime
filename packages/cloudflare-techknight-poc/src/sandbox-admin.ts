@@ -1,15 +1,9 @@
-import { hasAnthropicCredential } from "./anthropic-auth.js";
 import { resolveClaudeRuntimeConfig, type ClaudeRuntimeBindings } from "./claude-runtime-config.js";
 import { resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { generateMeetingMinutesInSandbox, meetingMinutesGenerationDiagnosticCode } from "./meeting-minutes-generator.js";
 
-const OAUTH_OK_MARKER = "TECHKNIGHT_OAUTH_OK";
-
 export interface SandboxAdminEnv extends ClaudeRuntimeBindings {
   SANDBOX_PROBE_TOKEN?: string;
-  ANTHROPIC_API_KEY?: string;
-  CLAUDE_CODE_OAUTH_TOKEN?: string;
-  TENANT_ID?: string;
   MEETING_MINUTES_CONTEXT_MODE?: string;
 }
 
@@ -32,6 +26,7 @@ interface ProbeSandbox {
 interface ProbeDependencies {
   createSandbox: (id: string) => ProbeSandbox;
   randomId?: () => string;
+  tenantBoundaryHandle?: string;
 }
 
 async function secureEqual(actual: string | null, expected: string): Promise<boolean> {
@@ -53,10 +48,6 @@ export async function isSandboxAdminAuthorized(request: Request, token?: string)
 
 function boundedVersion(output: string): string {
   return output.trim().replace(/[\r\n]+/g, " ").slice(0, 120);
-}
-
-function tenantId(env: SandboxAdminEnv): string {
-  return env.TENANT_ID?.trim() || "techknight";
 }
 
 export async function handleSandboxAdminRequest(
@@ -81,44 +72,20 @@ export async function handleSandboxAdminRequest(
       const result = await sandbox.exec("claude --version", { timeout: 60_000 });
       return Response.json({
         ok: result.success,
-        tenant: tenantId(env),
         runtime: "claude-code",
         version: result.success ? boundedVersion(result.stdout) : undefined,
-        oauthConfigured: hasAnthropicCredential(env),
-        credentialLocation: "worker-secret",
+        providerForwarding: "trusted_forwarder_required",
       });
     }
 
     if (pathname === "/admin/sandbox/oauth-probe") {
-      if (!hasAnthropicCredential(env)) {
-        return Response.json({ error: "oauth_not_configured" }, { status: 503 });
-      }
-      const result = await sandbox.exec(
-        `claude --print --permission-mode bypassPermissions "Reply exactly: ${OAUTH_OK_MARKER}"`,
-        {
-          timeout: 120_000,
-          env: {
-            IS_SANDBOX: "1",
-            CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
-          },
-        },
-      );
-      const ok = result.success && result.stdout.includes(OAUTH_OK_MARKER);
-      return Response.json(
-        {
-          ok,
-          tenant: tenantId(env),
-          auth: "anthropic-oauth",
-          credentialLocation: "worker-secret",
-          freshContainer: true,
-        },
-        { status: ok ? 200 : 502 },
-      );
+      return Response.json({ error: "credential_forwarding_unavailable" }, { status: 503 });
     }
 
     if (pathname === "/admin/sandbox/meeting-minutes-probe") {
-      if (!hasAnthropicCredential(env)) {
-        return Response.json({ error: "oauth_not_configured" }, { status: 503 });
+      const tenantBoundaryHandle = dependencies.tenantBoundaryHandle;
+      if (!tenantBoundaryHandle || !/^tb_[A-Za-z0-9_-]{32,128}$/.test(tenantBoundaryHandle)) {
+        return Response.json({ error: "tenant_boundary_required" }, { status: 503 });
       }
       const receipt = {
         schema_version: "meeting_minutes_context_receipt.v1" as const,
@@ -155,12 +122,12 @@ export async function handleSandboxAdminRequest(
           resolveMeetingMinutesContextMode(env.MEETING_MINUTES_CONTEXT_MODE),
           resolveClaudeRuntimeConfig(env),
           sandbox,
+          tenantBoundaryHandle,
         );
-        return Response.json({ ok: true, tenant: tenantId(env), probe: "meeting-minutes-generation" });
+        return Response.json({ ok: true, probe: "meeting-minutes-generation" });
       } catch (error) {
         return Response.json({
           ok: false,
-          tenant: tenantId(env),
           probe: "meeting-minutes-generation",
           code: meetingMinutesGenerationDiagnosticCode(error),
         }, { status: 502 });

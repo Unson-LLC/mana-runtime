@@ -35,13 +35,14 @@ function parsePolicy(value: string | undefined): TaskWritePolicy {
   }
 }
 
-async function postApprovalRequest(fetchImpl: typeof fetch, env: TaskWriteProxyEnv, input: {
+async function postApprovalRequest(fetchImpl: typeof fetch, brokered: boolean, env: TaskWriteProxyEnv, input: {
   approvalId: string; payloadHash: string; requesterId: string; operation: string; project: string; expiresAt: number;
 }): Promise<void> {
   const approvalChannelId = env.TASK_WRITE_APPROVAL_CHANNEL_ID ?? env.SLACK_ALLOWED_CHANNEL_ID;
-  if (!env.SLACK_BOT_TOKEN || !approvalChannelId) throw new Error("task_write_approval_not_configured");
+  if (!approvalChannelId || (!env.SLACK_BOT_TOKEN && !brokered)) throw new Error("task_write_approval_not_configured");
   const response = await fetchImpl("https://slack.com/api/chat.postMessage", { method: "POST",
-    headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" },
+    headers: { ...(env.SLACK_BOT_TOKEN ? { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` } : {}),
+      "content-type": "application/json; charset=utf-8" },
     body: JSON.stringify({ channel: approvalChannelId,
       text: `書き込み承認が必要です: ${input.operation} (${input.project})`,
       blocks: [{ type: "section", text: { type: "mrkdwn", text: `*書き込み承認*\n依頼者: <@${input.requesterId}>\n操作: \`${input.operation}\`\nプロジェクト: \`${input.project}\`` } },
@@ -153,7 +154,9 @@ function capabilityPlacementId(token: string): string {
   }
 }
 
-export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
+export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
+  const brokered = fetchImpl !== undefined;
+  const providerFetch = fetchImpl ?? fetch;
   return async (request: Request, env: TaskWriteProxyEnv): Promise<Response> => {
     if (env.RUNTIME_TASK_WRITE_ENABLED !== "true") return error("task_write_disabled", 503);
     const url = new URL(request.url);
@@ -170,7 +173,8 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
       const projects = placement?.projectCodes ?? parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
       const placementId = placement?.placementId ?? env.RUNTIME_PLACEMENT_ID;
       const writeChannelId = placement?.channelId ?? env.SLACK_ALLOWED_CHANNEL_ID;
-      if (!secret || projects.length === 0 || !env.BRAINBASE_TASK_API_TOKEN || !env.SLACK_EXPECTED_TEAM_ID || !placementId) throw new Error("task_write_not_configured");
+      if (!secret || projects.length === 0 || (!env.BRAINBASE_TASK_API_TOKEN && !brokered)
+        || !env.SLACK_EXPECTED_TEAM_ID || !placementId) throw new Error("task_write_not_configured");
       const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId });
       const operation = `task.${body.operation}` as TaskWriteOperation;
       const intent: TaskWriteIntent = { requestId: body.request_id, actor: claims.actor, placementId: claims.placementId,
@@ -201,7 +205,7 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
           await createTaskWriteApproval(env.TASK_WRITE_APPROVALS, { approvalId: newApprovalId, payloadHash: fingerprint,
             body, capability: token, requesterId: claims.actor.id, approvers: decision.approvers,
             policyVersion: decision.policyVersion, expiresAt });
-          await postApprovalRequest(fetchImpl, env, { approvalId: newApprovalId, payloadHash: fingerprint,
+          await postApprovalRequest(providerFetch, brokered, env, { approvalId: newApprovalId, payloadHash: fingerprint,
             requesterId: claims.actor.id, operation, project: body.project, expiresAt });
           console.log(JSON.stringify({ event: "task_write_approval_required", approvalId: newApprovalId, requestId: body.request_id,
             actor: claims.actor.id, project: body.project, operation, policyVersion: decision.policyVersion, payloadHash: fingerprint }));
@@ -223,7 +227,7 @@ export function createTaskWriteProxyHandler(fetchImpl: typeof fetch = fetch) {
       const client = new TaskApiClient({
         baseUrl: upstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL),
         token: env.BRAINBASE_TASK_API_TOKEN,
-        fetchImpl,
+        fetchImpl: providerFetch,
       });
       let result: CanonicalTask;
       if (body.operation === "create") {

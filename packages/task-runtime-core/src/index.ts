@@ -136,7 +136,7 @@ export class TaskApiError extends Error {
 
 export interface TaskApiClientOptions {
   baseUrl: string;
-  token: string;
+  token?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -188,11 +188,11 @@ function encodeQuery(query: object): string {
 
 export class TaskApiClient {
   private readonly baseUrl: string;
-  private readonly token: string;
+  private readonly token?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: TaskApiClientOptions) {
-    if (!options.baseUrl || !options.token) {
+    if (!options.baseUrl || (!options.token && !options.fetchImpl)) {
       throw new TaskApiError(503, "task_store_not_configured", "Canonical task API is not configured");
     }
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -204,7 +204,8 @@ export class TaskApiClient {
     path: string,
     options: { method?: string; body?: unknown; idempotencyKey?: string } = {},
   ): Promise<T> {
-    const headers: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    const headers: Record<string, string> = {};
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
     if (options.body !== undefined) headers["Content-Type"] = "application/json";
     if (options.idempotencyKey !== undefined) headers["Idempotency-Key"] = options.idempotencyKey;
 

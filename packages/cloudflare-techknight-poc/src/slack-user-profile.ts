@@ -38,14 +38,15 @@ export async function resolveSlackUserProfile(input: {
   botToken?: string;
   fetchImpl?: typeof fetch;
 }): Promise<SlackUserProfileResolution> {
-  if (!input.botToken || !/^[A-Z0-9_]{3,64}$/.test(input.userId)) {
+  if ((!input.botToken && !input.fetchImpl) || !/^[A-Z0-9_]{3,64}$/.test(input.userId)) {
     return { status: "unavailable", reason: "slack_api_error" };
   }
   let response: Response;
   try {
     response = await (input.fetchImpl ?? fetch)(
       `https://slack.com/api/users.info?user=${encodeURIComponent(input.userId)}`,
-      { method: "GET", headers: { Authorization: `Bearer ${input.botToken}` }, signal: AbortSignal.timeout(10_000) },
+      { method: "GET", headers: input.botToken ? { Authorization: `Bearer ${input.botToken}` } : {},
+        signal: AbortSignal.timeout(10_000) },
     );
   } catch {
     return { status: "unavailable", reason: "slack_api_error" };

@@ -14,9 +14,17 @@ export interface TransactionalStorage {
 interface EventClaim {
   status: "processing" | "completed";
   claimedAt: number;
+  claimToken: string;
   responseTs?: string;
   completedAt?: number;
 }
+
+export type RuntimeEventClaimResult =
+  | { disposition: "claimed"; claimToken: string }
+  | { disposition: "in_progress"; retryAfterMs: number }
+  | { disposition: "completed"; responseTs?: string };
+
+export type RuntimeClaimSettlement = "complete" | "release";
 
 function key(eventId: string): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(eventId)) throw new Error("event_id_invalid");
@@ -30,20 +38,41 @@ export function runtimeDeliveryId(event: Pick<SlackQueueEvent, "eventId" | "mess
   return event.eventId;
 }
 
-export async function claimRuntimeEvent(storage: TransactionalStorage, eventId: string, now = Date.now()): Promise<boolean> {
+/**
+ * Claims the canonical Slack message delivery identity. `message` and
+ * `app_mention` variants of one Slack post intentionally share this claim, but
+ * only a delivered text reply completes it. Non-reply triage releases it so a
+ * later explicit mention remains eligible.
+ */
+export async function claimRuntimeEvent(
+  storage: TransactionalStorage,
+  eventId: string,
+  now = Date.now(),
+): Promise<RuntimeEventClaimResult> {
   const storageKey = key(eventId);
   return storage.transaction(async (transaction) => {
     const current = await transaction.get<EventClaim>(storageKey);
-    if (current?.status === "completed") return false;
-    if (current?.status === "processing" && now - current.claimedAt < LEASE_MS) return false;
-    await transaction.put(storageKey, { status: "processing", claimedAt: now } satisfies EventClaim);
-    return true;
+    if (current?.status === "completed") {
+      return { disposition: "completed", ...(current.responseTs ? { responseTs: current.responseTs } : {}) };
+    }
+    if (current?.status === "processing" && now - current.claimedAt < LEASE_MS) {
+      return { disposition: "in_progress", retryAfterMs: LEASE_MS - (now - current.claimedAt) };
+    }
+    const claimToken = crypto.randomUUID();
+    await transaction.put(storageKey, { status: "processing", claimedAt: now, claimToken } satisfies EventClaim);
+    return { disposition: "claimed", claimToken };
   });
+}
+
+export function runtimeClaimSettlement(result: { outcome?: string; responseTs?: string }): RuntimeClaimSettlement {
+  if (result.outcome === "ignored" || result.outcome === "reacted") return "release";
+  return typeof result.responseTs === "string" && result.responseTs.length > 0 ? "complete" : "release";
 }
 
 export async function completeRuntimeEvent(
   storage: TransactionalStorage,
   eventId: string,
+  claimToken: string,
   responseTs: string | undefined,
   now = Date.now(),
 ): Promise<void> {
@@ -51,19 +80,27 @@ export async function completeRuntimeEvent(
   await storage.transaction(async (transaction) => {
     const current = await transaction.get<EventClaim>(storageKey);
     if (current?.status !== "processing") throw new Error("runtime_event_claim_missing");
+    if (current.claimToken !== claimToken) throw new Error("runtime_event_claim_conflict");
     await transaction.put(storageKey, {
       status: "completed",
       claimedAt: current.claimedAt,
+      claimToken,
       ...(responseTs ? { responseTs } : {}),
       completedAt: now,
     } satisfies EventClaim);
   });
 }
 
-export async function releaseRuntimeEvent(storage: TransactionalStorage, eventId: string): Promise<void> {
+export async function releaseRuntimeEvent(
+  storage: TransactionalStorage,
+  eventId: string,
+  claimToken: string,
+): Promise<void> {
   const storageKey = key(eventId);
   await storage.transaction(async (transaction) => {
     const current = await transaction.get<EventClaim>(storageKey);
-    if (current?.status === "processing") await transaction.delete(storageKey);
+    if (current?.status !== "processing") throw new Error("runtime_event_claim_missing");
+    if (current.claimToken !== claimToken) throw new Error("runtime_event_claim_conflict");
+    await transaction.delete(storageKey);
   });
 }

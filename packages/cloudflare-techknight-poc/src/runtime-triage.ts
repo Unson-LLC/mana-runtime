@@ -1,3 +1,5 @@
+import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
+
 export interface RuntimeTriageInput {
   botName: string;
   persona?: string;
@@ -71,22 +73,27 @@ export function parseRuntimeTriageDecision(raw: string): RuntimeTriageDecision |
 export async function runRuntimeTriage(input: RuntimeTriageInput, options: {
   model: "sonnet" | "opus";
   effort?: "xhigh";
+  tenantBoundaryHandle: string;
   createSandbox(id: string): TriageSandbox;
 }): Promise<RuntimeTriageDecision> {
-  const sandbox = options.createSandbox(`triage-${crypto.randomUUID()}`);
+  if (!options.tenantBoundaryHandle) throw new Error("tenant_boundary_required");
+  const sandbox = options.createSandbox(freshTenantContainerId("triage"));
   const promptPath = "/tmp/mana-triage-prompt.txt";
   try {
     await sandbox.writeFile(promptPath, buildRuntimeTriagePrompt(input));
     const effort = options.effort ? ` --effort ${options.effort}` : "";
     const result = await sandbox.exec(
-      `claude --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
-      { timeout: 30_000, env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" } },
+      `node /opt/mana/tenant-claude-runner.mjs -- --print --model ${options.model}${effort} --permission-mode bypassPermissions "$(cat ${promptPath})"`,
+      { timeout: 30_000, env: {
+        IS_SANDBOX: "1",
+        MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
+      } },
     );
     if (!result.success) return { action: "reply", reason: "triage_error" };
     return parseRuntimeTriageDecision(result.stdout) ?? { action: "reply", reason: "parse_failed" };
   } catch {
     return { action: "reply", reason: "triage_error" };
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }

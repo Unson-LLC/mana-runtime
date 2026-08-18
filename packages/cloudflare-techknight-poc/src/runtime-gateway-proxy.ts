@@ -1,7 +1,7 @@
 import { TaskApiClient, type TaskListPage } from "@openryoko/task-runtime-core";
 import { verifyTaskWriteCapability } from "@openryoko/write-broker";
 import { parseRuntimePlacements, type RuntimePlacement } from "./runtime-config.js";
-import { handleTaskWriteProxyRequest, type TaskWriteProxyEnv } from "./task-write-proxy.js";
+import { createTaskWriteProxyHandler, type TaskWriteProxyEnv } from "./task-write-proxy.js";
 
 export const RUNTIME_GATEWAY_PROXY_HOST = "gateway.internal";
 export const RUNTIME_GATEWAY_PATH = "/api/runtime/gateway";
@@ -18,6 +18,15 @@ export interface RuntimeGatewayProxyEnv extends TaskWriteProxyEnv {
 }
 
 type GatewayBody = { tool: string; arguments: Record<string, unknown>; request_id: string; call_index?: number };
+export interface RuntimeGatewayProxyDependencies {
+  deliverSlackMessage?(input: {
+    requestId: string;
+    callIndex: number;
+    channel: string;
+    threadTs?: string;
+    text: string;
+  }): Promise<{ channel: string; ts?: string }>;
+}
 const responseError = (error: string, status: number) => Response.json({ error }, { status });
 
 function decodePlacementId(token: string): string {
@@ -108,7 +117,12 @@ function authorizedTaskChannels(source: RuntimePlacement, placements: readonly R
   return { channels, scope: { mode: "authorized_channels" as const } };
 }
 
-export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch) {
+export function createRuntimeGatewayProxyHandler(
+  fetchImpl?: typeof fetch,
+  dependencies: RuntimeGatewayProxyDependencies = {},
+) {
+  const brokered = fetchImpl !== undefined;
+  const providerFetch = fetchImpl ?? fetch;
   return async (request: Request, env: RuntimeGatewayProxyEnv): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method !== "POST" || url.protocol !== "https:" || url.hostname !== RUNTIME_GATEWAY_PROXY_HOST || url.pathname !== RUNTIME_GATEWAY_PATH) return responseError("not_found", 404);
@@ -128,7 +142,7 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
 
       if (["create_task","update_task","transition_task"].includes(body.tool)) {
         const operation = body.tool.replace("_task", "");
-        return handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", { method: "POST",
+        return createTaskWriteProxyHandler(fetchImpl)(new Request("https://task-write.internal/api/task-write", { method: "POST",
           headers: { "content-type": "application/json", "x-mana-task-write-capability": token },
           body: JSON.stringify({ ...body.arguments, request_id: body.request_id, project: placement.projectCodes[0], operation, call_index: body.call_index }) }),
         { ...env, RUNTIME_PROJECT_CODES: placement.projectCodes.join(","), RUNTIME_PLACEMENT_ID: placement.placementId,
@@ -139,7 +153,7 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
         return Response.json(authorizedTaskChannels(placement, placements, claims.actor.id));
       }
       if (["list_tasks", "search_tasks", "list_tasks_across_channels", "search_tasks_across_channels"].includes(body.tool)) {
-        if (!env.BRAINBASE_TASK_API_BASE_URL || !env.BRAINBASE_TASK_API_TOKEN) return responseError("gateway_not_configured", 503);
+        if (!env.BRAINBASE_TASK_API_BASE_URL || (!env.BRAINBASE_TASK_API_TOKEN && !brokered)) return responseError("gateway_not_configured", 503);
         const isSearch = body.tool === "search_tasks" || body.tool === "search_tasks_across_channels";
         const isCrossChannel = body.tool === "list_tasks_across_channels" || body.tool === "search_tasks_across_channels";
         if (isSearch && env.RUNTIME_TASK_SEARCH_ENABLED !== "true") return responseError("gateway_tool_disabled", 503);
@@ -151,7 +165,8 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
         const query = taskQuery(args, projectCodes);
         if (!query) return responseError("invalid_arguments", 400);
         if (isSearch && (typeof args.query !== "string" || !args.query.trim() || args.query.length > 200)) return responseError("invalid_arguments", 400);
-        const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL, token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl });
+        const client = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+          token: env.BRAINBASE_TASK_API_TOKEN, fetchImpl: providerFetch });
         try {
           const page = isSearch ? await client.searchTasks({ ...query, query: (args.query as string).trim() }) : await client.listTasks(query);
           return Response.json(normalizeTaskPage(page, projectCodes, query.limit, scope));
@@ -163,11 +178,18 @@ export function createRuntimeGatewayProxyHandler(fetchImpl: typeof fetch = fetch
       if (body.tool === "send_message") {
         const args = body.arguments;
         const delivery = placement.deliveryScopes ?? [];
-        if (args.connector !== "slack" || typeof args.channel !== "string" || !delivery.some((scope) => scope.connector === "slack" && scope.channelId === args.channel) || typeof args.text !== "string" || !args.text.trim() || !env.SLACK_BOT_TOKEN) return responseError("gateway_delivery_denied", 403);
-        const upstream = await fetchImpl("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: args.channel, text: args.text.trim(), ...(typeof args.thread === "string" ? { thread_ts: args.thread } : {}) }) });
-        const payload = await upstream.json().catch(() => null) as { ok?: boolean; ts?: string; error?: string } | null;
-        if (!upstream.ok || !payload?.ok) return responseError("gateway_delivery_failed", 502);
-        return Response.json({ ok: true, channel: args.channel, ts: payload.ts });
+        if (args.connector !== "slack" || typeof args.channel !== "string" || !delivery.some((scope) => scope.connector === "slack" && scope.channelId === args.channel) || typeof args.text !== "string" || !args.text.trim()) return responseError("gateway_delivery_denied", 403);
+        if (!dependencies.deliverSlackMessage) return responseError("gateway_delivery_not_configured", 503);
+        const delivered = await dependencies.deliverSlackMessage({
+          requestId: body.request_id,
+          callIndex: Number.isInteger(body.call_index) && Number(body.call_index) >= 0
+            ? Number(body.call_index)
+            : 0,
+          channel: args.channel,
+          ...(typeof args.thread === "string" ? { threadTs: args.thread } : {}),
+          text: args.text.trim(),
+        });
+        return Response.json({ ok: true, channel: delivered.channel, ...(delivered.ts ? { ts: delivered.ts } : {}) });
       }
       if (body.tool === "list_sessions" || body.tool === "get_session") {
         if (!env.RUNTIME_SESSION_REGISTRY) return responseError("gateway_not_configured", 503);

@@ -267,6 +267,22 @@ describe("runtime gateway proxy", () => {
     const response = await createRuntimeGatewayProxyHandler(fetchImpl)(await request("send_message", { connector: "slack", channel: "C_OTHER", text: "x" }), env);
     expect(response.status).toBe(403); expect(fetchImpl).not.toHaveBeenCalled();
   });
+  it("routes an authorized Slack delivery through the canonical tenant delivery port", async () => {
+    const fetchImpl = vi.fn(async () => { throw new Error("direct_slack_fetch_forbidden"); });
+    const deliverSlackMessage = vi.fn(async () => ({ channel: "C_MANA", ts: "2.0" }));
+    const response = await createRuntimeGatewayProxyHandler(fetchImpl as typeof fetch, {
+      deliverSlackMessage,
+    })(await request("send_message", {
+      connector: "slack", channel: "C_MANA", thread: "1.0", text: "  完了しました  ",
+    }), env);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, channel: "C_MANA", ts: "2.0" });
+    expect(deliverSlackMessage).toHaveBeenCalledWith({
+      requestId: "Ev1", callIndex: 1, channel: "C_MANA", threadTs: "1.0", text: "完了しました",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
   it("rejects a capability for a non-operator", async () => {
     const response = await createRuntimeGatewayProxyHandler(vi.fn())(await request("list_tasks", {}, capability("UOTHER")), env);
     expect(response.status).toBe(403);

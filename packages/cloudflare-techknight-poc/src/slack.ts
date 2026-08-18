@@ -1,13 +1,13 @@
 import type { SlackFileReference, SlackQueueEvent } from "./types.js";
 import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-request-body.js";
-import { TenantBoundaryError } from "./multitenancy/errors.js";
-import { assertSecretArtifactFree } from "./multitenancy/secret-guard.js";
 import {
+  TenantBoundaryError,
+  assertSecretArtifactFree,
   resolveSlackWorkerIngress,
   type TenantAuthorityClient,
   type TenantContextIssueRequest,
   type TenantQueueBody,
-} from "./multitenancy/runtime-boundaries.js";
+} from "./multitenancy/index.js";
 
 const SLACK_REPLAY_WINDOW_SECONDS = 300;
 const MAX_SLACK_FILES = 10;
