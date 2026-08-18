@@ -29,6 +29,7 @@ interface InteractionOptions {
   updateOriginal?(responseUrl: string, message: SlackInteractionMessage): Promise<void>;
   defer?(work: Promise<void>): void;
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string }): Promise<Response>;
+  handleContractLedgerAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
   handleMeetingTaskAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
   isIntakePaused?(): Promise<boolean>;
 }
@@ -85,6 +86,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
   resolveThreadTs?: InteractionOptions["resolveThreadTs"],
   handleMeetingTaskAction?: InteractionOptions["handleMeetingTaskAction"],
   isIntakePaused?: InteractionOptions["isIntakePaused"],
+  handleContractLedgerAction?: InteractionOptions["handleContractLedgerAction"],
 ): Promise<Response> {
   const slack = new MeetingMinutesSlackClient(env.SLACK_BOT_TOKEN ?? "");
   const destinationTeamIds = (() => {
@@ -105,7 +107,8 @@ export function handleMeetingMinutesInteractionEntrypoint(
     clearProcessing: (input) => slack.clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
     updateOriginal: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
-    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction, isIntakePaused });
+    defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction, isIntakePaused,
+    handleContractLedgerAction });
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
@@ -141,6 +144,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   if (options.handleMeetingTaskAction) {
     const taskResponse = await options.handleMeetingTaskAction(payload!);
     if (taskResponse) return taskResponse;
+  }
+  if (options.handleContractLedgerAction) {
+    const contractResponse = await options.handleContractLedgerAction(payload!);
+    if (contractResponse) return contractResponse;
   }
   if (string(team?.id) !== options.expectedTeamId) return response("slack_team_forbidden", 403);
   const userId = string(user?.id);

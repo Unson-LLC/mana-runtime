@@ -97,6 +97,19 @@ import {
   handleMeetingMinutesIntakeAdminRequest,
   interceptMeetingMinutesIntakePause,
 } from "./meeting-minutes-intake-entrypoints.js";
+import {
+  ContractLedgerState,
+  contractLedgerConfig,
+  enqueueScheduledContractLedgerSync,
+  isContractLedgerEvent,
+  notifyContractLedgerDeadLetter,
+  parseContractLedgerSlackAction,
+  processContractLedgerApproval,
+  processContractLedgerSync,
+  type ContractLedgerApprovalEvent,
+  type ContractLedgerEnvironment,
+  type ContractLedgerSyncEvent,
+} from "./contract-ledger.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -104,8 +117,9 @@ export { TaskWriteApproval } from "./task-write-approval.js";
 export { TaskBoardBinding } from "./task-board-binding.js";
 export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
 export { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
+export { ContractLedgerState } from "./contract-ledger.js";
 
-interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
+interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedgerEnvironment {
   SLACK_SIGNING_SECRET: string;
   SLACK_SIGNING_SECRET_TECHKNIGHT?: string;
   SLACK_EXPECTED_TEAM_ID: string;
@@ -542,7 +556,12 @@ export default {
               env, targetId, "task_write",
             ), defer: (work) => ctx.waitUntil(work),
           });
-        }, () => meetingMinutesDeploymentGate(env).isIntakePaused());
+        }, () => meetingMinutesDeploymentGate(env).isIntakePaused(), async (payload) => {
+          const event = parseContractLedgerSlackAction(payload, contractLedgerConfig(env));
+          if (!event) return undefined;
+          await env.CONTRACT_LEDGER_SYNCS.send(event);
+          return Response.json({ ok: true, queued: true, decision: event.decision, envelope_id: event.envelopeId });
+        });
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
@@ -580,8 +599,29 @@ export default {
     });
   },
 
-  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
+      if (isContractLedgerEvent(message.body)) {
+        if (batch.queue === "unson-business-contract-ledger-syncs-dlq") {
+          try { await notifyContractLedgerDeadLetter(message.body, env); message.ack(); }
+          catch (error) {
+            console.error(JSON.stringify({ event: "contract_ledger_dlq_notification_failed", runId: message.body.runId,
+              error: error instanceof Error ? error.message : "unexpected_error" }));
+            message.retry();
+          }
+          continue;
+        }
+        try {
+          if (message.body.kind === "contract_ledger_sync") await processContractLedgerSync(message.body, env);
+          else await processContractLedgerApproval(message.body, env);
+          message.ack();
+        } catch (error) {
+          console.error(JSON.stringify({ event: "contract_ledger_processing_failed", kind: message.body.kind,
+            runId: message.body.runId, error: error instanceof Error ? error.message : "unexpected_error" }));
+          message.retry();
+        }
+        continue;
+      }
       if (isTaskBoardRepairEvent(message.body)) {
         await consumeTaskBoardRepair({
           body: message.body,
@@ -1031,7 +1071,8 @@ export default {
     }
   },
 
-  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     await enqueueScheduledTaskBoardRepair(env);
+    await enqueueScheduledContractLedgerSync(controller, env);
   },
-} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;
+} satisfies ExportedHandler<Env, SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>;
