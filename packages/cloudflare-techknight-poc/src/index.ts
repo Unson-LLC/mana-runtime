@@ -18,6 +18,7 @@ import {
 } from "./sandbox-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
+  currentMeetingMinutesActionTs,
   isMeetingMinutesSelection,
   isMeetingMinutesRedo,
   isMeetingMinutesRouterFileEvent,
@@ -400,7 +401,7 @@ export default {
         const selection = { kind: "meeting_minutes_selection", runId,
           destinationId: run.destination.id, workspaceId: run.workspaceId,
           channelId: run.sourceChannelId, userId: run.approvedBy ?? "admin-retry",
-          actionTs: new Date().toISOString() } satisfies MeetingMinutesSelection;
+          actionTs: currentMeetingMinutesActionTs() } satisfies MeetingMinutesSelection;
         run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
           const clients = meetingMinutesClients(env);
           await processMeetingMinutesSelectionWithStatus(workspace.fs, selection,

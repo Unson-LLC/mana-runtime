@@ -59,6 +59,9 @@ export function isMeetingMinutesSelection(value: unknown): value is MeetingMinut
       typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
     typeof candidate.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.actionTs);
 }
+export function currentMeetingMinutesActionTs(nowMs = Date.now()): string {
+  return (nowMs / 1_000).toFixed(6);
+}
 export function isMeetingMinutesRedo(value: unknown): value is MeetingMinutesRedo {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Partial<MeetingMinutesRedo>;
