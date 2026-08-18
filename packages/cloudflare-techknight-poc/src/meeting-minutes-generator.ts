@@ -25,12 +25,26 @@ const MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES = new Set([
   "meeting_minutes_generation_result_error",
   "meeting_minutes_generation_result_missing",
   "meeting_minutes_generation_result_schema_invalid",
+  "meeting_minutes_generation_result_schema_invalid_title",
+  "meeting_minutes_generation_result_schema_invalid_overview",
+  "meeting_minutes_generation_result_schema_invalid_body",
+  "meeting_minutes_generation_result_schema_invalid_tasks",
+  "meeting_minutes_generation_result_schema_invalid_used_source_refs",
+  "meeting_minutes_generation_result_schema_invalid_decision_candidates",
   "meeting_minutes_judgment_hook_failed",
   "meeting_minutes_judgment_hook_receipt_invalid",
   "meeting_minutes_judgment_lifecycle_incomplete",
   "meeting_minutes_judgment_event_order_invalid",
   "meeting_minutes_judgment_identity_mismatch",
   "meeting_minutes_judgment_route_receipt_missing",
+]);
+const MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES = new Set([
+  "meeting_minutes_generation_result_schema_invalid_title",
+  "meeting_minutes_generation_result_schema_invalid_overview",
+  "meeting_minutes_generation_result_schema_invalid_body",
+  "meeting_minutes_generation_result_schema_invalid_tasks",
+  "meeting_minutes_generation_result_schema_invalid_used_source_refs",
+  "meeting_minutes_generation_result_schema_invalid_decision_candidates",
 ]);
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
@@ -90,11 +104,16 @@ export function meetingMinutesGenerationDiagnosticCode(error: unknown): string {
 export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMinutes {
   const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   assertGeneratedMeetingMinutesNotPlaceholder(record);
-  const title = nonEmpty(record.title, 200); const overview = nonEmpty(record.overview, 600);
+  const title = nonEmpty(record.title, 200);
+  if (!title) throw new Error("meeting_minutes_generation_result_schema_invalid_title");
+  const overview = nonEmpty(record.overview, 600);
+  if (!overview) throw new Error("meeting_minutes_generation_result_schema_invalid_overview");
   const body = stripMeetingMinutesActionItems(nonEmpty(record.body, 100_000) ?? "");
-  if (!title || !overview || !body) throw new Error("meeting_minutes_generation_invalid");
+  if (!body) throw new Error("meeting_minutes_generation_result_schema_invalid_body");
   const rawTasks = record.tasks === undefined ? [] : record.tasks;
-  if (!Array.isArray(rawTasks) || rawTasks.length > 20) throw new Error("meeting_minutes_generation_invalid");
+  if (!Array.isArray(rawTasks) || rawTasks.length > 20) {
+    throw new Error("meeting_minutes_generation_result_schema_invalid_tasks");
+  }
   const tasks = rawTasks.map((item): MeetingMinutesTaskCandidate | undefined => {
     const task = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
     const taskTitle = nonEmpty(task.title, 200); if (!taskTitle) return undefined;
@@ -109,19 +128,27 @@ export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMi
     return { title: taskTitle, ...(description ? { description } : {}), ...(assignee_name ? { assignee_name } : {}), ...(priority ? { priority } : {}),
       ...(due_at ? { due_at } : {}) };
   });
-  if (tasks.some((task) => !task)) throw new Error("meeting_minutes_generation_invalid");
+  if (tasks.some((task) => !task)) {
+    throw new Error("meeting_minutes_generation_result_schema_invalid_tasks");
+  }
   const brainbase_context_receipt_id = nonEmpty(record.brainbase_context_receipt_id, 200);
   const brainbase_context_checksum = nonEmpty(record.brainbase_context_checksum, 128);
   const rawRefs = record.used_source_refs ?? [];
-  if (!Array.isArray(rawRefs) || rawRefs.length > 100) throw new Error("meeting_minutes_generation_invalid");
+  if (!Array.isArray(rawRefs) || rawRefs.length > 100) {
+    throw new Error("meeting_minutes_generation_result_schema_invalid_used_source_refs");
+  }
   const used_source_refs = rawRefs.map((item): MeetingMinutesContextSourceRef | undefined => {
     const ref = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
     const type = nonEmpty(ref.type, 100); const id = nonEmpty(ref.id, 300); const sourceRef = nonEmpty(ref.ref, 2_000);
     return type && id ? { type, id, ...(sourceRef ? { ref: sourceRef } : {}) } : undefined;
   });
-  if (used_source_refs.some((ref) => !ref)) throw new Error("meeting_minutes_generation_invalid");
+  if (used_source_refs.some((ref) => !ref)) {
+    throw new Error("meeting_minutes_generation_result_schema_invalid_used_source_refs");
+  }
   const rawDecisions = record.decision_candidates ?? [];
-  if (!Array.isArray(rawDecisions) || rawDecisions.length > 20) throw new Error("meeting_minutes_generation_invalid");
+  if (!Array.isArray(rawDecisions) || rawDecisions.length > 20) {
+    throw new Error("meeting_minutes_generation_result_schema_invalid_decision_candidates");
+  }
   const decision_candidates = rawDecisions.map((item) => {
     const decision = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
     const decisionTitle = nonEmpty(decision.title, 300); if (!decisionTitle) return undefined;
@@ -130,7 +157,9 @@ export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMi
       ? decision.source_ref_ids.map((id) => nonEmpty(id, 300)).filter((id): id is string => Boolean(id)).slice(0, 20) : [];
     return { title: decisionTitle, ...(reason ? { reason } : {}), ...(ids.length ? { source_ref_ids: ids } : {}) };
   });
-  if (decision_candidates.some((decision) => !decision)) throw new Error("meeting_minutes_generation_invalid");
+  if (decision_candidates.some((decision) => !decision)) {
+    throw new Error("meeting_minutes_generation_result_schema_invalid_decision_candidates");
+  }
   return { title, overview, body, tasks: tasks as MeetingMinutesTaskCandidate[],
     ...(brainbase_context_receipt_id ? { brainbase_context_receipt_id } : {}),
     ...(brainbase_context_checksum ? { brainbase_context_checksum } : {}),
@@ -321,6 +350,7 @@ function resultMinutes(events: Array<Record<string, unknown>>): {
         ...(typeof sessionId === "string" ? { sessionId } : {}) };
     } catch (error) {
       if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+      if (error instanceof Error && MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(error.message)) throw error;
       throw new Error("meeting_minutes_generation_result_schema_invalid");
     }
     throw new Error("meeting_minutes_generation_result_schema_invalid");
