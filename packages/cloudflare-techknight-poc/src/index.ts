@@ -282,10 +282,11 @@ function meetingMinutesClients(env: Env) {
       postProcessingStatus: (run: MeetingMinutesRun) => slack.postProcessingStatus(run),
       download: (fileId: string) => slack.downloadTextFile(fileId),
       generate: (transcript: string, destination: MeetingMinutesDestination,
-        context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3]) => {
+        context: Parameters<typeof generateMeetingMinutesInSandbox>[2], mode: Parameters<typeof generateMeetingMinutesInSandbox>[3],
+        observe?: Parameters<typeof generateMeetingMinutesInSandbox>[6]) => {
         if (!hasAnthropicCredential(env)) throw new Error("oauth_not_configured");
         return generateMeetingMinutesInSandbox(transcript, destination, context, mode, claudeRuntime,
-          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`));
+          createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`), observe);
       },
       saveGitHub: (input: Parameters<typeof github.save>[0]) => github.save(input),
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {

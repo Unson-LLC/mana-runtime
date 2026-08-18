@@ -1,6 +1,6 @@
 import type { AuditedGeneratedMeetingMinutes, GeneratedMeetingMinutes, MeetingMinutesDestination,
   MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
-  MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
+  MeetingMinutesGenerationDiagnostics, MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
@@ -49,6 +49,46 @@ const MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES = new Set([
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
+
+function safeExitCode(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
+}
+
+function classifyGenerationStderr(stderr: string, timeout: boolean): MeetingMinutesGenerationDiagnostics["stderrCode"] {
+  if (timeout) return "TIMEOUT";
+  const normalized = stderr.toLowerCase();
+  if (normalized.includes("rate_limit") || normalized.includes("rate limit")) return "RATE_LIMITED";
+  if (normalized.includes("judgment_hook") || normalized.includes("judgment hook")) return "HOOK_FAILED";
+  if (normalized.includes("authentication") || normalized.includes("unauthorized")) return "AUTHENTICATION_FAILED";
+  return "UNKNOWN";
+}
+
+function generationStreamProgress(stdout: string): Pick<MeetingMinutesGenerationDiagnostics,
+  "stdoutBytes" | "streamEventCount"> & Pick<MeetingMinutesGenerationDiagnostics["progress"],
+  "stdout_observed" | "hook_observed" | "result_observed"> {
+  const events = stdout.split("\n").filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as Record<string, unknown>]; } catch { return []; }
+  });
+  return { stdoutBytes: new TextEncoder().encode(stdout).byteLength, streamEventCount: events.length,
+    stdout_observed: stdout.length > 0,
+    hook_observed: events.some((event) => event.type === "system" && event.subtype === "hook_response"),
+    result_observed: events.some((event) => event.type === "result") };
+}
+
+function generationFailure(message: string, diagnostics: MeetingMinutesGenerationDiagnostics): Error {
+  const error = new Error(message) as Error & { generationDiagnostics: MeetingMinutesGenerationDiagnostics };
+  error.generationDiagnostics = diagnostics;
+  return error;
+}
+
+function safeGenerationErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return /^meeting_minutes_[a-z0-9_]+$/.test(message) ? message : "meeting_minutes_generation_failed";
+}
+
+function isGenerationTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === "TimeoutError";
+}
 async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
   await sandbox.writeFile(runtimeClaudePromptPath("meeting-minutes"), prompt);
 }
@@ -652,24 +692,62 @@ export async function generateMeetingMinutesInSandbox(
   mode: MeetingMinutesContextMode,
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
+  observe?: (diagnostics: MeetingMinutesGenerationDiagnostics) => Promise<void>,
 ): Promise<AuditedGeneratedMeetingMinutes> {
+  const generationRuntime: ClaudeRuntimeConfig = claudeRuntime.model === "opus"
+    ? { model: "sonnet" }
+    : claudeRuntime;
+  const startedAtMs = Date.now();
+  const base: MeetingMinutesGenerationDiagnostics = {
+    schemaVersion: "meeting_minutes_generation_diagnostics.v1", startedAt: new Date(startedAtMs).toISOString(),
+    model: generationRuntime.model, timeoutMs: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
+    progress: { prompt_written: false, exec_started: false },
+  };
   try {
     await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript, destination, context, mode));
+    base.progress.prompt_written = true;
     // Opus/xhigh repeatedly reaches the Queue wall-clock budget on long
     // transcripts. Keep the same audited prompt/schema contract, but execute
     // meeting-minutes generation with Sonnet so the job can finish in-band.
-    const generationRuntime: ClaudeRuntimeConfig = claudeRuntime.model === "opus"
-      ? { model: "sonnet" }
-      : claudeRuntime;
-    const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", generationRuntime, {
+    const execution = sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", generationRuntime, {
       structuredOutput: "meeting-minutes",
       includeJudgmentHookEvents: true,
     }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
     });
-    if (!result.success) throw new Error("meeting_minutes_generation_failed");
-    return parseReceiptBoundGeneratedMeetingMinutesOutput(result.stdout, context);
+    base.progress.exec_started = true;
+    await observe?.(structuredClone(base));
+    const result = await execution;
+    const finishedAtMs = Date.now();
+    const stream = generationStreamProgress(result.stdout);
+    const elapsedMs = typeof result.elapsedMs === "number" && Number.isFinite(result.elapsedMs)
+      ? Math.max(0, result.elapsedMs) : Math.max(0, finishedAtMs - startedAtMs);
+    const exitCode = safeExitCode(result.exitCode);
+    if (!result.success) {
+      const timeout = result.outcome === "timeout";
+      throw generationFailure("meeting_minutes_generation_failed", { ...base,
+        finishedAt: new Date(finishedAtMs).toISOString(), elapsedMs,
+        outcome: timeout ? "timeout" : "nonzero_exit", ...(exitCode === undefined ? {} : { exitCode }),
+        stderrCode: classifyGenerationStderr(result.stderr, timeout), progress: { ...base.progress,
+          stdout_observed: stream.stdout_observed, hook_observed: stream.hook_observed,
+          result_observed: stream.result_observed },
+        stdoutBytes: stream.stdoutBytes, streamEventCount: stream.streamEventCount });
+    }
+    const generated = parseReceiptBoundGeneratedMeetingMinutesOutput(result.stdout, context);
+    Object.defineProperty(generated, "generationDiagnostics", { enumerable: false, configurable: true,
+      value: { ...base, finishedAt: new Date(finishedAtMs).toISOString(), elapsedMs,
+        outcome: "success", progress: { ...base.progress, stdout_observed: stream.stdout_observed,
+          hook_observed: stream.hook_observed, result_observed: stream.result_observed },
+        stdoutBytes: stream.stdoutBytes, streamEventCount: stream.streamEventCount } });
+    return generated;
+  } catch (error) {
+    if (error && typeof error === "object" && "generationDiagnostics" in error) throw error;
+    const finishedAtMs = Date.now();
+    const timeout = isGenerationTimeout(error);
+    throw generationFailure(safeGenerationErrorMessage(error), {
+      ...base, finishedAt: new Date(finishedAtMs).toISOString(), elapsedMs: Math.max(0, finishedAtMs - startedAtMs),
+      outcome: timeout ? "timeout" : "transport_failure", stderrCode: timeout ? "TIMEOUT" : "UNKNOWN" });
   } finally {
     await sandbox.destroy().catch(() => undefined);
   }

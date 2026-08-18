@@ -44,6 +44,8 @@ interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode?: number;
+  outcome?: string;
+  elapsedMs?: number;
 }
 
 export interface ReplySandbox {

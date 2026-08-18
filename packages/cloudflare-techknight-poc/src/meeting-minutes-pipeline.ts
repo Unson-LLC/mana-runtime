@@ -1,6 +1,7 @@
 import { isMeetingMinutesFile, meetingMinutesRunId, type AuditedGeneratedMeetingMinutes, type GeneratedMeetingMinutes,
   type MeetingMinutesContextMode, type MeetingMinutesContextReceipt,
-  type MeetingMinutesDestination, type MeetingMinutesDiagnosticStage, type MeetingMinutesRun, type MeetingMinutesSelection,
+  type MeetingMinutesDestination, type MeetingMinutesDiagnosticStage, type MeetingMinutesGenerationDiagnostics,
+  type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
   meetingMinutesContextProjectCode, meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
@@ -29,7 +30,8 @@ export interface ResumeMeetingMinutesOptions {
   postProcessingStatus(run: MeetingMinutesRun): Promise<string>;
   download(fileId: string): Promise<string>;
   generate(transcript: string, destination: MeetingMinutesDestination, context: MeetingMinutesContextReceipt,
-    mode: MeetingMinutesContextMode): Promise<AuditedGeneratedMeetingMinutes>;
+    mode: MeetingMinutesContextMode,
+    observe?: (diagnostics: MeetingMinutesGenerationDiagnostics) => Promise<void>): Promise<AuditedGeneratedMeetingMinutes>;
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string; assignee_person_id?: string | null;
@@ -53,6 +55,22 @@ export interface RedoMeetingMinutesOptions {
 }
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
+
+async function generateWithDiagnostics(fs: WorkspaceFs, run: MeetingMinutesRun, transcript: string,
+  context: MeetingMinutesContextReceipt, options: ResumeMeetingMinutesOptions): Promise<AuditedGeneratedMeetingMinutes> {
+  const candidate = await options.generate(transcript, run.destination!, context, options.contextMode,
+    async (generation) => {
+      run.diagnostics = { ...run.diagnostics, schemaVersion: "meeting_minutes_diagnostics.v1",
+        stage: "generation", generation };
+      run.updatedAt = now(options);
+      await saveMeetingMinutesRun(fs, run);
+    });
+  if (candidate.generationDiagnostics) run.diagnostics = { ...run.diagnostics,
+    schemaVersion: "meeting_minutes_diagnostics.v1", stage: "generation",
+    generation: candidate.generationDiagnostics };
+  delete candidate.generationDiagnostics;
+  return candidate;
+}
 function destinationIsValid(value: MeetingMinutesDestination): boolean {
   const taskProjectCodes = value.taskProjectCodes;
   return /^[A-Za-z0-9_-]{1,128}$/.test(value.id) && !!value.projectId.trim() && !!value.name.trim() &&
@@ -413,7 +431,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     if (!run.github) {
       diagnosticStage = "generation";
       if (!run.generated) {
-        const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
+        const candidate = await generateWithDiagnostics(fs, run, transcript, contextReceipt, options);
         run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt, options.contextMode);
         run.status = "generated";
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
@@ -424,7 +442,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
           if (!(error instanceof Error) || !["meeting_minutes_context_source_ref_unknown",
             "meeting_minutes_context_attestation_mismatch"].includes(error.message)) throw error;
           diagnosticStage = "generation";
-          const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
+          const candidate = await generateWithDiagnostics(fs, run, transcript, contextReceipt, options);
           run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt, options.contextMode);
         }
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
@@ -482,9 +500,13 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   } catch (error) {
     const failedStage = run.status;
     const classified = classifyMeetingMinutesFailure(diagnosticStage, error);
+    const generationDiagnostics = error && typeof error === "object" && "generationDiagnostics" in error
+      ? (error as { generationDiagnostics?: MeetingMinutesGenerationDiagnostics }).generationDiagnostics
+      : undefined;
     run.status = "failed";
     run.failure = { stage: failedStage, message: error instanceof Error ? error.message : "meeting_minutes_failed" };
     run.diagnostics = { ...run.diagnostics, schemaVersion: "meeting_minutes_diagnostics.v1", ...classified,
+      ...(generationDiagnostics ? { generation: generationDiagnostics } : {}),
       failedAt: now(options), checkpoint: { hasGitHub: Boolean(run.github),
         hasSlackParent: Boolean(run.slack?.parentTs), postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 } };
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); throw error;
