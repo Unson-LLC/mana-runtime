@@ -132,19 +132,28 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(sandbox.destroy).toHaveBeenCalled();
   });
 
-  it("fails closed before Claude when the canonical Receipt context exceeds the prompt boundary", async () => {
+  it("projects an oversized canonical Receipt context into the prompt boundary", async () => {
     const oversizedContext = {
       ...context,
-      context: { ...context.context, source_refs: [
-        { type: "graph_entity", id: "x".repeat(100_001) },
-      ] },
+      context: { ...context.context,
+        source_refs: Array.from({ length: 100 }, (_, index) =>
+          ({ type: "graph_entity", id: `${index}-${"x".repeat(2_000)}` })),
+        open_tasks: Array.from({ length: 100 }, (_, index) =>
+          ({ id: `task-${index}`, title: "y".repeat(2_000) })),
+      },
     };
-    const sandbox = { writeFile: vi.fn(), exec: vi.fn(), destroy: vi.fn().mockResolvedValue(undefined) };
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: true,
+      stdout: receiptBoundStream({ title: "title", overview: "overview", body: "body", tasks: [],
+        ...auditOutput }), stderr: "" }),
+    destroy: vi.fn().mockResolvedValue(undefined) };
 
-    await expect(generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedContext, "required",
-      { model: "opus", effort: "xhigh" }, sandbox))
-      .rejects.toThrow("meeting_minutes_brainbase_context_prompt_too_large");
-    expect(sandbox.exec).not.toHaveBeenCalled();
+    await generateMeetingMinutesInSandbox("transcript", destinations[0]!, oversizedContext, "required",
+      { model: "opus", effort: "xhigh" }, sandbox);
+    const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
+      path === "/tmp/meeting-minutes-prompt.txt")?.[1]);
+    expect(prompt).toContain('"context_projection_truncated":true');
+    const projectedReceipt = prompt.match(/<brainbase_context_receipt>\n(.*)\n<\/brainbase_context_receipt>/)?.[1] ?? "";
+    expect(new TextEncoder().encode(projectedReceipt).byteLength).toBeLessThanOrEqual(100_000);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
   it("destroys the Sandbox and rejects invalid model output", async () => {
