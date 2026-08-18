@@ -33,10 +33,10 @@ import {
   type ReplyJudgmentResult,
 } from "./reply-judgment.js";
 import {
-  assertFreshTenantContainer,
   destroyTenantContainer,
   freshTenantContainerId,
 } from "./multitenancy/container-lifecycle.js";
+import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -84,7 +84,6 @@ export interface ReplyPipelineOptions {
   botAttributedAppMentionUserIds?: readonly string[];
   triage?(event: SlackQueueEvent): Promise<RuntimeTriageDecision>;
   runtimeContext?: { persona: string; instructions: readonly string[]; skills: readonly string[]; escalationEmployee?: string };
-  claudeSession?: { id: string; sandboxId: string; resume: boolean };
   resolveActorIdentity?: ActorIdentityResolver;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
@@ -250,11 +249,10 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "claudeSession">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
 ): Promise<ReplyJudgmentResult> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
-  assertFreshTenantContainer(options.tenantBoundaryHandle, options.claudeSession);
 
   const startedAt = Date.now();
   const trace = { ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort };
@@ -272,8 +270,7 @@ export async function generateClaudeReply(
   const requesterIdentity = options.requesterIdentity ?? (identityOutcome.outcome === "resolved"
     ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
     : undefined);
-  const sandbox = options.createSandbox(options.claudeSession?.sandboxId
-    ?? freshTenantContainerId("techknight-reply"));
+  const sandbox = options.createSandbox(freshTenantContainerId("techknight-reply"));
   try {
     const promptPath = runtimeClaudePromptPath("reply");
     const promptContent = buildPrompt(
@@ -335,62 +332,15 @@ export async function generateClaudeReply(
         } : {}),
       },
     };
-    let result = await sandbox.exec(
+    const result = await sandbox.exec(
       buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
         mcpEnabled: true,
         includeJudgmentHookEvents: true,
-        sessionId: options.claudeSession?.id,
-        resumeSession: options.claudeSession?.resume,
       }),
       execOptions,
     );
-    if (!result.success && options.claudeSession?.resume
-      && /No conversation found with session ID:/i.test(result.stderr)) {
-      emitTurnLog("log", "mana_claude_session_recovered", event, trace, {
-        outcome: "recreated",
-        reasonCode: "claude_session_not_found",
-      });
-      result = await sandbox.exec(
-        buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
-          taskSearchEnabled: options.taskSearchEnabled,
-          taskWriteEnabled: options.taskWriteEnabled,
-          mcpEnabled: true,
-          includeJudgmentHookEvents: true,
-          sessionId: options.claudeSession.id,
-          resumeSession: false,
-        }),
-        execOptions,
-      );
-    }
-    if (!result.success && options.claudeSession
-      && /Session ID .* is already in use\./i.test(result.stderr)) {
-      emitTurnLog("log", "mana_claude_session_recovered", event, trace, {
-        outcome: "fresh_turn",
-        reasonCode: "claude_session_busy",
-      });
-      // A session lock belongs to the container that owns its Claude process.
-      // Run the hydrated one-turn fallback in an isolated sandbox so the same
-      // stale process cannot also reject the recovery command.
-      // Sandbox IDs are capped at 63 characters by the Containers runtime.
-      // Keep recovery isolation unique without embedding the unbounded Slack event ID.
-      const recoverySandbox = options.createSandbox(`tkr-${crypto.randomUUID()}`);
-      try {
-        await prepareSandbox(recoverySandbox);
-        result = await recoverySandbox.exec(
-          buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
-            taskSearchEnabled: options.taskSearchEnabled,
-            taskWriteEnabled: options.taskWriteEnabled,
-            mcpEnabled: true,
-            includeJudgmentHookEvents: true,
-          }),
-          execOptions,
-        );
-      } finally {
-        await recoverySandbox.destroy();
-      }
-    }
     if (!result.success) {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
         outcome: "error",
@@ -423,11 +373,9 @@ export async function generateClaudeReply(
     });
     return { ...judgment, reply };
   } finally {
-    // A thread-generation sandbox owns the Claude transcript used by --resume.
-    // Cloudflare suspends it after inactivity; destroying it would silently turn
-    // every turn back into a fresh conversation. Ephemeral event sandboxes keep
-    // the previous cleanup behavior.
-    if (!options.claudeSession) await destroyTenantContainer(sandbox);
+    // Conversation continuity comes from hydrated Slack/thread/runtime context.
+    // The tenant isolation contract requires a fresh Container for every attempt.
+    await destroyTenantContainer(sandbox);
   }
 }
 
@@ -449,7 +397,7 @@ export async function postSlackReply(
       body: JSON.stringify({
         channel: event.channelId,
         thread_ts: event.threadTs,
-        text,
+        text: escapeUntrustedSlackMrkdwn(text),
         client_msg_id: clientMsgId,
       }),
       signal: AbortSignal.timeout(15_000),
@@ -644,7 +592,8 @@ export async function updateSlackReply(
         ...(options.slackBotToken ? { authorization: `Bearer ${options.slackBotToken}` } : {}),
         "content-type": "application/json; charset=utf-8",
       },
-      body: JSON.stringify({ channel: event.channelId, ts: responseTs, text }),
+      body: JSON.stringify({ channel: event.channelId, ts: responseTs,
+        text: escapeUntrustedSlackMrkdwn(text) }),
       signal: AbortSignal.timeout(15_000),
     });
   } catch {

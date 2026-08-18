@@ -5,6 +5,7 @@ import {
   type TenantInteractionEffects,
   type TenantInteractionIdentity,
 } from "../slack-interactions.js";
+import { MAX_SLACK_REQUEST_BODY_BYTES } from "../slack-request-body.js";
 
 const secret = "secret"; const now = 1_786_420_000;
 function request(payload: unknown): Request {
@@ -41,6 +42,36 @@ const tenantBoundary = {
 
 describe("handleMeetingMinutesInteraction", () => {
   function deferred() { const work: Promise<void>[] = []; return { work, defer: (promise: Promise<void>) => { work.push(promise); } }; }
+  it("rejects an oversized declared body before signature verification or tenant resolution", async () => {
+    const send = vi.fn();
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
+    const oversized = new Request("https://worker/slack/interactions", {
+      method: "POST",
+      headers: {
+        "content-length": String(MAX_SLACK_REQUEST_BODY_BYTES + 1),
+        "x-slack-request-timestamp": String(now),
+        "x-slack-signature": "v0=not-a-valid-signature",
+      },
+      body: "payload=%7B%7D",
+    });
+
+    const result = await handleMeetingMinutesInteraction(oversized, {
+      signingSecret: secret,
+      expectedAppId: "A1",
+      operatorUserIds: new Set(["U1"]),
+      nowMs: now * 1000,
+      ...tenantBoundary,
+      resolveTenantEffects,
+      destinations,
+      send,
+    });
+
+    expect(result.status).toBe(413);
+    await expect(result.json()).resolves.toEqual({ error: "slack_request_body_too_large" });
+    expect(resolveTenantEffects).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("accepts destination-qualified action ids", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const qualifiedPayload = structuredClone(payload);
@@ -308,13 +339,14 @@ describe("handleMeetingMinutesInteraction", () => {
   it("routes a signed task approval with the immutable payload hash", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn();
     const approveTaskWrite = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    const approvalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const approvalPayload = { ...payload, user: { id: "U_APPROVER" }, actions: [{ action_id: "mana_task_write_approve",
-      value: JSON.stringify({ approvalId: "approval-1", payloadHash: "a".repeat(64) }) }] };
+      value: JSON.stringify({ approvalId, payloadHash: "a".repeat(64) }) }] };
     const response = await handleMeetingMinutesInteraction(request(approvalPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, ...tenantBoundary,
       send, updateOriginal, resolveDestinations: () => { throw new Error("minutes config unavailable"); }, approveTaskWrite });
     expect(response.status).toBe(200);
-    expect(approveTaskWrite).toHaveBeenCalledWith({ approvalId: "approval-1", payloadHash: "a".repeat(64),
+    expect(approveTaskWrite).toHaveBeenCalledWith({ approvalId, payloadHash: "a".repeat(64),
       approverId: "U_APPROVER", channelId: "C1" }, expect.objectContaining({
       tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
     }));

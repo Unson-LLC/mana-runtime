@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { assertBrainbaseMeetingMinutesRuntimeProjects } from "./brainbase-project-binding-check.mjs";
 import { assertMeetingMinutesDeployAllowed } from "./deploy-gate-check.mjs";
+import {
+  assertTenantRuntimeDeploymentPreflight,
+  assertTenantRuntimeHealthReady,
+} from "./tenant-runtime-deploy-readiness.mjs";
+
+const configPath = fileURLToPath(new URL("../wrangler.unson-business.jsonc", import.meta.url));
 
 try {
   await assertBrainbaseMeetingMinutesRuntimeProjects({
@@ -24,7 +31,29 @@ try {
   process.exit(5);
 }
 
-const child = spawn("pnpm", ["exec", "wrangler", "deploy", "--config", "wrangler.unson-business.jsonc"], {
-  stdio: "inherit", shell: false,
+let deploymentConfig;
+try {
+  deploymentConfig = await assertTenantRuntimeDeploymentPreflight({ configPath });
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "tenant_runtime_deploy_preflight_failed");
+  process.exit(7);
+}
+
+const deployExit = await new Promise((resolve) => {
+  const child = spawn("pnpm", ["exec", "wrangler", "deploy", "--config", configPath], {
+    stdio: "inherit", shell: false,
+  });
+  child.on("error", () => resolve(1));
+  child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
 });
-child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+if (deployExit !== 0) process.exit(deployExit);
+
+try {
+  await assertTenantRuntimeHealthReady({
+    baseUrl,
+    expectedTenantId: deploymentConfig.tenantId,
+  });
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "tenant_runtime_post_deploy_not_ready");
+  process.exit(8);
+}

@@ -150,8 +150,16 @@ describe("会社別Cloudflare deployment", () => {
       fileURLToPath(new URL("../../scripts/build-profiles.mjs", import.meta.url)),
       "utf8",
     );
-    expect(buildProfiles).toContain('["build:default", "build:unson-business"]');
-    for (const scriptName of ["build:default", "build:unson-business", "deploy:unson-business"]) {
+    expect(buildProfiles).toContain(
+      '["build:default", "build:unson-business", "build:dedicated-cloud", "build:customer-managed-oss"]',
+    );
+    for (const scriptName of [
+      "build:default",
+      "build:unson-business",
+      "build:dedicated-cloud",
+      "build:customer-managed-oss",
+      "deploy:unson-business",
+    ]) {
       expect(packageJson.scripts[scriptName]).toContain(
         "pnpm --filter @openryoko/task-runtime-core build",
       );

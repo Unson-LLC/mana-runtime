@@ -1,6 +1,7 @@
 import {
   generateClaudeReply,
   isReplyEligible,
+  postSlackReply,
   processReplyEvent,
   ReplyPipelineError,
   withSlackThreadStatus,
@@ -120,20 +121,22 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
 }
 
 describe("TechKnight Slack reply pipeline", () => {
-  it("rejects a persisted Container whenever a tenant boundary is active", async () => {
-    const { options } = harness({
-      tenantBoundaryHandle: TENANT_BOUNDARY_A,
-      claudeSession: {
-        id: "12345678-1234-4123-8123-123456789abc",
-        sandboxId: "techknight-session-stable",
-        resume: true,
-      },
-    });
+  it("renders Slack control sequences from an untrusted reply as literal text without breaking normal formatting", async () => {
+    const { options, fetchMock } = harness();
 
-    await expect(generateClaudeReply(event(), options)).rejects.toEqual(
-      expect.objectContaining({ code: "CONTAINER_REUSE_FORBIDDEN" }),
-    );
-    expect(options.createSandbox).not.toHaveBeenCalled();
+    await postSlackReply(event(), [
+      "*太字* <@U_ATTACK> <!channel> <https://evil.test|開く>",
+      "通常URL https://safe.test と既存escape &lt;@U_SAFE&gt;",
+    ].join("\n"), options);
+
+    const [, request] = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("chat.postMessage")
+    ) as [string, RequestInit];
+    const body = JSON.parse(String(request.body)) as { text: string };
+    expect(body.text).toBe([
+      "*太字* &lt;@U_ATTACK&gt; &lt;!channel&gt; &lt;https://evil.test|開く&gt;",
+      "通常URL https://safe.test と既存escape &lt;@U_SAFE&gt;",
+    ].join("\n"));
   });
 
   it("uses a fresh Container for a retry of the same tenant operation", async () => {
@@ -145,6 +148,22 @@ describe("TechKnight Slack reply pipeline", () => {
     const sandboxIds = vi.mocked(options.createSandbox).mock.calls.map(([id]) => id);
     expect(sandboxIds).toHaveLength(2);
     expect(sandboxIds[0]).not.toBe(sandboxIds[1]);
+  });
+
+  it("does not retry a stale-session-shaped failure and still destroys the fresh Container", async () => {
+    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    sandbox.exec.mockResolvedValueOnce({
+      success: false,
+      stdout: "",
+      stderr: "No conversation found with session ID: stale-session",
+      exitCode: 1,
+    });
+
+    await expect(generateClaudeReply(event(), options)).rejects.toEqual(
+      expect.objectContaining({ code: "claude_execution_failed" }),
+    );
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
   it("fails closed when a tenant Container cannot be destroyed", async () => {

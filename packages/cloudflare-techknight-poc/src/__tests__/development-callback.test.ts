@@ -10,6 +10,28 @@ function request(body: Record<string, unknown>, token = "secret") { return new R
 const body = { job_id: "job_1", event_id: "Ev1", placement_id: "mana-dev-biz", workspace_id: "T1", channel_id: "C1", thread_ts: "1.0", requester_id: "U1", status: "completed", summary: "完了", quota_decision: "allowed", story_id: "STR-1", pr_url: "https://github.com/x/y/pull/1" };
 
 describe("development callback", () => {
+  it("renders untrusted callback fields literally while preserving the validated PR URL", async () => {
+    const post = vi.fn(async () => "2.0");
+    const response = await handleDevelopmentCallback(request({
+      ...body,
+      story_id: "STR-1 <@U_ATTACK>",
+      summary: "*完了* <!channel> <https://evil.test|確認>",
+    }), {
+      token: "secret", placements: [placement],
+      resolve: async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+      claim: async () => ({ state: "claimed" }), recordDelivery: async () => undefined,
+      complete: async () => undefined, release: async () => undefined, post,
+    });
+
+    expect(response.status).toBe(200);
+    expect(post).toHaveBeenCalledWith(expect.anything(), [
+      "Development: completed",
+      "Story: STR-1 &lt;@U_ATTACK&gt;",
+      "PR: https://github.com/x/y/pull/1",
+      "*完了* &lt;!channel&gt; &lt;https://evil.test|確認&gt;",
+    ].join("\n"));
+  });
+
   it("authorizes an installed workspace through tenant authority instead of a static workspace binding", async () => {
     const resolve = vi.fn(async (event: SlackQueueEvent) => ({
       ...event,

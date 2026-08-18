@@ -7,6 +7,7 @@ import { destinationSelectedMessage, organizationSelectionMessage, projectSelect
   redoFailedMessage, redoProcessingMessage,
   MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { verifySlackRequest } from "./slack.js";
+import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-request-body.js";
 
 interface InteractionOptions {
   signingSecret: string;
@@ -66,6 +67,7 @@ export type SlackInteractionMessage = SlackSelectionMessage;
 export interface MeetingMinutesInteractionEnvironment extends MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
   SLACK_SIGNING_SECRET_TECHKNIGHT?: string;
+  SLACK_EXPECTED_APP_ID_TECHKNIGHT?: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
   MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON?: string;
@@ -80,6 +82,86 @@ function string(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 function response(error: string, status: number): Response { return Response.json({ error }, { status }); }
+
+const slackIdPattern = /^[A-Z0-9_-]{2,64}$/;
+const timestampPattern = /^\d{1,20}(?:\.\d{1,12})?$/;
+const meetingMinutesRunIdPattern = /^[A-Za-z0-9_-]{3,260}$/;
+const meetingMinutesDestinationIdPattern = /^[A-Za-z0-9_-]{1,128}$/;
+const taskWriteApprovalIdPattern = /^[a-f0-9-]{36}$/;
+const sha256Pattern = /^[a-f0-9]{64}$/;
+
+function validOptionalText(value: unknown, maxLength: number): boolean {
+  return value === undefined || (typeof value === "string" && value.trim().length > 0 && value.length <= maxLength);
+}
+
+function isMeetingMinutesInteractionAction(actionId: string | undefined): boolean {
+  return actionId === MEETING_MINUTES_CHOOSE_ACTION_ID ||
+    actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`) === true ||
+    actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`) === true ||
+    actionId === MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID ||
+    actionId === MEETING_MINUTES_REDO_ACTION_ID ||
+    actionId === MEETING_MINUTES_CONFIRM_REDO_ACTION_ID;
+}
+
+function isMeetingMinutesTaskInteraction(
+  actionId: string | undefined,
+  callbackId: string | undefined,
+): boolean {
+  return actionId === "mana_meeting_minutes_task_edit" ||
+    actionId === "mana_meeting_minutes_task_cancel" ||
+    actionId === "mana_meeting_minutes_task_assignee" ||
+    callbackId === "mana_meeting_minutes_task_edit_view";
+}
+
+function validMeetingMinutesTaskMetadata(value: Record<string, unknown> | undefined): boolean {
+  const runId = string(value?.runId);
+  // Preserve tenant-binding rejection precedence for payloads with no usable card metadata;
+  // once an identifier is supplied, validate it before deriving tenant-scoped effects.
+  if (!runId) return true;
+  const index = value?.index;
+  if (!meetingMinutesRunIdPattern.test(runId) || !Number.isInteger(index) ||
+    Number(index) < 0 || Number(index) > 10_000) return false;
+  const boundedIdentifiers: readonly [unknown, RegExp][] = [
+    [value?.organizationId, meetingMinutesDestinationIdPattern],
+    [value?.projectId, meetingMinutesDestinationIdPattern],
+    [value?.channelId, slackIdPattern],
+    [value?.sourceWorkspaceId, slackIdPattern],
+    [value?.sourceAppId, slackIdPattern],
+    [value?.sourceChannelId, slackIdPattern],
+  ];
+  if (boundedIdentifiers.some(([candidate, pattern]) => candidate !== undefined &&
+    !pattern.test(string(candidate) ?? ""))) return false;
+  const sourceThreadTs = string(value?.sourceThreadTs);
+  return (sourceThreadTs === undefined || timestampPattern.test(sourceThreadTs)) &&
+    validOptionalText(value?.title, 120) && validOptionalText(value?.due, 32) &&
+    validOptionalText(value?.assigneePersonId, 512) && validOptionalText(value?.assigneeDisplayName, 256);
+}
+
+function validMeetingMinutesInteractionValue(
+  actionId: string,
+  value: Record<string, unknown> | undefined,
+  actionTs: string | undefined,
+): boolean {
+  const runId = string(value?.runId);
+  if (!runId || !meetingMinutesRunIdPattern.test(runId) || !actionTs || !timestampPattern.test(actionTs) ||
+    !validOptionalText(value?.fileName, 1_024) || !validOptionalText(value?.sourceThreadTs, 32) ||
+    (typeof value?.sourceThreadTs === "string" && !timestampPattern.test(value.sourceThreadTs.trim()))) return false;
+
+  if (actionId === MEETING_MINUTES_CHOOSE_ACTION_ID || actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)) {
+    const destinationId = string(value?.destinationId);
+    const qualifiedDestinationId = actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)
+      ? actionId.slice(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`.length) : undefined;
+    return !!destinationId && meetingMinutesDestinationIdPattern.test(destinationId) &&
+      (!qualifiedDestinationId || meetingMinutesDestinationIdPattern.test(qualifiedDestinationId));
+  }
+  if (actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`)) {
+    const organizationId = string(value?.organizationId);
+    const qualifiedOrganizationId = actionId.slice(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`.length);
+    return !!organizationId && meetingMinutesDestinationIdPattern.test(organizationId) &&
+      meetingMinutesDestinationIdPattern.test(qualifiedOrganizationId);
+  }
+  return true;
+}
 
 async function interactionEventId(body: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)));
@@ -149,8 +231,9 @@ export function handleMeetingMinutesInteractionEntrypoint(
   if (!send || !resolveTenantEffects) return Promise.resolve(response("FALLBACK_FORBIDDEN", 503));
   return handleMeetingMinutesInteraction(request, { signingSecret: env.SLACK_SIGNING_SECRET,
     expectedAppId: env.SLACK_EXPECTED_APP_ID, operatorUserIds,
-    additionalAuthenticators: env.SLACK_SIGNING_SECRET_TECHKNIGHT ? [{
+    additionalAuthenticators: env.SLACK_SIGNING_SECRET_TECHKNIGHT && env.SLACK_EXPECTED_APP_ID_TECHKNIGHT ? [{
       signingSecret: env.SLACK_SIGNING_SECRET_TECHKNIGHT,
+      expectedAppId: env.SLACK_EXPECTED_APP_ID_TECHKNIGHT,
     }] : [],
     resolveDestinations: () => meetingMinutesRuntimeConfig(env).destinations,
     send,
@@ -167,7 +250,14 @@ export function handleMeetingMinutesInteractionEntrypoint(
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
-  const body = await request.text();
+  let body: string;
+  try {
+    body = await readSlackRequestBody(request);
+  } catch (error) {
+    const rejected = slackRequestBodyErrorResponse(error);
+    if (rejected) return rejected;
+    throw error;
+  }
   const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
   const signature = request.headers.get("x-slack-signature") ?? "";
   const authenticators = [{ signingSecret: options.signingSecret,
@@ -178,8 +268,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   if (verifiedAuthenticators.length === 0) {
     console.warn(JSON.stringify({ event: "slack_interaction_signature_invalid",
       authenticatorCount: authenticators.length,
-      authenticators: authenticators.map((authenticator) => ({ expectedAppId: authenticator.expectedAppId,
-        signingSecretLength: authenticator.signingSecret.length })) }));
+      authenticators: authenticators.map((authenticator) => ({ expectedAppId: authenticator.expectedAppId })) }));
     return response("slack_signature_invalid", 401);
   }
   const encoded = new URLSearchParams(body).get("payload");
@@ -196,8 +285,29 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     !authenticator.expectedAppId || appId === authenticator.expectedAppId);
   if (!verifiedAuthenticator) return response("slack_app_forbidden", 403);
   const actionValue = parsedObject(action?.value);
+  const actionId = string(action?.action_id);
+  const actionTs = string(action?.action_ts);
   const view = object(payload?.view);
   const viewMetadata = parsedObject(view?.private_metadata);
+  const taskActionId = string(payload?.action_id) ?? actionId;
+  const viewCallbackId = string(view?.callback_id);
+  if (actionId && actionId.length > 256) return response("slack_interaction_invalid", 400);
+  const threadTsCandidates = [string(sourceMessage?.thread_ts), string(sourceContainer?.thread_ts),
+    string(actionValue?.sourceThreadTs)].filter((item): item is string => Boolean(item));
+  if (isMeetingMinutesInteractionAction(actionId) && (!actionId ||
+    !validMeetingMinutesInteractionValue(actionId, actionValue, actionTs) ||
+    threadTsCandidates.some((item) => !timestampPattern.test(item)) || new Set(threadTsCandidates).size > 1)) {
+    return response("slack_interaction_invalid", 400);
+  }
+  if (isMeetingMinutesTaskInteraction(taskActionId, viewCallbackId) &&
+    !validMeetingMinutesTaskMetadata(viewCallbackId ? viewMetadata : actionValue)) {
+    return response("slack_interaction_invalid", 400);
+  }
+  if (actionId === "mana_task_write_approve" && options.approveTaskWrite &&
+    (!taskWriteApprovalIdPattern.test(string(actionValue?.approvalId) ?? "") ||
+      !sha256Pattern.test(string(actionValue?.payloadHash) ?? ""))) {
+    return response("slack_interaction_invalid", 400);
+  }
   const interactionId = await interactionEventId(body);
   const interactionWorkspaceId = string(team?.id);
   const interactionRequesterId = string(user?.id);
@@ -206,7 +316,14 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     ?? string(sourceMessage?.ts) ?? string(actionValue?.sourceThreadTs) ?? string(action?.action_ts)
     ?? `interaction:${interactionId.slice("slack-interaction-".length)}`;
   if (!options.resolveTenantEffects) return response("FALLBACK_FORBIDDEN", 503);
-  if (!interactionWorkspaceId || !appId || !interactionRequesterId || !interactionChannelId) {
+  const enterpriseId = string(object(payload?.enterprise)?.id);
+  const threadIdentityValid = timestampPattern.test(interactionThreadTs) ||
+    /^interaction:[A-Za-z0-9_-]{43}$/.test(interactionThreadTs);
+  if (!interactionWorkspaceId || !slackIdPattern.test(interactionWorkspaceId) ||
+    !appId || !slackIdPattern.test(appId) ||
+    !interactionRequesterId || !slackIdPattern.test(interactionRequesterId) ||
+    !interactionChannelId || !slackIdPattern.test(interactionChannelId) ||
+    (enterpriseId !== undefined && !slackIdPattern.test(enterpriseId)) || !threadIdentityValid) {
     return response("slack_interaction_invalid", 400);
   }
   let tenantEffects: TenantInteractionEffects;
@@ -218,7 +335,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       channel_id: interactionChannelId,
       thread_ts: interactionThreadTs,
       requester_id: interactionRequesterId,
-      ...(string(object(payload?.enterprise)?.id) ? { enterprise_id: string(object(payload?.enterprise)?.id) } : {}),
+      ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
     });
   } catch {
     return response("TENANT_INTERACTION_UNAVAILABLE", 503);
@@ -229,15 +346,12 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   }
   const userId = string(user?.id);
   const channelId = string(channel?.id);
-  if (string(action?.action_id) === "mana_task_write_approve" && options.approveTaskWrite) {
-    let value: Record<string, unknown> | undefined;
-    try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
-    const approvalId = string(value?.approvalId); const payloadHash = string(value?.payloadHash);
+  if (actionId === "mana_task_write_approve" && options.approveTaskWrite) {
+    const approvalId = string(actionValue?.approvalId); const payloadHash = string(actionValue?.payloadHash);
     if (!userId || !channelId || !approvalId || !payloadHash) return response("slack_interaction_invalid", 400);
     return options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId }, tenantEffects);
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
-  const actionId = string(action?.action_id);
   const destinationAction = actionId === MEETING_MINUTES_CHOOSE_ACTION_ID || actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`);
   const organizationAction = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`);
   const backAction = actionId === MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID;
@@ -246,17 +360,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   if (!destinationAction && !organizationAction && !backAction && !redoAction && !confirmRedoAction) {
     return response("slack_interaction_invalid", 400);
   }
-  let value: Record<string, unknown> | undefined;
-  try { value = object(JSON.parse(string(action?.value) ?? "")); } catch { return response("slack_interaction_invalid", 400); }
+  const value = actionValue;
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
   const organizationId = string(value?.organizationId); const fileName = string(value?.fileName);
-  const actionTs = string(action?.action_ts);
-  const timestampPattern = /^\d{1,20}(?:\.\d{1,12})?$/;
-  const threadTsCandidates = [string(sourceMessage?.thread_ts), string(sourceContainer?.thread_ts),
-    string(value?.sourceThreadTs)].filter((item): item is string => Boolean(item));
-  if (threadTsCandidates.some((item) => !timestampPattern.test(item)) || new Set(threadTsCandidates).size > 1) {
-    return response("slack_interaction_invalid", 400);
-  }
   const sourceThreadTs = threadTsCandidates[0];
   if (options.isIntakePaused && await options.isIntakePaused()) {
     const responseUrl = string(payload?.response_url);

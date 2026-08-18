@@ -3,6 +3,7 @@ import type { SlackQueueEvent } from "./types.js";
 import type { QuotaDecision } from "./multitenancy/contracts.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { TenantBoundaryError } from "./multitenancy/errors.js";
+import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
 
 export type DevelopmentStatus = "completed" | "needs_decision" | "needs_input" | "failed" | "timed_out";
 export interface DevelopmentCallbackPayload {
@@ -54,8 +55,11 @@ export function parseDevelopmentCallbackPayload(value: unknown): DevelopmentCall
   return p as unknown as DevelopmentCallbackPayload;
 }
 function render(payload: DevelopmentCallbackPayload): string {
-  return [`Development: ${payload.status}`, payload.story_id ? `Story: ${payload.story_id}` : undefined,
-    payload.pr_url ? `PR: ${payload.pr_url}` : undefined, payload.summary].filter(Boolean).join("\n");
+  return [`Development: ${payload.status}`,
+    payload.story_id ? `Story: ${escapeUntrustedSlackMrkdwn(payload.story_id)}` : undefined,
+    payload.pr_url ? `PR: ${payload.pr_url}` : undefined,
+    escapeUntrustedSlackMrkdwn(payload.summary),
+  ].filter(Boolean).join("\n");
 }
 
 export async function handleDevelopmentCallback(request: Request, options: {

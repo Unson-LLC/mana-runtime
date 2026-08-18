@@ -1,4 +1,5 @@
 import type { SlackFileReference, SlackQueueEvent } from "./types.js";
+import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-request-body.js";
 import {
   TenantBoundaryError,
   assertSecretArtifactFree,
@@ -180,7 +181,14 @@ export async function handleSlackRequest(
   request: Request,
   options: HandleSlackRequestOptions,
 ): Promise<Response> {
-  const body = await request.text();
+  let body: string;
+  try {
+    body = await readSlackRequestBody(request);
+  } catch (error) {
+    const rejected = slackRequestBodyErrorResponse(error);
+    if (rejected) return rejected;
+    throw error;
+  }
   const validSignature = await verifySlackRequest({
     body,
     timestamp: request.headers.get("x-slack-request-timestamp") ?? "",
@@ -240,7 +248,14 @@ export async function handleTenantSlackRequest(
   request: Request,
   options: HandleTenantSlackRequestOptions,
 ): Promise<Response> {
-  const body = await request.text();
+  let body: string;
+  try {
+    body = await readSlackRequestBody(request);
+  } catch (error) {
+    const rejected = slackRequestBodyErrorResponse(error);
+    if (rejected) return rejected;
+    throw error;
+  }
   const validSignature = await verifySlackRequest({
     body,
     timestamp: request.headers.get("x-slack-request-timestamp") ?? "",

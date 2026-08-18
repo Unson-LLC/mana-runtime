@@ -7,6 +7,12 @@ import {
 import { DurableObject } from "cloudflare:workers";
 
 import { handleTenantSlackRequest } from "./slack.js";
+import { ackMalformedTenantQueueMessage } from "./queue-message-validation.js";
+import {
+  adminJsonInputErrorResponse,
+  readAdminJsonRequest,
+  validateMeetingMinutesAdminTaskIds,
+} from "./admin-json-input.js";
 import {
   handleSandboxAdminRequest,
   isSandboxAdminAuthorized,
@@ -1493,10 +1499,16 @@ export default {
         if (!runAdminMatch[2] || !run.destination) {
           return Response.json({ error: "meeting_minutes_retry_not_available" }, { status: 409 });
         }
-        const payload = await request.json().catch(() => null) as {
-          taskIds?: unknown;
-          actionTs?: unknown;
-        } | null;
+        let payload: { taskIds?: unknown; actionTs?: unknown } | null;
+        try {
+          const parsed = await readAdminJsonRequest(request);
+          payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed as { taskIds?: unknown; actionTs?: unknown } : null;
+        } catch (error) {
+          const rejected = adminJsonInputErrorResponse(error);
+          if (rejected) return rejected;
+          throw error;
+        }
         const actionTs = typeof payload?.actionTs === "string"
           && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
           ? payload.actionTs : undefined;
@@ -1526,9 +1538,7 @@ export default {
           verifier, now: () => new Date().toISOString(),
         });
         if (runAdminMatch[2] === "/adopt-tasks") {
-          const taskIds = Array.isArray(payload?.taskIds) && payload.taskIds.every((id) =>
-            typeof id === "string" && id.length >= 3 && id.length <= 512)
-            ? [...new Set(payload.taskIds)] : [];
+          const taskIds = validateMeetingMinutesAdminTaskIds(payload) ?? [];
           const generatedTasks = run.generated?.tasks ?? [];
           const conflictRepair = run.taskRegistration?.failure?.status === 409;
           const incompleteAdoption = run.taskRegistration?.registered.length === generatedTasks.length &&
@@ -1929,6 +1939,10 @@ export default {
       },
     });
     for (const message of batch.messages) {
+      if (ackMalformedTenantQueueMessage(message,
+        (entry) => console.error(JSON.stringify(entry)))) {
+        continue;
+      }
       if (isTenantTaskBoardRepairBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;

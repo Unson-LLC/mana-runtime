@@ -57,6 +57,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
     const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      SLACK_EXPECTED_APP_ID_TECHKNIGHT: "A-TECHKNIGHT",
       MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
       TECHKNIGHT_EVENTS: { send: vi.fn() } };
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
@@ -80,6 +81,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const handleMeetingTaskAction = vi.fn(async () => Response.json({ ok: true }));
     const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      SLACK_EXPECTED_APP_ID_TECHKNIGHT: "A-TECHKNIGHT",
       MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
       TECHKNIGHT_EVENTS: { send: vi.fn() } };
     const resolveTenantEffects = tenantEffectResolver();
@@ -95,6 +97,58 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(resolveTenantEffects).toHaveBeenCalledOnce();
   });
 
+  it("rejects a different app id even when the request is signed by the Tech Knight app secret", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "tech-knight-secret";
+    const payload = { api_app_id: "A-IMPOSTOR", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },
+      channel: { id: "CDEST" }, trigger_id: "trigger", actions: [{
+        action_id: "mana_meeting_minutes_task_edit",
+        value: JSON.stringify({ runId: "Ev1_F1", index: 0, organizationId: "tech-knight",
+          channelId: "CDEST", title: "旧題", due: "2026-08-20" }),
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const handleMeetingTaskAction = vi.fn(async () => Response.json({ ok: true }));
+    const resolveTenantEffects = tenantEffectResolver();
+    const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
+      SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      SLACK_EXPECTED_APP_ID_TECHKNIGHT: "A-TECHKNIGHT", TECHKNIGHT_EVENTS: { send: vi.fn() } };
+
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
+    handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, resolveTenantEffects);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "slack_app_forbidden" });
+    expect(resolveTenantEffects).not.toHaveBeenCalled();
+    expect(handleMeetingTaskAction).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the Tech Knight signing secret has no expected app id binding", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "tech-knight-secret";
+    const payload = { api_app_id: "A-TECHKNIGHT", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },
+      channel: { id: "CDEST" }, trigger_id: "trigger", actions: [{
+        action_id: "mana_meeting_minutes_task_edit", value: "{}",
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const handleMeetingTaskAction = vi.fn(async () => Response.json({ ok: true }));
+    const resolveTenantEffects = tenantEffectResolver();
+    const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
+      SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      TECHKNIGHT_EVENTS: { send: vi.fn() } };
+
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
+    handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, resolveTenantEffects);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "slack_signature_invalid" });
+    expect(resolveTenantEffects).not.toHaveBeenCalled();
+    expect(handleMeetingTaskAction).not.toHaveBeenCalled();
+  });
+
   it("preserves the authenticated destination workspace and app when queueing a selection", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "tech-knight-secret";
     const payload = { api_app_id: "A-TECHKNIGHT", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },
@@ -107,6 +161,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const send = vi.fn().mockResolvedValue(undefined); const deferred: Promise<unknown>[] = [];
     const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      SLACK_EXPECTED_APP_ID_TECHKNIGHT: "A-TECHKNIGHT",
       MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "CSOURCE",
       MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
       MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
@@ -137,6 +192,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const handleMeetingTaskAction = vi.fn(async () => Response.json({ ok: true }));
     const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_SIGNING_SECRET_TECHKNIGHT: "tech-knight-secret",
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      SLACK_EXPECTED_APP_ID_TECHKNIGHT: "A-TECHKNIGHT",
       MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({ "tech-knight": "T-TECHKNIGHT" }),
       TECHKNIGHT_EVENTS: { send: vi.fn() } };
     const resolveTenantEffects = vi.fn(async () => {

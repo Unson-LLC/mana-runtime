@@ -1,11 +1,35 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { handleSlackCommandRequest } from "../slack-command.js";
+import { MAX_SLACK_REQUEST_BODY_BYTES } from "../slack-request-body.js";
 import type { SlackQueueEvent } from "../types.js";
 
 const secret = "secret"; const nowMs = 1_786_680_000_000; const timestamp = String(nowMs / 1000);
 function make(body: string) { return new Request("https://runtime.test/slack/commands", { method: "POST", headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}` }, body }); }
 describe("Slack native development command", () => {
+  it("rejects an oversized body without Content-Length before signature verification or queueing", async () => {
+    const send = vi.fn();
+    const request = new Request("https://runtime.test/slack/commands", {
+      method: "POST",
+      headers: {
+        "x-slack-request-timestamp": timestamp,
+        "x-slack-signature": "v0=not-a-valid-signature",
+      },
+      body: "x".repeat(MAX_SLACK_REQUEST_BODY_BYTES + 1),
+    });
+
+    const response = await handleSlackCommandRequest(request, {
+      signingSecret: secret,
+      placements: [{ channelId: "C1", allowedUserIds: ["U1"] }],
+      nowMs,
+      send,
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "slack_request_body_too_large" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("acks an authorized command and queues a deterministic development event", async () => {
     const send = vi.fn(async (_event: Omit<SlackQueueEvent, "tenantId">) => undefined); const body = new URLSearchParams({ team_id: "T1", channel_id: "C1", user_id: "U1", command: "/vibepro", trigger_id: "tr1", text: "認証を直して" }).toString();
     const response = await handleSlackCommandRequest(make(body), { signingSecret: secret, placements: [{ channelId: "C1", allowedUserIds: ["U1"] }], nowMs, send });

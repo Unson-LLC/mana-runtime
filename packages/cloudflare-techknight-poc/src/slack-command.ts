@@ -1,4 +1,5 @@
 import { verifySlackRequest } from "./slack.js";
+import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-request-body.js";
 import type { SlackQueueEvent } from "./types.js";
 
 const COMMANDS = new Set(["/vibepro", "/ryoko-develop"]);
@@ -7,7 +8,14 @@ export async function handleSlackCommandRequest(request: Request, options: {
   placements: ReadonlyArray<{ channelId: string; allowedUserIds: readonly string[] }>;
   nowMs?: number; send(event: Omit<SlackQueueEvent, "tenantId">): Promise<unknown>;
 }): Promise<Response> {
-  const body = await request.text();
+  let body: string;
+  try {
+    body = await readSlackRequestBody(request);
+  } catch (error) {
+    const rejected = slackRequestBodyErrorResponse(error);
+    if (rejected) return rejected;
+    throw error;
+  }
   const valid = await verifySlackRequest({ body, timestamp: request.headers.get("x-slack-request-timestamp") ?? "",
     signature: request.headers.get("x-slack-signature") ?? "", signingSecret: options.signingSecret, nowMs: options.nowMs });
   if (!valid) return Response.json({ error: "slack_signature_invalid" }, { status: 401 });

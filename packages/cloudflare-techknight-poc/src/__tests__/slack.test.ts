@@ -2,10 +2,12 @@ import { createHmac } from "node:crypto";
 
 import {
   handleSlackRequest,
+  handleTenantSlackRequest,
   normalizeSlackEvent,
   verifySlackRequest,
 } from "../slack.js";
 import { interceptMeetingMinutesIntakePause } from "../meeting-minutes-intake-entrypoints.js";
+import { MAX_SLACK_REQUEST_BODY_BYTES } from "../slack-request-body.js";
 
 const signingSecret = "test-signing-secret";
 const nowSeconds = 1_786_420_000;
@@ -197,6 +199,70 @@ describe("normalizeSlackEvent", () => {
 });
 
 describe("handleSlackRequest", () => {
+  it("rejects an oversized tenant event before authority resolution or queueing", async () => {
+    const send = vi.fn();
+    const authority = {
+      resolve_workspace_connection: vi.fn(async () => { throw new Error("must not resolve"); }),
+      read_workspace_connection: vi.fn(async () => { throw new Error("must not read"); }),
+      issue_tenant_context: vi.fn(async () => { throw new Error("must not issue"); }),
+    };
+    const request = new Request("https://example.com/slack/events", {
+      method: "POST",
+      headers: {
+        "content-length": String(MAX_SLACK_REQUEST_BODY_BYTES + 1),
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": "v0=not-a-valid-signature",
+      },
+      body: "{}",
+    });
+
+    const response = await handleTenantSlackRequest(request, {
+      signing_secret: signingSecret,
+      expected_app_id: "A_UNSON",
+      required_scopes: ["chat:write"],
+      required_authorization: {
+        audience: "mana-runtime",
+        project_id: "mana",
+        capability_id: "slack.event.receive",
+      },
+      authority,
+      now_ms: nowSeconds * 1_000,
+      resolve_verification_key: async () => undefined,
+      send,
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "slack_request_body_too_large" });
+    expect(authority.resolve_workspace_connection).not.toHaveBeenCalled();
+    expect(authority.read_workspace_connection).not.toHaveBeenCalled();
+    expect(authority.issue_tenant_context).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized declared body before signature verification or queueing", async () => {
+    const send = vi.fn();
+    const request = new Request("https://example.com/slack/events", {
+      method: "POST",
+      headers: {
+        "content-length": String(MAX_SLACK_REQUEST_BODY_BYTES + 1),
+        "x-slack-request-timestamp": String(nowSeconds),
+        "x-slack-signature": "v0=not-a-valid-signature",
+      },
+      body: "{}",
+    });
+
+    const response = await handleSlackRequest(request, {
+      signingSecret,
+      expectedTeamId: "T_UNSON",
+      nowMs: nowSeconds * 1_000,
+      send,
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "slack_request_body_too_large" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("returns a verified URL challenge without queueing", async () => {
     const body = JSON.stringify({
       type: "url_verification",

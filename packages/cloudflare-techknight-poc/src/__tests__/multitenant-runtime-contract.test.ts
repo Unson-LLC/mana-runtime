@@ -1069,7 +1069,9 @@ describe("story-mana-multitenant-runtime contract", () => {
 
     const reply = readFileSync(new URL("../reply-pipeline.ts", import.meta.url), "utf8");
     expect(reply).toContain('freshTenantContainerId("techknight-reply")');
-    expect(reply).toContain("assertFreshTenantContainer(options.tenantBoundaryHandle, options.claudeSession)");
+    expect(reply).not.toContain("claudeSession");
+    expect(reply).not.toContain("mana_claude_session_recovered");
+    expect(reply).toContain("await destroyTenantContainer(sandbox)");
     const meetingTask = readFileSync(new URL("../meeting-task-pipeline.ts", import.meta.url), "utf8");
     expect(meetingTask).toContain('freshTenantContainerId("meeting-tasks")');
     expect(meetingTask).toContain("destroyTenantContainer(sandbox)");

@@ -1,0 +1,56 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mana-runtime-customer-managed-oss",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "RUNTIME_EXECUTION_MODE": "reply_only",
+    "RUNTIME_TASK_SEARCH_ENABLED": "false",
+    "RUNTIME_TASK_WRITE_ENABLED": "false",
+    "RUNTIME_TASK_BOARD_ENABLED": "false",
+    "MANA_DEPLOYMENT_PROFILE": "customer_managed_oss",
+    "BRAINBASE_TENANT_RUNTIME_ENABLED": "1",
+    "BRAINBASE_TENANT_RUNTIME_HOST": "127.0.0.1",
+    "BRAINBASE_TENANT_RUNTIME_PORT": "31016",
+    "MANA_CREDENTIAL_AUDIENCE": "api.anthropic.com",
+    "MANA_RUNTIME_CAPABILITIES": "signed_tenant_context,connection_revision_recheck,tenant_scoped_authorization,credential_broker_v1,usage_receipt_v1,idempotent_effects_v1,container_sanitization_v1"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "TECHKNIGHT_WORKSPACE", "class_name": "TechKnightWorkspace" },
+      { "name": "TECHKNIGHT_SANDBOX", "class_name": "TechKnightSandbox" },
+      { "name": "TASK_WRITE_BUDGETS", "class_name": "TaskWriteBudget" },
+      { "name": "RUNTIME_SESSION_REGISTRY", "class_name": "RuntimeSessionRegistry" },
+      { "name": "TENANT_RUNTIME_STATE", "class_name": "TenantRuntimeState" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["TechKnightWorkspace"] },
+    { "tag": "v2", "new_sqlite_classes": ["TechKnightSandbox"] },
+    { "tag": "v3", "new_sqlite_classes": ["TaskWriteBudget"] },
+    { "tag": "v4", "new_sqlite_classes": ["RuntimeSessionRegistry"] },
+    { "tag": "v5", "new_sqlite_classes": ["TenantRuntimeState"] }
+  ],
+  "services": [
+    { "binding": "BRAINBASE_TENANT_RUNTIME_SERVICE", "service": "brainbase-tenant-runtime" }
+  ],
+  "containers": [
+    { "class_name": "TechKnightSandbox", "image": "./Dockerfile", "instance_type": "basic", "max_instances": 1 }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "TECHKNIGHT_EVENTS", "queue": "mana-runtime-customer-managed-oss-events" }
+    ],
+    "consumers": [
+      {
+        "queue": "mana-runtime-customer-managed-oss-events",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "max_concurrency": 1,
+        "dead_letter_queue": "mana-runtime-customer-managed-oss-events-dlq"
+      }
+    ]
+  }
+}
