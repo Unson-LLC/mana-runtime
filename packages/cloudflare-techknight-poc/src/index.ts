@@ -292,10 +292,20 @@ function meetingMinutesClients(env: Env) {
         return taskClient().createTask(input, idempotencyKey);
       },
       findExistingTask: async (title: string, projectCodes: readonly string[]) => {
-        const page = await taskClient().searchTasks({ query: title, project_code: [...projectCodes], limit: 20 });
         const normalizedTitle = title.trim().toLocaleLowerCase("ja");
-        const exact = page.items.filter((task) => task.title.trim().toLocaleLowerCase("ja") === normalizedTitle);
-        return exact.length === 1 ? { id: exact[0]!.id } : undefined;
+        const exact: Array<{ id: string }> = [];
+        let cursor: string | undefined;
+        for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+          const page = await taskClient().listTasks({ project_code: [...projectCodes], limit: 100,
+            ...(cursor ? { cursor } : {}) });
+          exact.push(...page.items
+            .filter((task) => task.title.trim().toLocaleLowerCase("ja") === normalizedTitle)
+            .map((task) => ({ id: task.id })));
+          if (exact.length > 1) return undefined;
+          if (!page.next_cursor) return exact.length === 1 ? exact[0] : undefined;
+          cursor = page.next_cursor;
+        }
+        return undefined;
       },
       // Destination project IDs belong to the task destination contract and are
       // not Graph person scopes. Resolve globally, then let non-unique names
