@@ -2,23 +2,22 @@
   "schema_version": "0.1.0",
   "responsibilities": [
     {
-      "id": "mana_runtime.lightsail_deployment.authorization_boundary",
+      "id": "mana_runtime.lightsail_decommission.authorization_boundary",
       "primary_authority": {
         "kind": "domain_contract",
-        "ref": "docs/contracts/lightsail-deploy-authorization.json#LIGHTSAIL-DEPLOY-AUTH-001"
+        "ref": "docs/contracts/lightsail-deploy-authorization.json#LIGHTSAIL-DECOMMISSION-AUTH-001"
       },
       "supporting_authority": [
-        "docs/adr/0006-restricted-github-actions-lightsail-deploy.md",
-        "docs/architecture/story-lightsail-deploy-workflow.md",
-        "docs/specs/lightsail-deploy-workflow.md",
-        "docs/operations/lightsail-deploy-workflow.md"
+        "docs/architecture/story-cloudflare-primary-runtime.md",
+        "docs/operations/lightsail-deploy-workflow.md",
+        "docs/operations/lightsail-runtime-decommission-2026-08-18.md"
       ],
       "owned_surfaces": {
         "paths": [
-          ".github/workflows/deploy-lightsail.yml",
-          ".github/workflows/ci.yml",
+          ".github/workflows/**",
           "scripts/deploy/**",
-          "playwright.deploy.config.ts",
+          "docs/operations/lightsail-deploy-workflow.md",
+          "docs/operations/lightsail-runtime-decommission-2026-08-18.md",
           "e2e/story-lightsail-deploy-workflow-boundaries.spec.ts"
         ],
         "symbols": [],
@@ -29,11 +28,12 @@
         ]
       },
       "required_evidence": [
-        "auth_denied",
-        "real_byte_replay",
-        "deployment_version_stamp",
-        "workflow_state_regression",
-        "current_head_verification"
+        "workflow_absent",
+        "entry_disabled_readback",
+        "active_run_readback",
+        "same_run_receipt",
+        "duplicate_count_readback",
+        "rollback_boundary_record"
       ],
       "unknown_policy": "block_or_review"
     }
