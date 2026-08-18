@@ -3,18 +3,18 @@
   "kit_role": "canonical_conformance_contract",
   "cross_contract": {
     "repository": "Unson-LLC/mana-runtime",
-    "pull_request": 237,
-    "input_head": "dd9a9f7d0183caa4db7719628adea2c79db35718"
+    "pull_request": 292,
+    "input_head": "1b015def50a1ee21b616c87b717e821655bf2a48"
   },
   "producer_audit_input": {
     "repository": "Unson-LLC/brainbase-unson",
-    "pull_request": 1229,
-    "head": "a4d1be7a98c48e94c116d4137d2a80354834b8a2"
+    "pull_request": 1257,
+    "head": "93f2d142e1234a2d3c00b18792db7030cc8d738c"
   },
   "consumer_audit_input": {
     "repository": "Unson-LLC/mana-runtime",
-    "pull_request": 236,
-    "head": "dd9a9f7d0183caa4db7719628adea2c79db35718"
+    "pull_request": 292,
+    "head": "1b015def50a1ee21b616c87b717e821655bf2a48"
   },
   "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
   "production_code_changed": true,

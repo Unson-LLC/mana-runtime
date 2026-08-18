@@ -6,9 +6,9 @@
 
 | 対象 | PR | 固定 HEAD |
 |---|---:|---|
-| 横断契約（今回の入力） | #237 | `dd9a9f7d0183caa4db7719628adea2c79db35718` |
-| Brainbase producer 実装 | #1229 | `a4d1be7a98c48e94c116d4137d2a80354834b8a2` |
-| mana-runtime consumer 実装 | #236 | `dd9a9f7d0183caa4db7719628adea2c79db35718` |
+| 横断契約（今回の入力） | #292 | `1b015def50a1ee21b616c87b717e821655bf2a48` |
+| Brainbase producer 実装 | #1257 | `93f2d142e1234a2d3c00b18792db7030cc8d738c` |
+| mana-runtime consumer 実装 | #292 | `1b015def50a1ee21b616c87b717e821655bf2a48` |
 
 `source-lock.json` はこの比較基準を機械可読に固定します。以後の producer / consumer 追従は、このキットを変更せず同じ fixture を読んで行います。
 
