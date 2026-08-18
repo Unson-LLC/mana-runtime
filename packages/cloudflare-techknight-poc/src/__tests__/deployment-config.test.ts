@@ -536,6 +536,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("registeredCount: run.taskRegistration?.registered.length ?? 0");
     expect(worker).toContain("failure: run.taskRegistration?.failure");
     expect(worker).toContain("failedCandidateTitle: run.taskRegistration?.failure");
+    expect(worker).toContain('runAdminMatch[2] === "/adopt-tasks"');
+    expect(worker).toContain("meeting_minutes_task_adoption_scope_mismatch");
     expect(packageJson.scripts["meeting-minutes:intake:pause"]).toContain("meeting-minutes-intake-control.mjs pause");
     expect(packageJson.scripts["meeting-minutes:intake:resume"]).toContain("meeting-minutes-intake-control.mjs resume");
   });

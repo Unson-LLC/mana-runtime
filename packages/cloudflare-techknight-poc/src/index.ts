@@ -381,7 +381,7 @@ export default {
         status: () => gate.status(),
       });
     }
-    const runAdminMatch = url.pathname.match(/^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})(\/retry)?$/);
+    const runAdminMatch = url.pathname.match(/^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})(\/retry|\/adopt-tasks)?$/);
     if (runAdminMatch && (request.method === "GET" || request.method === "POST")) {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -398,8 +398,36 @@ export default {
         if (!runAdminMatch[2] || !run.destination) {
           return Response.json({ error: "meeting_minutes_retry_not_available" }, { status: 409 });
         }
+        if (runAdminMatch[2] === "/adopt-tasks") {
+          const payload = await request.json().catch(() => null) as { taskIds?: unknown } | null;
+          const taskIds = Array.isArray(payload?.taskIds) && payload.taskIds.every((id) =>
+            typeof id === "string" && id.length >= 3 && id.length <= 512)
+            ? [...new Set(payload.taskIds)] : [];
+          const generatedTasks = run.generated?.tasks ?? [];
+          if (!run.taskRegistration?.failure || run.taskRegistration.failure.status !== 409 ||
+            taskIds.length !== generatedTasks.length) {
+            return Response.json({ error: "meeting_minutes_task_adoption_invalid" }, { status: 409 });
+          }
+          const taskApi = new TaskApiClient({ baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
+            token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (input, init) =>
+              fetch(input, { ...init, signal: AbortSignal.timeout(15_000) }) });
+          const tasks = await Promise.all(taskIds.map((taskId) => taskApi.getTask(taskId)));
+          const projectCodes = run.destination.taskProjectCodes;
+          if (tasks.some((task) => !projectCodes.every((code) => (task.project_codes ?? []).includes(code)))) {
+            return Response.json({ error: "meeting_minutes_task_adoption_scope_mismatch" }, { status: 409 });
+          }
+          run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+            const current = (await loadMeetingMinutesRun(workspace.fs, runId))!;
+            current.taskRegistration = { registered: tasks.map((task, index) => ({ index,
+              title: task.title, taskId: task.id, status: "reused" as const,
+              projectCodes: [...projectCodes] })) };
+            current.updatedAt = new Date().toISOString();
+            await saveMeetingMinutesRun(workspace.fs, current);
+            return current;
+          });
+        }
         const selection = { kind: "meeting_minutes_selection", runId,
-          destinationId: run.destination.id, workspaceId: run.workspaceId,
+          destinationId: run.destination!.id, workspaceId: run.workspaceId,
           channelId: run.sourceChannelId, userId: run.approvedBy ?? "admin-retry",
           actionTs: currentMeetingMinutesActionTs() } satisfies MeetingMinutesSelection;
         run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
