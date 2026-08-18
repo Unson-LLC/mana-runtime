@@ -90,10 +90,10 @@ export interface ContractLedgerEnvironment {
   GOOGLE_DRIVE_MCP_TOKEN?: string;
   SLACK_BOT_TOKEN?: string;
   CONTRACT_LEDGER_SYNCS: Queue<ContractLedgerSyncEvent | ContractLedgerApprovalEvent>;
-  CONTRACT_LEDGER_STATE: { idFromName(name: string): unknown; get(id: unknown): ContractLedgerState };
+  CONTRACT_LEDGER_STATE: { idFromName(name: string): unknown; get(id: unknown): ContractLedgerStateStore };
 }
 
-interface CandidateRecord {
+export interface CandidateRecord {
   event: ContractLedgerCandidateEvent;
   status: "pending" | "applying" | "approved" | "rejected";
   notifiedAt?: string;
@@ -103,12 +103,8 @@ interface CandidateRecord {
   reason?: string;
 }
 
-interface ContractLedgerStateLike {
-  storage: DurableObjectStorage;
-}
-
-export class ContractLedgerState {
-  constructor(private readonly state: ContractLedgerStateLike) {}
+export class ContractLedgerStateStore {
+  constructor(private readonly state: { storage: DurableObjectStorage }) {}
 
   async claimRun(key: string): Promise<"claimed" | "completed" | "in_progress"> {
     return this.state.storage.transaction(async (tx) => {
@@ -391,7 +387,7 @@ function candidateBlocks(candidate: ContractLedgerCandidateEvent): unknown[] {
       text: { type: "plain_text", text: "除外" }, action_id: CONTRACT_LEDGER_REJECT_ACTION_ID, value }] }];
 }
 
-function stateStub(env: ContractLedgerEnvironment): ContractLedgerState {
+function stateStub(env: ContractLedgerEnvironment): ContractLedgerStateStore {
   return env.CONTRACT_LEDGER_STATE.get(env.CONTRACT_LEDGER_STATE.idFromName("unson-contract-ledger"));
 }
 

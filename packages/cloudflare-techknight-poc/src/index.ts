@@ -98,7 +98,7 @@ import {
   interceptMeetingMinutesIntakePause,
 } from "./meeting-minutes-intake-entrypoints.js";
 import {
-  ContractLedgerState,
+  ContractLedgerStateStore,
   contractLedgerConfig,
   enqueueScheduledContractLedgerSync,
   isContractLedgerEvent,
@@ -118,7 +118,28 @@ export { TaskWriteApproval } from "./task-write-approval.js";
 export { TaskBoardBinding } from "./task-board-binding.js";
 export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
 export { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
-export { ContractLedgerState } from "./contract-ledger.js";
+export class ContractLedgerState extends DurableObject {
+  private readonly store = new ContractLedgerStateStore({ storage: this.ctx.storage });
+  claimRun(key: string) { return this.store.claimRun(key); }
+  completeRun(key: string, receipt: Parameters<ContractLedgerStateStore["completeRun"]>[1]) {
+    return this.store.completeRun(key, receipt);
+  }
+  failRun(key: string, receipt: Parameters<ContractLedgerStateStore["failRun"]>[1]) {
+    return this.store.failRun(key, receipt);
+  }
+  releaseRun(key: string) { return this.store.releaseRun(key); }
+  saveCandidate(candidate: Parameters<ContractLedgerStateStore["saveCandidate"]>[0]) {
+    return this.store.saveCandidate(candidate);
+  }
+  markCandidateNotified(envelopeId: string, messageTs: string) {
+    return this.store.markCandidateNotified(envelopeId, messageTs);
+  }
+  candidate(envelopeId: string) { return this.store.candidate(envelopeId); }
+  claimDecision(event: Parameters<ContractLedgerStateStore["claimDecision"]>[0]) {
+    return this.store.claimDecision(event);
+  }
+  completeApproval(envelopeId: string) { return this.store.completeApproval(envelopeId); }
+}
 
 interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedgerEnvironment {
   SLACK_SIGNING_SECRET: string;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildContractLedgerPlan,
-  ContractLedgerState,
+  ContractLedgerStateStore,
   contractLedgerConfig,
   contractStatusLabel,
   enqueueScheduledContractLedgerSync,
@@ -103,7 +103,7 @@ describe("Durable Object idempotency", () => {
       delete: async (key: string) => values.delete(key),
       transaction: async <T>(operation: (tx: unknown) => Promise<T>) => operation(storage),
     };
-    const state = new ContractLedgerState({ storage: storage as unknown as DurableObjectStorage });
+    const state = new ContractLedgerStateStore({ storage: storage as unknown as DurableObjectStorage });
     expect(await state.claimRun("day")).toBe("claimed");
     expect(await state.claimRun("day")).toBe("in_progress");
     const candidate = { kind: "contract_ledger_candidate" as const, runId: "run", envelope: envelope(),
