@@ -1,0 +1,46 @@
+{
+  "schema_version": "0.1.0",
+  "fixture_id": "FX-NA-001",
+  "fixture_kind": "non_applicable",
+  "description": "customer-managed OSSで明示されたCloud任意能力だけがnon_applicableになる境界。共通tenant契約は免除しない。",
+  "deployment": {
+    "profile": "customer_managed_oss",
+    "protocol_id": "mana-brainbase-tenant-context",
+    "protocol_version": "1.0",
+    "advertised_optional_capabilities": {
+      "cloud_billing_export": {
+        "status": "non_applicable",
+        "reason": "customer-managed OSS has no Brainbase Cloud billing export"
+      },
+      "managed_operations": {
+        "status": "non_applicable",
+        "reason": "deployment operations are customer-owned"
+      },
+      "cloud_standard_credential": {
+        "status": "non_applicable",
+        "reason": "this deployment advertises customer_oauth and customer_api only"
+      }
+    }
+  },
+  "expected": {
+    "non_applicable_capabilities": ["cloud_billing_export", "managed_operations", "cloud_standard_credential"],
+    "still_required": [
+      "signed_tenant_context",
+      "connection_revision_recheck",
+      "tenant_scoped_authorization",
+      "credential_broker_v1",
+      "usage_receipt_v1",
+      "idempotent_effects_v1",
+      "container_sanitization_v1"
+    ],
+    "single_tenant_oss_waives_tenant_context": false,
+    "cross_tenant_container_reuse": "forbidden",
+    "silent_protocol_downgrade": "forbidden",
+    "tenant_or_credential_fallback": "forbidden"
+  },
+  "execution_evidence": {
+    "status": "not_collected",
+    "evidence_ref": "docs/operations/mana-multitenant-production-e2e-runbook.md",
+    "note": "Applicability boundary only; compatible OSS conformance has not been executed."
+  }
+}

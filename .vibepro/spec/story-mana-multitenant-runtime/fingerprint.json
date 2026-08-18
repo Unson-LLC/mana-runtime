@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-mana-multitenant-runtime",
+  "recorded_from": "vibepro spec write --final + spec fingerprint",
+  "generated_at": "2026-08-17T18:21:25.589Z",
+  "inputs_digest": {
+    "story_sha": "sha256:e09121d6e5249256bf0b08f43e7dc40cc6684bdc2380a0ae56a75c6c067681d0",
+    "code_sha": "sha256:7a8dec718898c17d30bd09badc591c09f759435d17fbaa2cc8a3065bfaec2765",
+    "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925",
+    "architecture_sha": "sha256:2cd1121411b434289079677f143592d4c823ec94cf9eb6df0e57f6b7f3e325c9"
+  },
+  "accepted_spec_sha256": "f9679a2117ce98c00b94711459e49ad0fe602ba6f228e8ddd89caab825186612",
+  "canonical_fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
+  "canonical_contract_head": "38e13adde56dbd398cea914aec69c831194353c9",
+  "cross_lane_contract_decision_count": 9,
+  "blocking_open_decision_count": 0,
+  "implementation_start_gate": "ready",
+  "story_path": "docs/management/stories/active/story-mana-multitenant-runtime.md",
+  "acceptance_criteria_count": 25,
+  "architecture_files": [
+    "docs/architecture/story-mana-multitenant-runtime.md"
+  ],
+  "code_files_scanned": 0,
+  "test_files_scanned": 9,
+  "previous_accepted_spec_present": true
+}

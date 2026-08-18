@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-USAGE-PARTIAL-UNKNOWN-EMPTY",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "usage_events/2",
+  "mutations": [
+    { "operation": "set", "path": "/unknown_fields", "value": [] }
+  ],
+  "expected_code": "USAGE_PARTIAL_UNKNOWN_FIELDS_REQUIRED",
+  "business_api_called": false
+}

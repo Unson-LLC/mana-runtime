@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-EXPIRES-NOT-AFTER-ISSUED",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "tenant_context_envelope",
+  "mutations": [
+    { "operation": "set", "path": "/expires_at", "value": "2026-08-16T13:00:00Z" }
+  ],
+  "expected_code": "TIME_ORDER_INVALID",
+  "business_api_called": false
+}

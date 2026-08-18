@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-REVISION-NUMBER",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "tenant_context_envelope",
+  "mutations": [
+    { "operation": "set", "path": "/workspace_connection/connection_revision", "value": 7 }
+  ],
+  "expected_code": "REVISION_INVALID",
+  "business_api_called": false
+}

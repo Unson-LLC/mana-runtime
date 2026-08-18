@@ -1,0 +1,15 @@
+{
+  "fixture_id": "NEG-ADDITIONAL-PROPERTY",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "tenant_context_envelope",
+  "mutations": [
+    {
+      "operation": "set",
+      "path": "/unexpected_field",
+      "value": "must_be_rejected"
+    }
+  ],
+  "expected_code": "SCHEMA_INVALID",
+  "business_api_called": false
+}

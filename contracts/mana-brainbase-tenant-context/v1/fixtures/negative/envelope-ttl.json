@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-ENVELOPE-TTL-301",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "tenant_context_envelope",
+  "mutations": [
+    { "operation": "set", "path": "/expires_at", "value": "2026-08-16T13:05:01Z" }
+  ],
+  "expected_code": "TTL_EXCEEDED",
+  "business_api_called": false
+}

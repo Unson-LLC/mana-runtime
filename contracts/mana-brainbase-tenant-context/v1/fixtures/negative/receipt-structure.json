@@ -1,0 +1,14 @@
+{
+  "fixture_id": "NEG-RECEIPT-STRUCTURE",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "operation_receipt",
+  "mutations": [
+    {
+      "operation": "delete",
+      "path": "/reply/state"
+    }
+  ],
+  "expected_code": "SCHEMA_INVALID",
+  "business_api_called": false
+}

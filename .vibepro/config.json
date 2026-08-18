@@ -321,6 +321,20 @@
         "due_at": null
       },
       {
+        "story_id": "story-mana-multitenant-runtime",
+        "title": "八雲まなをテナント分離されたSlackランタイムとして提供する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": "quarter",
+        "view": "product",
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "category": "product",
+        "contract_type": "new_capability",
+        "derived_by": "vibepro-story-derive"
+      },
+      {
         "story_id": "story-task-canvas-ownership",
         "title": "Mana管理Canvasだけを安全に自動更新する",
         "ssot": "local",
