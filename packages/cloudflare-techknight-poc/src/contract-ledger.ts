@@ -108,9 +108,12 @@ export class ContractLedgerStateStore {
 
   async claimRun(key: string): Promise<"claimed" | "completed" | "in_progress"> {
     return this.state.storage.transaction(async (tx) => {
-      const current = await tx.get<{ status: string }>(`run:${key}`);
+      const current = await tx.get<{ status: string; claimedAt?: string }>(`run:${key}`);
       if (current?.status === "completed") return "completed";
-      if (current?.status === "running") return "in_progress";
+      const claimedAt = current?.claimedAt ? new Date(current.claimedAt).getTime() : Number.NaN;
+      if (current?.status === "running" && Number.isFinite(claimedAt) && Date.now() - claimedAt < 5 * 60_000) {
+        return "in_progress";
+      }
       await tx.put(`run:${key}`, { status: "running", claimedAt: new Date().toISOString() });
       return "claimed";
     });
@@ -399,7 +402,8 @@ export async function processContractLedgerSync(event: ContractLedgerSyncEvent, 
     updatedCount: 0, candidateCount: 0, excludedCount: 0, failedCount: 0, envelopeIds: [], ledgerResults: [],
     failures: [], startedAt, finishedAt: new Date().toISOString() });
   const claim = await state.claimRun(event.idempotencyKey);
-  if (claim !== "claimed") return { ...empty(), status: "already_completed" };
+  if (claim === "completed") return { ...empty(), status: "already_completed" };
+  if (claim === "in_progress") throw new Error("contract_ledger_run_in_progress");
   const receipt = empty();
   try {
     if (!config.spreadsheetId || !config.legalChannelId) throw new Error("contract_ledger_config_incomplete");

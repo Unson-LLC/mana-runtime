@@ -106,6 +106,8 @@ describe("Durable Object idempotency", () => {
     const state = new ContractLedgerStateStore({ storage: storage as unknown as DurableObjectStorage });
     expect(await state.claimRun("day")).toBe("claimed");
     expect(await state.claimRun("day")).toBe("in_progress");
+    values.set("run:stale", { status: "running", claimedAt: "2026-01-01T00:00:00.000Z" });
+    expect(await state.claimRun("stale")).toBe("claimed");
     const candidate = { kind: "contract_ledger_candidate" as const, runId: "run", envelope: envelope(),
       proposedRow: ["DS-2026-001", "env-1"] };
     expect((await state.saveCandidate(candidate)).created).toBe(true);
