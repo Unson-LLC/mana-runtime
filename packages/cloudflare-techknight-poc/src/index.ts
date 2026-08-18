@@ -296,7 +296,7 @@ function meetingMinutesClients(env: Env) {
         const exact: Array<{ id: string }> = [];
         let cursor: string | undefined;
         for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-          const page = await taskClient().listTasks({ project_code: [...projectCodes], limit: 100,
+          const page = await taskClient().listTasks({ project_code: [...projectCodes], limit: 50,
             ...(cursor ? { cursor } : {}) });
           exact.push(...page.items
             .filter((task) => task.title.trim().toLocaleLowerCase("ja") === normalizedTitle)
