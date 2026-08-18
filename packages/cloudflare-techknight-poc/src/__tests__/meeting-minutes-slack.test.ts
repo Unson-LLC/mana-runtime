@@ -530,4 +530,30 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(bodies[1]?.blocks)).toContain("続きがあります（2件中 1件目）");
     expect(JSON.stringify(bodies[2]?.blocks)).toContain("この議事録はAIにより自動生成されました");
   });
+
+  it("renders untrusted meeting text literally while preserving the card's trusted mrkdwn", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: `${bodies.length}.1` });
+    }) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+
+    const parentTs = await client.postParent(
+      "C1",
+      "定例 <@U_ATTACK>.txt",
+      "*要約* <!channel> <https://evil.test|確認> &lt;@U_SAFE&gt; https://safe.test",
+      "safe-parent",
+    );
+    await client.postThreadChunk(
+      "C1", parentTs, "定例 <@U_ATTACK>.txt",
+      "*本文* <!here> <https://evil.test> &lt;!channel&gt;", 0, 1, "safe-chunk",
+    );
+
+    const parent = JSON.stringify(bodies[0]);
+    const chunk = JSON.stringify(bodies[1]);
+    expect(parent).toContain("📝 *会議要約: 定例 &lt;@U_ATTACK&gt;.txt*");
+    expect(parent).toContain("*要約* &lt;!channel&gt; &lt;https://evil.test|確認&gt; &lt;@U_SAFE&gt; https://safe.test");
+    expect(chunk).toContain("📄 *詳細議事録: 定例 &lt;@U_ATTACK&gt;.txt*");
+    expect(chunk).toContain("*本文* &lt;!here&gt; &lt;https://evil.test&gt; &lt;!channel&gt;");
+  });
 });

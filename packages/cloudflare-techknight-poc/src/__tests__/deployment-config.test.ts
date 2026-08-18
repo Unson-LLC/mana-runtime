@@ -556,7 +556,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
     expect(worker).toContain("consumeTaskBoardRepair({");
-    expect(worker).toContain("enqueueScheduledTaskBoardRepair(env)");
+    expect(worker).toContain("enqueueScheduledTaskBoardRepair(env, new Date().toISOString(),");
+    expect(worker).toContain("resolveTaskBoardRepairTenantContext(env, repair)");
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');
   });
 

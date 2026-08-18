@@ -17,7 +17,8 @@ import { classifyMeetingMinutesFailure, meetingMinutesFailureLog,
   meetingMinutesReceiptSnapshot } from "./meeting-minutes-diagnostics.js";
 
 export interface StartMeetingMinutesOptions {
-  enabled: boolean; routerChannelId: string; destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
+  enabled: boolean; routerChannelId: string; sourceAppId: string;
+  destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
   download?(fileId: string): Promise<string>;
   classifyDestination?(transcript: string, destinations: readonly MeetingMinutesDestination[]):
     Promise<{ destinationId: string; reason: string } | null>;
@@ -128,7 +129,8 @@ export async function startMeetingMinutesRuns(fs: WorkspaceFs, event: SlackQueue
       runs.push(existing); continue;
     }
     const timestamp = now(options); const run: MeetingMinutesRun = { version: 1, runId, eventId: event.eventId,
-      workspaceId: event.workspaceId, sourceChannelId: event.channelId, sourceThreadTs: event.threadTs,
+      workspaceId: event.workspaceId, sourceAppId: options.sourceAppId,
+      sourceChannelId: event.channelId, sourceThreadTs: event.threadTs,
       sourceMessageTs: event.messageTs, file, status: "awaiting_destination", slack: { postedChunkIndexes: [] },
       createdAt: timestamp, updatedAt: timestamp };
     await saveMeetingMinutesRun(fs, run);
@@ -309,7 +311,8 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   validateMeetingMinutesDestinations(options.destinations);
   const run = await loadMeetingMinutesRun(fs, selection.runId);
   if (!run) throw new Error("meeting_minutes_run_not_found");
-  if (run.workspaceId !== selection.workspaceId || run.sourceChannelId !== selection.channelId) {
+  if (run.workspaceId !== selection.workspaceId || run.sourceAppId !== selection.appId ||
+    run.sourceChannelId !== selection.channelId || run.sourceThreadTs !== selection.threadTs) {
     throw new Error("meeting_minutes_selection_boundary_mismatch");
   }
   const configured = options.destinations.find((item) => item.id === selection.destinationId);
@@ -555,7 +558,8 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
   validateMeetingMinutesDestinations(options.destinations);
   const run = await loadMeetingMinutesRun(fs, command.runId);
   if (!run) throw new Error("meeting_minutes_run_not_found");
-  if (run.workspaceId !== command.workspaceId || run.sourceChannelId !== command.channelId) {
+  if (run.workspaceId !== command.workspaceId || run.sourceAppId !== command.appId ||
+    run.sourceChannelId !== command.channelId || run.sourceThreadTs !== command.threadTs) {
     throw new Error("meeting_minutes_redo_boundary_mismatch");
   }
   if (run.status !== "completed" || !run.destination || !run.github || !run.slack?.processingTs) {

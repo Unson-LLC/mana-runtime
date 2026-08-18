@@ -29,7 +29,8 @@ import {
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
 import type { MeetingMinutesDestination, MeetingMinutesRecovery, MeetingMinutesRedo, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
-import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
+import { handleMeetingMinutesInteractionEntrypoint,
+  type TenantInteractionEffects, type TenantInteractionIdentity } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
@@ -76,6 +77,7 @@ import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolve
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
   consumeTaskBoardRepair,
+  taskBoardRepairEventId,
   enqueueMeetingMinutesTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
   enqueueTaskBoardRepairsForProjects,
@@ -113,7 +115,7 @@ import {
   TenantRuntimeStateHandler,
   type TenantStateStorage,
 } from "./multitenancy/tenant-runtime-state.js";
-import type { DeploymentProfileName, ExpectedTenantScope } from "./multitenancy/contracts.js";
+import type { DeploymentProfileName, ExpectedTenantScope, TenantContextEnvelope } from "./multitenancy/contracts.js";
 import { TenantBoundaryError, deny } from "./multitenancy/errors.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { handleSlackInstallationLifecycleRequest } from "./multitenancy/slack-installation-entrypoint.js";
@@ -189,9 +191,11 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   };
   CF_VERSION_METADATA?: { id: string; tag?: string };
   TENANT_ID: string;
-  TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | SlackQueueEvent
+  TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>
+    | SlackQueueEvent
     | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
-  TASK_BOARD_REPAIRS: Queue<TaskBoardRepairEvent>;
+  TASK_BOARD_REPAIRS: Queue<TenantQueueBody<TaskBoardRepairEvent> | TaskBoardRepairEvent>;
+  MANA_TASK_BOARD_SERVICE_ACTOR_ID?: string;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
   TASK_WRITE_APPROVALS: DurableObjectNamespace;
   TASK_BOARD_BINDINGS: DurableObjectNamespace;
@@ -375,7 +379,8 @@ function meetingMinutesClients(env: Env) {
         destinationSlack(channelId).postParent(channelId, fileName, summary, clientMsgId),
       postTaskCard: (run: MeetingMinutesRun) => destinationSlack(run.destination!.slackChannelId).postTaskCard(run),
       repairTaskBoard: (targetId: string) =>
-        enqueueMeetingMinutesTaskBoardRepair(env, targetId, "task_write"),
+        enqueueMeetingMinutesTaskBoardRepair(env, targetId, "task_write",
+          (repair) => resolveTaskBoardRepairTenantContext(env, repair)),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         destinationSlack(channelId).postThreadChunk(channelId, threadTs, fileName, text, index, total, clientMsgId),
@@ -425,6 +430,101 @@ function tenantRuntimeClients(env: Env) {
   });
 }
 
+async function resolveTaskBoardRepairTenantContext(
+  env: Env,
+  repair: TaskBoardRepairEvent,
+): Promise<TenantContextEnvelope> {
+  const clients = tenantRuntimeClients(env);
+  const resolved = await resolveSlackWorkerIngress({
+    identity: {
+      provider: "slack",
+      app_id: requiredTenantRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+      workspace_id: repair.workspaceId,
+      event_id: taskBoardRepairEventId(repair),
+      channel_id: repair.channelId,
+      thread_ts: repair.requestedAt,
+      requester_id: requiredTenantRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID),
+    },
+    required_scopes: requiredTenantRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+      .split(",").map((value) => value.trim()).filter(Boolean),
+    required_authorization: {
+      audience: requiredTenantRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+      project_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+      capability_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    },
+    authority: clients.authority,
+    now: repair.requestedAt,
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  });
+  return resolved.tenant_context;
+}
+
+async function resolveDerivedMeetingTenantContext(
+  env: Env,
+  source: TenantContextEnvelope,
+  payload: MeetingMinutesRecovery,
+): Promise<TenantContextEnvelope> {
+  const requesterId = source.slack.requester_id;
+  if (!requesterId) deny("queue_producer", "IDENTITY_INVALID");
+  const clients = tenantRuntimeClients(env);
+  const resolved = await resolveSlackWorkerIngress({
+    identity: {
+      provider: "slack",
+      app_id: source.workspace_connection.app_id,
+      workspace_id: payload.workspaceId,
+      event_id: `${source.slack.event_id}:meeting_minutes_recovery:${payload.runId}`,
+      channel_id: payload.channelId,
+      thread_ts: payload.threadTs,
+      requester_id: requesterId,
+    },
+    required_scopes: requiredTenantRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+      .split(",").map((value) => value.trim()).filter(Boolean),
+    required_authorization: {
+      audience: requiredTenantRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+      project_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+      capability_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    },
+    authority: clients.authority,
+    now: payload.actionTs,
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  });
+  if (resolved.tenant_context.tenant.tenant_id !== source.tenant.tenant_id
+    || resolved.tenant_context.placement.deployment_id !== source.placement.deployment_id) {
+    deny("queue_producer", "SCOPE_MISMATCH");
+  }
+  return resolved.tenant_context;
+}
+
+function createStaticTenantInteractionEffectResolver(
+  env: Env,
+  onResolved?: (context: TenantContextEnvelope) => void,
+) {
+  const clients = tenantRuntimeClients(env);
+  return async (source: TenantInteractionIdentity): Promise<TenantInteractionEffects> => {
+    const resolved = await resolveSlackWorkerIngress({
+      identity: { provider: "slack", ...source },
+      required_scopes: requiredTenantRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+        .split(",").map((value) => value.trim()).filter(Boolean),
+      required_authorization: {
+        audience: requiredTenantRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+        project_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+        capability_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+      },
+      authority: clients.authority,
+      now: new Date().toISOString(),
+      resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+    });
+    onResolved?.(resolved.tenant_context);
+    return {
+      tenant_id: resolved.tenant_context.tenant.tenant_id,
+      source,
+      durableObject: async (_effectId, _target, execute) => execute(),
+      brainbaseProxy: async (_effectId, _target, _mode, execute) => execute(fetch),
+      slackDelivery: async (_effectId, _target, _event, execute) => execute(fetch),
+    };
+  };
+}
+
 async function resolveTenantVerificationKey(env: Env, keyId: string): Promise<CryptoKey | undefined> {
   let parsed: unknown;
   try {
@@ -455,9 +555,55 @@ function isTenantSlackQueueBody(value: unknown): value is TenantQueueBody<SlackQ
     && typeof payload.channelId === "string" && typeof payload.threadTs === "string";
 }
 
-async function tenantPayloadHash(payload: SlackQueueEvent): Promise<string> {
+function isTenantQueueBody(value: unknown): value is TenantQueueBody<unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const body = value as Partial<TenantQueueBody<unknown>>;
+  return body.schema_version === "1.0" && !!body.tenant_context && body.payload !== undefined;
+}
+
+type TenantQueuePayload = SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo
+  | MeetingMinutesRecovery | TaskBoardRepairEvent;
+
+const internalCanonicalPayload = Symbol("internalCanonicalPayload");
+
+function markInternalCanonicalPayload(
+  payload: TenantQueuePayload,
+  context: TenantContextEnvelope,
+): TenantQueuePayload {
+  Object.defineProperty(payload, internalCanonicalPayload, { value: context, enumerable: false });
+  return payload;
+}
+
+function internalCanonicalContext(payload: unknown): TenantContextEnvelope | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  return (payload as Record<symbol, unknown>)[internalCanonicalPayload] as TenantContextEnvelope | undefined;
+}
+
+function isInternalCanonicalPayload(payload: unknown): boolean {
+  return internalCanonicalContext(payload) !== undefined;
+}
+
+async function tenantPayloadHash(payload: unknown): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(jcsCanonicalize(payload)));
   return `sha256:${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function expectedTenantQueueScope(env: Env, body: TenantQueueBody<TenantQueuePayload>): ExpectedTenantScope {
+  const payload = body.payload;
+  const context = body.tenant_context;
+  const threadTs = "requestedAt" in payload ? payload.requestedAt : payload.threadTs;
+  const appId = "appId" in payload ? payload.appId : context.workspace_connection.app_id;
+  return {
+    audience: requiredTenantRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    workspace_id: payload.workspaceId,
+    app_id: appId,
+    channel_id: payload.channelId,
+    thread_ts: threadTs,
+    actor_principal_id: context.actor.principal_id,
+    project_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+    capability_id: requiredTenantRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    deployment_id: context.placement.deployment_id,
+  };
 }
 
 function tenantExpectedScope(env: Env, body: TenantQueueBody<SlackQueueEvent>): ExpectedTenantScope {
@@ -599,7 +745,9 @@ const worker = {
         }
         const selection = { kind: "meeting_minutes_selection", runId,
           destinationId: run.destination!.id, workspaceId: run.workspaceId,
-          channelId: run.sourceChannelId, userId: run.approvedBy ?? "admin-retry",
+          appId: requiredTenantRuntimeBinding(run.sourceAppId), channelId: run.sourceChannelId,
+          threadTs: run.sourceThreadTs,
+          userId: run.approvedBy ?? "admin-retry",
           actionTs: currentMeetingMinutesActionTs() } satisfies MeetingMinutesSelection;
         run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
           const clients = meetingMinutesClients(env);
@@ -647,32 +795,41 @@ const worker = {
     }
     if (request.method === "POST" && url.pathname === "/slack/interactions") {
       const config = meetingMinutesRuntimeConfig(env);
+      let interactionContext: TenantContextEnvelope | undefined;
+      const resolveInteractionEffects = createStaticTenantInteractionEffectResolver(
+        env, (context) => { interactionContext = context; },
+      );
       return handleMeetingMinutesInteractionEntrypoint(request, env, ctx, config.operatorUserIds,
-        async ({ approvalId, payloadHash, approverId, channelId }) => {
+        async ({ approvalId, payloadHash, approverId, channelId }, effects) => {
           const approvalChannelId = env.TASK_WRITE_APPROVAL_CHANNEL_ID ?? env.SLACK_ALLOWED_CHANNEL_ID;
           if (channelId !== approvalChannelId) return Response.json({ error: "task_write_approval_channel_mismatch" }, { status: 403 });
-          const pending = await peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId);
+          const pending = await effects.durableObject(`task-approval-peek:${approvalId}`, {},
+            () => peekTaskWriteApproval(env.TASK_WRITE_APPROVALS, approvalId));
           if (pending.payloadHash !== payloadHash) return Response.json({ error: "task_write_approval_payload_mismatch" }, { status: 403 });
-          const approved = await handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", {
+          const approved = await effects.brainbaseProxy(`task-approval-execute:${approvalId}`, {}, "write",
+            () => handleTaskWriteProxyRequest(new Request("https://task-write.internal/api/task-write", {
             method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": pending.capability,
               "x-mana-task-write-approval-id": approvalId, "x-mana-task-write-approver-id": approverId },
             body: JSON.stringify(pending.body),
-          }), env);
+          }), env));
           if (!approved.ok) return approved;
           return Response.json({ ok: true, approval_id: approvalId });
         }, async (runId) => {
+          if (!interactionContext) throw new Error("interaction_tenant_context_missing");
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-            env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId,
+            interactionContext.tenant.tenant_id,
+            interactionContext.workspace_connection.workspace_id, runId,
           ));
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           return withDisposableResource(() => getWorkspace(handle), async (workspace) =>
             (await loadMeetingMinutesRun(workspace.fs, runId))?.sourceThreadTs);
-        }, async (payload) => {
+        }, async (payload, effects) => {
           const parsedTeamIds = (() => { try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
             catch { return {}; } })();
-          const loadWorkspace = async <T>(runId: string, operation: (workspace: { fs: Parameters<typeof loadMeetingMinutesRun>[0] }) => Promise<T>) => {
+          const loadWorkspace = async <T>(runId: string, source: { workspaceId: string },
+            operation: (workspace: { fs: Parameters<typeof loadMeetingMinutesRun>[0] }) => Promise<T>) => {
             const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-              env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId));
+              effects.tenant_id, source.workspaceId, runId));
             const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
             return withDisposableResource(() => getWorkspace(handle), operation);
           };
@@ -680,12 +837,19 @@ const worker = {
             token: env.BRAINBASE_TASK_API_TOKEN ?? "", fetchImpl: async (request, init) =>
               fetch(request, { ...init, signal: AbortSignal.timeout(15_000) }) });
           let cachedRun: MeetingMinutesRun | undefined;
-          return handleMeetingMinutesTaskAction(payload, { sourceTeamId: env.SLACK_EXPECTED_TEAM_ID,
+          let cachedSource: { workspaceId: string; appId: string; channelId: string; threadTs: string } | undefined;
+          return handleMeetingMinutesTaskAction(payload, {
             destinationTeamIds: parsedTeamIds,
             destinations: config.destinations,
             operatorUserIds: config.operatorUserIds,
-            loadRun: async (runId) => { cachedRun = await loadWorkspace(runId, (workspace) => loadMeetingMinutesRun(workspace.fs, runId)); return cachedRun; },
-            saveRun: (run) => loadWorkspace(run.runId, async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); }),
+            loadRun: async (runId, source) => { cachedSource = source;
+              cachedRun = await loadWorkspace(runId, source, (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+              return cachedRun; },
+            saveRun: (run) => {
+              if (!cachedSource) throw new Error("meeting_minutes_source_missing");
+              return loadWorkspace(run.runId, cachedSource,
+                async (workspace) => { await saveMeetingMinutesRun(workspace.fs, run); });
+            },
             getTask: (taskId) => taskClient.getTask(taskId),
             updateTask: (taskId, input, key) => taskClient.updateTask(taskId, input, key),
             deleteTask: (taskId, version, key) => taskClient.deleteTask(taskId, version, key),
@@ -704,10 +868,14 @@ const worker = {
               baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
               token: env.BRAINBASE_GRAPH_API_TOKEN,
             }), repairTaskBoard: (targetId) => enqueueMeetingMinutesTaskBoardRepair(
-              env, targetId, "task_write",
+              env, targetId, "task_write", (repair) => resolveTaskBoardRepairTenantContext(env, repair),
             ), defer: (work) => ctx.waitUntil(work),
           });
-        }, () => meetingMinutesDeploymentGate(env).isIntakePaused());
+        }, async (command) => {
+          if (!interactionContext) throw new Error("interaction_tenant_context_missing");
+          await env.TECHKNIGHT_EVENTS.send({ schema_version: "1.0",
+            tenant_context: interactionContext, payload: command });
+        }, resolveInteractionEffects, () => meetingMinutesDeploymentGate(env).isIntakePaused());
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
@@ -769,7 +937,8 @@ const worker = {
     }
   },
 
-  async queue(batch: MessageBatch<TenantQueueBody<SlackQueueEvent> | SlackQueueEvent
+  async queue(batch: MessageBatch<TenantQueueBody<TenantQueuePayload>
+    | SlackQueueEvent
     | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
     for (const message of batch.messages) {
       if (ackMalformedTenantQueueMessage(message, (entry) => console.error(JSON.stringify(entry)))) continue;
@@ -784,11 +953,17 @@ const worker = {
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
         });
-        await consumeTenantQueueMessage(tenantMessage, {
+        await consumeTenantQueueMessage<SlackQueueEvent, void>(tenantMessage as {
+          body: TenantQueueBody<SlackQueueEvent>;
+          ack(): void;
+          retry(options?: { delaySeconds?: number }): void;
+        }, {
           verifier,
           expected_scope: (body) => tenantExpectedScope(env, body),
           now: () => new Date().toISOString(),
-          process: (payload) => env.TECHKNIGHT_EVENTS.send(payload),
+          process: (payload) => processCanonicalPayload(markInternalCanonicalPayload(
+            payload, tenantMessage.body.tenant_context,
+          ), env),
           ownership: createDurableTenantStateClient(
             env.TENANT_RUNTIME_STATE, tenantMessage.body.tenant_context.tenant.tenant_id,
           ),
@@ -799,16 +974,55 @@ const worker = {
         });
         continue;
       }
+      if (isTenantQueueBody(message.body)) {
+        const tenantBody = message.body as TenantQueueBody<TenantQueuePayload>;
+        const clients = tenantRuntimeClients(env);
+        const verifier = new TenantRuntimeBoundaryVerifier({
+          read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        });
+        await consumeTenantQueueMessage<TenantQueuePayload, void>({ body: tenantBody,
+          ack: () => message.ack(), retry: (options) => message.retry(options) }, {
+          verifier,
+          expected_scope: (body) => expectedTenantQueueScope(env, body),
+          now: () => new Date().toISOString(),
+          process: (payload) => processCanonicalPayload(markInternalCanonicalPayload(
+            payload, tenantBody.tenant_context,
+          ), env),
+          ownership: createDurableTenantStateClient(
+            env.TENANT_RUNTIME_STATE, tenantBody.tenant_context.tenant.tenant_id),
+          payload_hash: tenantPayloadHash,
+          retention_until: (now) => new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+          log: (entry) => console.log(JSON.stringify(entry)),
+          log_error: (entry) => console.error(JSON.stringify(entry)),
+        });
+        continue;
+      }
       if (isTaskBoardRepairEvent(message.body)) {
+        const canonicalContext = internalCanonicalContext(message.body);
+        if (!canonicalContext) {
+          console.error(JSON.stringify({ event: "task_board_raw_fallback_rejected", code: "FALLBACK_FORBIDDEN" }));
+          message.ack();
+          continue;
+        }
+        let retryRequested = false;
         await consumeTaskBoardRepair({
           body: message.body,
-          ack: () => message.ack(),
-          retry: () => message.retry(),
-        }, env);
+          ack: () => undefined,
+          retry: () => { retryRequested = true; },
+        }, { ...env, TENANT_ID: canonicalContext.tenant.tenant_id });
+        if (retryRequested) message.retry();
+        else message.ack();
         continue;
       }
       const meetingMinutesConfig = meetingMinutesRuntimeConfig(env);
       if (isMeetingMinutesRedo(message.body)) {
+        const canonicalContext = internalCanonicalContext(message.body);
+        if (!canonicalContext) {
+          console.error(JSON.stringify({ event: "meeting_minutes_redo_raw_fallback_rejected", code: "FALLBACK_FORBIDDEN" }));
+          message.ack();
+          continue;
+        }
         const command = message.body;
         const commandGate = await gateMeetingMinutesCommandQueueMessage({
           body: command, ack: () => message.ack(), retry: () => message.retry(),
@@ -816,7 +1030,7 @@ const worker = {
         if (commandGate === "blocked") continue;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-            env.TENANT_ID, command.workspaceId, command.runId,
+            canonicalContext.tenant.tenant_id, command.workspaceId, command.runId,
           ));
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
@@ -832,10 +1046,16 @@ const worker = {
         continue;
       }
       if (isMeetingMinutesRecovery(message.body)) {
+        const canonicalContext = internalCanonicalContext(message.body);
+        if (!canonicalContext) {
+          console.error(JSON.stringify({ event: "meeting_minutes_recovery_raw_fallback_rejected", code: "FALLBACK_FORBIDDEN" }));
+          message.ack();
+          continue;
+        }
         const recovery = message.body;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-            env.TENANT_ID, recovery.workspaceId, recovery.runId,
+            canonicalContext.tenant.tenant_id, recovery.workspaceId, recovery.runId,
           ));
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           const outcome = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
@@ -845,7 +1065,8 @@ const worker = {
             });
           });
           if (outcome === "not_due") {
-            await env.TECHKNIGHT_EVENTS.send(recovery, { delaySeconds: 60 });
+            message.retry({ delaySeconds: 60 });
+            continue;
           } else if (outcome !== "superseded") {
             await meetingMinutesDeploymentGate(env).markTerminal(recovery.runId);
           }
@@ -858,6 +1079,12 @@ const worker = {
         continue;
       }
       if (isMeetingMinutesSelection(message.body)) {
+        const canonicalContext = internalCanonicalContext(message.body);
+        if (!canonicalContext) {
+          console.error(JSON.stringify({ event: "meeting_minutes_selection_raw_fallback_rejected", code: "FALLBACK_FORBIDDEN" }));
+          message.ack();
+          continue;
+        }
         const selection = message.body;
         if (selection.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ||
           selection.channelId !== meetingMinutesConfig.routerChannelId) {
@@ -872,7 +1099,7 @@ const worker = {
         let failedMeetingMinutesRun: MeetingMinutesRun | undefined;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-            env.TENANT_ID, selection.workspaceId, selection.runId,
+            canonicalContext.tenant.tenant_id, selection.workspaceId, selection.runId,
           ));
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
@@ -882,7 +1109,12 @@ const worker = {
               await meetingMinutesDeploymentGate(env).markActive({ runId: selection.runId,
                 startedAt: new Date().toISOString(),
                 deadlineAt: new Date(Date.now() + armed.delaySeconds * 1_000).toISOString() });
-              await env.TECHKNIGHT_EVENTS.send(armed.event, {
+              const recoveryContext = await resolveDerivedMeetingTenantContext(env, canonicalContext, armed.event);
+              await env.TECHKNIGHT_EVENTS.send({
+                schema_version: "1.0",
+                tenant_context: recoveryContext,
+                payload: armed.event,
+              }, {
                 delaySeconds: Math.min(armed.delaySeconds, MEETING_MINUTES_RECOVERY_DELAY_SECONDS),
               });
             }
@@ -909,6 +1141,11 @@ const worker = {
             }) }));
           message.retry();
         }
+        continue;
+      }
+      if (!isInternalCanonicalPayload(message.body)) {
+        console.error(JSON.stringify({ event: "slack_raw_fallback_rejected", code: "FALLBACK_FORBIDDEN" }));
+        message.ack();
         continue;
       }
       const meetingMinutesRouterGate = await gateMeetingMinutesRouterQueueMessage({
@@ -948,6 +1185,7 @@ const worker = {
               await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
                 const clients = meetingMinutesClients(env);
                 await processMeetingMinutesSlackEvent(workspace.fs, { ...event, files: [file] }, meetingMinutesConfig, {
+                  sourceAppId: requiredTenantRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
                   download: (fileId) => clients.slack.downloadTextFile(fileId),
                   classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations),
                   requestDestination: (run, destinations) => clients.slack.requestDestination(run, destinations),
@@ -1249,9 +1487,27 @@ const worker = {
   },
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await enqueueScheduledTaskBoardRepair(env);
+    await enqueueScheduledTaskBoardRepair(env, new Date().toISOString(),
+      (repair) => resolveTaskBoardRepairTenantContext(env, repair));
   },
-} satisfies ExportedHandler<Env, TenantQueueBody<SlackQueueEvent> | SlackQueueEvent
+} satisfies ExportedHandler<Env, TenantQueueBody<TenantQueuePayload>
+  | SlackQueueEvent
   | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;
+
+async function processCanonicalPayload(payload: TenantQueuePayload, env: Env): Promise<void> {
+  let acknowledged = false;
+  let retryRequested = false;
+  const nestedMessage = {
+    body: payload,
+    ack: () => { acknowledged = true; },
+    retry: () => { retryRequested = true; },
+  };
+  await worker.queue({ messages: [nestedMessage] } as unknown as MessageBatch<
+    TenantQueueBody<TenantQueuePayload> | TenantQueuePayload
+  >, env);
+  if (retryRequested || !acknowledged) {
+    throw new Error("canonical_payload_processing_incomplete");
+  }
+}
 
 export default worker;

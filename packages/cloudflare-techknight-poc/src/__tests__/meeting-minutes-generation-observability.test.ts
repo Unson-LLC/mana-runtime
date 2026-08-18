@@ -23,7 +23,7 @@ const event: SlackQueueEvent = {
 };
 const selection: MeetingMinutesSelection = {
   kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana", workspaceId: "T1",
-  channelId: "CROUTER", userId: "U1", actionTs: "2.1",
+  appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1",
 };
 
 function hook(event: "UserPromptSubmit" | "Stop") {
@@ -127,7 +127,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
 
   it("durably checkpoints exec_started before an unresolved sandbox execution can finish", async () => {
     const fs = new MemoryFs();
-    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     let rejectGeneration!: (error: Error) => void;
     const generate = vi.fn(async (_transcript, _destination, _context, _mode, observe) => {

@@ -3,6 +3,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
   type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
+import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
 
 export interface SlackSelectionMessage {
   replace_original: true;
@@ -12,14 +13,15 @@ export interface SlackSelectionMessage {
 
 export function organizationSelectionMessage(runId: string, fileName: string,
   destinations: readonly MeetingMinutesDestination[]): SlackSelectionMessage {
+  const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
   const preferredOrder = ["unson", "unson-business", "tech-knight"];
   const organizations = [...new Map(destinations.map((item) => [item.organization.id, item.organization])).values()]
     .sort((left, right) => {
       const leftIndex = preferredOrder.indexOf(left.id); const rightIndex = preferredOrder.indexOf(right.id);
       return (leftIndex < 0 ? preferredOrder.length : leftIndex) - (rightIndex < 0 ? preferredOrder.length : rightIndex);
     });
-  return { replace_original: true, text: `${fileName} の保存先組織を選択してください。`, blocks: [
-    { type: "section", text: { type: "mrkdwn", text: `*${fileName}* の保存先組織を選択してください。` } },
+  return { replace_original: true, text: `${safeFileName} の保存先組織を選択してください。`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*${safeFileName}* の保存先組織を選択してください。` } },
     { type: "actions", elements: organizations.map((organization) => ({ type: "button",
       text: { type: "plain_text", text: organization.name },
       action_id: `${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:${organization.id}`,
@@ -29,11 +31,12 @@ export function organizationSelectionMessage(runId: string, fileName: string,
 
 export function projectSelectionMessage(runId: string, fileName: string, organizationId: string,
   destinations: readonly MeetingMinutesDestination[]): SlackSelectionMessage {
+  const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
   const projects = destinations.filter((item) => item.organization.id === organizationId);
   if (!projects.length) throw new Error("meeting_minutes_organization_invalid");
   const organization = projects[0]!.organization;
-  return { replace_original: true, text: `${fileName} の保存先プロジェクトを選択してください。`, blocks: [
-    { type: "section", text: { type: "mrkdwn", text: `*${fileName}* の保存先プロジェクトを選択してください。\n組織: *${organization.name}*` } },
+  return { replace_original: true, text: `${safeFileName} の保存先プロジェクトを選択してください。`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*${safeFileName}* の保存先プロジェクトを選択してください。\n組織: *${organization.name}*` } },
     { type: "actions", elements: projects.map((destination) => ({ type: "button",
       text: { type: "plain_text", text: destination.name }, action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`,
       value: JSON.stringify({ runId, destinationId: destination.id, fileName }) })) },
@@ -44,13 +47,13 @@ export function projectSelectionMessage(runId: string, fileName: string, organiz
 
 export function destinationSelectedMessage(runId: string, fileName: string,
   destination: MeetingMinutesDestination): SlackSelectionMessage {
-  return { replace_original: true, text: `${fileName} の保存先に ${destination.name} を選択しました。`, blocks: [
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先に ${destination.name} を選択しました。`, blocks: [
     { type: "section", text: { type: "mrkdwn", text: `*✅ 保存先を選択しました*\n保存先: ${destination.name}` } },
   ] };
 }
 
 export function redoConfirmationMessage(runId: string, fileName: string): SlackSelectionMessage {
-  return { replace_original: true, text: `${fileName} の保存先をやり直しますか？`, blocks: [
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先をやり直しますか？`, blocks: [
     { type: "section", text: { type: "mrkdwn", text: `*保存先をやり直しますか？*\nGitHubの議事録・文字起こしと自動登録タスクを取り消します。旧共有投稿は「取り消し済み」にし、保存先選択へ戻します。` } },
     { type: "actions", elements: [
       { type: "button", style: "danger", text: { type: "plain_text", text: "取り消して選び直す" },
@@ -60,14 +63,14 @@ export function redoConfirmationMessage(runId: string, fileName: string): SlackS
 }
 
 export function redoProcessingMessage(fileName: string): SlackSelectionMessage {
-  return { replace_original: true, text: `${fileName} の保存先をやり直しています。`, blocks: [
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先をやり直しています。`, blocks: [
     { type: "section", text: { type: "mrkdwn",
       text: `:hourglass_flowing_sand: *保存先をやり直しています…*\n旧保存先の議事録とタスクを取り消したあと、保存先選択へ切り替えます。` } },
   ] };
 }
 
 export function redoFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
-  return { replace_original: true, text: `${fileName} の保存先変更に失敗しました。`, blocks: [
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更に失敗しました。`, blocks: [
     { type: "section", text: { type: "mrkdwn",
       text: ":warning: *保存先のやり直しを完了できませんでした*\n完了済みの取り消し工程は保持されています。下のボタンから続きを再実行できます。" } },
     { type: "actions", elements: [{ type: "button", style: "danger",
@@ -80,9 +83,10 @@ export function suggestedDestinationMessage(run: MeetingMinutesRun,
   destinations: readonly MeetingMinutesDestination[]): SlackSelectionMessage | undefined {
   const destination = destinations.find((item) => item.id === run.routing?.suggestedDestinationId);
   if (!destination) return undefined;
-  const reason = run.routing?.reason ? `\n推定根拠: ${run.routing.reason}` : "";
-  return { replace_original: true, text: `${run.file.name} の保存先候補は ${destination.name} です。`, blocks: [
-    { type: "section", text: { type: "mrkdwn", text: `*${run.file.name}* の保存先候補です。\n候補は *${destination.name}* です。${reason}` } },
+  const safeFileName = escapeUntrustedSlackMrkdwn(run.file.name);
+  const reason = run.routing?.reason ? `\n推定根拠: ${escapeUntrustedSlackMrkdwn(run.routing.reason)}` : "";
+  return { replace_original: true, text: `${safeFileName} の保存先候補は ${destination.name} です。`, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: `*${safeFileName}* の保存先候補です。\n候補は *${destination.name}* です。${reason}` } },
     { type: "actions", elements: [
       { type: "button", style: "primary", text: { type: "plain_text", text: "この候補で進める" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${destination.id}`,
@@ -213,7 +217,7 @@ export class MeetingMinutesSlackClient {
     if (!run.slack?.selectionTs) throw new Error("meeting_minutes_selection_coordinates_missing");
     await this.setThreadStatus(run, `議事録を作成しています…（${run.destination.name}）`);
     const result = await this.post("chat.postMessage", { channel: run.sourceChannelId, thread_ts: run.sourceThreadTs,
-      text: `${run.file.name} の議事録を作成しています。`, client_msg_id: await clientMessageId(`${run.runId}-processing`),
+      text: `${escapeUntrustedSlackMrkdwn(run.file.name)} の議事録を作成しています。`, client_msg_id: await clientMessageId(`${run.runId}-processing`),
       blocks: [{ type: "section", text: { type: "mrkdwn", text: `*⏳ 議事録を作成中…*\n保存先: ${run.destination.name}\n完了すると共有先へ投稿します。` } }] });
     if (!result.ts) throw new Error("slack_response_ts_missing");
     return result.ts;
@@ -248,22 +252,23 @@ export class MeetingMinutesSlackClient {
       : taskIntegrationStage === "task_card"
       ? "タスク登録は完了しましたが、タスクカードの投稿が完了していません。"
       : "タスク自動登録だけ完了していません。";
+    const safeFileName = escapeUntrustedSlackMrkdwn(run.file.name);
     const text = persistedPlaceholderFailure
-      ? `${run.file.name} の保存済み議事録に見本文が含まれています。保存先をやり直してください。`
+      ? `${safeFileName} の保存済み議事録に見本文が含まれています。保存先をやり直してください。`
       : completed && permanentAuthenticationFailure
-      ? `${run.file.name} の議事録は作成・共有済みですが、Brainbaseの認証設定を確認できませんでした。`
+      ? `${safeFileName} の議事録は作成・共有済みですが、Brainbaseの認証設定を確認できませんでした。`
       : completed && permanentProjectBindingFailure
-      ? `${run.file.name} の議事録は作成・共有済みですが、Brainbaseのプロジェクト紐付けを確認できませんでした。`
+      ? `${safeFileName} の議事録は作成・共有済みですが、Brainbaseのプロジェクト紐付けを確認できませんでした。`
       : taskRegistrationPending
-      ? `${run.file.name} の議事録は作成・共有済みです。未完了のタスク連携を再実行できます。`
+      ? `${safeFileName} の議事録は作成・共有済みです。未完了のタスク連携を再実行できます。`
       : completed
-      ? `${run.file.name} の議事録を作成しました。${contextWarning
+      ? `${safeFileName} の議事録を作成しました。${contextWarning
         ? " Brainbaseの正本にない参照候補は除外しました。" : ""}`
       : permanentAuthenticationFailure
-      ? `${run.file.name} の議事録作成に失敗しました。Brainbaseの認証設定を確認してください。`
+      ? `${safeFileName} の議事録作成に失敗しました。Brainbaseの認証設定を確認してください。`
       : permanentProjectBindingFailure
-      ? `${run.file.name} の議事録作成に失敗しました。Brainbaseのプロジェクト紐付けを確認してください。`
-      : `${run.file.name} の議事録作成に失敗しました。再実行できます。`;
+      ? `${safeFileName} の議事録作成に失敗しました。Brainbaseのプロジェクト紐付けを確認してください。`
+      : `${safeFileName} の議事録作成に失敗しました。再実行できます。`;
     const details = persistedPlaceholderFailure
       ? [`*⚠️ 保存済みの議事録に見本文が含まれています*`,
         `保存先: ${run.destination.name}`,
@@ -338,11 +343,12 @@ export class MeetingMinutesSlackClient {
     }
   }
   async postParent(channelId: string, fileName: string, summary: string, clientMsgId: string): Promise<string> {
-    const text = `📝 会議要約: ${fileName}`;
+    const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
+    const text = `📝 会議要約: ${safeFileName}`;
     const blocks = [
-      { type: "section", text: { type: "mrkdwn", text: `📝 *会議要約: ${fileName}*\n\n_AI生成による要約です_` } },
+      { type: "section", text: { type: "mrkdwn", text: `📝 *会議要約: ${safeFileName}*\n\n_AI生成による要約です_` } },
       { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: summary } },
+      { type: "section", text: { type: "mrkdwn", text: escapeUntrustedSlackMrkdwn(summary) } },
       { type: "divider" },
       { type: "context", elements: [{ type: "mrkdwn", text: "💬 _詳細な議事録はこの投稿のスレッドに投稿されます_" }] },
     ];
@@ -353,13 +359,14 @@ export class MeetingMinutesSlackClient {
   async postThreadChunk(channelId: string, threadTs: string, fileName: string, minutes: string,
     index: number, total: number, clientMsgId: string): Promise<string> {
     const first = index === 0; const last = index === total - 1;
-    const text = first ? `📄 詳細議事録: ${fileName}` : `📄 詳細議事録（続き ${index + 1}/${total}）`;
+    const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
+    const text = first ? `📄 詳細議事録: ${safeFileName}` : `📄 詳細議事録（続き ${index + 1}/${total}）`;
     const blocks: Array<Record<string, unknown>> = [];
     if (first) blocks.push(
-      { type: "section", text: { type: "mrkdwn", text: `📄 *詳細議事録: ${fileName}*\n\n_AI生成による詳細な議事録です_` } },
+      { type: "section", text: { type: "mrkdwn", text: `📄 *詳細議事録: ${safeFileName}*\n\n_AI生成による詳細な議事録です_` } },
       { type: "divider" },
     );
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: minutes } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: escapeUntrustedSlackMrkdwn(minutes) } });
     blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: last
       ? "🤖 _この議事録はAIにより自動生成されました。必要に応じて内容をご確認ください。_"
       : `📜 _続きがあります（${total}件中 ${index + 1}件目）_` }] });
@@ -394,7 +401,7 @@ export class MeetingMinutesSlackClient {
   async retractSharedMinutes(channelId: string, parentTs: string, fileName: string): Promise<void> {
     try {
       await this.post("chat.update", { channel: channelId, ts: parentTs,
-        text: `${fileName} の議事録は保存先変更のため取り消されました。`,
+        text: `${escapeUntrustedSlackMrkdwn(fileName)} の議事録は保存先変更のため取り消されました。`,
         blocks: [{ type: "section", text: { type: "mrkdwn",
           text: `*⚠️ この議事録は取り消されました*\n保存先を変更して再作成しています。` } }] });
     } catch (error) {

@@ -106,7 +106,7 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(JSON.stringify(payload)).not.toContain(TASK_TOKEN);
   });
 
-  it("fans a successful write out only to Canvas targets for the changed project", async () => {
+  it("never publishes a raw tenant TaskBoard repair after a successful write", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const bindings = { ...env(), TENANT_ID: "unson-business", TASK_BOARD_REPAIRS: { send },
@@ -125,12 +125,7 @@ describe("Cloudflare requester-scoped task write proxy", () => {
       operation: "create", title: "契約更新",
     }), bindings);
     expect(response.status).toBe(200);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ targetId: "back-office",
-      workspaceId: "T0882T8N9UH", channelId: "C0BKS6RL99T", manaCanvasId: "FBACKOFFICE",
-      bindingRevision: 4, reason: "task_write" }));
-    expect(info).toHaveBeenCalledWith(JSON.stringify({ event: "task_board_repair_suppressed",
-      requestId: "EvWrite123", targetId: "back-office-disabled", reason: "target_disabled" }));
+    expect(send).not.toHaveBeenCalled();
     info.mockRestore();
   });
 

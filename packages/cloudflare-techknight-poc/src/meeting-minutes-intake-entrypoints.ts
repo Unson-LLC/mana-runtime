@@ -1,6 +1,7 @@
 import type { SlackQueueEvent } from "./types.js";
 import type { MeetingMinutesRedo, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { isMeetingMinutesRouterFileEvent } from "./meeting-minutes-entrypoints.js";
+import { adminJsonInputErrorResponse, readAdminJsonRequest } from "./admin-json-input.js";
 
 interface IntakeStatus {
   allowed: boolean;
@@ -70,9 +71,11 @@ export async function handleMeetingMinutesIntakeAdminRequest(
   }
   let payload: unknown;
   try {
-    payload = await request.json();
-  } catch {
-    return Response.json({ error: "invalid_json" }, { status: 400 });
+    payload = await readAdminJsonRequest(request);
+  } catch (error) {
+    const rejected = adminJsonInputErrorResponse(error);
+    if (rejected) return rejected;
+    throw error;
   }
   if (!payload || typeof payload !== "object" || typeof (payload as { paused?: unknown }).paused !== "boolean") {
     return Response.json({ error: "invalid_intake_state" }, { status: 400 });
