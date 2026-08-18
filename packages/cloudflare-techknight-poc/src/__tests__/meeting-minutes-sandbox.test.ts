@@ -217,6 +217,21 @@ describe("generateMeetingMinutesInSandbox", () => {
     }), context)).toThrow("meeting_minutes_generation_result_schema_invalid");
   });
 
+  it.each([
+    ["title", { title: " ", overview: "概要", body: "本文", tasks: [], ...auditOutput }],
+    ["overview", { title: "定例", overview: " ", body: "本文", tasks: [], ...auditOutput }],
+    ["body", { title: "定例", overview: "概要", body: " ", tasks: [], ...auditOutput }],
+    ["tasks", { title: "定例", overview: "概要", body: "本文", tasks: [{ title: " " }], ...auditOutput }],
+    ["used_source_refs", { title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [{ type: "graph_entity", id: " " }], decision_candidates: [] }],
+    ["decision_candidates", { title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [], decision_candidates: [{ title: " " }] }],
+  ])("reports a bounded field diagnostic for invalid %s", (field, minutes) => {
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+      receiptBoundStream(minutes), context,
+    )).toThrow(`meeting_minutes_generation_result_schema_invalid_${field}`);
+  });
+
   it("fails closed when the Judgment lifecycle is missing or failed", () => {
     const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
     expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
