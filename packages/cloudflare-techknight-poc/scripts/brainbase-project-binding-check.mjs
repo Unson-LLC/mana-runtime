@@ -17,6 +17,8 @@ export function collectMeetingMinutesProjectBindings(config) {
   const targets = parseArray("TASK_BOARD_TARGETS_JSON");
   const targetsById = new Map(targets.map((target) => [clean(target?.targetId), target]));
   const requiredCodes = new Set();
+  const contextCodes = new Set();
+  const taskScopeCodes = new Set();
   for (const destination of destinations) {
     const id = clean(destination?.id) || "unknown";
     const contextCode = clean(destination?.contextProjectCode);
@@ -29,10 +31,12 @@ export function collectMeetingMinutesProjectBindings(config) {
       throw new Error(`meeting_minutes_brainbase_project_check_target_mismatch:${id}:${targetId}`);
     }
     requiredCodes.add(contextCode);
-    for (const code of taskCodes) requiredCodes.add(code);
-    for (const code of targetCodes) requiredCodes.add(code);
+    contextCodes.add(contextCode);
+    for (const code of taskCodes) { requiredCodes.add(code); taskScopeCodes.add(code); }
+    for (const code of targetCodes) { requiredCodes.add(code); taskScopeCodes.add(code); }
   }
-  return { destinations, requiredCodes: [...requiredCodes].sort() };
+  return { destinations, requiredCodes: [...requiredCodes].sort(),
+    contextCodes: [...contextCodes].sort(), taskCodes: [...taskScopeCodes].sort() };
 }
 
 export function projectCodesFromGraphResponse(body) {
@@ -69,6 +73,20 @@ async function assertCanonicalTaskApiReachable(options) {
   if (!body || typeof body !== "object" || !Array.isArray(body.items)) {
     throw new Error(`${options.errorPrefix}_response_invalid`);
   }
+}
+
+async function assertTaskProjectCodeReadable({ code, baseUrl, token, timeoutMs, fetchImpl }) {
+  const url = new URL("/api/companion/tasks", baseUrl);
+  url.searchParams.set("project_code", code);
+  url.searchParams.set("limit", "1");
+  const errorPrefix = `meeting_minutes_brainbase_project_check_task_scope:${code}`;
+  const body = await fetchJson({ url, token, timeoutMs, fetchImpl, errorPrefix });
+  if (!body || typeof body !== "object" || !Array.isArray(body.items)) {
+    throw new Error(`${errorPrefix}_response_invalid`);
+  }
+  const matches = body.items.some((item) => Array.isArray(item?.project_codes)
+    && item.project_codes.map(clean).includes(code));
+  if (!matches) throw new Error(`${errorPrefix}_missing`);
 }
 
 export async function assertBrainbaseMeetingMinutesProjects({
@@ -109,7 +127,7 @@ export async function assertBrainbaseMeetingMinutesRuntimeProjects({
   const resolvedTaskBaseUrl = clean(taskBaseUrl) || clean(config?.vars?.BRAINBASE_TASK_API_BASE_URL);
   if (!resolvedTaskBaseUrl) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:task_url");
   if (!resolvedGraphBaseUrl) throw new Error("meeting_minutes_brainbase_project_check_auth_missing:graph_url");
-  const { requiredCodes } = collectMeetingMinutesProjectBindings(config);
+  const { contextCodes, taskCodes: requiredTaskCodes } = collectMeetingMinutesProjectBindings(config);
   const graphUrl = new URL("/api/info/graph/entities", resolvedGraphBaseUrl);
   graphUrl.searchParams.set("type", "project"); graphUrl.searchParams.set("limit", "500");
   const taskApiUrl = new URL("/api/companion/tasks", resolvedTaskBaseUrl);
@@ -120,10 +138,13 @@ export async function assertBrainbaseMeetingMinutesRuntimeProjects({
     errorPrefix: "meeting_minutes_brainbase_project_check_task_api" });
   const taskCodes = await fetchAuthorizedProjectCodes({ url: graphUrl, token: taskToken, timeoutMs, fetchImpl,
     errorPrefix: "meeting_minutes_brainbase_project_check_task_scope" });
-  const missingGraph = requiredCodes.filter((code) => !new Set(graphCodes).has(code));
-  const missingTask = requiredCodes.filter((code) => !new Set(taskCodes).has(code));
+  const graphCodeSet = new Set(graphCodes);
+  const taskCodeSet = new Set(taskCodes);
+  const missingGraph = contextCodes.filter((code) => !graphCodeSet.has(code));
   if (missingGraph.length > 0) throw new Error(`meeting_minutes_brainbase_project_check_graph_missing:${missingGraph.join(",")}`);
-  if (missingTask.length > 0) throw new Error(`meeting_minutes_brainbase_project_check_task_missing:${missingTask.join(",")}`);
-  return { graph: { requiredCodes, authorizedCodes: graphCodes },
-    task: { requiredCodes, authorizedCodes: taskCodes, apiReachable: true } };
+  const taskReadbackCodes = requiredTaskCodes.filter((code) => !taskCodeSet.has(code));
+  await Promise.all(taskReadbackCodes.map((code) => assertTaskProjectCodeReadable({ code,
+    baseUrl: resolvedTaskBaseUrl, token: taskToken, timeoutMs, fetchImpl })));
+  return { graph: { requiredCodes: contextCodes, authorizedCodes: graphCodes },
+    task: { requiredCodes: requiredTaskCodes, authorizedCodes: [...new Set([...taskCodes, ...taskReadbackCodes])].sort(), apiReachable: true } };
 }
