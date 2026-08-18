@@ -68,8 +68,8 @@ export class MeetingMinutesBrainbaseContextClient {
 }
 
 export function resolveMeetingMinutesContextMode(value: string | undefined): MeetingMinutesContextMode {
-  if (value === undefined || value === "" || value === "observe") return "observe";
-  if (value === "required") return "required";
+  if (value === undefined || value === "" || value === "required") return "required";
+  if (value === "observe") return "observe";
   throw new Error("meeting_minutes_context_mode_invalid");
 }
 
