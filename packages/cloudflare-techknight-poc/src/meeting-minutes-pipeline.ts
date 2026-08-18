@@ -4,7 +4,7 @@ import { isMeetingMinutesFile, meetingMinutesRunId, type AuditedGeneratedMeeting
   type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
   meetingMinutesContextProjectCode, meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
-import type { CreateTaskInput } from "@openryoko/task-runtime-core";
+import type { CreateTaskInput, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { assertGeneratedMeetingMinutesNotPlaceholder, splitMeetingMinutesForSlack,
   stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -35,8 +35,9 @@ export interface ResumeMeetingMinutesOptions {
   saveGitHub(input: { destination: MeetingMinutesDestination; transcript: string; minutes: GeneratedMeetingMinutes;
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string; assignee_person_id?: string | null;
-    assignee_display_name?: string | null }>;
-  findExistingTask?(title: string, projectCodes: readonly string[]): Promise<{ id: string } | undefined>;
+    assignee_display_name?: string | null; version?: number; project_codes?: string[] }>;
+  updateTask?(taskId: string, input: UpdateTaskInput, idempotencyKey: string): Promise<{ id: string;
+    assignee_person_id?: string | null; assignee_display_name?: string | null; version?: number; project_codes?: string[] }>;
   resolveAssignee?(name: string, projectId: string): Promise<
     { status: "resolved"; personId: string } | { status: "unknown" | "ambiguous" | "unavailable" }
   >;
@@ -158,11 +159,16 @@ async function taskIdempotencyKey(runId: string, revision: number, index: number
   return `meeting-minutes-${await digest(`${runId}:revision:${revision}:task:${index}`)}`;
 }
 
+async function taskScopeUpdateIdempotencyKey(runId: string, revision: number, index: number): Promise<string> {
+  return `meeting-minutes-${await digest(`${runId}:revision:${revision}:task:${index}:scope-update`)}`;
+}
+
 const SAFE_TASK_FAILURE_MESSAGES = new Set([
   "meeting_minutes_assignee_resolver_unconfigured", "meeting_minutes_assignee_unavailable",
   "meeting_minutes_task_invalid_response", "project_code_not_allowed", "task_scope_not_configured",
 ]);
-const SAFE_TASK_FAILURE_CODES = new Set(["project_code_not_allowed", "task_scope_not_configured"]);
+const SAFE_TASK_FAILURE_CODES = new Set(["project_code_not_allowed", "task_scope_not_configured",
+  "idempotency_conflict", "canonical_task_operation_in_progress"]);
 
 function safeTaskFailureMessage(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : "";
@@ -202,27 +208,44 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
         });
       }
       const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
-      let task: { id: string; assignee_person_id?: string | null; assignee_display_name?: string | null };
-      let reusedExisting = false;
-      try {
-        task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
-          project_codes: taskProjectCodes },
-          await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
-      } catch (error) {
-        const conflict = error && typeof error === "object" && "status" in error && error.status === 409;
-        const existing = conflict && options.findExistingTask
-          ? await options.findExistingTask(candidate.title, taskProjectCodes)
-          : undefined;
-        if (!existing) throw error;
-        task = existing;
-        reusedExisting = true;
+      const registeredScopes = run.taskRegistration.registered
+        .map((item) => item.projectCodes?.join("\0"))
+        .filter((scope): scope is string => typeof scope === "string");
+      const legacyConflictScope = !run.taskRegistration.pending && run.taskRegistration.failure?.status === 409
+        && registeredScopes.length > 0 && new Set(registeredScopes).size === 1
+        ? registeredScopes[0]!.split("\0") : undefined;
+      if (!run.taskRegistration.pending && run.taskRegistration.failure?.status === 409 && !legacyConflictScope) {
+        throw Object.assign(new Error("meeting_minutes_task_registration_failed"),
+          { status: 409, code: "idempotency_conflict" });
       }
+      const pending = run.taskRegistration.pending?.index === index
+        ? run.taskRegistration.pending
+        : { index, idempotencyKey: await taskIdempotencyKey(run.runId, run.revision ?? 0, index),
+          input: { ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
+            project_codes: legacyConflictScope ?? taskProjectCodes } };
+      if (run.taskRegistration.pending !== pending) {
+        run.taskRegistration.pending = pending;
+        run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+      }
+      let task = await options.createTask(pending.input, pending.idempotencyKey);
       if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
+      const pendingProjectCodes = pending.input.project_codes ?? [];
+      // Canonical Task API exposes project_codes on CanonicalTask and accepts project_codes with
+      // expected_version on UpdateTaskInput. Prefer the create recovery readback: a prior PATCH may
+      // have committed even when its response was lost.
+      const recoveredProjectCodes = Array.isArray(task.project_codes) ? task.project_codes : pendingProjectCodes;
+      if (recoveredProjectCodes.join("\0") !== taskProjectCodes.join("\0")) {
+        if (!Number.isInteger(task.version) || !options.updateTask) throw new Error("meeting_minutes_task_invalid_response");
+        task = await options.updateTask(task.id.trim(), { expected_version: task.version!,
+          project_codes: [...taskProjectCodes] },
+        await taskScopeUpdateIdempotencyKey(run.runId, run.revision ?? 0, index));
+        if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
+      }
       run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
         projectCodes: [...taskProjectCodes],
-        ...(reusedExisting ? { status: "reused" as const } : {}),
         ...(task.assignee_person_id ? { assigneePersonId: task.assignee_person_id } : {}),
         ...(task.assignee_display_name ? { assigneeDisplayName: task.assignee_display_name } : {}) });
+      delete run.taskRegistration.pending;
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
   } catch (error) {
