@@ -391,17 +391,25 @@ export default {
         env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId,
       ));
       const handle = env.MEETING_MINUTES_WORKSPACE.get(workspaceId) as unknown as WorkspaceHandle;
-      const run = await withDisposableResource(() => getWorkspace(handle),
+      let run = await withDisposableResource(() => getWorkspace(handle),
         (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
       if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
       if (request.method === "POST") {
         if (!runAdminMatch[2] || !run.destination) {
           return Response.json({ error: "meeting_minutes_retry_not_available" }, { status: 409 });
         }
-        await env.TECHKNIGHT_EVENTS.send({ kind: "meeting_minutes_selection", runId,
+        const selection = { kind: "meeting_minutes_selection", runId,
           destinationId: run.destination.id, workspaceId: run.workspaceId,
           channelId: run.sourceChannelId, userId: run.approvedBy ?? "admin-retry",
-          actionTs: currentMeetingMinutesActionTs() } satisfies MeetingMinutesSelection);
+          actionTs: currentMeetingMinutesActionTs() } satisfies MeetingMinutesSelection;
+        run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+          const clients = meetingMinutesClients(env);
+          await processMeetingMinutesSelectionWithStatus(workspace.fs, selection,
+            meetingMinutesRuntimeConfig(env), clients.resume, {
+              updateStatus: (candidate, outcome) => clients.slack.updateRunStatus(candidate, outcome),
+            });
+          return (await loadMeetingMinutesRun(workspace.fs, runId))!;
+        });
       }
       return Response.json({ runId: run.runId, status: run.status,
         destinationId: run.destination?.id, diagnostics: run.diagnostics,
