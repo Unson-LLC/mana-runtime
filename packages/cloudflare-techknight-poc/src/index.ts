@@ -404,7 +404,10 @@ export default {
             typeof id === "string" && id.length >= 3 && id.length <= 512)
             ? [...new Set(payload.taskIds)] : [];
           const generatedTasks = run.generated?.tasks ?? [];
-          if (!run.taskRegistration?.failure || run.taskRegistration.failure.status !== 409 ||
+          const conflictRepair = run.taskRegistration?.failure?.status === 409;
+          const incompleteAdoption = run.taskRegistration?.registered.length === generatedTasks.length &&
+            run.diagnostics?.stage === "task_registration";
+          if ((!conflictRepair && !incompleteAdoption) ||
             taskIds.length !== generatedTasks.length) {
             return Response.json({ error: "meeting_minutes_task_adoption_invalid" }, { status: 409 });
           }
@@ -418,9 +421,12 @@ export default {
           }
           run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
             const current = (await loadMeetingMinutesRun(workspace.fs, runId))!;
+            const repairFailure = current.taskRegistration?.failure ?? { index: 0, stage: "task_registration" as const,
+              message: "meeting_minutes_task_registration_failed", status: 409,
+              failedAt: new Date().toISOString() };
             current.taskRegistration = { registered: tasks.map((task, index) => ({ index,
               title: task.title, taskId: task.id, status: "reused" as const,
-              projectCodes: [...projectCodes] })) };
+              projectCodes: [...projectCodes] })), failure: repairFailure };
             current.updatedAt = new Date().toISOString();
             await saveMeetingMinutesRun(workspace.fs, current);
             return current;
