@@ -84,13 +84,17 @@ export interface MeetingMinutesFailureLog {
   retryable: boolean;
   receipt?: unknown;
   checkpoint?: unknown;
+  taskFailure?: { index?: number; status?: number; code?: string };
 }
 
 export function meetingMinutesFailureLog(run: MeetingMinutesRun): MeetingMinutesFailureLog {
   const failure = run.projectionFailure ?? run.diagnostics;
+  const taskFailure = run.taskRegistration?.failure;
   return { runId: run.runId, stage: failure?.stage ?? "unknown",
     code: failure?.code ?? "UNCLASSIFIED_FAILURE", retryable: failure?.retryable ?? true,
     receipt: run.diagnostics?.receiptSnapshot,
+    taskFailure: taskFailure ? { index: taskFailure.index, status: taskFailure.status,
+      code: taskFailure.code } : undefined,
     checkpoint: run.diagnostics?.checkpoint ?? { hasGitHub: Boolean(run.github),
       hasSlackParent: Boolean(run.slack?.parentTs), postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 } };
 }
