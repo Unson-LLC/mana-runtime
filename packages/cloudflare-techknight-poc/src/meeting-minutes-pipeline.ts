@@ -328,7 +328,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       try {
         const receipt = await options.resolveContext({ run_id: run.runId,
           project_code: meetingMinutesContextProjectCode(run.destination),
-          transcript_sha256: run.transcriptSha256 }, run.context?.receiptId);
+          transcript_sha256: run.transcriptSha256 }, undefined);
         assertMeetingMinutesContextUsable(receipt, options.contextMode);
         await registerGeneratedTasks(fs, run, receipt, options);
       } catch (error) {
