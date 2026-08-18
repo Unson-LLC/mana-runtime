@@ -69,7 +69,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-001",
@@ -135,7 +135,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-002",
@@ -185,7 +185,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-012",
@@ -231,7 +231,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-003",
@@ -289,7 +289,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-013",
@@ -339,7 +339,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-004",
@@ -389,7 +389,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-005",
@@ -435,7 +435,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-004",
@@ -477,7 +477,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-006",
@@ -527,7 +527,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-005",
@@ -577,12 +577,12 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-014",
       "type": "contract",
-      "statement": "CredentialBrokerClient.acquire_leaseはCredentialLeaseRequest {message_type:'credential_lease_request',protocol_version:'1.0',binding:{tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref},requested_ttl_seconds:1..60}だけを送り、CredentialLeaseResponse {message_type:'credential_lease_response',protocol_version:'1.0',lease_id:'lease_'+ULID,contract_revision,binding,issued_at,expires_at,max_uses:1,lease_token:opaque}のexact schema、全binding、contract_revision、TTL、時刻、single-useを検証する。lease_tokenはprovider secretではなく、provider標準header、URL、Queue、Durable state、Receipt、log、Container environmentへ入れない。各provider requestはBrainbase PR #1229 HEAD 06e3b1df6af18ff3dd5213bf6b337fac1a57509aのtrusted forwarding service POST /api/v1/runtime/provider-requests:forwardだけへ送る。接続はBRAINBASE_TENANT_RUNTIME_ENABLED=1、既定127.0.0.1、明示port、wildcard既定拒否、非loopback明示opt-in、secret BRAINBASE_TENANT_RUNTIME_SERVICE_TOKENを必須とする。headerはAuthorization:Bearer service-token、Brainbase-Protocol-Version:1.0、Brainbase-Deployment-Id、Content-Type:application/json、request bodyは{tenant_context,lease_id,lease_token,audience,provider_operation,request:{path_params?,query?,body?,target_url?,idempotency_key?}}のexact wireとし、idempotency_keyは^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$だけを許可する。応答は{provider,operation_id,provider_operation,status,response_encoding:'json'|'utf8'|'base64',content_type:string|null,body}のexact 7 fieldだけを受理する。Brainbaseはprovider別header生成、authoritative revision、tenant/connection/contract/operation/audience/provider/mode/TTL/max_uses=1の再検証を所有し、mana-runtimeへ生credentialを返さない。未設定、service auth失敗、replay、expired、revision mismatch、cross-tenant、provider mismatch、response schema/status/operation不一致、credential/lease/service-token反射はprovider network前またはconsumer response境界でfail closedとし、旧volatile injector、静的secret、opaque注入へfallbackしない。wire source-lockはcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.jsonとする。",
+      "statement": "CredentialBrokerClient.acquire_leaseはCredentialLeaseRequest {message_type:'credential_lease_request',protocol_version:'1.0',binding:{tenant_id,connection_id,connection_revision,contract_revision,operation_id,audience,credential_mode,credential_ref},requested_ttl_seconds:1..60}だけを送り、CredentialLeaseResponse {message_type:'credential_lease_response',protocol_version:'1.0',lease_id:'lease_'+ULID,contract_revision,binding,issued_at,expires_at,max_uses:1,lease_token:opaque}のexact schema、全binding、contract_revision、TTL、時刻、single-useを検証する。lease_tokenはprovider secretではなく、provider標準header、URL、Queue、Durable state、Receipt、log、Container environmentへ入れない。各provider requestはBrainbase統合実装a4d1be7a98c48e94c116d4137d2a80354834b8a2のtrusted forwarding service POST /api/v1/runtime/provider-requests:forwardだけへ送る。CloudflareではBRAINBASE_TENANT_RUNTIME_SERVICEのService Bindingを必須とし、Brainbase側の限定経路WorkerからAccess保護済みprivate originへ中継する。Node producerの既定127.0.0.1、明示port、wildcard既定拒否、非loopback明示opt-in、service token検証を維持する。headerはAuthorization:Bearer service-token、Brainbase-Protocol-Version:1.0、Brainbase-Deployment-Id、Content-Type:application/json、request bodyは{tenant_context,lease_id,lease_token,audience,provider_operation,request:{path_params?,query?,body?,target_url?,idempotency_key?}}のexact wireとし、idempotency_keyは^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$だけを許可する。応答は{provider,operation_id,provider_operation,status,response_encoding:'json'|'utf8'|'base64',content_type:string|null,body}のexact 7 fieldだけを受理する。Brainbaseはprovider別header生成、authoritative revision、tenant/connection/contract/operation/audience/provider/mode/TTL/max_uses=1の再検証を所有し、mana-runtimeへ生credentialを返さない。未設定、service auth失敗、replay、expired、revision mismatch、cross-tenant、provider mismatch、response schema/status/operation不一致、credential/lease/service-token反射はprovider network前またはconsumer response境界でfail closedとし、旧volatile injector、静的secret、opaque注入へfallbackしない。wire source-lockはcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.jsonとする。",
       "origin": {
         "story_refs": [
           {
@@ -631,7 +631,7 @@
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-007",
@@ -673,7 +673,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-007",
@@ -739,7 +739,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-015",
@@ -793,7 +793,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-016",
@@ -843,7 +843,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-010",
@@ -889,12 +889,12 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-017",
       "type": "contract",
-      "statement": "mana-runtime consumer conformanceはPR #237現HEAD 38e13adde56dbd398cea914aec69c831194353c9が保持するcontracts/mana-brainbase-tenant-context/v1を入力とし、manifest記載のfixture 23件を複製せず直接読む。fixture set SHA-256は9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833と一致しなければ実行しない。positive 1件はschema、exact protected header、RFC 8785+Ed25519、TTL/skew、revision、protocol/capability、credential lease、quota/usage/Receipt/idempotencyを全検証後に受理し、negative 21件はexpected_codeでbusiness API前に拒否し、non-applicable 1件は必須capability waiver 0・fallback 0を確認する。横断契約D-001〜D-009とschema/reference implementationを正本とする。trusted forwarding wireはBrainbase PR #1229 HEAD 06e3b1df6af18ff3dd5213bf6b337fac1a57509aとcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.jsonを正本とし、tenant context kitへ独自fieldを追加しない。opaque handle provider header禁止とtrusted service成功系をconsumer TDDで固定し、旧注入fallbackをproduction entrypointから除去する。",
+      "statement": "mana-runtime consumer conformanceはPR #292の統合実装1b015def50a1ee21b616c87b717e821655bf2a48が保持するcontracts/mana-brainbase-tenant-context/v1を入力とし、manifest記載のfixture 23件を複製せず直接読む。fixture set SHA-256は9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833と一致しなければ実行しない。positive 1件はschema、exact protected header、RFC 8785+Ed25519、TTL/skew、revision、protocol/capability、credential lease、quota/usage/Receipt/idempotencyを全検証後に受理し、negative 21件はexpected_codeでbusiness API前に拒否し、non-applicable 1件は必須capability waiver 0・fallback 0を確認する。横断契約D-001〜D-009とschema/reference implementationを正本とする。trusted forwarding wireはBrainbase統合実装a4d1be7a98c48e94c116d4137d2a80354834b8a2とcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.jsonを正本とし、tenant context kitへ独自fieldを追加しない。opaque handle provider header禁止とtrusted service成功系をconsumer TDDで固定し、旧注入fallbackをproduction entrypointから除去する。",
       "origin": {
         "story_refs": [
           {
@@ -963,7 +963,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-002",
@@ -1033,7 +1033,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "C-003",
@@ -1103,7 +1103,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     },
     {
       "id": "INV-008",
@@ -1165,7 +1165,7 @@
       },
       "confidence": 0.93,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-17T18:14:52.168Z"
+      "last_revised_at": "2026-08-18T16:31:25.086Z"
     }
   ],
   "multi_tenancy": {
