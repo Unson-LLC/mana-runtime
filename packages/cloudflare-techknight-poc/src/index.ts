@@ -612,8 +612,14 @@ export default {
           continue;
         }
         try {
-          if (message.body.kind === "contract_ledger_sync") await processContractLedgerSync(message.body, env);
-          else await processContractLedgerApproval(message.body, env);
+          if (message.body.kind === "contract_ledger_sync") {
+            const receipt = await processContractLedgerSync(message.body, env);
+            console.log(JSON.stringify({ event: "contract_ledger_sync_completed", ...receipt }));
+          } else {
+            const outcome = await processContractLedgerApproval(message.body, env);
+            console.log(JSON.stringify({ event: "contract_ledger_approval_completed", runId: message.body.runId,
+              envelopeId: message.body.envelopeId, decision: message.body.decision, outcome }));
+          }
           message.ack();
         } catch (error) {
           console.error(JSON.stringify({ event: "contract_ledger_processing_failed", kind: message.body.kind,
