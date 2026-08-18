@@ -124,6 +124,32 @@ describe("Cloudflare bounded task Canvas", () => {
     expect(markdown).toContain("全件走査はしていません");
   });
 
+  it("renders status and priority with distinct icons and readable task metadata", () => {
+    const markdown = renderBoundedTaskBoard({
+      items: [
+        { ...canonical("urgent", "in_progress"), title: "緊急対応", priority: "urgent", assignee_display_name: "佐藤", due_at: "2026-08-12T00:00:00.000Z" },
+        { ...canonical("high", "waiting"), title: "確認待ち", priority: "high" },
+        { ...canonical("medium", "pending"), title: "通常対応", priority: "medium" },
+        { ...canonical("low", "completed"), title: "軽微な対応", priority: "low" },
+      ],
+      hasMore: false,
+      observedLowerBound: 4,
+      requestCount: 4,
+    }, ["back-office"], "2026-08-13T00:00:00.000Z");
+
+    expect(markdown).toContain("🚧 進行中 1件｜⏸️ 保留 1件｜📥 未着手 1件｜✅ 完了 1件");
+    expect(markdown).toContain("## 🚧 進行中（表示1件）");
+    expect(markdown).toContain("## ⏸️ 保留（表示1件）");
+    expect(markdown).toContain("## 📥 未着手（表示1件）");
+    expect(markdown).toContain("## ✅ 完了（表示1件）");
+    expect(markdown).toContain("- 🛑 緊急　緊急対応");
+    expect(markdown).toContain("  - 👤 佐藤　📅 2026-08-12　⚠️ 期限超過");
+    expect(markdown).toContain("- 🔴 高　確認待ち");
+    expect(markdown).toContain("- 🟡 中　通常対応");
+    expect(markdown).toContain("- 🟢 低　軽微な対応");
+    expect(markdown).toContain("  - 👤 未割当　📅 期限なし");
+  });
+
   it("updates only the explicitly bound Mana Canvas", async () => {
     const fetchMock = vi.fn().mockImplementation(async function (this: unknown, url: string, init?: RequestInit) {
       if (this !== undefined) throw new TypeError("Illegal invocation");

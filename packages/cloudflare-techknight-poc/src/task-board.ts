@@ -9,6 +9,18 @@ import { parseRuntimeProjectCodes } from "./runtime-config.js";
 const DISPLAY_LIMIT = 20;
 const SLACK_ID = /^[A-Z0-9]{2,32}$/;
 const AMBIGUOUS_SLACK_ERRORS = new Set(["fatal_error", "internal_error", "request_timeout", "service_unavailable"]);
+const PRIORITY_DISPLAY: Readonly<Record<string, string>> = {
+  urgent: "🛑 緊急",
+  high: "🔴 高",
+  medium: "🟡 中",
+  low: "🟢 低",
+};
+const STATUS_GROUPS = [
+  { icon: "🚧", label: "進行中", status: "in_progress" },
+  { icon: "⏸️", label: "保留", status: "waiting" },
+  { icon: "📥", label: "未着手", status: "pending" },
+  { icon: "✅", label: "完了", status: "completed" },
+] as const;
 
 export interface TaskBoardRepairEvent {
   eventType: "task_board_repair";
@@ -40,30 +52,42 @@ function clean(value: string): string {
   return value.replace(/[<>]/g, "").replace(/[\r\n|]/g, " ").trim().slice(0, 160);
 }
 
-function taskLine(task: CanonicalTask): string {
+function taskLine(task: CanonicalTask, nowIso: string): string {
   const assignee = task.assignee_display_name?.trim() || "未割当";
-  const due = task.due_at ? `｜期限 ${clean(task.due_at.slice(0, 10))}` : "";
-  return `- ${clean(task.title)}｜${clean(assignee)}｜${clean(task.priority)}${due}`;
+  const dueDate = task.due_at ? clean(task.due_at.slice(0, 10)) : "期限なし";
+  const isOverdue = task.status !== "completed"
+    && Boolean(task.due_at)
+    && dueDate < nowIso.slice(0, 10);
+  const priority = PRIORITY_DISPLAY[task.priority] ?? `⚪ ${clean(task.priority)}`;
+  const waiting = task.status === "waiting" && task.waiting_on
+    ? `　⏳ ${clean(task.waiting_on)}`
+    : "";
+  return [
+    `- ${priority}　${clean(task.title)}`,
+    `  - 👤 ${clean(assignee)}　📅 ${dueDate}${isOverdue ? "　⚠️ 期限超過" : ""}${waiting}`,
+  ].join("\n");
 }
 
 export function renderBoundedTaskBoard(board: BoundedTaskBoard, projects: readonly string[], nowIso: string): string {
-  const groups = [
-    ["進行中", "in_progress"],
-    ["保留", "waiting"],
-    ["未着手", "pending"],
-    ["完了", "completed"],
-  ] as const;
   const count = board.hasMore
     ? `表示 ${board.observedLowerBound}件以上（続きあり、先頭${board.items.length}件を表示）`
     : `全 ${board.items.length}件`;
-  const sections = groups.flatMap(([label, status]) => {
+  const statusCounts = STATUS_GROUPS.map(({ icon, label, status }) =>
+    `${icon} ${label} ${board.items.filter((task) => task.status === status).length}件`).join("｜");
+  const sections = STATUS_GROUPS.flatMap(({ icon, label, status }) => {
     const items = board.items.filter((task) => task.status === status);
-    return [`## ${label}（表示${items.length}件）`, ...(items.length ? items.map(taskLine) : ["- なし"]), ""];
+    return [
+      `## ${icon} ${label}（表示${items.length}件）`,
+      ...(items.length ? items.map((task) => taskLine(task, nowIso)) : ["- なし"]),
+      "",
+    ];
   });
   return [
     "# タスクボード",
     `Brainbase正本｜対象project: ${projects.map(clean).join(", ")}｜${count}`,
     `最終更新: ${clean(nowIso)}`,
+    "",
+    statusCounts,
     "",
     ...sections,
     board.hasMore ? "必要なタスクはSlackで条件を指定して検索してください。全件走査はしていません。" : "",
