@@ -221,9 +221,15 @@ function base64Url(bytes: ArrayBuffer | Uint8Array): string {
 }
 
 function privateKeyBytes(encoded: string): Uint8Array {
-  const normalized = encoded.includes("BEGIN")
-    ? encoded.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "")
-    : encoded.replace(/\s/g, "");
+  const compact = encoded.replace(/\s/g, "");
+  let keyMaterial = encoded;
+  if (!encoded.includes("BEGIN")) {
+    const decoded = Uint8Array.from(atob(compact), (char) => char.charCodeAt(0));
+    const decodedText = new TextDecoder().decode(decoded);
+    if (!decodedText.includes("BEGIN PRIVATE KEY")) return decoded;
+    keyMaterial = decodedText;
+  }
+  const normalized = keyMaterial.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "");
   return Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0));
 }
 

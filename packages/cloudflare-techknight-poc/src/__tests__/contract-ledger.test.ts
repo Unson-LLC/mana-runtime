@@ -72,7 +72,9 @@ describe("DocuSign pagination", () => {
     const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
       publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
     const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
-    const key = Buffer.from(pkcs8).toString("base64");
+    const derBase64 = Buffer.from(pkcs8).toString("base64");
+    const pem = `-----BEGIN PRIVATE KEY-----\n${derBase64.match(/.{1,64}/g)?.join("\n")}\n-----END PRIVATE KEY-----\n`;
+    const key = Buffer.from(pem).toString("base64");
     let envelopePage = 0;
     const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
