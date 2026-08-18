@@ -18,6 +18,7 @@ import {
 } from "./sandbox-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
+  currentMeetingMinutesActionTs,
   isMeetingMinutesSelection,
   isMeetingMinutesRedo,
   isMeetingMinutesRouterFileEvent,
@@ -400,7 +401,7 @@ export default {
         await env.TECHKNIGHT_EVENTS.send({ kind: "meeting_minutes_selection", runId,
           destinationId: run.destination.id, workspaceId: run.workspaceId,
           channelId: run.sourceChannelId, userId: run.approvedBy ?? "admin-retry",
-          actionTs: new Date().toISOString() } satisfies MeetingMinutesSelection);
+          actionTs: currentMeetingMinutesActionTs() } satisfies MeetingMinutesSelection);
       }
       return Response.json({ runId: run.runId, status: run.status,
         destinationId: run.destination?.id, diagnostics: run.diagnostics,
