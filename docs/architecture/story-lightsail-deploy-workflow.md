@@ -1,5 +1,7 @@
 # Lightsail deploy workflow architecture
 
+> 状態: 2026-08-18に廃止。本文は過去の設計記録であり、実行手順ではない。
+
 Story: `story-lightsail-deploy-workflow`
 
 ## Decision

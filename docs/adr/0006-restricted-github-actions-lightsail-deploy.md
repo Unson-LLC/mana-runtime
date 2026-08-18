@@ -1,5 +1,8 @@
 # Lightsailデプロイは承認付きGitHub Actionsと制限付きSSH principalに限定する
 
+> 状態: 2026-08-18に廃止。通常デプロイの根拠として使用しない。廃止後の境界は
+> `docs/operations/lightsail-runtime-decommission-2026-08-18.md`を参照する。
+
 Story: `story-lightsail-deploy-workflow`
 
 ## Context
