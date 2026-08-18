@@ -191,9 +191,8 @@ import {
 import {
   handleSlackOAuthCallbackRequest,
   handleSlackOAuthStartRequest,
-  type SlackInstallationAuthorizationPort,
-  type SlackInstallationControlPlanePort,
 } from "./multitenancy/slack-oauth-installation.js";
+import { createSlackInstallationControlPlaneClient } from "./multitenancy/slack-installation-control-plane-client.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -264,7 +263,9 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   SLACK_OAUTH_CLIENT_ID?: string;
   SLACK_OAUTH_REDIRECT_URI?: string;
   SLACK_OAUTH_SCOPES?: string;
-  SLACK_INSTALLATION_CONTROL_PLANE?: SlackInstallationAuthorizationPort & SlackInstallationControlPlanePort;
+  SLACK_INSTALLATION_CONTROL_PLANE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
@@ -1451,8 +1452,12 @@ export default {
         || !env.SLACK_OAUTH_CLIENT_ID || !env.SLACK_OAUTH_REDIRECT_URI || !env.SLACK_OAUTH_SCOPES) {
         return Response.json({ error: "oauth_configuration_invalid" }, { status: 503 });
       }
+      const controlPlane = createSlackInstallationControlPlaneClient(
+        env.SLACK_INSTALLATION_CONTROL_PLANE,
+        env.SLACK_OAUTH_APP_ID,
+      );
       return handleSlackOAuthStartRequest(request, {
-        authorizer: env.SLACK_INSTALLATION_CONTROL_PLANE,
+        authorizer: controlPlane,
         intents: createDurableSlackInstallationIntentClient(env.TENANT_RUNTIME_STATE),
         app_id: env.SLACK_OAUTH_APP_ID,
         client_id: env.SLACK_OAUTH_CLIENT_ID,
@@ -1461,12 +1466,16 @@ export default {
       });
     }
     if (url.pathname === "/slack/installations/oauth/callback") {
-      if (!env.SLACK_INSTALLATION_CONTROL_PLANE || !env.SLACK_OAUTH_REDIRECT_URI) {
+      if (!env.SLACK_INSTALLATION_CONTROL_PLANE || !env.SLACK_OAUTH_REDIRECT_URI || !env.SLACK_OAUTH_APP_ID) {
         return Response.json({ error: "oauth_configuration_invalid" }, { status: 503 });
       }
+      const controlPlane = createSlackInstallationControlPlaneClient(
+        env.SLACK_INSTALLATION_CONTROL_PLANE,
+        env.SLACK_OAUTH_APP_ID,
+      );
       return handleSlackOAuthCallbackRequest(request, {
         intents: createDurableSlackInstallationIntentClient(env.TENANT_RUNTIME_STATE),
-        control_plane: env.SLACK_INSTALLATION_CONTROL_PLANE,
+        control_plane: controlPlane,
         redirect_uri: env.SLACK_OAUTH_REDIRECT_URI,
       });
     }
