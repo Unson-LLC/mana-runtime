@@ -106,6 +106,7 @@ import {
   parseContractLedgerSlackAction,
   processContractLedgerApproval,
   processContractLedgerSync,
+  scheduledContractLedgerEvent,
   type ContractLedgerApprovalEvent,
   type ContractLedgerEnvironment,
   type ContractLedgerSyncEvent,
@@ -468,6 +469,17 @@ export default {
         checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
           postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 },
         ...(request.method === "POST" ? { enqueued: true } : {}) });
+    }
+    if (request.method === "POST" && url.pathname === "/internal/contract-ledger/sync") {
+      const authorization = request.headers.get("authorization");
+      if (!env.DEVELOPMENT_CALLBACK_TOKEN || authorization !== `Bearer ${env.DEVELOPMENT_CALLBACK_TOKEN}`) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const config = contractLedgerConfig(env);
+      if (!config.enabled) return Response.json({ error: "contract_ledger_disabled" }, { status: 503 });
+      const event = scheduledContractLedgerEvent(new Date(), config.fromDate);
+      await env.CONTRACT_LEDGER_SYNCS.send(event);
+      return Response.json({ ok: true, queued: true, runId: event.runId, idempotencyKey: event.idempotencyKey });
     }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
