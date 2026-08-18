@@ -84,7 +84,35 @@ describe("Brainbase meeting-minutes project deployment check", () => {
         : (init.headers as Record<string, string>).authorization === "Bearer task-token"
           ? Response.json({ records: [] })
           : Response.json({ records: [{ payload: { project_code: "kartz" } }] })) }))
-      .rejects.toThrow("meeting_minutes_brainbase_project_check_task_missing:kartz");
+      .rejects.toThrow("meeting_minutes_brainbase_project_check_task_scope:kartz_missing");
+  });
+
+  it("accepts a Task-only scope only after filtered Task API readback", async () => {
+    const path = await configFile(config({
+      MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{
+        id: "board", contextProjectCode: "techknight", taskProjectCodes: ["proj_techknight_board"],
+        taskBoardTargetId: "minutes-board",
+      }]),
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([{
+        targetId: "minutes-board", projectCodes: ["proj_techknight_board"],
+      }]),
+    }));
+    const fetchImpl = vi.fn().mockImplementation(async (input: URL) => {
+      if (input.pathname === "/api/info/graph/entities") {
+        return Response.json({ records: [{ payload: { project_code: "techknight" } }] });
+      }
+      const code = input.searchParams.get("project_code");
+      return Response.json({ items: code === "proj_techknight_board"
+        ? [{ project_codes: ["proj_techknight_board"] }]
+        : [], next_cursor: null });
+    });
+    await expect(assertBrainbaseMeetingMinutesRuntimeProjects({ configPath: path,
+      taskBaseUrl: "https://task.brainbase.example", graphBaseUrl: "https://graph.brainbase.example",
+      taskToken: "task-token", graphToken: "graph-token", fetchImpl })).resolves.toEqual(expect.objectContaining({
+      graph: expect.objectContaining({ requiredCodes: ["techknight"] }),
+      task: expect.objectContaining({ requiredCodes: ["proj_techknight_board"],
+        authorizedCodes: expect.arrayContaining(["proj_techknight_board"]) }),
+    }));
   });
 
   it("fails closed when the Canonical Task API rejects the runtime credential", async () => {
