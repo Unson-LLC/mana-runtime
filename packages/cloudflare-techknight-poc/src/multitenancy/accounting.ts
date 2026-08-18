@@ -1,0 +1,572 @@
+import type {
+  CollectionState,
+  ExpectedTenantScope,
+  OperationOutcome,
+  QuotaDecision,
+  TenantContextEnvelope,
+} from "./contracts.js";
+import {
+  CanonicalContractError,
+  validateCanonicalOperationReceipt,
+  validateCanonicalQuotaDecision,
+  validateCanonicalUsageEvent,
+} from "./canonical-consumer.js";
+import { deny, TenantBoundaryError } from "./errors.js";
+import { assertCanonicalSharedId } from "./ids.js";
+import { tenantPartitionKey } from "./isolation.js";
+import { jcsCanonicalize } from "./jcs.js";
+import type { TenantRuntimeBoundaryVerifier } from "./runtime-boundaries.js";
+import { assertSecretArtifactFree } from "./secret-guard.js";
+
+export interface UsageEventInput {
+  usage_event_id: string;
+  protocol_version: string;
+  tenant_id: string;
+  connection_id: string;
+  connection_revision: string;
+  contract_revision: string;
+  deployment_id: string;
+  correlation_id: string;
+  operation_id: string;
+  idempotency_key: string;
+  kind: string;
+  quantity: number | null;
+  unit: string;
+  outcome: OperationOutcome;
+  collection_state: CollectionState;
+  failure_code?: string | null;
+  observed_at: string;
+  unknown_fields?: string[];
+}
+
+export interface UsageEvent extends UsageEventInput {
+  message_type: "usage_event";
+  failure_code: string | null;
+  unknown_fields: string[];
+}
+
+export function createUsageEvent(input: UsageEventInput): UsageEvent {
+  assertCanonicalSharedId(input.usage_event_id, "usage_", "usage");
+  if (input.collection_state === "not_collected" && input.quantity !== null) {
+    deny("usage", "USAGE_COLLECTION_INVALID");
+  }
+  if (input.collection_state === "collected" && input.quantity === null) {
+    deny("usage", "USAGE_COLLECTION_INVALID");
+  }
+  if (input.collection_state === "partial" && input.quantity === null && !(input.unknown_fields?.length)) {
+    deny("usage", "USAGE_COLLECTION_INVALID");
+  }
+  if (input.quantity !== null && (!Number.isFinite(input.quantity) || input.quantity < 0)) {
+    deny("usage", "USAGE_COLLECTION_INVALID");
+  }
+  const usage: UsageEvent = {
+    message_type: "usage_event",
+    ...structuredClone(input),
+    failure_code: input.failure_code ?? null,
+    unknown_fields: structuredClone(input.unknown_fields ?? []),
+  };
+  try {
+    validateCanonicalUsageEvent(usage);
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny("usage", error.code, error.details);
+    throw error;
+  }
+  return usage;
+}
+
+export interface OperationReceiptInput {
+  receipt_id: string;
+  protocol_version: string;
+  tenant_id: string;
+  connection_id: string;
+  connection_revision: string;
+  contract_revision: string;
+  deployment_id: string;
+  correlation_id: string;
+  operation_ids: string[];
+  idempotency_keys: string[];
+  actor_principal_id: string;
+  project_id: string;
+  capability_id: string;
+  quota_decision: QuotaDecision["decision"];
+  credential_mode: string;
+  collection_state: CollectionState;
+  outcome: OperationOutcome;
+  failure_code?: string | null;
+  usage_event_ids: string[];
+  reply: {
+    state: "not_attempted" | "delivered" | "failed" | "unknown";
+    reply_count: 0 | 1;
+    legacy_reply_count: 0;
+    slack_reply_ts?: string;
+  };
+  completed_at: string;
+}
+
+export function createOperationReceipt(input: OperationReceiptInput): OperationReceipt {
+  assertCanonicalSharedId(input.receipt_id, "receipt_", "receipt");
+  if (input.operation_ids.length === 0 || input.idempotency_keys.length === 0) deny("receipt", "RECEIPT_INVALID");
+  const receipt: OperationReceipt = {
+    message_type: "operation_receipt",
+    ...structuredClone(input),
+    failure_code: input.failure_code ?? null,
+  };
+  try {
+    validateCanonicalOperationReceipt(receipt);
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny("receipt", error.code, error.details);
+    throw error;
+  }
+  return receipt;
+}
+
+export class TenantQuotaCache {
+  readonly #decisions = new Map<string, QuotaDecision>();
+
+  set(decision: QuotaDecision): void {
+    try {
+      validateCanonicalQuotaDecision(decision);
+    } catch (error) {
+      if (error instanceof CanonicalContractError) deny("quota", error.code, error.details);
+      throw error;
+    }
+    this.#decisions.set(this.#key(decision.tenant_id, decision.contract_revision, decision.unit), structuredClone(decision));
+  }
+
+  get(tenantId: string, contractRevision: string, unit: string): QuotaDecision {
+    const decision = this.#decisions.get(this.#key(tenantId, contractRevision, unit));
+    if (!decision) deny("quota", "UPSTREAM_UNAVAILABLE");
+    return structuredClone(decision);
+  }
+
+  #key(tenantId: string, contractRevision: string, unit: string): string {
+    return JSON.stringify([tenantId, contractRevision, unit]);
+  }
+}
+
+export function assertQuotaAllowsExecution(decision: QuotaDecision): QuotaDecision {
+  if (decision.decision === "hard_stopped") deny("quota", "QUOTA_EXCEEDED");
+  if (decision.decision === "approval_required") deny("quota", "QUOTA_APPROVAL_REQUIRED");
+  if (decision.decision === "unavailable") deny("quota", "UPSTREAM_UNAVAILABLE");
+  return decision;
+}
+
+export async function authorizeTenantQuota(input: {
+  tenant_id: string;
+  contract_revision: string;
+  unit: string;
+  read_authoritative_decision(request: {
+    tenant_id: string;
+    contract_revision: string;
+    unit: string;
+  }): Promise<QuotaDecision>;
+}): Promise<QuotaDecision> {
+  let decision: QuotaDecision;
+  try {
+    decision = await input.read_authoritative_decision({
+      tenant_id: input.tenant_id,
+      contract_revision: input.contract_revision,
+      unit: input.unit,
+    });
+  } catch (error) {
+    if (error instanceof TenantBoundaryError) throw error;
+    deny("quota", "UPSTREAM_UNAVAILABLE");
+  }
+  if (!decision || decision.tenant_id !== input.tenant_id) {
+    deny("quota", "CROSS_TENANT_CANDIDATE");
+  }
+  if (decision.contract_revision !== input.contract_revision) {
+    deny("quota", "WORKSPACE_CONNECTION_STALE_REVISION");
+  }
+  if (decision.unit !== input.unit) deny("quota", "CROSS_TENANT_CANDIDATE");
+  try {
+    validateCanonicalQuotaDecision(decision);
+  } catch (error) {
+    if (error instanceof CanonicalContractError) deny("quota", error.code, error.details);
+    throw error;
+  }
+  return assertQuotaAllowsExecution(structuredClone(decision));
+}
+
+export type OperationReceipt = OperationReceiptInput & {
+  message_type: "operation_receipt";
+  failure_code: string | null;
+};
+
+export interface AccountingArtifact {
+  partition_key: string;
+  usage_events: UsageEvent[];
+  receipt: OperationReceipt;
+}
+
+export interface AccountingLedgerClaim {
+  disposition: "claimed";
+  batch_key: string;
+  entity_keys: string[];
+  outbox_key: string;
+}
+
+export type AccountingLedgerResult = AccountingLedgerClaim | { disposition: "duplicate" };
+
+type Awaitable<T> = T | Promise<T>;
+
+export interface TenantAccountingLedgerStore {
+  reserve_timestamp(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+    proposed_at: string;
+  }): Awaitable<string>;
+  claim(input: {
+    tenant_context: TenantContextEnvelope;
+    usage_event_ids: readonly string[];
+    receipt_id: string;
+    payload_hash: string;
+    artifact: AccountingArtifact;
+    operation_result?: unknown;
+  }): Awaitable<AccountingLedgerResult>;
+  read_pending(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): Awaitable<AccountingArtifact | undefined>;
+  read_pending_result(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): Awaitable<unknown | undefined>;
+  complete(claim: AccountingLedgerClaim): Awaitable<void>;
+  release(claim: AccountingLedgerClaim): Awaitable<void>;
+}
+
+/** Tenant-partitioned in-memory port. A Durable Object implementation can preserve these semantics. */
+export class TenantAccountingLedger implements TenantAccountingLedgerStore {
+  readonly #entities = new Map<string, { batch_key: string; state: "claimed" | "written" }>();
+  readonly #outbox = new Map<string, { batch_key: string; artifact: AccountingArtifact; operation_result?: unknown }>();
+  readonly #timestamps = new Map<string, string>();
+
+  reserve_timestamp(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+    proposed_at: string;
+  }): string {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    const existing = this.#timestamps.get(key);
+    if (existing) return existing;
+    this.#timestamps.set(key, input.proposed_at);
+    return input.proposed_at;
+  }
+
+  claim(input: {
+    tenant_context: TenantContextEnvelope;
+    usage_event_ids: readonly string[];
+    receipt_id: string;
+    payload_hash: string;
+    artifact: AccountingArtifact;
+    operation_result?: unknown;
+  }): AccountingLedgerResult {
+    const resourceIds = [...input.usage_event_ids, input.receipt_id];
+    const entityKeys = resourceIds.map((resourceId) => tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: resourceId,
+    }));
+    const outboxKey = entityKeys[entityKeys.length - 1];
+    const batchKey = JSON.stringify([entityKeys, input.payload_hash]);
+    const existing = entityKeys.map((key) => this.#entities.get(key));
+    if (existing.every((entry) => entry?.state === "written" && entry.batch_key === batchKey)) {
+      return { disposition: "duplicate" };
+    }
+    if (existing.every((entry) => entry?.state === "claimed" && entry.batch_key === batchKey)) {
+      const pending = outboxKey ? this.#outbox.get(outboxKey) : undefined;
+      if (!pending || pending.batch_key !== batchKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
+      return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
+    }
+    if (existing.some((entry) => entry !== undefined)) {
+      deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
+    }
+    for (const key of entityKeys) this.#entities.set(key, { batch_key: batchKey, state: "claimed" });
+    if (!outboxKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
+    this.#outbox.set(outboxKey, {
+      batch_key: batchKey,
+      artifact: structuredClone(input.artifact),
+      ...(input.operation_result === undefined
+        ? {}
+        : { operation_result: structuredClone(input.operation_result) }),
+    });
+    return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
+  }
+
+  read_pending(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): AccountingArtifact | undefined {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    const pending = this.#outbox.get(key);
+    return pending ? structuredClone(pending.artifact) : undefined;
+  }
+
+  read_pending_result(input: {
+    tenant_context: TenantContextEnvelope;
+    receipt_id: string;
+  }): unknown | undefined {
+    const key = tenantPartitionKey({
+      tenant_id: input.tenant_context.tenant.tenant_id,
+      resource_type: "usage",
+      connection_id: input.tenant_context.workspace_connection.connection_id,
+      workspace_id: input.tenant_context.workspace_connection.workspace_id,
+      channel_id: input.tenant_context.slack.channel_id,
+      thread_ts: input.tenant_context.slack.thread_ts ?? "",
+      resource_id: input.receipt_id,
+    });
+    const pending = this.#outbox.get(key);
+    return pending?.operation_result === undefined ? undefined : structuredClone(pending.operation_result);
+  }
+
+  complete(claim: AccountingLedgerClaim): void {
+    for (const key of claim.entity_keys) {
+      const entry = this.#entities.get(key);
+      if (!entry || entry.batch_key !== claim.batch_key || entry.state !== "claimed") {
+        deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
+      }
+      this.#entities.set(key, { batch_key: claim.batch_key, state: "written" });
+    }
+    this.#outbox.delete(claim.outbox_key);
+  }
+
+  release(claim: AccountingLedgerClaim): void {
+    for (const key of claim.entity_keys) {
+      const entry = this.#entities.get(key);
+      if (entry?.batch_key === claim.batch_key && entry.state === "claimed") this.#entities.delete(key);
+    }
+    const pending = this.#outbox.get(claim.outbox_key);
+    if (pending?.batch_key === claim.batch_key) this.#outbox.delete(claim.outbox_key);
+  }
+}
+
+async function accountingPayloadHash(value: unknown): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(jcsCanonicalize(value)),
+  ));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function assertAccountingScope(
+  tenantContext: TenantContextEnvelope,
+  expectedScope: ExpectedTenantScope,
+  usageEvents: readonly UsageEvent[],
+  receipt: OperationReceipt,
+): void {
+  const matchesContext = (value: {
+    protocol_version: string;
+    tenant_id: string;
+    connection_id: string;
+    connection_revision: string;
+    contract_revision: string;
+    deployment_id: string;
+    correlation_id: string;
+  }): boolean => value.protocol_version === tenantContext.protocol_version
+    && value.tenant_id === tenantContext.tenant.tenant_id
+    && value.connection_id === tenantContext.workspace_connection.connection_id
+    && value.connection_revision === tenantContext.workspace_connection.connection_revision
+    && value.contract_revision === tenantContext.contract_revision
+    && value.deployment_id === tenantContext.placement.deployment_id
+    && value.correlation_id === tenantContext.correlation_id;
+  if (usageEvents.length === 0 || !usageEvents.every(matchesContext) || !matchesContext(receipt)) {
+    deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  }
+  if (receipt.actor_principal_id !== tenantContext.actor.principal_id
+    || receipt.project_id !== expectedScope.project_id
+    || receipt.capability_id !== expectedScope.capability_id
+    || receipt.credential_mode !== tenantContext.credential.mode
+    || usageEvents.some((event) => !receipt.operation_ids.includes(event.operation_id)
+      || !receipt.idempotency_keys.includes(event.idempotency_key))) {
+    deny("brainbase_proxy", "CAPABILITY_SCOPE_MISMATCH");
+  }
+}
+
+export async function writeTenantAccounting(input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  now: string;
+  verifier: TenantRuntimeBoundaryVerifier;
+  ledger: TenantAccountingLedgerStore;
+  usage_events: readonly UsageEvent[];
+  receipt: OperationReceipt;
+  operation_result?: unknown;
+  write(payload: {
+    partition_key: string;
+    usage_events: UsageEvent[];
+    receipt: OperationReceipt;
+  }): Promise<{ result_ref: string }>;
+}): Promise<{ disposition: "written"; result_ref: string } | { disposition: "duplicate" }> {
+  await input.verifier.validate({
+    boundary: "brainbase_proxy",
+    tenant_context: input.tenant_context,
+    expected_scope: input.expected_scope,
+    now: input.now,
+  });
+  const claim = await persistTenantAccounting({
+    tenant_context: input.tenant_context,
+    expected_scope: input.expected_scope,
+    ledger: input.ledger,
+    usage_events: input.usage_events,
+    receipt: input.receipt,
+    ...(input.operation_result === undefined ? {} : { operation_result: input.operation_result }),
+  });
+  if (claim.disposition === "duplicate") return claim;
+  try {
+    const result = await input.write(claim.artifact);
+    if (!result?.result_ref) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+    await input.ledger.complete(claim.claim);
+    return { disposition: "written", result_ref: result.result_ref };
+  } catch (error) {
+    if (error instanceof TenantBoundaryError) throw error;
+    deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+  }
+}
+
+function assertAccountingContinuation(
+  authorizationContext: TenantContextEnvelope,
+  artifactContext: TenantContextEnvelope,
+): void {
+  const sameWorkspaceAuthority = authorizationContext.protocol_id === artifactContext.protocol_id
+    && authorizationContext.protocol_version === artifactContext.protocol_version
+    && authorizationContext.tenant.tenant_id === artifactContext.tenant.tenant_id
+    && authorizationContext.workspace_connection.connection_id
+      === artifactContext.workspace_connection.connection_id
+    && authorizationContext.workspace_connection.connection_revision
+      === artifactContext.workspace_connection.connection_revision
+    && authorizationContext.workspace_connection.workspace_id
+      === artifactContext.workspace_connection.workspace_id
+    && authorizationContext.workspace_connection.app_id === artifactContext.workspace_connection.app_id
+    && authorizationContext.workspace_connection.status === "active"
+    && authorizationContext.placement.deployment_id === artifactContext.placement.deployment_id
+    && authorizationContext.placement.profile === artifactContext.placement.profile
+    && authorizationContext.contract_revision === artifactContext.contract_revision;
+  const sameActorAndSlackScope = authorizationContext.actor.principal_id
+      === artifactContext.actor.principal_id
+    && authorizationContext.actor.authenticated_subject_id
+      === artifactContext.actor.authenticated_subject_id
+    && authorizationContext.slack.event_id === artifactContext.slack.event_id
+    && authorizationContext.slack.channel_id === artifactContext.slack.channel_id
+    && (authorizationContext.slack.thread_ts ?? "") === (artifactContext.slack.thread_ts ?? "")
+    && (authorizationContext.slack.requester_id ?? "") === (artifactContext.slack.requester_id ?? "")
+    && authorizationContext.credential.mode === artifactContext.credential.mode
+    && authorizationContext.credential.billing_principal_id
+      === artifactContext.credential.billing_principal_id;
+  if (!sameWorkspaceAuthority) deny("brainbase_proxy", "WORKSPACE_CONNECTION_STALE_REVISION");
+  if (!sameActorAndSlackScope) deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+}
+
+/**
+ * Authorize delivery of an already frozen accounting artifact with a newly
+ * issued, short-lived TenantContext. The original artifact context remains the
+ * accounting identity; the fresh context is used only for the immediate
+ * authoritative write gate and may never extend or mutate the original one.
+ */
+export async function writeTenantAccountingContinuation(input: {
+  authorization_context: TenantContextEnvelope;
+  artifact_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  now: string;
+  verifier: TenantRuntimeBoundaryVerifier;
+  artifact: AccountingArtifact;
+  write(payload: AccountingArtifact): Promise<{ result_ref: string }>;
+}): Promise<{ result_ref: string }> {
+  await input.verifier.validate({
+    boundary: "brainbase_proxy",
+    tenant_context: input.authorization_context,
+    expected_scope: input.expected_scope,
+    now: input.now,
+  });
+  assertAccountingContinuation(input.authorization_context, input.artifact_context);
+  assertAccountingScope(
+    input.artifact_context,
+    input.expected_scope,
+    input.artifact.usage_events,
+    input.artifact.receipt,
+  );
+  const expectedPartitionKey = tenantPartitionKey({
+    tenant_id: input.artifact_context.tenant.tenant_id,
+    resource_type: "usage",
+    connection_id: input.artifact_context.workspace_connection.connection_id,
+    workspace_id: input.artifact_context.workspace_connection.workspace_id,
+    channel_id: input.artifact_context.slack.channel_id,
+    thread_ts: input.artifact_context.slack.thread_ts ?? "",
+    resource_id: input.artifact.receipt.receipt_id,
+  });
+  if (input.artifact.partition_key !== expectedPartitionKey) {
+    deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  }
+  const result = await input.write(assertSecretArtifactFree(structuredClone(input.artifact)));
+  if (!result?.result_ref) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+  return result;
+}
+
+/**
+ * Persist the exact canonical payload before an external accounting write.
+ * Callers are responsible for validating the signed boundary before entering
+ * this local Durable Object boundary. The payload remains pending until a
+ * separately validated external write completes it.
+ */
+export async function persistTenantAccounting(input: {
+  tenant_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  ledger: TenantAccountingLedgerStore;
+  usage_events: readonly UsageEvent[];
+  receipt: OperationReceipt;
+  operation_result?: unknown;
+}): Promise<
+  | { disposition: "duplicate" }
+  | { disposition: "claimed"; claim: AccountingLedgerClaim; artifact: AccountingArtifact }
+> {
+  assertAccountingScope(input.tenant_context, input.expected_scope, input.usage_events, input.receipt);
+  const partitionKey = tenantPartitionKey({
+    tenant_id: input.tenant_context.tenant.tenant_id,
+    resource_type: "usage",
+    connection_id: input.tenant_context.workspace_connection.connection_id,
+    workspace_id: input.tenant_context.workspace_connection.workspace_id,
+    channel_id: input.tenant_context.slack.channel_id,
+    thread_ts: input.tenant_context.slack.thread_ts ?? "",
+    resource_id: input.receipt.receipt_id,
+  });
+  const artifact = assertSecretArtifactFree<AccountingArtifact>({
+    partition_key: partitionKey,
+    usage_events: input.usage_events.map((event) => structuredClone(event)),
+    receipt: structuredClone(input.receipt),
+  });
+  const operationResult = input.operation_result === undefined
+    ? undefined
+    : assertSecretArtifactFree(structuredClone(input.operation_result));
+  const claim = await input.ledger.claim({
+    tenant_context: input.tenant_context,
+    usage_event_ids: input.usage_events.map((event) => event.usage_event_id),
+    receipt_id: input.receipt.receipt_id,
+    payload_hash: await accountingPayloadHash(operationResult === undefined
+      ? artifact
+      : { artifact, operation_result: operationResult }),
+    artifact,
+    ...(operationResult === undefined ? {} : { operation_result: operationResult }),
+  });
+  if (claim.disposition === "duplicate") return claim;
+  return { disposition: "claimed", claim, artifact };
+}

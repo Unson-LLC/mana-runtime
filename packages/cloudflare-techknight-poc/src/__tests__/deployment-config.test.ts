@@ -11,6 +11,7 @@ interface DeploymentConfig {
     logs: { invocation_logs: boolean };
   };
   version_metadata?: { binding: string };
+  services?: Array<{ binding: string; service: string }>;
   vars: Record<string, string>;
   durable_objects: {
     bindings: Array<{ name: string; class_name: string }>;
@@ -144,7 +145,13 @@ describe("会社別Cloudflare deployment", () => {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
       scripts: Record<string, string>;
     };
-    for (const scriptName of ["build", "build:unson-business", "deploy:unson-business"]) {
+    expect(packageJson.scripts.build).toBe("node scripts/build-profiles.mjs");
+    const buildProfiles = readFileSync(
+      fileURLToPath(new URL("../../scripts/build-profiles.mjs", import.meta.url)),
+      "utf8",
+    );
+    expect(buildProfiles).toContain('["build:default", "build:unson-business"]');
+    for (const scriptName of ["build:default", "build:unson-business", "deploy:unson-business"]) {
       expect(packageJson.scripts[scriptName]).toContain(
         "pnpm --filter @openryoko/task-runtime-core build",
       );
@@ -258,12 +265,35 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).not.toContain('stdin: JSON.stringify({ mode: "new", request: job.request })');
   });
 
-  it("開発エージェントへCloudflare認証プロキシ用の非秘密プレースホルダーを渡す", () => {
+  it("開発エージェントへ検証済みtenant operation boundaryだけを渡す", () => {
     const runnerPath = fileURLToPath(new URL("../../container/openryoko-development-runner.mjs", import.meta.url));
     const runner = readFileSync(runnerPath, "utf8");
     expect(runner).toContain('IS_SANDBOX: "1"');
-    expect(runner).toContain('CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected"');
+    expect(runner).toContain("MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle");
+    expect(runner).toContain('throw new Error("tenant_boundary_required")');
+    expect(runner).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
     expect(runner).toContain("extraEnv: sandboxAgentEnv");
+  });
+
+  it("両Cloudflare profileをBrainbase専用internal serviceへbindする", () => {
+    for (const config of [techKnight, unson]) {
+      expect(config.services).toContainEqual({
+        binding: "BRAINBASE_TENANT_RUNTIME_SERVICE",
+        service: "brainbase-tenant-runtime",
+      });
+    }
+  });
+
+  it("provider資格情報をCloudflare Worker secretとして設定する手順を残さない", () => {
+    const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+    const readme = readFileSync(readmePath, "utf8");
+    expect(readme).not.toMatch(
+      /wrangler secret put (?:SLACK_BOT_TOKEN|BRAINBASE_TASK_API_TOKEN)\b/,
+    );
+    expect(readme).not.toContain("Bot tokenを`SLACK_BOT_TOKEN` Secretとして設定");
+    expect(readme).not.toContain("`BRAINBASE_TASK_API_TOKEN` Secretとして設定");
+    expect(readme).toContain("BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN");
+    expect(readme).toContain("Brainbase専用内部forward service");
   });
 
   it("開発エージェントもplacement既定と同じsonnetを明示して起動する", () => {
@@ -290,6 +320,15 @@ describe("会社別Cloudflare deployment", () => {
     expect(runner).toContain("safeRunnerFailureReason(result.stderr, result.code)");
     expect(runner).toContain("/^[a-z0-9._/-]+ exited with code [0-9]+$/i");
     expect(runner).not.toContain("summary: result.stderr");
+  });
+
+  it("開発ランナーは外側watchdogより先に停止してterminal callbackを試行する", () => {
+    const runner = readFileSync(fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url)), "utf8");
+    expect(runner).toContain("job.runner_timeout_ms");
+    expect(runner).toContain("result.timedOut");
+    expect(runner).toContain("AbortSignal.timeout(CALLBACK_TIMEOUT_MS)");
+    expect(runner).toContain('child.kill("SIGTERM")');
+    expect(runner).toContain('child.kill("SIGKILL")');
   });
 
   it("keeps task search off by default and documents the staged rollout", () => {
@@ -339,13 +378,39 @@ describe("会社別Cloudflare deployment", () => {
   it("keeps Sandbox internet off with only explicit runtime proxy hosts", () => {
     const sandboxPath = fileURLToPath(new URL("../sandbox-runtime.ts", import.meta.url));
     const sandboxRuntime = readFileSync(sandboxPath, "utf8");
+    const runner = readFileSync(fileURLToPath(
+      new URL("../../container/cloudflare-development-runner.mjs", import.meta.url),
+    ), "utf8");
     expect(sandboxRuntime).toContain("enableInternet = false");
     expect(sandboxRuntime).toContain('allowedHosts = ["api.anthropic.com", "github.com", DEVELOPMENT_CALLBACK_PROXY_HOST, TASK_SEARCH_PROXY_HOST');
-    expect(sandboxRuntime).toContain('`Basic ${btoa(`x-access-token:${env.GITHUB_TOKEN}`)}`');
+    expect(sandboxRuntime).not.toContain('"github-basic"');
+    expect(sandboxRuntime).not.toContain("credential_header");
+    expect(sandboxRuntime).toContain("authorizeTenantProviderOutbound(");
+    const tenantProviderOutbound = readFileSync(fileURLToPath(
+      new URL("../multitenancy/tenant-provider-outbound.ts", import.meta.url),
+    ), "utf8");
+    expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
+    expect(sandboxRuntime).not.toContain("env.GITHUB_TOKEN");
+    const workerRuntime = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
+    expect(workerRuntime).not.toContain('audience: "github.com"');
+    expect(workerRuntime).not.toContain("githubCredentialLeaseHandle");
+    expect(workerRuntime).not.toContain("GITHUB_TOKEN?: string");
     expect(sandboxRuntime).toContain('[DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv)');
-    expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: handleTaskSearchProxyRequest");
-    expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: handleTaskWriteProxyRequest");
-    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env) => handleRuntimeGatewayProxyRequest(request, env)");
+    expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
+    expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
+    expect(sandboxRuntime).toContain("resolveDurableTenantBoundaryContext(");
+    expect(sandboxRuntime).toContain(
+      "SLACK_EXPECTED_TEAM_ID: resolved.tenant_context.workspace_connection.workspace_id",
+    );
+    expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
+    expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch, {");
+    expect(sandboxRuntime).toContain("deliverTenantGatewaySlackMessage");
+    expect(runner).toContain('"x-mana-tenant-boundary-handle"');
+    expect(runner).toContain('status: "timed_out"');
+    expect(sandboxRuntime).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
+    expect(sandboxRuntime).toContain('"mcp_gateway"');
+    expect(sandboxRuntime).toContain('"brainbase_proxy"');
+    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).not.toContain('"bb.unson.jp"');
   });
 
@@ -501,24 +566,49 @@ describe("会社別Cloudflare deployment", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain('url.pathname === "/slack/interactions"');
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
-    expect(worker).toContain("isMeetingMinutesSelection(message.body)");
+    expect(worker).toContain("createTenantInteractionEffectResolver(env)");
+    expect(worker).toContain("createMeetingMinutesTenantEffectGuard({");
+    expect(worker).not.toContain("meetingMinutesClients(env)");
+    expect(worker).not.toContain("env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId");
+    expect(worker).toContain('release: "on_expiration"');
+    expect(worker).toContain("isTenantMeetingMinutesSelectionBody(message.body)");
+    expect(worker).toContain("isTenantMeetingMinutesRedoBody(message.body)");
+    expect(worker).toContain("isTenantMeetingMinutesRecoveryBody(message.body)");
+    expect(worker).toContain("expectedTenantMeetingMinutesRedoScope(env, tenantBody)");
+    expect(worker).toContain("expectedTenantMeetingMinutesRecoveryScope(env, tenantBody)");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
     expect(worker).toContain("recoverStaleMeetingMinutesRun(");
     expect(worker).toContain("gateMeetingMinutesRouterQueueMessage(");
     expect(worker).toContain("gateMeetingMinutesCommandQueueMessage(");
     expect(worker).toContain("postIntakePausedToUser(command.channelId, command.userId)");
+    expect(worker).toContain("resolveSlackWorkerIngress({");
+    expect(worker).toContain("meetingMinutesRecoveryEventId(recovery)");
+    expect(worker).toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
+    expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
+    expect(worker).toContain("const childEventId = await childInteractionEventId(event.eventId, `meeting-minutes-file:${file.id}`)");
+    expect(worker).toContain("const childTenantContext = await resolveDerivedSlackTenantContext");
+    expect(worker).toContain("tenant_context: childTenantContext");
+    const ingestionStart = worker.indexOf("if (isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig))");
+    const ingestionEnd = worker.indexOf("const ordinaryEvent = tenantBody.payload", ingestionStart);
+    const ingestion = worker.slice(ingestionStart, ingestionEnd);
+    expect(ingestion).not.toContain("withTenantCredentialLease({");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
+    expect(worker).not.toContain("credentialLeaseHandle");
+    expect(worker).toContain("createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE)");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
     expect(worker).toContain("classifyMeetingMinutesDestinationInSandbox(");
-    expect(worker).toContain("download: (fileId) => clients.slack.downloadTextFile(fileId)");
-    expect(worker).toContain("classifyDestination: (transcript, destinations) => clients.classify(transcript, destinations)");
-    expect(worker).toContain("resolveMeetingMinutesDestinationSlackToken(env, organizationId)");
-    expect(worker).toContain(".filter((destination) => destination.slackChannelId === channelId)");
-    expect(worker).toContain('throw new Error("meeting_minutes_destination_slack_routing_invalid")');
-    expect(worker).toContain("consumeTaskBoardRepair({");
+    expect(worker).toContain("download: (fileId) => meetingClients.slack.downloadTextFile(fileId)");
+    expect(worker).toContain("classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations)");
+    expect(worker).not.toContain("resolveMeetingMinutesDestinationSlackToken");
+    expect(worker).toContain("credentialFetch");
+    expect(worker).toContain("destinations.find((candidate) => candidate.slackChannelId === channelId)");
+    expect(worker).toContain("isTenantTaskBoardRepairBody(message.body)");
+    expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
+    expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
   });
 
   it("fails deployment closed behind the authenticated meeting-minutes drain gate", () => {
@@ -555,8 +645,9 @@ describe("会社別Cloudflare deployment", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
-    expect(worker).toContain("consumeTaskBoardRepair({");
-    expect(worker).toContain("enqueueScheduledTaskBoardRepair(env)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
+    expect(worker).toContain("enqueueScheduledTaskBoardRepair(");
+    expect(worker).toContain("resolveTaskBoardRepairTenantContext(env, repair)");
     expect(worker).toContain('export { TaskWriteBudget } from "./task-write-budget.js"');
   });
 

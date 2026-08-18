@@ -1,4 +1,12 @@
 import type { SlackFileReference, SlackQueueEvent } from "./types.js";
+import {
+  TenantBoundaryError,
+  assertSecretArtifactFree,
+  resolveSlackWorkerIngress,
+  type TenantAuthorityClient,
+  type TenantContextIssueRequest,
+  type TenantQueueBody,
+} from "./multitenancy/index.js";
 
 const SLACK_REPLAY_WINDOW_SECONDS = 300;
 const MAX_SLACK_FILES = 10;
@@ -20,6 +28,17 @@ interface HandleSlackRequestOptions {
   nowMs?: number;
   intercept?(event: SlackQueueEvent): Promise<boolean>;
   send(event: SlackQueueEvent): Promise<unknown>;
+}
+
+export interface HandleTenantSlackRequestOptions {
+  signing_secret: string;
+  expected_app_id: string;
+  required_scopes: readonly string[];
+  required_authorization: TenantContextIssueRequest["required_authorization"];
+  authority: TenantAuthorityClient;
+  now_ms?: number;
+  resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
+  send(event: TenantQueueBody<SlackQueueEvent>): Promise<unknown>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -208,5 +227,93 @@ export async function handleSlackRequest(
   } catch (error) {
     const message = error instanceof Error ? error.message : "slack_event_invalid";
     return jsonResponse({ error: message }, message === "slack_team_forbidden" ? 403 : 400);
+  }
+}
+
+function tenantBoundaryStatus(error: TenantBoundaryError): number {
+  if (error.code === "WORKSPACE_CONNECTION_UNAVAILABLE" || error.code === "UPSTREAM_UNAVAILABLE") return 503;
+  if (error.code === "TENANT_CONTEXT_EXPIRED" || error.code === "WORKSPACE_CONNECTION_STALE_REVISION") return 409;
+  return 403;
+}
+
+export async function handleTenantSlackRequest(
+  request: Request,
+  options: HandleTenantSlackRequestOptions,
+): Promise<Response> {
+  const body = await request.text();
+  const validSignature = await verifySlackRequest({
+    body,
+    timestamp: request.headers.get("x-slack-request-timestamp") ?? "",
+    signature: request.headers.get("x-slack-signature") ?? "",
+    signingSecret: options.signing_secret,
+    nowMs: options.now_ms,
+  });
+  if (!validSignature) return jsonResponse({ error: "slack_signature_invalid" }, 401);
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return jsonResponse({ error: "slack_payload_invalid" }, 400);
+  }
+  if (isRecord(payload) && payload.type === "url_verification") {
+    const challenge = nonEmptyString(payload.challenge);
+    return challenge ? jsonResponse({ challenge }, 200) : jsonResponse({ error: "slack_payload_invalid" }, 400);
+  }
+  if (!isRecord(payload) || payload.api_app_id !== options.expected_app_id) {
+    return jsonResponse({ error: "slack_app_forbidden" }, 403);
+  }
+  if (payload.type !== "event_callback" || !isRecord(payload.event)) {
+    return jsonResponse({ error: "slack_event_invalid" }, 400);
+  }
+
+  const workspaceId = nonEmptyString(payload.team_id);
+  const eventId = nonEmptyString(payload.event_id);
+  const channelId = nonEmptyString(payload.event.channel);
+  const messageTs = nonEmptyString(payload.event.ts);
+  const threadTs = nonEmptyString(payload.event.thread_ts) ?? messageTs;
+  const requesterId = nonEmptyString(payload.event.user);
+  const enterpriseId = nonEmptyString(payload.context_enterprise_id) ?? nonEmptyString(payload.enterprise_id);
+  if (!workspaceId || !eventId || !channelId || !messageTs || !threadTs || !requesterId) {
+    return jsonResponse({ error: "slack_event_invalid" }, 400);
+  }
+
+  try {
+    const resolved = await resolveSlackWorkerIngress({
+      identity: {
+        provider: "slack",
+        app_id: options.expected_app_id,
+        workspace_id: workspaceId,
+        ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
+        event_id: eventId,
+        channel_id: channelId,
+        thread_ts: threadTs,
+        requester_id: requesterId,
+      },
+      required_scopes: options.required_scopes,
+      required_authorization: options.required_authorization,
+      authority: options.authority,
+      now: new Date(options.now_ms ?? Date.now()).toISOString(),
+      resolve_verification_key: options.resolve_verification_key,
+    });
+    const event = normalizeSlackEvent(
+      payload,
+      workspaceId,
+      new Date(options.now_ms ?? Date.now()).toISOString(),
+      resolved.tenant_context.tenant.tenant_id,
+    );
+    const message: TenantQueueBody<SlackQueueEvent> = {
+      schema_version: "1.0",
+      tenant_context: resolved.tenant_context,
+      payload: event,
+    };
+    assertSecretArtifactFree(message);
+    await options.send(message);
+    return jsonResponse({ ok: true }, 200);
+  } catch (error) {
+    if (error instanceof TenantBoundaryError) {
+      return jsonResponse({ error: error.code }, tenantBoundaryStatus(error));
+    }
+    return jsonResponse({ error: "WORKSPACE_CONNECTION_UNAVAILABLE" }, 503);
   }
 }

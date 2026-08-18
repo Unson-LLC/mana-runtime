@@ -163,6 +163,7 @@ export interface MeetingMinutesRun {
   runId: string;
   eventId: string;
   workspaceId: string;
+  sourceAppId?: string;
   sourceChannelId: string;
   sourceThreadTs: string;
   sourceMessageTs: string;
@@ -214,7 +215,9 @@ export interface MeetingMinutesSelection {
   runId: string;
   destinationId: string;
   workspaceId: string;
+  appId: string;
   channelId: string;
+  threadTs: string;
   userId: string;
   actionTs: string;
 }
@@ -223,7 +226,9 @@ export interface MeetingMinutesRedo {
   kind: "meeting_minutes_redo";
   runId: string;
   workspaceId: string;
+  appId: string;
   channelId: string;
+  threadTs: string;
   userId: string;
   actionTs: string;
 }
@@ -232,6 +237,10 @@ export interface MeetingMinutesRecovery {
   kind: "meeting_minutes_recovery";
   runId: string;
   workspaceId: string;
+  appId: string;
+  channelId: string;
+  threadTs: string;
+  userId: string;
   actionTs: string;
 }
 

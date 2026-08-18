@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && wrangler deploy --dry-run --outdir dist",
+    "build": "node scripts/build-profiles.mjs",
+    "build:default": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && wrangler deploy --dry-run --outdir dist",
     "build:unson-business": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && wrangler deploy --config wrangler.unson-business.jsonc --dry-run --outdir dist/unson-business",
     "deploy:unson-business": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && node scripts/deploy-unson-business.mjs",
     "meeting-minutes:intake:pause": "node scripts/meeting-minutes-intake-control.mjs pause",
@@ -13,6 +14,7 @@
     "verify:production-task-migration-evidence": "vitest run src/__tests__/production-task-migration-evidence.test.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "integration": "vitest run",
     "clean": "rm -rf dist .wrangler"
   },
   "dependencies": {

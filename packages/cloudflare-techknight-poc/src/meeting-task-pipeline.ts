@@ -22,6 +22,7 @@ import {
   TaskApiClient,
   TaskApiError,
 } from "@openryoko/task-runtime-core";
+import { destroyTenantContainer, freshTenantContainerId } from "./multitenancy/container-lifecycle.js";
 
 const MAX_TASKS = 20;
 const MAX_TITLE_CHARS = 200;
@@ -59,6 +60,7 @@ export interface MeetingTaskPipelineOptions {
   brainbaseTaskToken?: string;
   slackBotToken?: string;
   oauthConfigured: boolean;
+  tenantBoundaryHandle: string;
   claudeRuntime: ClaudeRuntimeConfig;
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
@@ -158,10 +160,12 @@ function buildExtractionPrompt(event: SlackQueueEvent): string {
 
 async function extractCandidates(
   event: SlackQueueEvent,
-  options: Pick<MeetingTaskPipelineOptions, "oauthConfigured" | "claudeRuntime" | "createSandbox">,
+  options: Pick<MeetingTaskPipelineOptions,
+    "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox">,
 ): Promise<TaskCandidate[]> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
-  const sandbox = options.createSandbox(`meeting-tasks-${event.eventId}`);
+  if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
+  const sandbox = options.createSandbox(freshTenantContainerId("meeting-tasks"));
   try {
     const promptPath = runtimeClaudePromptPath("meeting-task");
     await sandbox.writeFile(promptPath, buildExtractionPrompt(event));
@@ -171,7 +175,10 @@ async function extractCandidates(
         buildRuntimeClaudeCommand("meeting-task", options.claudeRuntime),
         {
           timeout: 120_000,
-          env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+          env: {
+            IS_SANDBOX: "1",
+            MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
+          },
         },
       );
     } catch {
@@ -180,7 +187,7 @@ async function extractCandidates(
     if (!result.success) throw new ReplyPipelineError("claude_execution_failed");
     return parseCandidates(result.stdout);
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }
 
@@ -221,7 +228,7 @@ async function createBrainbaseTask(
   index: number,
   options: MeetingTaskPipelineOptions,
 ): Promise<string> {
-  if (!options.brainbaseApiBaseUrl || !options.brainbaseTaskToken) {
+  if (!options.brainbaseApiBaseUrl || (!options.brainbaseTaskToken && !options.fetch)) {
     throw new ReplyPipelineError("brainbase_not_configured");
   }
   let task: Awaited<ReturnType<TaskApiClient["createTask"]>>;

@@ -1,0 +1,223 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  DevelopmentTerminalOutboxHandler,
+  createDevelopmentTerminalOutboxClient,
+  type DevelopmentTerminalOutboxRecord,
+  type DevelopmentTerminalOutboxSubmission,
+} from "../multitenancy/development-terminal-outbox.js";
+import { retryDevelopmentTerminalOutboxRecord } from "../multitenancy/development-callback-proxy.js";
+
+class MemoryStorage {
+  readonly values = new Map<string, unknown>();
+  readonly alarms: number[] = [];
+  alarmAt?: number;
+  get<T>(key: string): Promise<T | undefined> { return Promise.resolve(this.values.get(key) as T | undefined); }
+  put(key: string, value: unknown): Promise<void> { this.values.set(key, structuredClone(value)); return Promise.resolve(); }
+  delete(key: string): Promise<boolean> { return Promise.resolve(this.values.delete(key)); }
+  transaction<T>(callback: (transaction: MemoryStorage) => Promise<T>): Promise<T> { return callback(this); }
+  setAlarm(value: number | Date): Promise<void> {
+    this.alarmAt = value instanceof Date ? value.getTime() : value;
+    this.alarms.push(this.alarmAt);
+    return Promise.resolve();
+  }
+}
+
+const TRANSIENT_BOUNDARY_HANDLE = "tb_opaque_operation_handle_1234567890";
+
+const submission = {
+  job_id: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+  payload_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  callback_body: JSON.stringify({ job_id: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", status: "timed_out" }),
+  tenant_boundary_handle: TRANSIENT_BOUNDARY_HANDLE,
+  owner: {
+    tenantId: "tenant-a", connectionId: "connection-a", connectionRevision: "1",
+    operationId: "operation-a", eventId: "event-a", workspaceId: "workspace-a",
+    channelId: "channel-a", threadTs: "1.0", requesterId: "user-a", placementId: "placement-a",
+    jobId: "development-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", quotaDecision: "allowed",
+    contextHash: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  },
+  owner_claim: { key: "ik1_owner", partition_key: "tenant-partition-a" },
+  terminal_deadline_at: "2026-08-17T10:04:00.000Z",
+  observed_at: "2026-08-17T10:03:30.000Z",
+  terminal_accounting: {
+    tenant_context: {
+      tenant: { tenant_id: "tenant-a" },
+      workspace_connection: { connection_id: "connection-a", workspace_id: "workspace-a" },
+      operation_id: "operation-a",
+      slack: { channel_id: "channel-a", thread_ts: "1.0" },
+      expires_at: "2026-08-17T10:04:00.000Z",
+    } as never,
+    expected_scope: {} as never,
+    quota_decision: "allowed",
+    unit: "container_seconds",
+    outcome: "timed_out",
+    failure_code: "DEVELOPMENT_RUNNER_TIMED_OUT",
+    reply_state: "unknown",
+    recorded_at: "2026-08-17T10:04:00.000Z",
+    accounting_effect_id: "development_terminal:test-job",
+  },
+} satisfies DevelopmentTerminalOutboxSubmission & { tenant_boundary_handle: string };
+
+describe("development terminal outbox", () => {
+  it("arms a durable timeout before Container launch and lets the first real terminal callback win", async () => {
+    const storage = new MemoryStorage();
+    const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => handler.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a") as ReturnType<
+      typeof createDevelopmentTerminalOutboxClient
+    > & {
+      arm(input: DevelopmentTerminalOutboxSubmission & { activate_at: string }): Promise<unknown>;
+    };
+    const fallback = {
+      ...submission,
+      activate_at: "2026-08-17T10:03:45.000Z",
+      container_id: "development-sandbox-test-a",
+    };
+
+    await expect(client.arm(fallback)).resolves.toMatchObject({ state: "awaiting_terminal" });
+    expect(storage.alarmAt).toBe(Date.parse(fallback.activate_at));
+
+    const actual = {
+      ...submission,
+      payload_hash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      callback_body: JSON.stringify({ job_id: submission.job_id, status: "completed" }),
+      observed_at: "2026-08-17T10:03:40.000Z",
+    };
+    await expect(client.submit(actual)).resolves.toMatchObject({
+      state: "pending",
+      payload_hash: actual.payload_hash,
+      callback_body: actual.callback_body,
+      container_id: fallback.container_id,
+    });
+  });
+
+  it("delivers the armed timeout when no Container callback reaches the proxy", async () => {
+    const storage = new MemoryStorage();
+    const first = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => first.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a") as ReturnType<
+      typeof createDevelopmentTerminalOutboxClient
+    > & {
+      arm(input: DevelopmentTerminalOutboxSubmission & { activate_at: string }): Promise<unknown>;
+    };
+    const fallback = {
+      ...submission,
+      activate_at: "2026-08-17T10:03:45.000Z",
+      container_id: "development-sandbox-test-b",
+    };
+    await client.arm(fallback);
+
+    const restarted = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const deliver = vi.fn(async (_record: DevelopmentTerminalOutboxRecord) => ({ state: "completed" as const }));
+    await restarted.alarm(fallback.activate_at, deliver);
+
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(deliver.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      callback_body: fallback.callback_body,
+      payload_hash: fallback.payload_hash,
+    }));
+    await expect(client.read()).resolves.toMatchObject({ state: "completed" });
+  });
+
+  it("persists the exact callback before delivery and retries it after an isolate restart", async () => {
+    const storage = new MemoryStorage();
+    const first = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => first.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a");
+
+    await expect(client.submit(submission)).resolves.toMatchObject({ state: "pending" });
+    expect(storage.alarmAt).toBe(Date.parse("2026-08-17T10:03:30.000Z"));
+
+    const retry = vi.fn()
+      .mockResolvedValueOnce({ state: "retry", error: "UPSTREAM_UNAVAILABLE" })
+      .mockResolvedValueOnce({ state: "completed" });
+    await first.alarm("2026-08-17T10:03:31.000Z", retry);
+
+    const restarted = new DevelopmentTerminalOutboxHandler(storage, storage);
+    await restarted.alarm("2026-08-17T10:03:33.000Z", retry);
+    expect(retry).toHaveBeenCalledTimes(2);
+    expect(retry.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      callback_body: submission.callback_body,
+      payload_hash: submission.payload_hash,
+    }));
+    await expect(client.read()).resolves.toMatchObject({ state: "completed" });
+  });
+
+  it("never persists the transient tenant boundary handle in the durable callback outbox", async () => {
+    const storage = new MemoryStorage();
+    const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => handler.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a");
+
+    await client.submit(submission);
+
+    expect(JSON.stringify([...storage.values.entries()]))
+      .not.toContain(TRANSIENT_BOUNDARY_HANDLE);
+  });
+
+  it("rejects the same job id with a different terminal payload", async () => {
+    const storage = new MemoryStorage();
+    const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => handler.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a");
+    await client.submit(submission);
+
+    await expect(client.submit({ ...submission,
+      payload_hash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      callback_body: JSON.stringify({ job_id: submission.job_id, status: "completed" }),
+    })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  });
+
+  it("persists retry exhaustion as failed_terminal and stops scheduling alarms at the deadline", async () => {
+    const storage = new MemoryStorage();
+    const handler = new DevelopmentTerminalOutboxHandler(storage, storage);
+    const namespace = { idFromName: (name: string) => name, get: () => ({ fetch: (request: Request) => handler.fetch(request) }) };
+    const client = createDevelopmentTerminalOutboxClient(namespace, "tenant-partition-a");
+    await client.submit(submission);
+
+    await handler.alarm(submission.terminal_deadline_at, async () => ({
+      state: "retry",
+      error: "UPSTREAM_UNAVAILABLE",
+    }));
+
+    await expect(client.read()).resolves.toMatchObject({
+      state: "failed_terminal",
+      attempts: 1,
+      failure_code: "UPSTREAM_UNAVAILABLE",
+      failed_at: submission.terminal_deadline_at,
+    });
+    expect(storage.alarms).toEqual([Date.parse(submission.observed_at)]);
+  });
+
+  it("bounds a hung callback forward so the durable alarm can continue to terminal reconciliation", async () => {
+    vi.useFakeTimers();
+    try {
+      let forwardedSignal: AbortSignal | undefined;
+      const neverSettles = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        forwardedSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => undefined);
+      }) as unknown as typeof fetch;
+      const pending = retryDevelopmentTerminalOutboxRecord(
+        { ...submission, state: "pending", attempts: 1, updated_at: submission.observed_at },
+        {
+          DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
+          DEVELOPMENT_CALLBACK_TOKEN: "test-callback-token-placeholder",
+          TENANT_RUNTIME_STATE: {
+            idFromName: (name: string) => name,
+            get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+          } as never,
+        },
+        neverSettles,
+      );
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(pending).resolves.toEqual({ state: "retry", error: "UPSTREAM_UNAVAILABLE" });
+      expect(neverSettles).toHaveBeenCalledOnce();
+      expect(forwardedSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

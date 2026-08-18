@@ -17,11 +17,11 @@ function safeText(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
 }
 
-async function metadata(file: SlackFileReference, token: string, fetchImpl: typeof fetch): Promise<SlackFileMetadata> {
+async function metadata(file: SlackFileReference, token: string | undefined, fetchImpl: typeof fetch): Promise<SlackFileMetadata> {
   let response: Response;
   try {
     response = await fetchImpl(`https://slack.com/api/files.info?file=${encodeURIComponent(file.id)}`, {
-      headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
+      headers: token ? { authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(10_000),
     });
   } catch { throw new SlackAttachmentError("slack_attachment_metadata_unavailable"); }
   if (!response.ok) throw new SlackAttachmentError("slack_attachment_metadata_unavailable");
@@ -43,11 +43,11 @@ async function metadata(file: SlackFileReference, token: string, fetchImpl: type
   return { id, name, mimetype, size, url };
 }
 
-async function downloadText(file: SlackFileMetadata, token: string, fetchImpl: typeof fetch): Promise<string> {
+async function downloadText(file: SlackFileMetadata, token: string | undefined, fetchImpl: typeof fetch): Promise<string> {
   if ((file.size ?? 0) > MAX_DOWNLOAD_BYTES) throw new SlackAttachmentError("slack_attachment_too_large");
   let response: Response;
   try {
-    response = await fetchImpl(file.url, { headers: { authorization: `Bearer ${token}` },
+    response = await fetchImpl(file.url, { headers: token ? { authorization: `Bearer ${token}` } : {},
       signal: AbortSignal.timeout(15_000) });
   } catch { throw new SlackAttachmentError("slack_attachment_download_unavailable"); }
   if (!response.ok) throw new SlackAttachmentError("slack_attachment_download_unavailable");
@@ -61,7 +61,7 @@ export async function hydrateSlackAttachments(event: SlackQueueEvent, options: {
   botToken?: string; fetchImpl?: typeof fetch;
 }): Promise<SlackQueueEvent> {
   if (!event.files?.length) return event;
-  if (!options.botToken) throw new SlackAttachmentError("slack_bot_token_not_configured");
+  if (!options.botToken && !options.fetchImpl) throw new SlackAttachmentError("slack_bot_token_not_configured");
   if (event.files.length > MAX_FILES) throw new SlackAttachmentError("slack_attachments_too_many");
   const fetchImpl = options.fetchImpl ?? fetch;
   const sections: string[] = [];

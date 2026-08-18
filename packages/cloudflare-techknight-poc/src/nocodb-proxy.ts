@@ -66,10 +66,10 @@ function targetFor(tool: string, args: Record<string, unknown>, mapping: Record<
   return { method: "PATCH", path: `/api/v2/meta/columns/${encodeURIComponent(clean(args.columnId))}`, body: { colOptions: args.colOptions } };
 }
 
-export async function handleNocodbProxyRequest(request: Request, env: NocodbProxyEnv, fetchImpl: typeof fetch = fetch): Promise<Response> {
+export async function handleNocodbProxyRequest(request: Request, env: NocodbProxyEnv, fetchImpl?: typeof fetch): Promise<Response> {
   const url = new URL(request.url);
   if (url.hostname !== NOCODB_PROXY_HOST || url.pathname !== NOCODB_PROXY_PATH || request.method !== "POST") return Response.json({ error: "not_found" }, { status: 404 });
-  if (!env.NOCODB_URL || !env.NOCODB_TOKEN) return Response.json({ error: "nocodb_not_configured" }, { status: 503 });
+  if (!env.NOCODB_URL || (!env.NOCODB_TOKEN && !fetchImpl)) return Response.json({ error: "nocodb_not_configured" }, { status: 503 });
   try {
     const input = await request.json() as { tool?: unknown; arguments?: unknown };
     if (typeof input.tool !== "string" || !TOOLS.has(input.tool) || !input.arguments || typeof input.arguments !== "object" || Array.isArray(input.arguments)) throw new Error("invalid_arguments");
@@ -78,9 +78,9 @@ export async function handleNocodbProxyRequest(request: Request, env: NocodbProx
       return Response.json({ bases: Object.keys(mapping).sort().map((baseId) => ({ baseId })) });
     }
     const target = targetFor(input.tool, input.arguments as Record<string, unknown>, mapping);
-    const upstream = await fetchImpl(`${env.NOCODB_URL.replace(/\/$/, "")}${target.path}`, {
+    const upstream = await (fetchImpl ?? fetch)(`${env.NOCODB_URL.replace(/\/$/, "")}${target.path}`, {
       method: target.method,
-      headers: { "xc-token": env.NOCODB_TOKEN, "content-type": "application/json" },
+      headers: { ...(env.NOCODB_TOKEN ? { "xc-token": env.NOCODB_TOKEN } : {}), "content-type": "application/json" },
       ...(target.body !== undefined ? { body: JSON.stringify(target.body) } : {}),
       signal: AbortSignal.timeout(15_000),
     });

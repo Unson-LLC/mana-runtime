@@ -276,7 +276,9 @@ async function enforceBoundedJsonResponse(response: Response): Promise<Response>
   });
 }
 
-export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
+export function createTaskSearchProxyHandler(fetchImpl?: FetchLike) {
+  const brokered = fetchImpl !== undefined;
+  const providerFetch = fetchImpl ?? fetch;
   return async (request: Request, env: TaskSearchProxyEnv): Promise<Response> => {
     const trace = taskSearchTrace(request);
     const startedAt = Date.now();
@@ -306,7 +308,7 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
     let upstreamOrigin: string;
     try {
       projectCodes = resolveTaskSearchProjectCodes(env, trace);
-      if (projectCodes.length === 0 || !env.BRAINBASE_TASK_API_TOKEN) {
+      if (projectCodes.length === 0 || (!env.BRAINBASE_TASK_API_TOKEN && !brokered)) {
         throw new Error("task_search_not_configured");
       }
       upstreamOrigin = resolveUpstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL);
@@ -345,11 +347,11 @@ export function createTaskSearchProxyHandler(fetchImpl: FetchLike = fetch) {
       const query = applyTrustedProjectFilter(requestedQuery, projectCodes);
       const client = new TaskApiClient({
         baseUrl: upstreamOrigin,
-        token: env.BRAINBASE_TASK_API_TOKEN!,
+        token: env.BRAINBASE_TASK_API_TOKEN,
         fetchImpl: (async (input, init) => {
           const headers = new Headers(init?.headers);
           headers.set("accept", "application/json");
-          const response = await fetchImpl(input, {
+          const response = await providerFetch(input, {
             ...init,
             headers,
             redirect: "manual",

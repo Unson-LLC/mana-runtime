@@ -26,12 +26,13 @@ const fileEvent: SlackQueueEvent = {
 
 const selection: MeetingMinutesSelection = {
   kind: "meeting_minutes_selection", runId: "Ev-file-1_F1", destinationId: "senpainurse",
-  workspaceId: "T1", channelId: "C0BKTFQ9V38", userId: "U1", actionTs: "1786000010.000001",
+  workspaceId: "T1", appId: "A1", channelId: "C0BKTFQ9V38", threadTs: "1786000000.000001",
+  userId: "U1", actionTs: "1786000010.000001",
 };
 
 const redo: MeetingMinutesRedo = {
-  kind: "meeting_minutes_redo", runId: "Ev-file-1_F1", workspaceId: "T1",
-  channelId: "C0BKTFQ9V38", userId: "U1", actionTs: "1786000020.000001",
+  kind: "meeting_minutes_redo", runId: "Ev-file-1_F1", workspaceId: "T1", appId: "A1",
+  channelId: "C0BKTFQ9V38", threadTs: "1786000000.000001", userId: "U1", actionTs: "1786000020.000001",
 };
 
 describe("meeting minutes intake entrypoints", () => {

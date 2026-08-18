@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-mana-brainbase-multitenant-e2e",
+  "spec_id": "2026-08-16T12:41:31.790Z",
+  "evaluated_at": "2026-08-16T23:47:03.415Z",
+  "status": "clean",
+  "summary": {
+    "spec_code_drift": 0,
+    "spec_test_drift": 0,
+    "code_test_drift": 0,
+    "spec_pr_drift": 0
+  },
+  "items": []
+}

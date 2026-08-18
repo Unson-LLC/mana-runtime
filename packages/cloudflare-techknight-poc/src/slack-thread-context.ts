@@ -20,7 +20,7 @@ export class SlackThreadContextError extends Error {
 }
 
 interface SlackThreadContextOptions {
-  botToken: string | undefined;
+  botToken?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
   /** Exclude messages at or before a /new boundary. Slack timestamps compare numerically. */
@@ -43,7 +43,7 @@ export async function hydrateSlackQueueEventThreadContext(
   options: SlackThreadContextOptions,
 ): Promise<SlackQueueEvent> {
   if (event.threadTs === event.messageTs) return event;
-  if (!options.botToken) throw new SlackThreadContextError("slack_thread_history_token_missing");
+  if (!options.botToken && !options.fetch) throw new SlackThreadContextError("slack_thread_history_token_missing");
   const fetchImpl = options.fetch ?? fetch;
 
   const context = await hydrateSlackThreadContext(async (args) => {
@@ -56,7 +56,7 @@ export async function hydrateSlackQueueEventThreadContext(
       response = await fetchImpl(`https://slack.com/api/conversations.replies?${query}`, {
         method: "GET",
         headers: {
-          authorization: `Bearer ${options.botToken}`,
+          ...(options.botToken ? { authorization: `Bearer ${options.botToken}` } : {}),
         },
         signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
       });

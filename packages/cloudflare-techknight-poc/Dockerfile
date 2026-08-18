@@ -13,6 +13,7 @@ COPY --chmod=0555 container/brainbase-judgment-hook.mjs /opt/mana/brainbase-judg
 COPY --chmod=0444 container/meeting-minutes-claude-settings.json /opt/mana/meeting-minutes-claude-settings.json
 COPY --chmod=0555 container/cloudflare-development-runner.mjs /opt/mana/cloudflare-development-runner.mjs
 COPY --chmod=0555 container/openryoko-development-runner.mjs /opt/mana/openryoko-development-runner.mjs
+COPY --chmod=0555 container/tenant-claude-runner.mjs /opt/mana/tenant-claude-runner.mjs
 COPY --chmod=0444 container/openryoko-development-runner.json /etc/openryoko-development-runner.json
 
 ENV COMMAND_TIMEOUT_MS=180000

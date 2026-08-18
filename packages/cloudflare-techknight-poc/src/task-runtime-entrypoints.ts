@@ -15,8 +15,10 @@ import {
   type TaskBoardBindingNamespace,
 } from "./task-board-binding.js";
 import type { SlackQueueEvent } from "./types.js";
-import { enabledTaskBoardTargets, parseTaskBoardTargets, taskBoardSlackToken, taskBoardTargetsForProjects,
+import { enabledTaskBoardTargets, parseTaskBoardTargets, taskBoardTargetsForProjects,
   type TaskBoardTarget } from "./task-board-targets.js";
+import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
+import type { TenantQueueBody } from "./multitenancy/runtime-boundaries.js";
 
 interface TaskWriteRuntimeEnv {
   RUNTIME_TASK_WRITE_ENABLED?: string;
@@ -32,34 +34,41 @@ interface TaskWritePlacement {
 }
 
 interface TaskBoardRuntimeEnv extends TaskBoardEnv {
-  TENANT_ID: string;
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_ALLOWED_CHANNEL_ID: string;
-  TASK_BOARD_REPAIRS: { send(message: TaskBoardRepairEvent): Promise<unknown> };
+  TASK_BOARD_REPAIRS: { send(message: TenantQueueBody<TaskBoardRepairEvent>): Promise<unknown> };
   TASK_BOARD_BINDINGS?: TaskBoardBindingNamespace;
   RUNTIME_PLACEMENTS_JSON?: string;
 }
 
-function legacyTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
-  if (env.RUNTIME_PLACEMENTS_JSON) return parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
-    .filter((placement) => placement.taskBoardEnabled)
-    .map((placement) => ({ targetId: `legacy-${placement.placementId}`, organizationId: "unson-business" as const,
-      workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: placement.channelId, projectCodes: placement.projectCodes,
-      enabled: false, autoProvision: false, manaCanvasId: null, bindingRevision: null }));
-  return env.RUNTIME_TASK_BOARD_ENABLED === "true" ? [{ targetId: "legacy-default", organizationId: "unson-business",
-    workspaceId: env.SLACK_EXPECTED_TEAM_ID, channelId: env.SLACK_ALLOWED_CHANNEL_ID,
-    projectCodes: parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES), enabled: false, autoProvision: false,
-    manaCanvasId: null, bindingRevision: null }] : [];
+export function taskBoardRepairEventId(repair: TaskBoardRepairEvent): string {
+  return `task-board-repair:${repair.targetId}:${repair.requestedAt}`;
+}
+
+export async function createCanonicalTaskBoardRepairMessage(
+  repair: TaskBoardRepairEvent,
+  resolveTenantContext: (repair: TaskBoardRepairEvent) => Promise<TenantContextEnvelope>,
+): Promise<TenantQueueBody<TaskBoardRepairEvent>> {
+  const tenantContext = await resolveTenantContext(structuredClone(repair));
+  if (tenantContext.slack.event_id !== taskBoardRepairEventId(repair)
+    || tenantContext.slack.channel_id !== repair.channelId
+    || tenantContext.slack.thread_ts !== repair.requestedAt
+    || !tenantContext.slack.requester_id) throw new Error("task_board_tenant_context_scope_mismatch");
+  return {
+    schema_version: "1.0",
+    tenant_context: tenantContext,
+    payload: { ...repair, tenantId: tenantContext.tenant.tenant_id },
+  };
 }
 
 export function taskBoardTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
-  return env.TASK_BOARD_TARGETS_JSON ? parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON) : legacyTargets(env);
-}
-
-interface QueueMessageLike<T> {
-  body: T;
-  ack(): void;
-  retry(): void;
+  if (env.TASK_BOARD_TARGETS_JSON?.trim()) return parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON);
+  const schedulingEnabled = env.RUNTIME_TASK_BOARD_ENABLED === "true"
+    || (env.RUNTIME_PLACEMENTS_JSON
+      ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).some((placement) => placement.taskBoardEnabled)
+      : false);
+  if (schedulingEnabled) throw new Error("task_board_targets_required");
+  return [];
 }
 
 export async function issueTaskWriteRequestContext(
@@ -93,21 +102,23 @@ export async function issueTaskWriteRequestContext(
   };
 }
 
-export async function consumeTaskBoardRepair(
-  message: QueueMessageLike<TaskBoardRepairEvent>,
+export async function processTaskBoardRepair(
+  repair: TaskBoardRepairEvent,
   env: TaskBoardRuntimeEnv,
-  refresh: (bindings: TaskBoardEnv) => Promise<unknown> = refreshTaskBoard,
-  createCanvas: (channelId: string, token: string) => Promise<string> = createManagedTaskBoardCanvas,
+  expectedTenantId: string,
+  credentialFetch: typeof fetch,
+  refresh: (bindings: TaskBoardEnv, options?: { fetch?: typeof fetch }) => Promise<unknown> = refreshTaskBoard,
+  createCanvas: (channelId: string, token: string | undefined,
+    options?: { fetch?: typeof fetch }) => Promise<string> = createManagedTaskBoardCanvas,
 ): Promise<void> {
-  const repair = message.body;
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
   if (
-    repair.tenantId !== env.TENANT_ID ||
+    repair.tenantId !== expectedTenantId ||
     !target || !target.enabled || (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ||
     repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId ||
     repair.manaCanvasId !== target.manaCanvasId || repair.bindingRevision !== target.bindingRevision
   ) {
-    const rejectionReason = repair.tenantId !== env.TENANT_ID ? "tenant_mismatch" :
+    const rejectionReason = repair.tenantId !== expectedTenantId ? "tenant_mismatch" :
       !target ? "target_unknown" : !target.enabled ? "target_disabled" :
         (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ? "canvas_binding_missing" :
           repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId
@@ -115,68 +126,57 @@ export async function consumeTaskBoardRepair(
     console.error(JSON.stringify({ event: "task_board_repair_rejected", targetId: repair.targetId,
       reason: rejectionReason,
       expectedBindingRevision: target?.bindingRevision ?? null }));
-    message.ack();
-    return;
+    throw new Error("task_board_scope_mismatch");
   }
-  try {
-    const token = taskBoardSlackToken(target, env);
-    let canvasId = target.manaCanvasId;
-    if (!canvasId) {
-      if (!target.autoProvision || !env.TASK_BOARD_BINDINGS) {
-        console.error(JSON.stringify({ event: "task_board_repair_rejected", targetId: target.targetId,
-          reason: "canvas_binding_store_missing", expectedBindingRevision: target.bindingRevision }));
-        message.ack();
-        return;
-      }
-      const coordinates: TaskBoardBindingCoordinates = {
-        tenantId: env.TENANT_ID,
-        targetId: target.targetId,
-        workspaceId: target.workspaceId,
-        channelId: target.channelId,
-        bindingRevision: target.bindingRevision,
-      };
-      const reservation = await reserveTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates);
-      if (reservation.status === "bound") {
-        canvasId = reservation.canvasId;
-      } else if (reservation.status === "provisioning") {
-        console.warn(JSON.stringify({ event: "task_board_canvas_provisioning_pending",
-          targetId: target.targetId, bindingRevision: target.bindingRevision }));
-        message.ack();
-        return;
-      } else {
-        try {
-          canvasId = await createCanvas(target.channelId, token);
-        } catch (error) {
-          if (error instanceof TaskBoardCanvasProvisioningError && error.definitive) {
-            await releaseTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates);
-            throw error;
-          }
-          console.error(JSON.stringify({ event: "task_board_canvas_provisioning_uncertain",
-            targetId: target.targetId, bindingRevision: target.bindingRevision }));
-          message.ack();
-          return;
-        }
-        await completeTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates, canvasId);
-      }
+  let canvasId = target.manaCanvasId;
+  if (!canvasId) {
+    if (!target.autoProvision || !env.TASK_BOARD_BINDINGS) {
+      console.error(JSON.stringify({ event: "task_board_repair_rejected", targetId: target.targetId,
+        reason: "canvas_binding_store_missing", expectedBindingRevision: target.bindingRevision }));
+      throw new Error("task_board_scope_mismatch");
     }
-    await refresh({ ...env,
-      RUNTIME_TASK_BOARD_ENABLED: "true",
-      SLACK_BOT_TOKEN: token,
-      SLACK_ALLOWED_CHANNEL_ID: target.channelId,
-      TASK_BOARD_CANVAS_ID: canvasId,
-      RUNTIME_PROJECT_CODES: target.projectCodes.join(",") });
-    message.ack();
-  } catch (error) {
-    const code = error instanceof Error ? error.message : "unknown";
-    console.error(JSON.stringify({ event: "task_board_repair_failed", targetId: target.targetId, code }));
-    if (code === "task_board_canvas_binding_mismatch" || code === "task_board_not_configured") message.ack();
-    else message.retry();
+    const coordinates: TaskBoardBindingCoordinates = {
+      tenantId: expectedTenantId,
+      targetId: target.targetId,
+      workspaceId: target.workspaceId,
+      channelId: target.channelId,
+      bindingRevision: target.bindingRevision,
+    };
+    const reservation = await reserveTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates);
+    if (reservation.status === "bound") {
+      canvasId = reservation.canvasId;
+    } else if (reservation.status === "provisioning") {
+      console.warn(JSON.stringify({ event: "task_board_canvas_provisioning_pending",
+        targetId: target.targetId, bindingRevision: target.bindingRevision }));
+      return;
+    } else {
+      try {
+        canvasId = await createCanvas(target.channelId, undefined, { fetch: credentialFetch });
+      } catch (error) {
+        if (error instanceof TaskBoardCanvasProvisioningError && error.definitive) {
+          await releaseTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates);
+          throw error;
+        }
+        console.error(JSON.stringify({ event: "task_board_canvas_provisioning_uncertain",
+          targetId: target.targetId, bindingRevision: target.bindingRevision }));
+        return;
+      }
+      await completeTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates, canvasId);
+    }
   }
+  await refresh({ ...env,
+    RUNTIME_TASK_BOARD_ENABLED: "true",
+    BRAINBASE_TASK_API_TOKEN: undefined,
+    SLACK_BOT_TOKEN: undefined,
+    SLACK_ALLOWED_CHANNEL_ID: target.channelId,
+    TASK_BOARD_CANVAS_ID: canvasId,
+    RUNTIME_PROJECT_CODES: target.projectCodes.join(",") }, { fetch: credentialFetch });
 }
 
 export async function enqueueScheduledTaskBoardRepair(
   env: TaskBoardRuntimeEnv,
-  now = new Date().toISOString(),
+  now: string,
+  resolveTenantContext: (repair: TaskBoardRepairEvent) => Promise<TenantContextEnvelope>,
 ): Promise<void> {
   const configuredTargets = taskBoardTargets(env);
   const activeTargets = enabledTaskBoardTargets(configuredTargets);
@@ -184,9 +184,10 @@ export async function enqueueScheduledTaskBoardRepair(
     event: "task_board_repair_suppressed", targetId: target.targetId,
     reason: !target.enabled ? "target_disabled" : "canvas_binding_missing",
   })));
-  const results = await Promise.allSettled(activeTargets.map((target) => env.TASK_BOARD_REPAIRS.send({
+  const results = await Promise.allSettled(activeTargets.map(async (target) => {
+    const repair: TaskBoardRepairEvent = {
       eventType: "task_board_repair",
-      tenantId: env.TENANT_ID,
+      tenantId: "",
       targetId: target.targetId,
       workspaceId: target.workspaceId,
       channelId: target.channelId,
@@ -194,12 +195,16 @@ export async function enqueueScheduledTaskBoardRepair(
       bindingRevision: target.bindingRevision!,
       reason: "scheduled",
       requestedAt: now,
-    })));
+    };
+    await env.TASK_BOARD_REPAIRS.send(await createCanonicalTaskBoardRepairMessage(repair, resolveTenantContext));
+  }));
   if (results.some((result) => result.status === "rejected")) throw new Error("task_board_schedule_enqueue_failed");
 }
 
 export async function enqueueTaskBoardRepairsForProjects(env: TaskBoardRuntimeEnv, projectIds: readonly string[],
-  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
+  reason: TaskBoardRepairEvent["reason"],
+  resolveTenantContext: (repair: TaskBoardRepairEvent) => Promise<TenantContextEnvelope>,
+): Promise<void> {
   let configuredTargets;
   try { configuredTargets = taskBoardTargets(env); }
   catch (error) { console.error("task_board_targets_invalid", error); return; }
@@ -211,12 +216,15 @@ export async function enqueueTaskBoardRepairsForProjects(env: TaskBoardRuntimeEn
     event: "task_board_repair_suppressed", targetId: target.targetId,
     reason: !target.enabled ? "target_disabled" : "canvas_binding_missing",
   })));
-  const results = await Promise.allSettled(targets.map((target) => env.TASK_BOARD_REPAIRS.send({
-    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
+  const results = await Promise.allSettled(targets.map(async (target) => {
+    const repair: TaskBoardRepairEvent = {
+    eventType: "task_board_repair", targetId: target.targetId, tenantId: "",
     workspaceId: target.workspaceId, channelId: target.channelId,
-    manaCanvasId: target.manaCanvasId, bindingRevision: target.bindingRevision!, reason,
+    manaCanvasId: target.manaCanvasId ?? null, bindingRevision: target.bindingRevision!, reason,
     requestedAt: new Date().toISOString(),
-  })));
+    };
+    return env.TASK_BOARD_REPAIRS.send(await createCanonicalTaskBoardRepairMessage(repair, resolveTenantContext));
+  }));
   results.forEach((result, index) => {
     if (result.status === "rejected") console.error("task_board_repair_enqueue_failed", {
       targetId: targets[index]?.targetId, reason, error: result.reason,
@@ -225,7 +233,9 @@ export async function enqueueTaskBoardRepairsForProjects(env: TaskBoardRuntimeEn
 }
 
 export async function enqueueMeetingMinutesTaskBoardRepair(env: TaskBoardRuntimeEnv, targetId: string,
-  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
+  reason: TaskBoardRepairEvent["reason"],
+  resolveTenantContext: (repair: TaskBoardRepairEvent) => Promise<TenantContextEnvelope>,
+): Promise<void> {
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === targetId);
   if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
   if (!target.enabled || (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision) {
@@ -233,10 +243,11 @@ export async function enqueueMeetingMinutesTaskBoardRepair(env: TaskBoardRuntime
       reason: !target.enabled ? "target_disabled" : "canvas_binding_missing" }));
     return;
   }
-  await env.TASK_BOARD_REPAIRS.send({
-    eventType: "task_board_repair", targetId: target.targetId, tenantId: env.TENANT_ID,
+  const repair: TaskBoardRepairEvent = {
+    eventType: "task_board_repair", targetId: target.targetId, tenantId: "",
     workspaceId: target.workspaceId, channelId: target.channelId,
-    manaCanvasId: target.manaCanvasId, bindingRevision: target.bindingRevision, reason,
+    manaCanvasId: target.manaCanvasId ?? null, bindingRevision: target.bindingRevision, reason,
     requestedAt: new Date().toISOString(),
-  });
+  };
+  await env.TASK_BOARD_REPAIRS.send(await createCanonicalTaskBoardRepairMessage(repair, resolveTenantContext));
 }

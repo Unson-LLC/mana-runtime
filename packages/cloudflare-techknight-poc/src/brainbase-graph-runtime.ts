@@ -42,15 +42,15 @@ export async function listGraphPeople(projectCode: string | undefined, options: 
   });
 }
 
-function configured(options: BrainbaseGraphRuntimeOptions): options is BrainbaseGraphRuntimeOptions & { baseUrl: string; token: string } {
-  return Boolean(options.baseUrl?.trim() && options.token?.trim());
+function configured(options: BrainbaseGraphRuntimeOptions): options is BrainbaseGraphRuntimeOptions & { baseUrl: string } {
+  return Boolean(options.baseUrl?.trim() && (options.token?.trim() || options.fetch));
 }
 
 async function graphGet(url: URL, options: BrainbaseGraphRuntimeOptions): Promise<Response | undefined> {
   if (!configured(options)) return undefined;
   try {
     return await (options.fetch ?? fetch)(url, {
-      headers: { Authorization: `Bearer ${options.token}` },
+      headers: options.token ? { Authorization: `Bearer ${options.token}` } : {},
       signal: AbortSignal.timeout(10_000),
     });
   } catch {

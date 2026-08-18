@@ -16,6 +16,8 @@ export function meetingMinutesTaskCard(run: MeetingMinutesRun): { text: string; 
   const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn",
     text: `📋 *議事録のタスク確認* — ${summary}` } },
     { type: "divider" }];
+  if (!run.sourceAppId) blocks.push({ type: "section", text: { type: "mrkdwn",
+    text: "⚠️ このカードは旧形式のため操作できません。議事録を再生成してください。" } });
   for (const item of [...registered].sort((left, right) => left.index - right.index)) {
     const candidate = run.generated?.tasks?.[item.index]; const removed = item.status === "removed";
     const marker = removed ? "🗑" : item.status === "reused" ? "♻️" : item.status === "needs_review" ? "⚠️" : "✅";
@@ -26,10 +28,13 @@ export function meetingMinutesTaskCard(run: MeetingMinutesRun): { text: string; 
       candidate?.due_at ? `期限: ${safe(candidate.due_at.slice(0, 10))}` : undefined].filter(Boolean);
     if (meta.length) details.push(meta.join(" | ")); if (candidate?.description) details.push(`_${safe(candidate.description)}_`);
     blocks.push({ type: "section", text: { type: "mrkdwn", text: details.join("\n") } });
-    if (!removed && (!item.status || item.status === "registered")) { const value = JSON.stringify({ runId: run.runId, index: item.index,
+    if (!removed && (!item.status || item.status === "registered") && run.sourceAppId) {
+      const value = JSON.stringify({ runId: run.runId, index: item.index,
       organizationId: run.destination?.organization.id, channelId: run.destination?.slackChannelId,
       title: item.title, due: candidate?.due_at?.slice(0, 10), projectId: run.destination?.projectId,
-      assigneePersonId: item.assigneePersonId, assigneeDisplayName: item.assigneeDisplayName ?? candidate?.assignee_name }); blocks.push({ type: "actions", elements: [
+      assigneePersonId: item.assigneePersonId, assigneeDisplayName: item.assigneeDisplayName ?? candidate?.assignee_name,
+      sourceWorkspaceId: run.workspaceId, sourceAppId: run.sourceAppId,
+      sourceChannelId: run.sourceChannelId, sourceThreadTs: run.sourceThreadTs }); blocks.push({ type: "actions", elements: [
       { type: "button", text: { type: "plain_text", text: "編集" }, action_id: MEETING_MINUTES_TASK_EDIT_ACTION_ID, value },
       { type: "button", style: "danger", text: { type: "plain_text", text: "取り消し" }, action_id: MEETING_MINUTES_TASK_CANCEL_ACTION_ID,
         value, confirm: { title: { type: "plain_text", text: "タスクの取り消し" },
@@ -52,12 +57,15 @@ export function meetingMinutesTaskEditView(run: MeetingMinutesRun, index: number
     ] };
 }
 export function meetingMinutesTaskEditViewFromAction(input: { runId: string; index: number; title: string; due?: string;
-  organizationId: string; channelId: string; projectId?: string; assigneePersonId?: string; assigneeDisplayName?: string }): Record<string, unknown> {
+  organizationId: string; channelId: string; projectId?: string; assigneePersonId?: string; assigneeDisplayName?: string;
+  sourceWorkspaceId: string; sourceAppId: string; sourceChannelId: string; sourceThreadTs: string }): Record<string, unknown> {
   const initialOption = input.assigneePersonId && input.assigneeDisplayName ? {
     text: { type: "plain_text", text: input.assigneeDisplayName.slice(0, 75) }, value: input.assigneePersonId } : undefined;
   return { type: "modal", callback_id: MEETING_MINUTES_TASK_EDIT_VIEW_ID,
     private_metadata: JSON.stringify({ runId: input.runId, index: input.index, organizationId: input.organizationId,
-      channelId: input.channelId, projectId: input.projectId }), title: { type: "plain_text", text: "タスクを編集" },
+      channelId: input.channelId, projectId: input.projectId, sourceWorkspaceId: input.sourceWorkspaceId,
+      sourceAppId: input.sourceAppId, sourceChannelId: input.sourceChannelId,
+      sourceThreadTs: input.sourceThreadTs }), title: { type: "plain_text", text: "タスクを編集" },
     submit: { type: "plain_text", text: "保存" }, close: { type: "plain_text", text: "キャンセル" }, blocks: [
       { type: "input", block_id: "title", label: { type: "plain_text", text: "タイトル" }, element: {
         type: "plain_text_input", action_id: "value", initial_value: input.title, max_length: 120 } },

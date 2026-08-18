@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "role": "mana_runtime_consumer",
+  "canonical_owner": "mana-runtime execution boundary",
+  "fixture_manifest": "fixtures/manifest.json",
+  "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
+  "required_adapter_behavior": [
+    "Load fixtures/manifest.json from the pinned PR #237 kit commit; do not copy fixtures.",
+    "Accept POS-CANONICAL-FLOW-001 only after schema, protected header, RFC 8785 Ed25519 signature, time, revision, audience, and idempotency validation.",
+    "Recheck the authoritative connection revision before credential lease, Brainbase write, and Slack delivery.",
+    "Accept a credential lease only when lease_id, contract_revision, max_uses=1, TTL, and all binding fields match.",
+    "Keep collection_state independent from outcome and never translate partial or not_collected into zero or success.",
+    "Own only queue_execution and slack_delivery claims; submit observed usage and Receipts to Brainbase canonical storage.",
+    "Reject every manifest negative case with its exact expected_code before the protected boundary.",
+    "Keep every required capability active for the non-applicable fixture."
+  ],
+  "required_test_name": "mana-runtime consumer reads PR237 canonical fixture manifest",
+  "result_contract": {
+    "positive": "all canonical messages accepted with no mutation",
+    "negative": "all expected codes observed and business API called=false",
+    "non_applicable": "mandatory capability waiver count remains zero"
+  }
+}

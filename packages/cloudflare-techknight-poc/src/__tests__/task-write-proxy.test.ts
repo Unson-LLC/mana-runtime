@@ -106,32 +106,20 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(JSON.stringify(payload)).not.toContain(TASK_TOKEN);
   });
 
-  it("fans a successful write out only to Canvas targets for the changed project", async () => {
+  it("never publishes a raw tenant TaskBoard repair after a successful write", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const bindings = { ...env(), TENANT_ID: "unson-business", TASK_BOARD_REPAIRS: { send },
       TASK_BOARD_TARGETS_JSON: JSON.stringify([
         { targetId: "back-office", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
-          channelId: "C0BKS6RL99T", projectCodes: ["back-office"], enabled: true,
-          manaCanvasId: "FBACKOFFICE", bindingRevision: 4 },
+          channelId: "C0BKS6RL99T", projectCodes: ["back-office"] },
         { targetId: "pms", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
-          channelId: "C0BKX9Y169F", projectCodes: ["proj_pms"], enabled: true,
-          manaCanvasId: "FPMS", bindingRevision: 2 },
-        { targetId: "back-office-disabled", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
-          channelId: "C0BKS6RL99U", projectCodes: ["back-office"], enabled: false,
-          manaCanvasId: null, bindingRevision: null },
+          channelId: "C0BKX9Y169F", projectCodes: ["proj_pms"] },
       ]) };
     const response = await createTaskWriteProxyHandler(vi.fn().mockResolvedValue(Response.json(task)))(await request({
       operation: "create", title: "契約更新",
     }), bindings);
     expect(response.status).toBe(200);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ targetId: "back-office",
-      workspaceId: "T0882T8N9UH", channelId: "C0BKS6RL99T", manaCanvasId: "FBACKOFFICE",
-      bindingRevision: 4, reason: "task_write" }));
-    expect(info).toHaveBeenCalledWith(JSON.stringify({ event: "task_board_repair_suppressed",
-      requestId: "EvWrite123", targetId: "back-office-disabled", reason: "target_disabled" }));
-    info.mockRestore();
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("calls the injected fetch without binding TaskApiClient as its receiver", async () => {

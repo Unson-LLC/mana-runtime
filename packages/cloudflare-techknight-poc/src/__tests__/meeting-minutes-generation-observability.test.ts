@@ -23,7 +23,7 @@ const event: SlackQueueEvent = {
 };
 const selection: MeetingMinutesSelection = {
   kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana", workspaceId: "T1",
-  channelId: "CROUTER", userId: "U1", actionTs: "2.1",
+  appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1",
 };
 
 function hook(event: "UserPromptSubmit" | "Stop") {
@@ -61,6 +61,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
 
     const generated = asRecord(await generateMeetingMinutesInSandbox(
       "TRANSCRIPT_SECRET_123", destination, context, "required", { model: "opus", effort: "xhigh" }, sandbox,
+      "tenant-boundary-handle",
     ));
     expect(generated.generationDiagnostics).toMatchObject({
       model: "sonnet", timeoutMs: 780_000, outcome: "success", elapsedMs: 2_500,
@@ -81,7 +82,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
     let failure: unknown;
     try {
       await generateMeetingMinutesInSandbox("TRANSCRIPT_SECRET", destination, context, "required",
-        { model: "opus", effort: "xhigh" }, sandbox);
+        { model: "opus", effort: "xhigh" }, sandbox, "tenant-boundary-handle");
     } catch (error) { failure = error; }
     const diagnostics = asRecord(failure).generationDiagnostics;
     expect(diagnostics).toMatchObject({ outcome: "timeout", elapsedMs: 780_000, exitCode: 124,
@@ -98,7 +99,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
     let failure: unknown;
     try {
       await generateMeetingMinutesInSandbox("TRANSCRIPT_SECRET", destination, context, "required",
-        { model: "opus", effort: "xhigh" }, sandbox);
+        { model: "opus", effort: "xhigh" }, sandbox, "tenant-boundary-handle");
     } catch (error) { failure = error; }
     const diagnostics = asRecord(failure).generationDiagnostics;
     expect(failure).toMatchObject({ message: "meeting_minutes_generation_failed" });
@@ -118,7 +119,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
     let failure: unknown;
     try {
       await generateMeetingMinutesInSandbox("TRANSCRIPT_SECRET", destination, context, "required",
-        { model: "opus", effort: "xhigh" }, sandbox);
+        { model: "opus", effort: "xhigh" }, sandbox, "tenant-boundary-handle");
     } catch (error) { failure = error; }
     const diagnostics = asRecord(failure).generationDiagnostics;
     expect(diagnostics).toMatchObject({ outcome: "nonzero_exit", exitCode, stderrCode });
@@ -128,6 +129,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
   it("durably checkpoints exec_started before an unresolved sandbox execution can finish", async () => {
     const fs = new MemoryFs();
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     let rejectGeneration!: (error: Error) => void;
     const generate = vi.fn(async (_transcript, _destination, _context, _mode, observe) => {

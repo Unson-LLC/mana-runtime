@@ -1,5 +1,10 @@
 import { createHmac } from "node:crypto";
-import { handleMeetingMinutesInteraction, updateSlackInteractionMessage } from "../slack-interactions.js";
+import {
+  handleMeetingMinutesInteraction,
+  updateSlackInteractionMessage,
+  type TenantInteractionEffects,
+  type TenantInteractionIdentity,
+} from "../slack-interactions.js";
 
 const secret = "secret"; const now = 1_786_420_000;
 function request(payload: unknown): Request {
@@ -21,6 +26,18 @@ const destinations = [
     taskBoardTargetId: "minutes-board", name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" },
     slackChannelId: "C3", github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } },
 ];
+const tenantBoundary = {
+  resolveTenantEffects: async (source: TenantInteractionIdentity): Promise<TenantInteractionEffects> => {
+    const credentialFetch = vi.fn(async () => new Response("ok")) as unknown as typeof fetch;
+    return {
+      tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      source,
+      durableObject: async (_effectId, _target, execute) => execute(),
+      brainbaseProxy: async (_effectId, _target, _mode, execute) => execute(credentialFetch),
+      slackDelivery: async (_effectId, _target, _event, execute) => execute(credentialFetch),
+    };
+  },
+};
 
 describe("handleMeetingMinutesInteraction", () => {
   function deferred() { const work: Promise<void>[] = []; return { work, defer: (promise: Promise<void>) => { work.push(promise); } }; }
@@ -29,27 +46,30 @@ describe("handleMeetingMinutesInteraction", () => {
     const qualifiedPayload = structuredClone(payload);
     qualifiedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:mana";
     const result = await handleMeetingMinutesInteraction(request(qualifiedPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
     expect(result.status).toBe(200);
     expect(send).toHaveBeenCalledOnce();
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "meeting.txt の保存先に Back Office を選択しました。",
-    }));
+    }), expect.any(Function));
   });
 
   it("verifies and queues an authorized selection", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
-    expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({ runId: "Ev1_F1", destinationId: "mana" }));
+    expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "Ev1_F1", destinationId: "mana", threadTs: "1.0",
+    }));
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "meeting.txt の保存先に Back Office を選択しました。",
-    }));
-    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+    }), expect.any(Function));
+    expect(showProcessing).toHaveBeenCalledWith(
+      { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
     expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
     expect(await response.json()).toEqual({ ok: true });
   });
@@ -60,13 +80,13 @@ describe("handleMeetingMinutesInteraction", () => {
       fileName: "定例.txt" });
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(organizationPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).not.toHaveBeenCalled();
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "定例.txt の保存先プロジェクトを選択してください。",
-    }));
+    }), expect.any(Function));
     const message = updateOriginal.mock.calls[0]?.[1];
     expect(JSON.stringify(message)).toContain("ボード定例");
     expect(JSON.stringify(message)).not.toContain("Back Office");
@@ -78,7 +98,7 @@ describe("handleMeetingMinutesInteraction", () => {
     backPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "定例.txt" });
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(backPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).not.toHaveBeenCalled();
@@ -91,7 +111,7 @@ describe("handleMeetingMinutesInteraction", () => {
     unknownPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", organizationId: "unknown", fileName: "定例.txt" });
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(unknownPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(400); expect(background.work).toHaveLength(0);
     expect(send).not.toHaveBeenCalled(); expect(updateOriginal).not.toHaveBeenCalled();
@@ -101,7 +121,7 @@ describe("handleMeetingMinutesInteraction", () => {
     mismatchedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:board";
     const send = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(mismatchedPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, defer: background.defer });
     expect(response.status).toBe(400); expect(send).not.toHaveBeenCalled(); expect(background.work).toHaveLength(0);
   });
@@ -109,7 +129,7 @@ describe("handleMeetingMinutesInteraction", () => {
     const invalid = { ...payload, response_url: "https://example.com/actions/token" };
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(invalid), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, send, updateOriginal, defer: background.defer });
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary, send, updateOriginal, defer: background.defer });
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).not.toHaveBeenCalled();
   });
@@ -119,12 +139,13 @@ describe("handleMeetingMinutesInteraction", () => {
     const showProcessing = vi.fn(); const clearProcessing = vi.fn().mockRejectedValue(new Error("clear Bearer secret"));
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).rejects.toThrow("queue Authorization Bearer secret");
     expect(updateOriginal).toHaveBeenCalledOnce();
-    expect(showProcessing).toHaveBeenCalledOnce(); expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" });
+    expect(showProcessing).toHaveBeenCalledOnce();
+    expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" }, expect.any(Function));
     const serialized = consoleError.mock.calls.flat().join(" ");
     expect(serialized).toContain('"stage":"interaction_enqueue"');
     expect(serialized).toContain('"code":"INTERACTION_ENQUEUE_FAILED"');
@@ -136,7 +157,7 @@ describe("handleMeetingMinutesInteraction", () => {
     const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("Slack Bearer secret"));
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledOnce(); expect(showProcessing).toHaveBeenCalledOnce();
@@ -149,7 +170,7 @@ describe("handleMeetingMinutesInteraction", () => {
     const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValue(new Error("Slack Bearer secret"));
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(updateOriginal).toHaveBeenCalledOnce(); expect(send).toHaveBeenCalledOnce();
@@ -163,7 +184,7 @@ describe("handleMeetingMinutesInteraction", () => {
     redoPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(redoPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).not.toHaveBeenCalled();
@@ -176,12 +197,12 @@ describe("handleMeetingMinutesInteraction", () => {
     confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
     const send = vi.fn().mockResolvedValue(undefined); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
-    expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
-      channelId: "C1", userId: "U1", actionTs: "1.2" });
+    expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1", appId: "A1",
+      channelId: "C1", threadTs: "1.0", userId: "U1", actionTs: "1.2" });
   });
   it("replaces the confirmation with a durable retry when redo enqueue fails", async () => {
     const confirmPayload = structuredClone(payload);
@@ -190,21 +211,22 @@ describe("handleMeetingMinutesInteraction", () => {
     const send = vi.fn().mockRejectedValue(new Error("queue unavailable"));
     const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(updateOriginal).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
     expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("取り消しを再実行");
   });
-  it("queues without immediate feedback when Slack omitted a valid thread timestamp", async () => {
+  it("fails closed when Slack omitted the tenant thread coordinate", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(missingThread), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, defer: background.defer });
-    expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(send).toHaveBeenCalledOnce(); expect(showProcessing).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await expect(Promise.all(background.work)).rejects.toThrow("meeting_minutes_thread_coordinate_missing");
+    expect(send).not.toHaveBeenCalled(); expect(showProcessing).not.toHaveBeenCalled();
   });
   it("shows immediate feedback for an existing retry button using the signed container thread", async () => {
     const retryPayload = structuredClone(payload);
@@ -212,10 +234,11 @@ describe("handleMeetingMinutesInteraction", () => {
     (retryPayload as typeof retryPayload & { container: { thread_ts: string } }).container = { thread_ts: "1.0" };
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(retryPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+    expect(showProcessing).toHaveBeenCalledWith(
+      { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
     expect(send).toHaveBeenCalledOnce();
   });
   it("loads the durable thread coordinate for legacy retry buttons", async () => {
@@ -223,11 +246,12 @@ describe("handleMeetingMinutesInteraction", () => {
     const send = vi.fn(); const showProcessing = vi.fn(); const resolveThreadTs = vi.fn().mockResolvedValue("1.0");
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(retryPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, resolveThreadTs, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(resolveThreadTs).toHaveBeenCalledWith("Ev1_F1");
-    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+    expect(showProcessing).toHaveBeenCalledWith(
+      { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
     expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
   });
   it("uses the durable retry thread coordinate and rejects conflicting signed coordinates", async () => {
@@ -236,43 +260,49 @@ describe("handleMeetingMinutesInteraction", () => {
     retryPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", sourceThreadTs: "1.0" });
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(retryPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(showProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0", destinationName: "Back Office" });
+    expect(showProcessing).toHaveBeenCalledWith(
+      { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
 
     const conflicting = structuredClone(payload);
     conflicting.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", sourceThreadTs: "2.0" });
     const rejected = await handleMeetingMinutesInteraction(request(conflicting), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, defer: background.defer });
     expect(rejected.status).toBe(400);
   });
   it("fails closed for a non-operator", async () => {
     const send = vi.fn(); const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, send });
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, ...tenantBoundary, send });
     expect(response.status).toBe(403); expect(send).not.toHaveBeenCalled();
   });
   it("shows the durable pause reason to an authorized operator without queueing even when minutes are disabled", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", expectedChannelId: "C1",
-      operatorUserIds: new Set(["U1"]), nowMs: now * 1000, destinations: [], send, updateOriginal,
+      operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
+      destinations: [], send, updateOriginal,
       isIntakePaused: vi.fn().mockResolvedValue(true), defer: background.defer });
     expect(response.status).toBe(200); expect(await response.json()).toEqual({ ok: true, intake_paused: true });
     await Promise.all(background.work);
     expect(send).not.toHaveBeenCalled();
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: expect.stringContaining("受付は一時停止中"),
-    }));
+    }), expect.any(Function));
   });
-  it("rejects selections outside the configured router channel before feedback or queueing", async () => {
+  it("delegates router channel authorization to the canonical tenant authority", async () => {
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
+    const resolveTenantEffects = vi.fn(async () => { throw new Error("channel_scope_mismatch"); });
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", expectedChannelId: "C_ROUTER",
-      operatorUserIds: new Set(["U1"]), nowMs: now * 1000, destinations, send, showProcessing,
-      defer: background.defer });
-    expect(response.status).toBe(403); expect(background.work).toHaveLength(0);
+      operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary, resolveTenantEffects,
+      destinations, send, showProcessing, defer: background.defer });
+    expect(response.status).toBe(503); expect(background.work).toHaveLength(0);
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_id: "T1", channel_id: "C1",
+    }));
     expect(showProcessing).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
   it("routes a signed task approval with the immutable payload hash", async () => {
@@ -281,11 +311,13 @@ describe("handleMeetingMinutesInteraction", () => {
     const approvalPayload = { ...payload, user: { id: "U_APPROVER" }, actions: [{ action_id: "mana_task_write_approve",
       value: JSON.stringify({ approvalId: "approval-1", payloadHash: "a".repeat(64) }) }] };
     const response = await handleMeetingMinutesInteraction(request(approvalPayload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, ...tenantBoundary,
       send, updateOriginal, resolveDestinations: () => { throw new Error("minutes config unavailable"); }, approveTaskWrite });
     expect(response.status).toBe(200);
     expect(approveTaskWrite).toHaveBeenCalledWith({ approvalId: "approval-1", payloadHash: "a".repeat(64),
-      approverId: "U_APPROVER", channelId: "C1" });
+      approverId: "U_APPROVER", channelId: "C1" }, expect.objectContaining({
+      tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    }));
     expect(send).not.toHaveBeenCalled(); expect(updateOriginal).not.toHaveBeenCalled();
     expect(await response.json()).toEqual({ ok: true });
   });

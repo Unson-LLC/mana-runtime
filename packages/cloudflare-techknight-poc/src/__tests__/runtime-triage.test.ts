@@ -1,6 +1,36 @@
 import { buildRuntimeTriagePrompt, parseRuntimeTriageDecision, runRuntimeTriage } from "../runtime-triage.js";
 
 describe("runtime Slack triage", () => {
+  it("uses only the dedicated tenant operation control channel", async () => {
+    const exec = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '{"action":"reply"}',
+      stderr: "",
+    });
+    const tenantBoundaryHandle = `tb_${"B".repeat(32)}`;
+
+    await runRuntimeTriage({
+      botName: "八雲まな",
+      speakerName: "佐藤圭吾",
+      channelType: "channel",
+      messageText: "次の打ち手を整理して",
+      recentThread: [],
+    }, {
+      model: "sonnet",
+      tenantBoundaryHandle,
+      createSandbox: () => ({
+        writeFile: vi.fn().mockResolvedValue(undefined),
+        exec,
+        destroy: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    const execOptions = exec.mock.calls[0][1] as { env: Record<string, string> };
+    expect(execOptions.env.MANA_TENANT_BOUNDARY_HANDLE).toBe(tenantBoundaryHandle);
+    expect(execOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(exec.mock.calls[0][0]).toContain("/opt/mana/tenant-claude-runner.mjs");
+  });
+
   it.each([
     { success: false, stdout: "", stderr: "upstream failed" },
     new Error("sandbox unavailable"),
@@ -18,6 +48,7 @@ describe("runtime Slack triage", () => {
       recentThread: [],
     }, {
       model: "sonnet",
+      tenantBoundaryHandle: `tb_${"C".repeat(32)}`,
       createSandbox: () => ({
         writeFile: vi.fn().mockResolvedValue(undefined),
         exec,

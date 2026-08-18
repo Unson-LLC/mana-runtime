@@ -1,0 +1,18 @@
+{
+  "fixture_id": "NEG-JWS-PROTECTED-HEADER",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "tenant_context_envelope",
+  "mutations": [
+    {
+      "operation": "replace_protected_header",
+      "value": {
+        "alg": "EdDSA",
+        "kid": "fixture-ed25519-2026-08",
+        "typ": "application/mana-brainbase-tenant-context+jws"
+      }
+    }
+  ],
+  "expected_code": "SCHEMA_INVALID",
+  "business_api_called": false
+}

@@ -1,9 +1,12 @@
 import type { AuditedGeneratedMeetingMinutes, GeneratedMeetingMinutes, MeetingMinutesDestination,
   MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
   MeetingMinutesGenerationDiagnostics, MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
-import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinutesMcpConfigPath,
+  type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
+import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
+import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 
 // Opus/xhigh can exceed ten minutes for long transcripts once structured-output
 // validation and judgment hooks are included. Keep this below the Queue's
@@ -49,7 +52,6 @@ const MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES = new Set([
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
-
 function safeExitCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
 }
@@ -89,8 +91,15 @@ function safeGenerationErrorMessage(error: unknown): string {
 function isGenerationTimeout(error: unknown): boolean {
   return error instanceof Error && error.name === "TimeoutError";
 }
-async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
+async function prepareMeetingMinutesRuntime(
+  sandbox: ReplySandbox,
+  prompt: string,
+  tenantBoundaryHandle: string,
+): Promise<void> {
   await sandbox.writeFile(runtimeClaudePromptPath("meeting-minutes"), prompt);
+  await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), JSON.stringify(buildRuntimeMcpConfig({
+    mcp: ["brainbase"], gatewayTools: [],
+  }, tenantBoundaryHandle)));
 }
 
 function nonEmpty(value: unknown, max: number): string | undefined {
@@ -272,21 +281,26 @@ export async function classifyMeetingMinutesDestinationInSandbox(
   destinations: readonly MeetingMinutesDestination[],
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
+  tenantBoundaryHandle: string,
 ): Promise<{ destinationId: string; reason: string } | null> {
+  if (!tenantBoundaryHandle) throw new Error("tenant_boundary_required");
   try {
-    await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations));
+    await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations), tenantBoundaryHandle);
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
       structuredOutput: "meeting-minutes-routing",
     }), {
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
-      env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      env: {
+        IS_SANDBOX: "1",
+        MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+      },
     });
     if (!result.success) return null;
     return parseMeetingMinutesRoutingOutput(result.stdout, destinations);
   } catch {
     return null;
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }
 
@@ -692,8 +706,10 @@ export async function generateMeetingMinutesInSandbox(
   mode: MeetingMinutesContextMode,
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
+  tenantBoundaryHandle: string,
   observe?: (diagnostics: MeetingMinutesGenerationDiagnostics) => Promise<void>,
 ): Promise<AuditedGeneratedMeetingMinutes> {
+  if (!tenantBoundaryHandle) throw new Error("tenant_boundary_required");
   const generationRuntime: ClaudeRuntimeConfig = claudeRuntime.model === "opus"
     ? { model: "sonnet" }
     : claudeRuntime;
@@ -704,7 +720,11 @@ export async function generateMeetingMinutesInSandbox(
     progress: { prompt_written: false, exec_started: false },
   };
   try {
-    await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript, destination, context, mode));
+    await prepareMeetingMinutesRuntime(
+      sandbox,
+      generationPrompt(transcript, destination, context, mode),
+      tenantBoundaryHandle,
+    );
     base.progress.prompt_written = true;
     // Opus/xhigh repeatedly reaches the Queue wall-clock budget on long
     // transcripts. Keep the same audited prompt/schema contract, but execute
@@ -714,7 +734,10 @@ export async function generateMeetingMinutesInSandbox(
       includeJudgmentHookEvents: true,
     }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
-      env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      env: {
+        IS_SANDBOX: "1",
+        MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+      },
     });
     base.progress.exec_started = true;
     await observe?.(structuredClone(base));
@@ -749,6 +772,6 @@ export async function generateMeetingMinutesInSandbox(
       ...base, finishedAt: new Date(finishedAtMs).toISOString(), elapsedMs: Math.max(0, finishedAtMs - startedAtMs),
       outcome: timeout ? "timeout" : "transport_failure", stderrCode: timeout ? "TIMEOUT" : "UNKNOWN" });
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }

@@ -1,0 +1,12 @@
+{
+  "fixture_id": "NEG-PROTOCOL-MAJOR",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "protocol_request",
+  "mutations": [
+    { "operation": "set", "path": "/supported_range", "value": ">=2.0 <3.0" },
+    { "operation": "set", "path": "/supported_versions", "value": ["2.0"] }
+  ],
+  "expected_code": "PROTOCOL_VERSION_UNSUPPORTED",
+  "business_api_called": false
+}
