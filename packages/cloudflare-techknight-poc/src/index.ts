@@ -472,7 +472,7 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/internal/contract-ledger/sync") {
       const authorization = request.headers.get("authorization");
-      if (!env.DEVELOPMENT_CALLBACK_TOKEN || authorization !== `Bearer ${env.DEVELOPMENT_CALLBACK_TOKEN}`) {
+      if (!env.CONTRACT_LEDGER_TRIGGER_TOKEN || authorization !== `Bearer ${env.CONTRACT_LEDGER_TRIGGER_TOKEN}`) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
       const config = contractLedgerConfig(env);
