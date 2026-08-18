@@ -380,6 +380,34 @@ export default {
         status: () => gate.status(),
       });
     }
+    const runAdminMatch = url.pathname.match(/^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})(\/retry)?$/);
+    if (runAdminMatch && (request.method === "GET" || request.method === "POST")) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const runId = runAdminMatch[1]!;
+      const workspaceId = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+        env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId,
+      ));
+      const handle = env.MEETING_MINUTES_WORKSPACE.get(workspaceId) as unknown as WorkspaceHandle;
+      const run = await withDisposableResource(() => getWorkspace(handle),
+        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
+      if (request.method === "POST") {
+        if (!runAdminMatch[2] || !run.destination) {
+          return Response.json({ error: "meeting_minutes_retry_not_available" }, { status: 409 });
+        }
+        await env.TECHKNIGHT_EVENTS.send({ kind: "meeting_minutes_selection", runId,
+          destinationId: run.destination.id, workspaceId: run.workspaceId,
+          channelId: run.sourceChannelId, userId: run.approvedBy ?? "admin-retry",
+          actionTs: new Date().toISOString() } satisfies MeetingMinutesSelection);
+      }
+      return Response.json({ runId: run.runId, status: run.status,
+        destinationId: run.destination?.id, diagnostics: run.diagnostics,
+        checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
+          postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 },
+        ...(request.method === "POST" ? { enqueued: true } : {}) });
+    }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       let callbackWorkspace: DurableObjectStub<TechKnightWorkspace> | undefined;
