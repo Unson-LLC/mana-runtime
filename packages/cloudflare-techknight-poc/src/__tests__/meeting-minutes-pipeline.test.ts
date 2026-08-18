@@ -311,7 +311,7 @@ describe("meeting minutes pipeline", () => {
       destinations: [configuredKartz], resolveContext, createTask,
     }));
 
-    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1");
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
     expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["kartz"] }), expect.any(String));
     expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
       destination: { contextProjectCode: "unson", taskProjectCodes: ["kartz"] } });
@@ -561,6 +561,37 @@ describe("meeting minutes pipeline", () => {
     expect(createTask.mock.calls[0]?.[1]).toBe(createTask.mock.calls[1]?.[1]);
     expect(createTask.mock.calls[0]?.[0]).toMatchObject({ project_codes: ["mana"] });
     expect(createTask.mock.calls[1]?.[0]).toMatchObject({ project_codes: ["unson"] });
+  });
+
+  it("refreshes the task inventory before a task-only retry and reuses tasks created by the failed attempt", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const initialReceipt = { schema_version: "meeting_minutes_context_receipt.v1" as const,
+      receipt_id: "receipt-stale", identity: { run_id: selection.runId, project_code: "mana",
+        transcript_sha256: "ignored-by-mock" }, status: "resolved" as const, checksum: "checksum-stale",
+      resolved_at: "2026-08-18T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } };
+    const refreshedReceipt = { ...initialReceipt, receipt_id: "receipt-fresh", checksum: "checksum-fresh",
+      context: { source_refs: [], open_tasks: [{ id: "task-existing", title: "Kartzの確認事項を進める" }] } };
+    const resolveContext = vi.fn()
+      .mockResolvedValueOnce(initialReceipt)
+      .mockImplementation(async (_identity, receiptId) => receiptId ? initialReceipt : refreshedReceipt);
+    const createTask = vi.fn().mockRejectedValue(new TaskApiError(409, "idempotency_conflict", "conflict"));
+    const options = resumeOptions({ resolveContext, createTask,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }) });
+
+    const deferred = await resumeMeetingMinutesRun(fs, selection, options);
+    expect(deferred.taskRegistration?.failure).toMatchObject({ stage: "task_registration", status: 409 });
+
+    const recovered = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(resolveContext).toHaveBeenLastCalledWith(expect.any(Object), undefined);
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(recovered.taskRegistration?.registered).toEqual([
+      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-existing",
+        status: "reused", projectCodes: ["mana"] },
+    ]);
+    expect(recovered.taskRegistration).not.toHaveProperty("failure");
   });
 
   it("keeps the task-only retry until board repair and the final task card both complete", async () => {
