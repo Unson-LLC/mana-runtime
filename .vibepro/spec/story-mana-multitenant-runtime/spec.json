@@ -82,7 +82,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-001",
@@ -148,7 +148,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-002",
@@ -198,7 +198,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-012",
@@ -244,7 +244,7 @@
       },
       "confidence": 0.88,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-003",
@@ -302,7 +302,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-013",
@@ -352,7 +352,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-004",
@@ -402,7 +402,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-005",
@@ -448,7 +448,7 @@
       },
       "confidence": 0.86,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-004",
@@ -490,7 +490,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-006",
@@ -540,7 +540,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-005",
@@ -590,7 +590,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-006",
@@ -625,26 +625,26 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "CredentialDecisionV1 selection and injection planned Red"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/trusted-provider-forwarder.integration.test.ts",
+            "case": "materializes provider credentials only inside the trusted service before a successful provider request"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "credential lease and Slack delivery recheck authoritative revision planned Red"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/tenant-credential-fetch.integration.test.ts",
+            "case": "uses a fresh lease through the trusted forwarder without putting opaque handles in provider headers"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "must_cover": "CredentialDecisionV1 selection and injection planned Red"
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/trusted-provider-forwarder.integration.test.ts",
+            "must_cover": "materializes provider credentials only inside the trusted service before a successful provider request"
           }
         ]
       },
       "confidence": 0.89,
       "first_seen_at": "2026-08-18T17:15:15.617Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-007",
@@ -686,7 +686,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-007",
@@ -752,7 +752,7 @@
       },
       "confidence": 0.98,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-015",
@@ -806,7 +806,7 @@
       },
       "confidence": 0.9,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-016",
@@ -856,7 +856,7 @@
       },
       "confidence": 0.91,
       "first_seen_at": "2026-08-17T00:28:16.289Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-010",
@@ -902,7 +902,7 @@
       },
       "confidence": 0.97,
       "first_seen_at": "2026-08-16T13:34:39.243Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-008",
@@ -976,7 +976,7 @@
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-18T17:15:15.617Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-002",
@@ -1046,7 +1046,7 @@
       },
       "confidence": 0.96,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "C-009",
@@ -1116,7 +1116,7 @@
       },
       "confidence": 0.94,
       "first_seen_at": "2026-08-18T17:15:15.617Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     },
     {
       "id": "INV-008",
@@ -1178,7 +1178,7 @@
       },
       "confidence": 0.93,
       "first_seen_at": "2026-08-17T05:26:43.529Z",
-      "last_revised_at": "2026-08-18T17:42:54.501Z"
+      "last_revised_at": "2026-08-18T18:44:06.101Z"
     }
   ],
   "multi_tenancy": {

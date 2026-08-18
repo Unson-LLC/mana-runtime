@@ -625,20 +625,20 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "CredentialDecisionV1 selection and injection planned Red"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/trusted-provider-forwarder.integration.test.ts",
+            "case": "materializes provider credentials only inside the trusted service before a successful provider request"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "case": "credential lease and Slack delivery recheck authoritative revision planned Red"
+            "file": "packages/cloudflare-techknight-poc/src/__tests__/tenant-credential-fetch.integration.test.ts",
+            "case": "uses a fresh lease through the trusted forwarder without putting opaque handles in provider headers"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/multitenant-runtime-contract.test.ts",
-            "must_cover": "CredentialDecisionV1 selection and injection planned Red"
+            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/trusted-provider-forwarder.integration.test.ts",
+            "must_cover": "materializes provider credentials only inside the trusted service before a successful provider request"
           }
         ]
       },
