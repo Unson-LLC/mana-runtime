@@ -45,6 +45,29 @@ export interface GeneratedMeetingMinutes {
   brainbase_context_warnings?: Array<"unknown_source_ref_removed">;
   /** Worker-derived proof that the generation run actually read the canonical Brainbase Receipt. */
   brainbase_context_attestation?: MeetingMinutesContextAttestation;
+  /** Safe, content-free execution metadata. The pipeline moves this into durable run diagnostics. */
+  generationDiagnostics?: MeetingMinutesGenerationDiagnostics;
+}
+
+export interface MeetingMinutesGenerationDiagnostics {
+  schemaVersion: "meeting_minutes_generation_diagnostics.v1";
+  startedAt: string;
+  finishedAt?: string;
+  elapsedMs?: number;
+  model: string;
+  timeoutMs: number;
+  outcome?: "success" | "timeout" | "nonzero_exit" | "transport_failure";
+  exitCode?: number;
+  stderrCode?: "TIMEOUT" | "RATE_LIMITED" | "AUTHENTICATION_FAILED" | "HOOK_FAILED" | "CLI_ERROR" | "UNKNOWN";
+  progress: {
+    prompt_written: boolean;
+    exec_started: boolean;
+    stdout_observed?: boolean;
+    hook_observed?: boolean;
+    result_observed?: boolean;
+  };
+  stdoutBytes?: number;
+  streamEventCount?: number;
 }
 
 export interface MeetingMinutesMcpContextAttestation {
@@ -132,6 +155,7 @@ export interface MeetingMinutesDiagnostics {
   failedAt?: string;
   receiptSnapshot?: { receiptId?: string; status: MeetingMinutesContextStatus; errorCodes: string[] };
   checkpoint?: { hasGitHub: boolean; hasSlackParent: boolean; postedChunkCount: number };
+  generation?: MeetingMinutesGenerationDiagnostics;
 }
 
 export interface MeetingMinutesRun {
