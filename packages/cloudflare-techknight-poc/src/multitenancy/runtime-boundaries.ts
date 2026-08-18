@@ -10,9 +10,12 @@ import { assertSecretArtifactFree } from "./secret-guard.js";
 import {
   claimIdempotency,
   completeIdempotency,
+  IDEMPOTENCY_LEASE_MS,
   type IdempotencyStore,
+  renewIdempotency,
   releaseIdempotency,
 } from "./idempotency.js";
+import type { IdempotencyClaim } from "./idempotency.js";
 import { validateCanonicalIdempotencyClaim } from "./canonical-consumer.js";
 import type { WorkspaceConnectionLookup } from "./workspace-connection.js";
 
@@ -212,10 +215,21 @@ export interface TenantQueueBody<T> {
 export interface TenantQueueMessageLike<T> {
   body: TenantQueueBody<T>;
   ack(): void;
-  retry(): void;
+  retry(options?: { delaySeconds?: number }): void;
 }
 
 const RETRYABLE_BOUNDARY_CODES = new Set(["WORKSPACE_CONNECTION_UNAVAILABLE", "UPSTREAM_UNAVAILABLE"]);
+
+function inProgressRetryDelaySeconds(claim: IdempotencyClaim, now: string): number {
+  const nowMs = Date.parse(now);
+  const leaseUntilMs = claim.lease_until
+    ? Date.parse(claim.lease_until)
+    : Date.parse(claim.updated_at) + IDEMPOTENCY_LEASE_MS;
+  if (!Number.isFinite(nowMs) || !Number.isFinite(leaseUntilMs)) return 1;
+  // Retry after the lease boundary so the next delivery can atomically reclaim
+  // a crashed Worker. The one-second guard avoids a same-boundary race.
+  return Math.max(1, Math.ceil((leaseUntilMs - nowMs) / 1_000) + 1);
+}
 
 export async function consumeTenantQueueMessage<T, R>(
   message: TenantQueueMessageLike<T>,
@@ -227,6 +241,8 @@ export async function consumeTenantQueueMessage<T, R>(
     ownership: IdempotencyStore;
     payload_hash(payload: T): string | Promise<string>;
     retention_until(now: string): string;
+    /** Test/edge tuning hook; production defaults to one heartbeat per lease third. */
+    heartbeat_interval_ms?: number;
     log?(entry: Record<string, string>): void;
     log_error?(entry: Record<string, string>): void;
   },
@@ -235,6 +251,7 @@ export async function consumeTenantQueueMessage<T, R>(
   const tenantContext = message.body.tenant_context;
   let idempotencyClaimed = false;
   let idempotencyPartitionKey: string | undefined;
+  let idempotencyClaimToken: string | undefined;
   try {
     assertSecretArtifactFree(message.body);
     await options.verifier.validate({
@@ -279,16 +296,54 @@ export async function consumeTenantQueueMessage<T, R>(
       updated_at: observedAt,
     });
     if (claim.disposition !== "claimed") {
-      message.ack();
+      if (claim.disposition === "in_progress") {
+        message.retry({ delaySeconds: inProgressRetryDelaySeconds(claim.claim, options.now()) });
+      } else {
+        message.ack();
+      }
       return;
     }
     idempotencyClaimed = true;
     idempotencyPartitionKey = claim.claim.partition_key;
-    await options.process(message.body.payload, tenantContext);
+    idempotencyClaimToken = claim.claim.claim_token;
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let heartbeatInFlight: Promise<void> | undefined;
+    let heartbeatError: unknown;
+    const heartbeatIntervalMs = Math.max(1, Math.floor(
+      options.heartbeat_interval_ms ?? IDEMPOTENCY_LEASE_MS / 3,
+    ));
+    const heartbeat = () => {
+      if (heartbeatInFlight) return;
+      heartbeatInFlight = Promise.resolve().then(async () => {
+        const updatedAt = options.now();
+        await renewIdempotency(options.ownership, {
+          key: tenantContext.idempotency_key,
+          tenant_id: tenantContext.tenant.tenant_id,
+          claim_token: idempotencyClaimToken as string,
+          updated_at: updatedAt,
+          partition_key: idempotencyPartitionKey,
+        });
+      }).catch((error: unknown) => {
+        heartbeatError = error instanceof TenantBoundaryError && error.code === "IDEMPOTENCY_CONFLICT"
+          ? error
+          : new TenantBoundaryError("idempotency", "UPSTREAM_UNAVAILABLE");
+      }).finally(() => {
+        heartbeatInFlight = undefined;
+      });
+    };
+    heartbeatTimer = setInterval(heartbeat, heartbeatIntervalMs);
+    try {
+      await options.process(message.body.payload, tenantContext);
+    } finally {
+      if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
+      if (heartbeatInFlight) await heartbeatInFlight;
+    }
+    if (heartbeatError !== undefined) throw heartbeatError;
     await completeIdempotency(options.ownership, {
       key: tenantContext.idempotency_key,
       tenant_id: tenantContext.tenant.tenant_id,
       state: "succeeded",
+      claim_token: idempotencyClaimToken,
       updated_at: observedAt,
       retained_until: retentionUntil,
       partition_key: idempotencyPartitionKey,
@@ -299,19 +354,31 @@ export async function consumeTenantQueueMessage<T, R>(
     const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
     options.log_error?.({ event: "tenant_queue_failed", event_id: eventId, code });
     if (idempotencyClaimed) {
-      if (RETRYABLE_BOUNDARY_CODES.has(code)) {
-        await releaseIdempotency(options.ownership, tenantContext.idempotency_key,
-          tenantContext.tenant.tenant_id, idempotencyPartitionKey);
-      } else {
-        const observedAt = options.now();
-        await completeIdempotency(options.ownership, {
-          key: tenantContext.idempotency_key,
-          tenant_id: tenantContext.tenant.tenant_id,
-          state: "failed_terminal",
-          updated_at: observedAt,
-          retained_until: options.retention_until(observedAt),
-          partition_key: idempotencyPartitionKey,
-        });
+      try {
+        if (RETRYABLE_BOUNDARY_CODES.has(code)) {
+          await releaseIdempotency(options.ownership, tenantContext.idempotency_key,
+            tenantContext.tenant.tenant_id, idempotencyPartitionKey, idempotencyClaimToken);
+        } else {
+          const observedAt = options.now();
+          await completeIdempotency(options.ownership, {
+            key: tenantContext.idempotency_key,
+            tenant_id: tenantContext.tenant.tenant_id,
+            state: "failed_terminal",
+            claim_token: idempotencyClaimToken,
+            updated_at: observedAt,
+            retained_until: options.retention_until(observedAt),
+            partition_key: idempotencyPartitionKey,
+          });
+        }
+      } catch (claimError) {
+        // A later delivery may have reclaimed an expired lease. The old Worker
+        // must not delete or overwrite that newer claim; the newer delivery
+        // owns the retry, so acknowledge this stale attempt.
+        if (claimError instanceof TenantBoundaryError && claimError.code === "IDEMPOTENCY_CONFLICT") {
+          message.ack();
+          return;
+        }
+        throw claimError;
       }
     }
     if (RETRYABLE_BOUNDARY_CODES.has(code)) message.retry(); else message.ack();

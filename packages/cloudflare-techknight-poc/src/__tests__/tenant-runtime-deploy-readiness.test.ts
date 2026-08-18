@@ -49,6 +49,7 @@ const completeConfig = {
 const completeSecrets = [
   "BRAINBASE_RUNTIME_API_TOKEN",
   "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
+  "SLACK_SIGNING_SECRET",
   "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
   "DEVELOPMENT_CALLBACK_TOKEN",
 ];
@@ -80,9 +81,22 @@ describe("tenant runtime deploy readiness", () => {
 
     expect(result).toEqual({
       ready: false,
-      missing_bindings: ["BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN", "DEVELOPMENT_CALLBACK_TOKEN"],
+      missing_bindings: [
+        "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
+        "DEVELOPMENT_CALLBACK_TOKEN",
+        "SLACK_SIGNING_SECRET",
+      ],
     });
     expect(JSON.stringify(result)).not.toContain("secret-material-never-log");
+  });
+
+  it("requires the signing secret used by the public Slack ingress", () => {
+    const result = assessTenantRuntimeDeploymentConfig(completeConfig, completeSecrets.filter((name) => name !== "SLACK_SIGNING_SECRET"));
+
+    expect(result).toEqual({
+      ready: false,
+      missing_bindings: ["SLACK_SIGNING_SECRET"],
+    });
   });
 
   it("accepts a complete deployment config and parses Wrangler secret metadata", () => {

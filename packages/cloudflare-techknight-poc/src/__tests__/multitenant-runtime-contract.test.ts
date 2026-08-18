@@ -36,6 +36,7 @@ import {
   prepareContainerReuse,
   hashTenantObjectKey,
   resolveSlackWorkerIngress,
+  renewIdempotency,
   resolveTemporaryObjectExpiry,
   signTenantContextEnvelope,
   tenantPartitionKey,
@@ -173,6 +174,14 @@ async function envelope(
     "test-key-1",
   );
   return { value, publicKey: keys.publicKey };
+}
+
+async function queueContextHash(value: TenantContextEnvelope): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value.integrity.value),
+  ));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 async function validate(
@@ -327,12 +336,67 @@ describe("story-mana-multitenant-runtime contract", () => {
     await expect(claimIdempotency(store, claim)).resolves.toMatchObject({ disposition: "in_progress" });
     await expect(claimIdempotency(store, { ...claim, payload_hash: "payload-b" }))
       .rejects.toEqual(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+    const currentClaim = (await claimIdempotency(store, claim)).claim;
     expect(() => completeIdempotency(store, { key, tenant_id: TENANT_A, state: "succeeded",
+      claim_token: currentClaim.claim_token,
       result_ref: "opaque-result-a", updated_at: NOW, retained_until: "2026-09-14T13:02:00.000Z" }))
       .toThrow(expect.objectContaining({ code: "IDEMPOTENCY_RETENTION_INVALID" }));
     completeIdempotency(store, { key, tenant_id: TENANT_A, state: "succeeded",
+      claim_token: currentClaim.claim_token,
       result_ref: "opaque-result-a", updated_at: NOW, retained_until: "2026-09-15T13:02:00.000Z" });
     await expect(claimIdempotency(store, claim)).resolves.toMatchObject({ disposition: "succeeded" });
+  });
+
+  it("reclaims only expired queue claims and fences a crashed worker", async () => {
+    const store = new IdempotencyMemoryStore();
+    const claim = {
+      key: "ik1_queue-crash-recovery",
+      owner: "mana_runtime" as const,
+      scope: "queue_execution" as const,
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      slack_event_id: "Ev-queue-crash",
+      operation_id: OPERATION_A,
+      context_hash: "sha256:queue-context",
+      payload_hash: PAYLOAD_HASH,
+      connection_revision: "7",
+      updated_at: "2026-08-16T13:02:00.000Z",
+      lease_until: "2026-08-16T13:02:05.000Z",
+    };
+    const first = await claimIdempotency(store, claim);
+    expect(first.disposition).toBe("claimed");
+
+    await expect(claimIdempotency(store, { ...claim,
+      updated_at: "2026-08-16T13:02:03.000Z", lease_until: "2026-08-16T13:02:08.000Z" }))
+      .resolves.toMatchObject({ disposition: "in_progress", claim: { claim_token: first.claim.claim_token } });
+
+    const reclaimed = await claimIdempotency(store, { ...claim,
+      updated_at: "2026-08-16T13:02:06.000Z", lease_until: "2026-08-16T13:02:11.000Z" });
+    expect(reclaimed.disposition).toBe("claimed");
+    expect(reclaimed.claim.claim_token).not.toBe(first.claim.claim_token);
+
+    expect(() => completeIdempotency(store, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      state: "succeeded",
+      claim_token: first.claim.claim_token,
+      result_ref: "stale-worker-result",
+      updated_at: "2026-08-16T13:02:07.000Z",
+      retained_until: "2026-09-16T13:02:07.000Z",
+    })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+
+    completeIdempotency(store, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      state: "succeeded",
+      claim_token: reclaimed.claim.claim_token,
+      result_ref: "reclaimed-worker-result",
+      updated_at: "2026-08-16T13:02:07.000Z",
+      retained_until: "2026-09-16T13:02:07.000Z",
+    });
+    await expect(claimIdempotency(store, { ...claim,
+      updated_at: "2026-08-16T13:02:12.000Z", lease_until: "2026-08-16T13:02:17.000Z" }))
+      .resolves.toMatchObject({ disposition: "succeeded", claim: { result_ref: "reclaimed-worker-result" } });
   });
 
   it("TenantPartitionKeyV1 matrix planned Red", () => {
@@ -874,6 +938,171 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(message.retry).not.toHaveBeenCalled();
   });
 
+  it("reclaims a crashed queue worker only after lease expiry and processes the redelivery", async () => {
+    const { value, publicKey } = await envelope({
+      issued_at: "2026-08-16T13:05:00.000Z",
+      expires_at: "2026-08-16T13:10:00.000Z",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+    const ownership = new IdempotencyMemoryStore();
+    const contextHash = await queueContextHash(value);
+    const crashedClaim = await claimIdempotency(ownership, {
+      key: value.idempotency_key,
+      owner: "mana_runtime",
+      scope: "queue_execution",
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      slack_event_id: value.slack.event_id,
+      operation_id: value.operation_id,
+      context_hash: contextHash,
+      payload_hash: PAYLOAD_HASH,
+      connection_revision: "7",
+      updated_at: "2026-08-16T13:05:00.000Z",
+    });
+    expect(crashedClaim.disposition).toBe("claimed");
+
+    const message = {
+      body: { schema_version: "1.0" as const, tenant_context: value, payload: { command: "run" } },
+      ack: vi.fn(), retry: vi.fn(),
+    };
+    const process = vi.fn(async () => ({ outcome: "reclaimed" }));
+    await consumeTenantQueueMessage(message, {
+      verifier,
+      expected_scope: () => expectedScope,
+      now: () => "2026-08-16T13:10:01.000Z",
+      process,
+      ownership,
+      payload_hash: () => PAYLOAD_HASH,
+      retention_until: (now) => new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+    });
+
+    expect(process).toHaveBeenCalledOnce();
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+    expect(ownership.read(value.idempotency_key)).toMatchObject({ state: "succeeded" });
+  });
+
+  it("heartbeats an active long queue run and delays in-progress redelivery until its lease", async () => {
+    const { value, publicKey } = await envelope({
+      issued_at: "2026-08-16T13:05:00.000Z",
+      expires_at: "2026-08-16T13:10:00.000Z",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+    const ownership = new IdempotencyMemoryStore();
+    let workerNow = "2026-08-16T13:05:00.000Z";
+    let resolveProcess!: (value: { outcome: string }) => void;
+    const process = vi.fn(() => new Promise<{ outcome: string }>((resolve) => {
+      resolveProcess = resolve;
+    }));
+    const firstMessage = {
+      body: { schema_version: "1.0" as const, tenant_context: value, payload: { command: "run" } },
+      ack: vi.fn(), retry: vi.fn(),
+    };
+    const firstRun = consumeTenantQueueMessage(firstMessage, {
+      verifier,
+      expected_scope: () => expectedScope,
+      now: () => workerNow,
+      process,
+      ownership,
+      payload_hash: () => PAYLOAD_HASH,
+      retention_until: (observedAt) => new Date(Date.parse(observedAt) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+      heartbeat_interval_ms: 5,
+    });
+    await vi.waitFor(() => expect(process).toHaveBeenCalledOnce());
+
+    workerNow = "2026-08-16T13:06:00.000Z";
+    await vi.waitFor(async () => {
+      expect(ownership.read(value.idempotency_key)).toMatchObject({
+        state: "claimed",
+        lease_until: "2026-08-16T13:11:00.000Z",
+      });
+    });
+
+    const redelivery = {
+      body: { schema_version: "1.0" as const, tenant_context: value, payload: { command: "run" } },
+      ack: vi.fn(), retry: vi.fn(),
+    };
+    await consumeTenantQueueMessage(redelivery, {
+      verifier,
+      expected_scope: () => expectedScope,
+      now: () => "2026-08-16T13:10:00.000Z",
+      process,
+      ownership,
+      payload_hash: () => PAYLOAD_HASH,
+      retention_until: (observedAt) => new Date(Date.parse(observedAt) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+      heartbeat_interval_ms: 5,
+    });
+
+    expect(process).toHaveBeenCalledOnce();
+    expect(redelivery.ack).not.toHaveBeenCalled();
+    expect(redelivery.retry).toHaveBeenCalledWith({ delaySeconds: 61 });
+    resolveProcess({ outcome: "completed" });
+    await firstRun;
+    expect(firstMessage.ack).toHaveBeenCalledOnce();
+  });
+
+  it("fences a stale queue worker after redelivery reclaims its expired claim", async () => {
+    const { value, publicKey } = await envelope({
+      issued_at: "2026-08-16T13:05:00.000Z",
+      expires_at: "2026-08-16T13:10:00.000Z",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+    const ownership = new IdempotencyMemoryStore();
+    let now = "2026-08-16T13:05:00.000Z";
+    let resolveStaleProcess!: (value: { outcome: string }) => void;
+    const staleProcess = vi.fn(() => new Promise<{ outcome: string }>((resolve) => {
+      resolveStaleProcess = resolve;
+    }));
+    const staleMessage = {
+      body: { schema_version: "1.0" as const, tenant_context: value, payload: { command: "run" } },
+      ack: vi.fn(), retry: vi.fn(),
+    };
+    const staleRun = consumeTenantQueueMessage(staleMessage, {
+      verifier,
+      expected_scope: () => expectedScope,
+      now: () => now,
+      process: staleProcess,
+      ownership,
+      payload_hash: () => PAYLOAD_HASH,
+      retention_until: (observedAt) => new Date(Date.parse(observedAt) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+      heartbeat_interval_ms: 60_000,
+    });
+    await vi.waitFor(() => expect(staleProcess).toHaveBeenCalledOnce());
+
+    now = "2026-08-16T13:10:01.000Z";
+    const reclaimedProcess = vi.fn(async () => ({ outcome: "reclaimed" }));
+    const redelivery = {
+      body: { schema_version: "1.0" as const, tenant_context: value, payload: { command: "run" } },
+      ack: vi.fn(), retry: vi.fn(),
+    };
+    await consumeTenantQueueMessage(redelivery, {
+      verifier,
+      expected_scope: () => expectedScope,
+      now: () => now,
+      process: reclaimedProcess,
+      ownership,
+      payload_hash: () => PAYLOAD_HASH,
+      retention_until: (observedAt) => new Date(Date.parse(observedAt) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+      heartbeat_interval_ms: 5,
+    });
+    expect(reclaimedProcess).toHaveBeenCalledOnce();
+    expect(redelivery.ack).toHaveBeenCalledOnce();
+
+    resolveStaleProcess({ outcome: "stale" });
+    await staleRun;
+    expect(staleMessage.ack).toHaveBeenCalledOnce();
+    expect(ownership.read(value.idempotency_key)).toMatchObject({ state: "succeeded" });
+  });
+
   it("DO Container MCP and Brainbase write recheck revision planned Red", async () => {
     const { value, publicKey } = await envelope();
     const readSnapshot = vi.fn(async () => snapshotA);
@@ -1280,5 +1509,138 @@ describe("story-mana-multitenant-runtime contract", () => {
     if (accountingClaim.disposition === "claimed") await accountingAfterRestart.complete(accountingClaim);
     await expect(accountingAfterRestart.read_pending({ tenant_context: value, receipt_id: receiptId }))
       .resolves.toBeUndefined();
+  });
+
+  it("Durable Object reclaims an expired queue claim atomically after a Worker crash", async () => {
+    const { createDurableTenantStateStore } =
+      await import("../multitenancy/tenant-runtime-state.js");
+    const values = new Map<string, unknown>();
+    interface FixtureStorage {
+      get<T>(key: string): Promise<T | undefined>;
+      put(key: string, value: unknown): Promise<void>;
+      delete(key: string): Promise<boolean>;
+      transaction<T>(callback: (txn: FixtureStorage) => Promise<T>): Promise<T>;
+    }
+    const storage: FixtureStorage = {
+      get: async <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
+      put: async (key: string, value: unknown) => { values.set(key, structuredClone(value)); },
+      delete: async (key: string) => values.delete(key),
+      transaction: async <T>(callback: (txn: FixtureStorage) => Promise<T>) => callback(storage),
+    };
+    const firstWorker = createDurableTenantStateStore(storage);
+    const redelivery = createDurableTenantStateStore(storage);
+    const claim = {
+      key: "ik1_durable-queue-crash",
+      owner: "mana_runtime" as const,
+      scope: "queue_execution" as const,
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      slack_event_id: "Ev-durable-queue-crash",
+      operation_id: OPERATION_A,
+      context_hash: `sha256:${"d".repeat(64)}`,
+      payload_hash: PAYLOAD_HASH,
+      connection_revision: "7",
+      updated_at: "2026-08-16T13:02:00.000Z",
+      lease_until: "2026-08-16T13:02:05.000Z",
+    };
+    const first = await claimIdempotency(firstWorker, claim);
+    expect(first.disposition).toBe("claimed");
+    await expect(claimIdempotency(redelivery, { ...claim,
+      updated_at: "2026-08-16T13:02:03.000Z", lease_until: "2026-08-16T13:02:08.000Z" }))
+      .resolves.toMatchObject({ disposition: "in_progress", claim: { claim_token: first.claim.claim_token } });
+
+    const reclaimed = await claimIdempotency(redelivery, { ...claim,
+      updated_at: "2026-08-16T13:02:06.000Z", lease_until: "2026-08-16T13:02:11.000Z" });
+    expect(reclaimed.disposition).toBe("claimed");
+    expect(reclaimed.claim.claim_token).not.toBe(first.claim.claim_token);
+    await expect(completeIdempotency(firstWorker, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      state: "succeeded",
+      claim_token: first.claim.claim_token,
+      result_ref: "stale-worker-result",
+      updated_at: "2026-08-16T13:02:07.000Z",
+      retained_until: "2026-09-16T13:02:07.000Z",
+    })).rejects.toEqual(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+
+    await expect(completeIdempotency(redelivery, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      state: "succeeded",
+      claim_token: reclaimed.claim.claim_token,
+      result_ref: "reclaimed-worker-result",
+      updated_at: "2026-08-16T13:02:07.000Z",
+      retained_until: "2026-09-16T13:02:07.000Z",
+    })).resolves.toMatchObject({ state: "succeeded", result_ref: "reclaimed-worker-result" });
+    await expect(claimIdempotency(redelivery, { ...claim,
+      updated_at: "2026-08-16T13:02:12.000Z", lease_until: "2026-08-16T13:02:17.000Z" }))
+      .resolves.toMatchObject({ disposition: "succeeded", claim: { result_ref: "reclaimed-worker-result" } });
+  });
+
+  it("Durable Object renews an active queue claim and fences late renewal", async () => {
+    const { createDurableTenantStateStore } =
+      await import("../multitenancy/tenant-runtime-state.js");
+    const values = new Map<string, unknown>();
+    interface FixtureStorage {
+      get<T>(key: string): Promise<T | undefined>;
+      put(key: string, value: unknown): Promise<void>;
+      delete(key: string): Promise<boolean>;
+      transaction<T>(callback: (txn: FixtureStorage) => Promise<T>): Promise<T>;
+    }
+    const storage: FixtureStorage = {
+      get: async <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
+      put: async (key: string, value: unknown) => { values.set(key, structuredClone(value)); },
+      delete: async (key: string) => values.delete(key),
+      transaction: async <T>(callback: (txn: FixtureStorage) => Promise<T>) => callback(storage),
+    };
+    const worker = createDurableTenantStateStore(storage);
+    const claim = {
+      key: "ik1_durable-queue-heartbeat",
+      owner: "mana_runtime" as const,
+      scope: "queue_execution" as const,
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      slack_event_id: "Ev-durable-queue-heartbeat",
+      operation_id: OPERATION_A,
+      context_hash: `sha256:${"e".repeat(64)}`,
+      payload_hash: PAYLOAD_HASH,
+      connection_revision: "7",
+      updated_at: "2026-08-16T13:02:00.000Z",
+    };
+    const first = await claimIdempotency(worker, claim);
+    expect(first.disposition).toBe("claimed");
+    if (first.disposition !== "claimed") throw new Error("expected initial queue claim");
+
+    await expect(renewIdempotency(worker, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      claim_token: first.claim.claim_token,
+      partition_key: first.claim.partition_key,
+      updated_at: "2026-08-16T13:06:00.000Z",
+    })).resolves.toMatchObject({
+      state: "claimed",
+      claim_token: first.claim.claim_token,
+      updated_at: "2026-08-16T13:06:00.000Z",
+      lease_until: "2026-08-16T13:11:00.000Z",
+    });
+
+    await expect(claimIdempotency(worker, {
+      ...claim,
+      updated_at: "2026-08-16T13:10:00.000Z",
+    })).resolves.toMatchObject({ disposition: "in_progress" });
+    await expect(renewIdempotency(worker, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      claim_token: "ict1_stale-heartbeat",
+      partition_key: first.claim.partition_key,
+      updated_at: "2026-08-16T13:07:00.000Z",
+    })).rejects.toEqual(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+    await expect(renewIdempotency(worker, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      claim_token: first.claim.claim_token,
+      partition_key: first.claim.partition_key,
+      updated_at: "2026-08-16T13:12:00.000Z",
+    })).rejects.toEqual(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
   });
 });

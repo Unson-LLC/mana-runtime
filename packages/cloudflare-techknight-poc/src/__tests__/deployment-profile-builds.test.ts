@@ -21,7 +21,7 @@ interface WranglerProfile {
   durable_objects: { bindings: Array<{ name: string; class_name: string }> };
   queues: {
     producers: Array<{ queue: string }>;
-    consumers: Array<{ queue: string; dead_letter_queue: string }>;
+    consumers: Array<{ queue: string; dead_letter_queue: string; max_retries: number }>;
   };
 }
 
@@ -108,5 +108,21 @@ describe("実配置profileのビルド契約", () => {
     ]));
     const source = [JSON.stringify(config), JSON.stringify(manifest)].join("\n");
     expect(source).not.toMatch(/(?:token|secret)\s*["']?\s*[:=]\s*["'][^"']{8,}/i);
+  });
+
+  it("すべてのQueue consumerはmax_retries=3とDLQを持つ", () => {
+    const configs = [
+      loadJson<WranglerProfile>("wrangler.jsonc"),
+      loadJson<WranglerProfile>("wrangler.unson-business.jsonc"),
+      loadJson<WranglerProfile>("wrangler.dedicated-cloud.jsonc"),
+      loadJson<WranglerProfile>("wrangler.customer-managed-oss.jsonc"),
+    ];
+    for (const config of configs) {
+      for (const consumer of config.queues.consumers) {
+        expect(Number.isSafeInteger(consumer.max_retries)).toBe(true);
+        expect(consumer.max_retries).toBe(3);
+        expect(consumer.dead_letter_queue).toMatch(/-dlq$/);
+      }
+    }
   });
 });

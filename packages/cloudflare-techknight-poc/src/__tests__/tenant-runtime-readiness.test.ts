@@ -28,6 +28,7 @@ const complete = {
   BRAINBASE_TENANT_RUNTIME_PORT: "31016",
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "internal-service-token-placeholder",
   BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async () => new Response() },
+  SLACK_SIGNING_SECRET: "slack-signing-secret-placeholder",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   SLACK_EXPECTED_APP_ID: "A-MANA",
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
@@ -66,6 +67,16 @@ describe("tenant runtime readiness", () => {
     })).toEqual({
       ready: false,
       missing_bindings: ["SLACK_INSTALLATION_LIFECYCLE_TOKEN"],
+    });
+  });
+
+  it("fails closed when the public Slack signing secret is not configured", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      SLACK_SIGNING_SECRET: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["SLACK_SIGNING_SECRET"],
     });
   });
 

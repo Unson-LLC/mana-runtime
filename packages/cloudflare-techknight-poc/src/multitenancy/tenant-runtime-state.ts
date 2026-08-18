@@ -8,7 +8,14 @@ import type {
   IdempotencyClaim,
   IdempotencyClaimInput,
   IdempotencyCompleteInput,
+  IdempotencyRenewInput,
   IdempotencyStore,
+} from "./idempotency.js";
+import {
+  idempotencyLeaseUntil,
+  isIdempotencyClaimLeaseExpired,
+  prepareIdempotencyClaimInput,
+  shouldReclaimIdempotencyClaim,
 } from "./idempotency.js";
 import { deny, TenantBoundaryError } from "./errors.js";
 import { tenantPartitionKey } from "./isolation.js";
@@ -33,19 +40,29 @@ function idempotencyStorageKey(partitionKey: string): string {
 }
 
 function createStoredClaim(input: IdempotencyClaimInput): IdempotencyClaim {
+  const normalized = prepareIdempotencyClaimInput(input);
   return {
-    ...clone(input),
+    ...clone(normalized),
     state: "claimed",
+    claim_token: createClaimToken(),
     partition_key: tenantPartitionKey({
-      tenant_id: input.tenant_id,
+      tenant_id: normalized.tenant_id,
       resource_type: "idempotency",
-      connection_id: input.connection_id,
+      connection_id: normalized.connection_id,
       workspace_id: "",
       channel_id: "",
       thread_ts: "",
-      resource_id: input.key,
+      resource_id: normalized.key,
     }),
   };
+}
+
+function createClaimToken(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `ict1_${btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
 }
 
 function assertCompletionWindow(input: IdempotencyCompleteInput): void {
@@ -64,15 +81,21 @@ class DurableTenantStateStore implements IdempotencyStore {
 
   async claim(input: IdempotencyClaimInput): Promise<{ created: boolean; value: IdempotencyClaim }> {
     return this.storage.transaction(async (transaction) => {
-      const stored = createStoredClaim(input);
+      const normalized = prepareIdempotencyClaimInput(input);
+      const stored = createStoredClaim(normalized);
       const key = idempotencyStorageKey(stored.partition_key);
       const existing = await transaction.get<IdempotencyClaim>(key);
       if (existing) {
-        this.#partitionKeys.set(input.key, existing.partition_key);
+        if (shouldReclaimIdempotencyClaim(existing, normalized)) {
+          await transaction.put(key, stored);
+          this.#partitionKeys.set(normalized.key, stored.partition_key);
+          return { created: true, value: clone(stored) };
+        }
+        this.#partitionKeys.set(normalized.key, existing.partition_key);
         return { created: false, value: clone(existing) };
       }
       await transaction.put(key, stored);
-      this.#partitionKeys.set(input.key, stored.partition_key);
+      this.#partitionKeys.set(normalized.key, stored.partition_key);
       return { created: true, value: clone(stored) };
     });
   }
@@ -89,7 +112,7 @@ class DurableTenantStateStore implements IdempotencyStore {
     return value ? clone(value) : undefined;
   }
 
-  async release(key: string, tenantId: string, inputPartitionKey?: string): Promise<void> {
+  async release(key: string, tenantId: string, inputPartitionKey?: string, claimToken?: string): Promise<void> {
     await this.storage.transaction(async (transaction) => {
       const partitionKey = inputPartitionKey ?? this.#partitionKeys.get(key);
       if (!partitionKey) deny("idempotency", "IDEMPOTENCY_CLAIM_MISSING");
@@ -97,6 +120,11 @@ class DurableTenantStateStore implements IdempotencyStore {
       const current = await transaction.get<IdempotencyClaim>(storageKey);
       if (!current) return;
       if (current.tenant_id !== tenantId) deny("idempotency", "CROSS_TENANT_CANDIDATE");
+      if (current.claim_token !== undefined
+        && (current.scope === "queue_execution" || claimToken !== undefined)
+        && current.claim_token !== claimToken) {
+        deny("idempotency", "IDEMPOTENCY_CONFLICT", { key });
+      }
       if (current.state === "claimed") await transaction.delete(storageKey);
       this.#partitionKeys.delete(key);
     });
@@ -111,6 +139,11 @@ class DurableTenantStateStore implements IdempotencyStore {
       const current = await transaction.get<IdempotencyClaim>(key);
       if (!current) deny("idempotency", "IDEMPOTENCY_CLAIM_MISSING");
       if (current.tenant_id !== input.tenant_id) deny("idempotency", "CROSS_TENANT_CANDIDATE");
+      if (current.claim_token !== undefined
+        && (current.scope === "queue_execution" || input.claim_token !== undefined)
+        && current.claim_token !== input.claim_token) {
+        deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+      }
       const completed: IdempotencyClaim = {
         ...current,
         state: input.state,
@@ -121,6 +154,40 @@ class DurableTenantStateStore implements IdempotencyStore {
       await transaction.put(key, completed);
       this.#partitionKeys.set(input.key, completed.partition_key);
       return clone(completed);
+    });
+  }
+
+  async renew(input: IdempotencyRenewInput): Promise<IdempotencyClaim> {
+    return this.storage.transaction(async (transaction) => {
+      const partitionKey = input.partition_key ?? this.#partitionKeys.get(input.key);
+      if (!partitionKey) deny("idempotency", "IDEMPOTENCY_CLAIM_MISSING");
+      const storageKey = idempotencyStorageKey(partitionKey);
+      const current = await transaction.get<IdempotencyClaim>(storageKey);
+      if (!current) deny("idempotency", "IDEMPOTENCY_CLAIM_MISSING");
+      if (current.tenant_id !== input.tenant_id) deny("idempotency", "CROSS_TENANT_CANDIDATE");
+      if (current.partition_key !== partitionKey || current.scope !== "queue_execution"
+        || current.state !== "claimed") {
+        deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+      }
+      if (current.claim_token !== input.claim_token) {
+        deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+      }
+      if (isIdempotencyClaimLeaseExpired(current, input.updated_at)) {
+        deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+      }
+      const currentUpdatedAt = Date.parse(current.updated_at);
+      const updatedAt = Date.parse(input.updated_at);
+      if (!Number.isFinite(updatedAt) || (Number.isFinite(currentUpdatedAt) && updatedAt < currentUpdatedAt)) {
+        deny("idempotency", "IDEMPOTENCY_LEASE_INVALID", { key: input.key });
+      }
+      const renewed: IdempotencyClaim = {
+        ...current,
+        updated_at: input.updated_at,
+        lease_until: idempotencyLeaseUntil(input.updated_at),
+      };
+      await transaction.put(storageKey, renewed);
+      this.#partitionKeys.set(input.key, renewed.partition_key);
+      return clone(renewed);
     });
   }
 
@@ -332,18 +399,25 @@ export function createDurableTenantStateClient(
       if (!partitionKey) return undefined;
       return callOptionalState(stub(partitionKey), "idempotency/read", { key, partition_key: partitionKey });
     },
-    release: (key, claimTenantId, inputPartitionKey) => {
+    release: (key, claimTenantId, inputPartitionKey, claimToken) => {
       if (claimTenantId !== tenantId) deny("durable_object", "CROSS_TENANT_CANDIDATE");
       const partitionKey = inputPartitionKey ?? partitionKeys.get(key);
       if (!partitionKey) deny("durable_object", "IDEMPOTENCY_CLAIM_MISSING");
       return callState(stub(partitionKey), "idempotency/release",
-        { key, tenant_id: claimTenantId, partition_key: partitionKey });
+        { key, tenant_id: claimTenantId, partition_key: partitionKey, claim_token: claimToken });
     },
     complete: (input) => {
       if (input.tenant_id !== tenantId) deny("durable_object", "CROSS_TENANT_CANDIDATE");
       const partitionKey = input.partition_key ?? partitionKeys.get(input.key);
       if (!partitionKey) deny("durable_object", "IDEMPOTENCY_CLAIM_MISSING");
       return callState(stub(partitionKey), "idempotency/complete", { ...input, partition_key: partitionKey });
+    },
+    renew: (input) => {
+      if (input.tenant_id !== tenantId) deny("durable_object", "CROSS_TENANT_CANDIDATE");
+      const partitionKey = input.partition_key ?? partitionKeys.get(input.key);
+      if (!partitionKey) deny("durable_object", "IDEMPOTENCY_CLAIM_MISSING");
+      partitionKeys.set(input.key, partitionKey);
+      return callState(stub(partitionKey), "idempotency/renew", { ...input, partition_key: partitionKey });
     },
   };
 }
@@ -432,10 +506,13 @@ export class TenantRuntimeStateHandler {
           : await this.#idempotency.read(String(input.key ?? ""));
       } else if (url.pathname === "/idempotency/release") {
         await this.#idempotency.release(String(input.key ?? ""), String(input.tenant_id ?? ""),
-          String(input.partition_key ?? "") || undefined);
+          String(input.partition_key ?? "") || undefined,
+          typeof input.claim_token === "string" ? input.claim_token : undefined);
         result = null;
       } else if (url.pathname === "/idempotency/complete") {
         result = await this.#idempotency.complete(input as unknown as IdempotencyCompleteInput);
+      } else if (url.pathname === "/idempotency/renew") {
+        result = await this.#idempotency.renew(input as unknown as IdempotencyRenewInput);
       } else if (url.pathname === "/accounting/reserve-timestamp") {
         result = await this.#accounting.reserve_timestamp(
           input as unknown as Parameters<TenantAccountingLedgerStore["reserve_timestamp"]>[0],

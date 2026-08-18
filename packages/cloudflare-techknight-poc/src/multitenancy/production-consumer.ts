@@ -349,6 +349,7 @@ export async function postTenantSlackReply(input: {
       key: claim.claim.key,
       tenant_id: input.tenant_context.tenant.tenant_id,
       state: "succeeded",
+      claim_token: claim.claim.claim_token,
       result_ref: responseTs,
       updated_at: input.now,
       retained_until: input.retention_until,
@@ -357,7 +358,7 @@ export async function postTenantSlackReply(input: {
     return responseTs;
   } catch (error) {
     await releaseIdempotency(input.ownership, claim.claim.key,
-      input.tenant_context.tenant.tenant_id, claim.claim.partition_key);
+      input.tenant_context.tenant.tenant_id, claim.claim.partition_key, claim.claim.claim_token);
     throw error;
   }
 }

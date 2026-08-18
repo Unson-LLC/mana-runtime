@@ -18,12 +18,15 @@ export interface IdempotencyClaimInput extends Omit<IdempotencyTuple, "protocol_
   payload_hash: string;
   connection_revision: string;
   updated_at: string;
+  /** The claim lease. Queue executions receive a bounded default when omitted. */
+  lease_until?: string;
 }
 
 export interface IdempotencyClaim extends IdempotencyClaimInput {
   state: "pending" | "claimed" | "succeeded" | "failed_terminal";
   partition_key: string;
-  lease_until?: string;
+  /** Fences a worker which lost its claim to an expired-lease reclaimer. */
+  claim_token: string;
   result_ref?: string;
   retained_until?: string;
 }
@@ -43,13 +46,102 @@ export interface IdempotencyCompleteInput {
   updated_at: string;
   retained_until: string;
   partition_key?: string;
+  claim_token?: string;
+}
+
+export interface IdempotencyRenewInput {
+  key: string;
+  tenant_id: string;
+  claim_token: string;
+  updated_at: string;
+  partition_key?: string;
 }
 
 export interface IdempotencyStore {
   claim(input: IdempotencyClaimInput): Awaitable<{ created: boolean; value: IdempotencyClaim }>;
   read(key: string): Awaitable<IdempotencyClaim | undefined>;
-  release(key: string, tenantId: string, partitionKey?: string): Awaitable<void>;
+  release(key: string, tenantId: string, partitionKey?: string, claimToken?: string): Awaitable<void>;
   complete(input: IdempotencyCompleteInput): Awaitable<IdempotencyClaim>;
+  renew(input: IdempotencyRenewInput): Awaitable<IdempotencyClaim>;
+}
+
+/** Queue work must not remain in_progress forever after a Worker crash. */
+export const IDEMPOTENCY_LEASE_MS = 5 * 60 * 1_000;
+
+export function idempotencyLeaseUntil(updatedAt: string): string {
+  const start = Date.parse(updatedAt);
+  if (!Number.isFinite(start)) deny("idempotency", "IDEMPOTENCY_LEASE_INVALID");
+  return new Date(start + IDEMPOTENCY_LEASE_MS).toISOString();
+}
+
+export function prepareIdempotencyClaimInput(input: IdempotencyClaimInput): IdempotencyClaimInput {
+  const normalized = input.scope !== "queue_execution" || input.lease_until !== undefined
+    ? structuredClone(input)
+    : { ...structuredClone(input), lease_until: idempotencyLeaseUntil(input.updated_at) };
+  assertLeaseWindow(normalized);
+  return normalized;
+}
+
+function assertLeaseWindow(input: IdempotencyClaimInput): void {
+  if (input.lease_until === undefined) return;
+  const now = Date.parse(input.updated_at);
+  const leaseUntil = Date.parse(input.lease_until);
+  if (!Number.isFinite(now) || !Number.isFinite(leaseUntil) || leaseUntil <= now) {
+    deny("idempotency", "IDEMPOTENCY_LEASE_INVALID");
+  }
+}
+
+function newClaimToken(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return `ict1_${base64Url(bytes)}`;
+}
+
+function claimIdentityMatches(existing: IdempotencyClaim, input: IdempotencyClaimInput): boolean {
+  return [
+    "tenant_id",
+    "connection_id",
+    "slack_event_id",
+    "operation_id",
+    "context_hash",
+    "payload_hash",
+    "owner",
+    "scope",
+    "connection_revision",
+  ].every((field) => existing[field as keyof IdempotencyClaim] === input[field as keyof IdempotencyClaimInput]);
+}
+
+export function isIdempotencyClaimLeaseExpired(existing: IdempotencyClaim, now: string): boolean {
+  if (existing.state !== "claimed") return false;
+  // Claims written before lease support have no lease_until. Treat their
+  // updated_at as the lease start during migration so they cannot remain
+  // permanently in_progress; all new queue claims persist lease_until.
+  const leaseUntil = existing.lease_until
+    ? Date.parse(existing.lease_until)
+    : existing.scope === "queue_execution"
+      ? Date.parse(existing.updated_at) + IDEMPOTENCY_LEASE_MS
+      : Number.NaN;
+  const nowMs = Date.parse(now);
+  return Number.isFinite(leaseUntil) && Number.isFinite(nowMs) && leaseUntil <= nowMs;
+}
+
+function assertClaimToken(existing: IdempotencyClaim, claimToken: string | undefined, key: string): void {
+  // business_effect outboxes persisted only key/partition_key before fencing
+  // was introduced. Keep those records compatible while requiring a token for
+  // queue executions and for callers that explicitly provide one.
+  if (existing.claim_token !== undefined
+    && (existing.scope === "queue_execution" || claimToken !== undefined)
+    && existing.claim_token !== claimToken) {
+    deny("idempotency", "IDEMPOTENCY_CONFLICT", { key });
+  }
+}
+
+export function shouldReclaimIdempotencyClaim(
+  existing: IdempotencyClaim,
+  input: IdempotencyClaimInput,
+): boolean {
+  const normalized = prepareIdempotencyClaimInput(input);
+  return claimIdentityMatches(existing, normalized) && isIdempotencyClaimLeaseExpired(existing, normalized.updated_at);
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -88,11 +180,26 @@ export class IdempotencyMemoryStore implements IdempotencyStore {
   readonly #claims = new Map<string, IdempotencyClaim>();
 
   claim(input: IdempotencyClaimInput): { created: boolean; value: IdempotencyClaim } {
-    const existing = this.#claims.get(input.key);
-    if (existing) return { created: false, value: structuredClone(existing) };
+    const normalized = prepareIdempotencyClaimInput(input);
+    const existing = this.#claims.get(normalized.key);
+    if (existing) {
+      if (shouldReclaimIdempotencyClaim(existing, normalized)) {
+        const reclaimed = this.#createStoredClaim(normalized);
+        this.#claims.set(normalized.key, reclaimed);
+        return { created: true, value: structuredClone(reclaimed) };
+      }
+      return { created: false, value: structuredClone(existing) };
+    }
+    const stored = this.#createStoredClaim(normalized);
+    this.#claims.set(normalized.key, stored);
+    return { created: true, value: structuredClone(stored) };
+  }
+
+  #createStoredClaim(input: IdempotencyClaimInput): IdempotencyClaim {
     const stored: IdempotencyClaim = {
       ...structuredClone(input),
       state: "claimed",
+      claim_token: newClaimToken(),
       partition_key: tenantPartitionKey({
         tenant_id: input.tenant_id,
         resource_type: "idempotency",
@@ -103,8 +210,7 @@ export class IdempotencyMemoryStore implements IdempotencyStore {
         resource_id: input.key,
       }),
     };
-    this.#claims.set(input.key, stored);
-    return { created: true, value: structuredClone(stored) };
+    return stored;
   }
 
   read(key: string): IdempotencyClaim | undefined {
@@ -112,10 +218,11 @@ export class IdempotencyMemoryStore implements IdempotencyStore {
     return value ? structuredClone(value) : undefined;
   }
 
-  release(key: string, tenantId: string): void {
+  release(key: string, tenantId: string, _partitionKey?: string, claimToken?: string): void {
     const current = this.#claims.get(key);
     if (!current) return;
     if (current.tenant_id !== tenantId) deny("idempotency", "CROSS_TENANT_CANDIDATE");
+    assertClaimToken(current, claimToken, key);
     if (current.state === "claimed") this.#claims.delete(key);
   }
 
@@ -123,6 +230,7 @@ export class IdempotencyMemoryStore implements IdempotencyStore {
     const current = this.#claims.get(input.key);
     if (!current) deny("idempotency", "IDEMPOTENCY_CLAIM_MISSING");
     if (current.tenant_id !== input.tenant_id) deny("idempotency", "CROSS_TENANT_CANDIDATE");
+    assertClaimToken(current, input.claim_token, input.key);
     const updatedAt = Date.parse(input.updated_at);
     const retainedUntil = Date.parse(input.retained_until);
     if (!Number.isFinite(updatedAt) || !Number.isFinite(retainedUntil)
@@ -139,17 +247,46 @@ export class IdempotencyMemoryStore implements IdempotencyStore {
     this.#claims.set(input.key, completed);
     return structuredClone(completed);
   }
+
+  renew(input: IdempotencyRenewInput): IdempotencyClaim {
+    const current = this.#claims.get(input.key);
+    if (!current) deny("idempotency", "IDEMPOTENCY_CLAIM_MISSING");
+    if (current.tenant_id !== input.tenant_id) deny("idempotency", "CROSS_TENANT_CANDIDATE");
+    if (input.partition_key !== undefined && current.partition_key !== input.partition_key) {
+      deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+    }
+    if (current.scope !== "queue_execution" || current.state !== "claimed") {
+      deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+    }
+    assertClaimToken(current, input.claim_token, input.key);
+    if (isIdempotencyClaimLeaseExpired(current, input.updated_at)) {
+      deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+    }
+    const currentUpdatedAt = Date.parse(current.updated_at);
+    const updatedAt = Date.parse(input.updated_at);
+    if (!Number.isFinite(updatedAt) || (Number.isFinite(currentUpdatedAt) && updatedAt < currentUpdatedAt)) {
+      deny("idempotency", "IDEMPOTENCY_LEASE_INVALID", { key: input.key });
+    }
+    const renewed: IdempotencyClaim = {
+      ...current,
+      updated_at: input.updated_at,
+      lease_until: idempotencyLeaseUntil(input.updated_at),
+    };
+    this.#claims.set(input.key, renewed);
+    return structuredClone(renewed);
+  }
 }
 
 export async function claimIdempotency(
   store: IdempotencyStore,
   claim: IdempotencyClaimInput,
 ): Promise<IdempotencyClaimResult> {
-  const result = await store.claim(claim);
+  const normalized = prepareIdempotencyClaimInput(claim);
+  const result = await store.claim(normalized);
   if (result.created) return { disposition: "claimed", claim: result.value };
   const existing = result.value;
-  if (existing.connection_revision !== claim.connection_revision) {
-    deny("idempotency", "WORKSPACE_CONNECTION_STALE_REVISION", { key: claim.key });
+  if (existing.connection_revision !== normalized.connection_revision) {
+    deny("idempotency", "WORKSPACE_CONNECTION_STALE_REVISION", { key: normalized.key });
   }
   const invariantFields: (keyof IdempotencyClaimInput)[] = [
     "tenant_id",
@@ -161,8 +298,8 @@ export async function claimIdempotency(
     "owner",
     "scope",
   ];
-  if (invariantFields.some((field) => existing[field] !== claim[field])) {
-    deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: claim.key });
+  if (invariantFields.some((field) => existing[field] !== normalized[field])) {
+    deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: normalized.key });
   }
   return {
     disposition: existing.state === "succeeded" || existing.state === "failed_terminal"
@@ -177,8 +314,9 @@ export function releaseIdempotency(
   key: string,
   tenantId: string,
   partitionKey?: string,
+  claimToken?: string,
 ): Awaitable<void> {
-  return store.release(key, tenantId, partitionKey);
+  return store.release(key, tenantId, partitionKey, claimToken);
 }
 
 export function completeIdempotency(
@@ -186,4 +324,11 @@ export function completeIdempotency(
   input: IdempotencyCompleteInput,
 ): Awaitable<IdempotencyClaim> {
   return store.complete(input);
+}
+
+export function renewIdempotency(
+  store: IdempotencyStore,
+  input: IdempotencyRenewInput,
+): Awaitable<IdempotencyClaim> {
+  return store.renew(input);
 }

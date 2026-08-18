@@ -1942,7 +1942,7 @@ export default {
         await consumeTenantQueueMessage({
           body: tenantBody,
           ack: () => message.ack(),
-          retry: () => message.retry(),
+          retry: (options) => message.retry(options),
         }, {
           verifier,
           expected_scope: () => expectedScope,
@@ -2017,7 +2017,7 @@ export default {
         await consumeTenantQueueMessage({
           body: tenantBody,
           ack: () => message.ack(),
-          retry: () => message.retry(),
+          retry: (options) => message.retry(options),
         }, {
           verifier,
           expected_scope: () => expectedScope,
@@ -2074,7 +2074,7 @@ export default {
         await consumeTenantQueueMessage({
           body: tenantBody,
           ack: () => message.ack(),
-          retry: () => message.retry(),
+          retry: (options) => message.retry(options),
         }, {
           verifier,
           expected_scope: () => expectedScope,
@@ -2114,7 +2114,7 @@ export default {
         await consumeTenantQueueMessage({
           body: tenantBody,
           ack: () => message.ack(),
-          retry: () => message.retry(),
+          retry: (options) => message.retry(options),
         }, {
           verifier,
           expected_scope: () => expectedScope,
@@ -2185,7 +2185,7 @@ export default {
         await consumeTenantQueueMessage({
           body: tenantBody,
           ack: () => message.ack(),
-          retry: () => message.retry(),
+          retry: (options) => message.retry(options),
         }, {
           ...tenantConsumerOptions,
           process: async (event: SlackQueueEvent, tenantContext) => executeTenantRuntimeOperation({
@@ -2319,7 +2319,7 @@ export default {
       await consumeTenantQueueMessage({
         body: tenantBody,
         ack: () => message.ack(),
-        retry: () => message.retry(),
+        retry: (options) => message.retry(options),
       }, {
         ...tenantConsumerOptions,
         process: async (event: SlackQueueEvent, tenantContext) => {
