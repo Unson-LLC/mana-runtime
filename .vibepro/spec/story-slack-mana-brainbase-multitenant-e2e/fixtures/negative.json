@@ -1,0 +1,35 @@
+{
+  "schema_version": "0.1.0",
+  "fixture_id": "FX-NEG-001",
+  "fixture_kind": "negative",
+  "canonical_manifest": "contracts/mana-brainbase-tenant-context/v1/fixtures/manifest.json#negative",
+  "canonical_fixtures": [
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/tampered-payload.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/protected-header.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/revision-number.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/time-order.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/envelope-ttl.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/protocol-major.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/protocol-capability.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/credential-lease-legacy-shape.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/credential-lease-ttl.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/credential-lease-binding.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/quota-revision-number.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/usage-not-collected-quantity.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/usage-partial-unknown.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/usage-outcome-mixed.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/idempotency-owner.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/idempotency-key.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/required-missing.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/additional-property.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/receipt-structure.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/usage-required-missing.json",
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/negative/idempotency-claim-required-missing.json"
+  ],
+  "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
+  "case_count": 21,
+  "execution_evidence": {
+    "status": "not_collected",
+    "note": "Reference rejection pass only. Producer/consumer boundary calls and protected business API call counts remain not_collected."
+  }
+}
