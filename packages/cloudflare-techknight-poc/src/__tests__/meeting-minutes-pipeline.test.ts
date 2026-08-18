@@ -886,17 +886,23 @@ describe("meeting minutes pipeline", () => {
     } });
   });
 
-  it("fails closed before generation when required Brainbase context is partial", async () => {
+  it.each(["partial", "unavailable"] as const)(
+    "fails closed before generation and external persistence when required Brainbase context is %s",
+    async (status) => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
-    const generate = vi.fn();
+    const options = resumeOptions({ contextMode: "required" });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
-      receipt_id: "receipt-partial", identity, status: "partial" as const, checksum: "partial-checksum",
+      receipt_id: `receipt-${status}`, identity, status, checksum: `${status}-checksum`,
       resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
     await expect(resumeMeetingMinutesRun(fs, selection,
-      resumeOptions({ contextMode: "required", resolveContext, generate })))
-      .rejects.toThrow("meeting_minutes_context_partial");
-    expect(generate).not.toHaveBeenCalled();
+      { ...options, resolveContext }))
+      .rejects.toThrow(`meeting_minutes_context_${status}`);
+    expect(options.generate).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
   });
 
   it("reuses exact tasks and flags similar open tasks instead of creating duplicates", async () => {

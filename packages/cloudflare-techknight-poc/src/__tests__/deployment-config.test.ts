@@ -170,7 +170,7 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_TASK_WRITE_ENABLED: "true",
       RUNTIME_TASK_BOARD_ENABLED: "true",
       MEETING_MINUTES_ENABLED: "true",
-      MEETING_MINUTES_CONTEXT_MODE: "observe",
+      MEETING_MINUTES_CONTEXT_MODE: "required",
       MEETING_MINUTES_ROUTER_CHANNEL_ID: "C0BKTFQ9V38",
       MEETING_MINUTES_OPERATOR_USER_IDS: "U088D1HBY6L,U0BKP8D3KPD,U07B19N048G",
       RUNTIME_CLAUDE_MODEL: "opus",
@@ -386,7 +386,7 @@ describe("会社別Cloudflare deployment", () => {
 
   it("enables Cloudflare meeting minutes with the confirmed cutover authority", () => {
     expect(unson.vars.MEETING_MINUTES_ENABLED).toBe("true");
-    expect(unson.vars.MEETING_MINUTES_CONTEXT_MODE).toBe("observe");
+    expect(unson.vars.MEETING_MINUTES_CONTEXT_MODE).toBe("required");
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD,U07B19N048G");
     for (const name of ["MEETING_MINUTES_DESTINATIONS_JSON", "MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON"]) {
