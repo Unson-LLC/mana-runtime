@@ -34,6 +34,7 @@ export interface ResumeMeetingMinutesOptions {
     sourceFileName: string; sourceTs: string }): Promise<SavedMeetingMinutesRecords>;
   createTask(input: CreateTaskInput, idempotencyKey: string): Promise<{ id: string; assignee_person_id?: string | null;
     assignee_display_name?: string | null }>;
+  findExistingTask?(title: string, projectCodes: readonly string[]): Promise<{ id: string } | undefined>;
   resolveAssignee?(name: string, projectId: string): Promise<
     { status: "resolved"; personId: string } | { status: "unknown" | "ambiguous" | "unavailable" }
   >;
@@ -183,12 +184,25 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
         });
       }
       const { assignee_name: _assigneeName, ...taskCandidate } = candidate;
-      const task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
-        project_codes: taskProjectCodes },
-        await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
+      let task: { id: string; assignee_person_id?: string | null; assignee_display_name?: string | null };
+      let reusedExisting = false;
+      try {
+        task = await options.createTask({ ...taskCandidate, ...(assignee_person_id ? { assignee_person_id } : {}),
+          project_codes: taskProjectCodes },
+          await taskIdempotencyKey(run.runId, run.revision ?? 0, index));
+      } catch (error) {
+        const conflict = error && typeof error === "object" && "status" in error && error.status === 409;
+        const existing = conflict && options.findExistingTask
+          ? await options.findExistingTask(candidate.title, taskProjectCodes)
+          : undefined;
+        if (!existing) throw error;
+        task = existing;
+        reusedExisting = true;
+      }
       if (!task.id?.trim()) throw new Error("meeting_minutes_task_invalid_response");
       run.taskRegistration.registered.push({ index, title: candidate.title, taskId: task.id.trim(),
         projectCodes: [...taskProjectCodes],
+        ...(reusedExisting ? { status: "reused" as const } : {}),
         ...(task.assignee_person_id ? { assigneePersonId: task.assignee_person_id } : {}),
         ...(task.assignee_display_name ? { assigneeDisplayName: task.assignee_display_name } : {}) });
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
@@ -328,7 +342,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       try {
         const receipt = await options.resolveContext({ run_id: run.runId,
           project_code: meetingMinutesContextProjectCode(run.destination),
-          transcript_sha256: run.transcriptSha256 }, undefined);
+          transcript_sha256: run.transcriptSha256 }, run.context?.receiptId);
         assertMeetingMinutesContextUsable(receipt, options.contextMode);
         await registerGeneratedTasks(fs, run, receipt, options);
       } catch (error) {
