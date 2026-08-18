@@ -535,6 +535,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN)");
     expect(worker).toContain("registeredCount: run.taskRegistration?.registered.length ?? 0");
     expect(worker).toContain("failure: run.taskRegistration?.failure");
+    expect(worker).toContain("failedCandidateTitle: run.taskRegistration?.failure");
     expect(packageJson.scripts["meeting-minutes:intake:pause"]).toContain("meeting-minutes-intake-control.mjs pause");
     expect(packageJson.scripts["meeting-minutes:intake:resume"]).toContain("meeting-minutes-intake-control.mjs resume");
   });

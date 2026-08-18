@@ -414,7 +414,9 @@ export default {
       return Response.json({ runId: run.runId, status: run.status,
         destinationId: run.destination?.id, diagnostics: run.diagnostics,
         taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
-          failure: run.taskRegistration?.failure },
+          failure: run.taskRegistration?.failure,
+          failedCandidateTitle: run.taskRegistration?.failure
+            ? run.generated?.tasks?.[run.taskRegistration.failure.index]?.title : undefined },
         checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
           postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 },
         ...(request.method === "POST" ? { enqueued: true } : {}) });
