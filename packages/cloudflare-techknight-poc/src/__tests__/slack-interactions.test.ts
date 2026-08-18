@@ -114,33 +114,48 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).not.toHaveBeenCalled();
   });
   it("clears processing when the queue rejects the selection", async () => {
-    const send = vi.fn().mockRejectedValue(new Error("queue unavailable")); const updateOriginal = vi.fn();
-    const showProcessing = vi.fn(); const clearProcessing = vi.fn(); const background = deferred();
+    const send = vi.fn().mockRejectedValue(new Error("queue Authorization Bearer secret")); const updateOriginal = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const showProcessing = vi.fn(); const clearProcessing = vi.fn().mockRejectedValue(new Error("clear Bearer secret"));
+    const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
-    await expect(Promise.all(background.work)).rejects.toThrow("queue unavailable");
+    await expect(Promise.all(background.work)).rejects.toThrow("queue Authorization Bearer secret");
     expect(updateOriginal).toHaveBeenCalledOnce();
     expect(showProcessing).toHaveBeenCalledOnce(); expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" });
+    const serialized = consoleError.mock.calls.flat().join(" ");
+    expect(serialized).toContain('"stage":"interaction_enqueue"');
+    expect(serialized).toContain('"code":"INTERACTION_ENQUEUE_FAILED"');
+    expect(serialized).not.toContain("Bearer secret");
+    consoleError.mockRestore();
   });
   it("still queues when immediate Slack feedback fails", async () => {
-    const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("Slack unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("Slack Bearer secret"));
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, showProcessing, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledOnce(); expect(showProcessing).toHaveBeenCalledOnce();
+    expect(consoleError.mock.calls.flat().join(" ")).toContain('"code":"IMMEDIATE_STATUS_FAILED"');
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
+    consoleError.mockRestore();
   });
   it("still queues when the selection confirmation update fails", async () => {
-    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValue(new Error("Slack unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValue(new Error("Slack Bearer secret"));
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(updateOriginal).toHaveBeenCalledOnce(); expect(send).toHaveBeenCalledOnce();
+    expect(consoleError.mock.calls.flat().join(" ")).toContain('"code":"SELECTION_CONFIRMATION_FAILED"');
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
+    consoleError.mockRestore();
   });
   it("shows a confirmation before queueing a redo", async () => {
     const redoPayload = structuredClone(payload);

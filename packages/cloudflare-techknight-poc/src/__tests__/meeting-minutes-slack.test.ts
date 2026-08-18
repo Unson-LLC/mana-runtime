@@ -91,6 +91,15 @@ describe("MeetingMinutesSlackClient", () => {
       .resolves.toBe("3.1");
   });
 
+  it("propagates a completion assistant status failure for durable lifecycle diagnostics", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).includes("assistant.threads.setStatus")
+      ? Response.json({ ok: false, error: "not_allowed" })
+      : Response.json({ ok: true })) as typeof fetch;
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(routedRun(), "completed"))
+      .rejects.toThrow("slack_api_failed:assistant.threads.setStatus:not_allowed");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("explains a canonical task project scope mismatch to the operator", async () => {
     let call: { url: string; body: Record<string, unknown> } | undefined;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -155,7 +164,43 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(body)).toContain("議事録の作成に失敗しました");
     expect(JSON.stringify(body)).toContain("mana_meeting_minutes_choose_destination:mana");
     expect(JSON.stringify(body)).toContain("再実行");
+    expect(JSON.stringify(body)).toContain("失敗段階: 不明（旧形式）");
+    expect(JSON.stringify(body)).not.toContain("失敗段階: 状態表示");
     expect(JSON.stringify(body)).toContain('\\"sourceThreadTs\\":\\"1.0\\"');
+  });
+
+  it("shows safe same-run diagnostics for an unclassified failure without exposing the raw error", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "failed" as const,
+      failure: { stage: "routed", message: "Authorization: Bearer secret-value raw upstream response" },
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1" as const, stage: "generation" as const,
+        code: "UNCLASSIFIED_FAILURE", retryable: true, failedAt: "2026-08-18T00:00:00.000Z" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("処理ID: run-1");
+    expect(serialized).toContain("失敗段階: 議事録生成");
+    expect(serialized).toContain("エラーコード: UNCLASSIFIED_FAILURE");
+    expect(serialized).not.toContain("secret-value");
+    expect(serialized).not.toContain("raw upstream response");
+  });
+
+  it("does not recommend or offer retry when diagnostics say operator action is required", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "failed" as const,
+      failure: { stage: "routed", message: "meeting_minutes_transcript_changed" },
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1" as const, stage: "transcript_download" as const,
+        code: "TRANSCRIPT_CHANGED", retryable: false, failedAt: "2026-08-18T00:00:00.000Z" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("運用担当者へ確認してください");
+    expect(serialized).not.toContain("下のボタンから再実行できます");
+    expect(serialized).not.toContain('"type":"actions"');
   });
 
   it("explains that placeholder output was rejected before it was shared", async () => {

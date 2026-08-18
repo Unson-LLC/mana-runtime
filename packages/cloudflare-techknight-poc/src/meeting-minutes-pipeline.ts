@@ -1,6 +1,6 @@
 import { isMeetingMinutesFile, meetingMinutesRunId, type AuditedGeneratedMeetingMinutes, type GeneratedMeetingMinutes,
   type MeetingMinutesContextMode, type MeetingMinutesContextReceipt,
-  type MeetingMinutesDestination, type MeetingMinutesRun, type MeetingMinutesSelection,
+  type MeetingMinutesDestination, type MeetingMinutesDiagnosticStage, type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
   meetingMinutesContextProjectCode, meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput } from "@openryoko/task-runtime-core";
@@ -12,6 +12,8 @@ import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 import { assertMeetingMinutesContextUsable, bindGeneratedMeetingMinutesContext,
   reconcileMeetingMinutesTask } from "./meeting-minutes-brainbase-context.js";
+import { classifyMeetingMinutesFailure, meetingMinutesFailureLog,
+  meetingMinutesReceiptSnapshot } from "./meeting-minutes-diagnostics.js";
 
 export interface StartMeetingMinutesOptions {
   enabled: boolean; routerChannelId: string; destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
@@ -137,6 +139,21 @@ async function taskIdempotencyKey(runId: string, revision: number, index: number
   return `meeting-minutes-${await digest(`${runId}:revision:${revision}:task:${index}`)}`;
 }
 
+const SAFE_TASK_FAILURE_MESSAGES = new Set([
+  "meeting_minutes_assignee_resolver_unconfigured", "meeting_minutes_assignee_unavailable",
+  "meeting_minutes_task_invalid_response", "project_code_not_allowed", "task_scope_not_configured",
+]);
+const SAFE_TASK_FAILURE_CODES = new Set(["project_code_not_allowed", "task_scope_not_configured"]);
+
+function safeTaskFailureMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : "";
+  return SAFE_TASK_FAILURE_MESSAGES.has(message) ? message : fallback;
+}
+
+function safeTaskFailureCode(value: unknown): string | undefined {
+  return typeof value === "string" && SAFE_TASK_FAILURE_CODES.has(value) ? value : undefined;
+}
+
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
   receipt: MeetingMinutesContextReceipt, options: ResumeMeetingMinutesOptions): Promise<void> {
   const tasks: MeetingMinutesTaskCandidate[] = run.generated?.tasks ?? [];
@@ -178,13 +195,13 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
     }
   } catch (error) {
     const taskApiClassification = error && typeof error === "object"
-      ? { code: "code" in error && typeof error.code === "string" ? error.code : undefined,
+      ? { code: "code" in error ? safeTaskFailureCode(error.code) : undefined,
         status: "status" in error && typeof error.status === "number" && Number.isInteger(error.status)
           ? error.status : undefined }
       : {};
     run.taskRegistration.failure = { index: activeIndex,
       stage: "task_registration",
-      message: error instanceof Error ? error.message : "meeting_minutes_task_registration_failed",
+      message: safeTaskFailureMessage(error, "meeting_minutes_task_registration_failed"),
       ...(taskApiClassification.code ? { code: taskApiClassification.code } : {}),
       ...(taskApiClassification.status ? { status: taskApiClassification.status } : {}),
       failedAt: now(options) };
@@ -200,10 +217,14 @@ async function deferTaskIntegration(fs: WorkspaceFs, run: MeetingMinutesRun,
   const existingClassification = stage === "task_registration" ? run.taskRegistration.failure : undefined;
   run.taskRegistration.failure = { index: run.taskRegistration.failure?.index ??
     Math.max(0, run.taskRegistration.registered.length - 1), stage,
-    message: error instanceof Error ? error.message : "meeting_minutes_task_integration_failed",
+    message: safeTaskFailureMessage(error, `meeting_minutes_${stage}_failed`),
     ...(existingClassification?.code ? { code: existingClassification.code } : {}),
     ...(existingClassification?.status ? { status: existingClassification.status } : {}),
     failedAt: now(options) };
+  const classified = classifyMeetingMinutesFailure("task_registration", error);
+  run.diagnostics = { ...run.diagnostics, schemaVersion: "meeting_minutes_diagnostics.v1", ...classified,
+    failedAt: now(options), checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
+      postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 } };
   run.status = "completed"; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
 }
@@ -221,6 +242,10 @@ async function clearTaskIntegrationPending(fs: WorkspaceFs, run: MeetingMinutesR
   options: ResumeMeetingMinutesOptions): Promise<void> {
   if (!run.taskRegistration?.failure) return;
   delete run.taskRegistration.failure;
+  if (run.diagnostics?.stage === "task_registration") {
+    const receiptSnapshot = run.diagnostics.receiptSnapshot;
+    run.diagnostics = { schemaVersion: "meeting_minutes_diagnostics.v1", ...(receiptSnapshot ? { receiptSnapshot } : {}) };
+  }
   run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
 }
 
@@ -307,9 +332,9 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         assertMeetingMinutesContextUsable(receipt, options.contextMode);
         await registerGeneratedTasks(fs, run, receipt, options);
       } catch (error) {
-        console.error("meeting_minutes_task_registration_retry_failed", {
-          runId: run.runId, error: error instanceof Error ? error.message : "meeting_minutes_task_registration_failed",
-        });
+        await deferTaskIntegration(fs, run, "task_registration", error, options);
+        console.error(JSON.stringify({ event: "meeting_minutes_task_registration_retry_failed",
+          ...meetingMinutesFailureLog(run) }));
         return run;
       }
       if (run.taskRegistration.registered.length && options.repairTaskBoard) {
@@ -351,13 +376,15 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   run.status = run.status === "awaiting_destination" ? "routed" : run.status; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
   run.slack ??= { postedChunkIndexes: [] };
-  if (!run.slack.processingTs) {
-    run.slack.processingTs = await options.postProcessingStatus(run);
-    run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
-  }
   let transcript = "";
   let contextReceipt: MeetingMinutesContextReceipt | undefined;
+  let diagnosticStage: MeetingMinutesDiagnosticStage = "slack_publish";
   try {
+    if (!run.slack.processingTs) {
+      run.slack.processingTs = await options.postProcessingStatus(run);
+      run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
+    }
+    diagnosticStage = "transcript_download";
     if (!run.github || !run.context) {
       transcript = await options.download(run.file.id);
       if (!transcript.trim()) throw new Error("meeting_minutes_transcript_empty");
@@ -367,7 +394,12 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     }
     const contextIdentity = { run_id: run.runId, project_code: meetingMinutesContextProjectCode(run.destination),
       transcript_sha256: run.transcriptSha256! };
+    diagnosticStage = "context_resolve";
     contextReceipt = await options.resolveContext(contextIdentity, run.context?.receiptId);
+    diagnosticStage = "context_gate";
+    run.diagnostics = { schemaVersion: "meeting_minutes_diagnostics.v1", stage: diagnosticStage,
+      receiptSnapshot: meetingMinutesReceiptSnapshot(contextReceipt) };
+    run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     assertMeetingMinutesContextUsable(contextReceipt, options.contextMode);
     if (run.context && (run.context.receiptId !== contextReceipt.receipt_id || run.context.checksum !== contextReceipt.checksum)) {
       throw new Error("meeting_minutes_context_changed");
@@ -379,6 +411,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     if (!run.github) {
+      diagnosticStage = "generation";
       if (!run.generated) {
         const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
         run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt, options.contextMode);
@@ -390,11 +423,13 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         } catch (error) {
           if (!(error instanceof Error) || !["meeting_minutes_context_source_ref_unknown",
             "meeting_minutes_context_attestation_mismatch"].includes(error.message)) throw error;
+          diagnosticStage = "generation";
           const candidate = await options.generate(transcript, run.destination, contextReceipt, options.contextMode);
           run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt, options.contextMode);
         }
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
       }
+      diagnosticStage = "github_save";
       run.github = await options.saveGitHub({ destination: run.destination, transcript, minutes: run.generated,
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
@@ -404,6 +439,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
     const chunks = splitMeetingMinutesForSlack(narrativeText);
     run.slack ??= { postedChunkIndexes: [] };
+    diagnosticStage = "slack_publish";
     if (!run.slack.parentTs) {
       run.slack.parentTs = await options.postParent(run.destination.slackChannelId, run.file.name, parentText,
         `${run.runId}-revision-${run.revision ?? 0}-parent`);
@@ -416,12 +452,13 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       run.slack.postedChunkIndexes.push(index); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
     try {
+      diagnosticStage = "task_registration";
       await registerGeneratedTasks(fs, run, contextReceipt, options);
     } catch (error) {
-      console.error("meeting_minutes_task_registration_deferred", {
-        runId: run.runId, error: error instanceof Error ? error.message : "meeting_minutes_task_registration_failed",
-      });
-      await deferTaskIntegration(fs, run, "task_registration", error, options); return run;
+      await deferTaskIntegration(fs, run, "task_registration", error, options);
+      console.error(JSON.stringify({ event: "meeting_minutes_task_registration_deferred",
+        ...meetingMinutesFailureLog(run) }));
+      return run;
     }
     if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
       await markTaskIntegrationPending(fs, run, "task_board", options);
@@ -444,8 +481,12 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     run.status = "completed"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); return run;
   } catch (error) {
     const failedStage = run.status;
+    const classified = classifyMeetingMinutesFailure(diagnosticStage, error);
     run.status = "failed";
     run.failure = { stage: failedStage, message: error instanceof Error ? error.message : "meeting_minutes_failed" };
+    run.diagnostics = { ...run.diagnostics, schemaVersion: "meeting_minutes_diagnostics.v1", ...classified,
+      failedAt: now(options), checkpoint: { hasGitHub: Boolean(run.github),
+        hasSlackParent: Boolean(run.slack?.parentTs), postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 } };
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run); throw error;
   }
 }

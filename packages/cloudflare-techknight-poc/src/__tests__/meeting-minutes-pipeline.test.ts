@@ -411,7 +411,7 @@ describe("meeting minutes pipeline", () => {
     const deferred = await resumeMeetingMinutesRun(fs, selection, options);
     expect(deferred).toMatchObject({
       status: "completed", slack: { parentTs: "10.1", postedChunkIndexes: [0] },
-      taskRegistration: { failure: { stage: "task_card", message: "task card down" } },
+      taskRegistration: { failure: { stage: "task_card", message: "meeting_minutes_task_card_failed" } },
     });
 
     const retried = await resumeMeetingMinutesRun(fs, selection, options);
@@ -480,11 +480,12 @@ describe("meeting minutes pipeline", () => {
   });
 
   it("retries only the unregistered tasks after a partial task API failure", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
       .mockResolvedValueOnce({ id: "task-1" })
-      .mockRejectedValueOnce(new Error("task api down"))
+      .mockRejectedValueOnce(new Error("task api Authorization Bearer secret"))
       .mockResolvedValueOnce({ id: "task-2" });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
@@ -497,7 +498,11 @@ describe("meeting minutes pipeline", () => {
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(first).toMatchObject({ status: "completed",
       slack: { parentTs: "10.1", postedChunkIndexes: [0] },
-      taskRegistration: { failure: { index: 1, message: "task api down" } } });
+      taskRegistration: { failure: { index: 1, message: "meeting_minutes_task_registration_failed" } } });
+    expect(first.diagnostics).toMatchObject({ stage: "task_registration", code: "TASK_REGISTRATION_FAILED",
+      checkpoint: { hasGitHub: true, hasSlackParent: true, postedChunkCount: 1 } });
+    expect(JSON.stringify(first)).not.toContain("Bearer secret");
+    expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
     expect(first).not.toHaveProperty("failure");
     const retried = await resumeMeetingMinutesRun(fs, selection, options);
     expect(retried.taskRegistration?.registered.map((task) => task.taskId)).toEqual(["task-1", "task-2"]);
@@ -509,6 +514,10 @@ describe("meeting minutes pipeline", () => {
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(retried.taskRegistration).not.toHaveProperty("failure");
+    expect(retried.diagnostics).not.toHaveProperty("stage");
+    expect(retried.diagnostics).not.toHaveProperty("code");
+    expect(retried.diagnostics).not.toHaveProperty("failedAt");
+    consoleError.mockRestore();
   });
 
   it("shares GitHub-saved minutes even when canonical task registration is unavailable", async () => {
@@ -529,7 +538,9 @@ describe("meeting minutes pipeline", () => {
     expect(deferred).toMatchObject({ status: "completed",
       slack: { parentTs: "10.1", postedChunkIndexes: [0] },
       taskRegistration: { failure: { index: 0, stage: "task_registration", code: "project_code_not_allowed",
-        status: 403, message: "project code is not allowed" } } });
+        status: 403, message: "meeting_minutes_task_registration_failed" } } });
+    expect(deferred.diagnostics).toMatchObject({ stage: "task_registration",
+      code: "TASK_PROJECT_CODE_NOT_ALLOWED", retryable: false });
     expect(deferred).not.toHaveProperty("failure");
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
@@ -567,7 +578,7 @@ describe("meeting minutes pipeline", () => {
     const deferred = await resumeMeetingMinutesRun(fs, selection, options);
     expect(deferred).toMatchObject({ status: "completed",
       taskRegistration: { registered: [{ taskId: "task-kartz" }],
-        failure: { stage: "task_board", message: "board down" } } });
+        failure: { stage: "task_board", message: "meeting_minutes_task_board_failed" } } });
     expect(postTaskCard).not.toHaveBeenCalled();
 
     const recovered = await resumeMeetingMinutesRun(fs, selection, options);
@@ -598,7 +609,7 @@ describe("meeting minutes pipeline", () => {
     const deferred = await resumeMeetingMinutesRun(fs, selection, options);
     expect(deferred).toMatchObject({ status: "completed",
       taskRegistration: { registered: [{ taskId: "task-kartz" }],
-        failure: { stage: "task_card", message: "task card down" } } });
+        failure: { stage: "task_card", message: "meeting_minutes_task_card_failed" } } });
     expect(deferred.slack?.taskCardTs).toBeUndefined();
 
     const recovered = await resumeMeetingMinutesRun(fs, selection, options);
@@ -629,7 +640,7 @@ describe("meeting minutes pipeline", () => {
 
     expect(retained.slack?.taskCardTs).toBeUndefined();
     expect(retained.taskRegistration?.failure).toMatchObject({
-      stage: "task_card", message: "task card down",
+      stage: "task_card", message: "meeting_minutes_task_card_failed",
     });
     expect(unavailable.resolveContext).not.toHaveBeenCalled();
     expect(unavailable.createTask).not.toHaveBeenCalled();
@@ -894,7 +905,10 @@ describe("meeting minutes pipeline", () => {
     const options = resumeOptions({ contextMode: "required" });
     const resolveContext = vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,
       receipt_id: `receipt-${status}`, identity, status, checksum: `${status}-checksum`,
-      resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
+      resolved_at: "2026-08-15T00:00:00.000Z", errors: [
+        { code: "graph_timeout", message: "Authorization: Bearer secret-value" },
+        { code: "not safe!", message: "raw upstream response" },
+      ], context: { source_refs: [], open_tasks: [] } }));
     await expect(resumeMeetingMinutesRun(fs, selection,
       { ...options, resolveContext }))
       .rejects.toThrow(`meeting_minutes_context_${status}`);
@@ -903,6 +917,39 @@ describe("meeting minutes pipeline", () => {
     expect(options.createTask).not.toHaveBeenCalled();
     expect(options.postParent).not.toHaveBeenCalled();
     expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      status: "failed",
+      diagnostics: {
+        schemaVersion: "meeting_minutes_diagnostics.v1",
+        stage: "context_gate",
+        code: status === "partial" ? "CONTEXT_PARTIAL" : "CONTEXT_UNAVAILABLE",
+        receiptSnapshot: { receiptId: `receipt-${status}`, status, errorCodes: ["GRAPH_TIMEOUT"] },
+      },
+    });
+    expect(JSON.stringify(await loadMeetingMinutesRun(fs, selection.runId))).not.toContain("secret-value");
+  });
+
+  it.each([
+    ["generation", "GENERATION_FAILED", { generate: vi.fn().mockRejectedValue(new Error("model secret output")) }],
+    ["github", "GITHUB_SAVE_FAILED", { saveGitHub: vi.fn().mockRejectedValue(new Error("github secret output")) }],
+    ["slack", "SLACK_PUBLISH_FAILED", { postParent: vi.fn().mockRejectedValue(new Error("slack secret output")) }],
+  ] as const)("persists a stable %s failure stage and safe code", async (_name, code, overrides) => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await expect(resumeMeetingMinutesRun(fs, selection, resumeOptions(overrides))).rejects.toThrow();
+    const failed = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(failed?.diagnostics).toMatchObject({ code });
+    expect(["generation", "github_save", "slack_publish"]).toContain(failed?.diagnostics?.stage);
+  });
+
+  it("persists a Slack publish diagnostic when the processing status post fails", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const options = resumeOptions({ postProcessingStatus: vi.fn().mockRejectedValue(new Error("Bearer secret")) });
+    await expect(resumeMeetingMinutesRun(fs, selection, options)).rejects.toThrow("Bearer secret");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "failed",
+      diagnostics: { stage: "slack_publish", code: "SLACK_PUBLISH_FAILED" } });
+    expect(options.download).not.toHaveBeenCalled();
   });
 
   it.each(["partial", "unavailable"] as const)(

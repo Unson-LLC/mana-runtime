@@ -121,6 +121,19 @@ export type MeetingMinutesRunStatus =
   | "completed"
   | "failed";
 
+export type MeetingMinutesDiagnosticStage = "interaction_enqueue" | "transcript_download" | "context_resolve"
+  | "context_gate" | "generation" | "github_save" | "slack_publish" | "task_registration" | "status_projection";
+
+export interface MeetingMinutesDiagnostics {
+  schemaVersion: "meeting_minutes_diagnostics.v1";
+  stage?: MeetingMinutesDiagnosticStage;
+  code?: string;
+  retryable?: boolean;
+  failedAt?: string;
+  receiptSnapshot?: { receiptId?: string; status: MeetingMinutesContextStatus; errorCodes: string[] };
+  checkpoint?: { hasGitHub: boolean; hasSlackParent: boolean; postedChunkCount: number };
+}
+
 export interface MeetingMinutesRun {
   version: 1;
   runId: string;
@@ -147,6 +160,10 @@ export interface MeetingMinutesRun {
       code?: string; status?: number; failedAt: string } };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
+  /** Sanitized diagnostics only; never store upstream bodies, transcript text, hashes, or credentials. */
+  diagnostics?: MeetingMinutesDiagnostics;
+  /** A projection failure is secondary and must not overwrite the processing failure or completed result. */
+  projectionFailure?: Required<Pick<MeetingMinutesDiagnostics, "stage" | "code" | "retryable" | "failedAt">>;
   lifecycle?: {
     actionTs: string;
     deadlineAt: string;

@@ -30,6 +30,7 @@ import type { MeetingMinutesDestination, MeetingMinutesRecovery, MeetingMinutesR
 import { handleMeetingMinutesInteractionEntrypoint } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
+import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
 import { handleMeetingMinutesTaskAction } from "./meeting-minutes-task-actions.js";
 import { handleTaskWriteProxyRequest } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
@@ -559,6 +560,7 @@ export default {
           body: selection, ack: () => message.ack(), retry: () => message.retry(),
         }, meetingMinutesCommandGateDependencies(env, meetingMinutesConfig.enabled));
         if (commandGate === "blocked") continue;
+        let failedMeetingMinutesRun: MeetingMinutesRun | undefined;
         try {
           const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
             env.TENANT_ID, selection.workspaceId, selection.runId,
@@ -582,6 +584,7 @@ export default {
               });
             } catch (error) {
               const persisted = await loadMeetingMinutesRun(workspace.fs, selection.runId);
+              failedMeetingMinutesRun = persisted;
               if (persisted?.status === "completed" || persisted?.lifecycle?.recoveryProjectedAt) {
                 await meetingMinutesDeploymentGate(env).markTerminal(selection.runId);
               }
@@ -591,8 +594,10 @@ export default {
           await meetingMinutesDeploymentGate(env).markTerminal(selection.runId);
           message.ack();
         } catch (error) {
-          console.error(JSON.stringify({ event: "meeting_minutes_selection_failed", runId: selection.runId,
-            error: error instanceof Error ? error.message : "unexpected_error" }));
+          console.error(JSON.stringify({ event: "meeting_minutes_selection_failed",
+            ...(failedMeetingMinutesRun ? meetingMinutesFailureLog(failedMeetingMinutesRun) : {
+              runId: selection.runId, stage: "unknown", code: "UNCLASSIFIED_FAILURE", retryable: true,
+            }) }));
           message.retry();
         }
         continue;

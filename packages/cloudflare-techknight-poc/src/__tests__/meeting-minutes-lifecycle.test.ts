@@ -1,5 +1,6 @@
 import { processMeetingMinutesSelectionWithStatus } from "../meeting-minutes-lifecycle.js";
 import { startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
+import { loadMeetingMinutesRun } from "../meeting-minutes-state.js";
 import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
   MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
@@ -70,7 +71,8 @@ describe("meeting minutes source status lifecycle", () => {
       createTask: vi.fn().mockRejectedValue(new Error("project_code_not_allowed")),
     }), { updateStatus });
     expect(run).toMatchObject({ status: "completed",
-      taskRegistration: { failure: { index: 0, message: "project_code_not_allowed" } } });
+      taskRegistration: { failure: { index: 0, message: "project_code_not_allowed" } },
+      diagnostics: { stage: "task_registration", code: "TASK_PROJECT_CODE_NOT_ALLOWED", retryable: false } });
     expect(run).not.toHaveProperty("failure");
     expect(updateStatus).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }), "completed");
     expect(updateStatus).not.toHaveBeenCalledWith(expect.anything(), "failed");
@@ -89,7 +91,9 @@ describe("meeting minutes source status lifecycle", () => {
     expect(operations.saveGitHub).toHaveBeenCalledTimes(1);
     expect(operations.postParent).toHaveBeenCalledTimes(1);
     expect(updateStatus).toHaveBeenCalledTimes(2);
-    expect(logProjectionError).toHaveBeenCalledWith(expect.objectContaining({ outcome: "completed", error: "slack update down" }));
+    expect(logProjectionError).toHaveBeenCalledWith(expect.objectContaining({ outcome: "completed",
+      runId: selection.runId, stage: "status_projection", code: "STATUS_PROJECTION_FAILED" }));
+    expect(JSON.stringify(logProjectionError.mock.calls)).not.toContain("slack update down");
   });
 
   it("preserves the processing error when the failure projection also fails", async () => {
@@ -98,6 +102,11 @@ describe("meeting minutes source status lifecycle", () => {
       resume({ saveGitHub: vi.fn().mockRejectedValue(new Error("github down")) }), {
         updateStatus: vi.fn().mockRejectedValue(new Error("slack update down")), logProjectionError,
       })).rejects.toThrow("github down");
-    expect(logProjectionError).toHaveBeenCalledWith(expect.objectContaining({ outcome: "failed", error: "slack update down" }));
+    expect(logProjectionError).toHaveBeenCalledWith(expect.objectContaining({ outcome: "failed",
+      stage: "status_projection", code: "STATUS_PROJECTION_FAILED" }));
+    const persisted = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(persisted).toMatchObject({ status: "failed", diagnostics: { stage: "github_save", code: "GITHUB_SAVE_FAILED" },
+      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED" } });
+    expect(JSON.stringify(logProjectionError.mock.calls)).not.toContain("slack update down");
   });
 });

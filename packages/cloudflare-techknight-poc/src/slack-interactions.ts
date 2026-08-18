@@ -259,7 +259,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       try { feedbackThreadTs = await options.resolveThreadTs(runId); }
       catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_lookup_failed", runId,
-          error: error instanceof Error ? error.message : "unexpected_error" }));
+          stage: "interaction_enqueue", code: "THREAD_COORDINATE_LOOKUP_FAILED", retryable: true }));
       }
     }
     let processingShown = false;
@@ -269,7 +269,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         processingShown = true;
       } catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
-          error: error instanceof Error ? error.message : "unexpected_error" }));
+          stage: "interaction_enqueue", code: "IMMEDIATE_STATUS_FAILED", retryable: true }));
       }
     }
     try {
@@ -278,7 +278,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         try { await options.updateOriginal(responseUrl, destinationSelectedMessage(runId, fileName, destination)); }
         catch (error) {
           console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
-            error: error instanceof Error ? error.message : "unexpected_error" }));
+            stage: "interaction_enqueue", code: "SELECTION_CONFIRMATION_FAILED", retryable: true }));
         }
       }
       await options.send({ kind: "meeting_minutes_selection", runId, destinationId, workspaceId: options.expectedTeamId,
@@ -288,9 +288,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         try { await options.clearProcessing({ channelId, threadTs: feedbackThreadTs }); }
         catch (clearError) {
           console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_clear_failed", runId,
-            error: clearError instanceof Error ? clearError.message : "unexpected_error" }));
+            stage: "interaction_enqueue", code: "IMMEDIATE_STATUS_CLEAR_FAILED", retryable: true }));
         }
       }
+      console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failed", runId,
+        stage: "interaction_enqueue", code: "INTERACTION_ENQUEUE_FAILED", retryable: true }));
       throw error;
     }
   })());
