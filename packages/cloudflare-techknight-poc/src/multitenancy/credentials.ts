@@ -10,7 +10,7 @@ import { validateTenantBoundary } from "./envelope.js";
 import { deny } from "./errors.js";
 
 export interface CredentialBrokerClient {
-  acquire_lease(request: CredentialLeaseRequest): Promise<CredentialLease>;
+  acquire_lease(request: CredentialLeaseRequest, tenantContext?: TenantContextEnvelope): Promise<CredentialLease>;
 }
 
 function assertLeaseBinding(
@@ -92,8 +92,11 @@ export async function acquireEnvelopeCredentialLease(input: {
     },
     requested_ttl_seconds: 60,
   };
+  const contextBoundBroker: CredentialBrokerClient = {
+    acquire_lease: (request) => input.broker.acquire_lease(request, input.envelope),
+  };
   return acquireCredentialLease({
-    broker: input.broker,
+    broker: contextBoundBroker,
     request,
     read_authoritative_snapshot: input.read_authoritative_snapshot,
     now: input.now,

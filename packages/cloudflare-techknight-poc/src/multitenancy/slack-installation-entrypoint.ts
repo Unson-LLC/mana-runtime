@@ -34,15 +34,9 @@ function parseLifecycleEvent(value: unknown): SlackInstallationLifecycleEvent | 
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const event = value as Record<string, unknown>;
   if (!nonEmptyString(event.kind, 64) || !nonEmptyString(event.expected_revision, 128)) return undefined;
-  if (event.kind === "oauth_callback") {
-    if (!exactKeys(event, ["kind", "expected_revision", "app_id", "workspace_id", "installation_id",
-      "installer_id", "granted_scopes", "authorization_code_ref"], ["enterprise_id"])
-      || !nonEmptyString(event.app_id, 128) || !nonEmptyString(event.workspace_id, 128)
-      || !nonEmptyString(event.installation_id, 256) || !nonEmptyString(event.installer_id, 128)
-      || !scopes(event.granted_scopes) || !nonEmptyString(event.authorization_code_ref)
-      || (event.enterprise_id !== undefined && !nonEmptyString(event.enterprise_id, 128))) return undefined;
-    return event as unknown as SlackInstallationLifecycleEvent;
-  }
+  // Public OAuth callbacks must pass the single-use installation-intent boundary.
+  // This authenticated lifecycle endpoint is only for post-installation revisions.
+  if (event.kind === "oauth_callback") return undefined;
   if (event.kind === "reauthorized") {
     if (!exactKeys(event, ["kind", "connection_id", "expected_revision", "installation_id", "installer_id",
       "granted_scopes"])

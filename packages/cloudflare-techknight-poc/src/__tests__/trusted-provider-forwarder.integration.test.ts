@@ -63,6 +63,27 @@ const BASE_ENV = {
   GOOGLE_DRIVE_MCP_BASE_URL: "https://drive.example.test",
   NOCODB_URL: "https://nocodb.example.test",
 };
+
+function trustedServiceEnv(port: number) {
+  return {
+    ...BASE_ENV,
+    BRAINBASE_TENANT_RUNTIME_SERVICE: {
+      async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+        const request = new Request(input, init);
+        const headers = new Headers(request.headers);
+        // The test binding stands in for the ingress Worker, which owns service authentication.
+        headers.set("authorization", `Bearer ${SERVICE_TOKEN}`);
+        return fetch(`http://127.0.0.1:${port}${new URL(request.url).pathname}`, {
+          method: request.method,
+          headers,
+          body: request.body,
+          redirect: "manual",
+          ...(request.body ? { duplex: "half" } : {}),
+        } as RequestInit);
+      },
+    },
+  };
+}
 const servers: Server[] = [];
 
 afterEach(async () => {
@@ -235,11 +256,7 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
       });
     });
     const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
-      env: {
-        ...BASE_ENV,
-        BRAINBASE_TENANT_RUNTIME_PORT: String(trustedPort),
-        BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN,
-      },
+      env: trustedServiceEnv(trustedPort),
       tenant_context: TENANT_CONTEXT,
     });
 
@@ -275,7 +292,7 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
     const request = testCase.request();
     const expectedBinding = { ...BINDING, audience: new URL(request.url).hostname };
     const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
-      env: { ...BASE_ENV, BRAINBASE_TENANT_RUNTIME_PORT: String(port), BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN },
+      env: trustedServiceEnv(port),
       tenant_context: TENANT_CONTEXT,
     });
 
@@ -295,12 +312,9 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
   });
 
   it.each([
-    ["disabled service", { BRAINBASE_TENANT_RUNTIME_ENABLED: "0", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
-    ["missing port", { BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
-    ["missing token", { BRAINBASE_TENANT_RUNTIME_PORT: "31016" }],
-    ["wildcard host", { BRAINBASE_TENANT_RUNTIME_HOST: "0.0.0.0", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
-    ["asterisk host", { BRAINBASE_TENANT_RUNTIME_HOST: "*", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK: "1", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
-    ["missing Cloudflare service binding", { BRAINBASE_TENANT_RUNTIME_ENABLED: "1", BRAINBASE_TENANT_RUNTIME_PORT: "31016", BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }],
+    ["missing Cloudflare service binding", {}],
+    ["invalid timeout", { BRAINBASE_TENANT_RUNTIME_SERVICE: BASE_ENV.BRAINBASE_TENANT_RUNTIME_SERVICE,
+      BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "0" }],
   ])("rejects unsafe internal service configuration: %s", (_label, env) => {
     expect(() => createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: TENANT_CONTEXT })).toThrow("runtime_configuration_invalid");
   });
@@ -357,11 +371,11 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
         ...BASE_ENV,
         BRAINBASE_TENANT_RUNTIME_PORT: "31016",
         BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN,
+        BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async () => {
+          throw new Error("trusted service must not be reached");
+        } },
       },
       tenant_context: TENANT_CONTEXT,
-      fetch_impl: async () => {
-        throw new Error("trusted service must not be reached");
-      },
     });
     await expect(forwarder.forward({
       lease: LEASE,
@@ -387,7 +401,7 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
       response.end(JSON.stringify({ provider: "slack", operation_id: BINDING.operation_id, provider_operation: "slack.files.download", ...next }));
     });
     const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
-      env: { ...BASE_ENV, BRAINBASE_TENANT_RUNTIME_PORT: String(port), BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }, tenant_context: TENANT_CONTEXT,
+      env: trustedServiceEnv(port), tenant_context: TENANT_CONTEXT,
     });
     const request = new Request("https://files.slack.com/files-pri/T/F/download/a.bin");
     const binding = { ...BINDING, audience: "files.slack.com" };
@@ -404,7 +418,7 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
       response.end(JSON.stringify({ code: "UPSTREAM_INVALID_RESPONSE", status: 502 }));
     });
     const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
-      env: { ...BASE_ENV, BRAINBASE_TENANT_RUNTIME_PORT: String(port), BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }, tenant_context: TENANT_CONTEXT,
+      env: trustedServiceEnv(port), tenant_context: TENANT_CONTEXT,
     });
     await expect(forwarder.forward({ lease: LEASE, expected_binding: BINDING,
       request: jsonRequest("https://api.anthropic.com/v1/messages", "POST", { messages: [] }), now: "2026-08-17T01:00:01.000Z" }))
@@ -423,7 +437,7 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
       response.end(JSON.stringify(bodies.shift()));
     });
     const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
-      env: { ...BASE_ENV, BRAINBASE_TENANT_RUNTIME_PORT: String(port), BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: SERVICE_TOKEN }, tenant_context: TENANT_CONTEXT,
+      env: trustedServiceEnv(port), tenant_context: TENANT_CONTEXT,
     });
     for (let index = 0; index < 2; index += 1) {
       await expect(forwarder.forward({ lease: LEASE, expected_binding: BINDING,

@@ -40,6 +40,7 @@
   },
   "execution_evidence": {
     "status": "not_collected",
+    "evidence_ref": "docs/operations/mana-multitenant-production-e2e-runbook.md",
     "note": "Applicability boundary only; compatible OSS conformance has not been executed."
   }
 }

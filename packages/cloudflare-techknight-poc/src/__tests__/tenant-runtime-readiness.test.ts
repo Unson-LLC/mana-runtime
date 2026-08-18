@@ -31,6 +31,14 @@ const complete = {
   SLACK_SIGNING_SECRET: "slack-signing-secret-placeholder",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   SLACK_EXPECTED_APP_ID: "A-MANA",
+  SLACK_OAUTH_APP_ID: "A-MANA",
+  SLACK_OAUTH_CLIENT_ID: "client-test",
+  SLACK_OAUTH_REDIRECT_URI: "https://mana.example.test/slack/installations/oauth/callback",
+  SLACK_OAUTH_SCOPES: "app_mentions:read,chat:write",
+  SLACK_INSTALLATION_CONTROL_PLANE: {
+    authorize: async () => ({}),
+    exchange_and_register: async () => ({}),
+  },
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
     keys: [{ kty: "OKP", crv: "Ed25519", kid: "key-1", x: "test", use: "sig" }],
   }),
@@ -77,6 +85,37 @@ describe("tenant runtime readiness", () => {
     })).toEqual({
       ready: false,
       missing_bindings: ["SLACK_SIGNING_SECRET"],
+    });
+  });
+
+  it("fails closed when Slack OAuth configuration or its control plane is not configured", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      SLACK_OAUTH_APP_ID: undefined,
+      SLACK_OAUTH_CLIENT_ID: undefined,
+      SLACK_OAUTH_REDIRECT_URI: undefined,
+      SLACK_OAUTH_SCOPES: undefined,
+      SLACK_INSTALLATION_CONTROL_PLANE: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: [
+        "SLACK_INSTALLATION_CONTROL_PLANE",
+        "SLACK_OAUTH_APP_ID",
+        "SLACK_OAUTH_CLIENT_ID",
+        "SLACK_OAUTH_REDIRECT_URI",
+        "SLACK_OAUTH_SCOPES",
+      ],
+    });
+  });
+
+  it("requires an HTTPS OAuth redirect URI and at least one valid OAuth scope", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      SLACK_OAUTH_REDIRECT_URI: "http://mana.example.test/callback",
+      SLACK_OAUTH_SCOPES: "",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["SLACK_OAUTH_REDIRECT_URI", "SLACK_OAUTH_SCOPES"],
     });
   });
 

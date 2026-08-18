@@ -107,7 +107,13 @@ import {
 } from "./task-board.js";
 import { enabledTaskBoardTargets, parseTaskBoardTargets } from "./task-board-targets.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
-import { claimRuntimeEvent, completeRuntimeEvent, releaseRuntimeEvent, runtimeDeliveryId } from "./runtime-event-claim.js";
+import {
+  claimRuntimeEvent,
+  completeRuntimeEvent,
+  releaseRuntimeEvent,
+  runtimeClaimSettlement,
+  runtimeDeliveryId,
+} from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
 import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, recoverStaleMeetingMinutesRun,
   MEETING_MINUTES_RECOVERY_DELAY_SECONDS } from "./meeting-minutes-recovery.js";
@@ -124,7 +130,10 @@ import {
   type TenantQueueBody,
   TenantRuntimeBoundaryVerifier,
 } from "./multitenancy/runtime-boundaries.js";
-import { createTenantRuntimeHttpClients } from "./multitenancy/http-clients.js";
+import {
+  createTenantRuntimeHttpClients,
+  parseWorkspaceConnectionHints,
+} from "./multitenancy/http-clients.js";
 import {
   createDurableTenantAccountingClient,
   createDurableTenantStateClient,
@@ -174,6 +183,17 @@ import {
 import { assessTenantRuntimeReadiness } from "./multitenancy/runtime-readiness.js";
 import { handleSlackInstallationLifecycleRequest } from "./multitenancy/slack-installation-entrypoint.js";
 import { SlackInstallationAdapter } from "./multitenancy/workspace-connection.js";
+import {
+  createDurableSlackInstallationIntentClient,
+  isSlackInstallationIntentRequest,
+  SlackInstallationIntentHandler,
+} from "./multitenancy/slack-oauth-installation-durable.js";
+import {
+  handleSlackOAuthCallbackRequest,
+  handleSlackOAuthStartRequest,
+  type SlackInstallationAuthorizationPort,
+  type SlackInstallationControlPlanePort,
+} from "./multitenancy/slack-oauth-installation.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -229,6 +249,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
   BRAINBASE_ACCOUNTING_URL?: string;
   BRAINBASE_RUNTIME_API_TOKEN?: string;
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
+  BRAINBASE_WORKSPACE_CONNECTIONS_JSON?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
   BRAINBASE_TENANT_RUNTIME_ENABLED?: string;
   BRAINBASE_TENANT_RUNTIME_HOST?: string;
@@ -239,6 +260,11 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
   SLACK_INSTALLATION_LIFECYCLE_TOKEN?: string;
+  SLACK_OAUTH_APP_ID?: string;
+  SLACK_OAUTH_CLIENT_ID?: string;
+  SLACK_OAUTH_REDIRECT_URI?: string;
+  SLACK_OAUTH_SCOPES?: string;
+  SLACK_INSTALLATION_CONTROL_PLANE?: SlackInstallationAuthorizationPort & SlackInstallationControlPlanePort;
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
@@ -275,8 +301,14 @@ export class TenantRuntimeState extends DurableObject<Env> {
     this.ctx.storage as unknown as TenantStateStorage,
     { setAlarm: (scheduledTime) => this.ctx.storage.setAlarm(scheduledTime) },
   );
+  readonly #slackInstallationIntents = new SlackInstallationIntentHandler(
+    this.ctx.storage as unknown as TenantStateStorage,
+  );
 
   fetch(request: Request): Promise<Response> {
+    if (isSlackInstallationIntentRequest(request)) {
+      return this.#slackInstallationIntents.fetch(request);
+    }
     if (new URL(request.url).hostname === "tenant-boundary-context.internal") {
       return this.#boundaryContext.fetch(request);
     }
@@ -316,16 +348,16 @@ export class TechKnightWorkspace extends withWorkspace(
     storage: self.workspaceStorage as unknown as DurableObjectStorageLike,
   }),
 ) {
-  async claimRuntimeEvent(eventId: string): Promise<boolean> {
+  async claimRuntimeEvent(eventId: string) {
     return claimRuntimeEvent(this.ctx.storage, eventId);
   }
 
-  async completeRuntimeEvent(eventId: string, responseTs?: string): Promise<void> {
-    await completeRuntimeEvent(this.ctx.storage, eventId, responseTs);
+  async completeRuntimeEvent(eventId: string, claimToken: string, responseTs?: string): Promise<void> {
+    await completeRuntimeEvent(this.ctx.storage, eventId, claimToken, responseTs);
   }
 
-  async releaseRuntimeEvent(eventId: string): Promise<void> {
-    await releaseRuntimeEvent(this.ctx.storage, eventId);
+  async releaseRuntimeEvent(eventId: string, claimToken: string): Promise<void> {
+    await releaseRuntimeEvent(this.ctx.storage, eventId, claimToken);
   }
 
   async claimDevelopmentCallback(eventId: string,
@@ -884,15 +916,13 @@ function tenantDeploymentProfile(env: Env): DeploymentProfileName {
   return profile;
 }
 
-function tenantRuntimeClients(env: Env) {
+function tenantRuntimeClients(env: Env, tenantContext?: TenantContextEnvelope) {
   return createTenantRuntimeHttpClients({
     deployment_profile: tenantDeploymentProfile(env),
-    tenant_authority_url: requiredRuntimeBinding(env.BRAINBASE_TENANT_AUTHORITY_URL),
-    credential_broker_url: requiredRuntimeBinding(env.BRAINBASE_CREDENTIAL_BROKER_URL),
-    quota_url: requiredRuntimeBinding(env.BRAINBASE_QUOTA_URL),
-    accounting_url: requiredRuntimeBinding(env.BRAINBASE_ACCOUNTING_URL),
-    api_token: requiredRuntimeBinding(env.BRAINBASE_RUNTIME_API_TOKEN),
+    service: env.BRAINBASE_TENANT_RUNTIME_SERVICE,
     timeout_ms: Number(env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000"),
+    workspace_connections: parseWorkspaceConnectionHints(env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON),
+    ...(tenantContext ? { tenant_context: tenantContext } : {}),
   });
 }
 
@@ -901,13 +931,19 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
   expected_scope: ExpectedTenantScope;
   artifact: AccountingArtifact;
 }): Promise<{ result_ref: string }> {
-  const clients = tenantRuntimeClients(env);
+  const clients = tenantRuntimeClients(env, input.tenant_context);
   const artifactContext = input.tenant_context;
   const snapshot = await clients.authority.read_workspace_connection(
     artifactContext.workspace_connection.connection_id,
   );
   const authorizationContext = await clients.authority.issue_tenant_context({
     workspace_connection: snapshot,
+    tenant_revision: artifactContext.tenant.tenant_revision,
+    actor: artifactContext.actor,
+    authorization: artifactContext.authorization,
+    correlation_id: artifactContext.correlation_id,
+    operation_id: artifactContext.operation_id,
+    billing_principal_id: artifactContext.credential.billing_principal_id,
     slack: {
       event_id: artifactContext.slack.event_id,
       channel_id: artifactContext.slack.channel_id,
@@ -935,7 +971,10 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
     now: new Date().toISOString(),
     verifier,
     artifact: input.artifact,
-    write: clients.accounting.write,
+    write: (payload) => clients.accounting.write({
+      ...payload,
+      tenant_context: authorizationContext,
+    }),
   });
 }
 
@@ -1405,6 +1444,30 @@ export default {
       return handleSlackInstallationLifecycleRequest(request, {
         token: env.SLACK_INSTALLATION_LIFECYCLE_TOKEN,
         adapter: new SlackInstallationAdapter(clients.workspace_connections),
+      });
+    }
+    if (url.pathname === "/slack/installations/oauth/start") {
+      if (!env.SLACK_INSTALLATION_CONTROL_PLANE || !env.SLACK_OAUTH_APP_ID
+        || !env.SLACK_OAUTH_CLIENT_ID || !env.SLACK_OAUTH_REDIRECT_URI || !env.SLACK_OAUTH_SCOPES) {
+        return Response.json({ error: "oauth_configuration_invalid" }, { status: 503 });
+      }
+      return handleSlackOAuthStartRequest(request, {
+        authorizer: env.SLACK_INSTALLATION_CONTROL_PLANE,
+        intents: createDurableSlackInstallationIntentClient(env.TENANT_RUNTIME_STATE),
+        app_id: env.SLACK_OAUTH_APP_ID,
+        client_id: env.SLACK_OAUTH_CLIENT_ID,
+        redirect_uri: env.SLACK_OAUTH_REDIRECT_URI,
+        scopes: env.SLACK_OAUTH_SCOPES.split(",").map((scope) => scope.trim()).filter(Boolean),
+      });
+    }
+    if (url.pathname === "/slack/installations/oauth/callback") {
+      if (!env.SLACK_INSTALLATION_CONTROL_PLANE || !env.SLACK_OAUTH_REDIRECT_URI) {
+        return Response.json({ error: "oauth_configuration_invalid" }, { status: 503 });
+      }
+      return handleSlackOAuthCallbackRequest(request, {
+        intents: createDurableSlackInstallationIntentClient(env.TENANT_RUNTIME_STATE),
+        control_plane: env.SLACK_INSTALLATION_CONTROL_PLANE,
+        redirect_uri: env.SLACK_OAUTH_REDIRECT_URI,
       });
     }
     if (url.pathname.startsWith("/admin/sandbox/")) {
@@ -2338,7 +2401,7 @@ export default {
           const id = env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event));
           const workspaceStub = env.TECHKNIGHT_WORKSPACE.get(id);
           const deliveryId = runtimeDeliveryId(event);
-          let deliveryClaimed = false;
+          let deliveryClaimToken: string | undefined;
           const handle = workspaceStub as unknown as WorkspaceHandle;
           try {
             const result = await withDisposableResource(
@@ -2364,10 +2427,20 @@ export default {
                 && !event.botId
                 && event.subtype !== "bot_message";
               if (!replyEligible && !ambientTriageCandidate) return { outcome: "ignored" as const };
-              if (!await workspaceStub.claimRuntimeEvent(deliveryId)) {
-                return { outcome: "already_processing" as const };
+              const runtimeClaim = await workspaceStub.claimRuntimeEvent(deliveryId);
+              if (runtimeClaim.disposition === "completed") {
+                return {
+                  outcome: "already_completed" as const,
+                  ...(runtimeClaim.responseTs ? { responseTs: runtimeClaim.responseTs } : {}),
+                };
               }
-              deliveryClaimed = true;
+              if (runtimeClaim.disposition === "in_progress") {
+                // Another delivery still owns this canonical Slack message. Do
+                // not complete the outer Queue claim: retry until the owner
+                // completes or its runtime lease can be reclaimed.
+                throw new TenantBoundaryError("idempotency", "UPSTREAM_UNAVAILABLE");
+              }
+              deliveryClaimToken = runtimeClaim.claimToken;
               const expectedScope = tenantConsumerOptions.expected_scope(tenantBody);
               const tenantCredentialFetch = createTenantCredentialFetch({
                 envelope: tenantContext,
@@ -2723,11 +2796,19 @@ export default {
               });
               },
             );
-            if (deliveryClaimed) await workspaceStub.completeRuntimeEvent(deliveryId,
-              "responseTs" in result && typeof result.responseTs === "string" ? result.responseTs : undefined);
+            if (deliveryClaimToken) {
+              const responseTs = "responseTs" in result && typeof result.responseTs === "string"
+                ? result.responseTs
+                : undefined;
+              if (runtimeClaimSettlement({ outcome: result.outcome, responseTs }) === "complete") {
+                await workspaceStub.completeRuntimeEvent(deliveryId, deliveryClaimToken, responseTs);
+              } else {
+                await workspaceStub.releaseRuntimeEvent(deliveryId, deliveryClaimToken);
+              }
+            }
             return result;
           } catch (error) {
-            if (deliveryClaimed) await workspaceStub.releaseRuntimeEvent(deliveryId);
+            if (deliveryClaimToken) await workspaceStub.releaseRuntimeEvent(deliveryId, deliveryClaimToken);
             throw error;
           }
         },

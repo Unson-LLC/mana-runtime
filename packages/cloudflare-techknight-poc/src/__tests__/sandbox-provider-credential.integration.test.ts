@@ -155,9 +155,7 @@ function trustedForwarderForTest(
       BRAINBASE_MCP_BASE_URL: "https://mcp.example.test",
       GOOGLE_DRIVE_MCP_BASE_URL: "https://drive.example.test",
       NOCODB_URL: "https://nocodb.example.test",
-    },
-    tenant_context: tenantContext,
-    fetch_impl: async (requestInfo, init) => {
+      BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(requestInfo, init);
       const input = await request.json() as {
         tenant_context: TenantContextEnvelope;
@@ -167,8 +165,8 @@ function trustedForwarderForTest(
         provider_operation: string;
         request: unknown;
       };
-      expect(request.url).toBe("http://127.0.0.1:31016/api/v1/runtime/provider-requests:forward");
-      expect(request.headers.get("authorization")).toBe("Bearer brainbase-service-token-placeholder");
+      expect(request.url).toBe("https://brainbase.internal/api/v1/runtime/provider-requests:forward");
+      expect(request.headers.get("authorization")).toBeNull();
       expect(request.headers.get("brainbase-protocol-version")).toBe("1.0");
       expect(input.tenant_context).toEqual(tenantContext);
       const material = materialByOpaqueHandle.get(input.lease_token);
@@ -205,7 +203,9 @@ function trustedForwarderForTest(
         content_type: "application/json",
         body,
       });
+      } },
     },
+    tenant_context: tenantContext,
   });
 }
 
@@ -443,37 +443,45 @@ describe("sandbox provider credential integration", () => {
     const leaseRequests: CredentialLeaseRequest[] = [];
     const materialByOpaqueHandle = new Map<string, string>();
     const leaseSuffixes = ["B0", "B1", "B2", "B3", "B4"];
-    const upstreamFetch = vi.fn(async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
+    const runtimeServiceFetch = vi.fn(async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(requestInfo, init);
       const url = new URL(request.url);
-      if (url.hostname === "authority.example.test") {
-        return Response.json({ result: SNAPSHOT });
+      if (url.pathname.endsWith("/workspace-connections:validate-revision")) {
+        return Response.json({
+          authoritative: true,
+          valid: true,
+          connection_revision: SNAPSHOT.connection_revision,
+          workspace_id: SNAPSHOT.workspace_id,
+          app_id: SNAPSHOT.app_id,
+          status: SNAPSHOT.status,
+          granted_scopes: SNAPSHOT.granted_scopes,
+          installation: { installation_id: SNAPSHOT.installation_id, installer_id: SNAPSHOT.installer_id },
+          credential: { mode: SNAPSHOT.credential_mode },
+        });
       }
-      if (url.hostname === "broker.example.test") {
-        const leaseRequest = await request.json() as CredentialLeaseRequest;
+      if (url.pathname.endsWith("/credential-leases")) {
+        const canonicalLeaseRequest = await request.json() as CredentialLeaseRequest
+          & { tenant_context: TenantContextEnvelope };
+        const { tenant_context: _tenantContext, ...leaseRequest } = canonicalLeaseRequest;
         leaseRequests.push(structuredClone(leaseRequest));
         const leaseNumber = leaseRequests.length;
         const leaseNow = Date.now();
         const opaqueHandle = `opaque-lease-handle-${leaseNumber}`;
         materialByOpaqueHandle.set(opaqueHandle, `materialized-provider-secret-${leaseNumber}`);
         return Response.json({
-          result: {
-            message_type: "credential_lease_response",
-            protocol_version: "1.0",
-            lease_id: `lease_01ARZ3NDEKTSV4RRFFQ69G5F${leaseSuffixes[leaseNumber - 1]}`,
-            contract_revision: leaseRequest.binding.contract_revision,
-            binding: leaseRequest.binding,
-            issued_at: new Date(leaseNow).toISOString(),
-            expires_at: new Date(leaseNow + 59_000).toISOString(),
-            max_uses: 1,
-            lease_token: opaqueHandle,
-          },
+          message_type: "credential_lease_response",
+          protocol_version: "1.0",
+          lease_id: `lease_01ARZ3NDEKTSV4RRFFQ69G5F${leaseSuffixes[leaseNumber - 1]}`,
+          contract_revision: leaseRequest.binding.contract_revision,
+          binding: leaseRequest.binding,
+          issued_at: new Date(leaseNow).toISOString(),
+          expires_at: new Date(leaseNow + 59_000).toISOString(),
+          max_uses: 1,
+          lease_token: opaqueHandle,
         });
       }
       return new Response("unexpected upstream", { status: 500 });
     });
-    vi.stubGlobal("fetch", upstreamFetch);
-
     const registry = createDurableTenantBoundaryRegistry(namespace);
     const handle = await registry.register({
       tenant_context: envelope,
@@ -493,11 +501,7 @@ describe("sandbox provider credential integration", () => {
     const env = {
       TENANT_RUNTIME_STATE: namespace,
       MANA_DEPLOYMENT_PROFILE: "shared_cloud",
-      BRAINBASE_TENANT_AUTHORITY_URL: "https://authority.example.test/runtime",
-      BRAINBASE_CREDENTIAL_BROKER_URL: "https://broker.example.test/runtime",
-      BRAINBASE_QUOTA_URL: "https://quota.example.test/runtime",
-      BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test/runtime",
-      BRAINBASE_RUNTIME_API_TOKEN: "test-runtime-auth-placeholder",
+      BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: runtimeServiceFetch },
       BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
       BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
     } as TenantProviderOutboundEnv;
@@ -601,21 +605,35 @@ describe("sandbox provider credential integration", () => {
     const materialByOpaqueHandle = new Map<string, string>();
     let activeSnapshot = structuredClone(SNAPSHOT);
     let failAccounting = true;
-    const upstreamFetch = vi.fn(async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
+    const runtimeServiceFetch = vi.fn(async (requestInfo: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(requestInfo, init);
       const url = new URL(request.url);
-      if (url.hostname === "authority.example.test") {
-        return Response.json({ result: activeSnapshot });
+      if (url.pathname.endsWith("/workspace-connections:validate-revision")) {
+        const body = await request.json() as { expected_connection_revision: string };
+        return Response.json({
+          authoritative: true,
+          valid: body.expected_connection_revision === activeSnapshot.connection_revision,
+          connection_revision: activeSnapshot.connection_revision,
+          workspace_id: activeSnapshot.workspace_id,
+          app_id: activeSnapshot.app_id,
+          status: activeSnapshot.status,
+          granted_scopes: activeSnapshot.granted_scopes,
+          installation: {
+            installation_id: activeSnapshot.installation_id,
+            installer_id: activeSnapshot.installer_id,
+          },
+          credential: { mode: activeSnapshot.credential_mode },
+        });
       }
-      if (url.hostname === "quota.example.test") {
-        const quota = await request.json() as { unit: string };
+      if (url.pathname.endsWith("/quota:decide")) {
+        const quota = await request.json() as { tenant_context: TenantContextEnvelope; unit: string };
         quotaRequests.push(structuredClone(quota));
         const now = new Date().toISOString();
         materialByOpaqueHandle.set("opaque-gateway-lease-handle", "materialized-slack-secret");
-        return Response.json({ result: {
+        return Response.json({
           message_type: "quota_decision",
-          tenant_id: SNAPSHOT.tenant_id,
-          contract_revision: SNAPSHOT.contract_revision,
+          tenant_id: quota.tenant_context.tenant.tenant_id,
+          contract_revision: quota.tenant_context.contract_revision,
           quota_revision: "19",
           decision: "allowed",
           limit: 100,
@@ -626,13 +644,15 @@ describe("sandbox provider credential integration", () => {
           window_ends_at: new Date(Date.now() + 60_000).toISOString(),
           decided_at: now,
           failure_code: null,
-        } });
+        });
       }
-      if (url.hostname === "broker.example.test") {
-        const leaseRequest = await request.json() as CredentialLeaseRequest;
+      if (url.pathname.endsWith("/credential-leases")) {
+        const canonicalLeaseRequest = await request.json() as CredentialLeaseRequest
+          & { tenant_context: TenantContextEnvelope };
+        const { tenant_context: _tenantContext, ...leaseRequest } = canonicalLeaseRequest;
         leaseRequests.push(structuredClone(leaseRequest));
         const leaseNow = Date.now();
-        return Response.json({ result: {
+        return Response.json({
           message_type: "credential_lease_response",
           protocol_version: "1.0",
           lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB0",
@@ -642,20 +662,19 @@ describe("sandbox provider credential integration", () => {
           expires_at: new Date(leaseNow + 59_000).toISOString(),
           max_uses: 1,
           lease_token: "opaque-gateway-lease-handle",
-        } });
+        });
       }
-      if (url.hostname === "accounting.example.test") {
-        accountingPayloads.push(await request.json());
-        if (failAccounting) {
+      if (url.pathname.endsWith("/usage-events") || url.pathname.endsWith("/operation-receipts:finalize")) {
+        const payload = await request.json();
+        accountingPayloads.push(payload);
+        if (url.pathname.endsWith("/operation-receipts:finalize") && failAccounting) {
           failAccounting = false;
           return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
         }
-        return Response.json({ result: { result_ref: "accounting-result-1" } });
+        return Response.json(payload);
       }
       return new Response("unexpected upstream", { status: 500 });
     });
-    vi.stubGlobal("fetch", upstreamFetch);
-
     const boundaryHandle = await createDurableTenantBoundaryRegistry(namespace).register({
       tenant_context: envelope,
       expected_scope: EXPECTED_SCOPE,
@@ -673,11 +692,7 @@ describe("sandbox provider credential integration", () => {
     const env = {
       TENANT_RUNTIME_STATE: namespace,
       MANA_DEPLOYMENT_PROFILE: "shared_cloud",
-      BRAINBASE_TENANT_AUTHORITY_URL: "https://authority.example.test/runtime",
-      BRAINBASE_CREDENTIAL_BROKER_URL: "https://broker.example.test/runtime",
-      BRAINBASE_QUOTA_URL: "https://quota.example.test/runtime",
-      BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test/runtime",
-      BRAINBASE_RUNTIME_API_TOKEN: "test-runtime-auth-placeholder",
+      BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: runtimeServiceFetch },
       BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
       BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
     } as unknown as TenantGatewayDeliveryEnv;
@@ -702,8 +717,9 @@ describe("sandbox provider credential integration", () => {
     expect(namespace.providerRequests.filter((entry) => entry.url.includes("chat.postMessage"))).toHaveLength(1);
     expect(leaseRequests).toHaveLength(1);
     expect(quotaRequests).toHaveLength(1);
-    expect(accountingPayloads).toHaveLength(2);
-    expect(accountingPayloads[1]).toEqual(accountingPayloads[0]);
+    expect(accountingPayloads).toHaveLength(4);
+    expect(accountingPayloads[2]).toEqual(accountingPayloads[0]);
+    expect(accountingPayloads[3]).toEqual(accountingPayloads[1]);
     expect(JSON.stringify(accountingPayloads)).not.toContain("opaque-gateway-lease-handle");
 
     activeSnapshot = { ...activeSnapshot, connection_revision: "8" };
@@ -714,7 +730,7 @@ describe("sandbox provider credential integration", () => {
       tenantCredentialFetchForResolvedContext(env, resolved, trustedForwarder),
     )).rejects.toMatchObject({ code: "WORKSPACE_CONNECTION_STALE_REVISION" });
     expect(namespace.providerRequests.filter((entry) => entry.url.includes("chat.postMessage"))).toHaveLength(1);
-    expect(accountingPayloads).toHaveLength(2);
+    expect(accountingPayloads).toHaveLength(4);
   });
 
   it("binds development callbacks to a durable tenant job owner across isolate restarts", async () => {

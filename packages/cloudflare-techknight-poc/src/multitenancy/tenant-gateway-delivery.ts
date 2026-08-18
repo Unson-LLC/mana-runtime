@@ -33,7 +33,7 @@ credentialFetch: typeof fetch): Promise<{ channel: string; ts?: string }> {
     || (input.threadTs !== undefined && input.threadTs !== canonicalThread)) {
     return Promise.reject(new Error("gateway_delivery_denied"));
   }
-  const clients = tenantRuntimeHttpClientsForEnv(env);
+  const clients = tenantRuntimeHttpClientsForEnv(env, resolved.tenant_context);
   const verifier = new TenantRuntimeBoundaryVerifier({
     read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
       resolved.tenant_context.workspace_connection.connection_id,

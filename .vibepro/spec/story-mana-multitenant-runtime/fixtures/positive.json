@@ -84,6 +84,7 @@
   },
   "execution_evidence": {
     "status": "not_collected",
+    "evidence_ref": "docs/operations/mana-multitenant-production-e2e-runbook.md",
     "note": "Fixture expectation only; no runtime, Graph, Slack, Receipt, or production result is asserted."
   }
 }

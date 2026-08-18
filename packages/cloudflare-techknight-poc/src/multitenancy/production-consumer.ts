@@ -72,7 +72,7 @@ async function recordOperation(input: {
     usage_events: accounting.usage_events,
     receipt: accounting.receipt,
     ...(input.operation_result === undefined ? {} : { operation_result: input.operation_result }),
-    write: (payload) => input.accounting.write(payload),
+    write: (payload) => input.accounting.write({ ...payload, tenant_context: input.tenant_context }),
   });
 }
 
@@ -182,7 +182,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       usage_events: pending.usage_events,
       receipt: pending.receipt,
       ...(pendingResult === undefined ? {} : { operation_result: pendingResult }),
-      write: (payload) => input.accounting.write(payload),
+      write: (payload) => input.accounting.write({ ...payload, tenant_context: input.tenant_context }),
     });
     if (pending.receipt.outcome !== "succeeded") {
       deny("brainbase_proxy", pending.receipt.failure_code ?? "UPSTREAM_UNAVAILABLE");
@@ -201,7 +201,10 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       tenant_id: input.tenant_context.tenant.tenant_id,
       contract_revision: input.tenant_context.contract_revision,
       unit: input.quota_unit,
-      read_authoritative_decision: (request) => input.quota.read_authoritative_decision(request),
+      read_authoritative_decision: (request) => input.quota.read_authoritative_decision({
+        ...request,
+        tenant_context: input.tenant_context,
+      }),
     });
   } catch (error) {
     const code = errorCode(error);

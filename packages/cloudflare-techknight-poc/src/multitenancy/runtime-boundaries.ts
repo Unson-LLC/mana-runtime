@@ -29,8 +29,14 @@ export interface SlackIngressIdentity extends WorkspaceConnectionLookup {
 
 export interface TenantContextIssueRequest {
   workspace_connection: WorkspaceConnectionSnapshot;
+  tenant_revision?: string;
   slack: Pick<SlackIngressIdentity,
     "event_id" | "channel_id" | "thread_ts" | "requester_id" | "enterprise_id">;
+  actor?: TenantContextEnvelope["actor"];
+  authorization?: TenantContextEnvelope["authorization"];
+  correlation_id?: string;
+  operation_id?: string;
+  billing_principal_id?: string;
   required_authorization: {
     audience: string;
     project_id: string;
@@ -231,6 +237,14 @@ function inProgressRetryDelaySeconds(claim: IdempotencyClaim, now: string): numb
   return Math.max(1, Math.ceil((leaseUntilMs - nowMs) / 1_000) + 1);
 }
 
+function terminalTimestamp(previous: string | undefined, current: string): string {
+  if (previous === undefined) return current;
+  const previousMs = Date.parse(previous);
+  const currentMs = Date.parse(current);
+  if (!Number.isFinite(previousMs) || !Number.isFinite(currentMs)) return current;
+  return currentMs >= previousMs ? current : previous;
+}
+
 export async function consumeTenantQueueMessage<T, R>(
   message: TenantQueueMessageLike<T>,
   options: {
@@ -252,6 +266,7 @@ export async function consumeTenantQueueMessage<T, R>(
   let idempotencyClaimed = false;
   let idempotencyPartitionKey: string | undefined;
   let idempotencyClaimToken: string | undefined;
+  let idempotencyTerminalAt: string | undefined;
   try {
     assertSecretArtifactFree(message.body);
     await options.verifier.validate({
@@ -306,6 +321,7 @@ export async function consumeTenantQueueMessage<T, R>(
     idempotencyClaimed = true;
     idempotencyPartitionKey = claim.claim.partition_key;
     idempotencyClaimToken = claim.claim.claim_token;
+    idempotencyTerminalAt = claim.claim.updated_at;
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     let heartbeatInFlight: Promise<void> | undefined;
     let heartbeatError: unknown;
@@ -323,6 +339,7 @@ export async function consumeTenantQueueMessage<T, R>(
           updated_at: updatedAt,
           partition_key: idempotencyPartitionKey,
         });
+        idempotencyTerminalAt = terminalTimestamp(idempotencyTerminalAt, updatedAt);
       }).catch((error: unknown) => {
         heartbeatError = error instanceof TenantBoundaryError && error.code === "IDEMPOTENCY_CONFLICT"
           ? error
@@ -339,13 +356,14 @@ export async function consumeTenantQueueMessage<T, R>(
       if (heartbeatInFlight) await heartbeatInFlight;
     }
     if (heartbeatError !== undefined) throw heartbeatError;
+    const completedAt = terminalTimestamp(idempotencyTerminalAt, options.now());
     await completeIdempotency(options.ownership, {
       key: tenantContext.idempotency_key,
       tenant_id: tenantContext.tenant.tenant_id,
       state: "succeeded",
       claim_token: idempotencyClaimToken,
-      updated_at: observedAt,
-      retained_until: retentionUntil,
+      updated_at: completedAt,
+      retained_until: options.retention_until(completedAt),
       partition_key: idempotencyPartitionKey,
     });
     options.log?.({ event: "tenant_queue_completed", event_id: eventId });
@@ -359,14 +377,14 @@ export async function consumeTenantQueueMessage<T, R>(
           await releaseIdempotency(options.ownership, tenantContext.idempotency_key,
             tenantContext.tenant.tenant_id, idempotencyPartitionKey, idempotencyClaimToken);
         } else {
-          const observedAt = options.now();
+          const completedAt = terminalTimestamp(idempotencyTerminalAt, options.now());
           await completeIdempotency(options.ownership, {
             key: tenantContext.idempotency_key,
             tenant_id: tenantContext.tenant.tenant_id,
             state: "failed_terminal",
             claim_token: idempotencyClaimToken,
-            updated_at: observedAt,
-            retained_until: options.retention_until(observedAt),
+            updated_at: completedAt,
+            retained_until: options.retention_until(completedAt),
             partition_key: idempotencyPartitionKey,
           });
         }

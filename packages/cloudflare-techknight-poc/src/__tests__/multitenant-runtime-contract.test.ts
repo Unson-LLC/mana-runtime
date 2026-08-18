@@ -1042,9 +1042,75 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(process).toHaveBeenCalledOnce();
     expect(redelivery.ack).not.toHaveBeenCalled();
     expect(redelivery.retry).toHaveBeenCalledWith({ delaySeconds: 61 });
+    workerNow = "2026-08-16T13:07:00.000Z";
     resolveProcess({ outcome: "completed" });
     await firstRun;
     expect(firstMessage.ack).toHaveBeenCalledOnce();
+    expect(ownership.read(value.idempotency_key)).toMatchObject({
+      state: "succeeded",
+      updated_at: "2026-08-16T13:07:00.000Z",
+      retained_until: "2026-09-15T13:07:00.000Z",
+    });
+    const completed = ownership.read(value.idempotency_key);
+    if (!completed) throw new Error("expected completed queue claim");
+    expect(() => completeIdempotency(ownership, {
+      key: value.idempotency_key,
+      tenant_id: TENANT_A,
+      claim_token: completed.claim_token,
+      state: "succeeded",
+      updated_at: "2026-08-16T13:06:00.000Z",
+      retained_until: "2026-09-15T13:06:00.000Z",
+    })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_TIMESTAMP_REGRESSION" }));
+  });
+
+  it("uses the completion clock for failed terminal state after a heartbeat", async () => {
+    const { value, publicKey } = await envelope({
+      issued_at: "2026-08-16T13:05:00.000Z",
+      expires_at: "2026-08-16T13:10:00.000Z",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+    const ownership = new IdempotencyMemoryStore();
+    let workerNow = "2026-08-16T13:05:00.000Z";
+    let rejectProcess!: (error: unknown) => void;
+    const process = vi.fn(() => new Promise<never>((_resolve, reject) => {
+      rejectProcess = reject;
+    }));
+    const message = {
+      body: { schema_version: "1.0" as const, tenant_context: value, payload: { command: "run" } },
+      ack: vi.fn(), retry: vi.fn(),
+    };
+    const run = consumeTenantQueueMessage(message, {
+      verifier,
+      expected_scope: () => expectedScope,
+      now: () => workerNow,
+      process,
+      ownership,
+      payload_hash: () => PAYLOAD_HASH,
+      retention_until: (observedAt) => new Date(Date.parse(observedAt) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+      heartbeat_interval_ms: 5,
+    });
+    await vi.waitFor(() => expect(process).toHaveBeenCalledOnce());
+
+    workerNow = "2026-08-16T13:06:00.000Z";
+    await vi.waitFor(async () => {
+      expect(ownership.read(value.idempotency_key)).toMatchObject({
+        state: "claimed",
+        lease_until: "2026-08-16T13:11:00.000Z",
+      });
+    });
+    workerNow = "2026-08-16T13:07:00.000Z";
+    rejectProcess(new TenantBoundaryError("queue_consumer", "NON_RETRYABLE"));
+    await run;
+
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(ownership.read(value.idempotency_key)).toMatchObject({
+      state: "failed_terminal",
+      updated_at: "2026-08-16T13:07:00.000Z",
+      retained_until: "2026-09-15T13:07:00.000Z",
+    });
   });
 
   it("fences a stale queue worker after redelivery reclaims its expired claim", async () => {
@@ -1134,7 +1200,7 @@ describe("story-mana-multitenant-runtime contract", () => {
     expect(broker.acquire_lease).toHaveBeenCalledWith(expect.objectContaining({
       message_type: "credential_lease_request", requested_ttl_seconds: 60,
       binding: expect.objectContaining({ tenant_id: TENANT_A, connection_revision: "7", credential_ref: "credential-ref-a" }),
-    }));
+    }), value);
 
     const ownership = new IdempotencyMemoryStore();
     await expect(authorizeSlackDeliveryWithAuthority({ envelope: value, expected_scope: expectedScope,
@@ -1340,15 +1406,25 @@ describe("story-mana-multitenant-runtime contract", () => {
       const url = String(request);
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       requests.push({ url, body, authorization: new Headers(init?.headers).get("authorization") });
-      if (url.endsWith("/tenant-authority")) {
-        return Response.json({ result: snapshotA });
+      if (url.endsWith("/workspace-connections:validate-revision")) {
+        return Response.json({
+          authoritative: true,
+          valid: true,
+          connection_revision: "7",
+          workspace_id: "T-A",
+          app_id: "A-MANA",
+          status: "active",
+          granted_scopes: snapshotA.granted_scopes,
+          installation: { installation_id: snapshotA.installation_id, installer_id: snapshotA.installer_id },
+          credential: { mode: snapshotA.credential_mode },
+        });
       }
-      if (url.endsWith("/accounting")) {
-        return Response.json({ result_ref: "brainbase-write-a" });
+      if (url.endsWith("/usage-events") || url.endsWith("/operation-receipts:finalize")) {
+        return Response.json(body);
       }
-      if (url.endsWith("/credential-broker")) {
+      if (url.endsWith("/credential-leases")) {
         const request = body as unknown as import("../multitenancy/contracts.js").CredentialLeaseRequest;
-        return Response.json({ result: {
+        return Response.json({
           message_type: "credential_lease_response",
           protocol_version: request.protocol_version,
           lease_id: "lease_01ARZ3NDEKTSV4RRFFQ69G5FB2",
@@ -1358,29 +1434,30 @@ describe("story-mana-multitenant-runtime contract", () => {
           expires_at: "2026-08-16T13:03:00.000Z",
           max_uses: 1,
           lease_token: "fixture-provider-token",
-        } });
+        });
       }
       return new Response("unavailable", { status: 503 });
     });
     const bindings = {
       deployment_profile: "shared_cloud" as const,
-      tenant_authority_url: "https://mock.invalid/tenant-authority",
-      credential_broker_url: "https://mock.invalid/credential-broker",
-      quota_url: "https://mock.invalid/quota",
-      accounting_url: "https://mock.invalid/accounting",
-      api_token: "fixture-runtime-token",
+      service: { fetch: fetchMock },
+      workspace_connections: [{ ...snapshotA, tenant_revision: "3" }],
       timeout_ms: 25,
     };
-    const clients = createTenantRuntimeHttpClients(bindings, { fetch: fetchMock, now: () => NOW });
+    const clients = createTenantRuntimeHttpClients(bindings, { now: () => NOW });
     await expect(clients.authority.resolve_workspace_connection({ provider: "slack", app_id: "A-MANA",
       workspace_id: "T-A" })).resolves.toEqual(snapshotA);
     const customerManagedClients = createTenantRuntimeHttpClients(
       { ...bindings, deployment_profile: "customer_managed_oss" },
-      { fetch: fetchMock, now: () => NOW },
+      { now: () => NOW },
     );
     await expect(customerManagedClients.authority.resolve_workspace_connection({ provider: "slack",
       app_id: "A-MANA", workspace_id: "T-A" })).resolves.toEqual(snapshotA);
     const { value, publicKey } = await envelope();
+    const contextBoundClients = createTenantRuntimeHttpClients(
+      { ...bindings, tenant_context: value },
+      { now: () => NOW },
+    );
     const trustedForwarder = {
       forward: vi.fn(async (input: import("../multitenancy/trusted-provider-forwarder.js").TrustedProviderForwardInput) => {
         expect(input.lease.lease_token).toBe("fixture-provider-token");
@@ -1392,8 +1469,8 @@ describe("story-mana-multitenant-runtime contract", () => {
     const credentialFetch = createTenantCredentialFetch({
       envelope: value,
       expected_scope: expectedScope,
-      broker: clients.credential_broker,
-      read_authoritative_snapshot: () => clients.authority.read_workspace_connection(CONNECTION_A),
+      broker: contextBoundClients.credential_broker,
+      read_authoritative_snapshot: () => contextBoundClients.authority.read_workspace_connection(CONNECTION_A),
       resolve_verification_key: async () => publicKey,
       now: () => NOW,
       trusted_forwarder: trustedForwarder,
@@ -1405,7 +1482,7 @@ describe("story-mana-multitenant-runtime contract", () => {
       },
     })).resolves.toMatchObject({ ok: true });
     expect(trustedForwarder.forward).toHaveBeenCalledTimes(1);
-    expect(requests.find((request) => request.url.endsWith("/credential-broker"))?.body)
+    expect(requests.find((request) => request.url.endsWith("/credential-leases"))?.body)
       .toMatchObject({ requested_ttl_seconds: 60, binding: {
         tenant_id: TENANT_A, connection_revision: "7", contract_revision: "11",
         operation_id: OPERATION_A, audience: "api.anthropic.com", credential_ref: "credential-ref-a",
@@ -1424,21 +1501,20 @@ describe("story-mana-multitenant-runtime contract", () => {
       collection_state: "not_collected", outcome: "failed", failure_code: "UPSTREAM_UNAVAILABLE",
       usage_event_ids: [usage.usage_event_id], reply: { state: "not_attempted", reply_count: 0, legacy_reply_count: 0 },
       completed_at: NOW });
-    await expect(clients.accounting.write({ partition_key: "tp1/test", usage_events: [usage], receipt }))
-      .resolves.toEqual({ result_ref: "brainbase-write-a" });
-    expect(requests.at(-1)?.body).toMatchObject({ usage_events: [{ quantity: null,
-      collection_state: "not_collected", outcome: "failed" }], receipt: { collection_state: "not_collected",
-      outcome: "failed" } });
-    expect(requests.every((request) => request.authorization === "Bearer fixture-runtime-token")).toBe(true);
-    expect(requests.every((request) => !JSON.stringify(request.body).includes("fixture-runtime-token"))).toBe(true);
+    await expect(contextBoundClients.accounting.write({ tenant_context: value, partition_key: "tp1/test",
+      usage_events: [usage], receipt })).resolves.toEqual({ result_ref: receipt.receipt_id });
+    expect(requests.at(-2)?.body).toMatchObject({ quantity: null,
+      collection_state: "not_collected", outcome: "failed" });
+    expect(requests.at(-1)?.body).toMatchObject({ collection_state: "not_collected", outcome: "failed" });
+    expect(requests.every((request) => request.authorization === null)).toBe(true);
 
-    const timeoutClients = createTenantRuntimeHttpClients({ ...bindings, timeout_ms: 1 }, {
-      fetch: vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    const timeoutClients = createTenantRuntimeHttpClients({ ...bindings, timeout_ms: 1, tenant_context: value,
+      service: { fetch: vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new DOMException("timeout", "AbortError")), { once: true });
-      })),
+      })) },
     });
-    await expect(timeoutClients.authority.resolve_workspace_connection({ provider: "slack", app_id: "A-MANA",
-      workspace_id: "T-A" })).rejects.toEqual(expect.objectContaining({ code: "WORKSPACE_CONNECTION_UNAVAILABLE" }));
+    await expect(timeoutClients.authority.read_workspace_connection(CONNECTION_A))
+      .rejects.toEqual(expect.objectContaining({ code: "WORKSPACE_CONNECTION_UNAVAILABLE" }));
   });
 
   it("two adapter instances share one Durable Object state and execute duplicate once planned Red", async () => {
@@ -1642,5 +1718,68 @@ describe("story-mana-multitenant-runtime contract", () => {
       partition_key: first.claim.partition_key,
       updated_at: "2026-08-16T13:12:00.000Z",
     })).rejects.toEqual(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+  });
+
+  it("Durable Object keeps terminal timestamps monotonic after heartbeat renewal", async () => {
+    const { createDurableTenantStateStore } = await import("../multitenancy/tenant-runtime-state.js");
+    const values = new Map<string, unknown>();
+    interface FixtureStorage {
+      get<T>(key: string): Promise<T | undefined>;
+      put(key: string, value: unknown): Promise<void>;
+      delete(key: string): Promise<boolean>;
+      transaction<T>(callback: (transaction: FixtureStorage) => Promise<T>): Promise<T>;
+    }
+    const storage: FixtureStorage = {
+      get: async <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
+      put: async (key: string, value: unknown) => { values.set(key, structuredClone(value)); },
+      delete: async (key: string) => values.delete(key),
+      transaction: async <T>(callback: (transaction: FixtureStorage) => Promise<T>) => callback(storage),
+    };
+    const worker = createDurableTenantStateStore(storage);
+    const claim = {
+      key: "ik1_durable-terminal-clock",
+      owner: "mana_runtime" as const,
+      scope: "queue_execution" as const,
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      slack_event_id: "Ev-durable-terminal-clock",
+      operation_id: OPERATION_A,
+      context_hash: `sha256:${"f".repeat(64)}`,
+      payload_hash: PAYLOAD_HASH,
+      connection_revision: "7",
+      updated_at: "2026-08-16T13:05:00.000Z",
+    };
+    const first = await claimIdempotency(worker, claim);
+    expect(first.disposition).toBe("claimed");
+    if (first.disposition !== "claimed") throw new Error("expected initial queue claim");
+    await renewIdempotency(worker, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      claim_token: first.claim.claim_token,
+      partition_key: first.claim.partition_key,
+      updated_at: "2026-08-16T13:06:00.000Z",
+    });
+
+    await expect(completeIdempotency(worker, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      claim_token: first.claim.claim_token,
+      state: "succeeded",
+      updated_at: "2026-08-16T13:05:00.000Z",
+      retained_until: "2026-09-15T13:05:00.000Z",
+    })).rejects.toEqual(expect.objectContaining({ code: "IDEMPOTENCY_TIMESTAMP_REGRESSION" }));
+
+    await expect(completeIdempotency(worker, {
+      key: claim.key,
+      tenant_id: TENANT_A,
+      claim_token: first.claim.claim_token,
+      state: "succeeded",
+      updated_at: "2026-08-16T13:07:00.000Z",
+      retained_until: "2026-09-15T13:07:00.000Z",
+    })).resolves.toMatchObject({
+      state: "succeeded",
+      updated_at: "2026-08-16T13:07:00.000Z",
+      retained_until: "2026-09-15T13:07:00.000Z",
+    });
   });
 });

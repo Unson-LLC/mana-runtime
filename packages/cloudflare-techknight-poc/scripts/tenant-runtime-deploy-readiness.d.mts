@@ -2,6 +2,7 @@ export interface WranglerDeploymentConfig {
   vars?: Record<string, unknown>;
   services?: Array<{ binding?: unknown; service?: unknown }>;
   durable_objects?: { bindings?: Array<{ name?: unknown; class_name?: unknown }> };
+  migrations?: Array<{ tag?: unknown; new_sqlite_classes?: unknown }>;
 }
 
 export interface DeploymentPreflightResult {
@@ -21,6 +22,16 @@ export function assertTenantRuntimeDeploymentConfig(
   secretNames: Iterable<string>,
 ): DeploymentPreflightResult;
 
+export interface TenantRuntimeSourceLockPaths {
+  tenantContext: string;
+  trustedProviderForwarder: string;
+}
+
+export function assertTenantRuntimeSourceLocks(options?: {
+  readFileImpl?: (path: string, encoding: "utf8") => Promise<string | Buffer>;
+  sourceLockPaths?: TenantRuntimeSourceLockPaths;
+}): Promise<{ tenantContext: Record<string, unknown>; trustedProviderForwarder: Record<string, unknown> }>;
+
 export function assertTenantRuntimeDeploymentPreflight(options: {
   configPath: string;
   execFileImpl?: (
@@ -28,6 +39,8 @@ export function assertTenantRuntimeDeploymentPreflight(options: {
     args: string[],
     options: { cwd: string; encoding: "utf8"; maxBuffer: number },
   ) => Promise<{ stdout: string }>;
+  readFileImpl?: (path: string, encoding: "utf8") => Promise<string | Buffer>;
+  sourceLockPaths?: TenantRuntimeSourceLockPaths;
 }): Promise<{ config: WranglerDeploymentConfig; tenantId: string }>;
 
 export function assertTenantRuntimeHealthReady(options: {

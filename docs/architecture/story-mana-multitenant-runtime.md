@@ -55,18 +55,23 @@ flowchart LR
 
 ## Tenant Contextの流れ
 
-1. Slack入口で署名、app、workspace、eventを検証する。
-2. installationからBrainbaseのworkspace connectionを一意解決する。
-3. Brainbaseがcanonical snake_caseの`TenantContextEnvelope`を発行する。mana-runtimeはRFC 8785 JCSとEd25519 detached JWS、TTL 300秒以下、clock skew 30秒以下を検証し、内容を変更・延命しない。
-4. Queue、Session、Container、MCP、Brainbase proxy、Slack deliveryの各境界でcontextと現行revisionを再検証する。
-5. 実行結果と実消費を同じcorrelationへ結び、Brainbase Receiptへ報告する。
-6. delivery scopeを再検証し、元のtenant、workspace、channel、threadへ最大1回返信する。
+1. 初回OAuth開始前に、認証済みtenant adminまたはBrainbaseへ事前登録されたworkspace connectionを根拠として、tenant、app、想定workspace／enterprise、connection revisionへ束縛した有効期限付き単回installation intentを発行する。
+2. OAuth callbackで推測不能なstateとnonceを照合し、installation intentを原子的に1回だけ消費する。callbackのworkspace、enterprise、appが束縛と一致した場合だけtoken保存とworkspace connection登録へ進む。
+3. Slackイベント入口で署名、app、workspace、eventを検証する。
+4. installationからBrainbaseのworkspace connectionを一意解決する。
+5. Brainbaseがcanonical snake_caseの`TenantContextEnvelope`を発行する。mana-runtimeはRFC 8785 JCSとEd25519 detached JWS、TTL 300秒以下、clock skew 30秒以下を検証し、内容を変更・延命しない。
+6. Queue、Session、Container、MCP、Brainbase proxy、Slack deliveryの各境界でcontextと現行revisionを再検証する。
+7. 実行結果と実消費を同じcorrelationへ結び、Brainbase Receiptへ報告する。
+8. delivery scopeを再検証し、元のtenant、workspace、channel、threadへ最大1回返信する。
 
 contextが欠落、曖昧、改ざん、失効、古い場合はその場で停止する。default tenant、別placement、別project、別credentialへ補完しない。
 
 ## 信頼境界
 
 - Slack payloadは外部入力であり、tenant主張を信頼しない。
+- OAuth callbackとSlack token exchange応答も外部入力であり、callback単体からtenantを選択・作成しない。installation intentは認証済みtenant adminまたは事前登録connectionだけが作成でき、tenant、app、想定workspace／enterprise、connection revisionへ束縛する。
+- installation intentのstateとnonceは推測不能な単回値とし、raw値を通常ログ、Receipt、分析イベントへ残さない。callbackではstate／nonce検証と原子的consumeをtoken永続化およびBrainbase登録より先に行う。
+- state／nonce不一致、期限切れ、replay、CSRF、workspace／enterprise／app不一致、既存connectionとのcross-tenant衝突または複数一致はfail closedで拒否する。別tenant、別app、default connectionへのfallbackや上書きは行わない。
 - Queue messageは署名済みでも再検証する。Worker、Queue consumer、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryの全境界が同じ検証規則を使う。
 - Durable Object／session cacheは正本revisionより弱い。
 - AIモデル、生成コード、tool引数は非信頼入力として扱う。
@@ -128,6 +133,8 @@ Cloudと互換OSSの両方で、tenant context、署名／時刻、revision、�
 
 | 状態 | 振る舞い |
 |---|---|
+| installation state／nonce不一致・期限切れ・replay | token保存とconnection登録の前に拒否 |
+| OAuth workspace／enterprise／app衝突 | 既存connectionを上書きせず、別tenantへfallbackせず拒否 |
 | connection not found／ambiguous | LLM前に拒否 |
 | revoked／stale revision | cacheを使わず拒否 |
 | scope／placement mismatch | 他経路へfallbackせず拒否 |
@@ -145,6 +152,8 @@ Cloudと互換OSSの両方で、tenant context、署名／時刻、revision、�
 | `AC-003` | 再認証、scope変更、uninstall、失効をrevisionとして扱う。 |
 | `AC-004` | connection異常をLLM前にfail closedにする。 |
 | `AC-005` | token本文をcontext、Queue、session、Container、ログ、Receiptへ含めない。 |
+| `AC-006` | 認証済みtenant adminまたは事前登録connectionを根拠に、tenant・app・想定workspace／enterpriseへ束縛した単回installation intentを発行する。 |
+| `AC-007` | state／nonce、期限、単回consume、workspace／enterprise／app衝突をtoken保存とconnection登録の前にfail closedで検証する。 |
 | `AC-101` | Brainbase正本からcanonical tenantを解決する。 |
 | `AC-102` | 型付きtenant contextを全経路へ伝播する。 |
 | `AC-103` | 各実行・tool・delivery境界で再検証する。 |
@@ -169,7 +178,7 @@ Cloudと互換OSSの両方で、tenant context、署名／時刻、revision、�
 ## Architecture fixture
 
 - positive: 契約済みinstallationが正しいtenant、connection revision、credential mode、projectで1回実行・返信される。
-- negative: Tenant A/B同時実行、同名識別子、改ざんcontext、失効connection、Container再利用、retryで越境と二重処理を拒否する。
+- negative: OAuth state／nonce不一致、期限切れ、replay、CSRF、workspace／enterprise／app衝突、Tenant A/B同時実行、同名識別子、改ざんcontext、失効connection、Container再利用、retryで越境と二重処理を拒否する。
 - non-applicable: `customer_managed_oss`で任意のCloud運用capabilityが提供されない場合、理由付き非対応として扱う。必須contractとcredential modeは緩和せず、別credentialへ切り替えない。
 
 ## Specへの拘束

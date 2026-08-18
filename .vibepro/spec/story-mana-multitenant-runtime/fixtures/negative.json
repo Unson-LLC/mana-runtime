@@ -33,6 +33,7 @@
   ],
   "execution_evidence": {
     "status": "not_collected",
+    "evidence_ref": "docs/operations/mana-multitenant-production-e2e-runbook.md",
     "note": "Expected denials are specified but have not been executed against implementation or production."
   }
 }

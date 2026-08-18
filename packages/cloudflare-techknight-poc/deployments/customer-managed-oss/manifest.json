@@ -20,6 +20,32 @@
       "container_sanitization_v1"
     ]
   },
+  "required_bindings": {
+    "services": [
+      "BRAINBASE_TENANT_RUNTIME_SERVICE",
+      "SLACK_INSTALLATION_CONTROL_PLANE"
+    ],
+    "durable_objects": [
+      {
+        "binding": "TENANT_RUNTIME_STATE",
+        "class_name": "TenantRuntimeState",
+        "migration_required": true
+      }
+    ]
+  },
+  "oauth": {
+    "required_vars": [
+      "SLACK_OAUTH_APP_ID",
+      "SLACK_OAUTH_CLIENT_ID",
+      "SLACK_OAUTH_REDIRECT_URI",
+      "SLACK_OAUTH_SCOPES"
+    ],
+    "state": {
+      "durable_object_binding": "TENANT_RUNTIME_STATE",
+      "durable_object_class": "TenantRuntimeState",
+      "migration_required": true
+    }
+  },
   "credential_modes": ["customer_oauth", "customer_api"],
   "secrets": {
     "required_names": [
@@ -32,6 +58,10 @@
   },
   "required_customer_configuration": [
     "SLACK_EXPECTED_APP_ID",
+    "SLACK_OAUTH_APP_ID",
+    "SLACK_OAUTH_CLIENT_ID",
+    "SLACK_OAUTH_REDIRECT_URI",
+    "SLACK_OAUTH_SCOPES",
     "MANA_REQUIRED_SLACK_SCOPES",
     "MANA_REQUIRED_AUDIENCE",
     "MANA_REQUIRED_PROJECT_ID",

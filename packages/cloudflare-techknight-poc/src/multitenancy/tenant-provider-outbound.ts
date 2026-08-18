@@ -3,7 +3,7 @@ import {
   TENANT_BOUNDARY_HANDLE_HEADER,
   type TenantBoundaryContextNamespace,
 } from "./durable-tenant-boundary.js";
-import { createTenantRuntimeHttpClients } from "./http-clients.js";
+import { createTenantRuntimeHttpClients, parseWorkspaceConnectionHints } from "./http-clients.js";
 import { createTenantCredentialFetch } from "./tenant-credential-fetch.js";
 import type { DeploymentProfileName } from "./contracts.js";
 import {
@@ -19,6 +19,7 @@ export interface TenantProviderOutboundEnv {
   BRAINBASE_ACCOUNTING_URL?: string;
   BRAINBASE_RUNTIME_API_TOKEN?: string;
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
+  BRAINBASE_WORKSPACE_CONNECTIONS_JSON?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
   BRAINBASE_TENANT_RUNTIME_ENABLED?: string;
   BRAINBASE_TENANT_RUNTIME_HOST?: string;
@@ -72,15 +73,18 @@ export async function resolveTenantProviderVerificationKey(
   }
 }
 
-export function tenantRuntimeHttpClientsForEnv(env: TenantProviderOutboundEnv) {
+export function tenantRuntimeHttpClientsForEnv(
+  env: TenantProviderOutboundEnv,
+  tenantContext?: import("./contracts.js").TenantContextEnvelope,
+) {
   return createTenantRuntimeHttpClients({
     deployment_profile: deploymentProfile(env.MANA_DEPLOYMENT_PROFILE),
-    tenant_authority_url: requiredBinding(env.BRAINBASE_TENANT_AUTHORITY_URL),
-    credential_broker_url: requiredBinding(env.BRAINBASE_CREDENTIAL_BROKER_URL),
-    quota_url: requiredBinding(env.BRAINBASE_QUOTA_URL),
-    accounting_url: requiredBinding(env.BRAINBASE_ACCOUNTING_URL),
-    api_token: requiredBinding(env.BRAINBASE_RUNTIME_API_TOKEN),
+    service: env.BRAINBASE_TENANT_RUNTIME_SERVICE,
     timeout_ms: Number(env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000"),
+    workspace_connections: env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON
+      ? parseWorkspaceConnectionHints(env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)
+      : [],
+    ...(tenantContext ? { tenant_context: tenantContext } : {}),
   });
 }
 
@@ -89,7 +93,7 @@ export function tenantCredentialFetchForResolvedContext(
   resolved: Exclude<Awaited<ReturnType<typeof resolveDurableTenantBoundaryContext>>, Response>,
   trustedForwarder?: TrustedProviderForwarder,
 ): typeof fetch {
-  const clients = tenantRuntimeHttpClientsForEnv(env);
+  const clients = tenantRuntimeHttpClientsForEnv(env, resolved.tenant_context);
   const productionForwarder = trustedForwarder ?? createBrainbaseTrustedProviderForwarderFromEnv({
     env,
     tenant_context: resolved.tenant_context,

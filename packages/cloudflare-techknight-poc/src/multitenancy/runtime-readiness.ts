@@ -14,6 +14,10 @@ const REQUIRED_TEXT_BINDINGS = [
   "SLACK_SIGNING_SECRET",
   "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
   "SLACK_EXPECTED_APP_ID",
+  "SLACK_OAUTH_APP_ID",
+  "SLACK_OAUTH_CLIENT_ID",
+  "SLACK_OAUTH_REDIRECT_URI",
+  "SLACK_OAUTH_SCOPES",
   "BRAINBASE_TENANT_RUNTIME_ENABLED",
   "BRAINBASE_TENANT_RUNTIME_PORT",
   "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
@@ -38,6 +42,21 @@ function safeHttpsUrl(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function validSlackOAuthAppId(value: unknown): boolean {
+  return nonEmpty(value) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value as string);
+}
+
+function validSlackOAuthClientId(value: unknown): boolean {
+  return nonEmpty(value) && /^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$/.test(value as string);
+}
+
+function validSlackOAuthScopes(value: unknown): boolean {
+  if (!nonEmpty(value)) return false;
+  const scopes = (value as string).split(",").map((scope) => scope.trim()).filter(Boolean);
+  return scopes.length > 0
+    && scopes.every((scope) => /^[a-z][a-z0-9_.:-]{0,127}$/.test(scope));
 }
 
 function validJwks(value: unknown): boolean {
@@ -93,6 +112,22 @@ export function assessTenantRuntimeReadiness(
   for (const binding of REQUIRED_TEXT_BINDINGS) {
     if (!nonEmpty(env[binding])) missing.push(binding);
   }
+  if (!validSlackOAuthAppId(env.SLACK_OAUTH_APP_ID)
+    || (nonEmpty(env.SLACK_EXPECTED_APP_ID) && env.SLACK_OAUTH_APP_ID !== env.SLACK_EXPECTED_APP_ID)) {
+    if (!missing.includes("SLACK_OAUTH_APP_ID")) missing.push("SLACK_OAUTH_APP_ID");
+  }
+  if (!validSlackOAuthClientId(env.SLACK_OAUTH_CLIENT_ID)
+    && !missing.includes("SLACK_OAUTH_CLIENT_ID")) {
+    missing.push("SLACK_OAUTH_CLIENT_ID");
+  }
+  if (!safeHttpsUrl(env.SLACK_OAUTH_REDIRECT_URI)
+    && !missing.includes("SLACK_OAUTH_REDIRECT_URI")) {
+    missing.push("SLACK_OAUTH_REDIRECT_URI");
+  }
+  if (!validSlackOAuthScopes(env.SLACK_OAUTH_SCOPES)
+    && !missing.includes("SLACK_OAUTH_SCOPES")) {
+    missing.push("SLACK_OAUTH_SCOPES");
+  }
   if (env.BRAINBASE_TENANT_RUNTIME_ENABLED !== "1"
     && !missing.includes("BRAINBASE_TENANT_RUNTIME_ENABLED")) {
     missing.push("BRAINBASE_TENANT_RUNTIME_ENABLED");
@@ -112,6 +147,15 @@ export function assessTenantRuntimeReadiness(
   const trustedService = env.BRAINBASE_TENANT_RUNTIME_SERVICE as { fetch?: unknown } | undefined;
   if (!trustedService || typeof trustedService.fetch !== "function") {
     missing.push("BRAINBASE_TENANT_RUNTIME_SERVICE");
+  }
+  const slackControlPlane = env.SLACK_INSTALLATION_CONTROL_PLANE as {
+    authorize?: unknown;
+    exchange_and_register?: unknown;
+  } | undefined;
+  if (!slackControlPlane
+    || typeof slackControlPlane.authorize !== "function"
+    || typeof slackControlPlane.exchange_and_register !== "function") {
+    missing.push("SLACK_INSTALLATION_CONTROL_PLANE");
   }
   const scopes = typeof env.MANA_REQUIRED_SLACK_SCOPES === "string"
     ? env.MANA_REQUIRED_SLACK_SCOPES.split(",").map((value) => value.trim()).filter(Boolean)

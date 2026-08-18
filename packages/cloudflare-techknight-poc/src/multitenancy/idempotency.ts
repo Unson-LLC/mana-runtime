@@ -67,6 +67,7 @@ export interface IdempotencyStore {
 
 /** Queue work must not remain in_progress forever after a Worker crash. */
 export const IDEMPOTENCY_LEASE_MS = 5 * 60 * 1_000;
+export const IDEMPOTENCY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 
 export function idempotencyLeaseUntil(updatedAt: string): string {
   const start = Date.parse(updatedAt);
@@ -233,9 +234,13 @@ export class IdempotencyMemoryStore implements IdempotencyStore {
     assertClaimToken(current, input.claim_token, input.key);
     const updatedAt = Date.parse(input.updated_at);
     const retainedUntil = Date.parse(input.retained_until);
+    const currentUpdatedAt = Date.parse(current.updated_at);
     if (!Number.isFinite(updatedAt) || !Number.isFinite(retainedUntil)
-      || retainedUntil - updatedAt < 30 * 24 * 60 * 60 * 1_000) {
+      || retainedUntil - updatedAt < IDEMPOTENCY_RETENTION_MS) {
       deny("idempotency", "IDEMPOTENCY_RETENTION_INVALID");
+    }
+    if (Number.isFinite(currentUpdatedAt) && updatedAt < currentUpdatedAt) {
+      deny("idempotency", "IDEMPOTENCY_TIMESTAMP_REGRESSION", { key: input.key });
     }
     const completed: IdempotencyClaim = {
       ...current,

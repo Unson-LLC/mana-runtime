@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { assessTenantRuntimeDeploymentConfig } from "../../scripts/tenant-runtime-deploy-readiness.mjs";
+import type { CustomerManagedDeploymentManifest } from "../../scripts/deployment-manifest.d.mts";
 
 const REQUIRED_CAPABILITIES = [
   "signed_tenant_context",
@@ -19,6 +21,7 @@ interface WranglerProfile {
   vars: Record<string, string>;
   services: Array<{ binding: string; service: string }>;
   durable_objects: { bindings: Array<{ name: string; class_name: string }> };
+  migrations: Array<{ tag: string; new_sqlite_classes: string[] }>;
   queues: {
     producers: Array<{ queue: string }>;
     consumers: Array<{ queue: string; dead_letter_queue: string; max_retries: number }>;
@@ -47,6 +50,9 @@ function expectCommonTenantContract(config: WranglerProfile, profile: string): v
     name: "TENANT_RUNTIME_STATE",
     class_name: "TenantRuntimeState",
   });
+  expect(config.migrations).toEqual(expect.arrayContaining([
+    { tag: expect.any(String), new_sqlite_classes: ["TenantRuntimeState"] },
+  ]));
 }
 
 describe("実配置profileのビルド契約", () => {
@@ -76,14 +82,9 @@ describe("実配置profileのビルド契約", () => {
 
   it("customer_managed_ossを資格情報なしの顧客管理manifestからbuildする", () => {
     const config = loadJson<WranglerProfile>("wrangler.customer-managed-oss.jsonc");
-    const manifest = loadJson<{
-      schema_version: string;
-      deployment_profile: string;
-      runtime: { target: string; config: string; output: string };
-      contract: { protocol_id: string; required_capabilities: string[] };
-      credential_modes: string[];
-      secrets: { required_names: string[]; values_included: boolean };
-    }>("deployments/customer-managed-oss/manifest.json");
+    const manifest = loadJson<CustomerManagedDeploymentManifest>(
+      "deployments/customer-managed-oss/manifest.json",
+    );
 
     expectCommonTenantContract(config, "customer_managed_oss");
     expect(config.account_id).toBeUndefined();
@@ -102,9 +103,34 @@ describe("実配置profileのビルド契約", () => {
     expect(manifest.contract.required_capabilities).toEqual(
       expect.arrayContaining(REQUIRED_CAPABILITIES),
     );
+    expect(manifest.required_bindings).toEqual({
+      services: [
+        "BRAINBASE_TENANT_RUNTIME_SERVICE",
+        "SLACK_INSTALLATION_CONTROL_PLANE",
+      ],
+      durable_objects: [{
+        binding: "TENANT_RUNTIME_STATE",
+        class_name: "TenantRuntimeState",
+        migration_required: true,
+      }],
+    });
+    expect(manifest.oauth).toEqual({
+      required_vars: [
+        "SLACK_OAUTH_APP_ID",
+        "SLACK_OAUTH_CLIENT_ID",
+        "SLACK_OAUTH_REDIRECT_URI",
+        "SLACK_OAUTH_SCOPES",
+      ],
+      state: {
+        durable_object_binding: "TENANT_RUNTIME_STATE",
+        durable_object_class: "TenantRuntimeState",
+        migration_required: true,
+      },
+    });
     expect(manifest.secrets.required_names).toEqual(expect.arrayContaining([
       "SLACK_SIGNING_SECRET",
       "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
+      "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
     ]));
     const source = [JSON.stringify(config), JSON.stringify(manifest)].join("\n");
     expect(source).not.toMatch(/(?:token|secret)\s*["']?\s*[:=]\s*["'][^"']{8,}/i);
@@ -123,6 +149,26 @@ describe("実配置profileのビルド契約", () => {
         expect(consumer.max_retries).toBe(3);
         expect(consumer.dead_letter_queue).toMatch(/-dlq$/);
       }
+    }
+  });
+
+  it("未構成profileはOAuthとcontrol-plane Service Bindingが揃うまでdeploy不可", () => {
+    const configs = [
+      loadJson<WranglerProfile>("wrangler.jsonc"),
+      loadJson<WranglerProfile>("wrangler.unson-business.jsonc"),
+      loadJson<WranglerProfile>("wrangler.dedicated-cloud.jsonc"),
+      loadJson<WranglerProfile>("wrangler.customer-managed-oss.jsonc"),
+    ];
+    for (const config of configs) {
+      const readiness = assessTenantRuntimeDeploymentConfig(config, []);
+      expect(readiness.ready).toBe(false);
+      expect(readiness.missing_bindings).toEqual(expect.arrayContaining([
+        "SLACK_INSTALLATION_CONTROL_PLANE",
+        "SLACK_OAUTH_APP_ID",
+        "SLACK_OAUTH_CLIENT_ID",
+        "SLACK_OAUTH_REDIRECT_URI",
+        "SLACK_OAUTH_SCOPES",
+      ]));
     }
   });
 });

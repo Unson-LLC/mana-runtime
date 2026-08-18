@@ -3,7 +3,7 @@ story_id: story-mana-multitenant-runtime
 title: 八雲まなをテナント分離されたSlackランタイムとして提供する
 status: active
 created_at: 2026-08-16
-updated_at: 2026-08-16
+updated_at: 2026-08-19
 horizon: quarter
 view: product
 source:
@@ -57,43 +57,45 @@ Brainbaseのcanonical tenant、workspace connection正本、契約、共通Cloud
 
 **非掲載Slackアプリ導入**
 
-- [ ] `AC-001`: OAuth installationをBrainbaseの`workspace_connection`へ登録し、tenantをworkspace IDから推測しない。
-- [ ] `AC-002`: app ID、team/workspace ID、enterprise ID、installer、scope、revision、statusを検証する。
-- [ ] `AC-003`: 再認証、scope変更、アンインストール、connection失効を処理する。
-- [ ] `AC-004`: 未契約、未登録、失効、別app、scope不足のworkspaceをLLM実行前に拒否する。
-- [ ] `AC-005`: token本文を設定ファイル、Queue、DO、Container入力、通常ログ、Receiptへ出さない。
+- [ ] AC-001: OAuth installationをBrainbaseの`workspace_connection`へ登録し、tenantをworkspace IDから推測しない。
+- [ ] AC-002: app ID、team/workspace ID、enterprise ID、installer、scope、revision、statusを検証する。
+- [ ] AC-003: 再認証、scope変更、アンインストール、connection失効を処理する。
+- [ ] AC-004: 未契約、未登録、失効、別app、scope不足のworkspaceをLLM実行前に拒否する。
+- [ ] AC-005: token本文を設定ファイル、Queue、DO、Container入力、通常ログ、Receiptへ出さない。
+- [ ] AC-006: 初回OAuth開始は、認証済みtenant adminまたはBrainbaseへ事前登録されたworkspace connectionだけが作成できる、tenant・app・想定workspace／enterpriseに束縛された有効期限付き単回installation intentを必須とする。stateとnonceは推測不能な単回値とし、本文をログやReceiptへ出さない。
+- [ ] AC-007: OAuth callbackはinstallation intentを原子的に1回だけ消費し、state／nonce不一致、期限切れ、replay、CSRF、workspace／enterprise／app衝突をtoken保存とworkspace connection登録の前にfail closedで拒否する。callbackだけからtenantを作成・推測しない。
 
 **Tenant Context伝播**
 
-- [ ] `AC-101`: Slack入口でBrainbaseのworkspace connectionからcanonical tenantを解決する。
-- [ ] `AC-102`: tenant ID、connection ID/revision、workspace、channel、placement、requester、correlation IDを型付きenvelopeで伝播する。
-- [ ] `AC-103`: Worker、Queue consumer、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryの各境界でenvelopeを再検証する。
-- [ ] `AC-104`: tenant未解決、不一致、改ざん、古いrevision、複数一致でdefault tenantや別placementへfallbackしない。
-- [ ] `AC-105`: Queue再送時も同一tenant・event・operation単位で冪等性を維持する。
+- [ ] AC-101: Slack入口でBrainbaseのworkspace connectionからcanonical tenantを解決する。
+- [ ] AC-102: tenant ID、connection ID/revision、workspace、channel、placement、requester、correlation IDを型付きenvelopeで伝播する。
+- [ ] AC-103: Worker、Queue consumer、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryの各境界でenvelopeを再検証する。
+- [ ] AC-104: tenant未解決、不一致、改ざん、古いrevision、複数一致でdefault tenantや別placementへfallbackしない。
+- [ ] AC-105: Queue再送時も同一tenant・event・operation単位で冪等性を維持する。
 
 **テナント分離実行面**
 
-- [ ] `AC-201`: DO key、session、thread history、file/object key、cache、workspace、MCP config、secret handleをtenantで分離する。
-- [ ] `AC-202`: Container再利用時は前tenantのprocess、filesystem、environment、credential、transcriptを残さない。
-- [ ] `AC-203`: shared、dedicated、customer-hostedのdeployment profileを明示し、暗黙の特権差を作らない。
-- [ ] `AC-204`: tenant A/Bの同時処理、同名workspace/channel/user、再送、Container再利用による越境を否定テストする。
-- [ ] `AC-205`: 添付ファイルと一時オブジェクトにtenant scope、size/MIME制限、保持期限、削除証跡を持たせる。
+- [ ] AC-201: DO key、session、thread history、file/object key、cache、workspace、MCP config、secret handleをtenantで分離する。
+- [ ] AC-202: Container再利用時は前tenantのprocess、filesystem、environment、credential、transcriptを残さない。
+- [ ] AC-203: shared、dedicated、customer-hostedのdeployment profileを明示し、暗黙の特権差を作らない。
+- [ ] AC-204: tenant A/Bの同時処理、同名workspace/channel/user、再送、Container再利用による越境を否定テストする。
+- [ ] AC-205: 添付ファイルと一時オブジェクトにtenant scope、size/MIME制限、保持期限、削除証跡を持たせる。
 
 **AI Credential Router**
 
-- [ ] `AC-301`: tenantの契約によりCloud標準API、顧客OAuth、顧客API credentialを決定論的に選択する。
-- [ ] `AC-302`: credentialはtenant別secret storeのopaque handleとして解決し、モデルや通常ログへ渡さない。
-- [ ] `AC-303`: OAuth資格情報をtenant単位で保存、更新、失効し、更新競合を監査する。
-- [ ] `AC-304`: 認証失敗時に別方式、運営者credential、別tenantへfallbackしない。
-- [ ] `AC-305`: 現行の単一`.credentials.json`前提を共有SaaS実行経路から除く。
+- [ ] AC-301: tenantの契約によりCloud標準API、顧客OAuth、顧客API credentialを決定論的に選択する。
+- [ ] AC-302: credentialはtenant別secret storeのopaque handleとして解決し、モデルや通常ログへ渡さない。
+- [ ] AC-303: OAuth資格情報をtenant単位で保存、更新、失効し、更新競合を監査する。
+- [ ] AC-304: 認証失敗時に別方式、運営者credential、別tenantへfallbackしない。
+- [ ] AC-305: 現行の単一`.credentials.json`前提を共有SaaS実行経路から除く。
 
 **利用上限・原価計測**
 
-- [ ] `AC-401`: token、model、tool、MCP、Container時間、storage、retryをcorrelation IDとtenantへ帰属させる。
-- [ ] `AC-402`: 50%、80%、100%等の警告とhard stop／超過許可をBrainbase planから適用する。
-- [ ] `AC-403`: Tenant Aの上限到達でTenant Bの処理を止めない。
-- [ ] `AC-404`: AIやtoolが失敗した場合も実消費を記録し、未計測を0に丸めない。
-- [ ] `AC-405`: Slackへは契約・credential・上限の内部情報を漏らさず、利用者が次の行動を選べる失敗表示を返す。
+- [ ] AC-401: token、model、tool、MCP、Container時間、storage、retryをcorrelation IDとtenantへ帰属させる。
+- [ ] AC-402: 50%、80%、100%等の警告とhard stop／超過許可をBrainbase planから適用する。
+- [ ] AC-403: Tenant Aの上限到達でTenant Bの処理を止めない。
+- [ ] AC-404: AIやtoolが失敗した場合も実消費を記録し、未計測を0に丸めない。
+- [ ] AC-405: Slackへは契約・credential・上限の内部情報を漏らさず、利用者が次の行動を選べる失敗表示を返す。
 
 ## Scenarios
 
@@ -104,6 +106,8 @@ Brainbaseのcanonical tenant、workspace connection正本、契約、共通Cloud
 - `MAMT-S-005`: ContainerがTenant Aの後にTenant Bへ再利用されても、Aのfile、env、conversationを参照できない。
 - `MAMT-S-006`: 顧客OAuthが失効した場合、Cloud標準APIへ自動fallbackせず再認証を案内する。
 - `MAMT-S-007`: Tenant Aだけが利用上限へ到達した場合、Aを停止しBは継続する。
+- `MAMT-S-008`: 認証済みtenant adminまたは事前登録connectionに束縛されたinstallation intentを1回だけ使うと、対応するtenantとworkspace connectionへ登録される。
+- `MAMT-S-009`: 使用済み／期限切れstateの再送、nonce不一致、または想定外のworkspace／enterprise／appを返すcallbackは、token保存とconnection登録を行わず拒否される。
 
 ## Implementation Slices
 

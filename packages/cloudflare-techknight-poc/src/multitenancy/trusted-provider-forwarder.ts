@@ -43,7 +43,6 @@ export interface BrainbaseTrustedProviderForwarderEnv {
 export interface BrainbaseTrustedProviderForwarderOptions {
   env: BrainbaseTrustedProviderForwarderEnv;
   tenant_context: TenantContextEnvelope;
-  fetch_impl?: typeof fetch;
 }
 
 const PROVIDER_AUTH_HEADERS = [
@@ -100,26 +99,6 @@ export function sanitizeTrustedProviderRequest(request: Request): Request {
 function requiredText(value: string | undefined): string {
   if (!value?.trim()) throw new Error("runtime_configuration_invalid");
   return value.trim();
-}
-
-function trustedServiceUrl(env: BrainbaseTrustedProviderForwarderEnv): URL {
-  if (env.BRAINBASE_TENANT_RUNTIME_ENABLED !== "1") {
-    throw new Error("runtime_configuration_invalid");
-  }
-  const host = env.BRAINBASE_TENANT_RUNTIME_HOST?.trim() || "127.0.0.1";
-  const portText = requiredText(env.BRAINBASE_TENANT_RUNTIME_PORT);
-  const port = Number(portText);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535
-    || host === "0.0.0.0" || host === "::" || host === "[::]" || host === "*") {
-    throw new Error("runtime_configuration_invalid");
-  }
-  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
-  if (!loopback && env.BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK !== "1") {
-    throw new Error("runtime_configuration_invalid");
-  }
-  const hostname = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-  const protocol = loopback ? "http" : "https";
-  return new URL(`${protocol}://${hostname}:${port}/api/v1/runtime/provider-requests:forward`);
 }
 
 function configuredBase(value: string | undefined): URL | undefined {
@@ -389,21 +368,19 @@ function providerResponse(result: ProviderResponse): Response {
 }
 
 /**
- * Creates the consumer adapter for Brainbase's loopback-only internal service.
- * The service token authenticates mana-runtime to Brainbase; it is never sent
- * to a provider. Provider credentials never cross this response boundary.
+ * Creates the consumer adapter for the single Brainbase runtime ingress
+ * Service Binding. The ingress owns Access and service-JWT injection.
+ * Provider credentials never cross this response boundary.
  */
 export function createBrainbaseTrustedProviderForwarderFromEnv(
   options: BrainbaseTrustedProviderForwarderOptions,
 ): TrustedProviderForwarder {
-  const endpoint = trustedServiceUrl(options.env);
-  const serviceToken = requiredText(options.env.BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN);
+  const endpoint = new URL("https://brainbase.internal/api/v1/runtime/provider-requests:forward");
   const timeoutMs = Number(options.env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000");
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new Error("runtime_configuration_invalid");
-  const serviceFetch = options.fetch_impl
-    ?? (options.env.BRAINBASE_TENANT_RUNTIME_SERVICE
-      ? options.env.BRAINBASE_TENANT_RUNTIME_SERVICE.fetch.bind(options.env.BRAINBASE_TENANT_RUNTIME_SERVICE)
-      : undefined);
+  const serviceFetch = options.env.BRAINBASE_TENANT_RUNTIME_SERVICE
+    ? options.env.BRAINBASE_TENANT_RUNTIME_SERVICE.fetch.bind(options.env.BRAINBASE_TENANT_RUNTIME_SERVICE)
+    : undefined;
   if (!serviceFetch) throw new Error("runtime_configuration_invalid");
   return Object.freeze({
     async forward(input: TrustedProviderForwardInput): Promise<Response> {
@@ -413,7 +390,6 @@ export function createBrainbaseTrustedProviderForwarderFromEnv(
         response = await serviceFetch(endpoint, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${serviceToken}`,
             "brainbase-protocol-version": "1.0",
             "brainbase-deployment-id": options.tenant_context.placement.deployment_id,
             "content-type": "application/json",
@@ -450,7 +426,7 @@ export function createBrainbaseTrustedProviderForwarderFromEnv(
         deny("credential_lease", "UPSTREAM_INVALID_RESPONSE");
       }
       if (validWrapper.status !== response.status
-        || containsSecret(validWrapper, [input.lease.lease_token, serviceToken])) {
+        || containsSecret(validWrapper, [input.lease.lease_token])) {
         deny("credential_lease", "UPSTREAM_INVALID_RESPONSE");
       }
       return providerResponse(validWrapper);

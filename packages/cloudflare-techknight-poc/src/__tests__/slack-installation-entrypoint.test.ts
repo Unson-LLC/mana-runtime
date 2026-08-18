@@ -21,11 +21,8 @@ const snapshot = {
 
 const bindings = {
   deployment_profile: "shared_cloud" as const,
-  tenant_authority_url: "https://mock.invalid/tenant-authority",
-  credential_broker_url: "https://mock.invalid/credential-broker",
-  quota_url: "https://mock.invalid/quota",
-  accounting_url: "https://mock.invalid/accounting",
-  api_token: "fixture-runtime-token",
+  service: { fetch: vi.fn(async () => new Response("not-called", { status: 503 })) },
+  workspace_connections: [{ ...snapshot, tenant_revision: "1" }],
   timeout_ms: 25,
 };
 
@@ -38,13 +35,13 @@ function lifecycleRequest(body: unknown, token = "lifecycle-token"): Request {
 }
 
 describe("Slack installation lifecycle production entrypoint", () => {
-  it("forwards only an opaque authorization reference to the authority revision port", async () => {
+  it("does not accept a public OAuth callback through the internal lifecycle endpoint", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const fetchMock = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return Response.json({ result: snapshot });
     });
-    const clients = createTenantRuntimeHttpClients(bindings, { fetch: fetchMock });
+    const clients = createTenantRuntimeHttpClients({ ...bindings, service: { fetch: fetchMock } });
     const response = await handleSlackInstallationLifecycleRequest(lifecycleRequest({
       kind: "oauth_callback",
       expected_revision: "0",
@@ -59,17 +56,8 @@ describe("Slack installation lifecycle production entrypoint", () => {
       adapter: new SlackInstallationAdapter(clients.workspace_connections),
     });
 
-    expect(response.status).toBe(200);
-    expect(requests).toEqual([{
-      operation: "register_slack_installation",
-      input: {
-        installation: expect.objectContaining({
-          provider: "slack",
-          authorization_code_ref: "oauth_exchange_opaque_01",
-        }),
-        expected_revision: "0",
-      },
-    }]);
+    expect(response.status).toBe(400);
+    expect(requests).toEqual([]);
     expect(JSON.stringify(requests)).not.toContain("access_token");
     expect(JSON.stringify(requests)).not.toContain("refresh_token");
   });

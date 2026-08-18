@@ -124,6 +124,35 @@ known-good Worker versionへrollbackします。rollbackが完了するまで以
 `npx wrangler whoami`のaccountと上表が一致しない場合はデプロイしません。会社間でSlack、
 Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を実施します。
 
+### Slack OAuthの配備契約
+
+Slack OAuthを有効にするprofileは、次の公開変数を対象のWrangler設定へ構成します。値はこのリポジトリへ
+追加せず、環境ごとの設定管理で与えます。
+
+- `SLACK_OAUTH_APP_ID`
+- `SLACK_OAUTH_CLIENT_ID`
+- `SLACK_OAUTH_REDIRECT_URI`（HTTPSのみ）
+- `SLACK_OAUTH_SCOPES`（カンマ区切り。空のscopeは不可）
+
+`SLACK_INSTALLATION_CONTROL_PLANE` は必須のCloudflare Service Bindingです。manifestにはbinding名だけを
+記載し、実在を確認できないservice名・targetは設定ファイルへ推測で追加しません。対象環境の運用者が
+実際のcontrol-plane serviceへ接続するまで、readiness/preflightはdeployを停止します。
+
+OAuth stateは専用の推測したDurable Objectではなく、全profile共通の
+`TENANT_RUNTIME_STATE`（class `TenantRuntimeState`）を使用します。各profileのWrangler設定にはこのbindingと
+`TenantRuntimeState`のSQLite migrationが必要です。stateはハッシュのみを保存し、replay防止を含む状態管理を
+Worker側で行います。
+
+Worker側で必要なsecret名は、`SLACK_SIGNING_SECRET`、`SLACK_INSTALLATION_LIFECYCLE_TOKEN`、
+`BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN`、`BRAINBASE_RUNTIME_API_TOKEN`です。値はmanifestやログへ含めません。
+Slack OAuth code交換とcredential登録はcontrol-plane serviceの責務であり、Worker用に存在を確認できない
+client secret名を追加していません。
+
+customer-managed OSSのmanifest（`deployments/customer-managed-oss/manifest.json`）は、上記の変数、
+Service Binding、state Durable Object、migration、secret名を必須項目として表現します。未構成profileの
+readiness/preflightはmissing bindingを返してfail-closedとなり、manifestの必須契約が満たされるまでdeploy
+できません。本番値はmanifest、Wrangler設定、テストfixtureへ記載しません。
+
 1. 対象設定の`SLACK_EXPECTED_TEAM_ID`と`SLACK_ALLOWED_CHANNEL_ID`を確認する。
    雲孫pilotではさらに`SLACK_EXPECTED_APP_ID`を必須とする。既存TechKnight deploymentは
    後方互換のためこのStoryではApp ID固定の対象外とし、専用App ID確認後に有効化する。

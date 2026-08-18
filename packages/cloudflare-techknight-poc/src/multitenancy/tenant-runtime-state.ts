@@ -12,6 +12,7 @@ import type {
   IdempotencyStore,
 } from "./idempotency.js";
 import {
+  IDEMPOTENCY_RETENTION_MS,
   idempotencyLeaseUntil,
   isIdempotencyClaimLeaseExpired,
   prepareIdempotencyClaimInput,
@@ -69,7 +70,7 @@ function assertCompletionWindow(input: IdempotencyCompleteInput): void {
   const updatedAt = Date.parse(input.updated_at);
   const retainedUntil = Date.parse(input.retained_until);
   if (!Number.isFinite(updatedAt) || !Number.isFinite(retainedUntil)
-    || retainedUntil - updatedAt < 30 * 24 * 60 * 60 * 1_000) {
+    || retainedUntil - updatedAt < IDEMPOTENCY_RETENTION_MS) {
     deny("idempotency", "IDEMPOTENCY_RETENTION_INVALID");
   }
 }
@@ -143,6 +144,11 @@ class DurableTenantStateStore implements IdempotencyStore {
         && (current.scope === "queue_execution" || input.claim_token !== undefined)
         && current.claim_token !== input.claim_token) {
         deny("idempotency", "IDEMPOTENCY_CONFLICT", { key: input.key });
+      }
+      const currentUpdatedAt = Date.parse(current.updated_at);
+      const updatedAt = Date.parse(input.updated_at);
+      if (Number.isFinite(currentUpdatedAt) && Number.isFinite(updatedAt) && updatedAt < currentUpdatedAt) {
+        deny("idempotency", "IDEMPOTENCY_TIMESTAMP_REGRESSION", { key: input.key });
       }
       const completed: IdempotencyClaim = {
         ...current,
