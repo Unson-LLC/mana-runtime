@@ -128,6 +128,8 @@ describe("generateMeetingMinutesInSandbox", () => {
       }));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.any(Object));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--model sonnet"), expect.any(Object));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--effort xhigh"), expect.any(Object));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--mcp-config"), expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
   });
