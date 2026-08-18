@@ -40,6 +40,7 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
     download: vi.fn().mockResolvedValue("transcript"),
     postProcessingStatus: vi.fn().mockResolvedValue("3.1"),
     createTask: vi.fn().mockResolvedValue({ id: "task-1" }),
+    updateTask: vi.fn().mockResolvedValue({ id: "task-1" }),
     saveGitHub: vi.fn().mockResolvedValue({ transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
       transcriptUrl: "https://github/t", minutesUrl: "https://github/m" }),
     postParent: vi.fn().mockResolvedValue("10.1"), postThreadChunk: vi.fn().mockResolvedValue("10.2"),
@@ -301,12 +302,13 @@ describe("meeting minutes pipeline", () => {
       destinations: [legacyKartz], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
       .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "project code is not allowed"))
-      .mockResolvedValueOnce({ id: "task-kartz" });
+      .mockResolvedValueOnce({ id: "task-kartz", version: 7, project_codes: ["mana"] });
+    const updateTask = vi.fn().mockResolvedValue({ id: "task-kartz", version: 8, project_codes: ["unson"] });
     const original = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
       destinations: [legacyKartz],
       generate: vi.fn().mockResolvedValue({ title: "Kartz定例", overview: "概要", body: "本文",
         tasks: [{ title: "確認する" }] }),
-      createTask,
+      createTask, updateTask,
     }));
     expect(original).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
       destination: { contextProjectCode: "unson" }, taskRegistration: { failure: { status: 403 } } });
@@ -315,11 +317,13 @@ describe("meeting minutes pipeline", () => {
       receipt_id: "receipt-1", identity, status: "resolved" as const, checksum: "checksum-1",
       resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
     const retried = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, resumeOptions({
-      destinations: [configuredKartz], resolveContext, createTask,
+      destinations: [configuredKartz], resolveContext, createTask, updateTask,
     }));
 
     expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1");
-    expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["kartz"] }), expect.any(String));
+    expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["unson"] }), expect.any(String));
+    expect(updateTask).toHaveBeenCalledWith("task-kartz", { expected_version: 7, project_codes: ["kartz"] },
+      expect.any(String));
     expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-1" },
       destination: { contextProjectCode: "unson", taskProjectCodes: ["kartz"] } });
     expect(retried.taskRegistration).not.toHaveProperty("failure");
@@ -532,12 +536,13 @@ describe("meeting minutes pipeline", () => {
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn()
       .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "project code is not allowed"))
-      .mockResolvedValueOnce({ id: "task-kartz" });
+      .mockResolvedValueOnce({ id: "task-kartz", version: 7, project_codes: ["mana"] });
+    const updateTask = vi.fn().mockResolvedValue({ id: "task-kartz", version: 8, project_codes: ["unson"] });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "Kartzの確認事項を進める" },
       ] }),
-      createTask,
+      createTask, updateTask,
     });
 
     const deferred = await resumeMeetingMinutesRun(fs, selection, options);
@@ -566,36 +571,40 @@ describe("meeting minutes pipeline", () => {
     expect(options.postParent).toHaveBeenCalledTimes(1);
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(createTask.mock.calls[0]?.[1]).toBe(createTask.mock.calls[1]?.[1]);
-    expect(createTask.mock.calls[0]?.[0]).toMatchObject({ project_codes: ["mana"] });
-    expect(createTask.mock.calls[1]?.[0]).toMatchObject({ project_codes: ["unson"] });
+    expect(createTask.mock.calls[0]).toEqual(createTask.mock.calls[1]);
+    expect(createTask.mock.calls[1]?.[0]).toMatchObject({ project_codes: ["mana"] });
+    expect(updateTask).toHaveBeenCalledWith("task-kartz", { expected_version: 7, project_codes: ["unson"] },
+      expect.any(String));
   });
 
-  it("recovers a 409 by adopting the one exact task already created by the failed attempt", async () => {
+  it("persists the exact create operation before the external Task request and replays it unchanged", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
-    const initialReceipt = { schema_version: "meeting_minutes_context_receipt.v1" as const,
-      receipt_id: "receipt-stale", identity: { run_id: selection.runId, project_code: "mana",
-        transcript_sha256: "ignored-by-mock" }, status: "resolved" as const, checksum: "checksum-stale",
-      resolved_at: "2026-08-18T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } };
-    const resolveContext = vi.fn().mockResolvedValue(initialReceipt);
-    const createTask = vi.fn().mockRejectedValue(new TaskApiError(409, "idempotency_conflict", "conflict"));
-    const findExistingTask = vi.fn().mockResolvedValue({ id: "task-existing" });
-    const options = resumeOptions({ resolveContext, createTask, findExistingTask,
+    const observed: unknown[] = [];
+    const createTask = vi.fn(async () => {
+      observed.push(structuredClone((await loadMeetingMinutesRun(fs, selection.runId))?.taskRegistration));
+      if (observed.length === 1) throw new Error("network response lost");
+      return { id: "task-recovered" };
+    });
+    const options = resumeOptions({ createTask,
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
         tasks: [{ title: "Kartzの確認事項を進める" }] }) });
 
+    const deferred = await resumeMeetingMinutesRun(fs, selection, options);
     const recovered = await resumeMeetingMinutesRun(fs, selection, options);
 
-    expect(createTask).toHaveBeenCalledTimes(1);
-    expect(findExistingTask).toHaveBeenCalledWith("Kartzの確認事項を進める", ["mana"]);
+    expect(deferred.taskRegistration?.pending).toEqual(expect.objectContaining({ index: 0,
+      input: expect.objectContaining({ title: "Kartzの確認事項を進める", project_codes: ["mana"] }) }));
+    expect(observed[0]).toMatchObject({ pending: { index: 0 } });
+    expect(createTask).toHaveBeenCalledTimes(2);
+    expect(createTask.mock.calls[1]).toEqual(createTask.mock.calls[0]);
     expect(recovered.taskRegistration?.registered).toEqual([
-      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-existing",
-        status: "reused", projectCodes: ["mana"] },
+      { index: 0, title: "Kartzの確認事項を進める", taskId: "task-recovered", projectCodes: ["mana"] },
     ]);
-    expect(recovered.taskRegistration).not.toHaveProperty("failure");
+    expect(recovered.taskRegistration).not.toHaveProperty("pending");
   });
 
-  it("keeps a 409 failure when no unique exact existing task can be found", async () => {
+  it("keeps idempotency_conflict terminal and never adopts a task found only by title", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
     const createTask = vi.fn().mockRejectedValue(new TaskApiError(409, "idempotency_conflict", "conflict"));
@@ -604,9 +613,70 @@ describe("meeting minutes pipeline", () => {
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
         tasks: [{ title: "同名候補が複数あるタスク" }] }) }));
 
-    expect(findExistingTask).toHaveBeenCalledWith("同名候補が複数あるタスク", ["mana"]);
+    expect(findExistingTask).not.toHaveBeenCalled();
     expect(run.taskRegistration?.registered).toEqual([]);
-    expect(run.taskRegistration?.failure).toMatchObject({ index: 0, stage: "task_registration", status: 409 });
+    expect(run.taskRegistration?.failure).toMatchObject({ index: 0, stage: "task_registration", status: 409,
+      code: "idempotency_conflict" });
+    expect(run.taskRegistration?.pending).toEqual(expect.objectContaining({ index: 0 }));
+    expect(run.diagnostics).toMatchObject({ code: "TASK_IDEMPOTENCY_CONFLICT", retryable: false });
+  });
+
+  it("recovers a legacy partial 409 only from one consistent registered project scope", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockResolvedValueOnce({ id: "task-first" })
+      .mockRejectedValueOnce(new TaskApiError(409, "idempotency_conflict", "conflict"));
+    const options = resumeOptions({ createTask,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
+        { title: "先に成功" }, { title: "応答を失ったTask" },
+      ] }) });
+    await resumeMeetingMinutesRun(fs, selection, options);
+    const legacy = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    delete legacy.taskRegistration!.pending;
+    await saveMeetingMinutesRun(fs, legacy);
+
+    createTask.mockResolvedValueOnce({ id: "task-second", version: 4, project_codes: ["mana"] });
+    const updateTask = vi.fn().mockResolvedValue({ id: "task-second", version: 5, project_codes: ["unson"] });
+    const recovered = await resumeMeetingMinutesRun(fs, selection, { ...options, updateTask,
+      destinations: [{ ...destination, taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-unson" }] });
+
+    expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ title: "応答を失ったTask",
+      project_codes: ["mana"] }), expect.any(String));
+    expect(updateTask).toHaveBeenCalledWith("task-second", { expected_version: 4, project_codes: ["unson"] },
+      expect.any(String));
+    expect(recovered.taskRegistration?.registered).toEqual([
+      expect.objectContaining({ index: 0, taskId: "task-first", projectCodes: ["mana"] }),
+      expect.objectContaining({ index: 1, taskId: "task-second", projectCodes: ["unson"] }),
+    ]);
+  });
+
+  it("commits registration without another scope PATCH when create recovery reads back the current scope", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockRejectedValueOnce(new TaskApiError(403, "project_code_not_allowed", "old scope"))
+      .mockResolvedValueOnce({ id: "task-recovered", version: 3, project_codes: ["mana"] })
+      .mockResolvedValueOnce({ id: "task-recovered", version: 4, project_codes: ["unson"] });
+    const updateTask = vi.fn().mockRejectedValueOnce(new Error("PATCH response lost"));
+    const options = resumeOptions({ createTask, updateTask,
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "scope移行する" }] }) });
+    await resumeMeetingMinutesRun(fs, selection, options);
+    const currentDestination = { ...destination, taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-unson" };
+
+    const patchLost = await resumeMeetingMinutesRun(fs, selection, { ...options, destinations: [currentDestination] });
+    expect(patchLost.taskRegistration?.pending).toEqual(expect.objectContaining({ index: 0,
+      input: expect.objectContaining({ project_codes: ["mana"] }) }));
+    const recovered = await resumeMeetingMinutesRun(fs, selection, { ...options, destinations: [currentDestination] });
+
+    expect(createTask.mock.calls[1]).toEqual(createTask.mock.calls[2]);
+    expect(updateTask).toHaveBeenCalledTimes(1);
+    expect(recovered.taskRegistration?.registered).toEqual([
+      expect.objectContaining({ taskId: "task-recovered", projectCodes: ["unson"] }),
+    ]);
+    expect(recovered.taskRegistration).not.toHaveProperty("pending");
+    expect(recovered.taskRegistration).not.toHaveProperty("failure");
   });
 
   it("keeps the task-only retry until board repair and the final task card both complete", async () => {

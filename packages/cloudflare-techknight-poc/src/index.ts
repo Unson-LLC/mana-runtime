@@ -780,23 +780,9 @@ function meetingMinutesClients(
         return effects.boundary("brainbase_proxy",
           (credentialFetch) => taskClient(credentialFetch).createTask(input, idempotencyKey));
       },
-      findExistingTask: async (title: string, projectCodes: readonly string[]) => {
-        return effects.boundary("brainbase_proxy", async (credentialFetch) => {
-          const normalizedTitle = title.trim().toLocaleLowerCase("ja");
-          const exact: Array<{ id: string }> = [];
-          let cursor: string | undefined;
-          for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-            const page = await taskClient(credentialFetch).listTasks({ project_code: [...projectCodes], limit: 50,
-              ...(cursor ? { cursor } : {}) });
-            exact.push(...page.items
-              .filter((task) => task.title.trim().toLocaleLowerCase("ja") === normalizedTitle)
-              .map((task) => ({ id: task.id })));
-            if (exact.length > 1) return undefined;
-            if (!page.next_cursor) return exact.length === 1 ? exact[0] : undefined;
-            cursor = page.next_cursor;
-          }
-          return undefined;
-        });
+      updateTask: async (taskId: string, input: Parameters<TaskApiClient["updateTask"]>[1], idempotencyKey: string) => {
+        return effects.boundary("brainbase_proxy",
+          (credentialFetch) => taskClient(credentialFetch).updateTask(taskId, input, idempotencyKey));
       },
       // Destination project IDs belong to the task destination contract and are
       // not Graph person scopes. Resolve globally, then let non-unique names

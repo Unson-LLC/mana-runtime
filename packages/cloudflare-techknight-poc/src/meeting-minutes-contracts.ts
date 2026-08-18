@@ -180,6 +180,8 @@ export interface MeetingMinutesRun {
     /** Canonical Task project scope used when this item was created or last migrated. */
     projectCodes?: string[];
     assigneePersonId?: string; assigneeDisplayName?: string }>;
+    /** Exact durable request saved before createTask. Retried byte-for-byte with the same idempotency key. */
+    pending?: { index: number; idempotencyKey: string; input: import("@openryoko/task-runtime-core").CreateTaskInput };
     failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string;
       /** Stable Task API classification retained so Slack can distinguish configuration errors from retryable failures. */
       code?: string; status?: number; failedAt: string } };
