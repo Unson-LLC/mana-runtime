@@ -24,6 +24,8 @@ import { assertSecretArtifactFree } from "./secret-guard.js";
 const CANONICAL_ORIGIN = "https://brainbase.internal";
 const RUNTIME_PREFIX = "/api/v1/runtime";
 
+type DesiredEffect = "read" | "write" | "external_side_effect";
+
 export interface TenantRuntimeServiceBinding {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
@@ -192,6 +194,57 @@ function canonicalContext(value: unknown): TenantContextEnvelope {
   return structuredClone(context);
 }
 
+function desiredEffectForCapability(capabilityId: string): DesiredEffect {
+  const value = capabilityId.toLowerCase();
+  if (/(send|publish|post|deliver|external)/u.test(value)) return "external_side_effect";
+  if (/(create|write|update|transition|delete|apply|approve|reject)/u.test(value)) return "write";
+  return "read";
+}
+
+function hasAuthorityScope(context: TenantContextEnvelope, expected: string): boolean {
+  return context.authorization.data_scopes.includes(expected);
+}
+
+function hasAuthorityPrefix(context: TenantContextEnvelope, prefix: string): boolean {
+  return context.authorization.data_scopes.some((scope) => scope.startsWith(prefix));
+}
+
+function assertCanonicalCompanyAuthority(
+  context: TenantContextEnvelope,
+  request: TenantContextIssueRequest,
+  desiredEffect: DesiredEffect,
+): void {
+  if (context.actor.authenticated_subject_id !== request.slack.requester_id) {
+    deny("worker_ingress", "ACTOR_SCOPE_MISMATCH");
+  }
+  if (!context.authorization.project_ids.includes(request.required_authorization.project_id)) {
+    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  }
+  if (!context.authorization.capability_ids.includes(request.required_authorization.capability_id)) {
+    deny("worker_ingress", "CAPABILITY_SCOPE_MISMATCH");
+  }
+  if (!hasAuthorityScope(context, `company_authority:effect:${desiredEffect}`)) {
+    deny("worker_ingress", "COMPANY_AUTHORITY_EFFECT_MISMATCH");
+  }
+  for (const prefix of [
+    "company_authority:decision:",
+    "company_authority:membership:",
+    "company_authority:resource:",
+    "company_authority:raci:",
+    "company_authority:policy:",
+    "company_authority:placement:",
+    "company_authority:identity_receipt:",
+    "company_authority:authority_receipt:",
+  ]) {
+    if (!hasAuthorityPrefix(context, prefix)) {
+      deny("worker_ingress", "COMPANY_AUTHORITY_EVIDENCE_MISSING", { missing: prefix });
+    }
+  }
+  if (hasAuthorityScope(context, "company_authority:decision:deny")) {
+    deny("worker_ingress", "COMPANY_AUTHORITY_DENIED");
+  }
+}
+
 function canonicalSnapshot(
   response: unknown,
   context: TenantContextEnvelope,
@@ -299,19 +352,9 @@ export function createTenantRuntimeHttpClients(
       resolve_workspace_connection: resolve,
       read_workspace_connection: read,
       async issue_tenant_context(request: TenantContextIssueRequest): Promise<TenantContextEnvelope> {
-        const actor = request.actor ?? {
-          principal_id: request.slack.requester_id,
-          principal_type: "person" as const,
-          authenticated_subject_id: request.slack.requester_id,
-        };
-        const authorization = request.authorization ?? {
-          organization_ids: [],
-          project_ids: [request.required_authorization.project_id],
-          data_scopes: [],
-          capability_ids: [request.required_authorization.capability_id],
-        };
         const seed = [request.workspace_connection.tenant_id, request.workspace_connection.connection_id,
           request.slack.event_id].join(":");
+        const desiredEffect = desiredEffectForCapability(request.required_authorization.capability_id);
         const body = {
           tenant_id: request.workspace_connection.tenant_id,
           expected_tenant_revision: request.tenant_revision
@@ -320,15 +363,26 @@ export function createTenantRuntimeHttpClients(
           expected_connection_revision: request.workspace_connection.connection_revision,
           workspace_id: request.workspace_connection.workspace_id,
           app_id: request.workspace_connection.app_id,
-          actor,
-          authorization,
+          provider_identity: {
+            provider: "slack",
+            authenticated_subject_id: request.slack.requester_id,
+            workspace_id: request.workspace_connection.workspace_id,
+            app_id: request.workspace_connection.app_id,
+            ...(request.slack.enterprise_id ? { enterprise_id: request.slack.enterprise_id } : {}),
+          },
+          requested_action: {
+            capability_id: request.required_authorization.capability_id,
+            resource_ref: `project:${request.required_authorization.project_id}`,
+            project_hint: request.required_authorization.project_id,
+            desired_effect: desiredEffect,
+          },
           slack: request.slack,
           correlation_id: request.correlation_id ?? await createDeterministicSharedId("cor_", seed),
           operation_id: request.operation_id ?? await createDeterministicSharedId("op_", seed),
-          billing_principal_id: request.billing_principal_id ?? actor.principal_id,
         };
         if (!body.expected_tenant_revision) deny("worker_ingress", "WORKSPACE_CONNECTION_UNAVAILABLE");
         const context = canonicalContext(await postJson(bindings, "/tenant-context:resolve", body, "worker_ingress"));
+        assertCanonicalCompanyAuthority(context, request, desiredEffect);
         contexts.set(context.workspace_connection.connection_id, structuredClone(context));
         return context;
       },
