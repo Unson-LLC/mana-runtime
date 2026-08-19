@@ -14,6 +14,12 @@ const disabledTarget = {
   bindingRevision: null,
 };
 
+const tenantContext = async (repair: { channelId: string; requestedAt: string; targetId: string }) => ({
+  tenant: { tenant_id: "ten_test" },
+  slack: { event_id: `task-board-repair:${repair.targetId}:${repair.requestedAt}`,
+    channel_id: repair.channelId, thread_ts: repair.requestedAt, requester_id: "svc_canvas" },
+} as never);
+
 describe("Worker task Canvas repair producers", () => {
   it("suppresses a disabled meeting repair with an ownership decision log", async () => {
     const send = vi.fn();
@@ -21,7 +27,7 @@ describe("Worker task Canvas repair producers", () => {
     const env = { TENANT_ID: "unson-business", TASK_BOARD_TARGETS_JSON: JSON.stringify([disabledTarget]),
       TASK_BOARD_REPAIRS: { send } } as never;
 
-    await enqueueMeetingMinutesTaskBoardRepair(env, "minutes-pms", "task_write");
+    await enqueueMeetingMinutesTaskBoardRepair(env, "minutes-pms", "task_write", tenantContext);
 
     expect(send).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalledWith(JSON.stringify({ event: "task_board_repair_suppressed",
@@ -37,11 +43,12 @@ describe("Worker task Canvas repair producers", () => {
     const env = { TENANT_ID: "unson-business",
       TASK_BOARD_TARGETS_JSON: JSON.stringify([disabledTarget, activeTarget]), TASK_BOARD_REPAIRS: { send } } as never;
 
-    await enqueueTaskBoardRepairsForProjects(env, ["proj_pms"], "task_write");
+    await enqueueTaskBoardRepairsForProjects(env, ["proj_pms"], "task_write", tenantContext);
 
     expect(send).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ targetId: "minutes-pms-owned",
-      manaCanvasId: "FOWNED", bindingRevision: 3 }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ schema_version: "1.0",
+      payload: expect.objectContaining({ targetId: "minutes-pms-owned",
+        tenantId: "ten_test", manaCanvasId: "FOWNED", bindingRevision: 3 }) }));
     expect(info).toHaveBeenCalledWith(expect.stringContaining('"targetId":"minutes-pms"'));
     info.mockRestore();
   });
