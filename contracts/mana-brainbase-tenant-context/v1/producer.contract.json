@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "role": "brainbase_producer",
+  "canonical_owner": "Brainbase",
+  "fixture_manifest": "fixtures/manifest.json",
+  "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
+  "required_adapter_behavior": [
+    "Load fixtures/manifest.json from the pinned PR #237 kit commit; do not copy fixtures.",
+    "For POS-CANONICAL-FLOW-001, negotiate version 1.0 and emit messages matching schema.json definitions.",
+    "Produce byte-identical RFC 8785 unsigned payload and exact five-field protected header before Ed25519 signing.",
+    "Issue lease_id with contract_revision, max_uses=1, identical binding, and TTL no greater than 60 seconds.",
+    "Persist canonical quota, UsageEvent, OperationReceipt, credential lease, and business-effect claims with the stated ownership.",
+    "Reject every manifest negative case with its exact expected_code before a business effect.",
+    "Treat customer-managed OSS non-applicability as optional capability metadata only."
+  ],
+  "required_test_name": "brainbase producer reads PR237 canonical fixture manifest",
+  "result_contract": {
+    "positive": "all canonical messages emitted and reference-validated",
+    "negative": "all expected codes observed and business effect count remains zero",
+    "non_applicable": "mandatory capability waiver count remains zero"
+  }
+}

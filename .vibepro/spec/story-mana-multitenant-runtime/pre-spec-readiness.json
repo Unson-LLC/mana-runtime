@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-mana-multitenant-runtime",
+  "created_at": "2026-08-18T17:42:51.166Z",
+  "status": "ready",
+  "git": {
+    "head_sha": "6da967aeacf509b3e647f667aeeee3b8724c94db"
+  },
+  "checks": [
+    {
+      "id": "story_selected",
+      "status": "pass",
+      "reason": "Story is registered in .vibepro/config.json (brainbase.stories[])"
+    },
+    {
+      "id": "graphify_context",
+      "status": "pass",
+      "reason": "Graphify graph has 3422 nodes and 7870 edges"
+    },
+    {
+      "id": "story_diagnosis",
+      "status": "pass",
+      "reason": "Story diagnosis run exists: 2026-08-18T141800Z"
+    }
+  ],
+  "graphify": {
+    "available": true,
+    "artifact": ".vibepro/graphify/graph.json",
+    "node_count": 3422,
+    "edge_count": 7870,
+    "edge_source_key": "links"
+  },
+  "diagnosis": {
+    "run_id": "2026-08-18T141800Z",
+    "gate_status": "pass",
+    "evidence_artifact": ".vibepro/diagnostics/2026-08-18T141800Z/evidence.json"
+  },
+  "engineering_judgment": null,
+  "pr_prepare": {
+    "created_at": "2026-08-18T17:42:51.122Z",
+    "artifact": ".vibepro/pr/story-mana-multitenant-runtime/pr-prepare.json"
+  },
+  "next_actions": []
+}

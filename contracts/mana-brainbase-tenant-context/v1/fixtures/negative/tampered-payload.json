@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-JWS-TAMPERED-PAYLOAD",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "tenant_context_envelope",
+  "mutations": [
+    { "operation": "set", "path": "/workspace_connection/app_id", "value": "A-TAMPERED" }
+  ],
+  "expected_code": "TENANT_CONTEXT_SIGNATURE_INVALID",
+  "business_api_called": false
+}

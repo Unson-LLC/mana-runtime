@@ -1,0 +1,14 @@
+{
+  "fixture_id": "NEG-IDEMPOTENCY-CLAIM-REQUIRED-MISSING",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "idempotency_claims/0",
+  "mutations": [
+    {
+      "operation": "delete",
+      "path": "/context_hash"
+    }
+  ],
+  "expected_code": "SCHEMA_INVALID",
+  "business_api_called": false
+}

@@ -1,0 +1,574 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.unson.jp/mana-brainbase-tenant-context/v1/schema.json",
+  "title": "Mana Brainbase tenant context wire contract v1",
+  "description": "Canonical wire schemas shared by the Brainbase producer and mana-runtime consumer.",
+  "oneOf": [
+    { "$ref": "#/$defs/TenantContextEnvelope" },
+    { "$ref": "#/$defs/ProtocolNegotiationRequest" },
+    { "$ref": "#/$defs/ProtocolNegotiationResponse" },
+    { "$ref": "#/$defs/CredentialLeaseRequest" },
+    { "$ref": "#/$defs/CredentialLeaseResponse" },
+    { "$ref": "#/$defs/QuotaDecision" },
+    { "$ref": "#/$defs/UsageEvent" },
+    { "$ref": "#/$defs/OperationReceipt" },
+    { "$ref": "#/$defs/IdempotencyClaim" }
+  ],
+  "$defs": {
+    "Revision": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "description": "Canonical unsigned decimal revision. JSON numbers and leading zeroes are forbidden."
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ProtocolId": {
+      "const": "mana-brainbase-tenant-context"
+    },
+    "ProtocolVersion": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+$"
+    },
+    "SupportedRange": {
+      "const": ">=1.0 <2.0"
+    },
+    "PrefixedUlid": {
+      "type": "string",
+      "pattern": "^(ten|wsc|dep|cor|op|lease|usage|receipt)_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "IdempotencyKey": {
+      "type": "string",
+      "pattern": "^ik1_[A-Za-z0-9_-]{43}$"
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "CredentialMode": {
+      "enum": ["cloud_standard", "customer_oauth", "customer_api"]
+    },
+    "CollectionState": {
+      "enum": ["collected", "partial", "not_collected"]
+    },
+    "Outcome": {
+      "enum": ["succeeded", "failed", "cancelled", "timed_out"]
+    },
+    "DeploymentProfile": {
+      "enum": ["shared_cloud", "dedicated_cloud", "customer_managed_oss"]
+    },
+    "RequiredCapability": {
+      "enum": [
+        "signed_tenant_context",
+        "connection_revision_recheck",
+        "tenant_scoped_authorization",
+        "credential_broker_v1",
+        "usage_receipt_v1",
+        "idempotent_effects_v1",
+        "container_sanitization_v1"
+      ]
+    },
+    "OptionalCapabilityStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "status"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "enum": ["supported", "unsupported", "non_applicable"] },
+        "reason": { "$ref": "#/$defs/NonEmptyString" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "non_applicable" } } },
+          "then": { "required": ["reason"] }
+        }
+      ]
+    },
+    "ProtocolNegotiationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "protocol_id",
+        "supported_range",
+        "supported_versions",
+        "required_capabilities",
+        "optional_capabilities",
+        "deployment_id",
+        "deployment_profile"
+      ],
+      "properties": {
+        "message_type": { "const": "protocol_negotiation_request" },
+        "protocol_id": { "$ref": "#/$defs/ProtocolId" },
+        "supported_range": { "$ref": "#/$defs/SupportedRange" },
+        "supported_versions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ProtocolVersion" }
+        },
+        "required_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/RequiredCapability" }
+        },
+        "optional_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "deployment_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "deployment_profile": { "$ref": "#/$defs/DeploymentProfile" }
+      }
+    },
+    "ProtocolNegotiationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "protocol_id",
+        "selected_version",
+        "supported_range",
+        "supported_versions",
+        "required_capabilities",
+        "optional_capabilities",
+        "compatibility_until"
+      ],
+      "properties": {
+        "message_type": { "const": "protocol_negotiation_response" },
+        "protocol_id": { "$ref": "#/$defs/ProtocolId" },
+        "selected_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "supported_range": { "$ref": "#/$defs/SupportedRange" },
+        "supported_versions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ProtocolVersion" }
+        },
+        "required_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/RequiredCapability" }
+        },
+        "optional_capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OptionalCapabilityStatus" }
+        },
+        "compatibility_until": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "TenantContextUnsigned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "protocol_id",
+        "protocol_version",
+        "issuer",
+        "audience",
+        "tenant",
+        "workspace_connection",
+        "actor",
+        "authorization",
+        "placement",
+        "slack",
+        "correlation_id",
+        "operation_id",
+        "idempotency_key",
+        "contract_revision",
+        "credential",
+        "issued_at",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "protocol_id": { "$ref": "#/$defs/ProtocolId" },
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "issuer": { "const": "brainbase" },
+        "audience": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "tenant": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tenant_id", "tenant_revision"],
+          "properties": {
+            "tenant_id": { "$ref": "#/$defs/PrefixedUlid" },
+            "tenant_revision": { "$ref": "#/$defs/Revision" }
+          }
+        },
+        "workspace_connection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "connection_id",
+            "connection_revision",
+            "status",
+            "provider",
+            "installation_id",
+            "workspace_id",
+            "app_id"
+          ],
+          "properties": {
+            "connection_id": { "$ref": "#/$defs/PrefixedUlid" },
+            "connection_revision": { "$ref": "#/$defs/Revision" },
+            "status": { "const": "active" },
+            "provider": { "const": "slack" },
+            "installation_id": { "$ref": "#/$defs/NonEmptyString" },
+            "workspace_id": { "$ref": "#/$defs/NonEmptyString" },
+            "app_id": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["principal_id", "principal_type", "authenticated_subject_id"],
+          "properties": {
+            "principal_id": { "$ref": "#/$defs/NonEmptyString" },
+            "principal_type": { "enum": ["person", "service"] },
+            "authenticated_subject_id": { "$ref": "#/$defs/NonEmptyString" },
+            "delegated_by": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        },
+        "authorization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["organization_ids", "project_ids", "data_scopes", "capability_ids"],
+          "properties": {
+            "organization_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+            "project_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+            "data_scopes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+            "capability_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } }
+          }
+        },
+        "placement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["deployment_id", "profile"],
+          "properties": {
+            "deployment_id": { "$ref": "#/$defs/PrefixedUlid" },
+            "profile": { "$ref": "#/$defs/DeploymentProfile" }
+          }
+        },
+        "slack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_id", "channel_id"],
+          "properties": {
+            "event_id": { "$ref": "#/$defs/NonEmptyString" },
+            "channel_id": { "$ref": "#/$defs/NonEmptyString" },
+            "enterprise_id": { "$ref": "#/$defs/NonEmptyString" },
+            "thread_ts": { "$ref": "#/$defs/NonEmptyString" },
+            "requester_id": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        },
+        "correlation_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "operation_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "idempotency_key": { "$ref": "#/$defs/IdempotencyKey" },
+        "contract_revision": { "$ref": "#/$defs/Revision" },
+        "credential": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "credential_ref", "billing_principal_id"],
+          "properties": {
+            "mode": { "$ref": "#/$defs/CredentialMode" },
+            "credential_ref": { "$ref": "#/$defs/NonEmptyString" },
+            "billing_principal_id": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        },
+        "issued_at": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "$ref": "#/$defs/Timestamp" },
+        "integrity": { "$ref": "#/$defs/Integrity" }
+      }
+    },
+    "Integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "algorithm", "key_id", "value"],
+      "properties": {
+        "method": { "const": "jws_detached" },
+        "algorithm": { "const": "EdDSA" },
+        "key_id": { "$ref": "#/$defs/NonEmptyString" },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+\\.\\.[A-Za-z0-9_-]{86}$"
+        }
+      }
+    },
+    "TenantContextEnvelope": {
+      "allOf": [
+        { "$ref": "#/$defs/TenantContextUnsigned" },
+        {
+          "type": "object",
+          "required": ["integrity"],
+          "properties": { "integrity": { "$ref": "#/$defs/Integrity" } }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CredentialLeaseBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "connection_id",
+        "connection_revision",
+        "contract_revision",
+        "operation_id",
+        "audience",
+        "credential_mode",
+        "credential_ref"
+      ],
+      "properties": {
+        "tenant_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "connection_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "connection_revision": { "$ref": "#/$defs/Revision" },
+        "contract_revision": { "$ref": "#/$defs/Revision" },
+        "operation_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "audience": { "$ref": "#/$defs/NonEmptyString" },
+        "credential_mode": { "$ref": "#/$defs/CredentialMode" },
+        "credential_ref": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "CredentialLeaseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message_type", "protocol_version", "binding", "requested_ttl_seconds"],
+      "properties": {
+        "message_type": { "const": "credential_lease_request" },
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "binding": { "$ref": "#/$defs/CredentialLeaseBinding" },
+        "requested_ttl_seconds": { "type": "integer", "minimum": 1, "maximum": 60 }
+      }
+    },
+    "CredentialLeaseResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "protocol_version",
+        "lease_id",
+        "contract_revision",
+        "binding",
+        "issued_at",
+        "expires_at",
+        "max_uses",
+        "lease_token"
+      ],
+      "properties": {
+        "message_type": { "const": "credential_lease_response" },
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "lease_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "contract_revision": { "$ref": "#/$defs/Revision" },
+        "binding": { "$ref": "#/$defs/CredentialLeaseBinding" },
+        "issued_at": { "$ref": "#/$defs/Timestamp" },
+        "expires_at": { "$ref": "#/$defs/Timestamp" },
+        "max_uses": { "const": 1 },
+        "lease_token": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "QuotaDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "tenant_id",
+        "contract_revision",
+        "quota_revision",
+        "decision",
+        "limit",
+        "used",
+        "remaining",
+        "unit",
+        "window_started_at",
+        "window_ends_at",
+        "decided_at"
+      ],
+      "properties": {
+        "message_type": { "const": "quota_decision" },
+        "tenant_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "contract_revision": { "$ref": "#/$defs/Revision" },
+        "quota_revision": { "$ref": "#/$defs/Revision" },
+        "decision": { "enum": ["allowed", "warning", "hard_stopped", "approval_required", "unavailable"] },
+        "limit": { "type": ["number", "null"], "minimum": 0 },
+        "used": { "type": ["number", "null"], "minimum": 0 },
+        "remaining": { "type": ["number", "null"], "minimum": 0 },
+        "unit": { "$ref": "#/$defs/NonEmptyString" },
+        "window_started_at": { "$ref": "#/$defs/Timestamp" },
+        "window_ends_at": { "$ref": "#/$defs/Timestamp" },
+        "decided_at": { "$ref": "#/$defs/Timestamp" },
+        "failure_code": { "type": ["string", "null"] }
+      }
+    },
+    "UsageEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "usage_event_id",
+        "protocol_version",
+        "tenant_id",
+        "connection_id",
+        "connection_revision",
+        "contract_revision",
+        "deployment_id",
+        "correlation_id",
+        "operation_id",
+        "idempotency_key",
+        "kind",
+        "quantity",
+        "unit",
+        "collection_state",
+        "outcome",
+        "failure_code",
+        "unknown_fields",
+        "observed_at"
+      ],
+      "properties": {
+        "message_type": { "const": "usage_event" },
+        "usage_event_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "tenant_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "connection_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "connection_revision": { "$ref": "#/$defs/Revision" },
+        "contract_revision": { "$ref": "#/$defs/Revision" },
+        "deployment_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "correlation_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "operation_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "idempotency_key": { "$ref": "#/$defs/IdempotencyKey" },
+        "kind": { "$ref": "#/$defs/NonEmptyString" },
+        "quantity": { "type": ["number", "null"], "minimum": 0 },
+        "unit": { "$ref": "#/$defs/NonEmptyString" },
+        "collection_state": { "$ref": "#/$defs/CollectionState" },
+        "outcome": { "$ref": "#/$defs/Outcome" },
+        "failure_code": { "type": ["string", "null"] },
+        "unknown_fields": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "observed_at": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "collection_state": { "const": "not_collected" } } },
+          "then": { "properties": { "quantity": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "collection_state": { "const": "partial" } } },
+          "then": { "properties": { "unknown_fields": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "collection_state": { "const": "collected" } } },
+          "then": {
+            "properties": {
+              "quantity": { "type": "number", "minimum": 0 },
+              "unknown_fields": { "maxItems": 0 }
+            }
+          }
+        }
+      ]
+    },
+    "OperationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "receipt_id",
+        "protocol_version",
+        "tenant_id",
+        "connection_id",
+        "connection_revision",
+        "contract_revision",
+        "deployment_id",
+        "correlation_id",
+        "operation_ids",
+        "idempotency_keys",
+        "actor_principal_id",
+        "project_id",
+        "capability_id",
+        "quota_decision",
+        "credential_mode",
+        "collection_state",
+        "outcome",
+        "failure_code",
+        "usage_event_ids",
+        "reply",
+        "completed_at"
+      ],
+      "properties": {
+        "message_type": { "const": "operation_receipt" },
+        "receipt_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "tenant_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "connection_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "connection_revision": { "$ref": "#/$defs/Revision" },
+        "contract_revision": { "$ref": "#/$defs/Revision" },
+        "deployment_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "correlation_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "operation_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/PrefixedUlid" } },
+        "idempotency_keys": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/IdempotencyKey" } },
+        "actor_principal_id": { "$ref": "#/$defs/NonEmptyString" },
+        "project_id": { "type": ["string", "null"] },
+        "capability_id": { "$ref": "#/$defs/NonEmptyString" },
+        "quota_decision": { "enum": ["allowed", "warning", "hard_stopped", "approval_required", "unavailable"] },
+        "credential_mode": { "$ref": "#/$defs/CredentialMode" },
+        "collection_state": { "$ref": "#/$defs/CollectionState" },
+        "outcome": { "$ref": "#/$defs/Outcome" },
+        "failure_code": { "type": ["string", "null"] },
+        "usage_event_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/PrefixedUlid" } },
+        "reply": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reply_count", "legacy_reply_count"],
+          "properties": {
+            "state": { "enum": ["not_attempted", "delivered", "failed", "unknown"] },
+            "reply_count": { "type": "integer", "minimum": 0, "maximum": 1 },
+            "legacy_reply_count": { "type": "integer", "minimum": 0, "maximum": 0 },
+            "slack_reply_ts": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        },
+        "completed_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "IdempotencyClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "owner",
+        "scope",
+        "tenant_id",
+        "connection_id",
+        "slack_event_id",
+        "operation_id",
+        "idempotency_key",
+        "context_hash",
+        "payload_hash",
+        "state",
+        "retention_until"
+      ],
+      "properties": {
+        "message_type": { "const": "idempotency_claim" },
+        "owner": { "enum": ["brainbase", "mana_runtime"] },
+        "scope": { "enum": ["credential_lease", "quota_decision", "business_effect", "usage_receipt", "queue_execution", "slack_delivery"] },
+        "tenant_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "connection_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "slack_event_id": { "$ref": "#/$defs/NonEmptyString" },
+        "operation_id": { "$ref": "#/$defs/PrefixedUlid" },
+        "idempotency_key": { "$ref": "#/$defs/IdempotencyKey" },
+        "context_hash": { "$ref": "#/$defs/Sha256" },
+        "payload_hash": { "$ref": "#/$defs/Sha256" },
+        "state": { "enum": ["pending", "claimed", "succeeded", "failed_terminal"] },
+        "retention_until": { "$ref": "#/$defs/Timestamp" }
+      }
+    }
+  }
+}

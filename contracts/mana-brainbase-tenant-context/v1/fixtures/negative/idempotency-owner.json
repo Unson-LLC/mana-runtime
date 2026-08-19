@@ -1,0 +1,11 @@
+{
+  "fixture_id": "NEG-IDEMPOTENCY-OWNER",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "idempotency_claims/1",
+  "mutations": [
+    { "operation": "set", "path": "/owner", "value": "brainbase" }
+  ],
+  "expected_code": "IDEMPOTENCY_OWNER_INVALID",
+  "business_api_called": false
+}
