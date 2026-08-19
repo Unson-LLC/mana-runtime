@@ -6,22 +6,22 @@
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "build": "pnpm --filter @mana-runtime/cloud-runtime build",
-    "build:unson-business": "pnpm --filter @mana-runtime/cloud-runtime build:unson-business",
-    "build:dedicated-cloud": "pnpm --filter @mana-runtime/cloud-runtime build:dedicated-cloud",
-    "build:customer-managed": "pnpm --filter @mana-runtime/cloud-runtime build:customer-managed-oss",
-    "dev": "pnpm --filter @mana-runtime/cloud-runtime dev",
-    "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm --filter @mana-runtime/cloud-runtime test && pnpm --filter @mana-runtime/slack-thread-context test && pnpm --filter @mana-runtime/task-runtime-core test && pnpm --filter @mana-runtime/write-broker test",
-    "test:cloud": "pnpm --filter @mana-runtime/cloud-runtime test",
-    "verify:production-task-migration-evidence": "pnpm --filter @mana-runtime/cloud-runtime verify:production-task-migration-evidence",
-    "deploy:unson-business": "pnpm --filter @mana-runtime/cloud-runtime deploy:unson-business",
-    "clean": "pnpm -r --if-present clean"
+    "build": "pnpm -C packages/cloud-runtime build",
+    "build:unson-business": "pnpm -C packages/cloud-runtime build:unson-business",
+    "build:dedicated-cloud": "pnpm -C packages/cloud-runtime build:dedicated-cloud",
+    "build:customer-managed": "pnpm -C packages/cloud-runtime build:customer-managed-oss",
+    "dev": "pnpm -C packages/cloud-runtime dev",
+    "typecheck": "pnpm -C packages/slack-thread-context typecheck && pnpm -C packages/task-runtime-core typecheck && pnpm -C packages/write-broker typecheck && pnpm -C packages/cloud-runtime typecheck && pnpm -C packages/web typecheck",
+    "test": "pnpm -C packages/slack-thread-context test && pnpm -C packages/task-runtime-core test && pnpm -C packages/write-broker test && pnpm -C packages/cloud-runtime test",
+    "test:cloud": "pnpm -C packages/cloud-runtime test",
+    "verify:production-task-migration-evidence": "pnpm -C packages/cloud-runtime verify:production-task-migration-evidence",
+    "deploy:unson-business": "pnpm -C packages/cloud-runtime deploy:unson-business",
+    "clean": "pnpm -C packages/slack-thread-context clean && pnpm -C packages/task-runtime-core clean && pnpm -C packages/cloud-runtime clean && pnpm -C packages/web clean"
   },
   "devDependencies": {
-    "@playwright/test": "^1.51.1",
-    "tsx": "^4.21.0",
-    "vitest": "^4.1.0"
+    "@playwright/test": "^1.58.2",
+    "turbo": "^2.4.0",
+    "typescript": "^5.8.0"
   },
   "engines": {
     "node": ">=22"
