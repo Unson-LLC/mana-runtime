@@ -35,11 +35,17 @@ function validateReceipt(value: unknown, expected: MeetingMinutesContextReceipt[
 }
 
 export class MeetingMinutesBrainbaseContextClient {
-  constructor(private readonly baseUrl: string, private readonly token: string,
-    private readonly fetchImpl: FetchLike = fetch) {}
+  private readonly fetchImpl: FetchLike;
+  private readonly brokered: boolean;
+
+  constructor(private readonly baseUrl: string, private readonly token?: string,
+    fetchImpl?: FetchLike) {
+    this.fetchImpl = fetchImpl ?? fetch;
+    this.brokered = fetchImpl !== undefined;
+  }
 
   async resolve(identity: MeetingMinutesContextReceipt["identity"], receiptId?: string): Promise<MeetingMinutesContextReceipt> {
-    if (!this.baseUrl || !this.token) throw new Error("meeting_minutes_context_client_unconfigured");
+    if (!this.baseUrl || (!this.token && !this.brokered)) throw new Error("meeting_minutes_context_client_unconfigured");
     const url = receiptId
       ? new URL(`/api/meeting-minutes/context-receipts/${encodeURIComponent(receiptId)}`, this.baseUrl)
       : new URL("/api/meeting-minutes/context-receipts", this.baseUrl);
@@ -50,7 +56,7 @@ export class MeetingMinutesBrainbaseContextClient {
     }
     const response = await this.fetchImpl.call(globalThis, url, {
       method: receiptId ? "GET" : "POST",
-      headers: { authorization: `Bearer ${this.token}`, accept: "application/json",
+      headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), accept: "application/json",
         ...(receiptId ? {} : { "content-type": "application/json" }) },
       ...(receiptId ? {} : { body: JSON.stringify(identity) }), redirect: "manual",
       signal: AbortSignal.timeout(15_000),

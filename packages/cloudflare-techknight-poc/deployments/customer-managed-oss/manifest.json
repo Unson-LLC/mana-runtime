@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "deployment_profile": "customer_managed_oss",
+  "runtime": {
+    "target": "cloudflare-workers-compatible",
+    "config": "wrangler.customer-managed-oss.jsonc",
+    "entrypoint": "src/index.ts",
+    "output": "dist/customer-managed-oss"
+  },
+  "contract": {
+    "protocol_id": "mana-brainbase-tenant-context",
+    "version_range": ">=1.0 <2.0",
+    "required_capabilities": [
+      "signed_tenant_context",
+      "connection_revision_recheck",
+      "tenant_scoped_authorization",
+      "credential_broker_v1",
+      "usage_receipt_v1",
+      "idempotent_effects_v1",
+      "container_sanitization_v1"
+    ]
+  },
+  "required_bindings": {
+    "services": [
+      "BRAINBASE_TENANT_RUNTIME_SERVICE",
+      "SLACK_INSTALLATION_CONTROL_PLANE"
+    ],
+    "durable_objects": [
+      {
+        "binding": "TENANT_RUNTIME_STATE",
+        "class_name": "TenantRuntimeState",
+        "migration_required": true
+      }
+    ]
+  },
+  "oauth": {
+    "required_vars": [
+      "SLACK_OAUTH_APP_ID",
+      "SLACK_OAUTH_CLIENT_ID",
+      "SLACK_OAUTH_REDIRECT_URI",
+      "SLACK_OAUTH_SCOPES"
+    ],
+    "state": {
+      "durable_object_binding": "TENANT_RUNTIME_STATE",
+      "durable_object_class": "TenantRuntimeState",
+      "migration_required": true
+    }
+  },
+  "credential_modes": ["customer_oauth", "customer_api"],
+  "secrets": {
+    "required_names": [
+      "SLACK_SIGNING_SECRET",
+      "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
+      "BRAINBASE_RUNTIME_API_TOKEN",
+      "SLACK_INSTALLATION_LIFECYCLE_TOKEN"
+    ],
+    "values_included": false
+  },
+  "required_customer_configuration": [
+    "SLACK_EXPECTED_APP_ID",
+    "SLACK_OAUTH_APP_ID",
+    "SLACK_OAUTH_CLIENT_ID",
+    "SLACK_OAUTH_REDIRECT_URI",
+    "SLACK_OAUTH_SCOPES",
+    "MANA_REQUIRED_SLACK_SCOPES",
+    "MANA_REQUIRED_AUDIENCE",
+    "MANA_REQUIRED_PROJECT_ID",
+    "MANA_REQUIRED_CAPABILITY_ID",
+    "BRAINBASE_TENANT_AUTHORITY_URL",
+    "BRAINBASE_CREDENTIAL_BROKER_URL",
+    "BRAINBASE_QUOTA_URL",
+    "BRAINBASE_ACCOUNTING_URL",
+    "BRAINBASE_TENANT_CONTEXT_JWKS_JSON"
+  ],
+  "optional_capabilities": {
+    "cloud_billing_export": "non_applicable",
+    "managed_operations": "non_applicable",
+    "shared_cloud_rls_conformance": "non_applicable"
+  }
+}

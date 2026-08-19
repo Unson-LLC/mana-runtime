@@ -26,7 +26,8 @@ describe("tenant Slack runtime wiring", () => {
     expect(queue).toContain("consumeTenantQueueMessage");
     expect(queue).toContain("TenantRuntimeBoundaryVerifier");
     expect(queue).toContain("createDurableTenantStateClient");
-    expect(queue).toContain("tenantExpectedScope(env, body)");
+    expect(queue).toContain("expectedTenantQueueScope(env, body)");
+    expect(queue).toContain('code: "FALLBACK_FORBIDDEN"');
   });
 
   it("exposes installation lifecycle and single-use OAuth intent routes", () => {
@@ -48,7 +49,7 @@ describe("tenant Slack runtime wiring", () => {
     expect(oauthRoutes.match(/oauth_configuration_invalid/g)).toHaveLength(2);
     expect(oauthRoutes.match(/status: 503/g)).toHaveLength(2);
     expect(oauthRoutes).toContain(
-      "createSlackInstallationControlPlaneClient(\n          env.SLACK_INSTALLATION_CONTROL_PLANE",
+      "createSlackInstallationControlPlaneClient(\n        env.SLACK_INSTALLATION_CONTROL_PLANE",
     );
   });
 });

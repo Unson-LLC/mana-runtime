@@ -161,26 +161,38 @@ async function clientMessageId(seed: string): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 export class MeetingMinutesSlackClient {
-  constructor(private readonly token: string, private readonly fetchImpl: typeof fetch = fetch) {}
+  private readonly fetchImpl: typeof fetch;
+  private readonly brokered: boolean;
+
+  constructor(private readonly token?: string, fetchImpl?: typeof fetch) {
+    this.fetchImpl = fetchImpl ?? fetch;
+    this.brokered = fetchImpl !== undefined;
+  }
+
+  private authorization(): Record<string, string> {
+    return this.token ? { Authorization: `Bearer ${this.token}` } : {};
+  }
+
   private async post(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<SlackApiResponse> {
-    if (!this.token.trim()) throw new Error("slack_bot_token_not_configured");
+    if (!this.token?.trim() && !this.brokered) throw new Error("slack_bot_token_not_configured");
     const response = await this.fetchImpl.call(globalThis, `https://slack.com/api/${method}`, { method: "POST",
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json; charset=utf-8" },
+      headers: { ...this.authorization(), "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify(body), signal });
     const result = await response.json() as SlackApiResponse;
     if (!response.ok || !result.ok) throw new Error(`slack_api_failed:${method}:${result.error ?? response.status}`);
     return result;
   }
   async downloadTextFile(fileId: string, maxBytes = 20 * 1024 * 1024): Promise<string> {
+    if (!this.token?.trim() && !this.brokered) throw new Error("slack_bot_token_not_configured");
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(fileId)) throw new Error("slack_file_id_invalid");
     const infoResponse = await this.fetchImpl.call(globalThis, `https://slack.com/api/files.info?file=${encodeURIComponent(fileId)}`, {
-      headers: { Authorization: `Bearer ${this.token}` },
+      headers: this.authorization(),
     });
     const info = await infoResponse.json() as { ok?: boolean; error?: string; file?: { name?: string; mimetype?: string; size?: number; url_private_download?: string } };
     if (!infoResponse.ok || !info.ok || !info.file?.url_private_download) throw new Error(`slack_file_info_failed:${info.error ?? infoResponse.status}`);
     if (!/\.txt$/i.test(info.file.name ?? "") || (info.file.mimetype && info.file.mimetype !== "text/plain")) throw new Error("slack_file_type_invalid");
     if (typeof info.file.size === "number" && info.file.size > maxBytes) throw new Error("slack_file_size_invalid");
-    const download = await this.fetchImpl.call(globalThis, info.file.url_private_download, { headers: { Authorization: `Bearer ${this.token}` } });
+    const download = await this.fetchImpl.call(globalThis, info.file.url_private_download, { headers: this.authorization() });
     if (!download.ok) throw new Error(`slack_file_download_failed:${download.status}`);
     const bytes = new Uint8Array(await download.arrayBuffer());
     if (bytes.byteLength > maxBytes) throw new Error("slack_file_size_invalid");

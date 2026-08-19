@@ -1,5 +1,7 @@
 import { handleSandboxAdminRequest } from "../sandbox-admin.js";
 
+const TENANT_BOUNDARY_HANDLE = `tb_${"P".repeat(32)}`;
+
 function env(overrides: Record<string, unknown> = {}) {
   return {
     SANDBOX_PROBE_TOKEN: "probe-secret",
@@ -47,23 +49,21 @@ describe("handleSandboxAdminRequest", () => {
     const client = sandbox({ success: true, stdout: "2.1.227\n", stderr: "" });
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/runtime-probe"),
-      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret" }),
+      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", TENANT_ID: "must-not-be-used" }),
       { createSandbox: () => client, randomId: () => "fixed" },
     );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      tenant: "techknight",
       runtime: "claude-code",
       version: "2.1.227",
-      oauthConfigured: true,
-      credentialLocation: "worker-secret",
+      providerForwarding: "trusted_forwarder_required",
     });
     expect(client.destroy).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when the TechKnight OAuth secret is absent", async () => {
+  it("fails closed because an admin token is not a tenant provider authority", async () => {
     const client = sandbox();
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/oauth-probe"),
@@ -76,7 +76,7 @@ describe("handleSandboxAdminRequest", () => {
     expect(client.destroy).toHaveBeenCalledOnce();
   });
 
-  it("passes only a placeholder into a fresh container and suppresses command output", async () => {
+  it("does not fall back to a Worker secret for an OAuth probe", async () => {
     const client = sandbox({
       success: true,
       stdout: "TECHKNIGHT_OAUTH_OK oauth-secret-must-not-leak",
@@ -88,17 +88,8 @@ describe("handleSandboxAdminRequest", () => {
       { createSandbox: () => client, randomId: () => "fixed" },
     );
 
-    expect(response.status).toBe(200);
-    expect(client.exec).toHaveBeenCalledWith(expect.stringContaining("TECHKNIGHT_OAUTH_OK"), {
-      timeout: 120_000,
-      env: {
-        IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
-      },
-    });
-    const command = client.exec.mock.calls[0]?.[0] as string;
-    expect(command).not.toContain("--model");
-    expect(command).not.toContain("--effort");
+    expect(response.status).toBe(503);
+    expect(client.exec).not.toHaveBeenCalled();
     const body = JSON.stringify(await response.json());
     expect(body).not.toContain("oauth-secret-must-not-leak");
     expect(client.destroy).toHaveBeenCalledOnce();
@@ -119,21 +110,37 @@ describe("handleSandboxAdminRequest", () => {
     });
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/meeting-minutes-probe"),
-      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh",
-        TENANT_ID: "unson-business", MEETING_MINUTES_CONTEXT_MODE: "required" }),
-      { createSandbox: () => client },
+      env({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh",
+        MEETING_MINUTES_CONTEXT_MODE: "required" }),
+      { createSandbox: () => client, tenantBoundaryHandle: TENANT_BOUNDARY_HANDLE },
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      ok: true, tenant: "unson-business", probe: "meeting-minutes-generation",
-    });
+    await expect(response.json()).resolves.toEqual({ ok: true, probe: "meeting-minutes-generation" });
     expect(client.exec).toHaveBeenCalledWith(
       expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
-      expect.objectContaining({ timeout: 780_000 }),
+      expect.objectContaining({
+        timeout: 780_000,
+        env: { IS_SANDBOX: "1", MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_HANDLE },
+      }),
     );
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("議事録生成プローブ"));
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("文脈モードはrequiredです"));
+  });
+
+  it("does not treat raw provider secrets as tenant authority when the boundary handle is absent", async () => {
+    const client = sandbox();
+    const response = await handleSandboxAdminRequest(
+      request("/admin/sandbox/meeting-minutes-probe"),
+      env({ ANTHROPIC_API_KEY: "raw-api-key", CLAUDE_CODE_OAUTH_TOKEN: "raw-oauth-token",
+        RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
+      { createSandbox: () => client },
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "tenant_boundary_required" });
+    expect(client.exec).not.toHaveBeenCalled();
+    expect(client.destroy).toHaveBeenCalledOnce();
   });
 
   it("rejects a model result when the production Judgment hooks are absent", async () => {
@@ -146,8 +153,8 @@ describe("handleSandboxAdminRequest", () => {
     ].join("\n"), stderr: "" });
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/meeting-minutes-probe"),
-      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
-      { createSandbox: () => client },
+      env({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
+      { createSandbox: () => client, tenantBoundaryHandle: TENANT_BOUNDARY_HANDLE },
     );
 
     expect(response.status).toBe(502);
@@ -160,14 +167,13 @@ describe("handleSandboxAdminRequest", () => {
     const client = sandbox();
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/meeting-minutes-probe"),
-      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", MEETING_MINUTES_CONTEXT_MODE: "invalid" }),
-      { createSandbox: () => client },
+      env({ MEETING_MINUTES_CONTEXT_MODE: "invalid" }),
+      { createSandbox: () => client, tenantBoundaryHandle: TENANT_BOUNDARY_HANDLE },
     );
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({
       ok: false,
-      tenant: "techknight",
       probe: "meeting-minutes-generation",
       code: "meeting_minutes_context_mode_invalid",
     });
@@ -179,8 +185,8 @@ describe("handleSandboxAdminRequest", () => {
     const client = sandbox({ success: true, stdout: "not-json", stderr: "private-stderr" });
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/meeting-minutes-probe"),
-      env({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret", RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
-      { createSandbox: () => client },
+      env({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
+      { createSandbox: () => client, tenantBoundaryHandle: TENANT_BOUNDARY_HANDLE },
     );
 
     expect(response.status).toBe(502);

@@ -138,12 +138,22 @@ describe("Cloudflare task search proxy", () => {
     ["limit too large", new Request("https://task-search.internal/api/companion/tasks/search?query=x&limit=21"), env(), 400],
     ["invalid status", new Request("https://task-search.internal/api/companion/tasks/search?query=x&status=deleted"), env(), 400],
     ["missing projects", new Request("https://task-search.internal/api/companion/tasks/search?query=x"), env({ RUNTIME_PROJECT_CODES: "" }), 503],
-    ["missing token", new Request("https://task-search.internal/api/companion/tasks/search?query=x"), env({ BRAINBASE_TASK_API_TOKEN: "" }), 503],
   ])("rejects %s before an upstream request", async (_name, request, bindings, status) => {
     const upstream = vi.fn();
     const response = await createTaskSearchProxyHandler(upstream)(request, bindings);
     expect(response.status).toBe(status);
     expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing token when no tenant credential fetch boundary exists", async () => {
+    const globalFetch = vi.spyOn(globalThis, "fetch");
+    const response = await createTaskSearchProxyHandler()(
+      new Request("https://task-search.internal/api/companion/tasks/search?query=x"),
+      env({ BRAINBASE_TASK_API_TOKEN: "" }),
+    );
+    expect(response.status).toBe(503);
+    expect(globalFetch).not.toHaveBeenCalled();
+    globalFetch.mockRestore();
   });
 
   it("keeps an upstream failure distinct from a zero result without leaking its body", async () => {

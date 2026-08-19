@@ -55,6 +55,24 @@ export async function isReplyCompleted(
   return (await fs.ls("/replies")).includes(path);
 }
 
+export async function readReplyCompletion(
+  fs: WorkspaceFs,
+  eventId: string,
+): Promise<ReplyCompletion | undefined> {
+  validateEventId(eventId);
+  const path = `/replies/${eventId}.json`;
+  await fs.mkdir("/replies", { recursive: true });
+  if (!(await fs.ls("/replies")).includes(path)) return undefined;
+  const raw = await fs.readFile(path);
+  if (typeof raw !== "string") throw new Error("reply_completion_invalid");
+  const value = JSON.parse(raw) as Partial<ReplyCompletion>;
+  if (value.eventId !== eventId || typeof value.responseTs !== "string" || !value.responseTs
+    || typeof value.completedAt !== "string" || !Number.isFinite(Date.parse(value.completedAt))) {
+    throw new Error("reply_completion_invalid");
+  }
+  return { eventId, responseTs: value.responseTs, completedAt: value.completedAt };
+}
+
 export async function persistReplyCompletion(
   fs: WorkspaceFs,
   completion: ReplyCompletion,

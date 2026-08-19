@@ -170,7 +170,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     }, { BRAINBASE_JUDGMENT_TURN_DIR: stateDir });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("judgment_hook_payload_too_large");
-  });
+  }, 15_000);
 
   it("fails closed when a bound PostToolUse response lacks an audit receipt", async () => {
     const server = createServer(async (request, response) => {

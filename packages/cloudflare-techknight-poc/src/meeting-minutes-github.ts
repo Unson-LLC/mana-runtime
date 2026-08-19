@@ -53,9 +53,21 @@ export function formatCloudflareMeetingMinutesMarkdown(request: SaveMeetingMinut
 }
 
 export class CloudflareMeetingMinutesGitHubClient {
-  constructor(private readonly token: string, private readonly fetchImpl: typeof fetch = fetch) {}
+  private readonly fetchImpl: typeof fetch;
+  private readonly brokered: boolean;
+
+  constructor(private readonly token?: string, fetchImpl?: typeof fetch) {
+    this.fetchImpl = fetchImpl ?? fetch;
+    this.brokered = fetchImpl !== undefined;
+  }
+
+  private headers(): Record<string, string> {
+    return { Accept: "application/vnd.github+json",
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      "User-Agent": "mana-runtime-meeting-minutes", "X-GitHub-Api-Version": "2022-11-28" };
+  }
   async save(request: SaveMeetingMinutesRecordsRequest): Promise<SavedMeetingMinutesRecords> {
-    if (!this.token.trim()) throw new Error("github_token_not_configured");
+    if (!this.token?.trim() && !this.brokered) throw new Error("github_token_not_configured");
     const target = request.destination.github;
     if (!target.owner.trim() || !target.repo.trim()) throw new Error("github_destination_invalid");
     const date = jstDate(request.sourceTs); const base = name(request.sourceFileName); const root = prefix(target.pathPrefix);
@@ -66,10 +78,9 @@ export class CloudflareMeetingMinutesGitHubClient {
     return { transcriptPath, minutesPath, transcriptUrl, minutesUrl };
   }
   async delete(target: MeetingMinutesDestination["github"], paths: readonly string[]): Promise<void> {
-    if (!this.token.trim()) throw new Error("github_token_not_configured");
+    if (!this.token?.trim() && !this.brokered) throw new Error("github_token_not_configured");
     const branch = target.branch?.trim() || "main";
-    const headers = { Accept: "application/vnd.github+json", Authorization: `Bearer ${this.token}`,
-      "User-Agent": "mana-runtime-meeting-minutes", "X-GitHub-Api-Version": "2022-11-28" };
+    const headers = this.headers();
     for (const path of paths) {
       const encodedPath = path.split("/").map(encodeURIComponent).join("/");
       const api = `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/contents/${encodedPath}`;
@@ -87,8 +98,7 @@ export class CloudflareMeetingMinutesGitHubClient {
   private async put(target: MeetingMinutesDestination["github"], path: string, content: string, message: string): Promise<string> {
     const branch = target.branch?.trim() || "main"; const encodedPath = path.split("/").map(encodeURIComponent).join("/");
     const api = `https://api.github.com/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/contents/${encodedPath}`;
-    const headers = { Accept: "application/vnd.github+json", Authorization: `Bearer ${this.token}`,
-      "User-Agent": "mana-runtime-meeting-minutes", "X-GitHub-Api-Version": "2022-11-28" };
+    const headers = this.headers();
     const current = await this.fetchImpl.call(globalThis, `${api}?ref=${encodeURIComponent(branch)}`, { headers }); let sha: string | undefined;
     if (current.ok) { sha = ((await current.json()) as { sha?: string }).sha; if (!sha) throw new Error("github_existing_content_invalid"); }
     else if (current.status !== 404) throw new Error(`github_read_failed:${current.status}`);

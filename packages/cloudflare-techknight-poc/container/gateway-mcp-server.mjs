@@ -35,7 +35,13 @@ async function callTool(name, args, fetchImpl, state) {
   const endpoint = GATEWAY_ENDPOINT;
   if (["create_task","update_task","transition_task"].includes(name)) state.writeCalls += 1;
   const body = { tool: name, arguments: args, request_id: requestId, call_index: state.writeCalls };
-  const response = await fetchImpl(endpoint, { method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": capability }, body: JSON.stringify(body), redirect: "manual", signal: AbortSignal.timeout(20_000) }).catch(() => null);
+  const response = await fetchImpl(endpoint, { method: "POST", headers: {
+    "content-type": "application/json",
+    "x-mana-task-write-capability": capability,
+    ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
+      "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
+    } : {}),
+  }, body: JSON.stringify(body), redirect: "manual", signal: AbortSignal.timeout(20_000) }).catch(() => null);
   const payload = response ? await response.json().catch(() => ({ error: "gateway_invalid_response" })) : { error: "gateway_unavailable" };
   return { content: [{ type: "text", text: JSON.stringify(payload) }], isError: !response?.ok };
 }

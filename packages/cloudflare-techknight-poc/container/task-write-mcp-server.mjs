@@ -22,7 +22,13 @@ export async function processTaskWriteRpcMessage(message, fetchImpl = fetch) {
   const capability = process.env.MANA_TASK_WRITE_CAPABILITY;
   if (!requestId || !capability) return { jsonrpc: "2.0", id: message.id ?? null, result: { content: [{ type: "text", text: JSON.stringify({ error: "task_write_not_configured" }) }], isError: true } };
   const operation = ["create","update","transition"][index];
-  const response = await fetchImpl(ENDPOINT, { method: "POST", headers: { "content-type": "application/json", "x-mana-task-write-capability": capability }, body: JSON.stringify({ ...args, request_id: requestId, operation }), redirect: "manual", signal: AbortSignal.timeout(20_000) }).catch(() => null);
+  const response = await fetchImpl(ENDPOINT, { method: "POST", headers: {
+    "content-type": "application/json",
+    "x-mana-task-write-capability": capability,
+    ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
+      "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
+    } : {}),
+  }, body: JSON.stringify({ ...args, request_id: requestId, operation }), redirect: "manual", signal: AbortSignal.timeout(20_000) }).catch(() => null);
   const payload = response ? await response.json().catch(() => ({ error: "task_write_invalid_response" })) : { error: "task_write_unavailable" };
   return { jsonrpc: "2.0", id: message.id ?? null, result: { content: [{ type: "text", text: JSON.stringify(payload) }], isError: !response?.ok } };
 }

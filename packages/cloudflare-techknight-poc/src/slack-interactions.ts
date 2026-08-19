@@ -238,10 +238,10 @@ export function handleMeetingMinutesInteractionEntrypoint(
     resolveDestinations: () => meetingMinutesRuntimeConfig(env).destinations,
     send,
     showProcessing: (input, credentialFetch) => new MeetingMinutesSlackClient(
-      env.SLACK_BOT_TOKEN ?? "", credentialFetch).showProcessingStatus(
+      undefined, credentialFetch).showProcessingStatus(
       input.channelId, input.threadTs, input.destinationName),
     clearProcessing: (input, credentialFetch) => new MeetingMinutesSlackClient(
-      env.SLACK_BOT_TOKEN ?? "", credentialFetch).clearProcessingStatus(input.channelId, input.threadTs),
+      undefined, credentialFetch).clearProcessingStatus(input.channelId, input.threadTs),
     resolveThreadTs,
     updateOriginal: (responseUrl, message, credentialFetch) => updateSlackInteractionMessage(
       responseUrl, message, credentialFetch),

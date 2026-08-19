@@ -881,14 +881,18 @@ async function runAgentAndShip(worktree, storyId, branch, baseBranch, agentArgv,
     // Fail silent: progress reporting is best-effort, never blocks the run.
   }
   const stopProgress = startAgentProgressReporting(worktree, baselineSha, startedAt);
+  const tenantBoundaryHandle = process.env.MANA_TENANT_BOUNDARY_HANDLE ?? "";
+  if (!/^tb_[A-Za-z0-9_-]{32,128}$/.test(tenantBoundaryHandle)) {
+    throw new Error("tenant_boundary_required");
+  }
   const sandboxAgentEnv = {
     ...agentEnv,
     IS_SANDBOX: "1",
-    CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
+    MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
   };
 
   try {
-    await runCommand(config.claudeBin, agentArgv, {
+    await runCommand(process.execPath, ["/opt/mana/tenant-claude-runner.mjs", "--", ...agentArgv], {
       cwd: worktree,
       timeoutMs: config.maxDurationMs,
       extraEnv: sandboxAgentEnv,
