@@ -48,7 +48,20 @@ const context: TenantContextEnvelope = {
   },
   actor: { principal_id: "person-1", principal_type: "person", authenticated_subject_id: "U1" },
   authorization: {
-    organization_ids: [], project_ids: ["project-1"], data_scopes: [], capability_ids: ["task.write"],
+    organization_ids: ["organization-1"],
+    project_ids: ["project-1"],
+    data_scopes: [
+      "company_authority:decision:auto",
+      "company_authority:membership:membership-1@3",
+      "company_authority:resource:project:project-1@12",
+      "company_authority:raci:5",
+      "company_authority:policy:8",
+      "company_authority:effect:write",
+      "company_authority:placement:placement-1",
+      "company_authority:identity_receipt:idres-1",
+      "company_authority:authority_receipt:authres-1",
+    ],
+    capability_ids: ["task.write"],
   },
   placement: { deployment_id: DEPLOYMENT_ID, profile: "shared_cloud" },
   slack: { event_id: "Ev1", channel_id: "C1", thread_ts: "1.0", requester_id: "U1" },
@@ -85,15 +98,27 @@ describe("Brainbase canonical tenant runtime transport", () => {
         expected_connection_revision: "7",
         workspace_id: "T1",
         app_id: "A1",
-        actor: context.actor,
-        authorization: context.authorization,
+        provider_identity: {
+          provider: "slack",
+          authenticated_subject_id: "U1",
+          workspace_id: "T1",
+          app_id: "A1",
+        },
+        requested_action: {
+          capability_id: "task.write",
+          resource_ref: "project:project-1",
+          project_hint: "project-1",
+          desired_effect: "write",
+        },
         slack: context.slack,
         correlation_id: context.correlation_id,
         operation_id: context.operation_id,
-        billing_principal_id: "person-1",
       });
       expect(String(init?.body)).not.toContain('"operation"');
       expect(String(init?.body)).not.toContain('"input"');
+      expect(String(init?.body)).not.toContain('"actor"');
+      expect(String(init?.body)).not.toContain('"authorization"');
+      expect(String(init?.body)).not.toContain('"billing_principal_id"');
       return Response.json(context);
     });
     const result = await clients(fetchMock).authority.issue_tenant_context({
