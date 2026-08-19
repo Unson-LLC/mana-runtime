@@ -9,19 +9,20 @@ export interface GoogleDriveMcpProxyEnv {
 export async function handleGoogleDriveMcpProxyRequest(
   request: Request,
   env: GoogleDriveMcpProxyEnv,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl?: typeof fetch,
 ): Promise<Response> {
   const url = new URL(request.url);
   if (url.hostname !== GOOGLE_DRIVE_MCP_PROXY_HOST || url.pathname !== GOOGLE_DRIVE_MCP_PROXY_PATH || request.method !== "POST") {
     return Response.json({ error: "not_found" }, { status: 404 });
   }
-  if (!env.GOOGLE_DRIVE_MCP_BASE_URL || !env.GOOGLE_DRIVE_MCP_TOKEN) {
+  if (!env.GOOGLE_DRIVE_MCP_BASE_URL || (!env.GOOGLE_DRIVE_MCP_TOKEN && !fetchImpl)) {
     return Response.json({ error: "google_drive_mcp_not_configured" }, { status: 503 });
   }
   const headers = new Headers(request.headers);
-  headers.set("authorization", `Bearer ${env.GOOGLE_DRIVE_MCP_TOKEN}`);
+  if (env.GOOGLE_DRIVE_MCP_TOKEN) headers.set("authorization", `Bearer ${env.GOOGLE_DRIVE_MCP_TOKEN}`);
+  else headers.delete("authorization");
   headers.delete("cookie");
-  const response = await fetchImpl(`${env.GOOGLE_DRIVE_MCP_BASE_URL.replace(/\/$/, "")}${GOOGLE_DRIVE_MCP_PROXY_PATH}`, {
+  const response = await (fetchImpl ?? fetch)(`${env.GOOGLE_DRIVE_MCP_BASE_URL.replace(/\/$/, "")}${GOOGLE_DRIVE_MCP_PROXY_PATH}`, {
     method: "POST",
     headers,
     body: request.body,

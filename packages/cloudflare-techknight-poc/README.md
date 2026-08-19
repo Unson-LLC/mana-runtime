@@ -3,8 +3,9 @@
 会社ごとに独立デプロイするCloudflare実行環境です。Slack Events APIで受けたイベントを
 署名・workspace境界で検証し、Queue、Durable Object、`@cloudflare/computer` Workspaceへ
 冪等に保存します。許可したチャンネルのメンションは会社別SandboxのClaude Codeで
-処理し、各社の八雲まなSlack Appから元スレッドへ返信します。Anthropic OAuthとSlack Bot
-tokenはContainerへ保存せず、会社別Worker Secretの境界内でだけ使用します。
+処理し、各社の八雲まなSlack Appから元スレッドへ返信します。Anthropic OAuthやSlack Bot
+tokenなどのprovider資格情報はWorkerとContainerへ渡さず、Brainbase専用内部forward serviceが
+request単位のsingle-use leaseをmaterializeしてproviderへ送信します。
 
 一般返信のタスク検索は、Sandbox内の検索専用stdio MCPから合成host
 `task-search.internal`だけを呼び、Workerが固定のBrainbase検索APIへ中継します。
@@ -20,9 +21,9 @@ Placement、`back-office` project、操作、期限、最大回数を署名し�
 - `wrangler.jsonc`: TechKnight
 - `wrangler.unson-business.jsonc`: 雲孫事業運営
 
-Worker、Queue、DLQ、Durable Object、Container、Slack認証、Anthropic OAuth、Brainbase認証は
-deploymentごとに分離します。内部のbinding/class名に残る`TECHKNIGHT_`は後方互換名であり、
-Cloudflare resource自体を共有するものではありません。
+Worker、Queue、DLQ、Durable Object、ContainerとBrainbase側のSlack、Anthropic、Brainbase
+provider資格情報はdeploymentごとに分離します。内部のbinding/class名に残る`TECHKNIGHT_`は
+後方互換名であり、Cloudflare resource自体を共有するものではありません。
 
 Slack Appもdeploymentごとに分離します。LightsailでSocket Modeを使う既存Appの接続方式は
 変更せず、Cloudflareには同じ表示名「八雲まな」の専用Appを新設してHTTP Events APIだけを
@@ -130,20 +131,25 @@ Anthropic OAuth、BrainbaseのTokenを流用しません。そのうえで次を
    対象のWrangler設定を`--config`で明示した`wrangler secret put`で設定する。
    既存Socket Mode Appは流用しない。
 3. Queue、Durable Object、Workerが対象会社のaccountに作られることをdry-run出力で確認する。
-4. 対象会社のAnthropic OAuthだけを`CLAUDE_CODE_OAUTH_TOKEN` Secretとして設定する。
+4. Brainbase専用内部forward serviceを`BRAINBASE_TENANT_RUNTIME_SERVICE` Service Bindingで接続し、
+   `BRAINBASE_TENANT_RUNTIME_ENABLED=1`、host `127.0.0.1`、明示portを確認する。
+   Workerにはprovider credentialを置かず、サービス認証用の
+   `BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN`だけをSecretとして設定する。
 5. 対象のWrangler設定を明示したdeploy scriptを実行し、Slack URL verificationと
    重複eventの永続化を確認する。
 6. 推測されにくい値を`SANDBOX_PROBE_TOKEN` Secretとして設定する。
 7. 認証付き`POST /admin/sandbox/runtime-probe`でClaude Codeの起動を確認する。
-8. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各回は新規Containerを使い、
-   OAuthがWorker Secretから復帰することを確認する。
-9. 対象会社の八雲まなAppのBot tokenを`SLACK_BOT_TOKEN` Secretとして設定する。
+8. 認証付き`POST /admin/sandbox/oauth-probe`を2回実行する。各provider requestが
+   Brainbase専用内部forward serviceで新しいsingle-use leaseを取得し、opaque handleや
+   provider credentialがWorker、Container environment、ログへ出ないことを確認する。
+9. 対象会社の八雲まなAppのBot tokenをBrainbase credential brokerへ登録し、
+   Slack provider requestがBrainbase専用内部forward serviceだけを通ることを確認する。
 10. `SLACK_ALLOWED_CHANNEL_ID`のチャンネルで八雲まなへメンションし、元スレッドへの返信と
     `techknight_slack_reply`の完了ログを確認する。
 11. 正式なBrainbase project codeを確認し、`RUNTIME_PROJECT_CODES`へカンマ区切りで設定する。
     未設定時はタスク登録を行わず`project_binding_missing`で停止する。
-12. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`、サービスTokenを
-    `BRAINBASE_TASK_API_TOKEN` Secretとして設定する。Token値はWrangler設定へ書かない。
+12. BrainbaseのタスクAPI URLを`BRAINBASE_TASK_API_BASE_URL`へ設定し、provider資格情報は
+    Brainbase credential brokerへ登録する。Workerへ`BRAINBASE_TASK_API_TOKEN`を設定しない。
 13. 「私の」「自分の」タスク検索を有効にする場合は、`workspaceId:SlackUserId`から
     Brainbase正規`person_id`への対応表(JSON)を`BRAINBASE_SLACK_PERSON_MAP_JSON` Secretとして
     設定する。レガシーAWS/Jimmy実装の静的対応表と同じ直接bridgeであり、対応表の内容・実際の
@@ -188,10 +194,8 @@ Socket Mode App `A0BLS5WEL2J`には変更を加えません。議事録タスク
 ```bash
 pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business
 npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.unson-business.jsonc
-npx wrangler secret put CLAUDE_CODE_OAUTH_TOKEN --config wrangler.unson-business.jsonc
+npx wrangler secret put BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN --config wrangler.unson-business.jsonc
 npx wrangler secret put SANDBOX_PROBE_TOKEN --config wrangler.unson-business.jsonc
-npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.unson-business.jsonc
-npx wrangler secret put BRAINBASE_TASK_API_TOKEN --config wrangler.unson-business.jsonc
 npx wrangler secret put TASK_WRITE_CAPABILITY_SECRET --config wrangler.unson-business.jsonc
 pnpm --filter @openryoko/cloudflare-techknight-poc deploy:unson-business
 ```

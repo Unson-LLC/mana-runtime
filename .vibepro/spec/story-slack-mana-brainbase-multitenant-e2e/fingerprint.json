@@ -1,0 +1,29 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-mana-brainbase-multitenant-e2e",
+  "recorded_from": "vibepro spec fingerprint",
+  "generated_at": "2026-08-16T23:49:48Z",
+  "inputs_digest": {
+    "story_sha": "sha256:7efd19bb90c4e8633f926e408694232414009a798b1995ee9452151613c83313",
+    "code_sha": "sha256:7a8dec718898c17d30bd09badc591c09f759435d17fbaa2cc8a3065bfaec2765",
+    "test_sha": "sha256:d2d11bd2a9fa47702f08941e8e3eac097f4bc11c942d06d408b050e74175a925",
+    "architecture_sha": "sha256:c4610ec8db5d7532d537e2aabfb33429ff2000dbf9c3c73fe341468bc161a23f"
+  },
+  "draft_spec_sha256": "0e7f105c495f279868785c3c3663b0dda2dc56c379f7d7d94d38bdb0970f1df3",
+  "fixture_sha256": {
+    "positive": "62b03cc5c377f69ecd66a0a6901e5e2935b6a69b65598bae9cd1203ec55a9539",
+    "negative": "d15bbb55d43eae63b64d29f1766e4fb52c12ec1dca840dcb2cd1a0ef33ea8024",
+    "non_applicable": "21856f725d12fbc93f21245f63bc77062d392ef4ce99f300a78728da95e34375",
+    "canonical_fixture_set": "81c73707578ae42d6ed539aae3ac1e8eb3b0feac906e3856e73d8cdf6629d454"
+  },
+  "cross_lane_contract_decision_count": 9,
+  "blocking_open_decision_count": 0,
+  "implementation_start_gate": "BLOCKED",
+  "story_path": "docs/management/stories/active/story-slack-mana-brainbase-multitenant-e2e.md",
+  "acceptance_criteria_count": 12,
+  "architecture_files": [
+    "docs/architecture/story-mana-multitenant-runtime.md",
+    "docs/architecture/story-slack-mana-brainbase-multitenant-e2e.md"
+  ],
+  "previous_accepted_spec_present": false
+}

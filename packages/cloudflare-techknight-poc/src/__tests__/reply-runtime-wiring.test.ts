@@ -44,6 +44,14 @@ describe("reply task-search runtime wiring", () => {
     });
   });
 
+  it("accepts the tenant credential fetch boundary without a static task token", () => {
+    expect(resolveReplyTaskSearchOptions(event(), {
+      ...configured,
+      brainbaseTaskToken: undefined,
+      tenantCredentialFetchConfigured: true,
+    })).toEqual(expect.objectContaining({ taskSearchEnabled: true }));
+  });
+
   it.each([
     ["workspace mismatch", event({ workspaceId: "T_OTHER" }), configured, "workspace_not_allowed"],
     ["missing project", event(), { ...configured, projectCodes: "" }, "project_binding_missing"],

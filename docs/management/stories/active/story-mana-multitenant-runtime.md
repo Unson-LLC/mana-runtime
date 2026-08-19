@@ -16,7 +16,7 @@ architecture_docs:
     status: accepted
 spec_docs:
   - path: docs/specs/story-mana-multitenant-runtime.vibepro.json
-    status: required_not_started
+    status: accepted
 related:
   - https://github.com/Unson-LLC/vibepro/issues/466
   - Unson-LLC/brainbase-unson:story-brainbase-multitenant-platform

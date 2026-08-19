@@ -1,0 +1,14 @@
+{
+  "fixture_id": "NEG-REQUIRED-MISSING",
+  "fixture_kind": "negative",
+  "base_fixture": "../positive/canonical-flow.json",
+  "target": "tenant_context_envelope",
+  "mutations": [
+    {
+      "operation": "delete",
+      "path": "/audience"
+    }
+  ],
+  "expected_code": "SCHEMA_INVALID",
+  "business_api_called": false
+}

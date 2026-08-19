@@ -49,8 +49,9 @@ export function isMeetingMinutesSelection(value: unknown): value is MeetingMinut
   return candidate.kind === "meeting_minutes_selection" &&
     typeof candidate.runId === "string" && /^[A-Za-z0-9_-]{3,260}$/.test(candidate.runId) &&
     typeof candidate.destinationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate.destinationId) &&
-    [candidate.workspaceId, candidate.channelId, candidate.userId].every((item) =>
+    [candidate.workspaceId, candidate.appId, candidate.channelId, candidate.userId].every((item) =>
       typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
+    typeof candidate.threadTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.threadTs) &&
     typeof candidate.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.actionTs);
 }
 export function isMeetingMinutesRedo(value: unknown): value is MeetingMinutesRedo {
@@ -58,14 +59,15 @@ export function isMeetingMinutesRedo(value: unknown): value is MeetingMinutesRed
   const candidate = value as Partial<MeetingMinutesRedo>;
   return candidate.kind === "meeting_minutes_redo" &&
     typeof candidate.runId === "string" && /^[A-Za-z0-9_-]{3,260}$/.test(candidate.runId) &&
-    [candidate.workspaceId, candidate.channelId, candidate.userId].every((item) =>
+    [candidate.workspaceId, candidate.appId, candidate.channelId, candidate.userId].every((item) =>
       typeof item === "string" && /^[A-Z0-9]{2,64}$/.test(item)) &&
+    typeof candidate.threadTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.threadTs) &&
     typeof candidate.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(candidate.actionTs);
 }
 
 export async function processMeetingMinutesSlackEvent(fs: WorkspaceFs, event: SlackQueueEvent,
   config: MeetingMinutesRuntimeConfig, options: Pick<StartMeetingMinutesOptions,
-    "download" | "classifyDestination" | "requestDestination" | "now">) {
+    "sourceAppId" | "download" | "classifyDestination" | "requestDestination" | "now">) {
   if (!isMeetingMinutesSlackEvent(event, config)) return [];
   return startMeetingMinutesRuns(fs, event, { ...options, enabled: config.enabled, routerChannelId: config.routerChannelId,
     destinations: config.destinations });

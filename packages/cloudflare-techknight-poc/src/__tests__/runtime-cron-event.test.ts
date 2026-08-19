@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createManualCronEvent } from "../runtime-cron-event.js";
+import { describe, expect, it, vi } from "vitest";
+import { createCanonicalManualCronMessage, createManualCronEvent } from "../runtime-cron-event.js";
 
 const source = {
   tenantId: "mana",
@@ -47,5 +47,29 @@ describe("manual runtime cron event", () => {
   it("does not manufacture an actor for requester-less execution", () => {
     expect(() => createManualCronEvent({ ...source, userId: undefined }, job,
       "2026-08-14T01:00:00.000Z")).toThrow("cron_requester_missing");
+  });
+
+  it("re-resolves the new cron event and enqueues only a canonical tenant body", async () => {
+    const tenantContext = {
+      tenant: { tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+      slack: { event_id: "cron:Ev_command:daily", channel_id: "C_MANA", thread_ts: "123.45",
+        requester_id: "U_OPERATOR" },
+    } as never;
+    const resolveTenantContext = vi.fn(async () => tenantContext);
+    const message = await createCanonicalManualCronMessage(source, job, "2026-08-14T01:00:00.000Z",
+      resolveTenantContext);
+
+    expect(resolveTenantContext).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: "cron:Ev_command:daily",
+      text: "今日のタスクを確認して報告して",
+    }));
+    expect(message).toEqual({
+      schema_version: "1.0",
+      tenant_context: tenantContext,
+      payload: expect.objectContaining({
+        tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        eventId: "cron:Ev_command:daily",
+      }),
+    });
   });
 });

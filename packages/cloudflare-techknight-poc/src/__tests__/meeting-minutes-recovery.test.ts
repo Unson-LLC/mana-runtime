@@ -4,9 +4,9 @@ import type { MeetingMinutesRun, MeetingMinutesSelection } from "../meeting-minu
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1",
-  destinationId: "united", workspaceId: "T1", channelId: "C1", userId: "U1", actionTs: "2.1" };
+  destinationId: "united", workspaceId: "T1", appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
 function run(status: MeetingMinutesRun["status"] = "routed"): MeetingMinutesRun {
-  return { version: 1, runId: "Ev1_F1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
+  return { version: 1, runId: "Ev1_F1", eventId: "Ev1", workspaceId: "T1", sourceAppId: "A1", sourceChannelId: "C1",
     sourceThreadTs: "1.1", sourceMessageTs: "1.1", file: { id: "F1", name: "meeting.txt" }, status,
     destination: { id: "united", projectId: "united", name: "United", organization: { id: "tech-knight", name: "Tech Knight" },
       slackChannelId: "CD", github: { owner: "o", repo: "r" } },
@@ -20,6 +20,12 @@ describe("meeting minutes stale recovery", () => {
     const first = await armMeetingMinutesRecovery(fs, selection, 1_000);
     const second = await armMeetingMinutesRecovery(fs, selection, 60_000);
     expect(second.event).toEqual(first.event);
+    expect(first.event).toMatchObject({
+      workspaceId: selection.workspaceId,
+      channelId: selection.channelId,
+      threadTs: selection.threadTs,
+      userId: selection.userId,
+    });
     expect((await loadMeetingMinutesRun(fs, selection.runId))?.lifecycle?.deadlineAt)
       .toBe(new Date(1_000 + 20 * 60 * 1_000).toISOString());
   });

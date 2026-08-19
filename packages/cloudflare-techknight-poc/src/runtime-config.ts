@@ -47,6 +47,7 @@ export interface ReplyTaskSearchBindingConfig extends RuntimeBindingConfig {
   taskSearchEnabled?: string;
   brainbaseApiBaseUrl?: string;
   brainbaseTaskToken?: string;
+  tenantCredentialFetchConfigured?: boolean;
 }
 
 export type ReplyTaskSearchOptions =
@@ -238,7 +239,10 @@ export function resolveReplyTaskSearchOptions(
 ): ReplyTaskSearchOptions {
   if (config.taskSearchEnabled !== "true") return { taskSearchEnabled: false };
   const binding = resolveRuntimeBinding(event, config);
-  if (!config.brainbaseApiBaseUrl || !config.brainbaseTaskToken) {
+  if (
+    !config.brainbaseApiBaseUrl ||
+    (!config.brainbaseTaskToken && !config.tenantCredentialFetchConfigured)
+  ) {
     throw new RuntimeBindingError("task_search_config_missing");
   }
   try {

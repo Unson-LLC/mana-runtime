@@ -46,13 +46,12 @@ describe("handleSandboxAdminRequest", () => {
       tenant: "techknight",
       runtime: "claude-code",
       version: "2.1.227",
-      oauthConfigured: true,
-      credentialLocation: "worker-secret",
+      providerForwarding: "trusted_forwarder_required",
     });
     expect(client.destroy).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when the TechKnight OAuth secret is absent", async () => {
+  it("fails closed because an admin token is not a tenant provider authority", async () => {
     const client = sandbox();
     const response = await handleSandboxAdminRequest(
       request("/admin/sandbox/oauth-probe"),
@@ -65,7 +64,7 @@ describe("handleSandboxAdminRequest", () => {
     expect(client.destroy).toHaveBeenCalledOnce();
   });
 
-  it("passes only a placeholder into a fresh container and suppresses command output", async () => {
+  it("does not fall back to a Worker secret for an OAuth probe", async () => {
     const client = sandbox({
       success: true,
       stdout: "TECHKNIGHT_OAUTH_OK oauth-secret-must-not-leak",
@@ -77,17 +76,8 @@ describe("handleSandboxAdminRequest", () => {
       { createSandbox: () => client, randomId: () => "fixed" },
     );
 
-    expect(response.status).toBe(200);
-    expect(client.exec).toHaveBeenCalledWith(expect.stringContaining("TECHKNIGHT_OAUTH_OK"), {
-      timeout: 120_000,
-      env: {
-        IS_SANDBOX: "1",
-        CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected",
-      },
-    });
-    const command = client.exec.mock.calls[0]?.[0] as string;
-    expect(command).not.toContain("--model");
-    expect(command).not.toContain("--effort");
+    expect(response.status).toBe(503);
+    expect(client.exec).not.toHaveBeenCalled();
     const body = JSON.stringify(await response.json());
     expect(body).not.toContain("oauth-secret-must-not-leak");
     expect(client.destroy).toHaveBeenCalledOnce();

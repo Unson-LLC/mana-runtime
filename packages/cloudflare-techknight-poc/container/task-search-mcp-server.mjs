@@ -56,6 +56,9 @@ function validateArgs(input) {
 
 function traceHeaders(callIndex) {
   const headers = { accept: "application/json" };
+  if (/^tb_[A-Za-z0-9_-]{32,128}$/.test(process.env.MANA_TENANT_BOUNDARY_HANDLE ?? "")) {
+    headers["x-mana-tenant-boundary-handle"] = process.env.MANA_TENANT_BOUNDARY_HANDLE;
+  }
   if (/^[A-Za-z0-9._:-]{1,128}$/.test(process.env.MANA_TRACE_ID ?? "")) {
     headers["x-mana-trace-id"] = process.env.MANA_TRACE_ID;
   }

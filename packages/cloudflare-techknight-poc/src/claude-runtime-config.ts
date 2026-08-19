@@ -127,9 +127,10 @@ export function buildRuntimeClaudeCommand(
       ? ` --output-format stream-json --verbose --include-hook-events --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : "";
+  const claude = "node /opt/mana/tenant-claude-runner.mjs --";
   const base = purpose === "meeting-minutes"
-    ? `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH} --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config${structuredOutputArg} < ${promptPath}`
-    : `claude --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg} "$(cat ${promptPath})"`;
+    ? `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH} --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config${structuredOutputArg} < ${promptPath}`
+    : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
     : base;

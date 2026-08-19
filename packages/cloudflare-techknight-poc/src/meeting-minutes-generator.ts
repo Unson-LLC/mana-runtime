@@ -5,6 +5,7 @@ import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinut
 import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
 import { buildRuntimeMcpConfig } from "./runtime-mcp-config.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
+import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 
 const MEETING_MINUTES_GENERATION_TIMEOUT_MS = 600_000;
 const MEETING_MINUTES_ROUTING_TIMEOUT_MS = 60_000;
@@ -14,13 +15,15 @@ const MEETING_MINUTES_AUDIT_STREAM_MAX_EVENTS = 20_000;
 const MEETING_MINUTES_CONTEXT_PROMPT_MAX_BYTES = 100_000;
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
-const MEETING_MINUTES_MCP_CONFIG = JSON.stringify(buildRuntimeMcpConfig({
-  mcp: ["brainbase"], gatewayTools: [],
-}));
-
-async function prepareMeetingMinutesRuntime(sandbox: ReplySandbox, prompt: string): Promise<void> {
+async function prepareMeetingMinutesRuntime(
+  sandbox: ReplySandbox,
+  prompt: string,
+  tenantBoundaryHandle: string,
+): Promise<void> {
   await sandbox.writeFile(runtimeClaudePromptPath("meeting-minutes"), prompt);
-  await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), MEETING_MINUTES_MCP_CONFIG);
+  await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), JSON.stringify(buildRuntimeMcpConfig({
+    mcp: ["brainbase"], gatewayTools: [],
+  }, tenantBoundaryHandle)));
 }
 
 function nonEmpty(value: unknown, max: number): string | undefined {
@@ -142,21 +145,26 @@ export async function classifyMeetingMinutesDestinationInSandbox(
   destinations: readonly MeetingMinutesDestination[],
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
+  tenantBoundaryHandle: string,
 ): Promise<{ destinationId: string; reason: string } | null> {
+  if (!tenantBoundaryHandle) throw new Error("tenant_boundary_required");
   try {
-    await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations));
+    await prepareMeetingMinutesRuntime(sandbox, routingPrompt(transcript, destinations), tenantBoundaryHandle);
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
       structuredOutput: "meeting-minutes-routing",
     }), {
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
-      env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      env: {
+        IS_SANDBOX: "1",
+        MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+      },
     });
     if (!result.success) return null;
     return parseMeetingMinutesRoutingOutput(result.stdout, destinations);
   } catch {
     return null;
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }
 
@@ -394,19 +402,28 @@ export async function generateMeetingMinutesInSandbox(
   mode: MeetingMinutesContextMode,
   claudeRuntime: ClaudeRuntimeConfig,
   sandbox: ReplySandbox,
+  tenantBoundaryHandle: string,
 ): Promise<AuditedGeneratedMeetingMinutes> {
+  if (!tenantBoundaryHandle) throw new Error("tenant_boundary_required");
   try {
-    await prepareMeetingMinutesRuntime(sandbox, generationPrompt(transcript, destination, context, mode));
+    await prepareMeetingMinutesRuntime(
+      sandbox,
+      generationPrompt(transcript, destination, context, mode),
+      tenantBoundaryHandle,
+    );
     const result = await sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", claudeRuntime, {
       structuredOutput: "meeting-minutes",
       includeJudgmentHookEvents: true,
     }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
-      env: { IS_SANDBOX: "1", CLAUDE_CODE_OAUTH_TOKEN: "proxy-injected" },
+      env: {
+        IS_SANDBOX: "1",
+        MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+      },
     });
     if (!result.success) throw new Error("meeting_minutes_generation_failed");
     return parseReceiptBoundGeneratedMeetingMinutesOutput(result.stdout, context);
   } finally {
-    await sandbox.destroy().catch(() => undefined);
+    await destroyTenantContainer(sandbox);
   }
 }

@@ -82,6 +82,7 @@ function replyOptions(
     allowedChannelId: "C_BACK_OFFICE",
     slackBotToken: "xoxb-secret",
     oauthConfigured: true,
+    tenantBoundaryHandle: "tb_00000000000000000000000000000001",
     claudeRuntime: resolveClaudeRuntimeConfig({
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
@@ -108,6 +109,7 @@ function meetingOptions(
     brainbaseTaskToken: "brainbase-secret",
     slackBotToken: "xoxb-secret",
     oauthConfigured: true,
+    tenantBoundaryHandle: "tb_00000000000000000000000000000002",
     claudeRuntime: resolveClaudeRuntimeConfig({
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",

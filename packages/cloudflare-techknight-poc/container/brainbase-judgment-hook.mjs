@@ -65,7 +65,12 @@ try {
   payload.turn_id = await resolveTurnId(payload);
   const response = await fetch(hookUrl, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
+        "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
+      } : {}),
+    },
     body: JSON.stringify(payload),
     redirect: "error",
     signal: AbortSignal.timeout(30_000),

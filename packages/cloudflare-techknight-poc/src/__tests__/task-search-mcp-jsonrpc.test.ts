@@ -113,6 +113,7 @@ describe("task-search stdio MCP", () => {
     vi.stubEnv("MANA_TRACE_ID", "EvTrace123");
     vi.stubEnv("MANA_TRACE_PLACEMENT_ID", "mana-dev-biz");
     vi.stubEnv("MANA_TRACE_PROJECT_CODES", "unson");
+    vi.stubEnv("MANA_TENANT_BOUNDARY_HANDLE", "tb_opaque_operation_handle_1234567890");
     try {
       const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [], has_more: false }));
       await processTaskSearchRpcMessage({
@@ -128,6 +129,8 @@ describe("task-search stdio MCP", () => {
       expect(headers.get("x-mana-trace-placement-id")).toBe("mana-dev-biz");
       expect(headers.get("x-mana-trace-project-codes")).toBe("unson");
       expect(headers.get("x-mana-trace-call-index")).toBe("1");
+      expect(headers.get("x-mana-tenant-boundary-handle"))
+        .toBe("tb_opaque_operation_handle_1234567890");
     } finally {
       vi.unstubAllEnvs();
     }

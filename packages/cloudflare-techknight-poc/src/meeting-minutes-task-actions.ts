@@ -9,19 +9,37 @@ type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as ObjectValue : undefined; }
 function text(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined; }
 type ActionMetadata = { runId: string; index: number; organizationId?: string; channelId?: string; projectId?: string;
-  title?: string; due?: string; assigneePersonId?: string; assigneeDisplayName?: string };
+  title?: string; due?: string; assigneePersonId?: string; assigneeDisplayName?: string;
+  sourceWorkspaceId?: string; sourceAppId?: string; sourceChannelId?: string; sourceThreadTs?: string };
 function metadata(value: unknown): ActionMetadata | undefined {
   try { const parsed = object(JSON.parse(text(value) ?? "")); const runId = text(parsed?.runId); const index = parsed?.index;
     return runId && Number.isInteger(index) && Number(index) >= 0 ? { runId, index: Number(index),
       organizationId: text(parsed?.organizationId), channelId: text(parsed?.channelId), projectId: text(parsed?.projectId),
       title: text(parsed?.title), due: text(parsed?.due), assigneePersonId: text(parsed?.assigneePersonId),
-      assigneeDisplayName: text(parsed?.assigneeDisplayName) } : undefined; }
+      assigneeDisplayName: text(parsed?.assigneeDisplayName), sourceWorkspaceId: text(parsed?.sourceWorkspaceId),
+      sourceAppId: text(parsed?.sourceAppId), sourceChannelId: text(parsed?.sourceChannelId),
+      sourceThreadTs: text(parsed?.sourceThreadTs) } : undefined; }
   catch { return undefined; }
 }
+export interface MeetingMinutesSourceIdentity {
+  workspaceId: string; appId: string; channelId: string; threadTs: string;
+}
+function sourceIdentity(value: ActionMetadata | undefined): MeetingMinutesSourceIdentity | undefined {
+  return value?.sourceWorkspaceId && value.sourceAppId && value.sourceChannelId && value.sourceThreadTs ? {
+    workspaceId: value.sourceWorkspaceId, appId: value.sourceAppId,
+    channelId: value.sourceChannelId, threadTs: value.sourceThreadTs,
+  } : undefined;
+}
+function expiredLegacyAction(): Response {
+  return Response.json({
+    error: "meeting_minutes_task_action_expired",
+    user_message: "このカードは旧形式のため操作できません。議事録を再生成してください。",
+  }, { status: 409 });
+}
 export interface MeetingMinutesTaskActionDependencies {
-  sourceTeamId: string; destinationTeamIds: Readonly<Record<string, string>>;
+  destinationTeamIds: Readonly<Record<string, string>>;
   operatorUserIds: ReadonlySet<string>;
-  loadRun(runId: string): Promise<MeetingMinutesRun | undefined>;
+  loadRun(runId: string, source: MeetingMinutesSourceIdentity): Promise<MeetingMinutesRun | undefined>;
   saveRun(run: MeetingMinutesRun): Promise<void>;
   getTask(taskId: string): Promise<CanonicalTask>;
   updateTask(taskId: string, input: UpdateTaskInput, idempotencyKey: string): Promise<CanonicalTask>;
@@ -41,10 +59,13 @@ function hasExpectedTaskScope(run: MeetingMinutesRun, current: CanonicalTask): b
   const actual = current.project_codes;
   return actual?.length === expected.length && expected.every((code) => actual.includes(code));
 }
-function allowed(payload: ObjectValue, run: MeetingMinutesRun, deps: MeetingMinutesTaskActionDependencies): boolean {
+function allowed(payload: ObjectValue, run: MeetingMinutesRun, source: MeetingMinutesSourceIdentity,
+  deps: MeetingMinutesTaskActionDependencies): boolean {
   const teamId = text(object(payload.team)?.id); const channelId = text(object(payload.channel)?.id);
-  const expectedTeam = deps.destinationTeamIds[run.destination?.organization.id ?? ""] ?? deps.sourceTeamId;
-  return teamId === expectedTeam && (!channelId || channelId === run.destination?.slackChannelId);
+  const expectedTeam = deps.destinationTeamIds[run.destination?.organization.id ?? ""];
+  return !!expectedTeam && teamId === expectedTeam && (!channelId || channelId === run.destination?.slackChannelId) &&
+    run.workspaceId === source.workspaceId && run.sourceAppId === source.appId &&
+    run.sourceChannelId === source.channelId && run.sourceThreadTs === source.threadTs;
 }
 export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   deps: MeetingMinutesTaskActionDependencies): Promise<Response | undefined> {
@@ -59,7 +80,11 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   if (payload.type === "block_suggestion" && actionId === MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID) {
     const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
     const teamId = text(object(payload.team)?.id); const expectedTeam = value?.organizationId && deps.destinationTeamIds[value.organizationId];
-    if (!value || !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam) {
+    const source = sourceIdentity(value);
+    if (value && !source) return expiredLegacyAction();
+    const run = value && source ? await deps.loadRun(value.runId, source) : undefined;
+    if (!value || !source || !run || !candidate(run, value.index) || !allowed(payload, run, source, deps) ||
+      !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam) {
       console.warn("meeting_minutes_assignee_suggestion_forbidden", {
         hasMetadata: Boolean(value), hasUserId: Boolean(userId), operatorAllowed: Boolean(userId && deps.operatorUserIds.has(userId)),
         teamMatched: Boolean(teamId && expectedTeam && teamId === expectedTeam),
@@ -84,8 +109,15 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     callbackId !== MEETING_MINUTES_TASK_EDIT_VIEW_ID) return undefined;
   const value = callbackId ? metadata(view?.private_metadata) : metadata(action?.value);
   if (!value) return Response.json({ error: "meeting_minutes_task_action_invalid" }, { status: 400 });
+  const source = sourceIdentity(value);
+  if (!source) return expiredLegacyAction();
   const userId = text(object(payload.user)?.id);
   if (!userId || !deps.operatorUserIds.has(userId)) return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
+  const run = await deps.loadRun(value.runId, source);
+  const item = run && candidate(run, value.index);
+  if (!run || !run.destination || !item || !allowed(payload, run, source, deps)) {
+    return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
+  }
   if (actionId === MEETING_MINUTES_TASK_EDIT_ACTION_ID) {
     const triggerId = text(payload.trigger_id); const teamId = text(object(payload.team)?.id); const channelId = text(object(payload.channel)?.id);
     const expectedTeam = value.organizationId && deps.destinationTeamIds[value.organizationId];
@@ -94,12 +126,9 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     deps.defer(deps.openView(value.organizationId, triggerId, meetingMinutesTaskEditViewFromAction({ runId: value.runId,
       index: value.index, title: value.title, due: value.due, organizationId: value.organizationId,
       channelId: value.channelId, projectId: value.projectId, assigneePersonId: value.assigneePersonId,
-      assigneeDisplayName: value.assigneeDisplayName })));
+      assigneeDisplayName: value.assigneeDisplayName, sourceWorkspaceId: source.workspaceId,
+      sourceAppId: source.appId, sourceChannelId: source.channelId, sourceThreadTs: source.threadTs })));
     return Response.json({ ok: true });
-  }
-  const run = await deps.loadRun(value.runId); const item = run && candidate(run, value.index);
-  if (!run || !run.destination || !item || !allowed(payload, run, deps)) {
-    return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
   }
   if (actionId === MEETING_MINUTES_TASK_CANCEL_ACTION_ID) {
     deps.defer((async () => { let current: CanonicalTask;
