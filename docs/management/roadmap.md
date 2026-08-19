@@ -1,9 +1,11 @@
 # mana-runtime ロードマップ（正本）
 
 - **初版**: 2026-07-29
-- **最終更新**: 2026-08-17
-- **現在地の基準**: `main` `ab65b7fa5b6cc25d61c088676430fc446ff47e34`
-**維持**: 方針変更はこのファイルを更新してからStory・Spec・Canonical Taskへ展開する。会議・Slackでの発言は、ここへ反映されるまでロードマップの正本ではない。
+- **最終更新**: 2026-08-19
+- **現在地の基準**: `main` `efa1dbb9497703d6b5c47b5b63ffd82550fbc7b1`
+- **統合計画**: [組織版・マルチテナント・経営実行ループ統合計画](../plans/2026-08-19-organization-edition-and-multitenant-rollout.md)
+
+**維持**: 方針変更はこのファイルを更新してからStory・Spec・Canonical Taskへ展開する。会議・Slackでの発言は、ここへ反映されるまでロードマップの正本ではない。日々の進捗はCanonical TaskまたはAutomation Runへ置き、本書へ重複保存しない。
 
 ## 1. 北極星
 
@@ -20,6 +22,15 @@ Decision（人間が決める）
 
 北極星指標は、週次の **「人間の判断介入1回あたりに完了した成果数」** とする。AI実行回数、会話数、登録タスク数は補助指標であり、成功判定には使わない。
 
+マナの行動原則を次で固定する。
+
+- 会社・プロジェクト・人物・責任・権限・過去判断をBrainbaseから解決してから動く。
+- 権限内の仕事は、下書きではなく実行・外部readback・証拠取得まで自律的に進める。
+- 人間にしかできない仕事は、担当者、必要な判断または行動、推奨、期限、未実行の影響を示して働きかける。
+- 通知しただけで責任を終えず、再確認、代替案、RACIに基づくエスカレーションまで追跡する。
+- 完了は自己申告ではなく、成果物、API readback、顧客反応、Operation Receiptなどの証拠で確定する。
+- 未取得、部分取得、権限不足、timeoutを成功や0件へ丸めない。
+
 ## 2. 正本と責務の境界
 
 mana-runtimeに第二の業務正本を作らない。
@@ -28,43 +39,98 @@ mana-runtimeに第二の業務正本を作らない。
 |---|---|---|
 | 顧客・プロジェクト・人物・RACI・意思決定 | Brainbase Graph SSOT | 実行前に参照し、候補をBrainbaseへ返す |
 | 作業項目・担当・期限・状態 | Brainbase Canonical Task | 作成・更新・検索・リマインド・Slack投影 |
-| 手順・分岐・承認・実行履歴・証跡 | Brainbase DAG / Automation Run | イベント受付、実行、承認UI、結果表示 |
+| 手順・分岐・承認・実行履歴・証跡 | Brainbase DAG / Automation Run | イベント受付、実行adapter、承認UI、結果表示 |
+| Personal KG | Brainbase上の本人所有領域 | 本人認証に基づいて参照・候補送信し、組織管理者へ本文を開示しない |
+| tenant・workspace connection・quota・credential正本 | Brainbase control plane | 署名付きcontext・短命leaseを受け、実行時に強制する |
 | 会話・チャンネル・一時セッション | mana-runtime | tenant境界内で保持し、業務事実の正本にしない |
-| 監査・停止・予算 | placement policy / receipt | 実行時に強制し、状態と理由を可視化する |
+| Queue・Slack deliveryの冪等性 | mana-runtime | runtime effectをclaimし、canonical Receiptへ関連付ける |
 
-## 3. 現在地
+## 3. 製品能力と配備形態
 
-### リポジトリ上で確認できる実装
+製品能力と配備形態を分離して管理する。マルチテナントを個人版・組織版とは別の機能階層にしない。
+
+### 3.1 製品能力
+
+| 能力 | 定義 |
+|---|---|
+| 個人版OSS | 個人の目的、判断、記憶、Task、Shipを進める共通MANA Core |
+| 組織版 | 個人版の全能力に、組織Graph、組織目標、RACI、共有Task・Ship、承認、監査、複数人への働きかけを加えた能力上の上位互換 |
+
+組織版は**能力上の上位互換**であり、個人データへのアクセス権上の上位互換ではない。組織管理者であっても、本人のPersonal KG本文を当然には閲覧できない。組織版でも個人モードをそのまま利用でき、組織共有は本人同意と組織レビューを経た正規化済みの事実・判断・関係と根拠ポインタに限定する。
+
+### 3.2 配備形態
+
+| profile | 定義 |
+|---|---|
+| `customer_managed_oss` | 利用者が管理する環境で個人版または互換組織版を動かす |
+| `dedicated_cloud` | 1 tenant専用のWorker、Queue、Container、credential境界で動かす |
+| `shared_cloud` | 複数tenantを同じサービス基盤へ安全に収容し、実行ごとにcanonical tenantを解決する |
+
+tenantは契約・データ分離・予算・監査の単位、organizationは業務上の組織Graph所有単位、workspace connectionはSlack等の外部接続、personは利用者、placementはマナの役割と権限である。Slack workspaceや会社名からtenantを暗黙推定しない。
+
+### 3.3 検証先
+
+| 検証先 | 主に証明すること |
+|---|---|
+| 個人版OSS | 共通Coreの単独利用、導入容易性、個人モードの互換性 |
+| 梅田さん・雲孫バックオフィス | 同一organization内の人物分離、Personal KG境界、RACI、共有業務、組織版の実務Ship |
+| TechKnight実運用 | `shared_cloud`の複数tenant分離、credential、冪等性、Usage・Receipt、障害分離、tenantごとの実務Ship |
+
+梅田さん導入は組織内の縦方向、TechKnightは組織間の横方向を検証する。両方が成立して初めて、組織版を個人版の能力上の上位互換として提供できる。
+
+## 4. 現在地
+
+### 4.1 `main`へ統合済み
+
+マルチテナント実装は旧umbrellaをそのまま入れず、責務別のR1〜R5へ分割して順次統合した。
+
+| PR | 統合内容 | merge commit |
+|---|---|---|
+| [#294](https://github.com/Unson-LLC/mana-runtime/pull/294) | canonical tenant contract、schema、fixture、conformance | `b59171154be4042104175cc3c19292f4aac6203c` |
+| [#295](https://github.com/Unson-LLC/mana-runtime/pull/295) | tenant runtime、Queue、Durable Object、idempotency、Usage・Receipt継続 | `56cb926352472644178c843fa16ba858b4af7cd8` |
+| [#296](https://github.com/Unson-LLC/mana-runtime/pull/296) | Slack ingress、commands、OAuth installation、control-plane bridge | `9536956dd2add4de16e0fa8b49535dc2f8561e6a` |
+| [#297](https://github.com/Unson-LLC/mana-runtime/pull/297) | 議事録、Slack操作、Task Canvasをtenant境界へ移行 | `eb3fb8cbd7f0e542cfc86d9405afa766725779e7` |
+| [#298](https://github.com/Unson-LLC/mana-runtime/pull/298) | provider credential、tenant Container、配備profile、readiness/security | `701d71229ae7aa3b7c52a8659eb8e5fb3f8e6e5c` |
+
+Brainbase producer側の対応契約 [#1257](https://github.com/Unson-LLC/brainbase-unson/pull/1257) も統合済みである。canonical source-lockは `merge_allowed: true`、`deploy_allowed: false` を維持する。
+
+既存機能として、以下もリポジトリ上に存在する。
 
 - Slack上の単一窓口、placementごとの権限・文脈・ツール境界
 - Canonical Taskの作成・更新・遷移・検索、期限リマインド、Task Canvas投影
 - 議事録の生成、保存先選択、タスク抽出・承認・登録、再実行・復旧
 - 実行前のBrainbase Graph文脈取得と、取得失敗を`未確認`として残す境界
-- Slack通常回答をBrainbase Judgment lifecycleへ接続し、回答前の判断・参照と実呼出を監査する境界
-- 成功ターンをreview-required候補としてBrainbase Candidate Storeへ送るdurable outbox
+- Slack通常回答とBrainbase Judgment lifecycleの接続
+- 学習候補をCandidate Storeへ送るdurable outbox
 - placement台帳、予算、kill switch、security event、実行receipt
-- cron、Slackイベント、会議終了などを起点に処理を動かす土台
+- `customer_managed_oss | dedicated_cloud | shared_cloud`の配備profileとdry-run readiness
+- [本番E2E採取runbook](../operations/mana-multitenant-production-e2e-runbook.md)
 
-### 完了済みとして扱う旧ロードマップ項目
+### 4.2 整理済みの旧PR
 
-- Canonical Task writerのLightsail移設とBrainbase MCP task mutation
-- 会議→議事録→タスク候補→承認→Canonical Task登録の基本動線
-- 期限リマインドと複数workspaceのTask Canvas同期
-- 実行前Graph文脈取得のランタイム実装
-- 学習候補をGraphへ直接書かずCandidate Storeへ送る境界
-- placement単位の台帳・予算・停止機構
+- [#234](https://github.com/Unson-LLC/mana-runtime/pull/234) は旧stackとしてsuperseded close。
+- [#237](https://github.com/Unson-LLC/mana-runtime/pull/237) は親stackへ包含済みとしてclose。
+- [#292](https://github.com/Unson-LLC/mana-runtime/pull/292) はR1〜R5へ分割済みとしてsuperseded close。
+- Brainbase [#1229](https://github.com/Unson-LLC/brainbase-unson/pull/1229) は`develop`へ完全包含済みのためclose。
 
-### 未完・未確認
+旧PRを再open、再merge、cherry-pickしない。実装正本は現在の`main`とcanonical contractである。
 
-- GraphのRACIからplacementの権限・承認者・停止条件を生成する写像は未実装
-- 人間確認は個別フローに実装されており、汎用HITLプリミティブになっていない
-- 複数の専門実行先を選ぶ動的ディスパッチは未実装
-- 学習候補の意味分類・機微区分・成果との関連付けは未完成
-- マルチテナントStory [#234](https://github.com/Unson-LLC/mana-runtime/pull/234)、runtime Spec [#236](https://github.com/Unson-LLC/mana-runtime/pull/236)、横断E2E Spec [#237](https://github.com/Unson-LLC/mana-runtime/pull/237) は未マージ
-- Slack通常回答のBrainbase Judgment lifecycle [#241](https://github.com/Unson-LLC/mana-runtime/pull/241) はmainへ統合済みだが、本番のfresh Slack E2Eは未取得
-- Lightsail・Cloudflare・各Slack tenantの機能同等性は、Storyごとのfresh本番E2Eがない限り確認済みにしない
+### 4.3 未完・未確認
 
-## 4. 優先成果
+- Cloudflare本番配備、実Slack、Brainbase UsageEvent・Operation Receiptの横断readbackは`not_collected`。
+- TechKnightの2つ以上の実tenantを使う成功・越境拒否・revision更新・再配送・障害分離E2Eは未取得。
+- [#293](https://github.com/Unson-LLC/mana-runtime/pull/293) は横断E2E Story・SpecのDraftであり、本番証拠ゲートとして未完。
+- source-lockの`deploy_allowed`は`false`であり、コード統合を本番稼働へ読み替えない。
+- 個人版OSSと組織版の共通Core契約、および組織版CIで個人版契約テストを通す互換ゲートは未完成。
+- actor、owner、organization、tenant、project、placementを、個人・組織・shared-cloud全経路で統一する上位Execution Contextは未完成。
+- 所有者やorganization未解決時に佐藤さん・雲孫へ寄らないno-fallback保証は未完成。
+- 梅田さん本人JWT、Personal KG相互非漏洩、本人レビュー、二段階Graph昇格、実務Shipの縦断E2Eは未取得。
+- GraphのRACIからplacementの権限・承認者・停止条件を生成する写像は未実装。
+- 人間確認は個別フローに実装されており、汎用HITLプリミティブになっていない。
+- 複数の専門実行先を選ぶ動的ディスパッチは未実装。
+- 学習候補の意味分類・機微区分・成果との関連付けは未完成。
+
+## 5. 優先成果
 
 ### P0-A. 経営実行ループ
 
@@ -72,43 +138,69 @@ mana-runtimeに第二の業務正本を作らない。
 
 マナはプロジェクトごとに次を追跡する。
 
-- 達成すべき成果と成功条件
+- Goal / Outcome / Shipと成功条件
 - 責任者、実行担当、承認者
 - 次の行動、期限、依存関係
 - 判断待ち、担当不在、停滞理由
 - 成果物、実行receipt、本番readback
 
-通常時は自律的に進め、次の例外だけを適切なRACIへ上げる。
-
-- 人間にしか決められないトレードオフ
-- 顧客・契約・予算・権限へ影響する変更
-- 期限超過、担当不在、依存先停止
-- 完了報告はあるが成果物または本番結果を確認できない状態
-
 **最小受入条件**:
 
-1. 1つの社内実プロジェクトで、成果→Task→担当→期限→証拠→完了を同一の相関IDで追える。
-2. 期限超過・担当不在・判断待ち・証拠不足を決定論的に検出できる。
-3. 人間へは全件一覧ではなく、判断または例外対応が必要な項目だけを提示する。
-4. 完了は自己申告ではなく、成果物・API readback・receiptのいずれかで確認する。未取得は`未確認`のまま残す。
+1. Goal/Outcome→Ship→Task→担当→期限→証拠→完了を同一correlation IDで追える。
+2. 期限超過・担当不在・判断待ち・依存停止・証拠不足を決定論的に検出できる。
+3. 行動を`auto / approval / human_action / deny`へ決定論的に分類できる。
+4. 人間へは判断または例外対応が必要な項目だけを、推奨・期限・放置影響付きで提示する。
+5. 通知後も状態を追跡し、未解消なら代替案とRACIに基づくエスカレーションを行う。
+6. 完了は成果物・API readback・顧客反応・Receiptで確認し、未取得は`not_collected`のまま残す。
+7. 判断・実行・結果をBrainbaseの学習候補へ関連付けて戻す。
 
-### P0-B. マルチテナント安全境界
+### P0-B. 組織版の上位互換と梅田さん導入
 
-**目的**: 顧客ごとの特注運用を増やさず、複数社へ安全に同じmana-runtimeを提供する。
-
-実装順は [#234](https://github.com/Unson-LLC/mana-runtime/pull/234) → [#236](https://github.com/Unson-LLC/mana-runtime/pull/236) → [#237](https://github.com/Unson-LLC/mana-runtime/pull/237) の依存関係を維持する。
+**目的**: 個人版OSSのCoreを分岐させず、組織版でも個人モードを維持しながら、組織目標・RACI・共有Task・Shipを扱えるようにする。
 
 **必須境界**:
 
-- Slack workspace connectionの導入・再認証・解除・権限変更
-- Worker / Queue / Durable Object / Container / MCP / Brainbaseまでtenant情報を強制伝播
-- セッション、ファイル、資格情報、キャッシュ、予算、receiptのtenant分離
-- tenant不明・接続失効・binding不一致をモデル実行前にfail closed
-- 再配送・再試行時の二重実行と二重返信の防止
-- A社のデータをB社から取得できない否定E2E
-- tenant別の利用量、警告、hard stop
+- 個人版と組織版でDecision→Work→Ship→Learnの共通契約を使う。
+- 組織版CIで個人版OSSの契約テストをそのまま通す。
+- actor、owner、organization、tenant、project、placement、correlation IDを別フィールドとして保持する。
+- ownerまたはorganization未解決時に佐藤さんや雲孫へフォールバックしない。
+- Personal KG本文は本人だけが利用し、組織管理者には同期状態・件数・監査結果だけを見せる。
+- Personalから組織Graphへの共有は本人同意と組織採用の二段階承認にする。
+- 梅田さん固有の条件分岐をruntime coreへ追加しない。
 
-機能実装やCIだけでは完了にしない。少なくとも2 tenantを使い、成功経路・境界拒否・再試行・予算分離を同一契約で本番readbackする。
+**梅田さん縦断受入条件**:
+
+1. 梅田さん本人のJWTでCodex・Claude Codeから接続し、person・organization・project scopeをreadbackできる。
+2. 佐藤さんと梅田さんのPersonal KGが相互に検索・更新できず、存在自体を推測できない。
+3. `雲孫バックオフィス`の組織文脈と担当TaskをRACI範囲で参照・更新できる。
+4. 会話→Personal KG候補→本人編集・承認→次の会話で再利用を同一runで完走する。
+5. 組織共有は、本人同意後に別の組織reviewerが採用し、Graphへは正規化した事実・判断と根拠ポインタだけを昇格する。
+6. バックオフィスの実務Shipを1件、証拠付きで完了する。
+7. 梅田さんが初回価値を`useful / not_useful`で評価し、Receiptと関連付ける。
+
+### P0-C. TechKnight shared-cloud本番E2E
+
+**目的**: `main`へ統合済みのマルチテナント実装を、TechKnightの実運用で安全性と価値の両面から検証し、証拠が揃った後だけdeploy gateを開く。
+
+**Safety Gate**:
+
+- 少なくとも2つの実tenantをBrainbase `workspace_connection`へ登録する。
+- 未契約、未登録、失効、別app、scope不足、複数一致をQueue投入・LLM実行前にfail closedする。
+- 署名付きtenant contextをWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack delivery、Receiptへ伝播し、各境界で再検証する。
+- connection revisionをingress、credential lease直前、Brainbase write直前、Slack delivery直前に再確認する。
+- session、thread、file、cache、credential、MCP config、idempotency、Usage、Receipt、budget、retry状態をtenant分離する。
+- protocol v1ではcross-tenant Container再利用を行わない。
+- tenant A/Bの同時処理、同名workspace/channel/user、再配送、失効、予算超過、依存障害の否定E2Eを通す。
+- Tenant Aの障害・失効・予算超過でTenant Bを停止させない。
+
+**Value Gate**:
+
+1. 最初は一般返信・read-only検索をtenant単位でcanaryする。
+2. 成功、越境拒否、再配送、revision更新、credential・quota・accounting障害を同一runでreadbackする。
+3. 安全性確認後にTask write、議事録、外部操作をtenant単位で段階開放する。
+4. 各tenantで少なくとも1件、依頼→文脈/RACI解決→実行または承認→外部Ship→readback→tenant付きReceiptを完走する。
+5. Cloudflare返信1件、旧runtime返信0件、UsageEventとOperation ReceiptのBrainbase正本readbackを確認する。
+6. Safety GateとValue Gateが揃うまで`deploy_allowed: false`を維持する。
 
 ### P1-A. 汎用ワークフロー・HITL
 
@@ -118,20 +210,16 @@ mana-runtimeに第二の業務正本を作らない。
 イベント
   → 正本から事実を取得
   → 実行案を作成
-  → policyとRACIで auto / approval / deny を決定
+  → policyとRACIで auto / approval / human_action / deny を決定
   → 実行
   → readback
   → receipt
   → 失敗時の再試行・補償・差し戻し
 ```
 
-手順・分岐・実行状態はBrainbase DAG / Automation Runを正本とし、mana-runtimeはSlack入力、実行adapter、承認表示を担う。mana-runtime内に別のDAG正本を作らない。
-
-第1号は月次経理、第2号は顧客案件の週次進行管理とする。両者で同じ承認・再試行・readback契約を再利用できた時点で「量産可能」と判定する。
+手順・分岐・実行状態はBrainbase DAG / Automation Runを正本とし、mana-runtimeはSlack入力、実行adapter、承認表示を担う。第1号は月次経理、第2号は顧客案件の週次進行管理とする。両者で同じ承認・再試行・readback契約を再利用できた時点で「量産可能」と判定する。
 
 ### P1-B. 顧客案件の共通運用テンプレート
-
-**目的**: 案件を受けるほど、個別対応ではなく再利用可能なmana-runtime資産が増える状態を作る。
 
 共通化する範囲:
 
@@ -142,11 +230,9 @@ mana-runtimeに第二の業務正本を作らない。
 - 成果物確認、顧客報告、継続・追加提案
 - tenantごとのコスト・品質・委任実績
 
-固有コードを追加する前に、共通Storyへ昇格できるかを確認する。1社だけに必要な処理はadapterまたは設定として隔離し、runtime coreへ混ぜない。
+1社だけに必要な処理はadapterまたは設定として隔離し、runtime coreへ混ぜない。
 
-### P2-A. 成果から学ぶ仕組み
-
-**目的**: 会話を大量保存するのではなく、成果につながった判断と失敗した実行を次の仕組みへ戻す。
+### P2. 成果学習と委任指標
 
 - 判断と成果の関連付け
 - 手戻り・失敗・停止理由の分類
@@ -154,59 +240,76 @@ mana-runtimeに第二の業務正本を作らない。
 - 自動実行可能な条件の候補化
 - 人間レビュー後のGraph、Skill、DAGへの昇格
 
-候補は自動で真理や実行ルールへ昇格させない。証拠、機微区分、影響範囲、推奨を提示し、人間承認を必須とする。
-
-### P2-B. 委任の経営指標
-
-委任率ダッシュボードは表示だけで終わらせず、経営実行ループの改善判断へ接続する。
-
 | 指標 | 意味 |
 |---|---|
 | 人間の判断介入1回あたりの完了成果数 | 北極星。認知帯域を成果へ変換できたか |
 | 無介入完了率 | 定常業務が人間の見張りなしに閉じた割合 |
 | 判断から実行までの時間 | 決定後の停滞を減らせたか |
 | 期限超過時間 | 問題の長期放置を減らせたか |
-| 証拠付き完了率 | 完了自己申告ではなく成果を確認できたか |
+| 証拠付き完了率 | 自己申告ではなく成果を確認できたか |
 | 手戻り率 | 自動化が仕事を増やしていないか |
 | 成果単位のAI費用 | 安い会話ではなく効率的な成果を出せたか |
-| tenant境界事故件数 | 複数社提供の安全性。目標は0件 |
+| Personal KG越境件数 | 同一organization内の個人情報境界。目標0件 |
+| tenant境界事故件数 | 複数社提供の安全性。目標0件 |
 
-## 5. 実装順
+## 6. 実装レーンと順序
+
+4レーンを並行させるが、同じ受入シナリオへ合流させる。
+
+| Lane | 対象 |
+|---|---|
+| Core Compatibility | 個人版OSSと組織版の共通Core、上位Execution Context、互換契約 |
+| Organization Capability | person/organization境界、Personal KG、RACI、共有Task・Ship、承認 |
+| TechKnight Shared Cloud | workspace connection、tenant context、credential、隔離、Usage・Receipt、本番運用 |
+| Value Validation | 梅田さんとTechKnightの実務で経営実行ループと証拠付きShipを閉じる |
 
 | 順 | 成果 | 完了判定 |
 |---|---|---|
-| 1 | マルチテナントStory・runtime Spec・横断E2E Specを確定 | #234→#236→#237がmainへ統合され、未解決条項が0件 |
-| 2 | 社内1案件で経営実行ループの最小縦断を作る | 判断キュー、停滞検知、働きかけ、証拠付き完了を同一案件で確認 |
-| 3 | 汎用HITLとAutomation Run接続を作る | 月次経理と顧客週次の2業務が同じ契約を再利用 |
-| 4 | 外部tenant pilotを行う | tenant分離、通常成功、拒否、再試行、予算をfresh本番E2Eでreadback |
-| 5 | 顧客案件テンプレートを複数案件へ展開 | 固有コードを増やさず、導入から報告まで再現 |
-| 6 | 成果学習と委任指標を接続 | 実行結果から改善候補が生まれ、レビュー後に仕組みへ戻る |
+| 1 | 統合済みマルチテナント実装を正本化 | #294〜#298が`main`、旧#234/#292がsuperseded、source-lockの責務が一意 |
+| 2 | 組織版・個人版の共通契約を固定 | 個人版fixtureを組織版CIで再利用し、no-fallbackと上位Execution Contextを検証 |
+| 3 | TechKnight read-only本番canary | 2実tenantで成功・拒否・再配送・revision・credential・Usage/Receiptをreadback |
+| 4 | 梅田さんステージング縦断 | 本人JWT、相互非漏洩、会話学習、本人レビュー、二段階共有、実務Ship、評価を確認 |
+| 5 | TechKnight write canary | tenant別にTask writeまたは議事録を段階開放し、二重実行なしで実務Shipを完了 |
+| 6 | 経営実行ループを両検証先へ適用 | 停滞検知、働きかけ、承認、readback、証拠付き完了を同じ契約で再利用 |
+| 7 | 汎用HITLとAutomation Run接続 | 月次経理と顧客週次の2業務が同じ契約を再利用 |
+| 8 | 顧客案件テンプレートと成果学習へ展開 | 固有コードを増やさず、導入から報告・改善候補まで再現 |
 
-P0-AとP0-Bは並行可能だが、外部顧客への展開はP0-Bの本番否定E2Eが成立するまで行わない。
+次の依存を崩さない。
 
-## 6. 今は優先しないもの
+- 個人版・組織版の共通Coreを分岐させない。
+- 梅田さん本番付与は、本人分離とステージングE2Eの後に行う。
+- TechKnight本番deployは、preflightとsource-lock gateを通してから行う。
+- TechKnight write開放は、read-only canaryと本番否定E2Eの後に行う。
+- Safety Gateだけ、またはValue Gateだけを通して組織版・shared-cloud完了としない。
+
+## 7. 今は優先しないもの
 
 - 表に見える専門エージェントや人格の追加
 - 顧客ごとの一回限りのコネクタをruntime coreへ追加すること
+- 梅田さん・TechKnight tenant名を条件分岐へ埋め込むこと
 - 成果との関係を説明できない会話メモリの拡大
 - 人間レビューを経ない自己改変・自己開発
 - 行動・承認・readbackへ接続しない閲覧専用ダッシュボード
+- shared-cloudのSafety/Value Gateより先に課金、セルフサービス申込、reseller管理を作ること
 - production evidenceのない「対応済み」「同等」「自動化済み」という表現
 
-新機能は「人間の判断介入を減らしながら、証拠付きの成果を増やすか」で採否を決める。
-
-## 7. 進捗記録
+## 8. 進捗記録
 
 - 2026-07-29: Canonical Task writerをLightsailへ移設し、Brainbase MCPへtask mutationを追加。
-- 2026-07-30: 会議→議事録→タスク提案→承認→Canonical Task登録、期限リマインド、議事録パイプラインのpilotを成立。
-- 2026-08-04: 実行前Graph文脈取得、学習候補outbox、人格・Skill・memory境界の現在地をアーキテクチャへ反映。
-- 2026-08-14〜16: 複数workspaceのTask Canvas、権限内タスク横断取得、議事録のBrainbase文脈・証跡・停止境界、復旧動線をmainへ統合。
-- 2026-08-17: 完了済みの旧優先順位を廃止。北極星を「判断介入1回あたりの完了成果数」とし、経営実行ループ、マルチテナント安全境界、汎用ワークフロー、顧客案件テンプレート、成果学習の順へ更新。
+- 2026-07-30: 会議→議事録→タスク提案→承認→Canonical Task登録、期限リマインド、議事録pilotを成立。
+- 2026-08-04: 実行前Graph文脈取得、学習候補outbox、人格・Skill・memory境界をアーキテクチャへ反映。
+- 2026-08-14〜16: 複数workspaceのTask Canvas、権限内タスク横断取得、議事録のBrainbase文脈・証跡・復旧動線を統合。
+- 2026-08-17: 北極星を「判断介入1回あたりの完了成果数」とし、経営実行ループを優先成果へ変更。
+- 2026-08-19: Brainbase producer契約とmana-runtime R1〜R5を`main`へ統合。旧stackをsuperseded closeし、本番E2Eを#293とrunbookへ集約。コード統合とdeploy gateを分離。
+- 2026-08-19: 個人版OSSと組織版の上位互換関係、製品能力と配備形態の二軸、梅田さん導入とTechKnight実運用の検証分担、Safety GateとValue Gateを追加。
 
-## 8. 更新時の証拠規則
+## 9. 更新時の証拠規則
 
-- `main`へ存在すること、CI成功、デプロイ、process health、利用者成果を別々に記録する。
+- `main`へ存在すること、PR exact-head CI、main CI、デプロイ、process health、利用者成果を別々に記録する。
 - 本番確認のない実装は「リポジトリ実装済み」と書き、「本番稼働済み」と書かない。
-- timeout、権限不足、部分取得、接続失敗は0件や成功へ丸めず、`未確認`として残す。
-- 完了条件はStoryの利用者成果、実行receipt、本番readbackで固定する。
-- 進行状態はCanonical TaskまたはAutomation Runへ置き、この文書へ日々の状態を重複保存しない。
+- timeout、権限不足、部分取得、接続失敗は0件や成功へ丸めず、`partial`または`not_collected`として残す。
+- 完了条件はStoryの利用者成果、Operation Receipt、本番readbackで固定する。
+- Personal KG境界は本人同士の相互非漏洩E2E、tenant境界は異なる実tenant間の否定E2Eで証明する。
+- Safety GateとValue Gateを別々に記録し、片方の成功をもう片方へ読み替えない。
+- source-lockの`merge_allowed`と`deploy_allowed`を別ゲートとして扱う。
+- 旧superseded PRを実装正本へ戻さない。
