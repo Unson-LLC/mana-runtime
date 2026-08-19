@@ -1,49 +1,29 @@
 {
-  "name": "openryoko",
+  "name": "mana-runtime",
+  "version": "0.8.0",
   "private": true,
-  "packageManager": "pnpm@10.6.4",
-  "engines": {
-    "node": ">=22"
-  },
+  "description": "Cloudflare-native execution runtime for Mana operating agents",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "build": "turbo build && rm -rf packages/jimmy/dist/web && cp -r packages/web/out packages/jimmy/dist/web",
-    "build:lightsail": "pnpm --filter @openryoko/web build && pnpm --filter openryoko... build && rm -rf packages/jimmy/dist/web && cp -r packages/web/out packages/jimmy/dist/web",
-    "dev": "turbo dev",
-    "lint": "turbo lint",
-    "typecheck": "turbo typecheck",
-    "test": "turbo run test",
-    "test:cloudflare-task-migration": "pnpm --filter @openryoko/write-broker test && pnpm --filter @openryoko/task-runtime-core test && pnpm --filter @openryoko/cloudflare-techknight-poc test",
-    "test:integration:deploy": "scripts/test-google-drive-mcp-protocol.sh",
-    "test:e2e:deploy": "playwright test --config playwright.deploy.config.ts",
-    "test:integration": "pnpm --filter openryoko test:integration",
-    "integration:cloudflare-task-migration": "pnpm --filter @openryoko/cloudflare-techknight-poc exec vitest run src/__tests__/task-write-mcp-jsonrpc.test.ts src/__tests__/task-board.test.ts",
-    "verify:cloudflare-task-migration-evidence": "pnpm --filter @openryoko/cloudflare-techknight-poc verify:production-task-migration-evidence",
-    "test:e2e": "node -e \"console.log(JSON.stringify({ node_arch: process.arch, node_version: process.version }))\" && playwright test",
-    "typecheck:cloudflare-task-migration": "pnpm --filter @openryoko/write-broker typecheck && pnpm --filter @openryoko/task-runtime-core typecheck && pnpm --filter @openryoko/cloudflare-techknight-poc typecheck",
-    "build:cloudflare-default": "pnpm --filter @openryoko/cloudflare-techknight-poc build:default",
-    "build:cloudflare-task-migration": "pnpm run build:cloudflare-default && pnpm --filter @openryoko/cloudflare-techknight-poc build:unson-business",
-    "clean": "rm -rf .turbo node_modules/.cache && turbo clean",
-    "ryoko": "node packages/jimmy/dist/bin/jimmy.js",
-    "setup": "pnpm build && node packages/jimmy/dist/bin/jimmy.js setup",
-    "setup:force": "pnpm build && node packages/jimmy/dist/bin/jimmy.js setup --force",
-    "start": "pnpm clean && pnpm build && node packages/jimmy/dist/bin/jimmy.js start",
-    "stop": "node packages/jimmy/dist/bin/jimmy.js stop",
-    "nuke": "node packages/jimmy/dist/bin/jimmy.js nuke",
-    "status": "node packages/jimmy/dist/bin/jimmy.js status"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3",
-      "classic-level",
-      "node-pty"
-    ]
+    "build": "pnpm --filter @mana-runtime/cloud-runtime build",
+    "build:unson-business": "pnpm --filter @mana-runtime/cloud-runtime build:unson-business",
+    "build:dedicated-cloud": "pnpm --filter @mana-runtime/cloud-runtime build:dedicated-cloud",
+    "build:customer-managed": "pnpm --filter @mana-runtime/cloud-runtime build:customer-managed-oss",
+    "dev": "pnpm --filter @mana-runtime/cloud-runtime dev",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm --filter @mana-runtime/cloud-runtime test && pnpm --filter @mana-runtime/slack-thread-context test && pnpm --filter @mana-runtime/task-runtime-core test && pnpm --filter @mana-runtime/write-broker test",
+    "test:cloud": "pnpm --filter @mana-runtime/cloud-runtime test",
+    "verify:production-task-migration-evidence": "pnpm --filter @mana-runtime/cloud-runtime verify:production-task-migration-evidence",
+    "deploy:unson-business": "pnpm --filter @mana-runtime/cloud-runtime deploy:unson-business",
+    "clean": "pnpm -r --if-present clean"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
-    "turbo": "^2.4.0",
-    "typescript": "^5.8.0"
+    "@playwright/test": "^1.51.1",
+    "tsx": "^4.21.0",
+    "vitest": "^4.1.0"
   },
-  "dependencies": {
-    "classic-level": "^2.0.0"
+  "engines": {
+    "node": ">=22"
   }
 }
