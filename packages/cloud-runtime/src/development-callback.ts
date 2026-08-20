@@ -130,6 +130,7 @@ function parseQuestions(value: unknown): DevelopmentQuestion[] | undefined {
     const options: DevelopmentQuestionOption[] = [];
     for (const rawOption of question.options) {
       const option = record(rawOption);
+      if (!option) return undefined;
       const label = boundedString(option?.label, 80);
       const description = option?.description === undefined ? undefined : boundedString(option.description, 200);
       if (!label || (option?.description !== undefined && !description)

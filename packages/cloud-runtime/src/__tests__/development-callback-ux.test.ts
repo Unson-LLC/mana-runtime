@@ -4,6 +4,7 @@ import {
   parseDevelopmentCallbackPayload,
   renderDevelopmentResult,
 } from "../development-callback.js";
+import type { SlackQueueEvent } from "../types.js";
 
 const placement = {
   placementId: "mana-dev-biz",
@@ -36,7 +37,10 @@ function options(overrides: Record<string, unknown> = {}) {
   return {
     token: "secret",
     placements: [placement],
-    resolve: async (event: Record<string, unknown>) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+    resolve: async (event: SlackQueueEvent): Promise<SlackQueueEvent> => ({
+      ...event,
+      tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    }),
     claim: vi.fn(async () => ({ state: "claimed" as const })),
     recordDelivery: vi.fn(async () => undefined),
     complete: vi.fn(async () => undefined),

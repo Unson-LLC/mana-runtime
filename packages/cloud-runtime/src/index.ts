@@ -77,6 +77,12 @@ import { runRuntimeDoctor } from "./runtime-doctor.js";
 import { executeRuntimeCron, parsePlacementCronJobs } from "./runtime-cron.js";
 import { createCanonicalManualCronMessage } from "./runtime-cron-event.js";
 import { handleSlackCommandRequest } from "./slack-command.js";
+import {
+  handleManaImprovementInteraction,
+  openManaImprovementModal,
+  postManaImprovementAcceptance,
+} from "./mana-improvement-slack.js";
+import { serializeManaImprovementRequest } from "./mana-improvement-request.js";
 import { runCloudflareDevelopmentRequest } from "./development-runner-client.js";
 import {
   handleDevelopmentCallback,
@@ -1753,6 +1759,117 @@ export default {
       });
     }
     if (request.method === "POST" && url.pathname === "/slack/interactions") {
+      const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      const developmentPlacements = placements.filter((placement) => placement.developmentEnabled === true);
+      const improvementResponse = await handleManaImprovementInteraction(
+        request.clone() as unknown as globalThis.Request,
+        {
+        signingSecret: env.SLACK_SIGNING_SECRET,
+        expectedAppId: env.SLACK_EXPECTED_APP_ID,
+        placements: developmentPlacements.map((placement) => ({
+          channelId: placement.channelId,
+          allowedUserIds: placement.audience?.allowedUserIds ?? [],
+        })),
+        defer: (work) => ctx.waitUntil(work),
+        accept: async (submission) => {
+          const clients = tenantRuntimeClients(env);
+          const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+            .split(",").map((value) => value.trim()).filter(Boolean);
+          const resolved = await resolveSlackWorkerIngress({
+            identity: {
+              provider: "slack",
+              app_id: submission.appId,
+              workspace_id: submission.workspaceId,
+              event_id: submission.eventId,
+              channel_id: submission.channelId,
+              thread_ts: submission.interactionThreadTs,
+              requester_id: submission.requesterId,
+            },
+            required_scopes: requiredScopes,
+            required_authorization: {
+              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            },
+            authority: clients.authority,
+            now: submission.receivedAt,
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          const expectedScope: ExpectedTenantScope = {
+            audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+            workspace_id: submission.workspaceId,
+            app_id: submission.appId,
+            channel_id: submission.channelId,
+            thread_ts: submission.interactionThreadTs,
+            actor_principal_id: resolved.tenant_context.actor.principal_id,
+            project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+            capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            deployment_id: resolved.tenant_context.placement.deployment_id,
+          };
+          const tenantCredentialFetch = createTenantCredentialFetch({
+            envelope: resolved.tenant_context,
+            expected_scope: expectedScope,
+            broker: clients.credential_broker,
+            trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+              env,
+              tenant_context: resolved.tenant_context,
+            }),
+            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+              resolved.tenant_context.workspace_connection.connection_id),
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            now: () => new Date().toISOString(),
+          });
+          const threadTs = await postManaImprovementAcceptance({
+            fetchImpl: tenantCredentialFetch,
+            channelId: submission.channelId,
+            requesterId: submission.requesterId,
+            request: submission.request,
+          });
+          const queued = await resolveSlackWorkerIngress({
+            identity: {
+              provider: "slack",
+              app_id: submission.appId,
+              workspace_id: submission.workspaceId,
+              event_id: submission.eventId,
+              channel_id: submission.channelId,
+              thread_ts: threadTs,
+              requester_id: submission.requesterId,
+            },
+            required_scopes: requiredScopes,
+            required_authorization: {
+              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            },
+            authority: clients.authority,
+            now: submission.receivedAt,
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          await env.TECHKNIGHT_EVENTS.send({
+            schema_version: "1.0",
+            tenant_context: queued.tenant_context,
+            payload: {
+              eventId: submission.eventId,
+              tenantId: queued.tenant_context.tenant.tenant_id,
+              workspaceId: submission.workspaceId,
+              channelId: submission.channelId,
+              threadTs,
+              messageTs: threadTs,
+              userId: submission.requesterId,
+              eventType: "app_mention",
+              text: `/develop ${serializeManaImprovementRequest(submission.request)}`,
+              receivedAt: submission.receivedAt,
+            },
+          });
+        },
+        onDeferredError: (error, submission) => {
+          console.error("mana_improvement_accept_failed", {
+            eventId: submission.eventId,
+            error: error instanceof Error ? error.message : "unknown",
+          });
+        },
+      });
+      if (improvementResponse) return improvementResponse;
       const config = meetingMinutesRuntimeConfig(env);
       const resolveInteractionEffects = createTenantInteractionEffectResolver(env);
       let canonicalInteractionTenantId: string | undefined;
@@ -1907,6 +2024,67 @@ export default {
       return handleSlackCommandRequest(request, { signingSecret: env.SLACK_SIGNING_SECRET,
         placements: developmentPlacements.map((placement) => ({ channelId: placement.channelId,
           allowedUserIds: placement.audience?.allowedUserIds ?? [] })),
+        openModal: async (input) => {
+          const clients = tenantRuntimeClients(env);
+          const receivedAt = new Date().toISOString();
+          const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+            .split(",").map((value) => value.trim()).filter(Boolean);
+          const resolved = await resolveSlackWorkerIngress({
+            identity: {
+              provider: "slack",
+              app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+              workspace_id: input.workspaceId,
+              event_id: `slash_modal_${input.triggerId}`,
+              channel_id: input.channelId,
+              thread_ts: input.triggerId,
+              requester_id: input.requesterId,
+            },
+            required_scopes: requiredScopes,
+            required_authorization: {
+              audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+              capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            },
+            authority: clients.authority,
+            now: receivedAt,
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          const expectedScope: ExpectedTenantScope = {
+            audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+            workspace_id: input.workspaceId,
+            app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+            channel_id: input.channelId,
+            thread_ts: input.triggerId,
+            actor_principal_id: resolved.tenant_context.actor.principal_id,
+            project_id: requiredRuntimeBinding(env.MANA_REQUIRED_PROJECT_ID),
+            capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            deployment_id: resolved.tenant_context.placement.deployment_id,
+          };
+          const tenantCredentialFetch = createTenantCredentialFetch({
+            envelope: resolved.tenant_context,
+            expected_scope: expectedScope,
+            broker: clients.credential_broker,
+            trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+              env,
+              tenant_context: resolved.tenant_context,
+            }),
+            read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+              resolved.tenant_context.workspace_connection.connection_id),
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            now: () => new Date().toISOString(),
+          });
+          return openManaImprovementModal({
+            fetchImpl: tenantCredentialFetch,
+            triggerId: input.triggerId,
+            metadata: {
+              workspaceId: input.workspaceId,
+              channelId: input.channelId,
+              requesterId: input.requesterId,
+              command: input.command,
+            },
+            initialProblem: input.initialProblem,
+          });
+        },
         send: async (event) => {
           const clients = tenantRuntimeClients(env);
           const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
