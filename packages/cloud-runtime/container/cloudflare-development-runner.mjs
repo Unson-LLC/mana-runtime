@@ -192,13 +192,8 @@ export async function main() {
   try {
     enqueueProgress({ phase: "analyzing", elapsed_sec: 0, commits: 0 });
     await ensureRepository(runnerDeadlineAt);
-    const runnerInput = job.mode === "resume"
-      ? { storyId: job.story_id, answers: job.answers }
-      : job.mode === "continueGates"
-        ? { storyId: job.story_id, continueGates: true }
-        : { request: job.request };
     const result = await run(process.execPath, ["/opt/mana/openryoko-development-runner.mjs"], {
-      stdin: JSON.stringify(runnerInput),
+      stdin: JSON.stringify({ request: job.request }),
       timeoutMs: remainingTime(runnerDeadlineAt),
       onStderrLine: (line) => {
         const progress = parseProgressLine(line);
