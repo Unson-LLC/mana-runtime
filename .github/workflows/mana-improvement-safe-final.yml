@@ -1,0 +1,174 @@
+name: Verify safe Mana improvement UX boundary
+
+on:
+  push:
+    branches:
+      - codex/mana-improvement-ux-p0-p1
+    paths:
+      - scripts/remove-unsafe-mana-continuation.mjs
+      - .github/workflows/mana-improvement-safe-final.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: mana-improvement-ux-apply
+  cancel-in-progress: false
+
+jobs:
+  safe-final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEAD_BRANCH: codex/mana-improvement-ux-p0-p1
+      BASE_BRANCH: codex/complete-openryoko-to-mana-cloud-migration
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/mana-improvement-ux-p0-p1
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Apply core P0 P1 patches without unsafe continuation
+        shell: bash
+        run: |
+          if [[ -f scripts/apply-mana-improvement-ux.mjs ]]; then node scripts/apply-mana-improvement-ux.mjs; fi
+          if [[ -f scripts/harden-mana-improvement-ux.mjs ]]; then node scripts/harden-mana-improvement-ux.mjs; fi
+          if [[ -f scripts/repair-mana-improvement-ux.mjs ]]; then node scripts/repair-mana-improvement-ux.mjs; fi
+          node scripts/remove-unsafe-mana-continuation.mjs
+          rm -f \
+            packages/cloud-runtime/src/mana-development-control.ts \
+            packages/cloud-runtime/src/mana-improvement-actions.ts \
+            packages/cloud-runtime/src/__tests__/mana-development-control.test.ts \
+            packages/cloud-runtime/src/__tests__/mana-improvement-actions.test.ts
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Commit verified safe implementation
+        shell: bash
+        run: |
+          rm -f pnpm-lock.yaml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -- packages/cloud-runtime docs/plans/2026-08-21-mana-self-improvement-continuation.md
+          for removed in \
+            packages/cloud-runtime/src/mana-development-control.ts \
+            packages/cloud-runtime/src/mana-improvement-actions.ts \
+            packages/cloud-runtime/src/__tests__/mana-development-control.test.ts \
+            packages/cloud-runtime/src/__tests__/mana-improvement-actions.test.ts; do
+            if git ls-files --error-unmatch "${removed}" >/dev/null 2>&1; then git rm -- "${removed}"; fi
+          done
+
+          find scripts -maxdepth 1 -type f \( -name '*mana-improvement*.mjs' -o -name '*mana-continuation*.mjs' \) -print0 | xargs -0 -r git rm --
+          for workflow in \
+            .github/workflows/mana-improvement-ux-apply.yml \
+            .github/workflows/mana-improvement-ux-pr.yml \
+            .github/workflows/mana-improvement-ux-harden.yml \
+            .github/workflows/mana-improvement-ux-repair.yml \
+            .github/workflows/mana-improvement-continuation.yml \
+            .github/workflows/mana-improvement-finalize.yml \
+            .github/workflows/mana-improvement-safe-final.yml; do
+            if [[ -e "${workflow}" ]]; then git rm -- "${workflow}"; fi
+          done
+
+          if ! git diff --cached --quiet; then
+            git diff --cached --check
+            git commit -m "fix(mana): keep continuation fail-closed without durable state"
+            git push origin HEAD:${HEAD_BRANCH}
+          fi
+
+      - name: Ensure stacked Draft PR and correct its scope
+        shell: bash
+        run: |
+          pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --head "${HEAD_BRANCH}" --base "${BASE_BRANCH}" --json number --jq '.[0].number // empty')"
+          if [[ -z "${pr}" ]]; then
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --draft \
+              --base "${BASE_BRANCH}" \
+              --head "${HEAD_BRANCH}" \
+              --title "feat(mana): 非エンジニア向け自己改善UXを追加" \
+              --body "#303をbaseに、改善依頼モーダル、実在thread root、構造化進捗・判断・Gate・成果カード、tenant authority境界を追加します。同一Story継続はdurable worktree stateが未実装のため安全停止とし、merge・deploy・secret変更は行いません。"
+            pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --head "${HEAD_BRANCH}" --base "${BASE_BRANCH}" --json number --jq '.[0].number // empty')"
+          fi
+
+          gh pr edit "${pr}" --repo "${GITHUB_REPOSITORY}" \
+            --title "feat(mana): 非エンジニア向け自己改善UXを追加" \
+            --body-file - <<'EOF'
+          ## 目的
+
+          `/vibepro`、Story、Gate、worktreeなどの開発用語を利用者へ要求せず、梅田さんを含む非エンジニアが「困っていること」と「どうなればよいか」からManaの改善を開始できるUXへ置き換えます。
+
+          このPRは #303 をbaseとするstacked Draft PRです。旧Jimmyではなく、Cloudflare-native Mana runtimeだけを変更します。
+
+          ## 実装
+
+          - `/vibepro`からSlack改善依頼モーダルを開く
+          - 問題、期待する結果、具体例、参考情報、許可範囲を`mana_improvement_request_v1`へ正規化
+          - モーダル送信後に実在する受付メッセージを投稿し、そのtsを正式なthread rootにする
+          - runnerの進捗を「依頼を整理中 / 変更中 / 確認中」として同じ受付カードへ反映
+          - questions / gates / commits / Story / PRをCloud境界で削らず構造化検証
+          - completed / needs_decision / needs_input / failed / timed_outを利用者向けBlock Kitへ変換
+          - Slack署名、requester、workspace、channel、canonical tenant authority、credential brokerを維持
+
+          ## 安全境界
+
+          - merge、deploy、secret変更、本番データ変更は行わない
+          - 未解決の業務判断とGateは構造化して表示するが、安全停止する
+          - 旧Jimmy runtimeは変更しない
+
+          ## 同一Story継続について
+
+          Cloud版はrunごとにfresh Containerを作り、終端後に破棄します。旧Jimmyの永続worktreeはありません。durable worktree artifactなしで「推奨で続ける」「Gateを続行する」ボタンを付けると、実際には同じStoryを再開できないため、このPRでは実装済みと扱いません。
+
+          必要な設計とAcceptance Criteriaは`docs/plans/2026-08-21-mana-self-improvement-continuation.md`に固定しています。
+
+          ## Verification
+
+          - `pnpm typecheck`
+          - `pnpm test`
+          - `pnpm build`
+          - `git diff --check`
+          EOF
+
+          head_sha="$(git rev-parse HEAD)"
+          gh pr comment "${pr}" --repo "${GITHUB_REPOSITORY}" --body-file - <<EOF
+          ## Corrected exact-head verification
+
+          Earlier continuation experiments are superseded by this result.
+
+          - HEAD: \`${head_sha}\`
+          - \`pnpm typecheck\`: PASS
+          - \`pnpm test\`: PASS
+          - \`pnpm build\`: PASS
+          - \`git diff --check\`: PASS
+          - guided request modal: PASS
+          - real Slack root timestamp propagation: PASS
+          - progress and structured result cards: PASS
+          - canonical tenant and credential boundary: preserved
+          - same-Story continuation: intentionally fail-closed pending durable worktree state
+          - temporary scripts and workflows: removed
+          - stacked base: \`${BASE_BRANCH}\` (#303)
+
+          Merge and production deployment were not performed.
+          EOF
