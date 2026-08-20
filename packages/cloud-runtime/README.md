@@ -48,6 +48,16 @@ Slack Events API / scheduled event / system event
 
 会社間でSlack App、Queue/DLQ、Durable Object、Computer/Sandbox、provider credential、Brainbase authority contextを共有しません。
 
+### 本番切替の安全境界
+
+- `BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN` はBrainbase専用内部forward serviceの認証用Cloudflare secretとして設定し、設定ファイルやログへ出さない。
+- task searchの初期値は `RUNTIME_TASK_SEARCH_ENABLED=false` とし、権限・テナント境界を確認してからONへ切り替える。
+- ON切替後の最初の境界付き`search_tasks` probeを記録し、本番Slackで既知タスクを検索してBrainbase正本と照合する。
+- 証跡にはWorker version、Container image digest、Git SHAを残す。テストやContainer healthだけをSlack E2E完了とは扱いません。
+- Cloudflareを正本へ切り替えた後は、旧配置を `mana-accounting.enabled=false`、`taskCanvas.enabled=false` とし、二重応答・二重実行を防ぐ。
+- `GITHUB_TOKEN` を除去する前に `meetingMinutesPipeline.destination.github` の残存利用を確認し、議事録pipelineを停止しない。
+- secret設定、切替、旧runtime停止は別々に証跡を残し、Workerの配備成功だけで切替完了としない。
+
 ## Local verification
 
 ```bash
