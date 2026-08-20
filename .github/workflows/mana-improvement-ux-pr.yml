@@ -1,0 +1,139 @@
+name: Verify and open Mana improvement UX Draft PR
+
+on:
+  push:
+    branches:
+      - codex/mana-improvement-ux-p0-p1
+    paths:
+      - .github/workflows/mana-improvement-ux-pr.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: mana-improvement-ux-apply
+  cancel-in-progress: false
+
+jobs:
+  verify-and-open-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEAD_BRANCH: codex/mana-improvement-ux-p0-p1
+      BASE_BRANCH: codex/complete-openryoko-to-mana-cloud-migration
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/mana-improvement-ux-p0-p1
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Apply patches when the first verifier did not finish
+        shell: bash
+        run: |
+          if [[ -f scripts/apply-mana-improvement-ux.mjs ]]; then
+            node scripts/apply-mana-improvement-ux.mjs
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Validate and publish verified branch
+        shell: bash
+        run: |
+          rm -f pnpm-lock.yaml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ -f scripts/apply-mana-improvement-ux.mjs ]]; then
+            git add -- \
+              packages/cloud-runtime/src/index.ts \
+              packages/cloud-runtime/src/reply-pipeline.ts \
+              packages/cloud-runtime/src/slack-interactions.ts \
+              packages/cloud-runtime/src/development-callback.ts \
+              packages/cloud-runtime/src/multitenancy/development-callback-proxy.ts \
+              packages/cloud-runtime/src/__tests__/development-callback.test.ts
+            git rm -- scripts/apply-mana-improvement-ux.mjs .github/workflows/mana-improvement-ux-apply.yml
+          fi
+          git rm -- .github/workflows/mana-improvement-ux-pr.yml
+
+          if ! git diff --cached --quiet; then
+            git diff --cached --check
+            git commit -m "feat(mana): add guided self-improvement UX"
+            git push origin HEAD:${HEAD_BRANCH}
+          fi
+
+      - name: Open stacked Draft PR
+        shell: bash
+        run: |
+          existing="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --head "${HEAD_BRANCH}" --base "${BASE_BRANCH}" --json url --jq '.[0].url // empty')"
+          if [[ -n "${existing}" ]]; then
+            echo "Draft PR already exists: ${existing}"
+            exit 0
+          fi
+
+          cat > /tmp/pr-body.md <<'EOF'
+          ## 目的
+
+          `/vibepro`、Story、Gate、worktreeなどの開発用語を利用者へ要求せず、梅田さんを含む非エンジニアが「困っていること」と「どうなればよいか」からManaの改善を開始できるUXへ置き換えます。
+
+          このPRは #303 をbaseとするstacked Draft PRです。旧Jimmyではなく、Cloudflare-native Mana runtimeだけを変更します。
+
+          ## P0: Cloud runtimeの自己改善UX
+
+          - `/vibepro`からSlackモーダルを開き、空コマンドでも入力を開始可能
+          - モーダル送信後に実在する受付メッセージを投稿し、そのtsを後続処理の正式なthread rootに使用
+          - runnerの`PROGRESS`をCloud callbackへ伝播し、受付カードを「依頼を整理中 / 変更中 / 確認中」に更新
+          - questions / gates / commits / Story / PRをCloud境界で削らず構造化検証
+          - completed / needs_decision / needs_input / failed / timed_outを利用者向けBlock Kitへ変換
+          - progress callbackをterminal accounting・sandbox破棄から分離
+
+          ## P1: 非エンジニア向け改善依頼モデル
+
+          - `mana_improvement_request_v1`を追加
+          - 問題、期待する結果、具体例、参考情報、許可する実行範囲を型付き・長さ制限付きで正規化
+          - requester / workspace / channelをSlack署名とprivate metadataの両方で照合
+          - canonical tenant authorityとcredential brokerを通してモーダル表示・受付投稿・Queue投入を実行
+          - merge / deploy / secret / 権限変更を明示的に禁止
+
+          ## 安全境界
+
+          - Draft PR作成、merge、deploy、secret変更は本機能から実行しない
+          - 未解決の業務判断は安全停止し、質問内容とManaの推奨を表示する
+          - 旧runtimeや本番credentialは変更しない
+
+          ## Verification
+
+          - `pnpm typecheck`
+          - `pnpm test`
+          - `pnpm build`
+          - `git diff --check`
+
+          上記を同一branch HEADで完了後に、このDraft PRを自動作成しています。
+          EOF
+
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --base "${BASE_BRANCH}" \
+            --head "${HEAD_BRANCH}" \
+            --title "feat(mana): 非エンジニア向け自己改善UXを追加" \
+            --body-file /tmp/pr-body.md
