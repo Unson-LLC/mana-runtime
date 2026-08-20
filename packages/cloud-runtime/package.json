@@ -1,0 +1,36 @@
+{
+  "name": "@mana-runtime/cloud-runtime",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-profiles.mjs",
+    "build:default": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && wrangler deploy --dry-run --outdir dist",
+    "build:unson-business": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && wrangler deploy --config wrangler.unson-business.jsonc --dry-run --outdir dist/unson-business",
+    "build:dedicated-cloud": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && wrangler deploy --config wrangler.dedicated-cloud.jsonc --dry-run --outdir dist/dedicated-cloud",
+    "build:customer-managed-oss": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && node scripts/build-customer-managed-oss.mjs",
+    "deploy:unson-business": "pnpm --filter @openryoko/slack-thread-context build && pnpm --filter @openryoko/task-runtime-core build && pnpm --filter @openryoko/write-broker build && node scripts/deploy-unson-business.mjs",
+    "meeting-minutes:intake:pause": "node scripts/meeting-minutes-intake-control.mjs pause",
+    "meeting-minutes:intake:resume": "node scripts/meeting-minutes-intake-control.mjs resume",
+    "dev": "wrangler dev",
+    "verify:production-task-migration-evidence": "vitest run src/__tests__/production-task-migration-evidence.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "integration": "vitest run",
+    "clean": "rm -rf dist .wrangler"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "0.1.1",
+    "@openryoko/slack-thread-context": "workspace:*",
+    "@openryoko/task-runtime-core": "workspace:*",
+    "@openryoko/write-broker": "workspace:*",
+    "@cloudflare/sandbox": "0.12.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260811.1",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.120.1"
+  }
+}

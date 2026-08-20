@@ -1,7 +1,7 @@
 ---
 title: Mana Operating Loop と Brainbase の製品境界
 status: accepted
-date: 2026-08-19
+date: 2026-08-20
 scope: mana-runtime
 ---
 
@@ -9,16 +9,43 @@ scope: mana-runtime
 
 ## 決定
 
-Mana は Brainbase の有償版ではなく、Brainbase の状態・記憶・権限を使って継続的に **理解・判断・実行する常駐Agent Runtime** とする。
-
-Brainbase が Memory Loop を所有し、Mana が Operating Loop を所有する。
+Mana は Brainbase の上位有償版ではなく、Brainbase の状態・記憶・権限を利用して継続的に **理解・判断・実行・追跡する Operating Agent** とする。
 
 ```text
 Brainbase = Remember / Organize / Retrieve / Learn
 Mana      = Understand / Decide / Act / Follow-through
 ```
 
-ManaはBrainbaseなしでも技術的には起動できる構造を許容するが、Brainbase連携時に最も高い価値を出す。BrainbaseをMana内部のprivate databaseにはしない。
+Brainbase が Memory Loop を所有し、Mana が Operating Loop を所有する。ManaはBrainbaseの正本を複製せず、Brainbaseが提供する組織状態・記憶・権限を実行時に利用する。
+
+## 現行Runtimeの正本
+
+Mana Runtimeの現行実装は **Cloudflare-native runtime** である。Jimmy / Jinn / OpenRyokoを基盤としたLightsail常駐runtimeは廃止済みであり、現行アーキテクチャの依存ではない。
+
+```text
+Slack Events API / timer / system event / human request
+                         |
+                         v
+                 Cloudflare Worker
+                         |
+                  Queue / Durable Object
+                         |
+                         v
+             Cloudflare Computer / Sandbox
+                         |
+                         v
+                    Claude Code
+                         |
+                         v
+               Brainbase APIs / brokers
+                         |
+                         v
+              action / Slack response
+```
+
+現行コードの正本は `packages/cloud-runtime/` とする。会社別deploymentは同じruntime実装から生成し、Slack App、Worker、Queue/DLQ、Durable Object、Computer/Sandbox、credential boundaryをdeployment単位で分離する。
+
+Git履歴には旧Jimmy/OpenRyoko実装が残るが、active source treeへ旧runtimeを残さない。
 
 ## Manaの責務
 
@@ -35,28 +62,22 @@ Manaは次の状態を継続的に理解する。
 - human availability / responsibility
 - blocker / dependency / deadline
 
-その上で、次の4種類のtriggerから判断を開始する。
+その上で次のtriggerから判断を開始する。
 
 ```text
-time trigger
-  朝・夜・週次など
-
-event trigger
-  meeting ended / task changed / PR merged / message received など
-
-state trigger
-  overdue / blocked / goal at risk / missing owner / stale decision など
-
-human trigger
-  Slack / UI / API / command からの依頼
+time trigger   -> 朝・夜・週次など
+event trigger  -> meeting ended / task changed / PR merged / message received
+state trigger  -> overdue / blocked / goal at risk / missing owner / stale decision
+human trigger  -> Slack / UI / API / command
 ```
 
-Manaは、判断結果を「返答」で終わらせず、権限の範囲で実行へ進める。
+Manaは判断結果を返答だけで終わらせず、Brainbaseから確認したauthorityの範囲で実行へ進める。
 
 ```text
 Observe
   -> Understand
   -> Decide
+  -> Authority check
   -> Act
   -> Verify outcome
   -> Record result to Brainbase
@@ -67,138 +88,54 @@ Observe
 
 ### `ohayo`: 今日、何を進めるべきか
 
-Manaの朝ルーティンは、BrainbaseのMorning Memory Loopを材料の1つとして使い、目的から今日の実行計画を決める。
+BrainbaseのMorning Memory Loopを材料の1つとして、Goal / Milestone / Sprint / Task / Ship / RACI / deadline / blocker / calendar / recent decisions / capacityを読み、今日のoutcomeと優先順位を決める。
 
-入力例:
-
-- Brainbase Memory Loopの結果
-- Goal / Milestone / Sprint
-- Task / Ship status
-- owner / RACI
-- deadline / blocker
-- calendar / meetings
-- recent decisions
-- human / agent capacity
-
-出力:
-
-- today outcome
-- top priorities
-- immediate decisions
-- Mana自身が今すぐShipする項目
-- 人間へ依頼する項目
-- reminder / escalation対象
-- risks / blockers
-- evidence / rationale
-
-重要なのは「今日思い出す情報」ではなく「今日会社・本人をどこまで前進させるか」を決定すること。
+出力は、today outcome、top priorities、immediate decisions、Mana自身が今すぐShipする項目、人間へ依頼する項目、reminder/escalation、risks/blockers、evidence/rationaleを含める。
 
 ### `oyasumi`: 今日の成果は十分だったか
 
-入力:
-
-- 朝に立てたoutcome / priority
-- 今日のShip
-- task transitions
-- human / agent actions
-- meeting decisions
-- blockers / failures
-- Brainbase Night Memory Loop
-
-出力:
-
-- achieved outcomes
-- unfinished but still valid
-- stale / unnecessary work to drop
-- accountability gaps
-- tomorrow top priority
-- decisions to persist
-- escalation required
-
-Manaは単に記憶を圧縮するのではなく、目的に対して実行が進んだかを評価する。
+朝のoutcome、Ship、task transition、human/agent action、meeting decision、blocker/failure、Brainbase Night Memory Loopを照合し、achieved outcomes、持越し、drop対象、accountability gap、tomorrow top priority、persistすべきdecision、escalationを判断する。
 
 ### `retro`: 来週、何を変えるべきか
 
-入力:
+Goal progress、Ship/outcome、反復blocker、human/agent execution、decision quality、Brainbase Memory Retro、process/role/authority frictionを分析し、system change、role変更提案、automation、削除/簡素化候補、Story/PR/operational Ship、人間承認事項へ落とす。
 
-- goal progress
-- ships / outcomes
-- repeated blockers
-- human / agent execution history
-- decision quality
-- Brainbase Memory Retro
-- process / role / authority friction
-
-出力:
-
-- repeated operational patterns
-- system changes
-- role / responsibility changes to propose
-- automation opportunities
-- process deletion / simplification candidates
-- stories / PRs / operational ships
-- human approval requirements
-
-ManaのRetroはMemory Systemの品質改善ではなく、成果を出すシステム全体の改善を扱う。
-
-## Brainbaseとの呼び分け
+## Brainbaseとのcompose
 
 ユーザー向け名称は同じでもよい。
 
 ```text
 without Mana
-
-/ohayo
-  -> Brainbase Morning Memory Loop
+/ohayo -> Brainbase Morning Memory Loop
 
 with Mana
-
-/ohayo
-  -> Mana Morning Operating Loop
-       -> Brainbase Morning Memory Loop
-       -> Brainbase organization / personal state
-       -> external sources as permitted
-       -> decision
-       -> execution
+/ohayo -> Mana Morning Operating Loop
+             -> Brainbase Morning Memory Loop
+             -> Brainbase organization / personal state
+             -> permitted external observations
+             -> decision
+             -> authority check
+             -> execution
 ```
 
-ManaがBrainbaseのルーティンをoverrideするのではなくcomposeする。
+ManaはBrainbase Routineをoverrideせずcomposeする。
 
-## Runtime architecture
+## Workerの位置づけ
 
-Manaはschedulerそのものではなく、複数triggerを受けてAgent executionを継続するruntimeである。
-
-```text
-                    +------------------+
-cron / timer ------>|                  |
-event bus --------->|   Mana Runtime   |----> Claude / Codex / other worker
-Brainbase event --->|                  |----> Slack / Email / external actions
-human request ----->|                  |----> human reminder / approval
-                    +--------+---------+
-                             |
-                             v
-                       Brainbase API
-                    state / memory / audit
-```
-
-Codex Automationは利用可能なtrigger / workerの1つであり、Manaの製品概念にしない。
-
-### Codexの位置づけ
-
-Codexは coding worker として利用できる。
+Claude Code、Codex、その他のagent runtimeはworkerであり、Manaの製品概念や正本ではない。
 
 ```text
-Mana detects required code change
+Mana detects work
   -> Judgment
   -> authority check
-  -> start Codex worker
-  -> PR / test / artifact
+  -> worker execution
+  -> artifact / PR / task mutation / message
   -> verify
   -> Ship result
-  -> Brainbaseに結果記録
+  -> Brainbase record
 ```
 
-Mana自身がコード生成モデルになる必要はない。Manaは仕事の割当・継続・確認を担う。
+Cloudflare Computerはworkerを隔離実行する現行基盤であり、Manaの業務知識の正本ではない。
 
 ## Brainbaseが正本であるもの
 
@@ -211,101 +148,65 @@ Mana自身がコード生成モデルになる必要はない。Manaは仕事の
 - task / sprint / ship SSOT（Brainbase側で管理する場合）
 - audit / run evidence
 
-## Manaが正本であるもの
+## Mana Runtimeが保持するもの
 
-Manaは原則として業務SSOTを複製しない。
-
-Mana Runtimeが保持する正本はruntime concernに限定する。
+runtime concernに限定する。
 
 - active execution session
 - worker lifecycle
-- trigger subscription
+- trigger/event processing state
+- Queue / retry / backoff / DLQ state
 - temporary execution context
-- retry / backoff
-- action attempt state
-- runtime connector state
+- connector delivery state
 - short-lived planning state
+- Durable Object / Computer lifecycle state
 
-長期の業務知識や正式な役割・判断を `~/.mana` の独自memoryだけへ閉じ込めない。
+長期業務知識、正式な役割、authority、decisionをMana独自memoryへ閉じ込めない。
 
 ## Authority boundary
-
-Manaの能力と権限を分ける。
 
 ```text
 can_do != allowed_to_do
 ```
 
-各actionは最低限次を持つ。
-
-- actor
-- target
-- action_type
-- required_authority
-- approval_mode
-- evidence
-- result
-
-例:
-
-- 情報収集: 自動許可可能
-- 下書き: 自動許可可能
-- internal task update: roleによって自動許可
-- external send: policy次第で承認
-- purchase / contract / production deploy: 明示されたauthority gate
-
-BrainbaseにあるRACI / policyを利用し、LLMが「やってよさそう」と推測して権限を生成しない。
+LLMは権限を生成しない。actor、resource、capability、desired effect、RACI/policy、evidenceをBrainbase側のcanonical company authorityで確認し、確認できなければfail closedする。
 
 ## Business boundary
 
 Manaの有償価値は「より多く記憶できる」ことではない。
 
-課金対象は次。
-
 - proactive monitoring
 - continuous prioritization
 - autonomous execution
 - human follow-through
-- multi-agent / worker orchestration
+- worker orchestration
 - organization-wide Operating Loop
 - managed channels / notifications
 - reliability / audit / commercial support
 
-Brainbase OSSが高品質でもManaの価値は失われない。むしろBrainbaseが信頼できるほどManaが高精度で動ける。
+Brainbase OSSが高品質でもManaの価値は失われない。Brainbaseが信頼できるほどManaが高精度に行動できる。
 
-## Repository / licensing note
+## Repository boundary
 
-このリポジトリは2026-08-19時点でpublicかつMITで、READMEもOpenRyokoとして公開配布を前提にしている。
+このリポジトリ `mana-runtime` はManaの現行Cloudflare実行基盤の正本とする。
 
-Manaを商用プロプライエタリな差別化層として販売する場合、現在のライセンス・公開範囲は別途経営判断が必要。
+- `packages/cloud-runtime/`: Cloudflare-native canonical runtime
+- `packages/task-runtime-core/`: task execution primitives
+- `packages/slack-thread-context/`: Slack context primitives
+- `packages/write-broker/`: bounded write primitives
+- `packages/web/`: Mana UI surfaces
 
-選択肢は混同しない。
+旧Jimmy/OpenRyoko runtimeを別の現行product/coreとして扱わない。必要な由来・著作権情報はGit履歴と法的noticeで保持し、active architectureには持ち込まない。
 
-### Option A: runtime OSS + managed Mana有償
-
-- runtime自体はOSSを維持
-- hosted control plane、managed connectors、organization policy、reliability、cloud executionを有償化
-- OSS採用をdistributionとして使う
-
-### Option B: OpenRyoko core OSS + Mana commercial layer private
-
-- upstream由来のgateway/runtime coreは公開
-- Mana固有のOperating Loop、organization reasoning、commercial connector / policy layerを別private repositoryへ分離
-
-### Option C: Mana runtime自体を今後proprietary化
-
-既にMIT公開された過去コードの権利を巻き戻すことはできない。将来追加部分のlicense / repository visibilityは変更できるが、既公開部分との差別化を前提に設計する必要がある。
-
-現時点の推奨は **Option B**。OpenRyoko/Jinn由来の汎用Agent gatewayを無理に囲い込むより、Mana固有のOperating LoopとBrainbase Organization integrationを商用資産として明確に分離する。
+ライセンスやrepository visibilityを変更する場合は、すでに公開済みのMITコードの権利を巻き戻せないことを前提に別ADRで判断する。これはruntime architectureとは別の経営・法務判断である。
 
 ## 実装ルール
 
-今後Manaへ機能を追加する際は次を確認する。
-
-1. これは記憶の正規化・検索・保存か。ならBrainbase側ではないか。
-2. これは目的に対する判断・実行・追跡か。ならMana側である。
-3. runtime固有状態をbusiness SSOT化していないか。
-4. Codex / Claude等の特定workerへ製品概念を結合していないか。
-5. time triggerだけでなくevent/state triggerとして一般化できないか。
-6. action authorityをLLM判断だけで作っていないか。
-7. 人間が必要な仕事を「表示」で終わらせずfollow-throughできるか。
+1. 記憶の正規化・検索・保存ならBrainbase責務ではないか確認する。
+2. 目的に対する判断・実行・追跡ならMana責務として扱う。
+3. runtime stateをbusiness SSOT化しない。
+4. Claude/Codex等の特定workerへ製品概念を結合しない。
+5. time triggerだけでなくevent/state triggerへ一般化できるか確認する。
+6. action authorityをLLM推測から作らない。
+7. 人間が必要な仕事を表示だけで終わらせずfollow-throughする。
+8. Lightsail/Jimmy/OpenRyokoを現行runtime dependencyとして復活させない。
