@@ -24,12 +24,14 @@ describe("development callback", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(post).toHaveBeenCalledWith(expect.anything(), [
-      "Development: completed",
-      "Story: STR-1 &lt;@U_ATTACK&gt;",
-      "PR: https://github.com/x/y/pull/1",
-      "*完了* &lt;!channel&gt; &lt;https://evil.test|確認&gt;",
-    ].join("\n"));
+    expect(post).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("*完了* &lt;!channel&gt; &lt;https://evil.test|確認&gt;"),
+      expect.arrayContaining([expect.objectContaining({ type: "actions" })]),
+    );
+    const blocks = (post.mock.calls as unknown[][])[0]?.[2];
+    expect(JSON.stringify(blocks)).toContain("STR-1 &lt;@U_ATTACK&gt;");
+    expect(JSON.stringify(blocks)).not.toContain("<!channel>");
   });
 
   it("authorizes an installed workspace through tenant authority instead of a static workspace binding", async () => {
@@ -58,7 +60,7 @@ describe("development callback", () => {
     const post = vi.fn(async () => "2.0"); const claim = vi.fn(async () => ({ state: "claimed" as const })); const complete = vi.fn(async () => undefined);
     const resolve = vi.fn(async (event) => ({ ...event, tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV" }));
     const response = await handleDevelopmentCallback(request(body), { token: "secret", placements: [placement], resolve, claim, recordDelivery: async () => undefined, complete, release: async () => undefined, post });
-    expect(response.status).toBe(200); expect(post).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV", eventId: "development:job_1", channelId: "C1", threadTs: "1.0" }), expect.stringContaining("Story: STR-1"));
+    expect(response.status).toBe(200); expect(post).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV", eventId: "development:job_1", channelId: "C1", threadTs: "1.0" }), expect.stringContaining("Story: STR-1"), expect.any(Array));
     expect(resolve).toHaveBeenCalledBefore(claim);
     expect(complete).toHaveBeenCalledWith("development:job_1", expect.objectContaining({ job_id: "job_1" }),
       { state: "delivered", responseTs: "2.0" });
@@ -78,7 +80,7 @@ describe("development callback", () => {
       complete: async () => undefined, release: async () => undefined, post,
     });
     expect(response.status).toBe(200);
-    expect(post).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Development: timed_out"));
+    expect(post).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("時間内に完了しませんでした"), expect.any(Array));
   });
   it("claims a job before posting so concurrent callbacks cannot double-post", async () => {
     let claimed = false;
