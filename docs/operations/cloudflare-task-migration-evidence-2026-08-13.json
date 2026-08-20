@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "evidence_type": "production_task_migration_readback",
-  "collected_at": "2026-08-13T14:06:48Z",
+  "collected_at": "2026-08-13T14:42:29.740446Z",
   "channel": {
     "workspace_id": "T0882T8N9UH",
     "channel_id": "C0BKS6RL99T",
@@ -14,14 +14,14 @@
   "cloudflare": {
     "worker_name": "unson-business-mana-runtime",
     "current": {
-      "worker_version": "40d97f3f-6d24-4f5c-938c-0a1898072682",
-      "worker_number": 43,
+      "worker_version": "1ba0353e-223b-40df-a853-578a43d71f32",
+      "worker_number": 48,
       "traffic_percent": 100,
-      "created_at": "2026-08-13T13:52:46.148738Z",
+      "created_at": "2026-08-13T14:42:29.740446Z",
       "release_tag": null,
-      "git_sha": "8f580d0089abaebbe64e4626b85132b8c1c1c632",
-      "git_sha_provenance": "Deployment worktree HEAD and independent source-thread readback; Cloudflare release tag is absent",
-      "script_etag": "1516ef0a64c0b0b3e758e36ae646e3b11aa0b793be6f5fff9ecc83442b801b66",
+      "git_sha": "354c29a",
+      "git_sha_provenance": "PR #132 merge commit checked out in the deployment worktree; deploy message git-354c29a PR #132; Cloudflare release tag is absent",
+      "script_etag": "5476268e7fc900fea625d037de8c5438a13b91b1d8ca19319092de7a8b732344",
       "task_search_enabled": true,
       "task_write_enabled": true,
       "task_board_enabled": true,
@@ -49,7 +49,7 @@
       "image_digest": "sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985"
     },
     "readback": {
-      "method": "Wrangler deployments list, versions view, containers info, deployment-worktree HEAD and source-thread readback",
+      "method": "Wrangler versions view and deployment-worktree HEAD readback",
       "secret_values_read": false
     }
   },

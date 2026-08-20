@@ -10,10 +10,10 @@ Slackチャンネル `C0BKS6RL99T` のタスク検索・作成・更新・状態
 
 ## 現在のCloudflare配備
 
-- Git SHA: `8f580d0089abaebbe64e4626b85132b8c1c1c632`
-- Worker version: `40d97f3f-6d24-4f5c-938c-0a1898072682`（#43）、配分100%
+- Git SHA: `354c29a`（PR #132 merge commit）
+- Worker version: `1ba0353e-223b-40df-a853-578a43d71f32`（#48）、配分100%
 - Worker設定のrelease tag: 未設定
-- Script etag: `1516ef0a64c0b0b3e758e36ae646e3b11aa0b793be6f5fff9ecc83442b801b66`
+- Script etag: `5476268e7fc900fea625d037de8c5438a13b91b1d8ca19319092de7a8b732344`
 - Worker handlers: `fetch`、`queue`、`scheduled`
 - 設定: search=`true`、write=`true`、board=`true`
 - 所有境界: Placement=`mana-accounting`、project=`back-office`、channel=`C0BKS6RL99T`
@@ -22,9 +22,9 @@ Slackチャンネル `C0BKS6RL99T` のタスク検索・作成・更新・状態
 - Container ID: `a0312218-7c5c-447a-a906-4e7e7030399b`、state=`ready`、healthy=1、failed=0
 - Container digest: `sha256:e9c204b29e130ae387cd551260b302ad345a4598596c41dbf80f81c88ca4a985`
 
-Workerのversion、bindings、Queue、cron、Durable Object、secret名、Containerのhealthとdigestを2026-08-13 23:07 JSTに読み戻した。secret値は表示していない。
+Workerのversion、bindings、Queue、cron、Durable Object、secret名、Containerのdigestを2026-08-13 23:42 JSTに読み戻した。secret値は表示していない。
 
-このWorkerは、別タスクの議事録修正用worktreeのexact HEADとデプロイ担当タスクのreadbackにより上記Git SHAとの対応を確認した。Cloudflare側にrelease tagがないため、タグによる独立照合ではない。#43では議事録コードだけが後続更新され、タスクのsearch/write/board、Placement、project、channel、Queue、Durable Objectの設定は維持されている。
+このWorkerはPR #132のmerge commit `354c29a`をcheckoutした配備worktreeから、deploy message `git-354c29a PR #132`を付けて配備した。Cloudflare側にrelease tagはない。#48では議事録のTechKnight Slack投稿経路だけを後続更新し、タスクのsearch/write/board、Placement、project、channel、Queue、Durable Objectの設定は維持されている。
 
 ## 切替時の同一Slackスレッド書き込みE2E
 
