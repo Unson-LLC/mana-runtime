@@ -74,6 +74,37 @@ describe("Slack native development command", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("acknowledges Slack before the modal's external authorization work completes", async () => {
+    let completeModal!: () => void;
+    const modalWork = new Promise<void>((resolve) => { completeModal = resolve; });
+    const defer = vi.fn<(work: Promise<void>) => void>();
+    const body = new URLSearchParams({
+      team_id: "T1",
+      channel_id: "C1",
+      user_id: "U1",
+      command: "/vibepro",
+      trigger_id: "tr-slow-authority",
+      text: "本番でフォームを開きたい",
+    }).toString();
+
+    const response = await Promise.race([
+      handleSlackCommandRequest(make(body), {
+        signingSecret: secret,
+        placements: [{ channelId: "C1", allowedUserIds: ["U1"] }],
+        nowMs,
+        openModal: () => modalWork,
+        defer,
+        send: vi.fn(),
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("slack_ack_waited_for_modal")), 50)),
+    ]);
+
+    expect(response.status).toBe(200);
+    expect(defer).toHaveBeenCalledWith(modalWork);
+    completeModal();
+    await modalWork;
+  });
+
   it("allows an empty command to open the guided form", async () => {
     const openModal = vi.fn(async () => undefined);
     const body = new URLSearchParams({

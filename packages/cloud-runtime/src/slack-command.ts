@@ -24,6 +24,8 @@ export async function handleSlackCommandRequest(request: Request, options: {
    * a synthetic Slack thread timestamp.
    */
   openModal?(input: SlackDevelopmentCommandInput): Promise<unknown>;
+  /** Keep modal opening alive after returning Slack's required fast acknowledgement. */
+  defer?(work: Promise<unknown>): void;
   send(event: Omit<SlackQueueEvent, "tenantId">): Promise<unknown>;
 }): Promise<Response> {
   let body: string;
@@ -62,7 +64,7 @@ export async function handleSlackCommandRequest(request: Request, options: {
     if (!triggerId) {
       return Response.json({ response_type: "ephemeral", text: "入力フォームを開けませんでした。もう一度お試しください。" });
     }
-    await options.openModal({
+    const modalWork = options.openModal({
       workspaceId,
       channelId,
       requesterId,
@@ -70,6 +72,8 @@ export async function handleSlackCommandRequest(request: Request, options: {
       command: command as SlackDevelopmentCommandInput["command"],
       initialProblem: text,
     });
+    if (options.defer) options.defer(modalWork);
+    else await modalWork;
     return Response.json({
       response_type: "ephemeral",
       text: "Manaの改善フォームを開きました。困っていることと完了条件を入力してください。",

@@ -2133,6 +2133,7 @@ export default {
             initialProblem: input.initialProblem,
           });
         },
+        defer: (work) => ctx.waitUntil(work.then(() => undefined)),
         send: async (event) => {
           const clients = tenantRuntimeClients(env);
           const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
