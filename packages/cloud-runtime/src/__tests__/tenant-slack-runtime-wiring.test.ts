@@ -52,4 +52,28 @@ describe("tenant Slack runtime wiring", () => {
       "createSlackInstallationControlPlaneClient(\n        env.SLACK_INSTALLATION_CONTROL_PLANE",
     );
   });
+
+  it("allows only health and OAuth installation routes in bootstrap mode", () => {
+    const fetchStart = source.indexOf("async fetch(");
+    const queueStart = source.indexOf("async queue(", fetchStart);
+    const fetchSource = source.slice(fetchStart, queueStart);
+
+    expect(fetchSource).toContain('bootstrapMode === "slack_oauth"');
+    expect(fetchSource).toContain('request.method === "POST" && url.pathname === "/slack/installations/oauth/start"');
+    expect(fetchSource).toContain('request.method === "GET" && url.pathname === "/slack/installations/oauth/callback"');
+    expect(fetchSource).toContain('error: "runtime_bootstrap_mode_active"');
+    expect(fetchSource.indexOf('error: "runtime_bootstrap_mode_active"'))
+      .toBeLessThan(fetchSource.indexOf('url.pathname === "/internal/slack/installations/lifecycle"'));
+  });
+
+  it("retries Queue messages and suppresses scheduled work while bootstrap is active", () => {
+    const queueStart = source.indexOf("async queue(");
+    const scheduledStart = source.indexOf("async scheduled(", queueStart);
+    const queueSource = source.slice(queueStart, scheduledStart);
+    const scheduledSource = source.slice(scheduledStart);
+
+    expect(queueSource).toContain("resolveTenantBootstrapMode(env.MANA_BOOTSTRAP_MODE) !== undefined");
+    expect(queueSource).toContain("message.retry({ delaySeconds: 60 })");
+    expect(scheduledSource).toContain("resolveTenantBootstrapMode(env.MANA_BOOTSTRAP_MODE) !== undefined");
+  });
 });

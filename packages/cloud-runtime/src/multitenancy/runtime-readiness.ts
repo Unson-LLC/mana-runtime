@@ -3,6 +3,16 @@ import { REQUIRED_TENANT_CAPABILITIES } from "./contracts.js";
 export interface TenantRuntimeReadiness {
   ready: boolean;
   missing_bindings: string[];
+  bootstrap_mode?: "slack_oauth";
+  installation_bootstrap_required?: true;
+}
+
+export type TenantBootstrapMode = "slack_oauth" | "invalid" | undefined;
+
+export function resolveTenantBootstrapMode(value: unknown): TenantBootstrapMode {
+  if (value === undefined) return undefined;
+  if (value === "slack_oauth") return "slack_oauth";
+  return "invalid";
 }
 
 const REQUIRED_TEXT_BINDINGS = [
@@ -66,6 +76,22 @@ function validJwks(value: unknown): boolean {
   }
 }
 
+function validWorkspaceConnectionHints(value: unknown): boolean {
+  if (!nonEmpty(value)) return false;
+  try {
+    const parsed = JSON.parse(value as string) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0 && parsed.every((candidate) => {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+      const hint = candidate as Record<string, unknown>;
+      return ["tenant_id", "connection_id", "workspace_id", "app_id"].every((key) => nonEmpty(hint[key]))
+        && Number.isInteger(Number(hint.tenant_revision)) && Number(hint.tenant_revision) > 0
+        && Number.isInteger(Number(hint.connection_revision)) && Number(hint.connection_revision) > 0;
+    });
+  } catch {
+    return false;
+  }
+}
+
 function placementTaskBoardEnabled(value: unknown): boolean {
   if (!nonEmpty(value)) return false;
   try {
@@ -96,6 +122,8 @@ export function assessTenantRuntimeReadiness(
   env: Record<string, unknown>,
 ): TenantRuntimeReadiness {
   const missing: string[] = [];
+  const bootstrapMode = resolveTenantBootstrapMode(env.MANA_BOOTSTRAP_MODE);
+  if (bootstrapMode === "invalid") missing.push("MANA_BOOTSTRAP_MODE");
   const profile = env.MANA_DEPLOYMENT_PROFILE;
   if (profile !== "shared_cloud" && profile !== "dedicated_cloud" && profile !== "customer_managed_oss") {
     missing.push("MANA_DEPLOYMENT_PROFILE");
@@ -175,6 +203,17 @@ export function assessTenantRuntimeReadiness(
   if (!validJwks(env.BRAINBASE_TENANT_CONTEXT_JWKS_JSON)) {
     missing.push("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
   }
+  if (!validWorkspaceConnectionHints(env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) {
+    missing.push("BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
+  }
   if (!env.TENANT_RUNTIME_STATE) missing.push("TENANT_RUNTIME_STATE");
+  if (bootstrapMode === "slack_oauth") {
+    return {
+      ready: false,
+      missing_bindings: missing.sort(),
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+    };
+  }
   return { ready: missing.length === 0, missing_bindings: missing.sort() };
 }

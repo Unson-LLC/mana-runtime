@@ -493,7 +493,12 @@ export function assessTenantRuntimeDeploymentConfig(config, secretNames) {
   if (!validJwks(vars.BRAINBASE_TENANT_CONTEXT_JWKS_JSON)) {
     missing.add("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
   }
-  if (!validWorkspaceConnectionHints(vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) {
+  const bootstrapMode = vars.MANA_BOOTSTRAP_MODE;
+  if (bootstrapMode !== undefined && bootstrapMode !== "slack_oauth") {
+    missing.add("MANA_BOOTSTRAP_MODE");
+  }
+  if (bootstrapMode !== "slack_oauth"
+    && !validWorkspaceConnectionHints(vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) {
     missing.add("BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   }
   if (!hasServiceBinding(config?.services, "BRAINBASE_TENANT_RUNTIME_SERVICE", "brainbase-tenant-runtime")) {

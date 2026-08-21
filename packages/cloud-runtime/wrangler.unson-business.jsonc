@@ -17,6 +17,7 @@
   },
   "vars": {
     "TENANT_ID": "unson-business",
+    "MANA_BOOTSTRAP_MODE": "slack_oauth",
     "SLACK_EXPECTED_TEAM_ID": "T0882T8N9UH",
     "MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON": "{\"unson\":\"T07LL5WV7N1\",\"unson-business\":\"T0882T8N9UH\",\"tech-knight\":\"T07A9J3PEMB\"}",
     "SLACK_EXPECTED_APP_ID": "A0BPM2J33SN",

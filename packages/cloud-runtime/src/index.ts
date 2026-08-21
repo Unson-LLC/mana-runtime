@@ -186,7 +186,10 @@ import {
   failDevelopmentTerminalOutboxRecord,
   retryDevelopmentTerminalOutboxRecord,
 } from "./multitenancy/development-callback-proxy.js";
-import { assessTenantRuntimeReadiness } from "./multitenancy/runtime-readiness.js";
+import {
+  assessTenantRuntimeReadiness,
+  resolveTenantBootstrapMode,
+} from "./multitenancy/runtime-readiness.js";
 import { handleSlackInstallationLifecycleRequest } from "./multitenancy/slack-installation-entrypoint.js";
 import { SlackInstallationAdapter } from "./multitenancy/workspace-connection.js";
 import {
@@ -277,6 +280,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   CF_VERSION_METADATA?: { id: string; tag?: string };
   TENANT_ID: string;
   MANA_DEPLOYMENT_PROFILE?: string;
+  MANA_BOOTSTRAP_MODE?: string;
   MANA_REQUIRED_AUDIENCE?: string;
   MANA_REQUIRED_CAPABILITY_ID?: string;
   MANA_REQUIRED_SLACK_SCOPES?: string;
@@ -1597,6 +1601,27 @@ async function processTenantMeetingMinutesRedo(input: {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const bootstrapMode = resolveTenantBootstrapMode(env.MANA_BOOTSTRAP_MODE);
+    if (bootstrapMode === "invalid") {
+      return Response.json({ error: "CONFIGURATION_INVALID" }, { status: 503 });
+    }
+    if (bootstrapMode === "slack_oauth") {
+      const oauthStart = request.method === "POST" && url.pathname === "/slack/installations/oauth/start";
+      const oauthCallback = request.method === "GET" && url.pathname === "/slack/installations/oauth/callback";
+      if (request.method === "GET" && url.pathname === "/health") {
+        const readiness = assessTenantRuntimeReadiness(env as unknown as Record<string, unknown>);
+        return Response.json({
+          ok: false,
+          tenant_runtime: readiness,
+          tenant: env.TENANT_ID,
+          bootstrap_mode: "slack_oauth",
+          installation_bootstrap_required: true,
+        }, { status: 503 });
+      }
+      if (!oauthStart && !oauthCallback) {
+        return Response.json({ error: "runtime_bootstrap_mode_active" }, { status: 503 });
+      }
+    }
     if (request.method === "GET" && url.pathname === "/health") {
       const readiness = assessTenantRuntimeReadiness(env as unknown as Record<string, unknown>);
       return Response.json({
@@ -2309,6 +2334,10 @@ export default {
     | TenantQueueBody<TaskBoardRepairEvent>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
     | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>, env: Env): Promise<void> {
+    if (resolveTenantBootstrapMode(env.MANA_BOOTSTRAP_MODE) !== undefined) {
+      for (const message of batch.messages) message.retry({ delaySeconds: 60 });
+      return;
+    }
     const executeTenantContainerOperation = <T>(input: {
       tenant_context: TenantContextEnvelope;
       expected_scope: ExpectedTenantScope;
@@ -3189,6 +3218,7 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    if (resolveTenantBootstrapMode(env.MANA_BOOTSTRAP_MODE) !== undefined) return;
     await enqueueScheduledTaskBoardRepair(
       env,
       new Date().toISOString(),

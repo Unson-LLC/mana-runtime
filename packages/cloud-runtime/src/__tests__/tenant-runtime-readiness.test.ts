@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { assessTenantRuntimeReadiness } from "../multitenancy/runtime-readiness.js";
+import {
+  assessTenantRuntimeReadiness,
+  resolveTenantBootstrapMode,
+} from "../multitenancy/runtime-readiness.js";
 
 const complete = {
   MANA_DEPLOYMENT_PROFILE: "shared_cloud",
@@ -21,6 +24,14 @@ const complete = {
   BRAINBASE_TENANT_RUNTIME_HOST: "127.0.0.1",
   BRAINBASE_TENANT_RUNTIME_PORT: "31016",
   BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async () => new Response() },
+  BRAINBASE_WORKSPACE_CONNECTIONS_JSON: JSON.stringify([{
+    tenant_id: "tenant-test",
+    tenant_revision: "1",
+    connection_id: "connection-test",
+    connection_revision: "1",
+    workspace_id: "T-TEST",
+    app_id: "A-MANA",
+  }]),
   SLACK_SIGNING_SECRET: "slack-signing-secret-placeholder",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   SLACK_EXPECTED_APP_ID: "A-MANA",
@@ -36,8 +47,57 @@ const complete = {
 };
 
 describe("tenant runtime readiness", () => {
+  it("resolves only the explicit Slack OAuth bootstrap mode", () => {
+    expect(resolveTenantBootstrapMode(undefined)).toBeUndefined();
+    expect(resolveTenantBootstrapMode("slack_oauth")).toBe("slack_oauth");
+    expect(resolveTenantBootstrapMode("true")).toBe("invalid");
+    expect(resolveTenantBootstrapMode("")).toBe("invalid");
+  });
+
   it("reports ready only when the canonical consumer bindings are present", () => {
     expect(assessTenantRuntimeReadiness(complete)).toEqual({ ready: true, missing_bindings: [] });
+  });
+
+  it("requires canonical workspace connections in normal runtime mode", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_WORKSPACE_CONNECTIONS_JSON: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+    });
+  });
+
+  it("keeps bootstrap health unready while allowing the missing connection only in Slack OAuth mode", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_BOOTSTRAP_MODE: "slack_oauth",
+      BRAINBASE_WORKSPACE_CONNECTIONS_JSON: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+    });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_BOOTSTRAP_MODE: "slack_oauth",
+    })).toEqual({
+      ready: false,
+      missing_bindings: [],
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+    });
+  });
+
+  it("rejects an unknown bootstrap mode as invalid configuration", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_BOOTSTRAP_MODE: "true",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["MANA_BOOTSTRAP_MODE"],
+    });
   });
 
   it("returns binding names only and never secret values", () => {

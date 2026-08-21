@@ -497,6 +497,23 @@ describe("tenant runtime deploy readiness", () => {
       .toThrow("tenant_runtime_deploy_preflight_failed:BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   });
 
+  it("permits only the explicit Slack OAuth bootstrap mode to omit connection hints", () => {
+    const config = structuredClone(completeConfig);
+    (config.vars as Record<string, unknown>).MANA_BOOTSTRAP_MODE = "slack_oauth";
+    delete (config.vars as Record<string, unknown>).BRAINBASE_WORKSPACE_CONNECTIONS_JSON;
+
+    expect(assertTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: true,
+      missing_bindings: [],
+    });
+
+    (config.vars as Record<string, unknown>).MANA_BOOTSTRAP_MODE = "true";
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON", "MANA_BOOTSTRAP_MODE"],
+    });
+  });
+
   it("accepts a complete deployment config and parses Wrangler secret metadata", () => {
     const output = JSON.stringify(completeSecrets.map((name) => ({ name, type: "secret_text" })));
     expect(parseWranglerSecretNames(output)).toEqual([...completeSecrets].sort());
