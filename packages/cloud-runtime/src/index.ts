@@ -1542,12 +1542,8 @@ export default {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      const boundary = await resolveDurableTenantBoundaryContext(
-        env.TENANT_RUNTIME_STATE, request, ["brainbase_proxy"], new Date().toISOString(),
-      );
-      if (boundary instanceof Response) return boundary;
       return Response.json(await meetingMinutesDeploymentGate(
-        env, boundary.tenant_context.tenant.tenant_id,
+        env, requiredRuntimeBinding(env.TENANT_ID),
       ).status());
     }
     if (request.method === "POST" && url.pathname === "/admin/meeting-minutes/intake") {
