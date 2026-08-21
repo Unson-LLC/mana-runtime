@@ -17,6 +17,7 @@ export async function assertMeetingMinutesDeployAllowed({ baseUrl, token, fetchI
   if (response.status === 503 && allowMissingGate) {
     const legacy = await response.clone().json().catch(() => null);
     if (legacy?.boundary === "brainbase_proxy" && legacy?.error === "TENANT_CONTEXT_MISSING") return;
+    if (legacy?.error === "runtime_bootstrap_mode_active") return;
   }
   if (!response.ok) throw new Error(`meeting_minutes_deploy_gate_http_${response.status}`);
   const gate = await response.json();
