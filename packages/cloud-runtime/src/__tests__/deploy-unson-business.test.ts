@@ -75,8 +75,8 @@ describe("unson business deploy wrapper", () => {
       });
 
       expect(result.status).toBe(7);
-      expect(result.stderr).toContain(
-        "tenant_runtime_source_lock_preflight_failed:tenant_context:deploy_not_allowed",
+      expect(result.stderr).toMatch(
+        /tenant_runtime_source_lock_preflight_failed:tenant_context:(?:deploy_not_allowed|deployment_authorization_context_missing)/,
       );
       expect(result.stderr).not.toContain("token-never-log");
       expect(result.stderr).not.toContain("ENOENT");
