@@ -159,6 +159,13 @@ describe("実配置profileのビルド契約", () => {
     expect(jwks.keys[0]).not.toHaveProperty("d");
   });
 
+  it("unson-businessはTask Canvasの作成・更新に必要なSlack OAuth scopeを持つ", () => {
+    const config = loadJson<WranglerProfile>("wrangler.unson-business.jsonc");
+    const scopes = config.vars.SLACK_OAUTH_SCOPES.split(",").map((scope) => scope.trim()).filter(Boolean);
+
+    expect(scopes).toEqual(expect.arrayContaining(["canvases:write", "channels:read", "groups:read"]));
+  });
+
   it("通常Queue consumerはmax_retries=3とDLQを持ち、DLQ consumerも再試行上限を持つ", () => {
     const configs = [
       loadJson<WranglerProfile>("wrangler.jsonc"),
