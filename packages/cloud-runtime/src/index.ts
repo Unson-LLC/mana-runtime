@@ -308,6 +308,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
   BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID?: string;
+  BRAINBASE_SLACK_BOOTSTRAP_TENANT_KEY?: string;
   BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID?: string;
   SLACK_INSTALLATION_CONTROL_PLANE?: {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;

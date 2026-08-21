@@ -26,6 +26,7 @@
     "SLACK_OAUTH_SCOPES": "app_mentions:read,chat:write,commands,files:read,users:read",
     "BRAINBASE_SLACK_CREDENTIAL_STORE_URL": "https://brainbase-tenant-credential-store.unson.workers.dev/api/v1/credentials",
     "BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID": "ten_01M0HMA228ES64N4TFX846V8T8",
+    "BRAINBASE_SLACK_BOOTSTRAP_TENANT_KEY": "unson-business",
     "BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID": "wsc_01M0HRK94FG2Y8DMBFYJHYT14K",
     "BRAINBASE_WORKSPACE_CONNECTIONS_JSON": "[{\"tenant_id\":\"ten_01M0HMA228ES64N4TFX846V8T8\",\"tenant_revision\":\"1\",\"connection_id\":\"wsc_01M0HRK94FG2Y8DMBFYJHYT14K\",\"connection_revision\":\"1\",\"workspace_id\":\"T0882T8N9UH\",\"app_id\":\"A0BPM2J33SN\"}]",
     "SLACK_ALLOWED_CHANNEL_ID": "C0BKS6RL99T",
