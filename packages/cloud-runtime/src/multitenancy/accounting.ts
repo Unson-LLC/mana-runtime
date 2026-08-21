@@ -5,6 +5,7 @@ import type {
   QuotaDecision,
   TenantContextEnvelope,
 } from "./contracts.js";
+import { TENANT_QUOTA_METRIC, TENANT_QUOTA_REQUESTED_QUANTITY } from "./contracts.js";
 import {
   CanonicalContractError,
   validateCanonicalOperationReceipt,
@@ -154,19 +155,26 @@ export function assertQuotaAllowsExecution(decision: QuotaDecision): QuotaDecisi
 export async function authorizeTenantQuota(input: {
   tenant_id: string;
   contract_revision: string;
-  unit: string;
+  metric: string;
+  requested_quantity: number;
   read_authoritative_decision(request: {
     tenant_id: string;
     contract_revision: string;
-    unit: string;
+    metric: string;
+    requested_quantity: number;
   }): Promise<QuotaDecision>;
 }): Promise<QuotaDecision> {
+  if (input.metric !== TENANT_QUOTA_METRIC
+    || input.requested_quantity !== TENANT_QUOTA_REQUESTED_QUANTITY) {
+    deny("quota", "QUOTA_INPUT_INVALID");
+  }
   let decision: QuotaDecision;
   try {
     decision = await input.read_authoritative_decision({
       tenant_id: input.tenant_id,
       contract_revision: input.contract_revision,
-      unit: input.unit,
+      metric: input.metric,
+      requested_quantity: input.requested_quantity,
     });
   } catch (error) {
     if (error instanceof TenantBoundaryError) throw error;
@@ -178,7 +186,7 @@ export async function authorizeTenantQuota(input: {
   if (decision.contract_revision !== input.contract_revision) {
     deny("quota", "WORKSPACE_CONNECTION_STALE_REVISION");
   }
-  if (decision.unit !== input.unit) deny("quota", "CROSS_TENANT_CANDIDATE");
+  if (decision.unit !== input.metric) deny("quota", "CROSS_TENANT_CANDIDATE");
   try {
     validateCanonicalQuotaDecision(decision);
   } catch (error) {

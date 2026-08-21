@@ -176,6 +176,37 @@ describe("Brainbase-owned company authority HTTP client", () => {
     await expect(clients.authority.issue_tenant_context(trustedRequest)).resolves.toEqual(context);
   });
 
+  it("accepts a Brainbase opaque project id when signed authority maps the trusted project code", async () => {
+    const captures: unknown[] = [];
+    const context = canonicalContext();
+    context.authorization.project_ids = ["prj_01KGHVCMA35JHSMXTSWQAS04PS"];
+    const clients = clientsWithResponse(context, captures);
+
+    await expect(clients.authority.issue_tenant_context({
+      ...request(),
+      trusted_project_ids: ["project-unson-backoffice"],
+    })).resolves.toEqual(context);
+  });
+
+  it("rejects a Brainbase opaque project id when signed authority maps another project code", async () => {
+    const captures: unknown[] = [];
+    const context = canonicalContext();
+    context.authorization.project_ids = ["prj_01KGHVCMA35JHSMXTSWQAS04PS"];
+    context.authorization.data_scopes = context.authorization.data_scopes.map((scope) => (
+      scope.startsWith("company_authority:resource:")
+        ? "company_authority:resource:project:project-other@12"
+        : scope
+    ));
+    const clients = clientsWithResponse(context, captures);
+
+    await expect(clients.authority.issue_tenant_context({
+      ...request(),
+      trusted_project_ids: ["project-unson-backoffice"],
+    })).rejects.toSatisfy((error: unknown) => (
+      error instanceof TenantBoundaryError && error.code === "PROJECT_SCOPE_MISMATCH"
+    ));
+  });
+
   it("sends only observed identity and requested action, never runtime actor or authorization", async () => {
     const captures: unknown[] = [];
     const clients = clientsWithResponse(canonicalContext(), captures);

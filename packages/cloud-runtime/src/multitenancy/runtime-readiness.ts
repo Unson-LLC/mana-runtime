@@ -67,6 +67,29 @@ function validJwks(value: unknown): boolean {
   }
 }
 
+function validWorkspaceConnectionHints(value: unknown): boolean {
+  if (!nonEmpty(value)) return false;
+  try {
+    const parsed = JSON.parse(value as string) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0 && parsed.every((candidate) => {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+      const hint = candidate as Record<string, unknown>;
+      return [
+        "tenant_id", "connection_id", "installation_id", "workspace_id", "app_id", "installer_id",
+        "deployment_id", "contract_revision",
+      ].every((key) => nonEmpty(hint[key]))
+        && Number.isInteger(Number(hint.tenant_revision)) && Number(hint.tenant_revision) > 0
+        && Number.isInteger(Number(hint.connection_revision)) && Number(hint.connection_revision) > 0
+        && Array.isArray(hint.granted_scopes)
+        && hint.granted_scopes.every((scope) => nonEmpty(scope))
+        && hint.status === "active"
+        && ["shared_cloud", "dedicated_cloud", "customer_managed_oss"].includes(String(hint.profile))
+        && ["cloud_standard", "customer_oauth", "customer_api"].includes(String(hint.credential_mode));
+    });
+  } catch {
+    return false;
+  }
+}
 function placementTaskBoardEnabled(value: unknown): boolean {
   if (!nonEmpty(value)) return false;
   try {
@@ -169,6 +192,9 @@ export function assessTenantRuntimeReadiness(
   }
   if (!validJwks(env.BRAINBASE_TENANT_CONTEXT_JWKS_JSON)) {
     missing.push("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
+  }
+  if (!validWorkspaceConnectionHints(env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) {
+    missing.push("BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   }
   if (!env.TENANT_RUNTIME_STATE) missing.push("TENANT_RUNTIME_STATE");
   return { ready: missing.length === 0, missing_bindings: missing.sort() };

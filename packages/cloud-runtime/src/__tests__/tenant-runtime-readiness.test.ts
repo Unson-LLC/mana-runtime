@@ -24,6 +24,22 @@ const complete = {
   BRAINBASE_TENANT_RUNTIME_PORT: "31016",
   BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "internal-service-token-placeholder",
   BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async () => new Response() },
+  BRAINBASE_WORKSPACE_CONNECTIONS_JSON: JSON.stringify([{
+    tenant_id: "tenant-test",
+    tenant_revision: "1",
+    connection_id: "connection-test",
+    connection_revision: "1",
+    installation_id: "installation-test",
+    workspace_id: "T-TEST",
+    app_id: "A-MANA",
+    installer_id: "person-installer",
+    granted_scopes: ["app_mentions:read", "chat:write"],
+    status: "active",
+    deployment_id: "dep_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    profile: "shared_cloud",
+    credential_mode: "customer_oauth",
+    contract_revision: "1",
+  }]),
   SLACK_SIGNING_SECRET: "slack-signing-secret-placeholder",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   SLACK_EXPECTED_APP_ID: "A-MANA",
@@ -41,6 +57,29 @@ const complete = {
 describe("tenant runtime readiness", () => {
   it("reports ready only when the canonical consumer bindings are present", () => {
     expect(assessTenantRuntimeReadiness(complete)).toEqual({ ready: true, missing_bindings: [] });
+  });
+
+  it("requires canonical workspace connections in normal runtime mode", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_WORKSPACE_CONNECTIONS_JSON: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+    });
+  });
+
+  it("rejects a routing-only workspace hint without canonical deployment scope", () => {
+    const hints = JSON.parse(complete.BRAINBASE_WORKSPACE_CONNECTIONS_JSON) as Array<Record<string, unknown>>;
+    delete hints[0]!.deployment_id;
+
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_WORKSPACE_CONNECTIONS_JSON: JSON.stringify(hints),
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+    });
   });
 
   it("returns binding names only and never secret values", () => {

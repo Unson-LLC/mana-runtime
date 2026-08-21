@@ -626,7 +626,19 @@ describe("sandbox provider credential integration", () => {
         });
       }
       if (url.pathname.endsWith("/quota:decide")) {
-        const quota = await request.json() as { tenant_context: TenantContextEnvelope; unit: string };
+        const quota = await request.json() as {
+          tenant_context: TenantContextEnvelope;
+          metric: string;
+          requested_quantity: number;
+          observed_quantity?: unknown;
+          window_started_at?: unknown;
+          window_ends_at?: unknown;
+        };
+        expect(quota).toEqual({
+          tenant_context: envelope,
+          metric: "tool_calls",
+          requested_quantity: 1,
+        });
         quotaRequests.push(structuredClone(quota));
         const now = new Date().toISOString();
         materialByOpaqueHandle.set("opaque-gateway-lease-handle", "materialized-slack-secret");
@@ -639,7 +651,7 @@ describe("sandbox provider credential integration", () => {
           limit: 100,
           used: 1,
           remaining: 99,
-          unit: quota.unit,
+          unit: quota.metric,
           window_started_at: new Date(Date.now() - 60_000).toISOString(),
           window_ends_at: new Date(Date.now() + 60_000).toISOString(),
           decided_at: now,

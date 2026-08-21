@@ -198,7 +198,8 @@ export async function resolveSlackWorkerIngress(input: {
     tenant_context: tenantContext,
     expected_scope: {
       ...input.required_authorization,
-      ...(trustedProjectIds ? { project_ids: trustedProjectIds } : {}),
+      project_id: tenantContext.authorization.project_ids[0]!,
+      ...(trustedProjectIds ? { project_ids: tenantContext.authorization.project_ids } : {}),
       workspace_id: input.identity.workspace_id,
       app_id: input.identity.app_id,
       channel_id: input.identity.channel_id,

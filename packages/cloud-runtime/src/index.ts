@@ -165,6 +165,7 @@ import {
   type TenantContextEnvelope,
 } from "./multitenancy/contracts.js";
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
+import { resolveCanonicalProjectScope } from "./multitenancy/project-scope.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
 import { createBrainbaseTrustedProviderForwarderFromEnv } from "./multitenancy/trusted-provider-forwarder.js";
@@ -602,7 +603,7 @@ function createTenantInteractionEffectResolver(env: Env) {
         quota: clients.quota,
         accounting: clients.accounting,
         ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, effect.tenantContext),
-        quota_unit: "interaction_effect",
+        usage_unit: "interaction_effect",
         now: () => new Date().toISOString(),
         process: perform,
       });
@@ -662,7 +663,7 @@ function createTenantInteractionEffectResolver(env: Env) {
           quota: clients.quota,
           accounting: clients.accounting,
           ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, effect.tenantContext),
-          quota_unit: "interaction_effect",
+          usage_unit: "interaction_effect",
           now: () => new Date().toISOString(),
           process: perform,
         });
@@ -1168,6 +1169,15 @@ function placementProjectScopeForEvent(
   }
 }
 
+function expectedProjectScopeForEvent(
+  env: Env,
+  event: SlackQueueEvent,
+  envelope: TenantContextEnvelope,
+): { project_id: string; project_ids: readonly string[] } {
+  const trusted = placementProjectScopeForEvent(env, event);
+  return resolveCanonicalProjectScope(envelope.authorization, trusted.project_ids, "queue_consumer");
+}
+
 function placementAuthorizationForEvent(
   env: Env,
   event: SlackQueueEvent,
@@ -1230,7 +1240,7 @@ function expectedTenantMeetingMinutesSelectionScope(
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = placementProjectScopeForEvent(env, {
+  const placementProjectScope = expectedProjectScopeForEvent(env, {
     tenantId: envelope.tenant.tenant_id,
     eventId: meetingMinutesSelectionEventId(selection),
     workspaceId: selection.workspaceId,
@@ -1241,7 +1251,7 @@ function expectedTenantMeetingMinutesSelectionScope(
     eventType: "message",
     text: "",
     receivedAt: selection.actionTs,
-  });
+  }, envelope);
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: selection.workspaceId,
@@ -1270,7 +1280,7 @@ function expectedTenantMeetingMinutesRedoScope(
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = placementProjectScopeForEvent(env, {
+  const placementProjectScope = expectedProjectScopeForEvent(env, {
     tenantId: envelope.tenant.tenant_id,
     eventId: meetingMinutesRedoEventId(command),
     workspaceId: command.workspaceId,
@@ -1281,7 +1291,7 @@ function expectedTenantMeetingMinutesRedoScope(
     eventType: "message",
     text: "",
     receivedAt: command.actionTs,
-  });
+  }, envelope);
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: command.workspaceId,
@@ -1310,7 +1320,7 @@ function expectedTenantMeetingMinutesRecoveryScope(
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = placementProjectScopeForEvent(env, {
+  const placementProjectScope = expectedProjectScopeForEvent(env, {
     tenantId: envelope.tenant.tenant_id,
     eventId: meetingMinutesRecoveryEventId(recovery),
     workspaceId: recovery.workspaceId,
@@ -1321,7 +1331,7 @@ function expectedTenantMeetingMinutesRecoveryScope(
     eventType: "message",
     text: "",
     receivedAt: recovery.actionTs,
-  });
+  }, envelope);
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: recovery.workspaceId,
@@ -1347,7 +1357,7 @@ function expectedTenantQueueScope(env: Env, body: TenantQueueBody<SlackQueueEven
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = placementProjectScopeForEvent(env, event);
+  const placementProjectScope = expectedProjectScopeForEvent(env, event, envelope);
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: event.workspaceId,
@@ -1376,7 +1386,7 @@ function expectedTenantTaskBoardRepairScope(
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = placementProjectScopeForEvent(env, {
+  const placementProjectScope = expectedProjectScopeForEvent(env, {
     tenantId: envelope.tenant.tenant_id,
     eventId: taskBoardRepairEventId(repair),
     workspaceId: repair.workspaceId,
@@ -1387,7 +1397,7 @@ function expectedTenantTaskBoardRepairScope(
     eventType: "message",
     text: "",
     receivedAt: repair.requestedAt,
-  });
+  }, envelope);
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: repair.workspaceId,
@@ -2386,7 +2396,7 @@ export default {
       if (isTenantTaskBoardRepairBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env);
+        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2427,7 +2437,7 @@ export default {
               quota: clients.quota,
               accounting: clients.accounting,
               ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
-              quota_unit: "task_board_refresh",
+              usage_unit: "task_board_refresh",
               now,
               process: () => executeTenantBoundary({
                 boundary: "brainbase_proxy",
@@ -2461,7 +2471,7 @@ export default {
       if (isTenantMeetingMinutesRedoBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env);
+        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2488,7 +2498,7 @@ export default {
             quota: clients.quota,
             accounting: clients.accounting,
             ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
-            quota_unit: "model_tokens",
+            usage_unit: "model_tokens",
             now,
             process: () => executeTenantContainerOperation({
                 tenant_context: tenantContext,
@@ -2518,7 +2528,7 @@ export default {
       if (isTenantMeetingMinutesRecoveryBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env);
+        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2558,7 +2568,7 @@ export default {
       if (isTenantMeetingMinutesSelectionBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env);
+        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2585,7 +2595,7 @@ export default {
             quota: clients.quota,
             accounting: clients.accounting,
             ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
-            quota_unit: "model_tokens",
+            usage_unit: "model_tokens",
             now,
             process: () => executeTenantContainerOperation({
                 tenant_context: tenantContext,
@@ -2620,7 +2630,7 @@ export default {
       const tenantBody = message.body;
       const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
       const runtimeWorkspaceId = tenantBody.tenant_context.workspace_connection.workspace_id;
-      const clients = tenantRuntimeClients(env);
+      const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
       const verifier = new TenantRuntimeBoundaryVerifier({
         read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2649,7 +2659,7 @@ export default {
             quota: clients.quota,
             accounting: clients.accounting,
             ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
-            quota_unit: "model_tokens",
+            usage_unit: "model_tokens",
             now: tenantConsumerOptions.now,
             process: async () => {
               const expectedScope = tenantConsumerOptions.expected_scope(tenantBody);
@@ -2710,7 +2720,7 @@ export default {
                   quota: clients.quota,
                   accounting: clients.accounting,
                   ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, childTenantContext),
-                  quota_unit: "model_tokens",
+                  usage_unit: "model_tokens",
                   now: tenantConsumerOptions.now,
                   process: () => executeTenantContainerOperation({
                       tenant_context: childTenantContext,
@@ -2883,7 +2893,7 @@ export default {
                 quota: clients.quota,
                 accounting: clients.accounting,
                 ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
-                quota_unit: quotaUnit,
+                usage_unit: quotaUnit,
                 now: tenantConsumerOptions.now,
                 process,
               });

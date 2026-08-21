@@ -415,6 +415,18 @@ describe("tenant runtime deploy readiness", () => {
       .toThrow("tenant_runtime_deploy_preflight_failed:BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   });
 
+  it("rejects a workspace connection hint without canonical deployment scope", () => {
+    const config = structuredClone(completeConfig);
+    const hints = JSON.parse(String(config.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) as Array<Record<string, unknown>>;
+    delete hints[0]!.deployment_id;
+    config.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON = JSON.stringify(hints);
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+    });
+  });
+
   it("rejects a workspace connection hint that cannot pass active ingress validation", () => {
     const config = structuredClone(completeConfig);
     const [hint] = JSON.parse(config.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON);

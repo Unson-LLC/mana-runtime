@@ -45,6 +45,7 @@
     "DOCUSIGN_AUTH_SERVER": "account.docusign.com",
     "DOCUSIGN_EXPECTED_EMAIL": "info@unson.jp",
     "BRAINBASE_TENANT_RUNTIME_ENABLED": "1",
+    "BRAINBASE_WORKSPACE_CONNECTIONS_JSON": "[{\"tenant_id\":\"ten_01M0HMA228ES64N4TFX846V8T8\",\"tenant_revision\":\"1\",\"connection_id\":\"wsc_01M0HRK94FG2Y8DMBFYJHYT14K\",\"connection_revision\":\"1\",\"workspace_id\":\"T0882T8N9UH\",\"app_id\":\"A0BPM2J33SN\",\"installation_id\":\"slack_T0882T8N9UH_A0BPM2J33SN\",\"installer_id\":\"brainbase-control-plane\",\"granted_scopes\":[\"app_mentions:read\",\"assistant:write\",\"canvases:read\",\"canvases:write\",\"channels:history\",\"channels:read\",\"chat:write\",\"chat:write.customize\",\"commands\",\"files:read\",\"files:write\",\"groups:history\",\"groups:read\",\"im:history\",\"im:read\",\"im:write\",\"mpim:history\",\"mpim:read\",\"mpim:write\",\"reactions:read\",\"reactions:write\",\"users:read\",\"users:read.email\"],\"status\":\"active\",\"deployment_id\":\"dep_01M0JK4PXCSV1P2V6Q4FJRBY7B\",\"profile\":\"shared_cloud\",\"credential_mode\":\"customer_oauth\",\"contract_revision\":\"2\"}]",
     "BRAINBASE_TENANT_RUNTIME_HOST": "127.0.0.1",
     "BRAINBASE_TENANT_RUNTIME_PORT": "31016",
     "MANA_REQUIRED_AUDIENCE": "mana-runtime",

@@ -48,7 +48,7 @@ credentialFetch: typeof fetch): Promise<{ channel: string; ts?: string }> {
     quota: clients.quota,
     accounting: clients.accounting,
     ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, resolved.tenant_context),
-    quota_unit: "slack_message",
+    usage_unit: "slack_message",
     accounting_effect_id: effectId,
     now: () => new Date().toISOString(),
     process: async () => {
