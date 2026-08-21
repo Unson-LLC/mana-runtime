@@ -7,6 +7,7 @@ import {
 import { DurableObject } from "cloudflare:workers";
 
 import { handleTenantSlackRequest } from "./slack.js";
+import { bootstrapUnsonSlackCredential } from "./tenant-credential-bootstrap.js";
 import { ackMalformedTenantQueueMessage } from "./queue-message-validation.js";
 import {
   adminJsonInputErrorResponse,
@@ -301,6 +302,10 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   SLACK_OAUTH_CLIENT_ID?: string;
   SLACK_OAUTH_REDIRECT_URI?: string;
   SLACK_OAUTH_SCOPES?: string;
+  BRAINBASE_SLACK_CREDENTIAL_STORE_URL?: string;
+  BRAINBASE_SLACK_CREDENTIAL_STORE_TOKEN?: string;
+  BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID?: string;
+  BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID?: string;
   SLACK_INSTALLATION_CONTROL_PLANE?: {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
@@ -1545,6 +1550,12 @@ export default {
       return Response.json(await meetingMinutesDeploymentGate(
         env, requiredRuntimeBinding(env.TENANT_ID),
       ).status());
+    }
+    if (request.method === "POST" && url.pathname === "/admin/tenant-credential/bootstrap-slack") {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      return bootstrapUnsonSlackCredential(request, env);
     }
     if (request.method === "POST" && url.pathname === "/admin/meeting-minutes/intake") {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
