@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assessTenantRuntimeDeploymentConfig,
   assertTenantRuntimeDeploymentConfig,
+  assertTenantRuntimeAuthorizationOnlyChild,
   assertTenantRuntimeDeploymentPreflight,
   assertTenantRuntimeHealthReady,
   parseWranglerSecretNames,
@@ -19,12 +20,13 @@ const requiredCapabilities = [
 ].join(",");
 
 const deploymentTarget = "mana-test";
+const deploymentReviewedCommit = "6".repeat(40);
 const deploymentCandidateCommit = "4".repeat(40);
 const deploymentNow = "2026-08-21T00:00:00.000Z";
 const deploymentAuthorization = {
   reviewer_identity: "github:reviewer",
   reviewer_provenance: "github:pull_request_review",
-  reviewed_commit_sha: deploymentCandidateCommit,
+  reviewed_commit_sha: deploymentReviewedCommit,
   target: deploymentTarget,
   authorized_at: "2026-08-20T00:00:00.000Z",
   expires_at: "2026-08-22T00:00:00.000Z",
@@ -178,6 +180,7 @@ const trustedProviderForwarderSourceLock = {
 const deploymentAuthorizationContext = {
   deploymentTarget,
   candidateCommit: deploymentCandidateCommit,
+  reviewedCommit: deploymentReviewedCommit,
   now: deploymentNow,
 };
 
@@ -205,6 +208,63 @@ function preflightDependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe("tenant runtime deploy readiness", () => {
+  it("accepts a direct child commit whose diff contains only both authorization source locks", () => {
+    expect(assertTenantRuntimeAuthorizationOnlyChild({
+      reviewedCommit: deploymentReviewedCommit,
+      candidateCommit: deploymentCandidateCommit,
+      candidateParentCommits: [deploymentReviewedCommit],
+      changedEntries: [
+        "M\tcontracts/mana-brainbase-tenant-context/v1/source-lock.json",
+        "M\tcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
+      ],
+    })).toEqual({
+      reviewedCommit: deploymentReviewedCommit,
+      candidateCommit: deploymentCandidateCommit,
+    });
+  });
+
+  it.each([
+    ["a non-direct parent", {
+      candidateParentCommits: ["7".repeat(40)],
+      changedEntries: [
+        "M\tcontracts/mana-brainbase-tenant-context/v1/source-lock.json",
+        "M\tcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
+      ],
+    }],
+    ["a merge commit", {
+      candidateParentCommits: [deploymentReviewedCommit, "8".repeat(40)],
+      changedEntries: [
+        "M\tcontracts/mana-brainbase-tenant-context/v1/source-lock.json",
+        "M\tcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
+      ],
+    }],
+    ["an extra changed file", {
+      candidateParentCommits: [deploymentReviewedCommit],
+      changedEntries: [
+        "M\tcontracts/mana-brainbase-tenant-context/v1/source-lock.json",
+        "M\tcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
+        "M\tpackages/cloud-runtime/wrangler.unson-business.jsonc",
+      ],
+    }],
+    ["a missing authorization lock", {
+      candidateParentCommits: [deploymentReviewedCommit],
+      changedEntries: ["M\tcontracts/mana-brainbase-tenant-context/v1/source-lock.json"],
+    }],
+    ["an added authorization lock", {
+      candidateParentCommits: [deploymentReviewedCommit],
+      changedEntries: [
+        "A\tcontracts/mana-brainbase-tenant-context/v1/source-lock.json",
+        "M\tcontracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
+      ],
+    }],
+  ])("rejects %s for an authorization-only direct child", (_case, context) => {
+    expect(() => assertTenantRuntimeAuthorizationOnlyChild({
+      reviewedCommit: deploymentReviewedCommit,
+      candidateCommit: deploymentCandidateCommit,
+      ...context,
+    })).toThrow(/tenant_runtime_deploy_authorization_(parent|commit)_invalid/);
+  });
+
   it.each([
     ["false", {
     [sourceLockPaths.tenantContext]: { ...tenantContextSourceLock, deploy_allowed: false },
@@ -265,6 +325,25 @@ describe("tenant runtime deploy readiness", () => {
     })).resolves.toMatchObject({ tenantId: "unson-business" });
 
     expect(dependencies.execFileImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects source locks whose deployment authorizations do not match exactly", async () => {
+    const dependencies = preflightDependencies({
+      [sourceLockPaths.trustedProviderForwarder]: {
+        ...trustedProviderForwarderSourceLock,
+        deployment_authorization: {
+          ...deploymentAuthorization,
+          reviewer_identity: "github:different-reviewer",
+        },
+      },
+    });
+
+    await expect(assertTenantRuntimeDeploymentPreflight({
+      configPath: "/deploy/wrangler.jsonc",
+      ...dependencies,
+      ...deploymentAuthorizationContext,
+    })).rejects.toThrow("tenant_runtime_source_lock_authorization_mismatch");
+    expect(dependencies.execFileImpl).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -349,6 +428,7 @@ describe("tenant runtime deploy readiness", () => {
     expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
       ready: false,
       missing_bindings: [
+        "MANA_REQUIRED_SLACK_SCOPES",
         "SLACK_INSTALLATION_CONTROL_PLANE",
         "SLACK_OAUTH_APP_ID",
         "SLACK_OAUTH_CLIENT_ID",
@@ -372,6 +452,16 @@ describe("tenant runtime deploy readiness", () => {
       ],
     });
     expect(JSON.stringify(result)).not.toContain("secret-material-never-log");
+  });
+
+  it("rejects a deployment when OAuth omits a required runtime Slack scope", () => {
+    const config = structuredClone(completeConfig);
+    config.vars.MANA_REQUIRED_SLACK_SCOPES = "app_mentions:read,chat:write,files:read";
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["MANA_REQUIRED_SLACK_SCOPES"],
+    });
   });
 
   it("requires the signing secret used by the public Slack ingress", () => {
@@ -405,6 +495,23 @@ describe("tenant runtime deploy readiness", () => {
     });
     expect(() => assertTenantRuntimeDeploymentConfig(config, completeSecrets))
       .toThrow("tenant_runtime_deploy_preflight_failed:BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
+  });
+
+  it("permits only the explicit Slack OAuth bootstrap mode to omit connection hints", () => {
+    const config = structuredClone(completeConfig);
+    (config.vars as Record<string, unknown>).MANA_BOOTSTRAP_MODE = "slack_oauth";
+    delete (config.vars as Record<string, unknown>).BRAINBASE_WORKSPACE_CONNECTIONS_JSON;
+
+    expect(assertTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: true,
+      missing_bindings: [],
+    });
+
+    (config.vars as Record<string, unknown>).MANA_BOOTSTRAP_MODE = "true";
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON", "MANA_BOOTSTRAP_MODE"],
+    });
   });
 
   it("accepts a complete deployment config and parses Wrangler secret metadata", () => {
@@ -464,5 +571,46 @@ describe("tenant runtime deploy readiness", () => {
       method: "GET",
       redirect: "error",
     }));
+  });
+
+  it("accepts only the explicit Slack OAuth bootstrap health marker when bootstrap is expected", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      ok: false,
+      tenant: "unson-business",
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+      tenant_runtime: {
+        ready: false,
+        missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+        bootstrap_mode: "slack_oauth",
+        installation_bootstrap_required: true,
+      },
+    }, { status: 503 }));
+
+    await expect(assertTenantRuntimeHealthReady({
+      baseUrl: "https://mana.example.test",
+      expectedTenantId: "unson-business",
+      expectedBootstrapMode: "slack_oauth",
+      fetchImpl,
+    })).resolves.toMatchObject({
+      tenant: "unson-business",
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+    });
+  });
+
+  it("does not accept an ordinary non-ready response as bootstrap health", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      ok: false,
+      tenant: "unson-business",
+      tenant_runtime: { ready: false, missing_bindings: [] },
+    }, { status: 503 }));
+
+    await expect(assertTenantRuntimeHealthReady({
+      baseUrl: "https://mana.example.test",
+      expectedTenantId: "unson-business",
+      expectedBootstrapMode: "slack_oauth",
+      fetchImpl,
+    })).rejects.toThrow("tenant_runtime_post_deploy_bootstrap_invalid");
   });
 });

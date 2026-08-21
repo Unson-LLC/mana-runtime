@@ -30,14 +30,23 @@ export interface TenantRuntimeSourceLockPaths {
 export interface TenantRuntimeDeploymentAuthorizationContext {
   deploymentTarget?: string;
   candidateCommit?: string;
+  reviewedCommit?: string;
   now?: string | Date;
 }
+
+export function assertTenantRuntimeAuthorizationOnlyChild(options: {
+  reviewedCommit?: string;
+  candidateCommit?: string;
+  candidateParentCommits?: string[];
+  changedEntries?: string[];
+}): { reviewedCommit: string; candidateCommit: string };
 
 export function assertTenantRuntimeSourceLocks(options?: {
   readFileImpl?: (path: string, encoding: "utf8") => Promise<string | Buffer>;
   sourceLockPaths?: TenantRuntimeSourceLockPaths;
   deploymentTarget?: string;
   candidateCommit?: string;
+  reviewedCommit?: string;
   now?: string | Date;
 }): Promise<{ tenantContext: Record<string, unknown>; trustedProviderForwarder: Record<string, unknown> }>;
 
@@ -52,12 +61,20 @@ export function assertTenantRuntimeDeploymentPreflight(options: {
   sourceLockPaths?: TenantRuntimeSourceLockPaths;
   deploymentTarget?: string;
   candidateCommit?: string;
+  reviewedCommit?: string;
   now?: string | Date;
-}): Promise<{ config: WranglerDeploymentConfig; tenantId: string }>;
+}): Promise<{ config: WranglerDeploymentConfig; tenantId: string; bootstrapMode?: string }>;
 
 export function assertTenantRuntimeHealthReady(options: {
   baseUrl: string;
   expectedTenantId: string;
+  expectedBootstrapMode?: "slack_oauth";
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
-}): Promise<{ ok: true; tenant_runtime: { ready: true; missing_bindings: [] }; tenant: string }>;
+}): Promise<{
+  ok: boolean;
+  tenant_runtime: { ready: boolean; missing_bindings: string[] };
+  tenant: string;
+  bootstrap_mode?: "slack_oauth";
+  installation_bootstrap_required?: true;
+}>;

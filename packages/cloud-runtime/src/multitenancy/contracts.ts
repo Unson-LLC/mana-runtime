@@ -119,6 +119,8 @@ export interface ExpectedTenantScope {
   thread_ts: string;
   actor_principal_id: string;
   project_id: string;
+  /** Exact placement project set. Omitted only for legacy single-project callers. */
+  project_ids?: readonly string[];
   capability_id: string;
   deployment_id: string;
 }

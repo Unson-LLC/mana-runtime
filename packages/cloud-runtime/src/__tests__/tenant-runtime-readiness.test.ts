@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { assessTenantRuntimeReadiness } from "../multitenancy/runtime-readiness.js";
+import {
+  assessTenantRuntimeReadiness,
+  resolveTenantBootstrapMode,
+} from "../multitenancy/runtime-readiness.js";
 
 const complete = {
   MANA_DEPLOYMENT_PROFILE: "shared_cloud",
   MANA_REQUIRED_AUDIENCE: "mana-runtime",
-  MANA_REQUIRED_PROJECT_ID: "project_a",
   MANA_REQUIRED_CAPABILITY_ID: "runtime.execute",
   MANA_REQUIRED_SLACK_SCOPES: "app_mentions:read,chat:write",
   MANA_CREDENTIAL_AUDIENCE: "api.anthropic.com",
@@ -18,12 +20,18 @@ const complete = {
     "idempotent_effects_v1",
     "container_sanitization_v1",
   ].join(","),
-  BRAINBASE_RUNTIME_API_TOKEN: "opaque-test-token",
   BRAINBASE_TENANT_RUNTIME_ENABLED: "1",
   BRAINBASE_TENANT_RUNTIME_HOST: "127.0.0.1",
   BRAINBASE_TENANT_RUNTIME_PORT: "31016",
-  BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "internal-service-token-placeholder",
   BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async () => new Response() },
+  BRAINBASE_WORKSPACE_CONNECTIONS_JSON: JSON.stringify([{
+    tenant_id: "tenant-test",
+    tenant_revision: "1",
+    connection_id: "connection-test",
+    connection_revision: "1",
+    workspace_id: "T-TEST",
+    app_id: "A-MANA",
+  }]),
   SLACK_SIGNING_SECRET: "slack-signing-secret-placeholder",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
   SLACK_EXPECTED_APP_ID: "A-MANA",
@@ -39,8 +47,57 @@ const complete = {
 };
 
 describe("tenant runtime readiness", () => {
+  it("resolves only the explicit Slack OAuth bootstrap mode", () => {
+    expect(resolveTenantBootstrapMode(undefined)).toBeUndefined();
+    expect(resolveTenantBootstrapMode("slack_oauth")).toBe("slack_oauth");
+    expect(resolveTenantBootstrapMode("true")).toBe("invalid");
+    expect(resolveTenantBootstrapMode("")).toBe("invalid");
+  });
+
   it("reports ready only when the canonical consumer bindings are present", () => {
     expect(assessTenantRuntimeReadiness(complete)).toEqual({ ready: true, missing_bindings: [] });
+  });
+
+  it("requires canonical workspace connections in normal runtime mode", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_WORKSPACE_CONNECTIONS_JSON: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+    });
+  });
+
+  it("keeps bootstrap health unready while allowing the missing connection only in Slack OAuth mode", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_BOOTSTRAP_MODE: "slack_oauth",
+      BRAINBASE_WORKSPACE_CONNECTIONS_JSON: undefined,
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+    });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_BOOTSTRAP_MODE: "slack_oauth",
+    })).toEqual({
+      ready: false,
+      missing_bindings: [],
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+    });
+  });
+
+  it("rejects an unknown bootstrap mode as invalid configuration", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_BOOTSTRAP_MODE: "true",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["MANA_BOOTSTRAP_MODE"],
+    });
   });
 
   it("returns binding names only and never secret values", () => {
@@ -125,6 +182,7 @@ describe("tenant runtime readiness", () => {
     })).toEqual({
       ready: false,
       missing_bindings: [
+        "MANA_REQUIRED_SLACK_SCOPES",
         "SLACK_INSTALLATION_CONTROL_PLANE",
         "SLACK_OAUTH_APP_ID",
         "SLACK_OAUTH_CLIENT_ID",
@@ -141,7 +199,18 @@ describe("tenant runtime readiness", () => {
       SLACK_OAUTH_SCOPES: "",
     })).toEqual({
       ready: false,
-      missing_bindings: ["SLACK_OAUTH_REDIRECT_URI", "SLACK_OAUTH_SCOPES"],
+      missing_bindings: ["MANA_REQUIRED_SLACK_SCOPES", "SLACK_OAUTH_REDIRECT_URI", "SLACK_OAUTH_SCOPES"],
+    });
+  });
+
+  it("requires every runtime Slack scope to be requested by OAuth", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_REQUIRED_SLACK_SCOPES: "app_mentions:read,chat:write,files:read",
+      SLACK_OAUTH_SCOPES: "app_mentions:read,chat:write",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["MANA_REQUIRED_SLACK_SCOPES"],
     });
   });
 

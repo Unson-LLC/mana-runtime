@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { assertBrainbaseMeetingMinutesRuntimeProjects } from "./brainbase-project-binding-check.mjs";
 import { assertMeetingMinutesDeployAllowed } from "./deploy-gate-check.mjs";
 import {
+  assertTenantRuntimeAuthorizationOnlyChild,
   assertTenantRuntimeDeploymentPreflight,
   assertTenantRuntimeHealthReady,
 } from "./tenant-runtime-deploy-readiness.mjs";
@@ -17,29 +18,24 @@ function candidateCheckoutHead() {
   }).trim();
 }
 
-function reviewedCheckoutParent() {
-  try {
-    return execFileSync("git", ["rev-parse", "HEAD^"], {
-      cwd: repositoryRoot,
-      encoding: "utf8",
-    }).trim();
-  } catch {
-    return process.env.MANA_DEPLOY_CANDIDATE_COMMIT;
+function assertAuthorizationOnlyCommit(reviewedCommit, candidateCommit) {
+  const parentLine = execFileSync("git", ["rev-list", "--parents", "-n", "1", candidateCommit], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  }).trim().split(/\s+/);
+  if (parentLine.shift() !== candidateCommit) {
+    throw new Error("tenant_runtime_deploy_authorization_parent_invalid");
   }
-}
-
-function assertAuthorizationOnlyCommit() {
-  const changed = execFileSync("git", ["diff", "--name-only", "HEAD^", "HEAD"], {
+  const changed = execFileSync("git", ["diff", "--name-status", reviewedCommit, candidateCommit, "--"], {
     cwd: repositoryRoot,
     encoding: "utf8",
   }).trim().split("\n").filter(Boolean).sort();
-  const allowed = [
-    "contracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
-    "contracts/mana-brainbase-tenant-context/v1/source-lock.json",
-  ].sort();
-  if (JSON.stringify(changed) !== JSON.stringify(allowed)) {
-    throw new Error("tenant_runtime_deploy_authorization_commit_invalid");
-  }
+  return assertTenantRuntimeAuthorizationOnlyChild({
+    reviewedCommit,
+    candidateCommit,
+    candidateParentCommits: parentLine,
+    changedEntries: changed,
+  });
 }
 
 function assertReviewedCandidateCheckout(actual) {
@@ -78,13 +74,15 @@ try {
 let deploymentConfig;
 try {
   const candidateCommit = process.env.MANA_DEPLOY_CANDIDATE_COMMIT;
+  const reviewedCommit = process.env.MANA_DEPLOY_REVIEWED_COMMIT;
   deploymentConfig = await assertTenantRuntimeDeploymentPreflight({
     configPath,
     candidateCommit,
-    reviewedCommit: reviewedCheckoutParent(),
+    reviewedCommit,
   });
-  assertReviewedCandidateCheckout(candidateCheckoutHead());
-  assertAuthorizationOnlyCommit();
+  const actualCandidateCommit = candidateCheckoutHead();
+  assertReviewedCandidateCheckout(actualCandidateCommit);
+  assertAuthorizationOnlyCommit(reviewedCommit, actualCandidateCommit);
 } catch (error) {
   console.error(error instanceof Error ? error.message : "tenant_runtime_deploy_preflight_failed");
   process.exit(7);
@@ -103,6 +101,7 @@ try {
   await assertTenantRuntimeHealthReady({
     baseUrl,
     expectedTenantId: deploymentConfig.tenantId,
+    expectedBootstrapMode: deploymentConfig.bootstrapMode,
   });
 } catch (error) {
   console.error(error instanceof Error ? error.message : "tenant_runtime_post_deploy_not_ready");

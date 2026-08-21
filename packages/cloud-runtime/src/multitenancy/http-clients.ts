@@ -209,6 +209,18 @@ function hasAuthorityPrefix(context: TenantContextEnvelope, prefix: string): boo
   return context.authorization.data_scopes.some((scope) => scope.startsWith(prefix));
 }
 
+function assertExactProjectScope(
+  context: TenantContextEnvelope,
+  trustedProjectIds: readonly string[],
+): void {
+  const signedProjectIds = [...context.authorization.project_ids].sort();
+  const expectedProjectIds = [...trustedProjectIds].sort();
+  if (signedProjectIds.length !== expectedProjectIds.length
+    || signedProjectIds.some((projectId, index) => projectId !== expectedProjectIds[index])) {
+    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  }
+}
+
 function assertCanonicalCompanyAuthority(
   context: TenantContextEnvelope,
   request: TenantContextIssueRequest,
@@ -217,7 +229,9 @@ function assertCanonicalCompanyAuthority(
   if (context.actor.authenticated_subject_id !== request.slack.requester_id) {
     deny("worker_ingress", "ACTOR_SCOPE_MISMATCH");
   }
-  if (!context.authorization.project_ids.includes(request.required_authorization.project_id)) {
+  if (request.trusted_project_ids) {
+    assertExactProjectScope(context, request.trusted_project_ids);
+  } else if (!context.authorization.project_ids.includes(request.required_authorization.project_id)) {
     deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
   }
   if (!context.authorization.capability_ids.includes(request.required_authorization.capability_id)) {
@@ -355,6 +369,17 @@ export function createTenantRuntimeHttpClients(
         const seed = [request.workspace_connection.tenant_id, request.workspace_connection.connection_id,
           request.slack.event_id].join(":");
         const desiredEffect = desiredEffectForCapability(request.required_authorization.capability_id);
+        const trustedProjectIds = request.trusted_project_ids
+          ? [...request.trusted_project_ids]
+          : undefined;
+        if (trustedProjectIds !== undefined && (
+          trustedProjectIds.length === 0 ||
+          trustedProjectIds.some((projectId) => typeof projectId !== "string" || projectId.trim().length === 0) ||
+          new Set(trustedProjectIds).size !== trustedProjectIds.length ||
+          !trustedProjectIds.includes(request.required_authorization.project_id)
+        )) {
+          deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+        }
         const body = {
           tenant_id: request.workspace_connection.tenant_id,
           expected_tenant_revision: request.tenant_revision
@@ -374,6 +399,7 @@ export function createTenantRuntimeHttpClients(
             capability_id: request.required_authorization.capability_id,
             resource_ref: `project:${request.required_authorization.project_id}`,
             project_hint: request.required_authorization.project_id,
+            ...(trustedProjectIds ? { project_ids: trustedProjectIds } : {}),
             desired_effect: desiredEffect,
           },
           slack: request.slack,
