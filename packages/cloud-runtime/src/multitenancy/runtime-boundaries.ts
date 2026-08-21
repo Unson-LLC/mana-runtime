@@ -42,6 +42,8 @@ export interface TenantContextIssueRequest {
     project_id: string;
     capability_id: string;
   };
+  /** Trusted project scope resolved from the runtime placement, never from Slack input. */
+  trusted_project_ids?: readonly string[];
 }
 
 export interface TenantAuthorityClient {
@@ -124,6 +126,7 @@ export async function resolveSlackWorkerIngress(input: {
   identity: SlackIngressIdentity;
   required_scopes: readonly string[];
   required_authorization: TenantContextIssueRequest["required_authorization"];
+  trusted_project_ids?: readonly string[];
   authority: TenantAuthorityClient;
   now: string;
   resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
@@ -131,6 +134,17 @@ export async function resolveSlackWorkerIngress(input: {
   tenant_context: TenantContextEnvelope;
   authoritative_snapshot: WorkspaceConnectionSnapshot;
 }> {
+  const trustedProjectIds = input.trusted_project_ids === undefined
+    ? undefined
+    : [...input.trusted_project_ids];
+  if (trustedProjectIds !== undefined && (
+    trustedProjectIds.length === 0 ||
+    trustedProjectIds.some((projectId) => typeof projectId !== "string" || projectId.trim().length === 0) ||
+    new Set(trustedProjectIds).size !== trustedProjectIds.length ||
+    !trustedProjectIds.includes(input.required_authorization.project_id)
+  )) {
+    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  }
   const lookup: WorkspaceConnectionLookup = {
     provider: "slack",
     app_id: input.identity.app_id,
@@ -156,6 +170,7 @@ export async function resolveSlackWorkerIngress(input: {
       ...(input.identity.enterprise_id ? { enterprise_id: input.identity.enterprise_id } : {}),
     },
     required_authorization: structuredClone(input.required_authorization),
+    ...(trustedProjectIds ? { trusted_project_ids: trustedProjectIds } : {}),
   };
   assertSecretArtifactFree(issueRequest);
   let tenantContext: TenantContextEnvelope;
@@ -183,6 +198,8 @@ export async function resolveSlackWorkerIngress(input: {
     tenant_context: tenantContext,
     expected_scope: {
       ...input.required_authorization,
+      project_id: tenantContext.authorization.project_ids[0]!,
+      ...(trustedProjectIds ? { project_ids: tenantContext.authorization.project_ids } : {}),
       workspace_id: input.identity.workspace_id,
       app_id: input.identity.app_id,
       channel_id: input.identity.channel_id,

@@ -13,6 +13,7 @@ import type {
   TenantContextEnvelope,
   WorkspaceConnectionSnapshot,
 } from "./contracts.js";
+import { TENANT_QUOTA_METRIC, TENANT_QUOTA_REQUESTED_QUANTITY } from "./contracts.js";
 import { authorizeSlackDeliveryWithAuthority } from "./delivery.js";
 import { deny, TenantBoundaryError } from "./errors.js";
 import { completeIdempotency, type IdempotencyStore, releaseIdempotency } from "./idempotency.js";
@@ -156,13 +157,14 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
   quota: TenantQuotaHttpClient;
   accounting: TenantAccountingHttpClient;
   ledger: TenantAccountingLedgerStore;
-  quota_unit: string;
+  /** UsageEvent unit; quota admission uses the independent tool_calls metric. */
+  usage_unit: string;
   now(): string;
   process(quotaDecision: QuotaDecision): Promise<R>;
   replay_after_accounting?(): Promise<R>;
   accounting_effect_id?: string;
 }): Promise<R> {
-  if (!input.quota_unit.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
+  if (!input.usage_unit.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
   const receiptId = await operationReceiptId(input.tenant_context, input.accounting_effect_id);
   const pending = await input.ledger.read_pending({
     tenant_context: input.tenant_context,
@@ -200,9 +202,11 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     quotaDecision = await authorizeTenantQuota({
       tenant_id: input.tenant_context.tenant.tenant_id,
       contract_revision: input.tenant_context.contract_revision,
-      unit: input.quota_unit,
-      read_authoritative_decision: (request) => input.quota.read_authoritative_decision({
-        ...request,
+      metric: TENANT_QUOTA_METRIC,
+      requested_quantity: TENANT_QUOTA_REQUESTED_QUANTITY,
+      read_authoritative_decision: ({ metric, requested_quantity }) => input.quota.read_authoritative_decision({
+        metric,
+        requested_quantity,
         tenant_context: input.tenant_context,
       }),
     });
@@ -215,7 +219,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       ledger: input.ledger,
       accounting: input.accounting,
       quota_decision: quotaDisposition(code),
-      unit: input.quota_unit,
+      unit: input.usage_unit,
       outcome: "failed",
       failure_code: code,
       ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
@@ -235,7 +239,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       ledger: input.ledger,
       accounting: input.accounting,
       quota_decision: quotaDecision.decision,
-      unit: input.quota_unit,
+      unit: input.usage_unit,
       outcome: "failed",
       failure_code: code,
       ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
@@ -251,7 +255,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     ledger: input.ledger,
     accounting: input.accounting,
     quota_decision: quotaDecision.decision,
-    unit: input.quota_unit,
+    unit: input.usage_unit,
     outcome: "succeeded",
     failure_code: null,
     ...(result.responseTs ? { response_ts: result.responseTs } : {}),

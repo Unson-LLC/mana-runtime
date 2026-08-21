@@ -6,6 +6,7 @@ import type {
   TenantContextEnvelope,
   WorkspaceConnectionSnapshot,
 } from "./contracts.js";
+import { TENANT_QUOTA_METRIC, TENANT_QUOTA_REQUESTED_QUANTITY } from "./contracts.js";
 import type { OperationReceipt, UsageEvent } from "./accounting.js";
 import type { CredentialBrokerClient } from "./credentials.js";
 import type { TenantAuthorityClient, TenantContextIssueRequest } from "./runtime-boundaries.js";
@@ -20,6 +21,7 @@ import {
 import { deny, TenantBoundaryError } from "./errors.js";
 import { createDeterministicSharedId } from "./ids.js";
 import { assertSecretArtifactFree } from "./secret-guard.js";
+import { resolveCanonicalProjectScope } from "./project-scope.js";
 
 const CANONICAL_ORIGIN = "https://brainbase.internal";
 const RUNTIME_PREFIX = "/api/v1/runtime";
@@ -48,7 +50,14 @@ export function parseWorkspaceConnectionHints(value: string | undefined): Worksp
   const hints = parsed as WorkspaceConnectionHint[];
   if (hints.length === 0 || hints.some((hint) => !hint || typeof hint !== "object"
     || !hint.tenant_id || !hint.tenant_revision || !hint.connection_id || !hint.connection_revision
-    || !hint.workspace_id || !hint.app_id)) {
+    || !hint.installation_id || !hint.workspace_id || !hint.app_id || !hint.installer_id
+    || !Array.isArray(hint.granted_scopes)
+    || hint.granted_scopes.some((scope) => typeof scope !== "string" || !scope.trim())
+    || hint.status !== "active"
+    || !hint.deployment_id
+    || !(["shared_cloud", "dedicated_cloud", "customer_managed_oss"] as const).includes(hint.profile)
+    || !(["cloud_standard", "customer_oauth", "customer_api"] as const).includes(hint.credential_mode)
+    || !hint.contract_revision)) {
     deny("runtime_configuration", "CONFIGURATION_INVALID");
   }
   return structuredClone(hints);
@@ -65,10 +74,27 @@ export interface TenantRuntimeHttpBindings {
 export interface TenantQuotaHttpClient {
   read_authoritative_decision(input: {
     tenant_context: TenantContextEnvelope;
-    tenant_id: string;
-    contract_revision: string;
-    unit: string;
+    metric: string;
+    requested_quantity: number;
   }): Promise<QuotaDecision>;
+}
+
+/**
+ * Mana charges one tool call per admitted runtime operation.  The quota
+ * request metric is deliberately independent from the UsageEvent unit: the
+ * latter describes what we could observe (for example model_tokens), while
+ * this request is the authoritative admission decision for the operation.
+ */
+function assertTenantQuotaRequest(input: {
+  metric: string;
+  requested_quantity: number;
+}): void {
+  // Do not normalize or fall back here.  A missing or mismatched metric must
+  // fail before a request can consume quota under an unintended dimension.
+  if (input.metric !== TENANT_QUOTA_METRIC
+    || input.requested_quantity !== TENANT_QUOTA_REQUESTED_QUANTITY) {
+    deny("quota", "QUOTA_INPUT_INVALID");
+  }
 }
 
 export interface TenantAccountingHttpClient {
@@ -154,7 +180,10 @@ async function postJson(
       method: "POST",
       headers: contextHeaders(context),
       body: JSON.stringify(body),
-      redirect: "error",
+      // Cloudflare Service Bindings reject RequestRedirect "error" before the
+      // target Worker is invoked. "manual" preserves fail-closed redirect
+      // handling while remaining valid at the edge.
+      redirect: "manual",
       signal: AbortSignal.timeout(bindings.timeout_ms),
     });
     const parsed = await responseBody(response);
@@ -209,6 +238,13 @@ function hasAuthorityPrefix(context: TenantContextEnvelope, prefix: string): boo
   return context.authorization.data_scopes.some((scope) => scope.startsWith(prefix));
 }
 
+function assertExactProjectScope(
+  context: TenantContextEnvelope,
+  trustedProjectCodes: readonly string[],
+): void {
+  resolveCanonicalProjectScope(context.authorization, trustedProjectCodes, "worker_ingress");
+}
+
 function assertCanonicalCompanyAuthority(
   context: TenantContextEnvelope,
   request: TenantContextIssueRequest,
@@ -217,7 +253,9 @@ function assertCanonicalCompanyAuthority(
   if (context.actor.authenticated_subject_id !== request.slack.requester_id) {
     deny("worker_ingress", "ACTOR_SCOPE_MISMATCH");
   }
-  if (!context.authorization.project_ids.includes(request.required_authorization.project_id)) {
+  if (request.trusted_project_ids) {
+    assertExactProjectScope(context, request.trusted_project_ids);
+  } else if (!context.authorization.project_ids.includes(request.required_authorization.project_id)) {
     deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
   }
   if (!context.authorization.capability_ids.includes(request.required_authorization.capability_id)) {
@@ -355,6 +393,17 @@ export function createTenantRuntimeHttpClients(
         const seed = [request.workspace_connection.tenant_id, request.workspace_connection.connection_id,
           request.slack.event_id].join(":");
         const desiredEffect = desiredEffectForCapability(request.required_authorization.capability_id);
+        const trustedProjectIds = request.trusted_project_ids
+          ? [...request.trusted_project_ids]
+          : undefined;
+        if (trustedProjectIds !== undefined && (
+          trustedProjectIds.length === 0 ||
+          trustedProjectIds.some((projectId) => typeof projectId !== "string" || projectId.trim().length === 0) ||
+          new Set(trustedProjectIds).size !== trustedProjectIds.length ||
+          !trustedProjectIds.includes(request.required_authorization.project_id)
+        )) {
+          deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+        }
         const body = {
           tenant_id: request.workspace_connection.tenant_id,
           expected_tenant_revision: request.tenant_revision
@@ -374,6 +423,7 @@ export function createTenantRuntimeHttpClients(
             capability_id: request.required_authorization.capability_id,
             resource_ref: `project:${request.required_authorization.project_id}`,
             project_hint: request.required_authorization.project_id,
+            ...(trustedProjectIds ? { project_ids: trustedProjectIds } : {}),
             desired_effect: desiredEffect,
           },
           slack: request.slack,
@@ -417,9 +467,11 @@ export function createTenantRuntimeHttpClients(
     },
     quota: {
       async read_authoritative_decision(input): Promise<QuotaDecision> {
+        assertTenantQuotaRequest(input);
         const response = record(await postJson(bindings, "/quota:decide", {
           tenant_context: input.tenant_context,
-          unit: input.unit,
+          metric: TENANT_QUOTA_METRIC,
+          requested_quantity: TENANT_QUOTA_REQUESTED_QUANTITY,
         }, "quota", input.tenant_context), "quota") as unknown as QuotaDecision;
         try {
           validateCanonicalQuotaDecision(response);
@@ -427,6 +479,7 @@ export function createTenantRuntimeHttpClients(
           if (error instanceof CanonicalContractError) deny("quota", error.code, error.details);
           throw error;
         }
+        if (response.unit !== input.metric) deny("quota", "CROSS_TENANT_CANDIDATE");
         return structuredClone(response);
       },
     },

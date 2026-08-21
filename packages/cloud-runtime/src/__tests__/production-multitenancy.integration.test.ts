@@ -153,10 +153,18 @@ function allowedQuota(tenantId: string): QuotaDecision {
     limit: 100,
     used: 1,
     remaining: 99,
-    unit: "interaction_effect",
+    unit: "tool_calls",
     window_started_at: "2026-08-01T00:00:00.000Z",
     window_ends_at: "2026-09-01T00:00:00.000Z",
     decided_at: NOW,
+  };
+}
+
+function hardStoppedQuota(tenantId: string): QuotaDecision {
+  return {
+    ...allowedQuota(tenantId),
+    decision: "hard_stopped",
+    failure_code: "QUOTA_EXCEEDED",
   };
 }
 
@@ -205,7 +213,7 @@ describe("production multitenancy integration", () => {
         quota,
         accounting,
         ledger: accountingLedger,
-        quota_unit: "interaction_effect",
+        usage_unit: "model_tokens",
         now: () => NOW,
         process: async () => ({
           outcome: "completed",
@@ -247,13 +255,20 @@ describe("production multitenancy integration", () => {
     expect(logError).not.toHaveBeenCalled();
     expect(process).toHaveBeenCalledOnce();
     expect(quota.read_authoritative_decision).toHaveBeenCalledOnce();
+    expect(quota.read_authoritative_decision).toHaveBeenCalledWith({
+      tenant_context: value,
+      metric: "tool_calls",
+      requested_quantity: 1,
+    });
     expect(post).toHaveBeenCalledOnce();
     expect(accounting.write).toHaveBeenCalledOnce();
     expect(accounting.write).toHaveBeenCalledWith(expect.objectContaining({
       usage_events: [expect.objectContaining({
         tenant_id: TENANT_A,
+        unit: "model_tokens",
         collection_state: "not_collected",
         quantity: null,
+        unknown_fields: ["observed_units"],
       })],
       receipt: expect.objectContaining({
         tenant_id: TENANT_A,
@@ -262,6 +277,69 @@ describe("production multitenancy integration", () => {
         reply: expect.objectContaining({ state: "delivered", reply_count: 1, legacy_reply_count: 0 }),
       }),
     }));
+  });
+
+  it("does not execute a blocked operation or consume quota again on the same idempotency retry", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      workspace_id: "T-A",
+      channel_id: "C-A",
+      actor_principal_id: "person-a",
+      project_id: "project-a",
+      deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-PROD-BLOCKED-001",
+      operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FC1",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+    const ownership = new IdempotencyMemoryStore();
+    const ledger = new TenantAccountingLedger();
+    const quota = {
+      read_authoritative_decision: vi.fn(async (request: { metric: string; requested_quantity: number }) => {
+        expect(request).toEqual(expect.objectContaining({ metric: "tool_calls", requested_quantity: 1 }));
+        return hardStoppedQuota(TENANT_A);
+      }),
+    };
+    const accounting = { write: vi.fn(async () => ({ result_ref: "blocked-receipt" })) };
+    const operation = vi.fn(async () => ({ outcome: "completed" as const }));
+    const process = vi.fn((_payload: unknown, tenantContext: TenantContextEnvelope) => executeTenantRuntimeOperation({
+      tenant_context: tenantContext,
+      expected_scope: expectedScopeA,
+      verifier,
+      quota,
+      accounting,
+      ledger,
+      usage_unit: "model_tokens",
+      now: () => NOW,
+      process: operation,
+    }));
+    const run = (message: ReturnType<typeof queueMessage>) => consumeTenantQueueMessage(message, {
+      verifier,
+      expected_scope: () => expectedScopeA,
+      now: () => NOW,
+      process,
+      ownership,
+      payload_hash: () => `sha256:${"b".repeat(64)}`,
+      retention_until: () => RETENTION_UNTIL,
+    });
+
+    const first = queueMessage(value);
+    await run(first);
+    const retry = queueMessage(value);
+    await run(retry);
+
+    expect(first.ack).toHaveBeenCalledOnce();
+    expect(retry.ack).toHaveBeenCalledOnce();
+    expect(first.retry).not.toHaveBeenCalled();
+    expect(retry.retry).not.toHaveBeenCalled();
+    expect(process).toHaveBeenCalledOnce();
+    expect(operation).not.toHaveBeenCalled();
+    expect(quota.read_authoritative_decision).toHaveBeenCalledOnce();
+    expect(accounting.write).toHaveBeenCalledOnce();
   });
 
   it("rejects a signed tenant B context before quota, processing, delivery, or accounting under tenant A scope", async () => {

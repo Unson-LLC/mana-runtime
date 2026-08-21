@@ -378,7 +378,9 @@ function validWorkspaceConnectionHints(value) {
       && hint.status === "active"
       && Array.isArray(hint.granted_scopes)
       && hint.granted_scopes.length > 0
-      && hint.granted_scopes.every(nonEmpty));
+      && hint.granted_scopes.every(nonEmpty)
+      && ["shared_cloud", "dedicated_cloud", "customer_managed_oss"].includes(hint.profile)
+      && ["cloud_standard", "customer_oauth", "customer_api"].includes(hint.credential_mode));
   } catch {
     return false;
   }

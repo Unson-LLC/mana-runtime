@@ -617,6 +617,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
     expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
     expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
+    expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context\)/g)).toHaveLength(5);
   });
 
   it("fails deployment closed behind the authenticated meeting-minutes drain gate", () => {

@@ -5,7 +5,7 @@ import type {
   TenantContextEnvelope,
   WorkspaceConnectionSnapshot,
 } from "../multitenancy/contracts.js";
-import { createTenantRuntimeHttpClients } from "../multitenancy/http-clients.js";
+import { createTenantRuntimeHttpClients, parseWorkspaceConnectionHints } from "../multitenancy/http-clients.js";
 import { createOperationReceipt, createUsageEvent } from "../multitenancy/accounting.js";
 
 const NOW = "2026-08-19T01:00:00.000Z";
@@ -86,11 +86,21 @@ function clients(fetchImpl: typeof fetch) {
 }
 
 describe("Brainbase canonical tenant runtime transport", () => {
+  it("rejects a routing-only hint before it can erase the trusted deployment boundary", () => {
+    const { deployment_id: _deploymentId, ...incomplete } = snapshot;
+    expect(() => parseWorkspaceConnectionHints(JSON.stringify([{
+      ...incomplete,
+      tenant_revision: "3",
+    }]))).toThrow(expect.objectContaining({ code: "CONFIGURATION_INVALID" }));
+  });
+
   it("resolves a signed context through the single Service Binding without a generic operation envelope", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://brainbase.internal/api/v1/runtime/tenant-context:resolve");
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(init?.redirect).toBe("manual");
       expect(JSON.parse(String(init?.body))).toEqual({
         tenant_id: TENANT_ID,
         expected_tenant_revision: "3",
@@ -155,7 +165,7 @@ describe("Brainbase canonical tenant runtime transport", () => {
     };
     const quota: QuotaDecision = {
       message_type: "quota_decision", tenant_id: TENANT_ID, contract_revision: "11", quota_revision: "4",
-      decision: "allowed", limit: 100, used: 1, remaining: 99, unit: "requests",
+      decision: "allowed", limit: 100, used: 1, remaining: 99, unit: "tool_calls",
       window_started_at: NOW, window_ends_at: "2026-08-20T01:00:00.000Z", decided_at: NOW, failure_code: null,
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -174,7 +184,7 @@ describe("Brainbase canonical tenant runtime transport", () => {
     const runtime = clients(fetchMock);
     await runtime.credential_broker.acquire_lease(leaseRequest, context);
     await runtime.quota.read_authoritative_decision({
-      tenant_context: context, tenant_id: TENANT_ID, contract_revision: "11", unit: "requests",
+      tenant_context: context, metric: "tool_calls", requested_quantity: 1,
     });
 
     expect(seen.map((request) => request.url)).toEqual([
@@ -187,6 +197,47 @@ describe("Brainbase canonical tenant runtime transport", () => {
       expect(request.headers.get("authorization")).toBeNull();
       expect(request.body.tenant_context).toEqual(context);
     }
+    expect(seen[1]?.body).toEqual({
+      tenant_context: context,
+      metric: "tool_calls",
+      requested_quantity: 1,
+    });
+    expect(seen[1]?.body).not.toHaveProperty("observed_quantity");
+    expect(seen[1]?.body).not.toHaveProperty("window_started_at");
+    expect(seen[1]?.body).not.toHaveProperty("window_ends_at");
+  });
+
+  it("rejects a missing or mismatched quota metric before making an upstream request", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      message_type: "quota_decision", tenant_id: TENANT_ID, contract_revision: "11",
+      quota_revision: "4", decision: "allowed", limit: 100, used: 1, remaining: 99,
+      unit: "tool_calls", window_started_at: NOW, window_ends_at: NOW,
+      decided_at: NOW, failure_code: null,
+    }));
+    const runtime = clients(fetchMock);
+
+    await expect(runtime.quota.read_authoritative_decision({
+      tenant_context: context, metric: "model_tokens", requested_quantity: 1,
+    })).rejects.toMatchObject({ code: "QUOTA_INPUT_INVALID" });
+    await expect(runtime.quota.read_authoritative_decision({
+      tenant_context: context, metric: "tool_calls", requested_quantity: 0,
+    })).rejects.toMatchObject({ code: "QUOTA_INPUT_INVALID" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a quota decision whose canonical unit does not match the requested metric", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      message_type: "quota_decision", tenant_id: TENANT_ID, contract_revision: "11",
+      quota_revision: "4", decision: "allowed", limit: 100, used: 1, remaining: 99,
+      unit: "model_tokens", window_started_at: NOW, window_ends_at: NOW,
+      decided_at: NOW, failure_code: null,
+    }));
+    const runtime = clients(fetchMock);
+
+    await expect(runtime.quota.read_authoritative_decision({
+      tenant_context: context, metric: "tool_calls", requested_quantity: 1,
+    })).rejects.toMatchObject({ code: "CROSS_TENANT_CANDIDATE" });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("writes usage before receipt finalization and safely retries the same canonical identifiers", async () => {
@@ -243,7 +294,7 @@ describe("Brainbase canonical tenant runtime transport", () => {
       fault_domain: "protocol",
     }, { status: 409, headers: { "content-type": "application/problem+json" } })));
     await expect(runtime.quota.read_authoritative_decision({
-      tenant_context: context, tenant_id: TENANT_ID, contract_revision: "11", unit: "requests",
+      tenant_context: context, metric: "tool_calls", requested_quantity: 1,
     })).rejects.toMatchObject({
       code: "WORKSPACE_CONNECTION_STALE_REVISION",
       details: expect.objectContaining({ status: 409, retryable: false, fault_domain: "protocol" }),

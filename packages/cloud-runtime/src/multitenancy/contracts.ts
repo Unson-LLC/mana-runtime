@@ -119,6 +119,8 @@ export interface ExpectedTenantScope {
   thread_ts: string;
   actor_principal_id: string;
   project_id: string;
+  /** Exact placement project set. Omitted only for legacy single-project callers. */
+  project_ids?: readonly string[];
   capability_id: string;
   deployment_id: string;
 }
@@ -221,6 +223,10 @@ export interface QuotaDecision {
   decided_at: string;
   failure_code?: string | null;
 }
+
+/** Canonical admission charge for every Mana runtime operation. */
+export const TENANT_QUOTA_METRIC = "tool_calls" as const;
+export const TENANT_QUOTA_REQUESTED_QUANTITY = 1 as const;
 
 export type CollectionState = "collected" | "partial" | "not_collected";
 export type OperationOutcome = "succeeded" | "failed" | "cancelled" | "timed_out";
