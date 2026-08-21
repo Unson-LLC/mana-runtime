@@ -5,6 +5,9 @@ export interface TenantCredentialBootstrapEnv {
   SLACK_BOT_TOKEN_UNSON?: string;
   BRAINBASE_SLACK_CREDENTIAL_STORE_URL?: string;
   BRAINBASE_SLACK_CREDENTIAL_STORE_TOKEN?: string;
+  BRAINBASE_SLACK_CREDENTIAL_STORE_SERVICE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID?: string;
 }
 
@@ -69,7 +72,9 @@ export async function bootstrapUnsonSlackCredential(
 
   let upstream: Response;
   try {
-    upstream = await fetchImpl(env.BRAINBASE_SLACK_CREDENTIAL_STORE_URL, {
+    const credentialStoreFetch = env.BRAINBASE_SLACK_CREDENTIAL_STORE_SERVICE?.fetch
+      .bind(env.BRAINBASE_SLACK_CREDENTIAL_STORE_SERVICE) ?? fetchImpl;
+    upstream = await credentialStoreFetch(env.BRAINBASE_SLACK_CREDENTIAL_STORE_URL, {
       method: "POST",
       headers: {
         authorization: `Bearer ${env.BRAINBASE_SLACK_CREDENTIAL_STORE_TOKEN}`,

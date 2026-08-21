@@ -73,6 +73,32 @@ describe("Unson Slack credential bootstrap", () => {
     expect(JSON.stringify(responsePayload)).not.toContain(env.SLACK_BOT_TOKEN_UNSON);
   });
 
+  it("uses the credential-store service binding when configured", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({
+      ok: true,
+      team_id: env.SLACK_EXPECTED_TEAM_ID,
+    }));
+    const serviceFetch = vi.fn().mockResolvedValue(Response.json({
+      result: {
+        credential_ref: "credref://bbcs/opaque",
+        credential_mode: "customer_oauth",
+      },
+    }));
+
+    const response = await bootstrapUnsonSlackCredential(new Request(
+      "https://worker.example/admin/tenant-credential/bootstrap-slack",
+      { method: "POST" },
+    ), {
+      ...env,
+      BRAINBASE_SLACK_CREDENTIAL_STORE_SERVICE: { fetch: serviceFetch },
+    }, fetchImpl);
+
+    expect(response.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(serviceFetch).toHaveBeenCalledOnce();
+    expect(serviceFetch.mock.calls[0]?.[0]).toBe(env.BRAINBASE_SLACK_CREDENTIAL_STORE_URL);
+  });
+
   it("fails closed for request bodies, missing configuration, and upstream failures", async () => {
     const fetchImpl = vi.fn();
     const bodyResponse = await bootstrapUnsonSlackCredential(new Request(

@@ -304,6 +304,9 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   SLACK_OAUTH_SCOPES?: string;
   BRAINBASE_SLACK_CREDENTIAL_STORE_URL?: string;
   BRAINBASE_SLACK_CREDENTIAL_STORE_TOKEN?: string;
+  BRAINBASE_SLACK_CREDENTIAL_STORE_SERVICE?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
   BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID?: string;
   BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID?: string;
   SLACK_INSTALLATION_CONTROL_PLANE?: {
