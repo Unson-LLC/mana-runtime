@@ -61,8 +61,16 @@ const completeConfig = {
       tenant_revision: "1",
       connection_id: "wsc-test",
       connection_revision: "1",
+      installation_id: "slack_T-TEST_A-MANA",
+      installer_id: "brainbase-control-plane",
       workspace_id: "T-TEST",
       app_id: "A-MANA",
+      granted_scopes: ["app_mentions:read", "chat:write"],
+      status: "active",
+      deployment_id: "dep-test",
+      profile: "shared_cloud",
+      credential_mode: "customer_oauth",
+      contract_revision: "1",
     }]),
     RUNTIME_PLACEMENTS_JSON: JSON.stringify([{ developmentEnabled: true }]),
     DEVELOPMENT_CALLBACK_BASE_URL: "https://mana.example.test",
@@ -405,6 +413,18 @@ describe("tenant runtime deploy readiness", () => {
     });
     expect(() => assertTenantRuntimeDeploymentConfig(config, completeSecrets))
       .toThrow("tenant_runtime_deploy_preflight_failed:BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
+  });
+
+  it("rejects a workspace connection hint that cannot pass active ingress validation", () => {
+    const config = structuredClone(completeConfig);
+    const [hint] = JSON.parse(config.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON);
+    delete hint.status;
+    config.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON = JSON.stringify([hint]);
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+    });
   });
 
   it("accepts a complete deployment config and parses Wrangler secret metadata", () => {
