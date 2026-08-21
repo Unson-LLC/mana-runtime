@@ -28,7 +28,10 @@ describe("Unson Slack credential bootstrap", () => {
       }));
 
     const response = await bootstrapUnsonSlackCredential(
-      new Request("https://worker.example/admin/tenant-credential/bootstrap-slack", { method: "POST" }),
+      new Request("https://worker.example/admin/tenant-credential/bootstrap-slack", {
+        method: "POST",
+        headers: { "content-length": "0" },
+      }),
       env,
       fetchImpl,
     );

@@ -35,7 +35,7 @@ export async function bootstrapUnsonSlackCredential(
   env: TenantCredentialBootstrapEnv,
   fetchImpl: FetchImpl = fetch,
 ): Promise<Response> {
-  if (request.method !== "POST" || request.headers.has("content-length") || request.body !== null) {
+  if (request.method !== "POST" || (await request.arrayBuffer()).byteLength !== 0) {
     return Response.json({ error: "invalid_request" }, { status: 400 });
   }
   if (!configured(env)) {
