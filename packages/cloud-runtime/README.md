@@ -50,7 +50,7 @@ Slack Events API / scheduled event / system event
 
 ### 本番切替の安全境界
 
-- `BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN` はBrainbase専用内部forward serviceの認証用Cloudflare secretとして設定し、設定ファイルやログへ出さない。
+- `BRAINBASE_TENANT_RUNTIME_SERVICE` はCloudflare Service Bindingだけを使い、mana-runtimeへBrainbase service tokenを保持させない。認証JWTはBrainbase側のbridgeが注入する。
 - task searchの初期値は `RUNTIME_TASK_SEARCH_ENABLED=false` とし、権限・テナント境界を確認してからONへ切り替える。
 - ON切替後の最初の境界付き`search_tasks` probeを記録し、本番Slackで既知タスクを検索してBrainbase正本と照合する。
 - 証跡にはWorker version、Container image digest、Git SHAを残す。テストやContainer healthだけをSlack E2E完了とは扱いません。

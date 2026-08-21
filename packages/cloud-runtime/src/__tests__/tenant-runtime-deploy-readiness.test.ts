@@ -70,8 +70,6 @@ const completeConfig = {
 };
 
 const completeSecrets = [
-  "BRAINBASE_RUNTIME_API_TOKEN",
-  "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
   "SLACK_SIGNING_SECRET",
   "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
   "DEVELOPMENT_CALLBACK_TOKEN",
@@ -137,10 +135,9 @@ const trustedProviderForwarderSourceLock = {
       explicit_port_required: true,
       non_loopback_opt_in_env: "BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK",
       wildcard_bind_allowed_by_default: false,
-      service_token_env: "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
+      transport: "cloudflare_service_binding",
     },
     headers: {
-      Authorization: "Bearer ${BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN}",
       "Brainbase-Protocol-Version": "1.0",
       "Brainbase-Deployment-Id": "${tenant_context.placement.deployment_id}",
       "Content-Type": "application/json",
@@ -356,14 +353,12 @@ describe("tenant runtime deploy readiness", () => {
 
   it("reports missing secret binding names without exposing configured material", () => {
     const result = assessTenantRuntimeDeploymentConfig(completeConfig, [
-      "BRAINBASE_RUNTIME_API_TOKEN",
       "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
     ]);
 
     expect(result).toEqual({
       ready: false,
       missing_bindings: [
-        "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
         "DEVELOPMENT_CALLBACK_TOKEN",
         "SLACK_SIGNING_SECRET",
       ],

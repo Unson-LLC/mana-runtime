@@ -31,10 +31,9 @@
       "explicit_port_required": true,
       "non_loopback_opt_in_env": "BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK",
       "wildcard_bind_allowed_by_default": false,
-      "service_token_env": "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN"
+      "transport": "cloudflare_service_binding"
     },
     "headers": {
-      "Authorization": "Bearer ${BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN}",
       "Brainbase-Protocol-Version": "1.0",
       "Brainbase-Deployment-Id": "${tenant_context.placement.deployment_id}",
       "Content-Type": "application/json"

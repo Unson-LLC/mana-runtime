@@ -175,7 +175,7 @@ describe("実配置profileのビルド契約", () => {
     }
   });
 
-  it("実profileはcontrol-plane bindingを持ち、OAuth公開設定が揃うまでdeploy不可", () => {
+  it("実profileはcontrol-plane bindingを持ち、未設定のOAuth公開値を明示する", () => {
     const configs = [
       loadJson<WranglerProfile>("wrangler.jsonc"),
       loadJson<WranglerProfile>("wrangler.unson-business.jsonc"),
@@ -188,12 +188,14 @@ describe("実配置profileのビルド契約", () => {
       expect(readiness.missing_bindings).not.toContain(
         "SLACK_INSTALLATION_CONTROL_PLANE",
       );
-      expect(readiness.missing_bindings).toEqual(expect.arrayContaining([
-        "SLACK_OAUTH_APP_ID",
-        "SLACK_OAUTH_CLIENT_ID",
-        "SLACK_OAUTH_REDIRECT_URI",
-        "SLACK_OAUTH_SCOPES",
-      ]));
+      const oauthBindings = [
+        "SLACK_OAUTH_APP_ID", "SLACK_OAUTH_CLIENT_ID", "SLACK_OAUTH_REDIRECT_URI", "SLACK_OAUTH_SCOPES",
+      ];
+      if (config.name === "unson-business-mana-runtime") {
+        expect(readiness.missing_bindings).not.toEqual(expect.arrayContaining(oauthBindings));
+      } else {
+        expect(readiness.missing_bindings).toEqual(expect.arrayContaining(oauthBindings));
+      }
     }
   });
 });

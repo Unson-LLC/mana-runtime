@@ -300,8 +300,8 @@ describe("会社別Cloudflare deployment", () => {
     );
     expect(readme).not.toContain("Bot tokenを`SLACK_BOT_TOKEN` Secretとして設定");
     expect(readme).not.toContain("`BRAINBASE_TASK_API_TOKEN` Secretとして設定");
-    expect(readme).toContain("BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN");
-    expect(readme).toContain("Brainbase専用内部forward service");
+    expect(readme).toContain("mana-runtimeへBrainbase service tokenを保持させない");
+    expect(readme).toContain("認証JWTはBrainbase側のbridgeが注入する");
   });
 
   it("開発エージェントもplacement既定と同じsonnetを明示して起動する", () => {
