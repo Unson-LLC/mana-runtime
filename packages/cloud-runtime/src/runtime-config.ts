@@ -13,6 +13,7 @@ export interface RuntimePlacement {
   channelId: string;
   channelName?: string;
   projectCodes: string[];
+  authorizationProjects?: Array<{ projectCode: string; projectId: string }>;
   taskWriteEnabled: boolean;
   developmentEnabled?: boolean;
   taskBoardEnabled?: boolean;
@@ -98,6 +99,15 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
       ) throw new Error("invalid");
       const projectCodes = parseRuntimeProjectCodes(candidate.projectCodes.join(","));
       if (projectCodes.length !== candidate.projectCodes.length) throw new Error("invalid");
+      const authorizationProjects = candidate.authorizationProjects as Array<Record<string, unknown>> | undefined;
+      if (authorizationProjects !== undefined && (
+        !Array.isArray(authorizationProjects) || authorizationProjects.length !== projectCodes.length ||
+        authorizationProjects.some((project, index) =>
+          typeof project !== "object" || project === null ||
+          project.projectCode !== projectCodes[index] ||
+          typeof project.projectId !== "string" || !/^prj_[0-9A-HJKMNP-TV-Z]{26}$/.test(project.projectId)) ||
+        new Set(authorizationProjects.map((project) => project.projectId)).size !== authorizationProjects.length
+      )) throw new Error("invalid");
       const audience = candidate.audience as Record<string, unknown> | undefined;
       if (audience !== undefined && (
         typeof audience !== "object" || audience === null || audience.type !== "operator" ||
@@ -159,6 +169,10 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
         channelId: candidate.channelId,
         ...(candidate.channelName ? { channelName: candidate.channelName as string } : {}),
         projectCodes,
+        ...(authorizationProjects ? { authorizationProjects: authorizationProjects.map((project) => ({
+          projectCode: project.projectCode as string,
+          projectId: project.projectId as string,
+        })) } : {}),
         taskWriteEnabled: candidate.taskWriteEnabled === true,
         ...(candidate.developmentEnabled === true ? { developmentEnabled: true } : {}),
         ...(candidate.taskBoardEnabled === true ? { taskBoardEnabled: true } : {}),
@@ -186,6 +200,14 @@ export function parseRuntimePlacements(value: string | undefined): RuntimePlacem
     if (error instanceof RuntimeBindingError) throw error;
     throw new RuntimeBindingError("runtime_placements_invalid");
   }
+}
+
+export function resolveRuntimeAuthorizationProjects(
+  placement: RuntimePlacement,
+): Array<{ projectCode: string; projectId: string }> {
+  return placement.authorizationProjects
+    ? placement.authorizationProjects.map((project) => ({ ...project }))
+    : placement.projectCodes.map((projectCode) => ({ projectCode, projectId: projectCode }));
 }
 
 export function resolveRuntimePlacement(

@@ -62,6 +62,7 @@ import {
   parseRuntimePlacements,
   RuntimeBindingError,
   resolveRuntimePlacement,
+  resolveRuntimeAuthorizationProjects,
   runWithReplyTaskSearchBinding,
 } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
@@ -491,16 +492,15 @@ async function resolveDerivedSlackTenantContext(
   const clients = tenantRuntimeClients(env);
   const sourceProjectIds = [...sourceTenantContext.authorization.project_ids];
   if (sourceProjectIds.length === 0) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  const placementAuthorization = placementAuthorizationForIdentity(env, identity);
+  if (JSON.stringify(sourceProjectIds) !== JSON.stringify(placementAuthorization.trusted_project_ids)) {
+    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  }
   const resolved = await resolveSlackWorkerIngress({
     identity: { provider: "slack", ...identity },
     required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
       .split(",").map((value) => value.trim()).filter(Boolean),
-    required_authorization: {
-      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-      project_id: sourceProjectIds[0]!,
-      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
-    },
-    trusted_project_ids: sourceProjectIds,
+    ...placementAuthorization,
     authority: clients.authority,
     now: new Date().toISOString(),
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -980,6 +980,17 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
 }): Promise<{ result_ref: string }> {
   const clients = tenantRuntimeClients(env, input.tenant_context);
   const artifactContext = input.tenant_context;
+  const placementAuthorization = placementAuthorizationForIdentity(env, {
+    app_id: artifactContext.workspace_connection.app_id,
+    workspace_id: artifactContext.workspace_connection.workspace_id,
+    event_id: artifactContext.slack.event_id,
+    channel_id: artifactContext.slack.channel_id,
+    thread_ts: artifactContext.slack.thread_ts ?? "",
+    requester_id: artifactContext.slack.requester_id ?? artifactContext.actor.authenticated_subject_id,
+  });
+  if (JSON.stringify(placementAuthorization.trusted_project_ids) !== JSON.stringify(
+    input.expected_scope.project_ids ?? artifactContext.authorization.project_ids,
+  )) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
   const snapshot = await clients.authority.read_workspace_connection(
     artifactContext.workspace_connection.connection_id,
   );
@@ -1003,15 +1014,10 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
         ? { enterprise_id: artifactContext.slack.enterprise_id }
         : {}),
     },
-    required_authorization: {
-      audience: input.expected_scope.audience,
-      project_id: input.expected_scope.project_id,
-      capability_id: input.expected_scope.capability_id,
-    },
+    required_authorization: placementAuthorization.required_authorization,
     // Preserve the exact placement scope when terminal accounting reissues
     // the authority context; a singular project hint is insufficient here.
-    trusted_project_ids: input.expected_scope.project_ids
-      ?? artifactContext.authorization.project_ids,
+    trusted_project_ids: placementAuthorization.trusted_project_ids,
   });
   const verifier = new TenantRuntimeBoundaryVerifier({
     read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
@@ -1148,7 +1154,7 @@ function meetingMinutesRecoveryEventId(recovery: MeetingMinutesRecovery): string
 function placementProjectScopeForEvent(
   env: Env,
   event: SlackQueueEvent,
-): { project_id: string; project_ids: readonly string[] } {
+): { project_code: string; project_id: string; project_ids: readonly string[] } {
   try {
     const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
     const placement = resolveRuntimePlacement(event, {
@@ -1156,8 +1162,13 @@ function placementProjectScopeForEvent(
       workspaceId: event.workspaceId,
       placements,
     });
-    if (placement.projectCodes.length === 0) throw new RuntimeBindingError("project_binding_missing");
-    return { project_id: placement.projectCodes[0]!, project_ids: [...placement.projectCodes] };
+    const projects = resolveRuntimeAuthorizationProjects(placement);
+    if (projects.length === 0) throw new RuntimeBindingError("project_binding_missing");
+    return {
+      project_code: projects[0]!.projectCode,
+      project_id: projects[0]!.projectId,
+      project_ids: projects.map((project) => project.projectId),
+    };
   } catch (error) {
     deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
       reason: error instanceof RuntimeBindingError ? error.code : "placement_resolution_failed",
@@ -1172,6 +1183,7 @@ function placementAuthorizationForEvent(
   required_authorization: {
     audience: string;
     project_id: string;
+    project_code?: string;
     capability_id: string;
   };
   trusted_project_ids: readonly string[];
@@ -1181,6 +1193,7 @@ function placementAuthorizationForEvent(
     required_authorization: {
       audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
       project_id: scope.project_id,
+      project_code: scope.project_code,
       capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
     },
     trusted_project_ids: scope.project_ids,
@@ -1194,6 +1207,7 @@ function placementAuthorizationForIdentity(
   required_authorization: {
     audience: string;
     project_id: string;
+    project_code?: string;
     capability_id: string;
   };
   trusted_project_ids: readonly string[];

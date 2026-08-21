@@ -7,6 +7,7 @@ import {
   assertTenantRuntimeDeploymentPreflight,
   assertTenantRuntimeHealthReady,
 } from "./tenant-runtime-deploy-readiness.mjs";
+import { buildWranglerDeployArgs } from "./wrangler-deploy-command.mjs";
 
 const configPath = fileURLToPath(new URL("../wrangler.unson-business.jsonc", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -89,7 +90,10 @@ try {
 }
 
 const deployExit = await new Promise((resolve) => {
-  const child = spawn("pnpm", ["exec", "wrangler", "deploy", "--config", configPath], {
+  const child = spawn("pnpm", buildWranglerDeployArgs({
+    configPath,
+    containersRollout: process.env.MANA_DEPLOY_CONTAINERS_ROLLOUT,
+  }), {
     stdio: "inherit", shell: false,
   });
   child.on("error", () => resolve(1));

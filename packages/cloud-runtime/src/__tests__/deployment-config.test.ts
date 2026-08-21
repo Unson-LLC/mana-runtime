@@ -214,6 +214,7 @@ describe("会社別Cloudflare deployment", () => {
         channelId: "C0BMNSP6C80",
         channelName: "0240-mana-dev",
         projectCodes: ["mana"],
+        authorizationProjects: [{ projectCode: "mana", projectId: "prj_01KGHVCMA35JHSMXTSWQAS04PS" }],
         taskWriteEnabled: true,
         taskBoardEnabled: true,
         developmentEnabled: true,

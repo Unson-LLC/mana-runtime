@@ -1,6 +1,7 @@
 import type { SlackFileReference, SlackQueueEvent } from "./types.js";
 import {
   resolveRuntimePlacement,
+  resolveRuntimeAuthorizationProjects,
   RuntimeBindingError,
   type RuntimePlacementConfig,
 } from "./runtime-config.js";
@@ -311,12 +312,14 @@ export async function handleTenantSlackRequest(
       options.placement_config.tenantId,
     );
     const placement = resolveRuntimePlacement(event, options.placement_config);
-    const placementProjectIds = [...placement.projectCodes];
+    const authorizationProjects = resolveRuntimeAuthorizationProjects(placement);
+    const placementProjectIds = authorizationProjects.map((project) => project.projectId);
     const requiredAuthorization = {
       ...options.required_authorization,
       // The first project is the canonical singular resource hint. The complete
       // placement set is carried separately and checked for exact equality.
       project_id: placementProjectIds[0]!,
+      project_code: authorizationProjects[0]!.projectCode,
     };
     const resolved = await resolveSlackWorkerIngress({
       identity: {

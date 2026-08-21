@@ -177,6 +177,28 @@ describe("Brainbase-owned company authority HTTP client", () => {
     await expect(clients.authority.issue_tenant_context(trustedRequest)).resolves.toEqual(context);
   });
 
+  it("uses the project code as the Brainbase lookup hint and the canonical id as the signed scope", async () => {
+    const captures: unknown[] = [];
+    const projectId = "prj_01KGHVCMA35JHSMXTSWQAS04PS";
+    const context = canonicalContext();
+    context.authorization.project_ids = [projectId];
+    const clients = clientsWithResponse(context, captures);
+    await clients.authority.issue_tenant_context({
+      ...request(),
+      required_authorization: {
+        ...request().required_authorization,
+        project_code: "mana",
+        project_id: projectId,
+      },
+      trusted_project_ids: [projectId],
+    });
+    expect((captures[0] as { requested_action: Record<string, unknown> }).requested_action).toMatchObject({
+      resource_ref: "project:mana",
+      project_hint: "mana",
+      project_ids: [projectId],
+    });
+  });
+
   it("sends only observed identity and requested action, never runtime actor or authorization", async () => {
     const captures: unknown[] = [];
     const clients = clientsWithResponse(canonicalContext(), captures);

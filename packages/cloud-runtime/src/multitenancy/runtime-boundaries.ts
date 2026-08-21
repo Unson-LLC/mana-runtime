@@ -42,6 +42,7 @@ export interface TenantContextIssueRequest {
   required_authorization: {
     audience: string;
     project_id: string;
+    project_code?: string;
     capability_id: string;
   };
   /** Trusted project scope resolved from the runtime placement, never from Slack input. */

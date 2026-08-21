@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { collectMeetingMinutesProjectBindings } from "../../scripts/brainbase-project-binding-check.mjs";
+import { buildWranglerDeployArgs } from "../../scripts/wrangler-deploy-command.mjs";
 
 function runScript(script: string, env: NodeJS.ProcessEnv): Promise<{ status: number | null; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -18,6 +19,20 @@ function runScript(script: string, env: NodeJS.ProcessEnv): Promise<{ status: nu
 }
 
 describe("unson business deploy wrapper", () => {
+  it("keeps the existing container image only when the rollout is explicitly disabled", () => {
+    expect(buildWranglerDeployArgs({
+      configPath: "/tmp/wrangler.jsonc",
+      containersRollout: "none",
+    })).toEqual([
+      "exec", "wrangler", "deploy", "--config", "/tmp/wrangler.jsonc", "--containers-rollout=none",
+    ]);
+
+    expect(() => buildWranglerDeployArgs({
+      configPath: "/tmp/wrangler.jsonc",
+      containersRollout: "invalid",
+    })).toThrow("tenant_runtime_container_rollout_invalid");
+  });
+
   it("stops before deployment when Brainbase project preflight fails", () => {
     const script = fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url));
     const result = spawnSync(process.execPath, [script], {

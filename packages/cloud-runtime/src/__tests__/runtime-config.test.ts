@@ -81,6 +81,24 @@ describe("Cloudflare runtime binding", () => {
       .toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
   });
 
+  it("binds a project code to its canonical authorization project id", () => {
+    expect(parseRuntimePlacements(JSON.stringify([{
+      placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"],
+      authorizationProjects: [{ projectCode: "mana", projectId: "prj_01KGHVCMA35JHSMXTSWQAS04PS" }],
+    }]))).toMatchObject([{ authorizationProjects: [{
+      projectCode: "mana", projectId: "prj_01KGHVCMA35JHSMXTSWQAS04PS",
+    }] }]);
+    for (const authorizationProjects of [
+      [{ projectCode: "other", projectId: "prj_01KGHVCMA35JHSMXTSWQAS04PS" }],
+      [{ projectCode: "mana", projectId: "mana" }],
+      [],
+    ]) {
+      expect(() => parseRuntimePlacements(JSON.stringify([{
+        placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], authorizationProjects,
+      }]))).toThrow(expect.objectContaining({ code: "runtime_placements_invalid" }));
+    }
+  });
+
   it("retains a placement-specific task board boundary", () => {
     expect(parseRuntimePlacements(JSON.stringify([{ placementId: "dev", channelId: "C_DEV", projectCodes: ["mana"], taskBoardEnabled: true }])))
       .toMatchObject([{ taskBoardEnabled: true }]);

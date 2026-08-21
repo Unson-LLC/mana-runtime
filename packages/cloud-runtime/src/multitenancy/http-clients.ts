@@ -398,8 +398,8 @@ export function createTenantRuntimeHttpClients(
           },
           requested_action: {
             capability_id: request.required_authorization.capability_id,
-            resource_ref: `project:${request.required_authorization.project_id}`,
-            project_hint: request.required_authorization.project_id,
+            resource_ref: `project:${request.required_authorization.project_code ?? request.required_authorization.project_id}`,
+            project_hint: request.required_authorization.project_code ?? request.required_authorization.project_id,
             ...(trustedProjectIds ? { project_ids: trustedProjectIds } : {}),
             desired_effect: desiredEffect,
           },
