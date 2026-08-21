@@ -19,6 +19,8 @@ const DEFAULT_SOURCE_LOCK_PATHS = Object.freeze({
 
 const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const DEPLOYMENT_AUTH_TEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+,-]{0,255}$/;
+const DEPLOYMENT_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 const REQUIRED_TEXT_VARS = [
   "TENANT_ID",
@@ -33,13 +35,6 @@ const REQUIRED_TEXT_VARS = [
   "MANA_CREDENTIAL_AUDIENCE",
   "BRAINBASE_TENANT_RUNTIME_ENABLED",
   "BRAINBASE_TENANT_RUNTIME_PORT",
-];
-
-const REQUIRED_HTTPS_VARS = [
-  "BRAINBASE_TENANT_AUTHORITY_URL",
-  "BRAINBASE_CREDENTIAL_BROKER_URL",
-  "BRAINBASE_QUOTA_URL",
-  "BRAINBASE_ACCOUNTING_URL",
 ];
 
 const REQUIRED_CAPABILITIES = [
@@ -81,6 +76,10 @@ function sourceLockError(lockId, reason) {
   return new Error(`tenant_runtime_source_lock_preflight_failed:${lockId}:${reason}`);
 }
 
+function deploymentAuthorizationError(lockId, reason) {
+  return sourceLockError(lockId, `deployment_authorization_${reason}`);
+}
+
 async function readSourceLock(readFileImpl, path, lockId) {
   let serialized;
   try {
@@ -102,6 +101,74 @@ function validAuditInput(value, expectedRepository) {
     && value.repository === expectedRepository
     && positiveInteger(value.pull_request)
     && GIT_SHA_PATTERN.test(value.head);
+}
+
+function validDeploymentAuthorizationText(value) {
+  return typeof value === "string"
+    && DEPLOYMENT_AUTH_TEXT_PATTERN.test(value)
+    && value.trim() === value;
+}
+
+function validDeploymentTimestamp(value) {
+  if (typeof value !== "string" || !DEPLOYMENT_TIMESTAMP_PATTERN.test(value)) return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function deploymentContextTimestamp(value) {
+  if (value === undefined) return Date.now();
+  if (value instanceof Date) return value.getTime();
+  if (!validDeploymentTimestamp(value)) return null;
+  return Date.parse(value);
+}
+
+function validateDeploymentAuthorization(lock, lockId, {
+  deploymentTarget,
+  candidateCommit,
+  now,
+} = {}) {
+  const authorization = lock.deployment_authorization;
+  if (!lock.deploy_allowed) {
+    // A disabled lock cannot carry an active authorization. Keeping the field
+    // null (or omitting it) makes accidental reuse observable and fail closed.
+    if (authorization !== undefined && authorization !== null) {
+      throw deploymentAuthorizationError(lockId, "invalid");
+    }
+    return;
+  }
+
+  if (!plainObject(authorization)) {
+    throw deploymentAuthorizationError(lockId, "missing");
+  }
+  if (!validDeploymentAuthorizationText(authorization.reviewer_identity)
+    || !validDeploymentAuthorizationText(authorization.reviewer_provenance)
+    || !GIT_SHA_PATTERN.test(authorization.reviewed_commit_sha)
+    || !validDeploymentAuthorizationText(authorization.target)
+    || !validDeploymentTimestamp(authorization.authorized_at)
+    || !validDeploymentTimestamp(authorization.expires_at)) {
+    throw deploymentAuthorizationError(lockId, "invalid");
+  }
+
+  const nowMs = deploymentContextTimestamp(now);
+  if (nowMs === null) throw deploymentAuthorizationError(lockId, "context_invalid");
+  const authorizedAtMs = Date.parse(authorization.authorized_at);
+  const expiresAtMs = Date.parse(authorization.expires_at);
+  if (authorizedAtMs > nowMs || expiresAtMs <= authorizedAtMs) {
+    throw deploymentAuthorizationError(lockId, "invalid");
+  }
+  if (expiresAtMs <= nowMs) {
+    throw deploymentAuthorizationError(lockId, "expired");
+  }
+  if (!validDeploymentAuthorizationText(deploymentTarget)
+    || !GIT_SHA_PATTERN.test(candidateCommit)) {
+    throw deploymentAuthorizationError(lockId, "context_missing");
+  }
+  if (authorization.target !== deploymentTarget) {
+    throw deploymentAuthorizationError(lockId, "target_mismatch");
+  }
+  if (authorization.reviewed_commit_sha !== candidateCommit) {
+    throw deploymentAuthorizationError(lockId, "candidate_mismatch");
+  }
 }
 
 function validateTenantContextSourceLock(lock) {
@@ -199,6 +266,9 @@ function validateTrustedProviderForwarderSourceLock(lock) {
 export async function assertTenantRuntimeSourceLocks({
   readFileImpl = readFile,
   sourceLockPaths = DEFAULT_SOURCE_LOCK_PATHS,
+  deploymentTarget,
+  candidateCommit,
+  now,
 } = {}) {
   if (!nonEmpty(sourceLockPaths?.tenantContext)
     || !nonEmpty(sourceLockPaths?.trustedProviderForwarder)) {
@@ -222,6 +292,12 @@ export async function assertTenantRuntimeSourceLocks({
   if (!trustedProviderForwarder.deploy_allowed) {
     throw sourceLockError("trusted_provider_forwarder", "deploy_not_allowed");
   }
+  validateDeploymentAuthorization(tenantContext, "tenant_context", { deploymentTarget, candidateCommit, now });
+  validateDeploymentAuthorization(trustedProviderForwarder, "trusted_provider_forwarder", {
+    deploymentTarget,
+    candidateCommit,
+    now,
+  });
   return { tenantContext, trustedProviderForwarder };
 }
 
@@ -258,6 +334,7 @@ function validJwks(value) {
       candidate && typeof candidate === "object" && !Array.isArray(candidate)
       && candidate.kty === "OKP" && candidate.crv === "Ed25519"
       && nonEmpty(candidate.kid) && nonEmpty(candidate.x)
+      && candidate.d === undefined
       && (candidate.use === undefined || candidate.use === "sig"));
   } catch {
     return false;
@@ -281,11 +358,11 @@ function hasNamedBinding(bindings, name, valueKey) {
     && nonEmpty(binding[valueKey]));
 }
 
-function hasServiceBinding(bindings, name) {
+function hasServiceBinding(bindings, name, expectedService) {
   return Array.isArray(bindings) && bindings.some((binding) =>
     binding && typeof binding === "object"
     && binding.binding === name
-    && nonEmpty(binding.service));
+    && binding.service === expectedService);
 }
 
 function hasDurableObjectMigration(migrations, className) {
@@ -338,16 +415,13 @@ export function assessTenantRuntimeDeploymentConfig(config, secretNames) {
   if (REQUIRED_CAPABILITIES.some((capability) => !capabilities.has(capability))) {
     missing.add("MANA_RUNTIME_CAPABILITIES");
   }
-  for (const name of REQUIRED_HTTPS_VARS) {
-    if (!safeHttpsUrl(vars[name])) missing.add(name);
-  }
   if (!validJwks(vars.BRAINBASE_TENANT_CONTEXT_JWKS_JSON)) {
     missing.add("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
   }
-  if (!hasServiceBinding(config?.services, "BRAINBASE_TENANT_RUNTIME_SERVICE")) {
+  if (!hasServiceBinding(config?.services, "BRAINBASE_TENANT_RUNTIME_SERVICE", "brainbase-tenant-runtime")) {
     missing.add("BRAINBASE_TENANT_RUNTIME_SERVICE");
   }
-  if (!hasServiceBinding(config?.services, "SLACK_INSTALLATION_CONTROL_PLANE")) {
+  if (!hasServiceBinding(config?.services, "SLACK_INSTALLATION_CONTROL_PLANE", "brainbase-slack-installation-control-plane")) {
     missing.add("SLACK_INSTALLATION_CONTROL_PLANE");
   }
   const hasTenantRuntimeState = hasNamedBinding(
@@ -408,6 +482,9 @@ export async function assertTenantRuntimeDeploymentPreflight({
   execFileImpl = execFileAsync,
   readFileImpl = readFile,
   sourceLockPaths = DEFAULT_SOURCE_LOCK_PATHS,
+  deploymentTarget,
+  candidateCommit,
+  now,
 }) {
   let config;
   try {
@@ -425,7 +502,13 @@ export async function assertTenantRuntimeDeploymentPreflight({
 
   // These repository-owned locks are the canonical cross-system deployment
   // authorization. Validate them before any Cloudflare API or Wrangler access.
-  await assertTenantRuntimeSourceLocks({ readFileImpl, sourceLockPaths });
+  await assertTenantRuntimeSourceLocks({
+    readFileImpl,
+    sourceLockPaths,
+    deploymentTarget: deploymentTarget ?? config.name,
+    candidateCommit,
+    now,
+  });
 
   let stdout;
   try {

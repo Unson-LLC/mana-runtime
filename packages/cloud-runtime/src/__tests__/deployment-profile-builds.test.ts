@@ -46,6 +46,10 @@ function expectCommonTenantContract(config: WranglerProfile, profile: string): v
     binding: "BRAINBASE_TENANT_RUNTIME_SERVICE",
     service: "brainbase-tenant-runtime",
   });
+  expect(config.services).toContainEqual({
+    binding: "SLACK_INSTALLATION_CONTROL_PLANE",
+    service: "brainbase-slack-installation-control-plane",
+  });
   expect(config.durable_objects.bindings).toContainEqual({
     name: "TENANT_RUNTIME_STATE",
     class_name: "TenantRuntimeState",
@@ -136,6 +140,25 @@ describe("実配置profileのビルド契約", () => {
     expect(source).not.toMatch(/(?:token|secret)\s*["']?\s*[:=]\s*["'][^"']{8,}/i);
   });
 
+  it("unson-businessは本番Brainbaseの公開検証鍵だけを直接JWK形式で固定する", () => {
+    const config = loadJson<WranglerProfile>("wrangler.unson-business.jsonc");
+    const jwks = JSON.parse(config.vars.BRAINBASE_TENANT_CONTEXT_JWKS_JSON) as {
+      keys: Array<Record<string, string>>;
+    };
+
+    expect(jwks).toEqual({
+      keys: [{
+        kid: "brainbase-tenant-context-20260819",
+        kty: "OKP",
+        crv: "Ed25519",
+        x: "eWbEUe--SU-Z0010NfiLcbAMIC3Q57h_Q9oJV9CekoQ",
+        use: "sig",
+        alg: "EdDSA",
+      }],
+    });
+    expect(jwks.keys[0]).not.toHaveProperty("d");
+  });
+
   it("すべてのQueue consumerはmax_retries=3とDLQを持つ", () => {
     const configs = [
       loadJson<WranglerProfile>("wrangler.jsonc"),
@@ -152,7 +175,7 @@ describe("実配置profileのビルド契約", () => {
     }
   });
 
-  it("未構成profileはOAuthとcontrol-plane Service Bindingが揃うまでdeploy不可", () => {
+  it("実profileはcontrol-plane bindingを持ち、OAuth公開設定が揃うまでdeploy不可", () => {
     const configs = [
       loadJson<WranglerProfile>("wrangler.jsonc"),
       loadJson<WranglerProfile>("wrangler.unson-business.jsonc"),
@@ -162,8 +185,10 @@ describe("実配置profileのビルド契約", () => {
     for (const config of configs) {
       const readiness = assessTenantRuntimeDeploymentConfig(config, []);
       expect(readiness.ready).toBe(false);
-      expect(readiness.missing_bindings).toEqual(expect.arrayContaining([
+      expect(readiness.missing_bindings).not.toContain(
         "SLACK_INSTALLATION_CONTROL_PLANE",
+      );
+      expect(readiness.missing_bindings).toEqual(expect.arrayContaining([
         "SLACK_OAUTH_APP_ID",
         "SLACK_OAUTH_CLIENT_ID",
         "SLACK_OAUTH_REDIRECT_URI",

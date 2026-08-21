@@ -76,7 +76,7 @@ describe("unson business deploy wrapper", () => {
 
       expect(result.status).toBe(7);
       expect(result.stderr).toContain("tenant_runtime_deploy_preflight_failed:");
-      expect(result.stderr).toContain("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
+      expect(result.stderr).not.toContain("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
       expect(result.stderr).toContain("MANA_REQUIRED_AUDIENCE");
       expect(result.stderr).not.toContain("token-never-log");
       expect(result.stderr).not.toContain("ENOENT");

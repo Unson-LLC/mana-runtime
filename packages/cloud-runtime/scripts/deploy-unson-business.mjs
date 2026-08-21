@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { assertBrainbaseMeetingMinutesRuntimeProjects } from "./brainbase-project-binding-check.mjs";
 import { assertMeetingMinutesDeployAllowed } from "./deploy-gate-check.mjs";
@@ -8,6 +8,25 @@ import {
 } from "./tenant-runtime-deploy-readiness.mjs";
 
 const configPath = fileURLToPath(new URL("../wrangler.unson-business.jsonc", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
+
+function candidateCheckoutHead() {
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  }).trim();
+}
+
+function assertReviewedCandidateCheckout(actual) {
+  const expected = process.env.MANA_DEPLOY_CANDIDATE_COMMIT;
+  const dirty = execFileSync("git", ["status", "--porcelain"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  }).trim();
+  if (!expected || expected !== actual || dirty) {
+    throw new Error("tenant_runtime_deploy_candidate_checkout_invalid");
+  }
+}
 
 try {
   await assertBrainbaseMeetingMinutesRuntimeProjects({
@@ -33,7 +52,12 @@ try {
 
 let deploymentConfig;
 try {
-  deploymentConfig = await assertTenantRuntimeDeploymentPreflight({ configPath });
+  const candidateCommit = process.env.MANA_DEPLOY_CANDIDATE_COMMIT;
+  deploymentConfig = await assertTenantRuntimeDeploymentPreflight({
+    configPath,
+    candidateCommit,
+  });
+  assertReviewedCandidateCheckout(candidateCheckoutHead());
 } catch (error) {
   console.error(error instanceof Error ? error.message : "tenant_runtime_deploy_preflight_failed");
   process.exit(7);

@@ -18,7 +18,20 @@ const requiredCapabilities = [
   "container_sanitization_v1",
 ].join(",");
 
+const deploymentTarget = "mana-test";
+const deploymentCandidateCommit = "4".repeat(40);
+const deploymentNow = "2026-08-21T00:00:00.000Z";
+const deploymentAuthorization = {
+  reviewer_identity: "github:reviewer",
+  reviewer_provenance: "github:pull_request_review",
+  reviewed_commit_sha: deploymentCandidateCommit,
+  target: deploymentTarget,
+  authorized_at: "2026-08-20T00:00:00.000Z",
+  expires_at: "2026-08-22T00:00:00.000Z",
+};
+
 const completeConfig = {
+  name: deploymentTarget,
   vars: {
     TENANT_ID: "unson-business",
     MANA_DEPLOYMENT_PROFILE: "shared_cloud",
@@ -48,7 +61,7 @@ const completeConfig = {
   },
   services: [
     { binding: "BRAINBASE_TENANT_RUNTIME_SERVICE", service: "brainbase-tenant-runtime" },
-    { binding: "SLACK_INSTALLATION_CONTROL_PLANE", service: "slack-installation-control-plane-test" },
+    { binding: "SLACK_INSTALLATION_CONTROL_PLANE", service: "brainbase-slack-installation-control-plane" },
   ],
   durable_objects: {
     bindings: [{ name: "TENANT_RUNTIME_STATE", class_name: "TenantRuntimeState" }],
@@ -91,6 +104,7 @@ const tenantContextSourceLock = {
   production_code_changed: true,
   merge_allowed: true,
   deploy_allowed: true,
+  deployment_authorization: deploymentAuthorization,
 };
 
 const trustedProviderForwarderSourceLock = {
@@ -153,6 +167,13 @@ const trustedProviderForwarderSourceLock = {
   },
   merge_allowed: true,
   deploy_allowed: true,
+  deployment_authorization: deploymentAuthorization,
+};
+
+const deploymentAuthorizationContext = {
+  deploymentTarget,
+  candidateCommit: deploymentCandidateCommit,
+  now: deploymentNow,
 };
 
 function preflightDependencies(overrides: Record<string, unknown> = {}) {
@@ -181,7 +202,7 @@ function preflightDependencies(overrides: Record<string, unknown> = {}) {
 describe("tenant runtime deploy readiness", () => {
   it.each([
     ["false", {
-      [sourceLockPaths.tenantContext]: { ...tenantContextSourceLock, deploy_allowed: false },
+    [sourceLockPaths.tenantContext]: { ...tenantContextSourceLock, deploy_allowed: false },
     }, "tenant_runtime_source_lock_preflight_failed:tenant_context:deploy_not_allowed"],
     ["false in trusted forwarder", {
       [sourceLockPaths.trustedProviderForwarder]: {
@@ -219,6 +240,7 @@ describe("tenant runtime deploy readiness", () => {
     const attempt = assertTenantRuntimeDeploymentPreflight({
       configPath: "/deploy/wrangler.jsonc",
       ...dependencies,
+      ...deploymentAuthorizationContext,
     });
 
     await expect(attempt).rejects.toThrow(expectedError);
@@ -234,9 +256,37 @@ describe("tenant runtime deploy readiness", () => {
     await expect(assertTenantRuntimeDeploymentPreflight({
       configPath: "/deploy/wrangler.jsonc",
       ...dependencies,
+      ...deploymentAuthorizationContext,
     })).resolves.toMatchObject({ tenantId: "unson-business" });
 
     expect(dependencies.execFileImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["missing", undefined, deploymentAuthorizationContext,
+      "tenant_runtime_source_lock_preflight_failed:tenant_context:deployment_authorization_missing"],
+    ["expired", { ...deploymentAuthorization, expires_at: deploymentNow }, deploymentAuthorizationContext,
+      "tenant_runtime_source_lock_preflight_failed:tenant_context:deployment_authorization_expired"],
+    ["future-dated", { ...deploymentAuthorization, authorized_at: "2026-08-21T00:00:00.001Z" }, deploymentAuthorizationContext,
+      "tenant_runtime_source_lock_preflight_failed:tenant_context:deployment_authorization_invalid"],
+    ["target mismatch", { ...deploymentAuthorization, target: "other-target" }, deploymentAuthorizationContext,
+      "tenant_runtime_source_lock_preflight_failed:tenant_context:deployment_authorization_target_mismatch"],
+    ["candidate mismatch", { ...deploymentAuthorization, reviewed_commit_sha: "9".repeat(40) }, deploymentAuthorizationContext,
+      "tenant_runtime_source_lock_preflight_failed:tenant_context:deployment_authorization_candidate_mismatch"],
+  ])("rejects %s deployment authorization before Cloudflare access", async (_case, authorization, context, expectedError) => {
+    const dependencies = preflightDependencies({
+      [sourceLockPaths.tenantContext]: {
+        ...tenantContextSourceLock,
+        deployment_authorization: authorization,
+      },
+    });
+
+    await expect(assertTenantRuntimeDeploymentPreflight({
+      configPath: "/deploy/wrangler.jsonc",
+      ...dependencies,
+      ...context,
+    })).rejects.toThrow(expectedError);
+    expect(dependencies.execFileImpl).not.toHaveBeenCalled();
   });
 
   it("fails closed for missing public vars, JWKS, Service Binding, and Durable Object binding", () => {
@@ -254,6 +304,26 @@ describe("tenant runtime deploy readiness", () => {
         "MANA_REQUIRED_AUDIENCE",
         "SLACK_INSTALLATION_CONTROL_PLANE",
         "TENANT_RUNTIME_STATE",
+      ],
+    });
+  });
+
+  it("rejects private JWK material and redirected canonical Service Bindings", () => {
+    const config = structuredClone(completeConfig);
+    config.vars.BRAINBASE_TENANT_CONTEXT_JWKS_JSON = JSON.stringify({
+      keys: [{ kty: "OKP", crv: "Ed25519", kid: "key-1", x: "public-key", d: "private-never-log" }],
+    });
+    config.services = [
+      { binding: "BRAINBASE_TENANT_RUNTIME_SERVICE", service: "other-runtime" },
+      { binding: "SLACK_INSTALLATION_CONTROL_PLANE", service: "other-control-plane" },
+    ];
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: [
+        "BRAINBASE_TENANT_CONTEXT_JWKS_JSON",
+        "BRAINBASE_TENANT_RUNTIME_SERVICE",
+        "SLACK_INSTALLATION_CONTROL_PLANE",
       ],
     });
   });
@@ -326,6 +396,23 @@ describe("tenant runtime deploy readiness", () => {
     const output = JSON.stringify(completeSecrets.map((name) => ({ name, type: "secret_text" })));
     expect(parseWranglerSecretNames(output)).toEqual([...completeSecrets].sort());
     expect(assertTenantRuntimeDeploymentConfig(completeConfig, parseWranglerSecretNames(output))).toEqual({
+      ready: true,
+      missing_bindings: [],
+    });
+  });
+
+  it("does not require legacy Brainbase URL vars because runtime calls the Service Binding", () => {
+    const config = structuredClone(completeConfig);
+    for (const name of [
+      "BRAINBASE_TENANT_AUTHORITY_URL",
+      "BRAINBASE_CREDENTIAL_BROKER_URL",
+      "BRAINBASE_QUOTA_URL",
+      "BRAINBASE_ACCOUNTING_URL",
+    ]) {
+      (config.vars as Record<string, unknown>)[name] = "not-a-url";
+    }
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
       ready: true,
       missing_bindings: [],
     });

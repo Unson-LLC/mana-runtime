@@ -23,13 +23,6 @@ const REQUIRED_TEXT_BINDINGS = [
   "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
 ] as const;
 
-const REQUIRED_HTTPS_BINDINGS = [
-  "BRAINBASE_TENANT_AUTHORITY_URL",
-  "BRAINBASE_CREDENTIAL_BROKER_URL",
-  "BRAINBASE_QUOTA_URL",
-  "BRAINBASE_ACCOUNTING_URL",
-] as const;
-
 function nonEmpty(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -68,6 +61,7 @@ function validJwks(value: unknown): boolean {
       const key = candidate as Record<string, unknown>;
       return key.kty === "OKP" && key.crv === "Ed25519"
         && nonEmpty(key.kid) && nonEmpty(key.x)
+        && key.d === undefined
         && (key.use === undefined || key.use === "sig");
     });
   } catch {
@@ -148,13 +142,8 @@ export function assessTenantRuntimeReadiness(
   if (!trustedService || typeof trustedService.fetch !== "function") {
     missing.push("BRAINBASE_TENANT_RUNTIME_SERVICE");
   }
-  const slackControlPlane = env.SLACK_INSTALLATION_CONTROL_PLANE as {
-    authorize?: unknown;
-    exchange_and_register?: unknown;
-  } | undefined;
-  if (!slackControlPlane
-    || typeof slackControlPlane.authorize !== "function"
-    || typeof slackControlPlane.exchange_and_register !== "function") {
+  const slackControlPlane = env.SLACK_INSTALLATION_CONTROL_PLANE as { fetch?: unknown } | undefined;
+  if (!slackControlPlane || typeof slackControlPlane.fetch !== "function") {
     missing.push("SLACK_INSTALLATION_CONTROL_PLANE");
   }
   const scopes = typeof env.MANA_REQUIRED_SLACK_SCOPES === "string"
@@ -179,9 +168,6 @@ export function assessTenantRuntimeReadiness(
     : []);
   if (REQUIRED_TENANT_CAPABILITIES.some((capability) => !capabilities.has(capability))) {
     missing.push("MANA_RUNTIME_CAPABILITIES");
-  }
-  for (const binding of REQUIRED_HTTPS_BINDINGS) {
-    if (!safeHttpsUrl(env[binding])) missing.push(binding);
   }
   if (!validJwks(env.BRAINBASE_TENANT_CONTEXT_JWKS_JSON)) {
     missing.push("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");

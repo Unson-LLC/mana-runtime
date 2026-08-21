@@ -85,5 +85,6 @@
     "consumer_fallback_allowed": false
   },
   "merge_allowed": true,
-  "deploy_allowed": false
+  "deploy_allowed": false,
+  "deployment_authorization": null
 }
