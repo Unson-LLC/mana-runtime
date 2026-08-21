@@ -1,4 +1,9 @@
 import type { SlackFileReference, SlackQueueEvent } from "./types.js";
+import {
+  resolveRuntimePlacement,
+  RuntimeBindingError,
+  type RuntimePlacementConfig,
+} from "./runtime-config.js";
 import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-request-body.js";
 import {
   TenantBoundaryError,
@@ -35,7 +40,11 @@ export interface HandleTenantSlackRequestOptions {
   signing_secret: string;
   expected_app_id: string;
   required_scopes: readonly string[];
-  required_authorization: TenantContextIssueRequest["required_authorization"];
+  /** Audience/capability are static; project_id is always supplied by the resolved placement. */
+  required_authorization: Omit<TenantContextIssueRequest["required_authorization"], "project_id">
+    & Partial<Pick<TenantContextIssueRequest["required_authorization"], "project_id">>;
+  /** Placement configuration is mandatory so a global project cannot authorize every channel. */
+  placement_config: RuntimePlacementConfig;
   authority: TenantAuthorityClient;
   now_ms?: number;
   resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
@@ -294,6 +303,21 @@ export async function handleTenantSlackRequest(
   }
 
   try {
+    const receivedAt = new Date(options.now_ms ?? Date.now()).toISOString();
+    const event = normalizeSlackEvent(
+      payload,
+      workspaceId,
+      receivedAt,
+      options.placement_config.tenantId,
+    );
+    const placement = resolveRuntimePlacement(event, options.placement_config);
+    const placementProjectIds = [...placement.projectCodes];
+    const requiredAuthorization = {
+      ...options.required_authorization,
+      // The first project is the canonical singular resource hint. The complete
+      // placement set is carried separately and checked for exact equality.
+      project_id: placementProjectIds[0]!,
+    };
     const resolved = await resolveSlackWorkerIngress({
       identity: {
         provider: "slack",
@@ -306,21 +330,16 @@ export async function handleTenantSlackRequest(
         requester_id: requesterId,
       },
       required_scopes: options.required_scopes,
-      required_authorization: options.required_authorization,
+      required_authorization: requiredAuthorization,
+      trusted_project_ids: placementProjectIds,
       authority: options.authority,
-      now: new Date(options.now_ms ?? Date.now()).toISOString(),
+      now: receivedAt,
       resolve_verification_key: options.resolve_verification_key,
     });
-    const event = normalizeSlackEvent(
-      payload,
-      workspaceId,
-      new Date(options.now_ms ?? Date.now()).toISOString(),
-      resolved.tenant_context.tenant.tenant_id,
-    );
     const message: TenantQueueBody<SlackQueueEvent> = {
       schema_version: "1.0",
       tenant_context: resolved.tenant_context,
-      payload: event,
+      payload: { ...event, tenantId: resolved.tenant_context.tenant.tenant_id },
     };
     assertSecretArtifactFree(message);
     await options.send(message);
@@ -328,6 +347,9 @@ export async function handleTenantSlackRequest(
   } catch (error) {
     if (error instanceof TenantBoundaryError) {
       return jsonResponse({ error: error.code }, tenantBoundaryStatus(error));
+    }
+    if (error instanceof RuntimeBindingError) {
+      return jsonResponse({ error: error.code }, 403);
     }
     return jsonResponse({ error: "WORKSPACE_CONNECTION_UNAVAILABLE" }, 503);
   }
