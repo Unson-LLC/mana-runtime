@@ -608,12 +608,17 @@ export async function assertTenantRuntimeDeploymentPreflight({
     throw new Error("tenant_runtime_secret_list_unavailable");
   }
   assertTenantRuntimeDeploymentConfig(config, parseWranglerSecretNames(stdout));
-  return { config, tenantId: config.vars.TENANT_ID };
+  return {
+    config,
+    tenantId: config.vars.TENANT_ID,
+    bootstrapMode: config.vars.MANA_BOOTSTRAP_MODE,
+  };
 }
 
 export async function assertTenantRuntimeHealthReady({
   baseUrl,
   expectedTenantId,
+  expectedBootstrapMode,
   fetchImpl = fetch,
   timeoutMs = 10_000,
 }) {
@@ -644,6 +649,20 @@ export async function assertTenantRuntimeHealthReady({
   const missing = Array.isArray(body?.tenant_runtime?.missing_bindings)
     ? body.tenant_runtime.missing_bindings.filter(nonEmpty).sort()
     : [];
+  if (expectedBootstrapMode === "slack_oauth") {
+    const validBootstrap = response.status === 503
+      && body?.ok === false
+      && body?.tenant === expectedTenantId
+      && body?.bootstrap_mode === "slack_oauth"
+      && body?.installation_bootstrap_required === true
+      && body?.tenant_runtime?.ready === false
+      && body?.tenant_runtime?.bootstrap_mode === "slack_oauth"
+      && body?.tenant_runtime?.installation_bootstrap_required === true
+      && missing.length === 1
+      && missing[0] === "BRAINBASE_WORKSPACE_CONNECTIONS_JSON";
+    if (!validBootstrap) throw new Error("tenant_runtime_post_deploy_bootstrap_invalid");
+    return body;
+  }
   if (!response.ok || body?.ok !== true || body?.tenant_runtime?.ready !== true) {
     throw new Error(`tenant_runtime_post_deploy_not_ready:${missing.length > 0 ? missing.join(",") : "unknown"}`);
   }

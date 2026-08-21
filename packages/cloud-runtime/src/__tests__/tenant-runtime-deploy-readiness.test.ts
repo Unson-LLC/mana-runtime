@@ -572,4 +572,45 @@ describe("tenant runtime deploy readiness", () => {
       redirect: "error",
     }));
   });
+
+  it("accepts only the explicit Slack OAuth bootstrap health marker when bootstrap is expected", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      ok: false,
+      tenant: "unson-business",
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+      tenant_runtime: {
+        ready: false,
+        missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+        bootstrap_mode: "slack_oauth",
+        installation_bootstrap_required: true,
+      },
+    }, { status: 503 }));
+
+    await expect(assertTenantRuntimeHealthReady({
+      baseUrl: "https://mana.example.test",
+      expectedTenantId: "unson-business",
+      expectedBootstrapMode: "slack_oauth",
+      fetchImpl,
+    })).resolves.toMatchObject({
+      tenant: "unson-business",
+      bootstrap_mode: "slack_oauth",
+      installation_bootstrap_required: true,
+    });
+  });
+
+  it("does not accept an ordinary non-ready response as bootstrap health", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({
+      ok: false,
+      tenant: "unson-business",
+      tenant_runtime: { ready: false, missing_bindings: [] },
+    }, { status: 503 }));
+
+    await expect(assertTenantRuntimeHealthReady({
+      baseUrl: "https://mana.example.test",
+      expectedTenantId: "unson-business",
+      expectedBootstrapMode: "slack_oauth",
+      fetchImpl,
+    })).rejects.toThrow("tenant_runtime_post_deploy_bootstrap_invalid");
+  });
 });

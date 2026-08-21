@@ -101,6 +101,7 @@ try {
   await assertTenantRuntimeHealthReady({
     baseUrl,
     expectedTenantId: deploymentConfig.tenantId,
+    expectedBootstrapMode: deploymentConfig.bootstrapMode,
   });
 } catch (error) {
   console.error(error instanceof Error ? error.message : "tenant_runtime_post_deploy_not_ready");
