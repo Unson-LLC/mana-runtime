@@ -21,7 +21,7 @@
     "MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON": "{\"unson\":\"T07LL5WV7N1\",\"unson-business\":\"T0882T8N9UH\",\"tech-knight\":\"T07A9J3PEMB\"}",
     "SLACK_EXPECTED_APP_ID": "A0BPM2J33SN",
     "SLACK_OAUTH_APP_ID": "A0BPM2J33SN",
-    "SLACK_OAUTH_CLIENT_ID": "7700200993749.9126720830805",
+    "SLACK_OAUTH_CLIENT_ID": "8274926757969.11803086105906",
     "SLACK_OAUTH_REDIRECT_URI": "https://unson-business-mana-runtime.unson.workers.dev/slack/installations/oauth/callback",
     "SLACK_OAUTH_SCOPES": "app_mentions:read,chat:write,commands,files:read,users:read",
     "BRAINBASE_SLACK_CREDENTIAL_STORE_URL": "https://brainbase-tenant-credential-store.unson.workers.dev/api/v1/credentials",
@@ -171,6 +171,10 @@
     {
       "binding": "SLACK_INSTALLATION_CONTROL_PLANE",
       "service": "brainbase-slack-installation-control-plane"
+    },
+    {
+      "binding": "BRAINBASE_SLACK_CREDENTIAL_STORE_SERVICE",
+      "service": "brainbase-tenant-credential-store"
     }
   ],
   "containers": [
