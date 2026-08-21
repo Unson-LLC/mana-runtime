@@ -402,10 +402,15 @@ export function createBrainbaseTrustedProviderForwarderFromEnv(
             provider_operation: mapped.provider_operation,
             request: mapped.request,
           }),
-          redirect: "error",
+          // Cloudflare Workers service bindings only accept "follow" or "manual".
+          // Keep forwarding fail-closed by observing redirects without following them.
+          redirect: "manual",
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch {
+        deny("credential_lease", "UPSTREAM_UNAVAILABLE");
+      }
+      if (response.status >= 300 && response.status < 400) {
         deny("credential_lease", "UPSTREAM_UNAVAILABLE");
       }
       let payload: unknown;

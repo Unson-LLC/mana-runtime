@@ -321,8 +321,10 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
 
   it("uses the Brainbase Service Binding instead of the Worker global network", async () => {
     const observed: Array<{ url: string; headers: Headers }> = [];
+    const redirects: Array<RequestRedirect | undefined> = [];
     const service = {
       fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        redirects.push(init?.redirect);
         const request = new Request(input, init);
         observed.push({ url: request.url, headers: new Headers(request.headers) });
         const body = await request.json() as { provider_operation: string };
@@ -357,8 +359,33 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
 
     expect(globalFetch).not.toHaveBeenCalled();
     expect(observed).toHaveLength(1);
+    expect(redirects).toEqual(["manual"]);
     expect(new URL(observed[0]!.url).pathname).toBe("/api/v1/runtime/provider-requests:forward");
     globalFetch.mockRestore();
+  });
+
+  it("does not follow a redirect returned by the Brainbase Service Binding", async () => {
+    const redirects: Array<RequestRedirect | undefined> = [];
+    const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
+      env: {
+        ...BASE_ENV,
+        BRAINBASE_TENANT_RUNTIME_SERVICE: {
+          async fetch(_input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+            redirects.push(init?.redirect);
+            return new Response(null, { status: 302, headers: { location: "https://example.invalid/" } });
+          },
+        },
+      },
+      tenant_context: TENANT_CONTEXT,
+    });
+
+    await expect(forwarder.forward({
+      lease: LEASE,
+      expected_binding: BINDING,
+      request: jsonRequest("https://api.anthropic.com/v1/messages", "POST", { messages: [] }),
+      now: LEASE.issued_at,
+    })).rejects.toMatchObject({ boundary: "credential_lease", code: "UPSTREAM_UNAVAILABLE" });
+    expect(redirects).toEqual(["manual"]);
   });
 
   it.each([
