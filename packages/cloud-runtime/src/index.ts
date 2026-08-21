@@ -986,6 +986,8 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
   const authorizationContext = await clients.authority.issue_tenant_context({
     workspace_connection: snapshot,
     tenant_revision: artifactContext.tenant.tenant_revision,
+    required_connection_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+      .split(",").map((scope) => scope.trim()).filter(Boolean),
     actor: artifactContext.actor,
     authorization: artifactContext.authorization,
     correlation_id: artifactContext.correlation_id,

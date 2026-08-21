@@ -52,6 +52,7 @@ function request(capabilityId = "task.read"): TenantContextIssueRequest {
     correlation_id: correlationId,
     operation_id: operationId,
     billing_principal_id: "runtime-self-asserted-billing",
+    required_connection_scopes: ["app_mentions:read", "chat:write"],
     required_authorization: {
       audience: "mana-runtime",
       project_id: "project-unson-backoffice",
@@ -186,6 +187,7 @@ describe("Brainbase-owned company authority HTTP client", () => {
     expect(body).not.toHaveProperty("actor");
     expect(body).not.toHaveProperty("authorization");
     expect(body).not.toHaveProperty("billing_principal_id");
+    expect(body.required_connection_scopes).toEqual(["app_mentions:read", "chat:write"]);
     expect(body.provider_identity).toEqual({
       provider: "slack",
       authenticated_subject_id: "U-UMEDA",

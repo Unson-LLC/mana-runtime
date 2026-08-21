@@ -388,6 +388,7 @@ export function createTenantRuntimeHttpClients(
           expected_connection_revision: request.workspace_connection.connection_revision,
           workspace_id: request.workspace_connection.workspace_id,
           app_id: request.workspace_connection.app_id,
+          required_connection_scopes: [...request.required_connection_scopes],
           provider_identity: {
             provider: "slack",
             authenticated_subject_id: request.slack.requester_id,

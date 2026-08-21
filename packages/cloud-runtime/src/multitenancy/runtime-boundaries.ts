@@ -30,6 +30,8 @@ export interface SlackIngressIdentity extends WorkspaceConnectionLookup {
 export interface TenantContextIssueRequest {
   workspace_connection: WorkspaceConnectionSnapshot;
   tenant_revision?: string;
+  /** Provider scopes verified against the authoritative workspace connection. */
+  required_connection_scopes: readonly string[];
   slack: Pick<SlackIngressIdentity,
     "event_id" | "channel_id" | "thread_ts" | "requester_id" | "enterprise_id">;
   actor?: TenantContextEnvelope["actor"];
@@ -162,6 +164,7 @@ export async function resolveSlackWorkerIngress(input: {
 
   const issueRequest: TenantContextIssueRequest = {
     workspace_connection: structuredClone(resolved),
+    required_connection_scopes: [...input.required_scopes],
     slack: {
       event_id: input.identity.event_id,
       channel_id: input.identity.channel_id,

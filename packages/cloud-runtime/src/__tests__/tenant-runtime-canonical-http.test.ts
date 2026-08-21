@@ -98,6 +98,7 @@ describe("Brainbase canonical tenant runtime transport", () => {
         expected_connection_revision: "7",
         workspace_id: "T1",
         app_id: "A1",
+        required_connection_scopes: ["app_mentions:read", "chat:write"],
         provider_identity: {
           provider: "slack",
           authenticated_subject_id: "U1",
@@ -135,6 +136,7 @@ describe("Brainbase canonical tenant runtime transport", () => {
       correlation_id: context.correlation_id,
       operation_id: context.operation_id,
       billing_principal_id: "person-1",
+      required_connection_scopes: ["app_mentions:read", "chat:write"],
       required_authorization: { audience: "mana-runtime", project_id: "project-1", capability_id: "task.write" },
     });
     expect(result).toEqual(context);
