@@ -366,9 +366,19 @@ function validWorkspaceConnectionHints(value) {
         "tenant_revision",
         "connection_id",
         "connection_revision",
+        "installation_id",
+        "installer_id",
         "workspace_id",
         "app_id",
-      ].every((name) => nonEmpty(hint[name])));
+        "deployment_id",
+        "profile",
+        "credential_mode",
+        "contract_revision",
+      ].every((name) => nonEmpty(hint[name]))
+      && hint.status === "active"
+      && Array.isArray(hint.granted_scopes)
+      && hint.granted_scopes.length > 0
+      && hint.granted_scopes.every(nonEmpty));
   } catch {
     return false;
   }
