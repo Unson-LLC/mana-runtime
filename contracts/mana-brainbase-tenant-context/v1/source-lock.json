@@ -19,6 +19,13 @@
   "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
   "production_code_changed": true,
   "merge_allowed": true,
-  "deploy_allowed": false,
-  "deployment_authorization": null
+  "deploy_allowed": true,
+  "deployment_authorization": {
+    "reviewer_identity": "user:ksato",
+    "reviewer_provenance": "codex:user-authorized-production-e2e",
+    "reviewed_commit_sha": "0316b85898eb976bc6761959edc9284f32715ffa",
+    "target": "unson-business-mana-runtime",
+    "authorized_at": "2026-08-21T09:20:29.000Z",
+    "expires_at": "2026-08-21T11:20:29.000Z"
+  }
 }
