@@ -199,6 +199,20 @@ import {
   handleSlackOAuthStartRequest,
 } from "./multitenancy/slack-oauth-installation.js";
 import { createSlackInstallationControlPlaneClient } from "./multitenancy/slack-installation-control-plane-client.js";
+import {
+  ContractLedgerStateStore,
+  contractLedgerConfig,
+  enqueueScheduledContractLedgerSync,
+  isContractLedgerEvent,
+  notifyContractLedgerDeadLetter,
+  parseContractLedgerSlackAction,
+  processContractLedgerApproval,
+  processContractLedgerSync,
+  scheduledContractLedgerEvent,
+  type ContractLedgerApprovalEvent,
+  type ContractLedgerEnvironment,
+  type ContractLedgerSyncEvent,
+} from "./contract-ledger.js";
 
 export { ContainerProxy, TechKnightSandbox } from "./sandbox-runtime.js";
 export { TaskWriteBudget } from "./task-write-budget.js";
@@ -206,8 +220,30 @@ export { TaskWriteApproval } from "./task-write-approval.js";
 export { TaskBoardBinding } from "./task-board-binding.js";
 export { RuntimeSessionRegistry } from "./runtime-session-registry.js";
 export { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
+export class ContractLedgerState extends DurableObject {
+  private readonly store = new ContractLedgerStateStore({ storage: this.ctx.storage });
+  claimRun(key: string) { return this.store.claimRun(key); }
+  completeRun(key: string, receipt: Parameters<ContractLedgerStateStore["completeRun"]>[1]) {
+    return this.store.completeRun(key, receipt);
+  }
+  failRun(key: string, receipt: Parameters<ContractLedgerStateStore["failRun"]>[1]) {
+    return this.store.failRun(key, receipt);
+  }
+  releaseRun(key: string) { return this.store.releaseRun(key); }
+  saveCandidate(candidate: Parameters<ContractLedgerStateStore["saveCandidate"]>[0]) {
+    return this.store.saveCandidate(candidate);
+  }
+  markCandidateNotified(envelopeId: string, messageTs: string) {
+    return this.store.markCandidateNotified(envelopeId, messageTs);
+  }
+  candidate(envelopeId: string) { return this.store.candidate(envelopeId); }
+  claimDecision(event: Parameters<ContractLedgerStateStore["claimDecision"]>[0]) {
+    return this.store.claimDecision(event);
+  }
+  completeApproval(envelopeId: string) { return this.store.completeApproval(envelopeId); }
+}
 
-interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment {
+interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedgerEnvironment {
   SLACK_SIGNING_SECRET: string;
   SLACK_SIGNING_SECRET_TECHKNIGHT?: string;
   SLACK_EXPECTED_TEAM_ID: string;
@@ -1642,6 +1678,17 @@ export default {
           postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 },
         ...(request.method === "POST" ? { enqueued: true } : {}) });
     }
+    if (request.method === "POST" && url.pathname === "/internal/contract-ledger/sync") {
+      const authorization = request.headers.get("authorization");
+      if (!env.CONTRACT_LEDGER_TRIGGER_TOKEN || authorization !== `Bearer ${env.CONTRACT_LEDGER_TRIGGER_TOKEN}`) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const config = contractLedgerConfig(env);
+      if (!config.enabled) return Response.json({ error: "contract_ledger_disabled" }, { status: 503 });
+      const event = scheduledContractLedgerEvent(new Date(), config.fromDate);
+      await env.CONTRACT_LEDGER_SYNCS.send(event);
+      return Response.json({ ok: true, queued: true, runId: event.runId, idempotencyKey: event.idempotencyKey });
+    }
     if (request.method === "POST" && url.pathname === "/development/callback") {
       const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       const callbackBoundary = await resolveDurableTenantBoundaryContext(
@@ -2012,6 +2059,11 @@ export default {
         }, () => {
           if (!canonicalInteractionTenantId) deny("worker_ingress", "TENANT_CONTEXT_MISSING");
           return meetingMinutesDeploymentGate(env, canonicalInteractionTenantId).isIntakePaused();
+        }, async (payload) => {
+          const event = parseContractLedgerSlackAction(payload, contractLedgerConfig(env));
+          if (!event) return undefined;
+          await env.CONTRACT_LEDGER_SYNCS.send(event);
+          return Response.json({ ok: true, queued: true, decision: event.decision, envelope_id: event.envelopeId });
         });
     }
     if (request.method === "POST" && url.pathname === "/slack/commands") {
@@ -2142,7 +2194,8 @@ export default {
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
     | TenantQueueBody<TaskBoardRepairEvent>
-    | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>, env: Env): Promise<void> {
+    | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
+    | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>, env: Env): Promise<void> {
     const executeTenantContainerOperation = <T>(input: {
       tenant_context: TenantContextEnvelope;
       expected_scope: ExpectedTenantScope;
@@ -2171,6 +2224,33 @@ export default {
       },
     });
     for (const message of batch.messages) {
+      if (isContractLedgerEvent(message.body)) {
+        if (batch.queue === "unson-business-contract-ledger-syncs-dlq") {
+          try { await notifyContractLedgerDeadLetter(message.body, env); message.ack(); }
+          catch (error) {
+            console.error(JSON.stringify({ event: "contract_ledger_dlq_notification_failed", runId: message.body.runId,
+              error: error instanceof Error ? error.message : "unexpected_error" }));
+            message.retry();
+          }
+          continue;
+        }
+        try {
+          if (message.body.kind === "contract_ledger_sync") {
+            const receipt = await processContractLedgerSync(message.body, env);
+            console.log(JSON.stringify({ event: "contract_ledger_sync_completed", ...receipt }));
+          } else {
+            const outcome = await processContractLedgerApproval(message.body, env);
+            console.log(JSON.stringify({ event: "contract_ledger_approval_completed", runId: message.body.runId,
+              envelopeId: message.body.envelopeId, decision: message.body.decision, outcome }));
+          }
+          message.ack();
+        } catch (error) {
+          console.error(JSON.stringify({ event: "contract_ledger_processing_failed", kind: message.body.kind,
+            runId: message.body.runId, error: error instanceof Error ? error.message : "unexpected_error" }));
+          message.retry();
+        }
+        continue;
+      }
       if (ackMalformedTenantQueueMessage(message,
         (entry) => console.error(JSON.stringify(entry)))) {
         continue;
@@ -2999,15 +3079,17 @@ export default {
     }
   },
 
-  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     await enqueueScheduledTaskBoardRepair(
       env,
       new Date().toISOString(),
       (repair) => resolveTaskBoardRepairTenantContext(env, repair),
     );
+    await enqueueScheduledContractLedgerSync(controller, env);
   },
 } satisfies ExportedHandler<Env, TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
   | TenantQueueBody<MeetingMinutesRedo>
   | TenantQueueBody<MeetingMinutesRecovery>
   | TenantQueueBody<TaskBoardRepairEvent>
-  | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent>;
+  | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
+  | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>;

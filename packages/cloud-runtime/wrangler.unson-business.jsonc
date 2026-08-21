@@ -30,6 +30,15 @@
     "BRAINBASE_GRAPH_API_BASE_URL": "https://bb.unson.jp",
     "BRAINBASE_MCP_BASE_URL": "https://bb.unson.jp/runtime-mcp",
     "GOOGLE_DRIVE_MCP_BASE_URL": "https://bb.unson.jp/runtime-google-drive",
+    "CONTRACT_LEDGER_ENABLED": "true",
+    "CONTRACT_LEDGER_WRITE_MODE": "existing",
+    "CONTRACT_LEDGER_SPREADSHEET_ID": "1wVt_Cgj3P1cYXCiC8nyn1RmHOKpPTOaIGfGuPjPCNFk",
+    "CONTRACT_LEDGER_SHEET_NAME": "契約台帳",
+    "CONTRACT_LEDGER_LEGAL_CHANNEL_ID": "C0BKZ6CF3J8",
+    "CONTRACT_LEDGER_FROM_DATE": "2026-01-01",
+    "CONTRACT_LEDGER_APPROVER_USER_IDS": "U088D1HBY6L,U0BKP8D3KPD",
+    "DOCUSIGN_AUTH_SERVER": "account.docusign.com",
+    "DOCUSIGN_EXPECTED_EMAIL": "info@unson.jp",
     "BRAINBASE_TENANT_RUNTIME_ENABLED": "1",
     "BRAINBASE_TENANT_RUNTIME_HOST": "127.0.0.1",
     "BRAINBASE_TENANT_RUNTIME_PORT": "31016",
@@ -101,6 +110,10 @@
       {
         "name": "TENANT_RUNTIME_STATE",
         "class_name": "TenantRuntimeState"
+      },
+      {
+        "name": "CONTRACT_LEDGER_STATE",
+        "class_name": "ContractLedgerState"
       }
     ]
   },
@@ -139,6 +152,10 @@
     },
     {
       "tag": "v9",
+      "new_sqlite_classes": ["ContractLedgerState"]
+    },
+    {
+      "tag": "v10",
       "new_sqlite_classes": ["TenantRuntimeState"]
     }
   ],
@@ -169,6 +186,10 @@
       {
         "binding": "TASK_BOARD_REPAIRS",
         "queue": "unson-business-mana-task-board-repairs"
+      },
+      {
+        "binding": "CONTRACT_LEDGER_SYNCS",
+        "queue": "unson-business-contract-ledger-syncs"
       }
     ],
     "consumers": [
@@ -187,10 +208,25 @@
         "max_retries": 3,
         "max_concurrency": 1,
         "dead_letter_queue": "unson-business-mana-task-board-repairs-dlq"
+      },
+      {
+        "queue": "unson-business-contract-ledger-syncs",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "max_concurrency": 1,
+        "dead_letter_queue": "unson-business-contract-ledger-syncs-dlq"
+      },
+      {
+        "queue": "unson-business-contract-ledger-syncs-dlq",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "max_concurrency": 1
       }
     ]
   },
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": ["*/15 * * * *", "0 0 * * 1-5"]
   }
 }
