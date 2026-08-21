@@ -101,7 +101,7 @@ tenantは契約・データ分離・予算・監査の単位、organizationは�
 | [#297](https://github.com/Unson-LLC/mana-runtime/pull/297) | 議事録、Slack操作、Task Canvasをtenant境界へ移行 | `eb3fb8cbd7f0e542cfc86d9405afa766725779e7` |
 | [#298](https://github.com/Unson-LLC/mana-runtime/pull/298) | provider credential、tenant Container、配備profile、readiness/security | `701d71229ae7aa3b7c52a8659eb8e5fb3f8e6e5c` |
 
-Brainbase producer側の対応契約 [#1257](https://github.com/Unson-LLC/brainbase-unson/pull/1257) も統合済みである。canonical source-lockは `merge_allowed: true`、`deploy_allowed: false` を維持する。
+Brainbase producer側の対応契約 [#1257](https://github.com/Unson-LLC/brainbase-unson/pull/1257) も統合済みである。canonical source-lockは `merge_allowed: true`、`deploy_allowed: false` を維持する。`deploy_allowed: true` は、レビュー済み構成を本番検証へ投入してよいという許可であり、実Slack E2E、Safety／Value Gate、切替完了を意味しない。
 
 既存機能として、以下もリポジトリ上に存在する。
 
@@ -132,7 +132,7 @@ Brainbase producer側の対応契約 [#1257](https://github.com/Unson-LLC/brainb
 - Cloudflare本番配備、実Slack、Brainbase UsageEvent・Operation Receiptの横断readbackは`not_collected`。
 - TechKnightの2つ以上の実tenantを使う成功・越境拒否・revision更新・再配送・障害分離E2Eは未取得。
 - [#293](https://github.com/Unson-LLC/mana-runtime/pull/293) は横断E2E Story・SpecのDraftであり、本番証拠ゲートとして未完。
-- source-lockの`deploy_allowed`は`false`であり、コード統合を本番稼働へ読み替えない。
+- source-lockの`deploy_allowed`は`false`であり、現時点ではレビュー済み構成の本番検証投入も未許可である。値が`true`になっても、コード統合を本番稼働、E2E、切替完了へ読み替えない。
 - 個人版OSSと組織版の共通Core契約、および組織版CIで個人版契約テストを通す互換ゲートは未完成。
 - actor、owner、organization、tenant、project、placementを、個人・組織・shared-cloud全経路で統一する上位Execution Contextは未完成。
 - 所有者やorganization未解決時に佐藤さん・雲孫へ寄らないno-fallback保証は未完成。
@@ -237,7 +237,7 @@ M0の必須成果:
 3. 安全性確認後にTask write、議事録、外部操作をtenant単位で段階開放する。
 4. 各tenantで少なくとも1件、依頼→company authority解決→実行または承認→外部Ship→readback→tenant付きReceiptを完走する。
 5. Cloudflare返信1件、旧runtime返信0件、UsageEventとOperation ReceiptのBrainbase正本readbackを確認する。
-6. Safety GateとValue Gateが揃うまで`deploy_allowed: false`を維持する。
+6. `deploy_allowed`はレビュー済み構成を本番検証へ投入するための前段ゲートとし、Safety Gate、Value Gate、実Slack／Brainbase readback、切替完了は後段の独立ゲートとして記録する。
 
 ### P1-A. 汎用ワークフロー・HITL
 
@@ -358,5 +358,5 @@ M0の必須成果:
 - Personal KG境界は本人同士の相互非漏洩E2E、tenant境界は異なる実tenant間の否定E2Eで証明する。
 - company authority、Personal、tenantの3境界を別々に記録し、片方の成功を他方へ読み替えない。
 - Safety GateとValue Gateを別々に記録し、片方の成功をもう片方へ読み替えない。
-- source-lockの`merge_allowed`と`deploy_allowed`を別ゲートとして扱う。
+- source-lockの`merge_allowed`と`deploy_allowed`を別ゲートとして扱う。`deploy_allowed`はレビュー済み構成の本番検証投入許可であり、E2E・Safety／Value Gate・切替完了の証明ではない。
 - 旧superseded PRを実装正本へ戻さない。

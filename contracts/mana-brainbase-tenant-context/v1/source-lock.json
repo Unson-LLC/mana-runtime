@@ -19,5 +19,6 @@
   "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
   "production_code_changed": true,
   "merge_allowed": true,
-  "deploy_allowed": false
+  "deploy_allowed": false,
+  "deployment_authorization": null
 }

@@ -69,6 +69,10 @@
     {
       "binding": "BRAINBASE_TENANT_RUNTIME_SERVICE",
       "service": "brainbase-tenant-runtime"
+    },
+    {
+      "binding": "SLACK_INSTALLATION_CONTROL_PLANE",
+      "service": "brainbase-slack-installation-control-plane"
     }
   ],
   "containers": [

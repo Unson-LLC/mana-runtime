@@ -33,7 +33,8 @@
     { "tag": "v5", "new_sqlite_classes": ["TenantRuntimeState"] }
   ],
   "services": [
-    { "binding": "BRAINBASE_TENANT_RUNTIME_SERVICE", "service": "brainbase-tenant-runtime" }
+    { "binding": "BRAINBASE_TENANT_RUNTIME_SERVICE", "service": "brainbase-tenant-runtime" },
+    { "binding": "SLACK_INSTALLATION_CONTROL_PLANE", "service": "brainbase-slack-installation-control-plane" }
   ],
   "containers": [
     { "class_name": "TechKnightSandbox", "image": "./Dockerfile", "instance_type": "basic", "max_instances": 1 }

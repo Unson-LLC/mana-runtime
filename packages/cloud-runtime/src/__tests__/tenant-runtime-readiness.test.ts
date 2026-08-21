@@ -18,10 +18,6 @@ const complete = {
     "idempotent_effects_v1",
     "container_sanitization_v1",
   ].join(","),
-  BRAINBASE_TENANT_AUTHORITY_URL: "https://authority.example.test",
-  BRAINBASE_CREDENTIAL_BROKER_URL: "https://broker.example.test",
-  BRAINBASE_QUOTA_URL: "https://quota.example.test",
-  BRAINBASE_ACCOUNTING_URL: "https://accounting.example.test",
   BRAINBASE_RUNTIME_API_TOKEN: "opaque-test-token",
   BRAINBASE_TENANT_RUNTIME_ENABLED: "1",
   BRAINBASE_TENANT_RUNTIME_HOST: "127.0.0.1",
@@ -35,10 +31,7 @@ const complete = {
   SLACK_OAUTH_CLIENT_ID: "client-test",
   SLACK_OAUTH_REDIRECT_URI: "https://mana.example.test/slack/installations/oauth/callback",
   SLACK_OAUTH_SCOPES: "app_mentions:read,chat:write",
-  SLACK_INSTALLATION_CONTROL_PLANE: {
-    authorize: async () => ({}),
-    exchange_and_register: async () => ({}),
-  },
+  SLACK_INSTALLATION_CONTROL_PLANE: { fetch: async () => new Response() },
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
     keys: [{ kty: "OKP", crv: "Ed25519", kid: "key-1", x: "test", use: "sig" }],
   }),
@@ -60,12 +53,47 @@ describe("tenant runtime readiness", () => {
     expect(result).toEqual({
       ready: false,
       missing_bindings: [
-        "BRAINBASE_QUOTA_URL",
         "BRAINBASE_RUNTIME_API_TOKEN",
         "TENANT_RUNTIME_STATE",
       ],
     });
     expect(JSON.stringify(result)).not.toContain("opaque-test-token");
+  });
+
+  it("does not require legacy Brainbase URL variables when Service Bindings are used", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_TENANT_AUTHORITY_URL: undefined,
+      BRAINBASE_CREDENTIAL_BROKER_URL: "http://unused.example.test",
+      BRAINBASE_QUOTA_URL: undefined,
+      BRAINBASE_ACCOUNTING_URL: "not-a-url",
+    })).toEqual({ ready: true, missing_bindings: [] });
+  });
+
+  it("rejects a tenant-context JWKS containing private key material", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
+        keys: [{ kty: "OKP", crv: "Ed25519", kid: "key-1", x: "public-key", d: "private-never-log" }],
+      }),
+    })).toEqual({ ready: false, missing_bindings: ["BRAINBASE_TENANT_CONTEXT_JWKS_JSON"] });
+  });
+
+  it("requires a fetch-only Slack installation control-plane binding", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      SLACK_INSTALLATION_CONTROL_PLANE: {
+        authorize: async () => ({}),
+        exchange_and_register: async () => ({}),
+      },
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["SLACK_INSTALLATION_CONTROL_PLANE"],
+    });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      SLACK_INSTALLATION_CONTROL_PLANE: { fetch: async () => new Response() },
+    })).toEqual({ ready: true, missing_bindings: [] });
   });
 
   it("fails closed when installation lifecycle authentication is not configured", () => {

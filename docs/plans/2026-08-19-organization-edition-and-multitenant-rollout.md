@@ -59,7 +59,7 @@ Brainbase producer側の対応契約 [#1257](https://github.com/Unson-LLC/brainb
 ### 2.2 未完ゲート
 
 - canonical source-lock: `merge_allowed: true`
-- canonical source-lock: `deploy_allowed: false`
+- canonical source-lock: `deploy_allowed: false`（`true`にする場合も、意味はレビュー済み構成を本番検証へ投入してよいという許可に限る。実Slack E2E、Safety／Value Gate、切替完了を意味しない）
 - Cloudflare本番配備: `not_collected`
 - 実Slack E2E: `not_collected`
 - Brainbase UsageEvent / Operation Receipt readback: `not_collected`
@@ -330,12 +330,12 @@ protocol v1ではcross-tenant Container再利用を禁止する。tenant変更�
 1. Brainbase control planeへ2つ以上の実tenantとworkspace connectionを登録
 2. authority、JWKS、audience、project、capability、Slack scopes、OAuth、quota、credential broker、accountingをpreflightで検証
 3. source-lockの`deploy_allowed: false`を維持したままdry-runとreadinessを取得
-4. 承認されたtargetだけへCloudflare deploy
+4. レビュー済み構成に対して`deploy_allowed: true`と期限付き`deployment_authorization`を記録し、同じreviewed commitを`MANA_DEPLOY_CANDIDATE_COMMIT`へ指定した後、承認されたtargetだけへCloudflare deploy（これは本番検証の投入であり、E2E／Safety／Value Gate／切替完了とは別）
 5. tenant単位でread-only canary
 6. 正常、越境拒否、再配送、revision更新、依存障害、Usage/Receiptをreadback
 7. Safety Gate成立後、tenant単位でTask write、議事録、外部操作を段階開放
 8. 各tenantで実務Shipを1件以上完了
-9. 同一runの証拠が揃った後だけsource-lockとStory証拠を更新
+9. 同一runの証拠が揃った後、Story証拠と後段ゲートの結果を更新する。source-lockの配備許可は再利用せず、検証終了または期限到来時に`deploy_allowed: false`と`deployment_authorization: null`へ戻す
 
 **Safety Gate C**:
 
