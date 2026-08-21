@@ -17,7 +17,6 @@
   },
   "vars": {
     "TENANT_ID": "unson-business",
-    "MANA_BOOTSTRAP_MODE": "slack_oauth",
     "SLACK_EXPECTED_TEAM_ID": "T0882T8N9UH",
     "MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON": "{\"unson\":\"T07LL5WV7N1\",\"unson-business\":\"T0882T8N9UH\",\"tech-knight\":\"T07A9J3PEMB\"}",
     "SLACK_EXPECTED_APP_ID": "A0BPM2J33SN",
@@ -41,6 +40,7 @@
     "DOCUSIGN_AUTH_SERVER": "account.docusign.com",
     "DOCUSIGN_EXPECTED_EMAIL": "info@unson.jp",
     "BRAINBASE_TENANT_RUNTIME_ENABLED": "1",
+    "BRAINBASE_WORKSPACE_CONNECTIONS_JSON": "[{\"tenant_id\":\"ten_01M0HMA228ES64N4TFX846V8T8\",\"tenant_revision\":\"1\",\"connection_id\":\"wsc_01M0HRK94FG2Y8DMBFYJHYT14K\",\"connection_revision\":\"1\",\"workspace_id\":\"T0882T8N9UH\",\"app_id\":\"A0BPM2J33SN\",\"installation_id\":\"slack_T0882T8N9UH_A0BPM2J33SN\",\"granted_scopes\":[\"app_mentions:read\",\"assistant:write\",\"canvases:read\",\"canvases:write\",\"channels:history\",\"channels:read\",\"chat:write\",\"chat:write.customize\",\"commands\",\"files:read\",\"files:write\",\"groups:history\",\"groups:read\",\"im:history\",\"im:read\",\"im:write\",\"mpim:history\",\"mpim:read\",\"mpim:write\",\"reactions:read\",\"reactions:write\",\"users:read\",\"users:read.email\"],\"status\":\"active\",\"credential_mode\":\"customer_oauth\"}]",
     "BRAINBASE_TENANT_RUNTIME_HOST": "127.0.0.1",
     "BRAINBASE_TENANT_RUNTIME_PORT": "31016",
     "MANA_REQUIRED_AUDIENCE": "mana-runtime",
