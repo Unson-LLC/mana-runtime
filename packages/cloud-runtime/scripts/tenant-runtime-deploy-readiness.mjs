@@ -355,6 +355,25 @@ function parsePlacements(value) {
   }
 }
 
+function validWorkspaceConnectionHints(value) {
+  if (!nonEmpty(value)) return false;
+  try {
+    const hints = JSON.parse(value);
+    return Array.isArray(hints) && hints.length > 0 && hints.every((hint) =>
+      hint && typeof hint === "object" && !Array.isArray(hint)
+      && [
+        "tenant_id",
+        "tenant_revision",
+        "connection_id",
+        "connection_revision",
+        "workspace_id",
+        "app_id",
+      ].every((name) => nonEmpty(hint[name])));
+  } catch {
+    return false;
+  }
+}
+
 function hasNamedBinding(bindings, name, valueKey) {
   return Array.isArray(bindings) && bindings.some((binding) =>
     binding && typeof binding === "object"
@@ -421,6 +440,9 @@ export function assessTenantRuntimeDeploymentConfig(config, secretNames) {
   }
   if (!validJwks(vars.BRAINBASE_TENANT_CONTEXT_JWKS_JSON)) {
     missing.add("BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
+  }
+  if (!validWorkspaceConnectionHints(vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) {
+    missing.add("BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   }
   if (!hasServiceBinding(config?.services, "BRAINBASE_TENANT_RUNTIME_SERVICE", "brainbase-tenant-runtime")) {
     missing.add("BRAINBASE_TENANT_RUNTIME_SERVICE");

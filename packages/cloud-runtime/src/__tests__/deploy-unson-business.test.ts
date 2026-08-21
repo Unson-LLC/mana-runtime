@@ -35,7 +35,7 @@ describe("unson business deploy wrapper", () => {
     expect(result.stderr).not.toContain("ENOENT");
   });
 
-  it("stops before Wrangler when deployment authorization is unavailable", async () => {
+  it("stops before Wrangler when the production workspace connection is unavailable", async () => {
     const script = fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url));
     const configPath = fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url));
     const config = JSON.parse(await readFile(configPath, "utf8"));
@@ -75,8 +75,9 @@ describe("unson business deploy wrapper", () => {
       });
 
       expect(result.status).toBe(7);
-      expect(result.stderr).toContain("tenant_runtime_source_lock_preflight_failed:tenant_context:");
-      expect(result.stderr).toMatch(/deploy_not_allowed|deployment_authorization_context_missing/);
+      expect(result.stderr).toContain(
+        "tenant_runtime_deploy_preflight_failed:BRAINBASE_WORKSPACE_CONNECTIONS_JSON",
+      );
       expect(result.stderr).not.toContain("token-never-log");
       expect(result.stderr).not.toContain("ENOENT");
     } finally {
