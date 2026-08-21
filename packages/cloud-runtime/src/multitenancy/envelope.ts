@@ -214,6 +214,14 @@ function assertExpectedScope(
   }
   if (envelope.actor.principal_id !== expected.actor_principal_id) deny(boundary, "ACTOR_SCOPE_MISMATCH");
   if (!envelope.authorization.project_ids.includes(expected.project_id)) deny(boundary, "PROJECT_SCOPE_MISMATCH");
+  if (expected.project_ids !== undefined) {
+    const signedProjectIds = [...envelope.authorization.project_ids].sort();
+    const expectedProjectIds = [...expected.project_ids].sort();
+    if (signedProjectIds.length !== expectedProjectIds.length
+      || signedProjectIds.some((projectId, index) => projectId !== expectedProjectIds[index])) {
+      deny(boundary, "PROJECT_SCOPE_MISMATCH");
+    }
+  }
   if (!envelope.authorization.capability_ids.includes(expected.capability_id)) deny(boundary, "CAPABILITY_SCOPE_MISMATCH");
   if (envelope.placement.deployment_id !== expected.deployment_id) deny(boundary, "CROSS_TENANT_CANDIDATE");
 }

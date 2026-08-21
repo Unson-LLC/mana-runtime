@@ -144,6 +144,38 @@ function clientsWithResponse(responseContext: TenantContextEnvelope, captures: u
 }
 
 describe("Brainbase-owned company authority HTTP client", () => {
+  it("sends the placement trusted project set and rejects a signed set with extra projects", async () => {
+    const captures: unknown[] = [];
+    const context = canonicalContext();
+    context.authorization.project_ids = ["project-unson-backoffice", "project-mana", "project-other"];
+    const clients = clientsWithResponse(context, captures);
+    const trustedRequest = {
+      ...request(),
+      trusted_project_ids: ["project-unson-backoffice", "project-mana"],
+    };
+
+    await expect(clients.authority.issue_tenant_context(trustedRequest)).rejects.toSatisfy((error: unknown) => (
+      error instanceof TenantBoundaryError && error.code === "PROJECT_SCOPE_MISMATCH"
+    ));
+    expect((captures[0] as { requested_action: Record<string, unknown> }).requested_action.project_ids)
+      .toEqual(["project-unson-backoffice", "project-mana"]);
+  });
+
+  it("accepts a signed project set only when it exactly matches the placement trust set", async () => {
+    const captures: unknown[] = [];
+    const context = canonicalContext();
+    context.authorization.project_ids = ["project-unson-backoffice", "project-mana"];
+    const clients = clientsWithResponse(context, captures);
+    const trustedRequest = {
+      ...request(),
+      trusted_project_ids: ["project-unson-backoffice", "project-mana"],
+    };
+
+    // This is the same request shape that the placement resolver will provide.
+    // It is intentionally exercised before the implementation exists.
+    await expect(clients.authority.issue_tenant_context(trustedRequest)).resolves.toEqual(context);
+  });
+
   it("sends only observed identity and requested action, never runtime actor or authorization", async () => {
     const captures: unknown[] = [];
     const clients = clientsWithResponse(canonicalContext(), captures);
