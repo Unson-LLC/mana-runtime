@@ -56,6 +56,14 @@ const completeConfig = {
     BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({
       keys: [{ kty: "OKP", crv: "Ed25519", kid: "key-1", x: "public-key", use: "sig" }],
     }),
+    BRAINBASE_WORKSPACE_CONNECTIONS_JSON: JSON.stringify([{
+      tenant_id: "ten-test",
+      tenant_revision: "1",
+      connection_id: "wsc-test",
+      connection_revision: "1",
+      workspace_id: "T-TEST",
+      app_id: "A-MANA",
+    }]),
     RUNTIME_PLACEMENTS_JSON: JSON.stringify([{ developmentEnabled: true }]),
     DEVELOPMENT_CALLBACK_BASE_URL: "https://mana.example.test",
   },
@@ -385,6 +393,18 @@ describe("tenant runtime deploy readiness", () => {
     });
     expect(() => assertTenantRuntimeDeploymentConfig(config, completeSecrets))
       .toThrow("tenant_runtime_deploy_preflight_failed:SLACK_EXPECTED_APP_ID");
+  });
+
+  it("requires a complete workspace connection hint before deployment", () => {
+    const config = structuredClone(completeConfig);
+    delete (config.vars as Record<string, unknown>).BRAINBASE_WORKSPACE_CONNECTIONS_JSON;
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_WORKSPACE_CONNECTIONS_JSON"],
+    });
+    expect(() => assertTenantRuntimeDeploymentConfig(config, completeSecrets))
+      .toThrow("tenant_runtime_deploy_preflight_failed:BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   });
 
   it("accepts a complete deployment config and parses Wrangler secret metadata", () => {
