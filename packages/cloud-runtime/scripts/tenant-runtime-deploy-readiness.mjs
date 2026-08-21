@@ -21,6 +21,10 @@ const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const DEPLOYMENT_AUTH_TEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+,-]{0,255}$/;
 const DEPLOYMENT_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const AUTHORIZATION_ONLY_COMMIT_PATHS = Object.freeze([
+  "contracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
+  "contracts/mana-brainbase-tenant-context/v1/source-lock.json",
+]);
 
 const REQUIRED_TEXT_VARS = [
   "TENANT_ID",
@@ -30,7 +34,6 @@ const REQUIRED_TEXT_VARS = [
   "SLACK_OAUTH_REDIRECT_URI",
   "SLACK_OAUTH_SCOPES",
   "MANA_REQUIRED_AUDIENCE",
-  "MANA_REQUIRED_PROJECT_ID",
   "MANA_REQUIRED_CAPABILITY_ID",
   "MANA_CREDENTIAL_AUDIENCE",
   "BRAINBASE_TENANT_RUNTIME_ENABLED",
@@ -76,6 +79,33 @@ function sourceLockError(lockId, reason) {
 
 function deploymentAuthorizationError(lockId, reason) {
   return sourceLockError(lockId, `deployment_authorization_${reason}`);
+}
+
+export function assertTenantRuntimeAuthorizationOnlyChild({
+  reviewedCommit,
+  candidateCommit,
+  candidateParentCommits,
+  changedEntries,
+} = {}) {
+  if (!GIT_SHA_PATTERN.test(reviewedCommit)
+    || !GIT_SHA_PATTERN.test(candidateCommit)
+    || candidateCommit === reviewedCommit
+    || !Array.isArray(candidateParentCommits)
+    || candidateParentCommits.length !== 1
+    || candidateParentCommits[0] !== reviewedCommit) {
+    throw new Error("tenant_runtime_deploy_authorization_parent_invalid");
+  }
+
+  const expected = AUTHORIZATION_ONLY_COMMIT_PATHS.map((path) => `M\t${path}`).sort();
+  const actual = Array.isArray(changedEntries)
+    && changedEntries.every((entry) => typeof entry === "string")
+    ? [...changedEntries].sort()
+    : null;
+  if (actual === null || JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error("tenant_runtime_deploy_authorization_commit_invalid");
+  }
+
+  return { reviewedCommit, candidateCommit };
 }
 
 async function readSourceLock(readFileImpl, path, lockId) {
@@ -294,7 +324,10 @@ export async function assertTenantRuntimeSourceLocks({
     throw sourceLockError("trusted_provider_forwarder", "deploy_not_allowed");
   }
   validateDeploymentAuthorization(tenantContext, "tenant_context", {
-    deploymentTarget, candidateCommit, reviewedCommit, now,
+    deploymentTarget,
+    candidateCommit,
+    reviewedCommit,
+    now,
   });
   validateDeploymentAuthorization(trustedProviderForwarder, "trusted_provider_forwarder", {
     deploymentTarget,
@@ -302,6 +335,19 @@ export async function assertTenantRuntimeSourceLocks({
     reviewedCommit,
     now,
   });
+  const tenantAuthorization = tenantContext.deployment_authorization;
+  const forwarderAuthorization = trustedProviderForwarder.deployment_authorization;
+  const authorizationFields = [
+    "reviewer_identity",
+    "reviewer_provenance",
+    "reviewed_commit_sha",
+    "target",
+    "authorized_at",
+    "expires_at",
+  ];
+  if (authorizationFields.some((field) => tenantAuthorization[field] !== forwarderAuthorization[field])) {
+    throw new Error("tenant_runtime_source_lock_authorization_mismatch");
+  }
   return { tenantContext, trustedProviderForwarder };
 }
 
@@ -428,8 +474,14 @@ export function assessTenantRuntimeDeploymentConfig(config, secretNames) {
   if (!Number.isInteger(trustedPort) || trustedPort < 1 || trustedPort > 65_535) {
     missing.add("BRAINBASE_TENANT_RUNTIME_PORT");
   }
-  if (!nonEmpty(vars.MANA_REQUIRED_SLACK_SCOPES)
-    || vars.MANA_REQUIRED_SLACK_SCOPES.split(",").every((scope) => !scope.trim())) {
+  const requiredSlackScopes = new Set(nonEmpty(vars.MANA_REQUIRED_SLACK_SCOPES)
+    ? vars.MANA_REQUIRED_SLACK_SCOPES.split(",").map((scope) => scope.trim()).filter(Boolean)
+    : []);
+  const oauthSlackScopes = new Set(nonEmpty(vars.SLACK_OAUTH_SCOPES)
+    ? vars.SLACK_OAUTH_SCOPES.split(",").map((scope) => scope.trim()).filter(Boolean)
+    : []);
+  if (requiredSlackScopes.size === 0
+    || [...requiredSlackScopes].some((scope) => !oauthSlackScopes.has(scope))) {
     missing.add("MANA_REQUIRED_SLACK_SCOPES");
   }
   const capabilities = new Set(nonEmpty(vars.MANA_RUNTIME_CAPABILITIES)

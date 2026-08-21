@@ -30,14 +30,23 @@ export interface TenantRuntimeSourceLockPaths {
 export interface TenantRuntimeDeploymentAuthorizationContext {
   deploymentTarget?: string;
   candidateCommit?: string;
+  reviewedCommit?: string;
   now?: string | Date;
 }
+
+export function assertTenantRuntimeAuthorizationOnlyChild(options: {
+  reviewedCommit?: string;
+  candidateCommit?: string;
+  candidateParentCommits?: string[];
+  changedEntries?: string[];
+}): { reviewedCommit: string; candidateCommit: string };
 
 export function assertTenantRuntimeSourceLocks(options?: {
   readFileImpl?: (path: string, encoding: "utf8") => Promise<string | Buffer>;
   sourceLockPaths?: TenantRuntimeSourceLockPaths;
   deploymentTarget?: string;
   candidateCommit?: string;
+  reviewedCommit?: string;
   now?: string | Date;
 }): Promise<{ tenantContext: Record<string, unknown>; trustedProviderForwarder: Record<string, unknown> }>;
 
@@ -52,6 +61,7 @@ export function assertTenantRuntimeDeploymentPreflight(options: {
   sourceLockPaths?: TenantRuntimeSourceLockPaths;
   deploymentTarget?: string;
   candidateCommit?: string;
+  reviewedCommit?: string;
   now?: string | Date;
 }): Promise<{ config: WranglerDeploymentConfig; tenantId: string }>;
 

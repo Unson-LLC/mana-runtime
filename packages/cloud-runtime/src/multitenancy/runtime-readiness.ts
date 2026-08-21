@@ -7,7 +7,6 @@ export interface TenantRuntimeReadiness {
 
 const REQUIRED_TEXT_BINDINGS = [
   "MANA_REQUIRED_AUDIENCE",
-  "MANA_REQUIRED_PROJECT_ID",
   "MANA_REQUIRED_CAPABILITY_ID",
   "MANA_CREDENTIAL_AUDIENCE",
   "SLACK_SIGNING_SECRET",
@@ -120,6 +119,16 @@ export function assessTenantRuntimeReadiness(
     && !missing.includes("SLACK_OAUTH_SCOPES")) {
     missing.push("SLACK_OAUTH_SCOPES");
   }
+  const requiredSlackScopes = typeof env.MANA_REQUIRED_SLACK_SCOPES === "string"
+    ? env.MANA_REQUIRED_SLACK_SCOPES.split(",").map((scope) => scope.trim()).filter(Boolean)
+    : [];
+  const oauthSlackScopes = new Set(typeof env.SLACK_OAUTH_SCOPES === "string"
+    ? env.SLACK_OAUTH_SCOPES.split(",").map((scope) => scope.trim()).filter(Boolean)
+    : []);
+  if (requiredSlackScopes.length === 0
+    || requiredSlackScopes.some((scope) => !oauthSlackScopes.has(scope))) {
+    if (!missing.includes("MANA_REQUIRED_SLACK_SCOPES")) missing.push("MANA_REQUIRED_SLACK_SCOPES");
+  }
   if (env.BRAINBASE_TENANT_RUNTIME_ENABLED !== "1"
     && !missing.includes("BRAINBASE_TENANT_RUNTIME_ENABLED")) {
     missing.push("BRAINBASE_TENANT_RUNTIME_ENABLED");
@@ -144,10 +153,6 @@ export function assessTenantRuntimeReadiness(
   if (!slackControlPlane || typeof slackControlPlane.fetch !== "function") {
     missing.push("SLACK_INSTALLATION_CONTROL_PLANE");
   }
-  const scopes = typeof env.MANA_REQUIRED_SLACK_SCOPES === "string"
-    ? env.MANA_REQUIRED_SLACK_SCOPES.split(",").map((value) => value.trim()).filter(Boolean)
-    : [];
-  if (scopes.length === 0) missing.push("MANA_REQUIRED_SLACK_SCOPES");
   const taskBoardSchedulingEnabled = env.RUNTIME_TASK_BOARD_ENABLED === "true"
     || placementTaskBoardEnabled(env.RUNTIME_PLACEMENTS_JSON);
   if (taskBoardSchedulingEnabled && !nonEmpty(env.TASK_BOARD_TARGETS_JSON)) {

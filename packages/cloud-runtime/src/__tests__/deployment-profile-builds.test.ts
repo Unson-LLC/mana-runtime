@@ -177,24 +177,27 @@ describe("実配置profileのビルド契約", () => {
     }
   });
 
-  it("実profileはcontrol-plane bindingを持ち、未設定のOAuth公開値を明示する", () => {
+  it("実profileはcontrol-plane bindingを持ち、本番profileだけOAuth公開設定が揃う", () => {
     const configs = [
       loadJson<WranglerProfile>("wrangler.jsonc"),
       loadJson<WranglerProfile>("wrangler.unson-business.jsonc"),
       loadJson<WranglerProfile>("wrangler.dedicated-cloud.jsonc"),
       loadJson<WranglerProfile>("wrangler.customer-managed-oss.jsonc"),
     ];
-    for (const config of configs) {
+    for (const [index, config] of configs.entries()) {
       const readiness = assessTenantRuntimeDeploymentConfig(config, []);
       expect(readiness.ready).toBe(false);
       expect(readiness.missing_bindings).not.toContain(
         "SLACK_INSTALLATION_CONTROL_PLANE",
       );
       const oauthBindings = [
-        "SLACK_OAUTH_APP_ID", "SLACK_OAUTH_CLIENT_ID", "SLACK_OAUTH_REDIRECT_URI", "SLACK_OAUTH_SCOPES",
+        "SLACK_OAUTH_APP_ID",
+        "SLACK_OAUTH_CLIENT_ID",
+        "SLACK_OAUTH_REDIRECT_URI",
+        "SLACK_OAUTH_SCOPES",
       ];
-      if (config.name === "unson-business-mana-runtime") {
-        expect(readiness.missing_bindings).not.toEqual(expect.arrayContaining(oauthBindings));
+      if (index === 1) {
+        for (const binding of oauthBindings) expect(readiness.missing_bindings).not.toContain(binding);
       } else {
         expect(readiness.missing_bindings).toEqual(expect.arrayContaining(oauthBindings));
       }

@@ -5,7 +5,6 @@ import { assessTenantRuntimeReadiness } from "../multitenancy/runtime-readiness.
 const complete = {
   MANA_DEPLOYMENT_PROFILE: "shared_cloud",
   MANA_REQUIRED_AUDIENCE: "mana-runtime",
-  MANA_REQUIRED_PROJECT_ID: "project_a",
   MANA_REQUIRED_CAPABILITY_ID: "runtime.execute",
   MANA_REQUIRED_SLACK_SCOPES: "app_mentions:read,chat:write",
   MANA_CREDENTIAL_AUDIENCE: "api.anthropic.com",
@@ -18,11 +17,9 @@ const complete = {
     "idempotent_effects_v1",
     "container_sanitization_v1",
   ].join(","),
-  BRAINBASE_RUNTIME_API_TOKEN: "opaque-test-token",
   BRAINBASE_TENANT_RUNTIME_ENABLED: "1",
   BRAINBASE_TENANT_RUNTIME_HOST: "127.0.0.1",
   BRAINBASE_TENANT_RUNTIME_PORT: "31016",
-  BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: "internal-service-token-placeholder",
   BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: async () => new Response() },
   SLACK_SIGNING_SECRET: "slack-signing-secret-placeholder",
   SLACK_INSTALLATION_LIFECYCLE_TOKEN: "installation-lifecycle-test-placeholder",
@@ -125,6 +122,7 @@ describe("tenant runtime readiness", () => {
     })).toEqual({
       ready: false,
       missing_bindings: [
+        "MANA_REQUIRED_SLACK_SCOPES",
         "SLACK_INSTALLATION_CONTROL_PLANE",
         "SLACK_OAUTH_APP_ID",
         "SLACK_OAUTH_CLIENT_ID",
@@ -141,7 +139,18 @@ describe("tenant runtime readiness", () => {
       SLACK_OAUTH_SCOPES: "",
     })).toEqual({
       ready: false,
-      missing_bindings: ["SLACK_OAUTH_REDIRECT_URI", "SLACK_OAUTH_SCOPES"],
+      missing_bindings: ["MANA_REQUIRED_SLACK_SCOPES", "SLACK_OAUTH_REDIRECT_URI", "SLACK_OAUTH_SCOPES"],
+    });
+  });
+
+  it("requires every runtime Slack scope to be requested by OAuth", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      MANA_REQUIRED_SLACK_SCOPES: "app_mentions:read,chat:write,files:read",
+      SLACK_OAUTH_SCOPES: "app_mentions:read,chat:write",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["MANA_REQUIRED_SLACK_SCOPES"],
     });
   });
 

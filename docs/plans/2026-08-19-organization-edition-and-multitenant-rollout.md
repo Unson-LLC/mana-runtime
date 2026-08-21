@@ -330,7 +330,7 @@ protocol v1ではcross-tenant Container再利用を禁止する。tenant変更�
 1. Brainbase control planeへ2つ以上の実tenantとworkspace connectionを登録
 2. authority、JWKS、audience、project、capability、Slack scopes、OAuth、quota、credential broker、accountingをpreflightで検証
 3. source-lockの`deploy_allowed: false`を維持したままdry-runとreadinessを取得
-4. レビュー済み構成に対して`deploy_allowed: true`と期限付き`deployment_authorization`を記録し、同じreviewed commitを`MANA_DEPLOY_CANDIDATE_COMMIT`へ指定した後、承認されたtargetだけへCloudflare deploy（これは本番検証の投入であり、E2E／Safety／Value Gate／切替完了とは別）
+4. A（レビュー済みコード／設定commit）から、二つのsource-lockだけに`deploy_allowed: true`と期限付き`deployment_authorization`を記録したB（Aの直接子であるauthorization-only commit）を作る。Bの`deployment_authorization.reviewed_commit_sha`はA、`MANA_DEPLOY_CANDIDATE_COMMIT`はBを指す。デプロイ前にA→Bの直接親関係と変更ファイル集合を検査し、コード・設定を含む候補を拒否したうえで、承認されたtargetだけへCloudflare deployする（これは本番検証の投入であり、E2E／Safety／Value Gate／切替完了とは別）
 5. tenant単位でread-only canary
 6. 正常、越境拒否、再配送、revision更新、依存障害、Usage/Receiptをreadback
 7. Safety Gate成立後、tenant単位でTask write、議事録、外部操作を段階開放
