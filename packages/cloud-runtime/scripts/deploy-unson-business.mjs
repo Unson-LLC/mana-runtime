@@ -17,6 +17,31 @@ function candidateCheckoutHead() {
   }).trim();
 }
 
+function reviewedCheckoutParent() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD^"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return process.env.MANA_DEPLOY_CANDIDATE_COMMIT;
+  }
+}
+
+function assertAuthorizationOnlyCommit() {
+  const changed = execFileSync("git", ["diff", "--name-only", "HEAD^", "HEAD"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  }).trim().split("\n").filter(Boolean).sort();
+  const allowed = [
+    "contracts/brainbase-trusted-provider-forwarder/v1/source-lock.json",
+    "contracts/mana-brainbase-tenant-context/v1/source-lock.json",
+  ].sort();
+  if (JSON.stringify(changed) !== JSON.stringify(allowed)) {
+    throw new Error("tenant_runtime_deploy_authorization_commit_invalid");
+  }
+}
+
 function assertReviewedCandidateCheckout(actual) {
   const expected = process.env.MANA_DEPLOY_CANDIDATE_COMMIT;
   const dirty = execFileSync("git", ["status", "--porcelain"], {
@@ -56,8 +81,10 @@ try {
   deploymentConfig = await assertTenantRuntimeDeploymentPreflight({
     configPath,
     candidateCommit,
+    reviewedCommit: reviewedCheckoutParent(),
   });
   assertReviewedCandidateCheckout(candidateCheckoutHead());
+  assertAuthorizationOnlyCommit();
 } catch (error) {
   console.error(error instanceof Error ? error.message : "tenant_runtime_deploy_preflight_failed");
   process.exit(7);

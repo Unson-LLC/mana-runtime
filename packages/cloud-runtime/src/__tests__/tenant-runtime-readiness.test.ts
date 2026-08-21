@@ -46,14 +46,12 @@ describe("tenant runtime readiness", () => {
   it("returns binding names only and never secret values", () => {
     const result = assessTenantRuntimeReadiness({
       ...complete,
-      BRAINBASE_RUNTIME_API_TOKEN: "",
       BRAINBASE_QUOTA_URL: "http://unsafe.example.test",
       TENANT_RUNTIME_STATE: undefined,
     });
     expect(result).toEqual({
       ready: false,
       missing_bindings: [
-        "BRAINBASE_RUNTIME_API_TOKEN",
         "TENANT_RUNTIME_STATE",
       ],
     });
@@ -152,7 +150,6 @@ describe("tenant runtime readiness", () => {
       ...complete,
       BRAINBASE_TENANT_RUNTIME_ENABLED: undefined,
       BRAINBASE_TENANT_RUNTIME_PORT: undefined,
-      BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN: undefined,
       BRAINBASE_TENANT_RUNTIME_SERVICE: undefined,
     })).toEqual({
       ready: false,
@@ -160,7 +157,6 @@ describe("tenant runtime readiness", () => {
         "BRAINBASE_TENANT_RUNTIME_ENABLED",
         "BRAINBASE_TENANT_RUNTIME_PORT",
         "BRAINBASE_TENANT_RUNTIME_SERVICE",
-        "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
       ],
     });
     expect(assessTenantRuntimeReadiness({

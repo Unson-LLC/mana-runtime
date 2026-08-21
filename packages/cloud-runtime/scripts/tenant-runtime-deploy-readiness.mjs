@@ -48,8 +48,6 @@ const REQUIRED_CAPABILITIES = [
 ];
 
 const REQUIRED_SECRET_BINDINGS = [
-  "BRAINBASE_RUNTIME_API_TOKEN",
-  "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN",
   "SLACK_SIGNING_SECRET",
   "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
 ];
@@ -125,6 +123,7 @@ function deploymentContextTimestamp(value) {
 function validateDeploymentAuthorization(lock, lockId, {
   deploymentTarget,
   candidateCommit,
+  reviewedCommit,
   now,
 } = {}) {
   const authorization = lock.deployment_authorization;
@@ -160,13 +159,14 @@ function validateDeploymentAuthorization(lock, lockId, {
     throw deploymentAuthorizationError(lockId, "expired");
   }
   if (!validDeploymentAuthorizationText(deploymentTarget)
-    || !GIT_SHA_PATTERN.test(candidateCommit)) {
+    || !GIT_SHA_PATTERN.test(candidateCommit)
+    || !GIT_SHA_PATTERN.test(reviewedCommit)) {
     throw deploymentAuthorizationError(lockId, "context_missing");
   }
   if (authorization.target !== deploymentTarget) {
     throw deploymentAuthorizationError(lockId, "target_mismatch");
   }
-  if (authorization.reviewed_commit_sha !== candidateCommit) {
+  if (authorization.reviewed_commit_sha !== reviewedCommit) {
     throw deploymentAuthorizationError(lockId, "candidate_mismatch");
   }
 }
@@ -213,9 +213,9 @@ function validateTrustedProviderForwarderSourceLock(lock) {
     && configuration.explicit_port_required === true
     && configuration.non_loopback_opt_in_env === "BRAINBASE_TENANT_RUNTIME_ALLOW_NON_LOOPBACK"
     && configuration.wildcard_bind_allowed_by_default === false
-    && configuration.service_token_env === "BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN"
+    && configuration.transport === "cloudflare_service_binding"
     && plainObject(headers)
-    && headers.Authorization === "Bearer ${BRAINBASE_TENANT_RUNTIME_SERVICE_TOKEN}"
+    && headers.Authorization === undefined
     && headers["Brainbase-Protocol-Version"] === "1.0"
     && headers["Brainbase-Deployment-Id"] === "${tenant_context.placement.deployment_id}"
     && headers["Content-Type"] === "application/json"
@@ -268,6 +268,7 @@ export async function assertTenantRuntimeSourceLocks({
   sourceLockPaths = DEFAULT_SOURCE_LOCK_PATHS,
   deploymentTarget,
   candidateCommit,
+  reviewedCommit = candidateCommit,
   now,
 } = {}) {
   if (!nonEmpty(sourceLockPaths?.tenantContext)
@@ -292,10 +293,13 @@ export async function assertTenantRuntimeSourceLocks({
   if (!trustedProviderForwarder.deploy_allowed) {
     throw sourceLockError("trusted_provider_forwarder", "deploy_not_allowed");
   }
-  validateDeploymentAuthorization(tenantContext, "tenant_context", { deploymentTarget, candidateCommit, now });
+  validateDeploymentAuthorization(tenantContext, "tenant_context", {
+    deploymentTarget, candidateCommit, reviewedCommit, now,
+  });
   validateDeploymentAuthorization(trustedProviderForwarder, "trusted_provider_forwarder", {
     deploymentTarget,
     candidateCommit,
+    reviewedCommit,
     now,
   });
   return { tenantContext, trustedProviderForwarder };
@@ -484,6 +488,7 @@ export async function assertTenantRuntimeDeploymentPreflight({
   sourceLockPaths = DEFAULT_SOURCE_LOCK_PATHS,
   deploymentTarget,
   candidateCommit,
+  reviewedCommit = candidateCommit,
   now,
 }) {
   let config;
@@ -507,6 +512,7 @@ export async function assertTenantRuntimeDeploymentPreflight({
     sourceLockPaths,
     deploymentTarget: deploymentTarget ?? config.name,
     candidateCommit,
+    reviewedCommit,
     now,
   });
 
