@@ -37,6 +37,19 @@ describe("meeting minutes deployment gate", () => {
       fetchImpl: missing, allowMissingGate: true })).resolves.toBeUndefined();
   });
 
+  it("permits only the known legacy tenant-boundary response during an explicit bootstrap", async () => {
+    const legacy = vi.fn().mockResolvedValue(Response.json({
+      boundary: "brainbase_proxy", error: "TENANT_CONTEXT_MISSING",
+    }, { status: 503 }));
+    await expect(assertMeetingMinutesDeployAllowed({ baseUrl: "https://worker.example", token: "token",
+      fetchImpl: legacy })).rejects.toThrow("meeting_minutes_deploy_gate_http_503");
+    await expect(assertMeetingMinutesDeployAllowed({ baseUrl: "https://worker.example", token: "token",
+      fetchImpl: legacy, allowMissingGate: true })).resolves.toBeUndefined();
+    await expect(assertMeetingMinutesDeployAllowed({ baseUrl: "https://worker.example", token: "token",
+      fetchImpl: vi.fn().mockResolvedValue(Response.json({ error: "upstream_unavailable" }, { status: 503 })),
+      allowMissingGate: true })).rejects.toThrow("meeting_minutes_deploy_gate_http_503");
+  });
+
   it("pauses new intake even while active runs are still draining", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({
       allowed: false, intakePaused: true, activeRuns: [{ runId: "run-1" }],
