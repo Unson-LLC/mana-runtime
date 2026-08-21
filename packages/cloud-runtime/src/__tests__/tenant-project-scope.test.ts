@@ -5,7 +5,7 @@ describe("tenant project scope", () => {
   it("maps one trusted placement code to Brainbase's signed canonical project id", () => {
     expect(resolveCanonicalProjectScope({
       project_ids: ["prj_01M0MANA000000000000000001"],
-      data_scopes: ["company_authority:resource:project:mana@prj_01M0MANA000000000000000001"],
+      data_scopes: ["company_authority:resource:project:mana@12"],
     }, ["mana"], "queue_consumer")).toEqual({
       project_id: "prj_01M0MANA000000000000000001",
       project_ids: ["prj_01M0MANA000000000000000001"],
@@ -20,9 +20,15 @@ describe("tenant project scope", () => {
   it("rejects an unbound code, multiple canonical candidates, and partial legacy scope", () => {
     for (const [authorization, codes] of [
       [{ project_ids: ["prj_other"], data_scopes: [] }, ["mana"]],
+      [{ project_ids: ["prj_other"],
+        data_scopes: ["company_authority:resource:project:mana@invalid-revision"] }, ["mana"]],
       [{ project_ids: ["prj_mana", "prj_other"],
-        data_scopes: ["company_authority:resource:project:mana@prj_mana"] }, ["mana"]],
+        data_scopes: ["company_authority:resource:project:mana@12"] }, ["mana"]],
       [{ project_ids: ["mana", "other"], data_scopes: [] }, ["mana"]],
+      [{ project_ids: ["prj_mana"], data_scopes: [
+        "company_authority:resource:project:mana@12",
+        "company_authority:resource:project:other@3",
+      ] }, ["mana"]],
     ] as const) {
       expect(() => resolveCanonicalProjectScope(authorization, codes, "queue_consumer"))
         .toThrow(TenantBoundaryError);
