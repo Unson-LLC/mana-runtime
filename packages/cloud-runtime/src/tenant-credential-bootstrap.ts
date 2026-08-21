@@ -1,5 +1,6 @@
 export interface TenantCredentialBootstrapEnv {
   BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID?: string;
+  BRAINBASE_SLACK_BOOTSTRAP_TENANT_KEY?: string;
   SLACK_EXPECTED_TEAM_ID?: string;
   SLACK_OAUTH_APP_ID?: string;
   SLACK_BOT_TOKEN_UNSON?: string;
@@ -14,12 +15,14 @@ export interface TenantCredentialBootstrapEnv {
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 
 const TENANT_ID = /^ten_[0-9A-HJKMNP-TV-Z]{26}$/u;
+const TENANT_KEY = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const CONNECTION_ID = /^wsc_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const SLACK_ID = /^[A-Z][A-Z0-9]{8,20}$/u;
 const CREDENTIAL_REF = /^credref:\/\/[A-Za-z0-9._~:/-]{1,500}$/u;
 
 function configured(env: TenantCredentialBootstrapEnv): env is Required<TenantCredentialBootstrapEnv> {
   return TENANT_ID.test(env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID ?? "")
+    && TENANT_KEY.test(env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_KEY ?? "")
     && CONNECTION_ID.test(env.BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID ?? "")
     && SLACK_ID.test(env.SLACK_EXPECTED_TEAM_ID ?? "")
     && SLACK_ID.test(env.SLACK_OAUTH_APP_ID ?? "")
@@ -83,10 +86,13 @@ export async function bootstrapUnsonSlackCredential(
       body: JSON.stringify({
         operation: "store",
         tenant_id: env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID,
+        tenant_key: env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_KEY,
         connection_id: env.BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID,
         connection_revision: "1",
         provider: "slack",
-        idempotency_key: `bootstrap:${env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID}:${env.BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID}:1`,
+        workspace_id: env.SLACK_EXPECTED_TEAM_ID,
+        app_id: env.SLACK_OAUTH_APP_ID,
+        idempotency_key: `bootstrap-v2:${env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID}:${env.BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID}:1`,
         credential_material: env.SLACK_BOT_TOKEN_UNSON,
         credential_mode: "customer_oauth",
       }),

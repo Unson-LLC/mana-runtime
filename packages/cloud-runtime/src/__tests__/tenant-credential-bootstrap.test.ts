@@ -4,6 +4,7 @@ import { bootstrapUnsonSlackCredential } from "../tenant-credential-bootstrap.js
 
 const env = {
   BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID: "ten_01M0HMA228ES64N4TFX846V8T8",
+  BRAINBASE_SLACK_BOOTSTRAP_TENANT_KEY: "unson-business",
   SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
   SLACK_OAUTH_APP_ID: "A0BPM2J33SN",
   SLACK_BOT_TOKEN_UNSON: "xoxb-production-secret",
@@ -63,10 +64,13 @@ describe("Unson Slack credential bootstrap", () => {
     expect(JSON.parse(String(init.body))).toEqual({
       operation: "store",
       tenant_id: env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID,
+      tenant_key: env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_KEY,
       connection_id: env.BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID,
       connection_revision: "1",
       provider: "slack",
-      idempotency_key: `bootstrap:${env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID}:${env.BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID}:1`,
+      workspace_id: env.SLACK_EXPECTED_TEAM_ID,
+      app_id: env.SLACK_OAUTH_APP_ID,
+      idempotency_key: `bootstrap-v2:${env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID}:${env.BRAINBASE_SLACK_BOOTSTRAP_CONNECTION_ID}:1`,
       credential_material: env.SLACK_BOT_TOKEN_UNSON,
       credential_mode: "customer_oauth",
     });
