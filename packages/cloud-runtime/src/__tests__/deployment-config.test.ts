@@ -674,7 +674,15 @@ describe("会社別Cloudflare deployment", () => {
       fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)),
       "utf8",
     );
-    expect(raw).toContain('"crons": ["*/15 * * * *"]');
+    expect(raw).toContain('"crons": ["*/15 * * * *", "0 0 * * 1-5"]');
+    expect(unson.durable_objects.bindings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "CONTRACT_LEDGER_STATE", class_name: "ContractLedgerState" }),
+      expect.objectContaining({ name: "TENANT_RUNTIME_STATE", class_name: "TenantRuntimeState" }),
+    ]));
+    expect(unson.migrations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tag: "v9", new_sqlite_classes: ["ContractLedgerState"] }),
+      expect.objectContaining({ tag: "v10", new_sqlite_classes: ["TenantRuntimeState"] }),
+    ]));
     expect(raw).not.toContain("TASK_WRITE_CAPABILITY_SECRET");
     expect(raw).not.toContain("GITHUB_TOKEN");
   });

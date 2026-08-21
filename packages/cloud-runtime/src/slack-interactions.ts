@@ -36,6 +36,7 @@ interface InteractionOptions {
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string },
     effects: TenantInteractionEffects): Promise<Response>;
   handleMeetingTaskAction?(payload: Record<string, unknown>, effects: TenantInteractionEffects): Promise<Response | undefined>;
+  handleContractLedgerAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
   resolveTenantEffects(identity: TenantInteractionIdentity): Promise<TenantInteractionEffects>;
   isIntakePaused?(): Promise<boolean>;
 }
@@ -227,6 +228,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
   send?: InteractionOptions["send"],
   resolveTenantEffects?: InteractionOptions["resolveTenantEffects"],
   isIntakePaused?: InteractionOptions["isIntakePaused"],
+  handleContractLedgerAction?: InteractionOptions["handleContractLedgerAction"],
 ): Promise<Response> {
   if (!send || !resolveTenantEffects) return Promise.resolve(response("FALLBACK_FORBIDDEN", 503));
   return handleMeetingMinutesInteraction(request, { signingSecret: env.SLACK_SIGNING_SECRET,
@@ -246,7 +248,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
     updateOriginal: (responseUrl, message, credentialFetch) => updateSlackInteractionMessage(
       responseUrl, message, credentialFetch),
     defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction,
-    resolveTenantEffects, isIntakePaused });
+    resolveTenantEffects, isIntakePaused, handleContractLedgerAction });
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
@@ -343,6 +345,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   if (options.handleMeetingTaskAction) {
     const taskResponse = await options.handleMeetingTaskAction(payload!, tenantEffects);
     if (taskResponse) return taskResponse;
+  }
+  if (options.handleContractLedgerAction) {
+    const contractResponse = await options.handleContractLedgerAction(payload!);
+    if (contractResponse) return contractResponse;
   }
   const userId = string(user?.id);
   const channelId = string(channel?.id);

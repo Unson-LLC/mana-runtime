@@ -159,7 +159,7 @@ describe("実配置profileのビルド契約", () => {
     expect(jwks.keys[0]).not.toHaveProperty("d");
   });
 
-  it("すべてのQueue consumerはmax_retries=3とDLQを持つ", () => {
+  it("通常Queue consumerはmax_retries=3とDLQを持ち、DLQ consumerも再試行上限を持つ", () => {
     const configs = [
       loadJson<WranglerProfile>("wrangler.jsonc"),
       loadJson<WranglerProfile>("wrangler.unson-business.jsonc"),
@@ -170,7 +170,9 @@ describe("実配置profileのビルド契約", () => {
       for (const consumer of config.queues.consumers) {
         expect(Number.isSafeInteger(consumer.max_retries)).toBe(true);
         expect(consumer.max_retries).toBe(3);
-        expect(consumer.dead_letter_queue).toMatch(/-dlq$/);
+        if (!consumer.queue.endsWith("-dlq")) {
+          expect(consumer.dead_letter_queue).toMatch(/-dlq$/);
+        }
       }
     }
   });
