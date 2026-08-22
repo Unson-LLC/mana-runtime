@@ -129,6 +129,12 @@
             "file": "docs/architecture/13_brainbase_owned_company_authority.md",
             "section": "Canonical contract"
           }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "pins the exact producer source lock and artifact digests"
+          }
         ]
       },
       "verifiable_by": {
@@ -171,6 +177,12 @@
             "file": "docs/architecture/13_brainbase_owned_company_authority.md",
             "section": "Runtime rule"
           }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "accepts all signed positive contexts without generating Mana authority semantics"
+          }
         ]
       },
       "verifiable_by": {
@@ -193,7 +205,23 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
+            "ac_id": "AC-002"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-006"
+          },
+          {
+            "kind": "acceptance_criteria",
             "ac_id": "AC-007"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-008"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-009"
           },
           {
             "kind": "acceptance_criteria",
@@ -204,6 +232,12 @@
           {
             "file": "docs/architecture/13_brainbase_owned_company_authority.md",
             "section": "Fail-closed"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "fails closed for all producer negative fixtures and preserves their no-effect contract"
           }
         ]
       },
@@ -234,6 +268,12 @@
           {
             "file": "docs/management/milestones/M0-brainbase-owned-company-authority.md",
             "section": "Dependencies"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "pins the exact producer source lock and artifact digests"
           }
         ]
       },
