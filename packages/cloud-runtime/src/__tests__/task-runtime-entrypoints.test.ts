@@ -163,6 +163,9 @@ describe("Cloudflare task runtime entrypoints", () => {
     const env = {
       TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH", SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       RUNTIME_TASK_BOARD_ENABLED: "true", SLACK_BOT_TOKEN: "unson-token",
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskBoardEnabled: true },
+      ]),
       TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget]), TASK_BOARD_REPAIRS: { send },
     };
     await expect(processTaskBoardRepair(repair, env, "unson-business", fetch,
@@ -207,6 +210,46 @@ describe("Cloudflare task runtime entrypoints", () => {
     }), { fetch });
   });
 
+  it("schedules only targets owned by this tenant and backed by a task-board placement", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const foreignTarget = {
+      ...devTarget,
+      targetId: "foreign",
+      organizationId: "tech-knight",
+      workspaceId: "T07A9J3PEMB",
+      channelId: "C0FOREIGN123",
+    };
+    const unplacedTarget = {
+      ...devTarget,
+      targetId: "unplaced",
+      channelId: "C0UNPLACED1",
+    };
+    const env = {
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH",
+      SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T", RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskBoardEnabled: true },
+      ]),
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget, foreignTarget, unplacedTarget]),
+      TASK_BOARD_REPAIRS: { send },
+    };
+
+    await enqueueScheduledTaskBoardRepair(env, "2026-08-13T03:00:00.000Z", resolveTaskBoardTenant);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ targetId: "business", channelId: "C0BKS6RL99T" }),
+    }));
+    expect(info).toHaveBeenCalledWith(JSON.stringify({
+      event: "task_board_repair_suppressed", targetId: "foreign", reason: "tenant_mismatch",
+    }));
+    expect(info).toHaveBeenCalledWith(JSON.stringify({
+      event: "task_board_repair_suppressed", targetId: "unplaced", reason: "placement_scope_missing",
+    }));
+    info.mockRestore();
+  });
+
   it("uses canonical targets even when the legacy global flag is off", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const env = {
@@ -227,7 +270,7 @@ describe("Cloudflare task runtime entrypoints", () => {
     }), { fetch });
   });
 
-  it("enqueues only enabled bound targets and processes a target without forwarding static credentials", async () => {
+  it("suppresses foreign tenant targets and rejects them at the queue consumer boundary", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const targets = [
@@ -239,38 +282,40 @@ describe("Cloudflare task runtime entrypoints", () => {
         projectCodes: ["back-office"], enabled: false, manaCanvasId: null, bindingRevision: null },
     ];
     const env = {
-      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH", SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       SLACK_BOT_TOKEN: "business-token", SLACK_BOT_TOKEN_UNSON: "unson-token",
       SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token", TASK_BOARD_TARGETS_JSON: JSON.stringify(targets),
       TASK_BOARD_REPAIRS: { send },
     };
     await enqueueScheduledTaskBoardRepair(env, "2026-08-15T00:00:00.000Z", resolveTaskBoardTenant);
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(JSON.stringify({
+      event: "task_board_repair_suppressed", targetId: "unson", reason: "tenant_mismatch",
+    }));
+    expect(info).toHaveBeenCalledWith(JSON.stringify({
+      event: "task_board_repair_suppressed", targetId: "tech", reason: "tenant_mismatch",
+    }));
     expect(info).toHaveBeenCalledWith(JSON.stringify({
       event: "task_board_repair_suppressed", targetId: "disabled", reason: "target_disabled",
     }));
     const refresh = vi.fn().mockResolvedValue(undefined);
-    await processTaskBoardRepair({ ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB",
+    await expect(processTaskBoardRepair({ ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB",
       channelId: "C0BKX9Y169F", manaCanvasId: "FTECH", bindingRevision: 2 },
-    env, "unson-business", fetch, refresh);
-    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
-      SLACK_BOT_TOKEN: undefined, BRAINBASE_TASK_API_TOKEN: undefined,
-      SLACK_ALLOWED_CHANNEL_ID: "C0BKX9Y169F", TASK_BOARD_CANVAS_ID: "FTECH", RUNTIME_PROJECT_CODES: "proj_tech",
-    }), { fetch });
+    env, "unson-business", fetch, refresh)).rejects.toThrow("task_board_scope_mismatch");
+    expect(refresh).not.toHaveBeenCalled();
     info.mockRestore();
   });
 
   it("reports a partial scheduled fanout failure after attempting every trusted target", async () => {
     const send = vi.fn().mockRejectedValueOnce(new Error("queue unavailable")).mockResolvedValueOnce(undefined);
     const env = {
-      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T_UNSON", SLACK_ALLOWED_CHANNEL_ID: "C_LEGACY",
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH", SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       SLACK_BOT_TOKEN: "business-token", SLACK_BOT_TOKEN_UNSON: "unson-token", SLACK_BOT_TOKEN_TECHKNIGHT: "tech-token",
-      TASK_BOARD_TARGETS_JSON: JSON.stringify([
-        { targetId: "unson", organizationId: "unson", workspaceId: "T07LL5WV7N1", channelId: "C0BKXCVSDCH",
-          projectCodes: ["proj_unson"], enabled: true, manaCanvasId: "FUNSON", bindingRevision: 1 },
-        { targetId: "tech", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB", channelId: "C0BKX9Y169F",
-          projectCodes: ["proj_tech"], enabled: true, manaCanvasId: "FTECH", bindingRevision: 1 },
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskBoardEnabled: true },
+        { placementId: "dev", channelId: "C0DEV123456", projectCodes: ["mana"], taskBoardEnabled: true },
       ]),
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget, devTarget]),
       TASK_BOARD_REPAIRS: { send },
     };
     await expect(enqueueScheduledTaskBoardRepair(env, "2026-08-15T01:00:00.000Z", resolveTaskBoardTenant))

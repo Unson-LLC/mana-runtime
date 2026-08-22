@@ -114,12 +114,14 @@ export async function processTaskBoardRepair(
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
   if (
     repair.tenantId !== expectedTenantId ||
-    !target || !target.enabled || (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ||
+    !target || target.organizationId !== env.TENANT_ID || !target.enabled
+    || (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ||
     repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId ||
     repair.manaCanvasId !== target.manaCanvasId || repair.bindingRevision !== target.bindingRevision
   ) {
     const rejectionReason = repair.tenantId !== expectedTenantId ? "tenant_mismatch" :
-      !target ? "target_unknown" : !target.enabled ? "target_disabled" :
+      !target ? "target_unknown" : target.organizationId !== env.TENANT_ID ? "target_tenant_mismatch"
+        : !target.enabled ? "target_disabled" :
         (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ? "canvas_binding_missing" :
           repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId
             ? "workspace_channel_mismatch" : "binding_snapshot_mismatch";
@@ -179,10 +181,24 @@ export async function enqueueScheduledTaskBoardRepair(
   resolveTenantContext: (repair: TaskBoardRepairEvent) => Promise<TenantContextEnvelope>,
 ): Promise<void> {
   const configuredTargets = taskBoardTargets(env);
-  const activeTargets = enabledTaskBoardTargets(configuredTargets);
+  const taskBoardPlacements = env.RUNTIME_PLACEMENTS_JSON
+    ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).filter((placement) => placement.taskBoardEnabled)
+    : [];
+  const placementForTarget = (target: TaskBoardTarget) => taskBoardPlacements.find((placement) =>
+    placement.channelId === target.channelId
+    && placement.projectCodes.length === target.projectCodes.length
+    && placement.projectCodes.every((project) => target.projectCodes.includes(project)));
+  const activeTargets = enabledTaskBoardTargets(configuredTargets).filter((target) =>
+    target.organizationId === env.TENANT_ID
+    && target.workspaceId === env.SLACK_EXPECTED_TEAM_ID
+    && Boolean(placementForTarget(target)));
   configuredTargets.filter((target) => !activeTargets.includes(target)).forEach((target) => console.info(JSON.stringify({
     event: "task_board_repair_suppressed", targetId: target.targetId,
-    reason: !target.enabled ? "target_disabled" : "canvas_binding_missing",
+    reason: !target.enabled ? "target_disabled"
+      : (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ? "canvas_binding_missing"
+        : target.organizationId !== env.TENANT_ID ? "tenant_mismatch"
+          : target.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ? "workspace_mismatch"
+            : "placement_scope_missing",
   })));
   const results = await Promise.allSettled(activeTargets.map(async (target) => {
     const repair: TaskBoardRepairEvent = {
