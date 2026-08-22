@@ -34,6 +34,18 @@ function fail(code: string, details?: Readonly<Record<string, unknown>>): never 
   throw new CanonicalContractError(code, details);
 }
 
+export type CanonicalAuthorityRetrievalState =
+  | "resolved"
+  | "no_data"
+  | "unknown"
+  | "partial"
+  | "not_collected";
+
+export function assertCanonicalAuthorityRetrieval(state: CanonicalAuthorityRetrievalState): true {
+  if (state !== "resolved") fail("AUTHORITY_UNAVAILABLE", { retrieval_state: state });
+  return true;
+}
+
 function record(value: unknown, path: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) fail("SCHEMA_INVALID", { path });
   return value as Record<string, unknown>;

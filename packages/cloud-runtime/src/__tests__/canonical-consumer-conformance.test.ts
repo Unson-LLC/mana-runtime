@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CANONICAL_FIXTURE_SET_SHA256,
   CanonicalContractError,
+  assertCanonicalAuthorityRetrieval,
   negotiateCanonicalProtocol,
   validateCanonicalConsumerFlow,
   validateCanonicalCredentialLease,
@@ -291,6 +292,26 @@ describe("Brainbase-owned company authority A0 fixture consumer", () => {
         credential_lease_issued: false,
         external_side_effect: false,
       });
+    }
+
+    const retrievalSchema = await readJson<Record<string, any>>(
+      "consumer-conformance/authority-retrieval-state.schema.json",
+      companyContractRoot,
+    );
+    expect(retrievalSchema.properties.cases.items.properties.state.enum).toEqual([
+      "no_data", "unknown", "partial", "not_collected",
+    ]);
+    expect(retrievalSchema.properties.cases.items.properties.expected_code.const).toBe("AUTHORITY_UNAVAILABLE");
+
+    const retrievalFixtures = await readJson<{
+      cases: Array<{ id: string; state: "no_data" | "unknown" | "partial" | "not_collected"; expected_code: string; business_effect: false }>;
+    }>("consumer-conformance/authority-retrieval-state.fixture.json", companyContractRoot);
+    expect(retrievalFixtures.cases).toHaveLength(4);
+    for (const fixture of retrievalFixtures.cases) {
+      expect(() => assertCanonicalAuthorityRetrieval(fixture.state), fixture.id).toThrow(
+        expect.objectContaining({ code: fixture.expected_code }),
+      );
+      expect(fixture.business_effect).toBe(false);
     }
   });
 });

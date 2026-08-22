@@ -64,7 +64,7 @@
       "unknown_tenant": "deny",
       "ambiguous_tenant": "deny",
       "unavailable_connection": "unavailable",
-      "no_data": "empty",
+      "no_data": "deny_as_authority_unavailable",
       "cross_tenant_candidate": "deny_and_audit"
     },
     "deployment_modes": [
@@ -200,7 +200,7 @@
     {
       "id": "INV-002",
       "type": "invariant",
-      "statement": "tenant/project mismatch、unknown/ambiguous authority、tamper/additional property、期限・署名違反はbusiness effect前にfail-closedとしfallbackしない。credential leaseは既存mana-brainbase-tenant-context/v1の責務であり、A0 company-authority contractのAcceptance Criteria外とする",
+      "statement": "tenant/project mismatch、unknown/ambiguous authority、authority retrievalのno_data/unknown/partial/not_collected、tamper/additional property、期限・署名違反はbusiness effect前にfail-closedとしfallbackしない。retrieval未確定状態はempty/zeroへ丸めずAUTHORITY_UNAVAILABLEとして拒否する。credential leaseは既存mana-brainbase-tenant-context/v1の責務であり、A0 company-authority contractのAcceptance Criteria外とする",
       "origin": {
         "story_refs": [
           {
