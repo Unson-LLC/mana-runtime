@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { generateSpecFinalNegativeEvidence } from "./generate-spec-final-negative-evidence.mjs";
@@ -13,11 +16,12 @@ const readJson = async (url) => JSON.parse(await readFile(url, "utf8"));
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 test("production E2E plan is bound to the locked producer and remains not_collected", async () => {
-  const [plan, lock, producer, fixtures] = await Promise.all([
+  const [plan, lock, producer, fixtures, spec] = await Promise.all([
     readJson(new URL("production-e2e-plan.json", specRoot)),
     readJson(new URL("consumer-source-lock.json", contractRoot)),
     readJson(new URL("producer.contract.json", contractRoot)),
     readJson(new URL("fixtures/cases.json", contractRoot)),
+    readJson(new URL("spec.json", specRoot)),
   ]);
 
   assert.equal(plan.status, "not_collected");
@@ -74,10 +78,41 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   assert.equal(queue.redelivery_effect_delta, 0);
   assert.equal(queue.aggregate_effect_count, 0);
   assert.equal(queue.accepted_first_delivery_plan, "out_of_scope_not_counted_as_negative_case_evidence");
+
+  assert.deepEqual(plan.runtime_execution_evidence, {
+    "AC-010": {
+      status: "not_collected",
+      owner: "T0",
+      required_assertions: [
+        "duplicate delivery executes model, Brainbase write, external side effect, and Slack delivery exactly once",
+        "both deliveries preserve the same Receipt, correlation ID, and idempotency identity",
+      ],
+      exit_condition: "collect deterministic runtime effect counters and identity-linked receipt readback after the T0 adapter exists",
+      fixture_mock_is_production_proof: false,
+    },
+    "AC-011": {
+      status: "not_collected",
+      owner: "T0",
+      required_assertions: [
+        "OperationReceipt, UsageEvent, external readback, and authority-resolution receipt share one correlation ID",
+        "completion remains incomplete when any required evidence is absent",
+      ],
+      exit_condition: "collect the correlated runtime artifacts after the T0 adapter and receipt surfaces exist",
+      fixture_mock_is_production_proof: false,
+    },
+  });
+  const clauseById = new Map(spec.clauses.map((clause) => [clause.id, clause]));
+  assert.deepEqual(
+    clauseById.get("INV-001").origin.story_refs.map(({ ac_id }) => ac_id),
+    ["AC-004", "AC-005"],
+  );
+  assert.equal(clauseById.get("BND-002").origin.story_refs[0].ac_id, "AC-010");
+  assert.equal(clauseById.get("BND-003").origin.story_refs[0].ac_id, "AC-011");
 });
 
 test("spec final rejection evidence is generated from the real command and content-bound", async () => {
-  const result = await generateSpecFinalNegativeEvidence({ repoRoot: root });
+  const temporaryArtifactDir = await mkdtemp(join(tmpdir(), "a0-spec-final-evidence-"));
+  const result = await generateSpecFinalNegativeEvidence({ repoRoot: root, artifactDir: temporaryArtifactDir });
   const legacyArtifact = new URL(
     ".vibepro/pr/story-brainbase-owned-company-authority-consumer/spec-final-negative-evidence.json",
     root,
@@ -91,14 +126,30 @@ test("spec final rejection evidence is generated from the real command and conte
   assert.equal(sha256(await readFile(result.logPath)), result.manifest.raw_log.sha256);
   assert.equal(sha256(await readFile(result.manifestPath)), (await readFile(result.sidecarPath, "utf8")).trim());
   await assert.rejects(access(legacyArtifact), { code: "ENOENT" });
+  const canonicalRoot = new URL(
+    ".vibepro/pr/story-brainbase-owned-company-authority-consumer/spec-final-negative-evidence/",
+    root,
+  );
+  const canonicalManifestPath = new URL("manifest.json", canonicalRoot);
+  const canonicalLogPath = new URL("raw.log", canonicalRoot);
+  const canonicalSidecarPath = new URL("manifest.sha256", canonicalRoot);
+  const canonicalManifestBytes = await readFile(canonicalManifestPath);
+  const canonicalManifest = JSON.parse(canonicalManifestBytes);
+  const canonicalManifestSha256 = sha256(canonicalManifestBytes);
+  assert.equal(canonicalManifestSha256, (await readFile(canonicalSidecarPath, "utf8")).trim());
+  assert.equal(sha256(await readFile(canonicalLogPath)), canonicalManifest.raw_log.sha256);
+  assert.equal(canonicalManifest.git.head_before, canonicalManifest.git.head_after);
+  assert.equal(canonicalManifest.git.head_before, execFileSync("git", ["rev-parse", "HEAD"], { cwd: root }).toString().trim());
+  assert.equal(canonicalManifest.success_claim, false);
   process.stdout.write(
     `SPEC_FINAL_NEGATIVE_EVIDENCE ${JSON.stringify({
-      manifest_path: result.manifest.manifest_path,
-      manifest_sha256: result.manifestSha256,
-      raw_log_path: result.manifest.raw_log.path,
-      raw_log_sha256: result.manifest.raw_log.sha256,
-      exit_code: result.manifest.exit_code,
-      success_claim: result.manifest.success_claim,
+      manifest_path: canonicalManifest.manifest_path,
+      manifest_sha256: canonicalManifestSha256,
+      raw_log_path: canonicalManifest.raw_log.path,
+      raw_log_sha256: canonicalManifest.raw_log.sha256,
+      exit_code: canonicalManifest.exit_code,
+      success_claim: canonicalManifest.success_claim,
     })}\n`,
   );
+  await rm(temporaryArtifactDir, { recursive: true, force: true });
 });

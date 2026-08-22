@@ -177,14 +177,6 @@
           {
             "kind": "acceptance_criteria",
             "ac_id": "AC-005"
-          },
-          {
-            "kind": "acceptance_criteria",
-            "ac_id": "AC-010"
-          },
-          {
-            "kind": "acceptance_criteria",
-            "ac_id": "AC-011"
           }
         ],
         "architecture_refs": [
@@ -208,6 +200,34 @@
           }
         ]
       },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-002",
+      "type": "invariant",
+      "statement": "AC-010のduplicate delivery、各effect exactly once、Receipt／correlation／idempotency identity同一性はT0 runtime adapterの実行証拠が得られるまでnot_collectedとし、fixture/mockを実行証拠へ昇格させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-010" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Production evidence boundary" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-010 runtime duplicate delivery and exactly-once effects remain not_collected" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "must_cover": "AC-010 runtime duplicate delivery" }] },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-003",
+      "type": "invariant",
+      "statement": "AC-011のOperationReceipt、UsageEvent、external readback、authority-resolution receiptの同一correlation結合はT0 runtime surfaceの実行証拠が得られるまでnot_collectedとし、fixture/mockをcompletion証拠へ昇格させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-011" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Production evidence boundary" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-011 correlated runtime completion evidence remains not_collected" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "must_cover": "AC-011 correlated runtime completion evidence" }] },
       "confidence": 1,
       "first_seen_at": "2026-08-22T00:00:00.000Z",
       "last_revised_at": "2026-08-22T01:01:21.954Z"

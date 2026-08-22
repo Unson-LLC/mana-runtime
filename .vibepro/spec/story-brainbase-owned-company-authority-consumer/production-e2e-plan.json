@@ -37,6 +37,28 @@
     "unknown_handling": "unknown and unavailable observations remain not_collected and include next_action",
     "production_proof": "not_collected"
   },
+  "runtime_execution_evidence": {
+    "AC-010": {
+      "status": "not_collected",
+      "owner": "T0",
+      "required_assertions": [
+        "duplicate delivery executes model, Brainbase write, external side effect, and Slack delivery exactly once",
+        "both deliveries preserve the same Receipt, correlation ID, and idempotency identity"
+      ],
+      "exit_condition": "collect deterministic runtime effect counters and identity-linked receipt readback after the T0 adapter exists",
+      "fixture_mock_is_production_proof": false
+    },
+    "AC-011": {
+      "status": "not_collected",
+      "owner": "T0",
+      "required_assertions": [
+        "OperationReceipt, UsageEvent, external readback, and authority-resolution receipt share one correlation ID",
+        "completion remains incomplete when any required evidence is absent"
+      ],
+      "exit_condition": "collect the correlated runtime artifacts after the T0 adapter and receipt surfaces exist",
+      "fixture_mock_is_production_proof": false
+    }
+  },
   "cases": [
     {
       "id": "tenant-boundary",

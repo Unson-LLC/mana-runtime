@@ -67,7 +67,7 @@ const contentBinding = async (repoRoot) => {
   return { algorithm: "sha256(path\\0bytes\\0, sorted by path)", files, sha256: sha256(Buffer.concat(parts)) };
 };
 
-export async function generateSpecFinalNegativeEvidence({ repoRoot }) {
+export async function generateSpecFinalNegativeEvidence({ repoRoot, artifactDir: artifactDirOverride }) {
   const root = resolve(fileURLToPath(repoRoot));
   const childEnv = { ...process.env };
   delete childEnv.NODE_TEST_CONTEXT;
@@ -97,13 +97,15 @@ export async function generateSpecFinalNegativeEvidence({ repoRoot }) {
     Buffer.from(`\nSTDERR_BYTES=${stderr.length}\n`), stderr,
   ]);
   const binding = await contentBinding(root);
-  const artifactDir = join(root, ".vibepro", "pr", storyId, "spec-final-negative-evidence");
+  const artifactDir = artifactDirOverride
+    ? resolve(artifactDirOverride)
+    : join(root, ".vibepro", "pr", storyId, "spec-final-negative-evidence");
   await mkdir(artifactDir, { recursive: true });
   const manifestPath = join(artifactDir, "manifest.json");
   const logPath = join(artifactDir, "raw.log");
   const sidecarPath = join(artifactDir, "manifest.sha256");
-  const manifestRelative = relative(root, manifestPath);
-  const logRelative = relative(root, logPath);
+  const manifestRelative = artifactDirOverride ? manifestPath : relative(root, manifestPath);
+  const logRelative = artifactDirOverride ? logPath : relative(root, logPath);
   const manifest = {
     schema_version: "0.1.0",
     evidence_type: "vibepro_spec_final_rejection",
