@@ -44,7 +44,7 @@ test("production E2E plan is bound to the locked producer and remains not_collec
 
   const canonicalCodes = new Set(producer.canonical_error_codes);
   const fixturesById = new Map(fixtures.negative.map((fixture) => [fixture.id, fixture]));
-  assert.equal(plan.cases.length, 8);
+  assert.equal(plan.cases.length, 14);
   for (const plannedCase of plan.cases) {
     assert.equal(plannedCase.current_state, "not_collected", plannedCase.id);
     assert.equal(plannedCase.coverage_status, "not_collected", plannedCase.id);
@@ -55,9 +55,21 @@ test("production E2E plan is bound to the locked producer and remains not_collec
     assert.ok(plannedCase.forbidden_display.includes("success"), plannedCase.id);
     assert.ok(plannedCase.forbidden_display.includes("empty"), plannedCase.id);
     assert.ok(plannedCase.forbidden_display.includes("in_progress"), plannedCase.id);
-    assert.equal(plannedCase.expected_code_status, "defined", plannedCase.id);
-    assert.ok(canonicalCodes.has(plannedCase.expected_code), plannedCase.id);
-    assert.ok(plannedCase.producer_fixture_ids.length > 0, plannedCase.id);
+    assert.ok(["defined", "not_defined"].includes(plannedCase.expected_code_status), plannedCase.id);
+    assert.ok(["retry_after_remediation", "do_not_retry", "diagnostic_only"].includes(plannedCase.operator_remediation.retryability), plannedCase.id);
+    assert.match(plannedCase.operator_remediation.rejection_reason, /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u, plannedCase.id);
+    assert.match(plannedCase.operator_remediation.next_action, /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u, plannedCase.id);
+    assert.match(plannedCase.operator_remediation.support_route, /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u, plannedCase.id);
+    assert.match(plannedCase.operator_visible_surface, /Slack|CLI/, plannedCase.id);
+    if (plannedCase.expected_code_status === "defined") {
+      assert.ok(canonicalCodes.has(plannedCase.expected_code), plannedCase.id);
+    } else {
+      assert.equal(plannedCase.expected_code, null, plannedCase.id);
+      assert.equal(plannedCase.code_owner, "T0", plannedCase.id);
+      assert.equal(plannedCase.success_eligible, false, plannedCase.id);
+      assert.equal(plannedCase.coverage_eligible, false, plannedCase.id);
+    }
+    assert.ok(Array.isArray(plannedCase.producer_fixture_ids), plannedCase.id);
     for (const fixtureId of plannedCase.producer_fixture_ids) {
       const fixture = fixturesById.get(fixtureId);
       assert.ok(fixture, `${plannedCase.id}: ${fixtureId}`);
@@ -69,6 +81,26 @@ test("production E2E plan is bound to the locked producer and remains not_collec
       );
     }
   }
+
+  assert.deepEqual(
+    plan.cases.map(({ id }) => id),
+    [
+      "tenant-boundary", "personal-owner-boundary", "unknown-person", "ambiguous-person",
+      "stale-raci", "stale-policy", "wrong-approver", "queue-redelivery",
+      "key-rotation-old-kid", "key-revocation", "legacy-runtime", "dual-read-migration",
+      "company-authority-missing", "brainbase-unavailable-no-fallback",
+    ],
+  );
+  for (const id of ["key-rotation-old-kid", "key-revocation"]) {
+    const keyCase = plan.cases.find((plannedCase) => plannedCase.id === id);
+    assert.equal(keyCase.implementation_status, "not_implemented");
+    assert.equal(keyCase.coverage_status, "not_collected");
+    assert.ok(keyCase.kid_before);
+    assert.ok(keyCase.kid_after);
+  }
+  const missingAuthority = plan.cases.find(({ id }) => id === "company-authority-missing");
+  assert.deepEqual(missingAuthority.allowed_operations, ["health", "protocol_negotiation", "provisioning", "connection_diagnostics", "tenant_isolation_test"]);
+  assert.equal(missingAuthority.business_operation, "rejected");
 
   const queue = plan.cases.find(({ id }) => id === "queue-redelivery");
   assert.equal(queue.first_delivery_outcome, "rejected");
@@ -141,6 +173,8 @@ test("spec final rejection evidence is generated from the real command and conte
   assert.equal(result.manifest.git.porcelain_sha256_before, result.manifest.git.porcelain_sha256_after);
   assert.ok(result.manifest.reason_codes.includes("multi_tenant_failure_semantics_no_data"));
   assert.ok(result.manifest.reason_codes.includes("multi_tenant_tenant_propagation_unverified"));
+  assert.deepEqual(result.manifest.reason_codes, result.manifest.expected_reason_codes);
+  assert.equal(result.manifest.reason_codes.includes("pattern_no_files"), false);
   assert.equal(sha256(await readFile(result.logPath)), result.manifest.raw_log.sha256);
   assert.equal(sha256(await readFile(result.manifestPath)), (await readFile(result.sidecarPath, "utf8")).trim());
   await assert.rejects(access(legacyArtifact), { code: "ENOENT" });

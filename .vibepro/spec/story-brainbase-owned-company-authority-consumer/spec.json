@@ -101,24 +101,24 @@
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
     },
     {
-      "id": "BND-004", "type": "invariant",
+      "id": "BND-004", "type": "contract",
       "statement": "AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証はT0 runtime adapterの実行証拠が得られるまでnot_collectedとし、fixture consumerやassertCanonicalAuthorityRetrieval helperをruntime integration証拠へ昇格させない",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-004" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "実行フローとA0境界" }], "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-004 runtime boundary integrations remain not_collected" }] },
-      "verifiable_by": { "test_pattern": [{ "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "must_cover": "AC-004 runtime boundary integrations" }] },
+      "verifiable_by": {},
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
     },
     {
-      "id": "BND-002", "type": "invariant",
+      "id": "BND-002", "type": "contract",
       "statement": "AC-010のduplicate delivery、各effect exactly once、Receipt／correlation／idempotency identity同一性はT0 runtime adapterの実行証拠が得られるまでnot_collectedとし、fixture/mockを実行証拠へ昇格させない",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-010" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Production evidence boundary" }], "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-010 runtime duplicate delivery and exactly-once effects remain not_collected" }] },
-      "verifiable_by": { "test_pattern": [{ "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "must_cover": "AC-010 runtime duplicate delivery" }] },
+      "verifiable_by": {},
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
     },
     {
-      "id": "BND-003", "type": "invariant",
+      "id": "BND-003", "type": "contract",
       "statement": "AC-011のOperationReceipt、UsageEvent、external readback、authority-resolution receiptの同一correlation結合はT0 runtime surfaceの実行証拠が得られるまでnot_collectedとし、fixture/mockをcompletion証拠へ昇格させない",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-011" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Production evidence boundary" }], "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-011 correlated runtime completion evidence remains not_collected" }] },
-      "verifiable_by": { "test_pattern": [{ "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "must_cover": "AC-011 correlated runtime completion evidence" }] },
+      "verifiable_by": {},
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
     },
     {
@@ -129,10 +129,10 @@
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
     },
     {
-      "id": "BND-001", "type": "invariant",
+      "id": "BND-001", "type": "contract",
       "statement": "本Storyのfixture/mock適合はproduction 2 tenant E2E、trusted kid/key rotation/revocation、T0完了、deploy、release-readyを証明しない",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-012" }], "architecture_refs": [{ "file": "docs/management/milestones/M0-brainbase-owned-company-authority.md", "section": "Dependencies" }], "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "production 2x2 tenant/person E2E remains not_collected" }] },
-      "verifiable_by": { "test_pattern": [{ "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "must_cover": "production_e2e_not_collected" }] },
+      "verifiable_by": {},
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
     }
   ]

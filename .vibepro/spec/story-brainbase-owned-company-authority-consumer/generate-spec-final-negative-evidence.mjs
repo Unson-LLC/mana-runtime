@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const storyId = "story-brainbase-owned-company-authority-consumer";
 const expectedReasonCodes = [
   "multi_tenant_failure_semantics_no_data",
+  "multi_tenant_tenant_graph_edges",
+  "multi_tenant_tenant_graph_entities",
   "multi_tenant_tenant_propagation_unverified",
 ];
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -156,7 +158,7 @@ export async function generateSpecFinalNegativeEvidence({ repoRoot, artifactDir:
   await atomicWrite(manifestPath, manifestBytes);
   await atomicWrite(sidecarPath, Buffer.from(`${manifestSha256}\n`));
 
-  if (result.status !== 2 || !expectedReasonCodes.every((code) => reasonCodes.includes(code))) {
+  if (result.status !== 2 || JSON.stringify(reasonCodes) !== JSON.stringify([...expectedReasonCodes].sort())) {
     throw new Error(`unexpected spec final result: exit=${result.status} reasons=${reasonCodes.join(",")}`);
   }
   if (before.head !== after.head || before.worktree_fingerprint_sha256 !== after.worktree_fingerprint_sha256) {
