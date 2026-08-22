@@ -1,10 +1,10 @@
 {
   "schema_version": "0.1.0",
   "story_id": "story-brainbase-owned-company-authority-consumer",
-  "created_at": "2026-08-22T00:57:06.060Z",
+  "created_at": "2026-08-22T03:29:48.744Z",
   "status": "ready",
   "git": {
-    "head_sha": "9f0f8d5caa31c22906e48ab084f02c6bf6e8a2fb"
+    "head_sha": "6d07e547dc4ba6ff2bea3b29a20764ccbfd3ca52"
   },
   "checks": [
     {
@@ -37,7 +37,7 @@
   },
   "engineering_judgment": null,
   "pr_prepare": {
-    "created_at": "2026-08-22T00:57:06.016Z",
+    "created_at": "2026-08-22T03:29:48.702Z",
     "artifact": ".vibepro/pr/story-brainbase-owned-company-authority-consumer/pr-prepare.json"
   },
   "next_actions": []
