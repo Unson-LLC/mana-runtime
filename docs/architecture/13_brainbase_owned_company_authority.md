@@ -64,10 +64,12 @@ MANAはperson、owner、organization、project、RACI、approver、policy、plac
 
 MANAからBrainbaseへ送るものは、観測事実と要求に限定する。
 
+現行`ObservedExecutionRequestV1`はSlack限定である。locked schemaは`provider: "slack"`だけを受理し、Codex、Claude Code、serviceはprovider固有のnested envelopeが契約化されるまで`future / not_implemented`として拒否する。A0のAC-001 verified範囲もSlack fixture conformanceだけであり、non-Slack providerの入力またはruntime接続を証明しない。
+
 ```ts
 interface ObservedExecutionRequestV1 {
   provider_identity: {
-    provider: "slack" | "codex" | "claude_code" | "service";
+    provider: "slack";
     authenticated_subject_id: string;
     app_id?: string;
     workspace_id?: string;
@@ -149,10 +151,10 @@ interface CanonicalExecutionContextV1 {
 
 A0で実証済みなのは、locked producer fixtureをfixture consumerへ入力し、署名済みcontextを検証・伝播するconformance境界だけである。`assertCanonicalAuthorityRetrieval`は未確定retrievalをfail-closedにするhelperであり、下記runtime経路への接続を証明しない。
 
-目標runtimeフロー（A0では未接続・`not_collected`）:
+目標runtimeフロー（A0では未接続・`not_collected`。現行v1入力はSlackだけ）:
 
 ```text
-Slack／Codex／Claude Code／service event
+Slack event
   → provider identityを検証
   → ObservedExecutionRequestを作る
   → Brainbaseへcompany authority resolution
@@ -164,6 +166,8 @@ Slack／Codex／Claude Code／service event
   → external readback
   → Usage／Operation Receipt／authority receiptを相関
 ```
+
+Codex、Claude Code、serviceから始まる同等フローは将来のprovider固有nested envelope契約後の対象であり、現行v1では`not_implemented`である。
 
 Brainbaseが到達不能、identityが未解決、contextが古い場合は、モデル実行前に止める。この停止をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryの各実runtime surfaceで確認するのはT0以後のexit conditionであり、fixture conformanceを接続証拠へ読み替えない。
 

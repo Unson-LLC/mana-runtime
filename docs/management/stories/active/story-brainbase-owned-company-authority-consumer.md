@@ -32,7 +32,7 @@ MANAは権限内の仕事を自動実行し、人間判断が必要ならBrainba
 
 ## Acceptance criteria
 
-- [ ] AC-001: provider identityだけを観測する。MANAはSlack／Codex／Claude Code／serviceの認証済みexternal subjectを取得するが、それをcanonical person IDとして採用しない。
+- [ ] AC-001: provider identityだけを観測する。現行`ObservedExecutionRequestV1`はSlackの認証済みexternal subjectだけを取得し、それをcanonical person IDとして採用しない。A0のverified範囲はlocked Slack fixture conformanceに限定する。Codex／Claude Code／serviceはprovider固有nested envelopeが契約化されるまで`future / not_implemented`であり、AC-001の成功証拠に含めない。
 - [ ] AC-002: requested actionだけを送る。MANAはcapability、resource、desired effect、delivery、correlation IDをBrainbaseへ送る。canonical organization、project、owner、RACI、approver、authority decisionを送らない。
 - [ ] AC-003: fixture consumer契約でBrainbase contextを必須にする。A0のconformance helperは署名済み`CanonicalExecutionContextV1`の検証・伝播だけを受理し、欠落・未確定contextをfail-closedで拒否する。このfixture検証は会社データread／write、Personal KG、外部side effectの実runtime接続証拠ではない。
 - [ ] AC-004: 全runtime境界で再検証する。Worker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへconsumerを接続し、signature、TTL、audience、deployment、tenant、connection、membership、resource、RACI、policy revisionを各境界で検証する。A0ではこれら7 surfaceの接続・実行証拠は`not_collected`であり、T0 runtime adapter後までunverifiedとする。
