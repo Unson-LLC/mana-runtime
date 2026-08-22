@@ -74,7 +74,8 @@
       "business_effect=false and side_effect_count=0",
       "Receipt and readback share the correlation ID",
       "unknown observations retain next_action",
-      "retry or redelivery preserves effect exactly once when applicable"
+      "expected_code is a canonical locked-producer code or expected_code_status=not_defined owned by T0",
+      "rejected-first redelivery preserves the original rejection code with original, delta, and aggregate effect counts all zero"
     ]
   },
   "clauses": [

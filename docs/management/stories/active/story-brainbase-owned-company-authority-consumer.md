@@ -57,7 +57,7 @@ MANAは権限内の仕事を自動実行し、人間判断が必要ならBrainba
 
 A0 company-authority contractはcredential lease固有fixture／negative caseを持たない。credential leaseのfail-closed検証は既存`mana-brainbase-tenant-context/v1`の責務であり、A0 company-authority contractのAcceptance Criteria外とする。
 
-AC-012のproduction E2Eは未収集である。将来の実行では、`.vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json`を正本test planとして使い、各negative caseについて利用者に見える拒否、side effect 0、同一correlation IDのReceipt/readback、未確認状態、再配送時のexactly-onceを収集する。計画に記載した画面、Slack応答、CLI、log、Receiptは予定面であり、A0で実装済みとは扱わない。
+AC-012のproduction E2Eは未収集である。将来の実行では、`.vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json`を正本test planとして使い、locked producer fixtureに存在するcanonical拒否code、利用者に見える拒否、side effect 0、同一correlation IDのReceipt/readback、未確認状態を収集する。再配送negative caseはrejected-first-deliveryだけを対象にし、original／redelivery／aggregate effectをすべて0に固定する。accepted-first-deliveryはこの8 negative caseの成功証拠に数えない。計画に記載した画面、Slack応答、CLI、log、Receiptは予定面であり、A0で実装済みとは扱わない。
 
 ## Release gate
 
