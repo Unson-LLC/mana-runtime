@@ -97,6 +97,9 @@ describe("Cloudflare task runtime entrypoints", () => {
     const env = {
       TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH", SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       SLACK_BOT_TOKEN: "unson-token", RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "C0BKS6RL99T", projectCodes: ["back-office"], taskBoardEnabled: true },
+      ]),
       TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget]), TASK_BOARD_REPAIRS: { send: vi.fn() },
     };
     await processTaskBoardRepair(repair, env, "unson-business", fetch, refresh);
@@ -104,6 +107,22 @@ describe("Cloudflare task runtime entrypoints", () => {
     await expect(processTaskBoardRepair({ ...repair, channelId: "C_OTHER" }, env,
       "unson-business", fetch, refresh)).rejects.toThrow("task_board_scope_mismatch");
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a same-tenant repair when the target projects do not match the enabled placement", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const env = {
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "T0882T8N9UH", SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
+      SLACK_BOT_TOKEN: "unson-token", RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "C0BKS6RL99T", projectCodes: ["mana"], taskBoardEnabled: true },
+      ]),
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([businessTarget]), TASK_BOARD_REPAIRS: { send: vi.fn() },
+    };
+
+    await expect(processTaskBoardRepair(repair, env, "unson-business", fetch, refresh))
+      .rejects.toThrow("task_board_scope_mismatch");
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("rejects a stale Canvas binding snapshot without writing to Slack", async () => {
@@ -146,6 +165,9 @@ describe("Cloudflare task runtime entrypoints", () => {
     const env = {
       TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "TUNSON", SLACK_ALLOWED_CHANNEL_ID: "CBACKOFFICE",
       SLACK_BOT_TOKEN: "unson-token", TASK_BOARD_TARGETS_JSON: JSON.stringify([target]),
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "CBACKOFFICE", projectCodes: ["back-office"], taskBoardEnabled: true },
+      ]),
       TASK_BOARD_REPAIRS: { send: vi.fn() },
       TASK_BOARD_BINDINGS: { idFromName: vi.fn((name) => name), get: vi.fn(() => ({ fetch: bindingFetch })) },
     };
