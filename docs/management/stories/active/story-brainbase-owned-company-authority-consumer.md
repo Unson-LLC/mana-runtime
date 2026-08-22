@@ -91,6 +91,10 @@ Tenant A／B、佐藤／梅田を使い、tenant越境、Personal越境、unknow
 - canonical cross-repo fixture
 - existing mana-brainbase tenant context v1
 
+## A0 contract boundary
+
+A0 company-authority contractはcredential lease固有fixture／negative caseを持たない。credential leaseのfail-closed検証は既存`mana-brainbase-tenant-context/v1`の責務であり、A0 company-authority contractのAcceptance Criteria外とする。
+
 ## Release gate
 
 本Story完了前に次を完了扱いにしない。

@@ -188,7 +188,7 @@
     {
       "id": "INV-002",
       "type": "invariant",
-      "statement": "tenant/project mismatch、unknown/ambiguous authority、tamper/additional property、期限・署名・lease違反はbusiness effect前にfail-closedとしfallbackしない",
+      "statement": "tenant/project mismatch、unknown/ambiguous authority、tamper/additional property、期限・署名違反はbusiness effect前にfail-closedとしfallbackしない。credential leaseは既存mana-brainbase-tenant-context/v1の責務であり、A0 company-authority contractのAcceptance Criteria外とする",
       "origin": {
         "story_refs": [
           {

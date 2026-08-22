@@ -80,7 +80,7 @@
     },
     {
       "id": "INV-002", "type": "invariant",
-      "statement": "tenant/project mismatch、unknown/ambiguous authority、tamper/additional property、期限・署名・lease違反はbusiness effect前にfail-closedとしfallbackしない",
+      "statement": "tenant/project mismatch、unknown/ambiguous authority、tamper/additional property、期限・署名違反はbusiness effect前にfail-closedとしfallbackしない。credential leaseは既存mana-brainbase-tenant-context/v1の責務であり、A0 company-authority contractのAcceptance Criteria外とする",
       "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-007" }, { "kind": "acceptance_criteria", "ac_id": "AC-013" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Fail-closed" }] },
       "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "must_cover": "fails closed for all producer negative fixtures" }] },
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
