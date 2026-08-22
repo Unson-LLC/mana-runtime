@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { generateSpecFinalNegativeEvidence } from "./generate-spec-final-negative-evidence.mjs";
@@ -78,6 +78,10 @@ test("production E2E plan is bound to the locked producer and remains not_collec
 
 test("spec final rejection evidence is generated from the real command and content-bound", async () => {
   const result = await generateSpecFinalNegativeEvidence({ repoRoot: root });
+  const legacyArtifact = new URL(
+    ".vibepro/pr/story-brainbase-owned-company-authority-consumer/spec-final-negative-evidence.json",
+    root,
+  );
   assert.equal(result.manifest.success_claim, false);
   assert.equal(result.manifest.exit_code, 2);
   assert.equal(result.manifest.git.head_before, result.manifest.git.head_after);
@@ -86,6 +90,7 @@ test("spec final rejection evidence is generated from the real command and conte
   assert.ok(result.manifest.reason_codes.includes("multi_tenant_tenant_propagation_unverified"));
   assert.equal(sha256(await readFile(result.logPath)), result.manifest.raw_log.sha256);
   assert.equal(sha256(await readFile(result.manifestPath)), (await readFile(result.sidecarPath, "utf8")).trim());
+  await assert.rejects(access(legacyArtifact), { code: "ENOENT" });
   process.stdout.write(
     `SPEC_FINAL_NEGATIVE_EVIDENCE ${JSON.stringify({
       manifest_path: result.manifest.manifest_path,
