@@ -1,0 +1,255 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-brainbase-owned-company-authority-consumer",
+  "generated_by": {
+    "caller": "unknown",
+    "stage": "ai_synthesis"
+  },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenant_id",
+      "resolved_from": [
+        "Brainbase signed CanonicalExecutionContextV1"
+      ],
+      "resolution_point": "Mana fixture consumer verifies the signed nested TenantContext before any business effect",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "fixture_consumer",
+        "queue",
+        "worker",
+        "durable_object",
+        "container",
+        "mcp",
+        "brainbase_proxy",
+        "slack_delivery"
+      ],
+      "verified_surfaces": [
+        "fixture_consumer"
+      ]
+    },
+    "resources": [
+      {
+        "name": "canonical_company_authority_context",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/connection_id/correlation_id",
+        "trust_zone": "brainbase_to_mana_control_plane",
+        "residue_policy": "fixture-only; production retention is not established by A0",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "opaque credential_ref only"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenant_id",
+      "scope": "tenant_id/connection_id/operation_id/audience",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "Brainbase"
+      ],
+      "residency": "not_collected by A0 fixture work",
+      "migration": "not_performed",
+      "rollback": "remove consumer fixture; no production state is changed"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_shared",
+      "managed_dedicated",
+      "customer_managed"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "cross_tenant_candidate",
+      "no_data"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "CanonicalExecutionContextV1",
+        "TenantContextEnvelope"
+      ],
+      "boundary_edges": [
+        "BrainbaseProducer->ManaFixtureConsumer"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "unverified",
+      "evidence_state": "not_collected",
+      "evidence": {
+        "propagation_surfaces": [
+          "fixture_consumer"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "cross_tenant_candidate",
+          "no_data"
+        ],
+        "evidence_refs": [
+          "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts"
+        ]
+      }
+    }
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "Manaはbrainbase-unson PR #1302のmerge SHAとfixture digestを固定し、observed requestとCanonicalExecutionContextV1をexact schemaで受け入れる",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-001"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-003"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/13_brainbase_owned_company_authority.md",
+            "section": "Canonical contract"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "must_cover": "exact producer source lock"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "Manaは会社権限を生成・昇格せず、company_authority_v1 protocol marker、署名、期限、audience、tenant、project、actor、source、idempotency、receiptを検証してそのまま伝播する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-004"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-005"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-010"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-011"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/13_brainbase_owned_company_authority.md",
+            "section": "Runtime rule"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "must_cover": "accepts all signed positive contexts"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "tenant/project mismatch、unknown/ambiguous authority、tamper/additional property、期限・署名・lease違反はbusiness effect前にfail-closedとしfallbackしない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-007"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-013"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/13_brainbase_owned_company_authority.md",
+            "section": "Fail-closed"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "must_cover": "fails closed for all producer negative fixtures"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-001",
+      "type": "invariant",
+      "statement": "本Storyのfixture/mock適合はproduction 2 tenant E2E、trusted kid/key rotation/revocation、T0完了、deploy、release-readyを証明しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-012"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/management/milestones/M0-brainbase-owned-company-authority.md",
+            "section": "Dependencies"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "contracts/mana-brainbase-company-authority/v1/consumer-source-lock.json",
+            "must_cover": "production_proof"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    }
+  ],
+  "generated_at": "2026-08-22T01:01:21.952Z",
+  "previous_spec_id": ""
+}

@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "contract_id": "mana-brainbase-company-authority/v1",
+  "contract_role": "mana_authority_consumer_fixture",
+  "accepted_producer": {
+    "repository": "Unson-LLC/brainbase-unson",
+    "ref": "develop",
+    "pull_request": 1302,
+    "merged_sha": "ad908bce7b90678f9ed7f1c570f808bdf1a500ad",
+    "root_path": "contracts/mana-brainbase-company-authority/v1",
+    "fixture_set_sha256": "1d7af5b850abeb10e07db281c17341636d80a74cb37679b2c2b6ab5ce9b0a6ea",
+    "artifact_sha256": {
+      "fixtures/cases.json": "d4d576cf88dff65252e3429a848f60ea5a9b2be3d5a36a6029a0e436469cd009",
+      "fixtures/fixture.schema.json": "5d3b3fedd0fc48004d317e61866269a5a8e5b7837f066f0be9a6386292cd5577",
+      "fixtures/manifest.json": "139b9720a9f1d658b21536f0eedf81eb71adecac04e3c6084568e49b60f20dca",
+      "fixtures/test-key.json": "915e16b8e72ef7be076145f034666b0f057113955f6c4292a48ec79837c055f7",
+      "producer.contract.json": "638f2d116d2803aaadc40c61893f3cf540fbfc3ef8a157dc38ed43905f618aac",
+      "reference/wire.mjs": "567acae2f99855dfba8cd5640a59d2c3c3306c853423a2fd752e49f0615c564b",
+      "schema/canonical-execution-context.schema.json": "050600918f10db36ea00c30cf8f01e1857e7563706872d3485858c0721ffae0a",
+      "schema/company-authority-resolution-response.schema.json": "76b7c828748c45f34080c011c0c47152867ec5e2f7edd37c35062a4a811461de",
+      "schema/observed-execution-request.schema.json": "662757f8fae8a0bc46c62194d2dc108a2d343eb539b38c04455b3ca34468707e",
+      "source-lock.json": "745c2d9212af0475d32db6663354eb407ee53ce962c911071bff74001616f246"
+    }
+  },
+  "consumer_boundary": {
+    "company_authority_identifier": "tenant_context.authorization.capability_ids contains company_authority_v1",
+    "requested_capability": "authority.capability_id",
+    "authority_receipt": "evidence.authority_resolution_receipt_id",
+    "behavior": "verify_and_propagate_only",
+    "semantic_generation": "forbidden",
+    "production_proof": "not_collected",
+    "runtime_trust_store": "not_implemented_by_this_fixture"
+  }
+}

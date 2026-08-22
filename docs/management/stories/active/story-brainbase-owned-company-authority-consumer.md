@@ -10,7 +10,8 @@ architecture_docs:
   - docs/architecture/13_brainbase_owned_company_authority.md
   - docs/architecture/10_company_brain.md
   - docs/architecture/04_auth_permission.md
-spec_docs: []
+spec_docs:
+  - .vibepro/spec/story-brainbase-owned-company-authority-consumer/spec.json
 related_tasks:
   - docs/management/milestones/M0-brainbase-owned-company-authority.md
 ---
