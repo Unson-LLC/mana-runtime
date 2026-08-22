@@ -63,6 +63,20 @@
       }
     }
   },
+  "production_e2e_plan": {
+    "status": "not_collected",
+    "artifact": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json",
+    "acceptance_criterion": "AC-012",
+    "implementation_claim": "none",
+    "required_observations": [
+      "operator-visible rejection",
+      "not shown as success, empty, or in-progress",
+      "business_effect=false and side_effect_count=0",
+      "Receipt and readback share the correlation ID",
+      "unknown observations retain next_action",
+      "retry or redelivery preserves effect exactly once when applicable"
+    ]
+  },
   "clauses": [
     {
       "id": "C-001", "type": "contract",

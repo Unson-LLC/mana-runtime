@@ -279,3 +279,9 @@ MANAはPersonal KG本文を組織Graphへ転送しない。組織共有はBrainb
 - Personal owner fallbackが0件
 - authority欠落時に会社データoperationが0件
 - `not_collected`を成功へ丸めない
+
+## 13. Production negative E2Eの観測境界
+
+AC-012の将来E2Eは、`.vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json`を正本test planとする。各caseは入口、予定するoperator-visible surface、拒否code、非成功表示、`business_effect=false`、side effect 0、同一correlation IDのReceipt/readback、未確認状態とnext actionを一組で観測する。retry／redelivery対象はeffect exactly onceも確認する。
+
+A0時点ではproduction E2E、runtime trust store、key rotation／revocation、T0接続が未完了である。計画上の画面、Slack応答、CLI、log、Receiptを実装済みsurfaceとして扱わず、取得できない観測は`not_collected`のまま残す。

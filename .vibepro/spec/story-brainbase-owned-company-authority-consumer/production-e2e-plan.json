@@ -1,0 +1,146 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-brainbase-owned-company-authority-consumer",
+  "acceptance_criterion": "AC-012",
+  "status": "not_collected",
+  "environment": "future production-like 2 tenant x 2 person E2E",
+  "surface_contract": {
+    "implementation_status": "not_implemented_or_not_verified_by_A0",
+    "planned_surfaces": [
+      "operator CLI or test harness result",
+      "operator-visible Slack response when the scenario enters through Slack",
+      "runtime log with no secret or customer payload",
+      "OperationReceipt and authority-resolution receipt readback"
+    ],
+    "rule": "A planned surface is not evidence that the surface exists. An unavailable observation remains not_collected with a next action."
+  },
+  "common_assertions": {
+    "forbidden_ui_states": ["success", "empty", "in_progress"],
+    "business_effect": false,
+    "side_effect_count": 0,
+    "correlation": "request, visible rejection, OperationReceipt, authority receipt, and readback use the same correlation_id",
+    "unknown_handling": "unknown and unavailable observations remain not_collected and include next_action",
+    "production_proof": "not_collected"
+  },
+  "cases": [
+    {
+      "id": "tenant-boundary",
+      "entry_point": "future Slack or CLI E2E request from Tenant A targeting Tenant B",
+      "scenario": "cross-tenant organization or project access",
+      "operator_visible_surface": "planned Slack rejection or CLI result, sanitized runtime log, OperationReceipt readback",
+      "expected_result": "explicit tenant mismatch rejection code",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after T0 and the runtime trust store exist, provision isolated Tenant A/B fixtures and collect the rejection plus receipt readback",
+      "retry_redelivery_expectation": "each delivery is rejected; business effect remains zero"
+    },
+    {
+      "id": "personal-owner-boundary",
+      "entry_point": "future Slack or CLI E2E request by Sato for Umeda Personal KG, and inverse",
+      "scenario": "cross-person Personal KG access",
+      "operator_visible_surface": "planned non-disclosing Slack rejection or CLI result, sanitized log, OperationReceipt readback",
+      "expected_result": "explicit owner or scope mismatch rejection code without existence disclosure",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after approved production-safe personas and trust infrastructure exist, collect both direction checks without exposing Personal KG content",
+      "retry_redelivery_expectation": "each delivery is rejected; business effect remains zero"
+    },
+    {
+      "id": "unknown-person",
+      "entry_point": "future provider-authenticated request whose subject has no canonical person",
+      "scenario": "unknown authority subject",
+      "operator_visible_surface": "planned AUTHORITY_UNAVAILABLE response, sanitized log, authority receipt readback",
+      "expected_result": "AUTHORITY_UNAVAILABLE",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "create a non-customer unknown subject after T0 and trust-store readiness, then collect the fail-closed evidence",
+      "retry_redelivery_expectation": "retry remains rejected until authoritative resolution exists"
+    },
+    {
+      "id": "ambiguous-person",
+      "entry_point": "future provider-authenticated request resolving to multiple candidate persons",
+      "scenario": "ambiguous authority subject",
+      "operator_visible_surface": "planned AUTHORITY_UNAVAILABLE response, sanitized log, authority receipt readback",
+      "expected_result": "AUTHORITY_UNAVAILABLE",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "prepare an approved ambiguous mapping fixture after T0 and collect explicit rejection evidence",
+      "retry_redelivery_expectation": "retry remains rejected until ambiguity is resolved authoritatively"
+    },
+    {
+      "id": "stale-raci",
+      "entry_point": "future request carrying a superseded RACI revision",
+      "scenario": "stale RACI authority context",
+      "operator_visible_surface": "planned stale-revision rejection, sanitized log, OperationReceipt and authority receipt readback",
+      "expected_result": "explicit stale RACI revision rejection code",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after revision readback exists, rotate the RACI revision and submit only the superseded context",
+      "retry_redelivery_expectation": "redelivery of the stale context remains rejected with zero effect"
+    },
+    {
+      "id": "stale-policy",
+      "entry_point": "future request carrying a superseded policy revision",
+      "scenario": "stale policy authority context",
+      "operator_visible_surface": "planned stale-revision rejection, sanitized log, OperationReceipt and authority receipt readback",
+      "expected_result": "explicit stale policy revision rejection code",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after policy revision readback exists, rotate the policy revision and submit only the superseded context",
+      "retry_redelivery_expectation": "redelivery of the stale context remains rejected with zero effect"
+    },
+    {
+      "id": "wrong-approver",
+      "entry_point": "future approval response from a person other than Brainbase approver_person_id",
+      "scenario": "approval by the wrong person or workspace",
+      "operator_visible_surface": "planned Slack rejection or CLI result, sanitized log, OperationReceipt and authority receipt readback",
+      "expected_result": "explicit approver mismatch rejection code",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across approval response rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after approval routing exists, submit an approved non-approver response without using customer data",
+      "retry_redelivery_expectation": "repeated wrong-approver responses remain rejected with zero effect"
+    },
+    {
+      "id": "queue-redelivery",
+      "entry_point": "future Queue redelivery with the same authority context, idempotency key, and correlation ID",
+      "scenario": "duplicate delivery after an accepted or rejected first delivery",
+      "operator_visible_surface": "planned CLI harness result, sanitized Queue log, OperationReceipt and external readback",
+      "expected_result": "duplicate delivery is identified and does not repeat the effect",
+      "forbidden_display": ["second success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id and idempotency key link both deliveries and the single authoritative receipt chain",
+      "current_state": "not_collected",
+      "next_action": "after Queue and receipt readback are production-ready, redeliver the same envelope and compare effect counters",
+      "retry_redelivery_expectation": "effect count is exactly once across original delivery and redelivery; for a rejected original delivery it remains zero"
+    }
+  ],
+  "dependencies": {
+    "T0": "not_done",
+    "runtime_trust_store": "not_implemented",
+    "key_rotation": "not_implemented",
+    "key_revocation": "not_implemented",
+    "production_e2e": "not_collected"
+  }
+}
