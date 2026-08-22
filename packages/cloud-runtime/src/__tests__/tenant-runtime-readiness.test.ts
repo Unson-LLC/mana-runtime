@@ -222,7 +222,7 @@ describe("tenant runtime readiness", () => {
       TASK_BOARD_TARGETS_JSON: "[]",
     })).toEqual({
       ready: false,
-      missing_bindings: ["MANA_TASK_BOARD_SERVICE_ACTOR_ID"],
+      missing_bindings: ["MANA_TASK_BOARD_SERVICE_ACTOR_ID", "RUNTIME_PLACEMENTS_JSON"],
     });
     expect(assessTenantRuntimeReadiness({
       ...complete,
@@ -240,7 +240,31 @@ describe("tenant runtime readiness", () => {
       MANA_TASK_BOARD_SERVICE_ACTOR_ID: "service_task_board",
     })).toEqual({
       ready: false,
-      missing_bindings: ["TASK_BOARD_TARGETS_JSON"],
+      missing_bindings: ["RUNTIME_PLACEMENTS_JSON", "TASK_BOARD_TARGETS_JSON"],
+    });
+  });
+
+  it("requires an enabled TaskBoard placement whenever scheduling is enabled", () => {
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      TASK_BOARD_TARGETS_JSON: "[]",
+      MANA_TASK_BOARD_SERVICE_ACTOR_ID: "service_task_board",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["RUNTIME_PLACEMENTS_JSON"],
+    });
+    expect(assessTenantRuntimeReadiness({
+      ...complete,
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([{
+        placementId: "accounting", channelId: "C_ACCOUNTING", projectCodes: ["back-office"], taskBoardEnabled: false,
+      }]),
+      TASK_BOARD_TARGETS_JSON: "[]",
+      MANA_TASK_BOARD_SERVICE_ACTOR_ID: "service_task_board",
+    })).toEqual({
+      ready: false,
+      missing_bindings: ["RUNTIME_PLACEMENTS_JSON"],
     });
   });
 
