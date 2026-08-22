@@ -80,6 +80,22 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   assert.equal(queue.accepted_first_delivery_plan, "out_of_scope_not_counted_as_negative_case_evidence");
 
   assert.deepEqual(plan.runtime_execution_evidence, {
+    "AC-004": {
+      status: "not_collected",
+      owner: "T0",
+      required_surfaces: [
+        "Worker",
+        "Queue",
+        "Durable Object",
+        "Container",
+        "MCP",
+        "Brainbase proxy",
+        "Slack delivery",
+      ],
+      exit_condition: "wire the fixture-validated consumer into every listed runtime boundary and collect deterministic rejection and no-effect evidence",
+      fixture_mock_is_runtime_integration_proof: false,
+      assertCanonicalAuthorityRetrieval_is_runtime_integration_proof: false,
+    },
     "AC-010": {
       status: "not_collected",
       owner: "T0",
@@ -104,8 +120,10 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   const clauseById = new Map(spec.clauses.map((clause) => [clause.id, clause]));
   assert.deepEqual(
     clauseById.get("INV-001").origin.story_refs.map(({ ac_id }) => ac_id),
-    ["AC-004", "AC-005"],
+    ["AC-005"],
   );
+  assert.equal(clauseById.get("C-002").origin.story_refs[0].ac_id, "AC-003");
+  assert.equal(clauseById.get("BND-004").origin.story_refs[0].ac_id, "AC-004");
   assert.equal(clauseById.get("BND-002").origin.story_refs[0].ac_id, "AC-010");
   assert.equal(clauseById.get("BND-003").origin.story_refs[0].ac_id, "AC-011");
 });

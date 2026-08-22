@@ -6,6 +6,10 @@ test("production 2x2 tenant/person E2E remains not_collected", {
   skip: "A0 fixture/mock conformance is not production 2x2 tenant/person E2E evidence",
 }, () => {});
 
+test("AC-004 runtime boundary integrations remain not_collected", {
+  skip: "A0 fixture conformance does not wire the consumer into Worker, Queue, Durable Object, Container, MCP, Brainbase proxy, or Slack delivery",
+}, () => {});
+
 test("AC-010 runtime duplicate delivery and exactly-once effects remain not_collected", {
   skip: "A0 fixture/mock conformance does not execute the T0 runtime adapter or effect counters",
 }, () => {});

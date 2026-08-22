@@ -34,8 +34,8 @@ MANAは権限内の仕事を自動実行し、人間判断が必要ならBrainba
 
 - [ ] AC-001: provider identityだけを観測する。MANAはSlack／Codex／Claude Code／serviceの認証済みexternal subjectを取得するが、それをcanonical person IDとして採用しない。
 - [ ] AC-002: requested actionだけを送る。MANAはcapability、resource、desired effect、delivery、correlation IDをBrainbaseへ送る。canonical organization、project、owner、RACI、approver、authority decisionを送らない。
-- [ ] AC-003: Brainbase contextを必須にする。会社データread／write、Personal KG、外部side effectは、署名済み`CanonicalExecutionContextV1`なしに実行できない。
-- [ ] AC-004: 全runtime境界で再検証する。Worker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryでsignature、TTL、audience、deployment、tenant、connection、membership、resource、RACI、policy revisionを検証する。
+- [ ] AC-003: fixture consumer契約でBrainbase contextを必須にする。A0のconformance helperは署名済み`CanonicalExecutionContextV1`の検証・伝播だけを受理し、欠落・未確定contextをfail-closedで拒否する。このfixture検証は会社データread／write、Personal KG、外部side effectの実runtime接続証拠ではない。
+- [ ] AC-004: 全runtime境界で再検証する。Worker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへconsumerを接続し、signature、TTL、audience、deployment、tenant、connection、membership、resource、RACI、policy revisionを各境界で検証する。A0ではこれら7 surfaceの接続・実行証拠は`not_collected`であり、T0 runtime adapter後までunverifiedとする。
 - [ ] AC-005: authority decisionに従う。`auto / approval / human_action / deny`をBrainbaseの結果どおりに扱い、モデルやruntimeがdecisionを昇格・変更しない。
 - [ ] AC-006: approverを変更しない。`approval`ではBrainbase指定approverだけを受理する。別person、同名user、別workspaceの回答を拒否する。
 - [ ] AC-007: no-fallbackを保証する。Brainbase unavailable、unknown person、ambiguous person、scope不一致、stale revision時にdefault tenant、default placement、default person、default project、運営者credentialへfallbackしない。
@@ -56,6 +56,8 @@ MANAは権限内の仕事を自動実行し、人間判断が必要ならBrainba
 ## A0 contract boundary
 
 A0 company-authority contractはcredential lease固有fixture／negative caseを持たない。credential leaseのfail-closed検証は既存`mana-brainbase-tenant-context/v1`の責務であり、A0 company-authority contractのAcceptance Criteria外とする。
+
+`assertCanonicalAuthorityRetrieval`はauthority retrievalの`no_data / unknown / partial / not_collected`を`AUTHORITY_UNAVAILABLE`へ落とすfixture conformance helperである。Worker／Queue／Durable Object／Container／MCP／Brainbase proxy／Slack deliveryへの接続証拠ではなく、AC-004のruntime integrationをverifiedへ昇格させない。
 
 AC-010のduplicate delivery、各effect 1回、Receipt／correlation／idempotency identity同一性と、AC-011のOperationReceipt／UsageEvent／external readback／authority receiptの同一correlation結合は、T0 runtime adapter未実装のため未収集である。A0のfixture/mockはkey形式とreceipt参照を検証するだけで、この実行証拠やproduction proofへ昇格させない。両ACのexit conditionは`production-e2e-plan.json`に固定する。
 

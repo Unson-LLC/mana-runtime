@@ -133,10 +133,6 @@
           {
             "kind": "acceptance_criteria",
             "ac_id": "AC-001"
-          },
-          {
-            "kind": "acceptance_criteria",
-            "ac_id": "AC-003"
           }
         ],
         "architecture_refs": [
@@ -165,15 +161,25 @@
       "last_revised_at": "2026-08-22T01:01:21.954Z"
     },
     {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "A0 fixture consumerは署名済みCanonicalExecutionContextV1を検証・伝播し、欠落または未確定contextをfail-closedで拒否する。この適合性helperは実runtime surfaceへの接続証拠ではない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-003" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "実行フローとA0境界" }],
+        "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "case": "accepts all signed positive contexts without generating Mana authority semantics" }, { "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "case": "fails closed for all producer negative fixtures and preserves their no-effect contract" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "must_cover": "accepts all signed positive contexts" }] },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
       "id": "INV-001",
       "type": "invariant",
       "statement": "Manaは会社権限を生成・昇格せず、company_authority_v1 protocol marker、署名、期限、audience、tenant、project、actor、source、idempotency、receiptを検証してそのまま伝播する",
       "origin": {
         "story_refs": [
-          {
-            "kind": "acceptance_criteria",
-            "ac_id": "AC-004"
-          },
           {
             "kind": "acceptance_criteria",
             "ac_id": "AC-005"
@@ -200,6 +206,20 @@
           }
         ]
       },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-004",
+      "type": "invariant",
+      "statement": "AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証はT0 runtime adapterの実行証拠が得られるまでnot_collectedとし、fixture consumerやassertCanonicalAuthorityRetrieval helperをruntime integration証拠へ昇格させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-004" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "実行フローとA0境界" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-004 runtime boundary integrations remain not_collected" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "must_cover": "AC-004 runtime boundary integrations" }] },
       "confidence": 1,
       "first_seen_at": "2026-08-22T00:00:00.000Z",
       "last_revised_at": "2026-08-22T01:01:21.954Z"

@@ -38,6 +38,22 @@
     "production_proof": "not_collected"
   },
   "runtime_execution_evidence": {
+    "AC-004": {
+      "status": "not_collected",
+      "owner": "T0",
+      "required_surfaces": [
+        "Worker",
+        "Queue",
+        "Durable Object",
+        "Container",
+        "MCP",
+        "Brainbase proxy",
+        "Slack delivery"
+      ],
+      "exit_condition": "wire the fixture-validated consumer into every listed runtime boundary and collect deterministic rejection and no-effect evidence",
+      "fixture_mock_is_runtime_integration_proof": false,
+      "assertCanonicalAuthorityRetrieval_is_runtime_integration_proof": false
+    },
     "AC-010": {
       "status": "not_collected",
       "owner": "T0",
