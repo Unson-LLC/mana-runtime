@@ -132,8 +132,8 @@
         ],
         "test_refs": [
           {
-            "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs",
-            "case": "production 2x2 tenant/person E2E remains not_collected"
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "pins the exact producer source lock and artifact digests"
           }
         ]
       },
@@ -272,8 +272,8 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
-            "case": "pins the exact producer source lock and artifact digests"
+            "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs",
+            "case": "production 2x2 tenant/person E2E remains not_collected"
           }
         ]
       },
