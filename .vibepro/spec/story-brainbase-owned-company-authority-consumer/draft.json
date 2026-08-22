@@ -132,8 +132,8 @@
         ],
         "test_refs": [
           {
-            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
-            "case": "pins the exact producer source lock and artifact digests"
+            "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs",
+            "case": "production 2x2 tenant/person E2E remains not_collected"
           }
         ]
       },
@@ -280,8 +280,8 @@
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "contracts/mana-brainbase-company-authority/v1/consumer-source-lock.json",
-            "must_cover": "production_proof"
+            "file_glob": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs",
+            "must_cover": "production_e2e_not_collected"
           }
         ]
       },
