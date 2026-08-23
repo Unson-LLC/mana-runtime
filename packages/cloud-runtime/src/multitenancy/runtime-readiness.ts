@@ -173,6 +173,9 @@ export function assessTenantRuntimeReadiness(
   if (scopes.length === 0) missing.push("MANA_REQUIRED_SLACK_SCOPES");
   const taskBoardSchedulingEnabled = env.RUNTIME_TASK_BOARD_ENABLED === "true"
     || placementTaskBoardEnabled(env.RUNTIME_PLACEMENTS_JSON);
+  if (env.RUNTIME_TASK_BOARD_ENABLED === "true" && !placementTaskBoardEnabled(env.RUNTIME_PLACEMENTS_JSON)) {
+    missing.push("RUNTIME_PLACEMENTS_JSON");
+  }
   if (taskBoardSchedulingEnabled && !nonEmpty(env.TASK_BOARD_TARGETS_JSON)) {
     missing.push("TASK_BOARD_TARGETS_JSON");
   }
