@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   enqueueMeetingMinutesTaskBoardRepair,
   enqueueTaskBoardRepairsForProjects,
@@ -21,6 +22,14 @@ const tenantContext = async (repair: { channelId: string; requestedAt: string; t
 } as never);
 
 describe("Worker task Canvas repair producers", () => {
+  it("routes the production Worker meeting repair path through the scoped producer", () => {
+    const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+
+    expect(source).not.toMatch(/async function enqueueMeetingMinutesTaskBoardRepair\s*\(/);
+    expect(source.match(/enqueueMeetingMinutesTaskBoardRepair\(\s*env,\s*targetId,\s*"task_write",\s*\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
+      .toHaveLength(2);
+  });
+
   it("suppresses a disabled meeting repair with an ownership decision log", async () => {
     const send = vi.fn();
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
