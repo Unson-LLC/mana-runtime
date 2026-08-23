@@ -102,7 +102,7 @@ import { hydrateSlackAttachments } from "./slack-attachments.js";
 import { hydrateGraphContext, listGraphPeople, resolveGraphPersonByName, resolveGraphRequester } from "./brainbase-graph-runtime.js";
 import { RuntimeSessionRegistry, upsertRuntimeSession } from "./runtime-session-registry.js";
 import {
-  createCanonicalTaskBoardRepairMessage,
+  enqueueMeetingMinutesTaskBoardRepair,
   enqueueScheduledTaskBoardRepair,
   issueTaskWriteRequestContext,
   processTaskBoardRepair,
@@ -112,7 +112,6 @@ import {
   isTaskBoardRepairEvent,
   type TaskBoardRepairEvent,
 } from "./task-board.js";
-import { enabledTaskBoardTargets, parseTaskBoardTargets } from "./task-board-targets.js";
 import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observability.js";
 import {
   claimRuntimeEvent,
@@ -451,30 +450,6 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 
 function meetingMinutesDeploymentGate(env: Env, tenantId: string): DurableObjectStub<MeetingMinutesDeploymentGate> {
   return env.MEETING_MINUTES_DEPLOYMENT_GATE.get(env.MEETING_MINUTES_DEPLOYMENT_GATE.idFromName(tenantId));
-}
-
-async function enqueueMeetingMinutesTaskBoardRepair(env: Env, targetId: string,
-  reason: TaskBoardRepairEvent["reason"]): Promise<void> {
-  let configuredTargets;
-  try { configuredTargets = parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON); }
-  catch (error) { console.error("task_board_targets_invalid", error); return; }
-  const target = configuredTargets.find((candidate) => candidate.targetId === targetId);
-  if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
-  if (!enabledTaskBoardTargets(configuredTargets).includes(target)) {
-    console.info(JSON.stringify({ event: "task_board_repair_suppressed", targetId,
-      reason: !target.enabled ? "target_disabled" : "canvas_binding_missing" }));
-    return;
-  }
-  const repair: TaskBoardRepairEvent = {
-    eventType: "task_board_repair", targetId: target.targetId, tenantId: "",
-    workspaceId: target.workspaceId, channelId: target.channelId,
-    manaCanvasId: target.manaCanvasId, bindingRevision: target.bindingRevision!, reason,
-    requestedAt: new Date().toISOString(),
-  };
-  await env.TASK_BOARD_REPAIRS.send(await createCanonicalTaskBoardRepairMessage(
-    repair,
-    (candidate) => resolveTaskBoardRepairTenantContext(env, candidate),
-  ));
 }
 
 async function childInteractionEventId(baseEventId: string, effectId: string): Promise<string> {
@@ -887,7 +862,12 @@ function meetingMinutesClients(
         { kind: "task_card", runId: run.runId, channelId: run.destination!.slackChannelId },
         (credentialFetch) => destinationSlack(run.destination!, credentialFetch).postTaskCard(run)),
       repairTaskBoard: (targetId: string) =>
-        effects.boundary("durable_object", () => enqueueMeetingMinutesTaskBoardRepair(env, targetId, "task_write")),
+        effects.boundary("durable_object", () => enqueueMeetingMinutesTaskBoardRepair(
+          env,
+          targetId,
+          "task_write",
+          (repair) => resolveTaskBoardRepairTenantContext(env, repair),
+        )),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         effects.destinationSlack(`destination-thread:${clientMsgId}:${index}`, destinationForChannel(channelId), threadTs,
@@ -2154,7 +2134,12 @@ export default {
             repairTaskBoard: (targetId) => effects.durableObject(
               `task-board-repair:${targetId}`,
               sourceTarget(canonicalSource()),
-              () => enqueueMeetingMinutesTaskBoardRepair(env, targetId, "task_write"),
+              () => enqueueMeetingMinutesTaskBoardRepair(
+                env,
+                targetId,
+                "task_write",
+                (repair) => resolveTaskBoardRepairTenantContext(env, repair),
+              ),
             ),
             defer: (work) => ctx.waitUntil(work),
           });
