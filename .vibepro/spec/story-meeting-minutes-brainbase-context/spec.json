@@ -138,10 +138,12 @@
         ],
         "code_refs": [
           {
-            "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts"
+            "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts",
+            "anchor": "generateMeetingMinutesInSandbox"
           },
           {
-            "file": "packages/cloud-runtime/src/claude-runtime-config.ts"
+            "file": "packages/cloud-runtime/src/claude-runtime-config.ts",
+            "anchor": "buildRuntimeClaudeCommand"
           }
         ],
         "test_refs": [
@@ -648,13 +650,16 @@
         ],
         "code_refs": [
           {
-            "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts"
+            "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts",
+            "anchor": "assertGeneratedMeetingMinutesNotPlaceholder"
           },
           {
-            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts"
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts",
+            "anchor": "resumeMeetingMinutesRun"
           },
           {
-            "file": "packages/cloud-runtime/src/meeting-minutes-slack.ts"
+            "file": "packages/cloud-runtime/src/meeting-minutes-recovery-runtime.ts",
+            "anchor": "processTenantMeetingMinutesRecovery"
           }
         ],
         "test_refs": [

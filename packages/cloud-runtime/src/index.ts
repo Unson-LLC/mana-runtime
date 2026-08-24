@@ -47,6 +47,10 @@ import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-life
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
 import { handleMeetingMinutesTaskAction, type MeetingMinutesSourceIdentity } from "./meeting-minutes-task-actions.js";
+import {
+  destinationTeamIdsForTaskActions,
+  resolveMeetingMinutesDestinationSlackBinding,
+} from "./meeting-minutes-destination-routing.js";
 import { createTaskWriteProxyHandler } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
@@ -832,18 +836,23 @@ function createMeetingMinutesTenantEffectGuard(input: {
     },
     async destinationSlack<T>(effectId: string, destination: MeetingMinutesDestination, threadTs: string | undefined,
       event: unknown, execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T> {
-      let teamIds: Record<string, string>;
-      try {
-        teamIds = JSON.parse(requiredRuntimeBinding(input.env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON)) as Record<string, string>;
-      } catch {
-        deny("runtime_configuration", "CONFIGURATION_INVALID");
-      }
-      const workspaceId = teamIds[destination.organization.id];
-      if (!workspaceId) deny("slack_delivery", "DELIVERY_SCOPE_MISMATCH");
+      const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding({
+        organizationId: destination.organization.id,
+        destination,
+        destinationTeamIdsJson: input.env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON,
+        trustedWorkspaceConnections: parseWorkspaceConnectionHints(input.env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON),
+        sourceTenantId: input.tenant_context.tenant.tenant_id,
+        sourceWorkspaceId: input.tenant_context.workspace_connection.workspace_id,
+        sourceAppId: input.tenant_context.workspace_connection.app_id,
+        sourceDeploymentId: input.tenant_context.placement.deployment_id,
+        sourceProfile: input.tenant_context.placement.profile,
+      });
+      const workspaceId = destinationSlackBinding.workspace_id;
+      const appId = destinationSlackBinding.app_id;
       const destinationThreadTs = requiredRuntimeBinding(threadTs ?? input.tenant_context.slack.thread_ts);
       const requesterId = requiredRuntimeBinding(input.tenant_context.slack.requester_id);
       const tenantContext = await resolveDerivedSlackTenantContext(input.env, input.tenant_context, {
-        app_id: requiredRuntimeBinding(input.env.SLACK_EXPECTED_APP_ID),
+        app_id: appId,
         workspace_id: workspaceId,
         event_id: await childInteractionEventId(input.tenant_context.slack.event_id, effectId),
         channel_id: destination.slackChannelId,
@@ -856,7 +865,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
         project_ids: [...tenantContext.authorization.project_ids],
         capability_id: requiredRuntimeBinding(input.env.MANA_REQUIRED_CAPABILITY_ID),
         workspace_id: workspaceId,
-        app_id: requiredRuntimeBinding(input.env.SLACK_EXPECTED_APP_ID),
+        app_id: appId,
         channel_id: destination.slackChannelId,
         thread_ts: destinationThreadTs,
         actor_principal_id: tenantContext.actor.principal_id,
@@ -2174,8 +2183,10 @@ export default {
           if (!approved.ok) return restoreSerializableResponse(approved);
           return Response.json({ ok: true, approval_id: approvalId });
         }, undefined, async (payload, effects) => {
-          const parsedTeamIds = (() => { try { return JSON.parse(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON ?? "{}") as Record<string, string>; }
-            catch { return {}; } })();
+          const parsedTeamIds = (() => {
+            try { return destinationTeamIdsForTaskActions(env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON); }
+            catch { return {}; }
+          })();
           const sourceTarget = (source: MeetingMinutesSourceIdentity): TenantInteractionTarget => ({
             workspace_id: source.workspaceId,
             app_id: source.appId,

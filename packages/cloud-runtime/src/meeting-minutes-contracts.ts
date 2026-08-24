@@ -47,6 +47,9 @@ export interface MeetingMinutesDestination {
   name: string;
   organization: { id: string; name: string };
   slackChannelId: string;
+  /** Optional exact destination Slack connection; legacy deployments use the team-id map. */
+  slackWorkspaceId?: string;
+  slackAppId?: string;
   github: { owner: string; repo: string; branch?: string; pathPrefix?: string };
 }
 
