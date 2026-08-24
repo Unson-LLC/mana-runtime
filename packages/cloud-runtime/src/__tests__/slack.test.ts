@@ -317,7 +317,7 @@ describe("handleSlackRequest", () => {
 
     expect(response.status).toBe(200);
     expect(send).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith("C_ROUTER", "1786420000.000155");
+    expect(notify).toHaveBeenCalledWith("C_ROUTER", "1786420000.000155", "EvPausedRace");
   });
 
   it("continues queueing ordinary events when the interceptor declines them", async () => {

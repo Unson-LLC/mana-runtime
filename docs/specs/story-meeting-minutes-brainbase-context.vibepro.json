@@ -36,10 +36,10 @@
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-8" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" }],
-        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }, { "file": "packages/cloudflare-techknight-poc/src/claude-runtime-config.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "accepts the Worker-bound Receipt attestation and rejects altered Receipt identity" }]
+        "code_refs": [{ "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts", "anchor": "generateMeetingMinutesInSandbox" }, { "file": "packages/cloud-runtime/src/claude-runtime-config.ts", "anchor": "buildRuntimeClaudeCommand" }],
+        "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-brainbase-context.test.ts", "case": "accepts the Worker-bound Receipt attestation and rejects altered Receipt identity" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }] },
       "confidence": 0.99
     },
     {
@@ -101,10 +101,10 @@
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-17" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" }, { "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "失敗" }],
-        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }, { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts" }, { "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-slack.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "rejects the production prompt example when it is copied as meeting minutes" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "stops a placeholder generation before GitHub, Slack, task, or board side effects" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "regenerates an unsaved persisted placeholder before any external side effect" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "does not reuse an already saved placeholder and requires an explicit redo" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "removes persisted outputs and reopens destination selection for a completed run" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "explains that placeholder output was rejected before it was shared" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "case": "requires an explicit redo when a saved meeting minutes file contains placeholders" }]
+        "code_refs": [{ "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts", "anchor": "assertGeneratedMeetingMinutesNotPlaceholder" }, { "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts", "anchor": "resumeMeetingMinutesRun" }, { "file": "packages/cloud-runtime/src/meeting-minutes-recovery-runtime.ts", "anchor": "processTenantMeetingMinutesRecovery" }],
+        "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "rejects the production prompt example when it is copied as meeting minutes" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "stops a placeholder generation before GitHub, Slack, task, or board side effects" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "regenerates an unsaved persisted placeholder before any external side effect" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "does not reuse an already saved placeholder and requires an explicit redo" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "removes persisted outputs and reopens destination selection for a completed run" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "case": "explains that placeholder output was rejected before it was shared" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "case": "requires an explicit redo when a saved meeting minutes file contains placeholders" }]
       },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "production prompt example" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "placeholder generation before GitHub, Slack, task, or board side effects" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "unsaved persisted placeholder" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "already saved placeholder" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "reopens destination selection for a completed run" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "placeholder output was rejected before it was shared" }, { "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "saved meeting minutes file contains placeholders" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "production prompt example" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "placeholder generation before GitHub, Slack, task, or board side effects" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "unsaved persisted placeholder" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "already saved placeholder" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "reopens destination selection for a completed run" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "placeholder output was rejected before it was shared" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "saved meeting minutes file contains placeholders" }] },
       "confidence": 0.99
     },
     {
@@ -180,7 +180,33 @@
     {
       "id": "C-009",
       "type": "contract",
-      "statement": "ユーザー向け失敗表示（スレッド特定、状態表示、選択、保存先やり直し、受付停止、ライフサイクル、Task操作）はrunId・失敗段階・固定エラーコードから導出した決定的な問い合わせIDを必ず含める。受付判定とTask write承認コールバックの拒否はraw errorを返さずHTTP 503の安全なUserFailure envelopeへ変換し、資格条件を満たすresponse_urlだけへ安全投影する。遅延Taskのopen・edit・cancelはPromiseをraw rejectで残さず、固定診断ログと安全投影へ収束させ、scope不一致通知を維持する",
+      "statement": "保存済みrunのorganizationだけが現行設定と異なる場合、SlackチャンネルとGitHub保存先が一致するときに限り、organizationを現行の認証経路へ更新して再実行する。SlackチャンネルまたはGitHub保存先が異なる場合はmeeting_minutes_destination_changedで拒否する。同じSlackチャンネルを複数organizationへ割り当てた設定と、現行設定に存在しないチャンネルの資格情報解決はfail closedにする",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-20" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "プロジェクト紐付け" }],
+        "code_refs": [{ "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts", "anchor": "resumeMeetingMinutesRun" }, { "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts", "anchor": "validateMeetingMinutesDestinations" }],
+        "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "retries a failed run after only its destination organization routing was corrected" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "still rejects a persisted run when its Slack delivery channel changed" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "still rejects a persisted run when its GitHub delivery path changed" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "rejects ambiguous Slack credential routing across organizations" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "destination organization routing was corrected" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "Slack delivery channel changed" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "GitHub delivery path changed" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "ambiguous Slack credential routing" }] },
+      "confidence": 0.99
+    },
+    {
+      "id": "C-010",
+      "type": "contract",
+      "statement": "Claudeへ渡すBrainbase文脈は、必須アンカーと文字起こしに関連する証拠から入力順序に依存しないworking setを構成し、100KBを品質目標ではなく搬送上限として扱う。選別後も超過する場合は本文の機械的圧縮を行わず生成前に拒否する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-21" }],
+        "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" }],
+        "code_refs": [{ "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts", "anchor": "selectMeetingMinutesContextWorkingSet" }],
+        "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "selects mandatory anchors and topic evidence independent of source order" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "selects mandatory anchors and topic evidence independent of source order" }] },
+      "confidence": 0.95
+    },
+    {
+      "id": "C-011",
+      "type": "contract",
+      "statement": "ユーザー向け失敗表示（スレッド特定、状態表示、選択、保存先やり直し、受付停止、ライフサイクル、Task操作）はrunIdまたは実行前イベントのeventId・失敗段階・固定エラーコードから導出した決定的な問い合わせIDを必ず含める。上流から相関IDを受け取れない同期表示はchannel・threadまたはchannel・userから構成する決定的なfallback seedを使い、空のシードやraw errorを問い合わせIDにしない。受付判定とTask write承認コールバックの拒否はraw errorを返さずHTTP 503の安全なUserFailure envelopeへ変換し、資格条件を満たすresponse_urlだけへ安全投影する。遅延Taskのopen・edit・cancelはPromiseをraw rejectで残さず、固定診断ログと安全投影へ収束させ、scope不一致通知を維持する",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-22" }],
         "architecture_refs": [

@@ -124,7 +124,7 @@
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
-            "case": "maps resolver failure %s to public code %s"
+            "case": "maps resolver failure %s to public code %s and notification eligibility %s"
           }
         ]
       },
@@ -305,7 +305,7 @@
             "anchor": "recoverStaleMeetingMinutesRun"
           },
           {
-            "file": "packages/cloud-runtime/src/index.ts",
+            "file": "packages/cloud-runtime/src/meeting-minutes-recovery-runtime.ts",
             "anchor": "processTenantMeetingMinutesRecovery"
           }
         ],

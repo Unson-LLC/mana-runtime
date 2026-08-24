@@ -124,6 +124,23 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(call?.body)).toContain("復旧後にファイルを投稿し直してください");
   });
 
+  it("derives the router intake inquiry id from the event id and uses a deterministic fallback", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+    await client.postIntakePaused("C1", "1.0", "event-1");
+    await client.postIntakePaused("C1", "1.0");
+    const eventText = String(bodies[0]?.text);
+    const fallbackText = String(bodies[1]?.text);
+    expect(eventText).toContain(`問い合わせID: ${deriveCorrelationId("event-1", "intake", "INTAKE_PAUSED")}`);
+    expect(eventText).not.toContain(deriveCorrelationId("C1:1.0", "intake", "INTAKE_PAUSED"));
+    expect(fallbackText).toContain(`問い合わせID: ${deriveCorrelationId("legacy-intake:C1:1.0", "intake", "INTAKE_PAUSED")}`);
+    expect(fallbackText).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+  });
+
   it("explains a blocked queued command privately to the operator", async () => {
     let call: { url: string; body: Record<string, unknown> } | undefined;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -135,6 +152,20 @@ describe("MeetingMinutesSlackClient", () => {
     expect(call?.body).toMatchObject({ channel: "C1", user: "U1" });
     expect(JSON.stringify(call?.body)).toContain("議事録の受付は一時停止中です");
     expect(JSON.stringify(call?.body)).toContain("保存先の選択またはやり直しをもう一度実行してください");
+  });
+
+  it("derives a queued command inquiry id from runId", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl)
+      .postIntakePausedToUser("C1", "U1", "run-1");
+    expect(String(call?.body.text)).toContain(`問い合わせID: ${deriveCorrelationId("run-1", "intake", "INTAKE_PAUSED")}`);
+    expect(String(call?.body.text)).not.toContain(
+      deriveCorrelationId("C1:U1", "intake", "INTAKE_PAUSED"),
+    );
   });
 
   it("does not stop minutes processing when the optional assistant status is unavailable", async () => {
@@ -196,6 +227,22 @@ describe("MeetingMinutesSlackClient", () => {
       expect(text).toContain("もう一度操作してください");
     },
   );
+
+  it("does not expose a legacy raw failure string as a public inquiry id", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
+    const rawFailure = "Bearer super-secret-token";
+    await new MeetingMinutesSlackClient("token", fetchImpl)
+      .postTaskActionFailure(run, "U1", "edit", rawFailure);
+    const text = String(call?.body.text);
+    expect(text).not.toContain(rawFailure);
+    expect(text).toContain(`問い合わせID: ${deriveCorrelationId(run.runId, "task_action", "TASK_ACTION_FAILED")}`);
+    expect(text).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+  });
 
   it("posts processing as a second reply after the selector reply", async () => {
     const bodies: Array<Record<string, unknown>> = [];

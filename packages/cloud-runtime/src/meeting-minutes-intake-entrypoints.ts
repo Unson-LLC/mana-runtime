@@ -23,7 +23,7 @@ interface IntakeQueueMessage {
 
 interface IntakeQueueDependencies {
   isPaused(): Promise<boolean>;
-  notify(channelId: string, threadTs: string): Promise<void>;
+  notify(channelId: string, threadTs: string, eventId?: string): Promise<void>;
   logPaused?(eventId: string): void;
   logNotificationFailure?(eventId: string, error: unknown): void;
 }
@@ -56,7 +56,7 @@ interface IntakeCommandQueueDependencies {
 
 interface IntakeIngressDependencies {
   isPaused(): Promise<boolean>;
-  notify(channelId: string, threadTs: string): Promise<void>;
+  notify(channelId: string, threadTs: string, eventId?: string): Promise<void>;
   defer(work: Promise<void>): void;
   logPaused?(eventId: string): void;
   logNotificationFailure?(eventId: string, error: unknown): void;
@@ -92,7 +92,7 @@ export async function consumeMeetingMinutesIntakePause(
 
   dependencies.logPaused?.(message.body.eventId);
   try {
-    await dependencies.notify(message.body.channelId, message.body.threadTs);
+    await dependencies.notify(message.body.channelId, message.body.threadTs, message.body.eventId);
   } catch (error) {
     dependencies.logNotificationFailure?.(message.body.eventId, error);
   }
@@ -117,7 +117,7 @@ export async function gateMeetingMinutesRouterQueueMessage(
   }
 
   try {
-    await dependencies.notify(message.body.channelId, message.body.threadTs);
+    await dependencies.notify(message.body.channelId, message.body.threadTs, message.body.eventId);
   } catch (error) {
     dependencies.logNotificationFailure?.(message.body.eventId, error);
   }
@@ -159,7 +159,7 @@ export async function interceptMeetingMinutesIntakePause(
   if (!(await dependencies.isPaused())) return false;
 
   dependencies.logPaused?.(event.eventId);
-  dependencies.defer(dependencies.notify(event.channelId, event.threadTs).catch((error) => {
+  dependencies.defer(dependencies.notify(event.channelId, event.threadTs, event.eventId).catch((error) => {
     dependencies.logNotificationFailure?.(event.eventId, error);
   }));
   return true;

@@ -1473,7 +1473,7 @@ async function processTenantMeetingMinutesSelection(input: {
     isPaused: () => meetingMinutesDeploymentGate(env, tenantId).isIntakePaused(),
     notify: (command) => effects.slack(`intake-paused:${command.runId}`, command,
       (credentialFetch) => new MeetingMinutesSlackClient(undefined, credentialFetch)
-        .postIntakePausedToUser(command.channelId, command.userId)),
+        .postIntakePausedToUser(command.channelId, command.userId, command.runId)),
     logPaused: (command) => console.info(JSON.stringify({ event: "meeting_minutes_intake_paused", runId: command.runId })),
     logDisabled: (command) => console.info(JSON.stringify({ event: "meeting_minutes_intake_disabled", runId: command.runId })),
     logNotificationFailure: (command, error) => console.warn(JSON.stringify({
@@ -1566,7 +1566,7 @@ async function processTenantMeetingMinutesRedo(input: {
     isPaused: () => meetingMinutesDeploymentGate(env, tenantContext.tenant.tenant_id).isIntakePaused(),
     notify: (queuedCommand) => effects.slack(`intake-paused:${queuedCommand.runId}`, queuedCommand,
       (credentialFetch) => new MeetingMinutesSlackClient(undefined, credentialFetch)
-        .postIntakePausedToUser(queuedCommand.channelId, queuedCommand.userId)),
+        .postIntakePausedToUser(queuedCommand.channelId, queuedCommand.userId, queuedCommand.runId)),
     logPaused: (queuedCommand) => console.info(JSON.stringify({
       event: "meeting_minutes_intake_paused", runId: queuedCommand.runId,
     })),
@@ -2682,11 +2682,11 @@ export default {
                 enabled: meetingMinutesConfig.enabled,
                 routerChannelId: meetingMinutesConfig.routerChannelId,
                 isPaused: () => meetingMinutesDeploymentGate(env, runtimeTenantId).isIntakePaused(),
-                notify: (channelId, threadTs) => intakeEffects.slack(
+                notify: (channelId, threadTs, eventId) => intakeEffects.slack(
                   `intake-paused:${event.eventId}`,
                   event,
                   (credentialFetch) => new MeetingMinutesSlackClient(undefined, credentialFetch)
-                    .postIntakePaused(channelId, threadTs),
+                    .postIntakePaused(channelId, threadTs, eventId),
                 ),
                 logPaused: (eventId) => console.info(JSON.stringify({
                   event: "meeting_minutes_intake_paused", eventId,

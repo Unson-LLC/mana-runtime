@@ -207,12 +207,38 @@ function taskActionFailureDetails(failure: MeetingMinutesTaskActionFailure): str
     `再試行可否: ${failure.retryable ? "可能" : "不可"}`];
 }
 
+const CANONICAL_CORRELATION_ID = /^cor_[0-9A-HJKMNP-TV-Z]{26}$/;
+const TASK_ACTION_FAILURE_CODES: readonly MeetingMinutesTaskActionFailure["code"][] = [
+  "TASK_ACTION_FAILED",
+  "TASK_SCOPE_MISMATCH",
+  "TASK_SCOPE_MIGRATION_FAILED",
+  "TASK_ACTION_EXPIRED",
+];
+
+function isCanonicalCorrelationId(value: unknown): value is string {
+  return typeof value === "string" && CANONICAL_CORRELATION_ID.test(value);
+}
+
+function isTaskActionFailureCode(value: unknown): value is MeetingMinutesTaskActionFailure["code"] {
+  return typeof value === "string" && TASK_ACTION_FAILURE_CODES.includes(value as MeetingMinutesTaskActionFailure["code"]);
+}
+
 function normalizeTaskActionFailure(run: MeetingMinutesRun,
   failure: MeetingMinutesTaskActionFailure | string,
   fallbackCode: MeetingMinutesTaskActionFailure["code"] = "TASK_ACTION_FAILED"): MeetingMinutesTaskActionFailure {
-  if (typeof failure !== "string") return failure;
-  return { ...meetingMinutesTaskActionFailure(run.runId, fallbackCode, fallbackCode !== "TASK_SCOPE_MISMATCH"),
-    correlationId: failure };
+  const fallback = meetingMinutesTaskActionFailure(run.runId, fallbackCode, fallbackCode !== "TASK_SCOPE_MISMATCH");
+  if (typeof failure === "string") {
+    // Keep the legacy string API for old callers, but never expose an arbitrary
+    // error string (for example an Authorization header) as a public ID.
+    return isCanonicalCorrelationId(failure) ? { ...fallback, correlationId: failure } : fallback;
+  }
+  if (!failure || typeof failure !== "object") return fallback;
+  if (failure.processingId !== run.runId || failure.stage !== "task_action" ||
+    !isTaskActionFailureCode(failure.code) || typeof failure.retryable !== "boolean") return fallback;
+  const expectedCorrelationId = deriveCorrelationId(failure.processingId, failure.stage, failure.code);
+  return { ...failure,
+    correlationId: isCanonicalCorrelationId(failure.correlationId) && failure.correlationId === expectedCorrelationId
+      ? failure.correlationId : expectedCorrelationId };
 }
 function failedRunDetails(run: MeetingMinutesRun): string[] {
   const destination = `保存先: ${run.destination!.name}`;
@@ -296,8 +322,9 @@ export class MeetingMinutesSlackClient {
       text: message.text, client_msg_id: await clientMessageId(`${run.runId}-selection`), blocks: message.blocks });
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
-  async postIntakePaused(channelId: string, threadTs: string): Promise<void> {
-    const correlationId = deriveCorrelationId(`${channelId}:${threadTs}`, "intake", "INTAKE_PAUSED");
+  async postIntakePaused(channelId: string, threadTs: string, eventId?: string): Promise<void> {
+    const seed = eventId?.trim() || `legacy-intake:${channelId}:${threadTs}`;
+    const correlationId = deriveCorrelationId(seed, "intake", "INTAKE_PAUSED");
     await this.post("chat.postMessage", {
       channel: channelId,
       thread_ts: threadTs,
@@ -306,8 +333,9 @@ export class MeetingMinutesSlackClient {
         text: `:warning: *議事録の新規受付は一時停止中です*\n復旧後にファイルを投稿し直してください。\n問い合わせID: ${correlationId}` } }],
     });
   }
-  async postIntakePausedToUser(channelId: string, userId: string): Promise<void> {
-    const correlationId = deriveCorrelationId(`${channelId}:${userId}`, "intake", "INTAKE_PAUSED");
+  async postIntakePausedToUser(channelId: string, userId: string, runId?: string): Promise<void> {
+    const seed = runId?.trim() || `legacy-intake:${channelId}:${userId}`;
+    const correlationId = deriveCorrelationId(seed, "intake", "INTAKE_PAUSED");
     await this.post("chat.postEphemeral", {
       channel: channelId,
       user: userId,

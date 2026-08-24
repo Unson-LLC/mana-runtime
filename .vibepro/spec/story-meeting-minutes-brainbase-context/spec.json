@@ -917,30 +917,37 @@
             "ac_id": "AC-20"
           }
         ],
-        "architecture_refs": [],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-meeting-minutes-brainbase-context.md",
+            "section": "プロジェクト紐付け"
+          }
+        ],
         "code_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-pipeline.ts"
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts",
+            "anchor": "resumeMeetingMinutesRun"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/index.ts"
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts",
+            "anchor": "validateMeetingMinutesDestinations"
           }
         ],
         "test_refs": [
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "case": "retries a failed run after only its destination organization routing was corrected"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "case": "still rejects a persisted run when its Slack delivery channel changed"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "case": "still rejects a persisted run when its GitHub delivery path changed"
           },
           {
-            "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "case": "rejects ambiguous Slack credential routing across organizations"
           }
         ]
@@ -948,19 +955,19 @@
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "must_cover": "destination organization routing was corrected"
           },
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "must_cover": "Slack delivery channel changed"
           },
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "must_cover": "GitHub delivery path changed"
           },
           {
-            "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "must_cover": "ambiguous Slack credential routing"
           }
         ]
@@ -976,11 +983,11 @@
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-21" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成契約" }],
-        "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }],
-        "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "selects mandatory anchors and topic evidence independent of source order" }]
+        "code_refs": [{ "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts", "anchor": "selectMeetingMinutesContextWorkingSet" }],
+        "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "selects mandatory anchors and topic evidence independent of source order" }]
       },
       "verifiable_by": {
-        "test_pattern": [{ "file_glob": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "selects mandatory anchors and topic evidence independent of source order" }]
+        "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "selects mandatory anchors and topic evidence independent of source order" }]
       },
       "confidence": 0.95,
       "first_seen_at": "2026-08-18T05:45:00.000Z",
