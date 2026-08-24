@@ -197,6 +197,8 @@ export interface MeetingMinutesRun {
     recoveredAt?: string;
     /** A failed recovery projection has been attempted; redelivery must not repeat it. */
     recoveryProjectionAttemptedAt?: string;
+    /** Durable result of the one-shot fallback after the recovery claim is saved. */
+    recoveryFallbackOutcome?: "succeeded" | "failed";
     recoveryProjectedAt?: string;
   };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */

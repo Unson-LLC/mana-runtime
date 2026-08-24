@@ -227,7 +227,7 @@ export function isTenantFailureResponseUrlEligible(error: unknown): boolean {
   // codes fail closed until their notification policy is reviewed. In
   // particular, this excludes unknown/ambiguous tenants, workspace/app or
   // scope mismatches, stale revisions, and cross-tenant candidates.
-  const code = error instanceof TenantBoundaryError ? error.code : string(object(error)?.code);
+  const code = error instanceof TenantBoundaryError ? error.code : undefined;
   return !!code && TENANT_RESPONSE_URL_ELIGIBLE_CODES.has(code);
 }
 

@@ -4,6 +4,37 @@ import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-
 import type { WorkspaceFs } from "./workspace-store.js";
 
 export const MEETING_MINUTES_RECOVERY_DELAY_SECONDS = 20 * 60;
+const MEETING_MINUTES_RECOVERY_OUTCOME_SAVE_ATTEMPTS = 2;
+
+export class MeetingMinutesRecoveryOutcomePersistenceError extends Error {
+  readonly code = "MEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILED";
+
+  constructor() {
+    super("meeting_minutes_recovery_outcome_persist_failed");
+    this.name = "MeetingMinutesRecoveryOutcomePersistenceError";
+  }
+}
+
+async function saveRecoveryOutcome(fs: WorkspaceFs, run: MeetingMinutesRun): Promise<void> {
+  for (let attempt = 1; attempt <= MEETING_MINUTES_RECOVERY_OUTCOME_SAVE_ATTEMPTS; attempt += 1) {
+    try {
+      await saveMeetingMinutesRun(fs, run);
+      return;
+    } catch {
+      // A single bounded retry covers a transient storage write failure without
+      // re-running the already claimed Slack fallback.
+    }
+  }
+  console.error(JSON.stringify({
+    event: "meeting_minutes_recovery_outcome_save_failed",
+    runId: run.runId,
+    stage: "status_projection",
+    code: "MEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILED",
+    retryable: true,
+    attempts: MEETING_MINUTES_RECOVERY_OUTCOME_SAVE_ATTEMPTS,
+  }));
+  throw new MeetingMinutesRecoveryOutcomePersistenceError();
+}
 
 export function isMeetingMinutesRecovery(value: unknown): value is MeetingMinutesRecovery {
   if (!value || typeof value !== "object") return false;
@@ -107,13 +138,14 @@ export async function recoverStaleMeetingMinutesRun(fs: WorkspaceFs, event: Meet
           code: "STATUS_PROJECTION_FAILED", retryable: true }));
       }
     }
+    run.lifecycle.recoveryFallbackOutcome = fallbackCompleted ? "succeeded" : "failed";
     if (fallbackCompleted) run.lifecycle.recoveryProjectedAt = projectionFailedAt;
     run.updatedAt = new Date().toISOString();
-    // The original processing/projection error remains the retry signal even
-    // if this bookkeeping save cannot be completed.
-    try { await saveMeetingMinutesRun(fs, run); }
-    catch { console.error(JSON.stringify({ event: "meeting_minutes_recovery_projection_marker_save_failed",
-      runId: run.runId, stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true })); }
+    // The claim marker makes redelivery terminal, so the fallback result must
+    // be durable before returning the original projection error. If storage is
+    // still unavailable after the bounded retry, surface an operational error
+    // rather than acknowledging an outcome that was not persisted.
+    await saveRecoveryOutcome(fs, run);
     throw error;
   }
   run.lifecycle.recoveryProjectedAt = new Date(now).toISOString();

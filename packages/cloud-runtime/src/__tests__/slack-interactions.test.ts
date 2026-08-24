@@ -574,8 +574,12 @@ describe("handleMeetingMinutesInteraction", () => {
   });
   it("fails closed for untyped and unknown tenant failures before touching response_url", () => {
     expect(isTenantFailureResponseUrlEligible(new Error("temporary connectivity"))).toBe(false);
+    expect(isTenantFailureResponseUrlEligible({ code: "UPSTREAM_UNAVAILABLE" })).toBe(false);
     expect(isTenantFailureResponseUrlEligible({ code: "NEW_UNKNOWN_BOUNDARY_CODE" })).toBe(false);
     expect(isTenantFailureResponseUrlEligible({ code: "WORKSPACE_OR_APP_MISMATCH" })).toBe(false);
+    expect(isTenantFailureResponseUrlEligible(new TenantBoundaryError(
+      "worker_ingress", "UPSTREAM_UNAVAILABLE", "temporary connectivity",
+    ))).toBe(true);
   });
   it("keeps the public HTTP failure when a signed payload has no response_url", async () => {
     const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);

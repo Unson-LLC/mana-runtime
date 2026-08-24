@@ -12,7 +12,7 @@ Slackで議事録の保存先ボタンを押した利用者として、失敗時
 - [x] AC-4: 議事録以外の共有interaction入口でも、従来のHTTP 503を維持しつつ同じ安全な失敗envelopeを返し、認証済みの通常処理は既存のtenant-scoped delivery境界を通す。
 - [x] AC-5: `response_url` がない、または安全性検査に通らない場合は認証前Slack更新を行わず、HTTP応答の公開コードと問い合わせIDを診断面として残す。
 - [x] AC-6: `TENANT_UNKNOWN`、`TENANT_AMBIGUOUS`、`WORKSPACE_OR_APP_MISMATCH` では `response_url` を通知に使わず、既知の一時障害・インストール不足・再認証要求だけを明示的なeligibility gateで許可する。
-- [x] AC-7: intake停止中・組織選択・戻る操作の状態投影は主経路1回と `STATUS_PROJECTION_FAILED` fallback 1回に制限し、即時状態表示と選択確認の複合失敗コードを固定する。stale recoveryはfallback結果をdurable markerへ記録して再配信による重複投影を防ぎ、元の処理エラーを保持する。
+- [x] AC-7: intake停止中・組織選択・戻る操作の状態投影は主経路1回と `STATUS_PROJECTION_FAILED` fallback 1回に制限し、即時状態表示と選択確認の複合失敗コードを固定する。stale recoveryはclaim markerをfallback前に保存し、fallback結果を最大2回の保存試行で`recoveryFallbackOutcome`へdurableに記録する。保存不能時は`MEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILED`を返し、再配信による重複投影を防ぎ、元の処理エラーを保持する。
 
 ## セキュリティ境界
 

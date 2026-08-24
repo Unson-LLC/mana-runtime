@@ -235,7 +235,7 @@
     {
       "id": "C-005",
       "type": "contract",
-      "statement": "tenant解決前のresponse_url通知は明示的なeligibility allowlistに限定し、インストール不足・再認証・quota・既知の一時接続障害だけを許可する。TENANT_UNKNOWN、TENANT_AMBIGUOUS、workspace/app不一致、全scope不一致、stale revision、CROSS_TENANT_CANDIDATE、未分類コード、型なし例外では通知しない",
+      "statement": "tenant解決前のresponse_url通知は、実体がTenantBoundaryError（または明示的に信頼されたwrapper）である場合に限り、明示的なeligibility allowlistへ限定する。インストール不足・再認証・quota・既知の一時接続障害だけを許可し、TENANT_UNKNOWN、TENANT_AMBIGUOUS、workspace/app不一致、全scope不一致、stale revision、CROSS_TENANT_CANDIDATE、未分類コード、型なし例外では通知しない",
       "origin": {
         "story_refs": [
           {
@@ -285,7 +285,7 @@
     {
       "id": "C-006",
       "type": "contract",
-      "statement": "stale recoveryはrecoveryProjectionAttemptedAtをfallback実行前にdurableに保存し、marker保存に失敗した配送ではfallbackを呼ばず元のprojection errorを再throwしてQueue retryへ渡す。markerが保存されたredeliveryはSlack投影を重複実行せず、fallback成否と元の処理エラーを保存する",
+      "statement": "stale recoveryはrecoveryProjectionAttemptedAtをfallback実行前にdurableに保存し、marker保存に失敗した配送ではfallbackを呼ばず元のprojection errorを再throwしてQueue retryへ渡す。fallback後はrecoveryFallbackOutcome（succeeded/failed）を最大2回の保存試行でdurableに記録し、保存不能ならMEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILEDをthrowする。markerが保存されたredeliveryはSlack投影を重複実行せず、fallback成否と元の処理エラーを保存する",
       "origin": {
         "story_refs": [
           {
@@ -328,7 +328,7 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
-            "must_cover": "recoveryProjectionAttemptedAt"
+            "must_cover": "recoveryFallbackOutcome"
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
