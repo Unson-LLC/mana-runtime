@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { MeetingMinutesDestination } from "../meeting-minutes-contracts.js";
 import {
   destinationTeamIdsForTaskActions,
+  preflightMeetingMinutesDestinationSlackBindings,
   resolveMeetingMinutesDestinationSlackBinding,
 } from "../meeting-minutes-destination-routing.js";
 import type { WorkspaceConnectionSnapshot } from "../multitenancy/contracts.js";
@@ -132,5 +133,55 @@ describe("meeting minutes destination Slack routing", () => {
     expect(destinationTeamIdsForTaskActions(JSON.stringify({
       alternate: { workspace_id: "T-ALT", app_id: "A-ALT" },
     }))).toEqual({ alternate: "T-ALT" });
+  });
+
+  it("preflights every configured destination with its authoritative workspace/app binding", () => {
+    const sameWorkspace: MeetingMinutesDestination = {
+      ...destination,
+      id: "same-workspace",
+      organization: { id: "same-workspace", name: "Same workspace" },
+      slackChannelId: "C-SAME",
+    };
+
+    expect(preflightMeetingMinutesDestinationSlackBindings({
+      destinations: [destination, sameWorkspace],
+      destinationTeamIdsJson: JSON.stringify({
+        alternate: { workspace_id: "T-ALT", app_id: "A-ALT" },
+        "same-workspace": "T-SOURCE",
+      }),
+      trustedWorkspaceConnections: [
+        connection(),
+        connection({
+          connection_id: "wsc-alternate",
+          installation_id: "slack-alternate",
+          workspace_id: "T-ALT",
+          app_id: "A-ALT",
+        }),
+      ],
+      sourceTenantId: "tenant-source",
+      sourceWorkspaceId: "T-SOURCE",
+      sourceAppId: "A-SOURCE",
+      sourceDeploymentId: "deployment-1",
+      sourceProfile: "shared_cloud",
+    })).toEqual({
+      "alternate-destination": { workspace_id: "T-ALT", app_id: "A-ALT" },
+      "same-workspace": { workspace_id: "T-SOURCE", app_id: "A-SOURCE" },
+    });
+  });
+
+  it("fails the preflight for a cross-workspace destination without an app binding", () => {
+    expect(() => preflightMeetingMinutesDestinationSlackBindings({
+      destinations: [destination],
+      destinationTeamIdsJson: JSON.stringify({ alternate: "T-ALT" }),
+      trustedWorkspaceConnections: [],
+      sourceTenantId: "tenant-source",
+      sourceWorkspaceId: "T-SOURCE",
+      sourceAppId: "A-SOURCE",
+      sourceDeploymentId: "deployment-1",
+      sourceProfile: "shared_cloud",
+    })).toThrow(expect.objectContaining({
+      boundary: "slack_delivery",
+      code: "DELIVERY_SCOPE_MISMATCH",
+    }));
   });
 });

@@ -49,7 +49,9 @@ import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
 import { handleMeetingMinutesTaskAction, type MeetingMinutesSourceIdentity } from "./meeting-minutes-task-actions.js";
 import {
   destinationTeamIdsForTaskActions,
+  preflightMeetingMinutesDestinationSlackBindings,
   resolveMeetingMinutesDestinationSlackBinding,
+  type MeetingMinutesDestinationSlackBindings,
 } from "./meeting-minutes-destination-routing.js";
 import { createTaskWriteProxyHandler } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
@@ -759,6 +761,7 @@ function createTenantInteractionEffectResolver(env: Env) {
 interface MeetingMinutesTenantEffectGuard {
   boundary<T>(boundary: BoundaryName, execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T>;
   slack<T>(effectId: string, event: unknown, execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T>;
+  preflightDestinationSlack(destinations: readonly MeetingMinutesDestination[]): MeetingMinutesDestinationSlackBindings;
   destinationSlack<T>(effectId: string, destination: MeetingMinutesDestination, threadTs: string | undefined,
     event: unknown, execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T>;
 }
@@ -771,6 +774,18 @@ function createMeetingMinutesTenantEffectGuard(input: {
   now(): string;
 }): MeetingMinutesTenantEffectGuard {
   const clients = tenantRuntimeClients(input.env);
+  const trustedWorkspaceConnections = parseWorkspaceConnectionHints(input.env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON);
+  const preflightDestinationSlack = (destinations: readonly MeetingMinutesDestination[]) =>
+    preflightMeetingMinutesDestinationSlackBindings({
+      destinations,
+      destinationTeamIdsJson: input.env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON,
+      trustedWorkspaceConnections,
+      sourceTenantId: input.tenant_context.tenant.tenant_id,
+      sourceWorkspaceId: input.tenant_context.workspace_connection.workspace_id,
+      sourceAppId: input.tenant_context.workspace_connection.app_id,
+      sourceDeploymentId: input.tenant_context.placement.deployment_id,
+      sourceProfile: input.tenant_context.placement.profile,
+    });
   const createCredentialFetch = (tenantContext: TenantContextEnvelope, expectedScope: ExpectedTenantScope) =>
     createTenantCredentialFetch({
     envelope: tenantContext,
@@ -819,6 +834,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
     return output === undefined ? resultRef as T : output;
   };
   return {
+    preflightDestinationSlack,
     boundary: (boundary, execute) => {
       const credentialFetch = createCredentialFetch(input.tenant_context, input.expected_scope);
       return executeTenantBoundary({
@@ -840,7 +856,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
         organizationId: destination.organization.id,
         destination,
         destinationTeamIdsJson: input.env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON,
-        trustedWorkspaceConnections: parseWorkspaceConnectionHints(input.env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON),
+        trustedWorkspaceConnections,
         sourceTenantId: input.tenant_context.tenant.tenant_id,
         sourceWorkspaceId: input.tenant_context.workspace_connection.workspace_id,
         sourceAppId: input.tenant_context.workspace_connection.app_id,
@@ -887,6 +903,7 @@ function meetingMinutesClients(
 ) {
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
   const destinations = meetingMinutesRuntimeConfig(env).destinations;
+  if (env.MEETING_MINUTES_ENABLED === "true") effects.preflightDestinationSlack(destinations);
   const sourceSlack = (credentialFetch: typeof fetch) => new MeetingMinutesSlackClient(
     undefined, credentialFetch);
   const destinationForChannel = (channelId: string) => {

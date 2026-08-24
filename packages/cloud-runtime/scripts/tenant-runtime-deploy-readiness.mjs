@@ -355,6 +355,63 @@ function parsePlacements(value) {
   }
 }
 
+function validMeetingMinutesDestinationSlackBindings(vars) {
+  if (vars.MEETING_MINUTES_ENABLED !== "true") return true;
+  if (!nonEmpty(vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON)) return false;
+
+  let configuredBindings;
+  try {
+    configuredBindings = JSON.parse(vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON);
+  } catch {
+    return false;
+  }
+  if (!plainObject(configuredBindings)) return false;
+
+  const destinations = [];
+  for (const [name, required] of [
+    ["MEETING_MINUTES_DESTINATIONS_JSON", true],
+    ["MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON", false],
+  ]) {
+    if (!nonEmpty(vars[name])) {
+      if (required) return false;
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(vars[name]);
+    } catch {
+      return false;
+    }
+    if (!Array.isArray(parsed)) return false;
+    destinations.push(...parsed);
+  }
+  if (destinations.length === 0) return false;
+
+  const destinationOrganizations = new Set();
+  for (const destination of destinations) {
+    if (!plainObject(destination) || !plainObject(destination.organization)
+      || !nonEmpty(destination.organization.id)) return false;
+    destinationOrganizations.add(destination.organization.id);
+  }
+
+  // A legacy string is safe only for the worker's own workspace. Every
+  // cross-workspace destination must pin both the workspace and app ID.
+  for (const binding of Object.values(configuredBindings)) {
+    if (typeof binding === "string") {
+      if (!nonEmpty(vars.SLACK_EXPECTED_TEAM_ID)
+        || binding !== vars.SLACK_EXPECTED_TEAM_ID) return false;
+      continue;
+    }
+    if (!plainObject(binding)
+      || !nonEmpty(binding.workspace_id ?? binding.workspaceId)
+      || !nonEmpty(binding.app_id ?? binding.appId)) return false;
+  }
+  for (const organizationId of destinationOrganizations) {
+    if (!Object.prototype.hasOwnProperty.call(configuredBindings, organizationId)) return false;
+  }
+  return true;
+}
+
 function validWorkspaceConnectionHints(value) {
   if (!nonEmpty(value)) return false;
   try {
@@ -456,6 +513,9 @@ export function assessTenantRuntimeDeploymentConfig(config, secretNames) {
   if (!validWorkspaceConnectionHints(vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) {
     missing.add("BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   }
+  if (!validMeetingMinutesDestinationSlackBindings(vars)) {
+    missing.add("MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON");
+  }
   if (!hasServiceBinding(config?.services, "BRAINBASE_TENANT_RUNTIME_SERVICE", "brainbase-tenant-runtime")) {
     missing.add("BRAINBASE_TENANT_RUNTIME_SERVICE");
   }
@@ -532,13 +592,6 @@ export async function assertTenantRuntimeDeploymentPreflight({
     throw new Error("tenant_runtime_deploy_config_invalid");
   }
 
-  // Static configuration must be complete before consulting Cloudflare. This keeps
-  // local validation deterministic and avoids unnecessary remote calls.
-  assertTenantRuntimeDeploymentConfig(config, [
-    ...REQUIRED_SECRET_BINDINGS,
-    "DEVELOPMENT_CALLBACK_TOKEN",
-  ]);
-
   // These repository-owned locks are the canonical cross-system deployment
   // authorization. Validate them before any Cloudflare API or Wrangler access.
   await assertTenantRuntimeSourceLocks({
@@ -549,6 +602,13 @@ export async function assertTenantRuntimeDeploymentPreflight({
     reviewedCommit,
     now,
   });
+
+  // Static configuration must be complete before consulting Cloudflare. This keeps
+  // local validation deterministic and avoids unnecessary remote calls.
+  assertTenantRuntimeDeploymentConfig(config, [
+    ...REQUIRED_SECRET_BINDINGS,
+    "DEVELOPMENT_CALLBACK_TOKEN",
+  ]);
 
   let stdout;
   try {

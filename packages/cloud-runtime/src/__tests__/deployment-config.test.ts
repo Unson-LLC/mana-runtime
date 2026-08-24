@@ -205,6 +205,19 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_CLAUDE_EFFORT: "xhigh",
       DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
+    expect(JSON.parse(unson.vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON)).toEqual({
+      unson: "T07LL5WV7N1",
+      "unson-business": { workspace_id: "T0882T8N9UH", app_id: "A0BPM2J33SN" },
+      "tech-knight": "T07A9J3PEMB",
+    });
+    expect(JSON.parse(unson.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)).toEqual([
+      expect.objectContaining({
+        workspace_id: "T0882T8N9UH",
+        app_id: "A0BPM2J33SN",
+        deployment_id: "dep_01M0JK4PXCSV1P2V6Q4FJRBY7B",
+        contract_revision: "2",
+      }),
+    ]);
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", channelName: "9960-back-office", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true,
         taskInventoryAllowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
@@ -567,6 +580,7 @@ describe("会社別Cloudflare deployment", () => {
       expect.objectContaining({ tag: "v8", new_sqlite_classes: ["TaskBoardBinding"] }),
     ]));
     const raw = readFileSync(fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)), "utf8");
+    expect(raw.match(/"BRAINBASE_WORKSPACE_CONNECTIONS_JSON"/g) ?? []).toHaveLength(1);
     expect(raw).not.toContain('"GITHUB_TOKEN":');
   });
 
@@ -576,6 +590,16 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
     expect(worker).toContain("createTenantInteractionEffectResolver(env)");
     expect(worker).toContain("createMeetingMinutesTenantEffectGuard({");
+    expect(worker).toContain("preflightMeetingMinutesDestinationSlackBindings");
+    expect(worker).toContain("effects.preflightDestinationSlack(destinations)");
+    const guardStart = worker.indexOf("function createMeetingMinutesTenantEffectGuard(");
+    const guardEnd = worker.indexOf("function meetingMinutesClients(", guardStart);
+    const guard = worker.slice(guardStart, guardEnd);
+    expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeGreaterThanOrEqual(0);
+    expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeLessThan(
+      guard.indexOf("resolveDerivedSlackTenantContext"),
+    );
+    expect(guard).toContain("app_id: appId");
     expect(worker).not.toContain("meetingMinutesClients(env)");
     expect(worker).not.toContain("env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId");
     expect(worker).toContain('release: "on_expiration"');

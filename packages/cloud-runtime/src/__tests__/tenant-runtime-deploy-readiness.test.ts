@@ -415,6 +415,38 @@ describe("tenant runtime deploy readiness", () => {
       .toThrow("tenant_runtime_deploy_preflight_failed:BRAINBASE_WORKSPACE_CONNECTIONS_JSON");
   });
 
+  it("requires an app binding for every configured cross-workspace meeting destination", () => {
+    const config = structuredClone(completeConfig);
+    const vars = config.vars as Record<string, string>;
+    vars.MEETING_MINUTES_ENABLED = "true";
+    vars.MEETING_MINUTES_DESTINATIONS_JSON = JSON.stringify([{
+      organization: { id: "alternate" },
+    }]);
+    vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON = JSON.stringify({ alternate: "T-ALT" });
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON"],
+    });
+  });
+
+  it("accepts an explicit workspace/app binding for a configured alternate destination", () => {
+    const config = structuredClone(completeConfig);
+    const vars = config.vars as Record<string, string>;
+    vars.MEETING_MINUTES_ENABLED = "true";
+    vars.MEETING_MINUTES_DESTINATIONS_JSON = JSON.stringify([{
+      organization: { id: "alternate" },
+    }]);
+    vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON = JSON.stringify({
+      alternate: { workspace_id: "T-ALT", app_id: "A-ALT" },
+    });
+
+    expect(assessTenantRuntimeDeploymentConfig(config, completeSecrets)).toEqual({
+      ready: true,
+      missing_bindings: [],
+    });
+  });
+
   it("rejects a workspace connection hint without canonical deployment scope", () => {
     const config = structuredClone(completeConfig);
     const hints = JSON.parse(String(config.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)) as Array<Record<string, unknown>>;

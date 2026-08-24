@@ -20,6 +20,11 @@ export interface MeetingMinutesDestinationSlackBinding {
   app_id: string;
 }
 
+export type MeetingMinutesDestinationSlackBindings = Readonly<Record<
+  string,
+  MeetingMinutesDestinationSlackBinding
+>>;
+
 const identifierPattern = /^[A-Za-z0-9_-]{2,64}$/;
 
 function text(value: unknown): string | undefined {
@@ -163,6 +168,45 @@ export function resolveMeetingMinutesDestinationSlackBinding(input: {
     (workspaceId === input.sourceWorkspaceId ? text(input.sourceAppId) : undefined);
   if (!appId) deny("slack_delivery", "DELIVERY_SCOPE_MISMATCH");
   return { workspace_id: workspaceId, app_id: assertIdentifier(appId) };
+}
+
+/**
+ * Resolve every configured meeting-minutes destination before a run can
+ * reach a Slack side effect.  This is intentionally stricter than resolving
+ * only the selected destination: a workspace-only entry for another
+ * workspace must be visible to deployment/runtime preflight instead of
+ * failing later after Brainbase or GitHub work has started.
+ */
+export function preflightMeetingMinutesDestinationSlackBindings(input: {
+  destinations: readonly MeetingMinutesDestination[];
+  destinationTeamIdsJson: string | undefined;
+  trustedWorkspaceConnections: readonly WorkspaceConnectionSnapshot[];
+  sourceTenantId?: string;
+  sourceWorkspaceId?: string;
+  sourceAppId?: string;
+  sourceDeploymentId?: string;
+  sourceProfile?: WorkspaceConnectionSnapshot["profile"];
+}): MeetingMinutesDestinationSlackBindings {
+  const bindings: Record<string, MeetingMinutesDestinationSlackBinding> = {};
+  for (const destination of input.destinations) {
+    const binding = resolveMeetingMinutesDestinationSlackBinding({
+      organizationId: destination.organization.id,
+      destination,
+      destinationTeamIdsJson: input.destinationTeamIdsJson,
+      trustedWorkspaceConnections: input.trustedWorkspaceConnections,
+      sourceTenantId: input.sourceTenantId,
+      sourceWorkspaceId: input.sourceWorkspaceId,
+      sourceAppId: input.sourceAppId,
+      sourceDeploymentId: input.sourceDeploymentId,
+      sourceProfile: input.sourceProfile,
+    });
+    const previous = bindings[destination.id];
+    if (previous && (previous.workspace_id !== binding.workspace_id || previous.app_id !== binding.app_id)) {
+      deny("slack_delivery", "DELIVERY_SCOPE_MISMATCH");
+    }
+    bindings[destination.id] = binding;
+  }
+  return bindings;
 }
 
 /** Preserve task-action compatibility when the destination map uses objects. */
