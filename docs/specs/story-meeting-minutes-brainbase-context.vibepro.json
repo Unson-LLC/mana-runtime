@@ -226,7 +226,7 @@
           { "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts", "case": "converts a task approval callback rejection into the safe temporary failure contract" },
           { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-task-actions.test.ts", "case": "settles a deferred edit-view rejection with a fixed safe projection" },
           { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-task-actions.test.ts", "case": "settles deferred edit and cancel failures without exposing raw errors" },
-          { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "case": "includes a deterministic inquiry id on the %s failure path" }
+          { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "case": "derives the router intake inquiry id from the event id and uses a deterministic fallback" }
         ]
       },
       "verifiable_by": {
