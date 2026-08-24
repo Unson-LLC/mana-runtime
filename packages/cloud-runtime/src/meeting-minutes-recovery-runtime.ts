@@ -17,7 +17,7 @@ import type {
   TenantContextEnvelope,
 } from "./multitenancy/contracts.js";
 import type { IdempotencyStore } from "./multitenancy/idempotency.js";
-import { deny } from "./multitenancy/errors.js";
+import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
 /** The tenant-scoped effects used by recovery's durable-object and Slack work. */
@@ -45,6 +45,8 @@ export interface MeetingMinutesRecoveryQueueContext {
 }
 
 export interface MeetingMinutesRecoveryRuntimeDependencies<Env> {
+  /** Reissue a fresh envelope from durable recovery authorization before validation. */
+  refreshTenantContext?(env: Env, body: TenantQueueBody<MeetingMinutesRecovery>): Promise<TenantContextEnvelope>;
   prepareQueue(env: Env, body: TenantQueueBody<MeetingMinutesRecovery>): MeetingMinutesRecoveryQueueContext;
   createEffects(input: {
     env: Env;
@@ -102,9 +104,27 @@ export async function processMeetingMinutesRecoveryQueue<Env>(
   env: Env,
   dependencies: MeetingMinutesRecoveryRuntimeDependencies<Env>,
 ): Promise<void> {
-  const tenantBody = message.body;
+  let tenantContext: TenantContextEnvelope;
+  try {
+    tenantContext = dependencies.refreshTenantContext
+      ? await dependencies.refreshTenantContext(env, message.body)
+      : message.body.tenant_context;
+  } catch (error) {
+    const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
+    console.error(JSON.stringify({ event: "meeting_minutes_recovery_context_refresh_failed",
+      event_id: message.body.tenant_context.slack.event_id, code }));
+    if (code === "WORKSPACE_CONNECTION_UNAVAILABLE" || code === "UPSTREAM_UNAVAILABLE") message.retry();
+    else message.ack();
+    return;
+  }
+  const tenantBody = tenantContext === message.body.tenant_context
+    ? message.body
+    : { ...message.body, tenant_context: tenantContext };
+  const tenantMessage = tenantBody === message.body
+    ? message
+    : { ...message, body: tenantBody };
   const context = dependencies.prepareQueue(env, tenantBody);
-  await consumeTenantQueueMessage(message, {
+  await consumeTenantQueueMessage(tenantMessage, {
     verifier: context.verifier,
     expected_scope: () => context.expectedScope,
     now: context.now,

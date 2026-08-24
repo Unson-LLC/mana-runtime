@@ -127,6 +127,7 @@ export async function resolveSlackWorkerIngress(input: {
   required_scopes: readonly string[];
   required_authorization: TenantContextIssueRequest["required_authorization"];
   trusted_project_ids?: readonly string[];
+  tenant_revision?: string;
   authority: TenantAuthorityClient;
   now: string;
   resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
@@ -162,6 +163,7 @@ export async function resolveSlackWorkerIngress(input: {
 
   const issueRequest: TenantContextIssueRequest = {
     workspace_connection: structuredClone(resolved),
+    ...(input.tenant_revision ? { tenant_revision: input.tenant_revision } : {}),
     slack: {
       event_id: input.identity.event_id,
       channel_id: input.identity.channel_id,

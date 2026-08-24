@@ -1,4 +1,5 @@
 import type { SlackFileReference } from "./types.js";
+import type { DeploymentProfileName } from "./multitenancy/contracts.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
 
 export const MEETING_MINUTES_CHOOSE_ACTION_ID = "mana_meeting_minutes_choose_destination";
@@ -182,6 +183,29 @@ export interface MeetingMinutesDiagnostics {
   generation?: MeetingMinutesGenerationDiagnostics;
 }
 
+/**
+ * Non-secret authorization and identity retained for a delayed recovery.
+ * Provider credentials and tenant-context integrity material must never be
+ * persisted here; Queue execution reissues a fresh context from this record.
+ */
+export interface MeetingMinutesRecoveryAuthorization {
+  tenantId: string;
+  tenantRevision: string;
+  connectionId: string;
+  connectionRevision: string;
+  workspaceId: string;
+  appId: string;
+  channelId: string;
+  threadTs: string;
+  requesterId: string;
+  actorPrincipalId: string;
+  projectIds: string[];
+  audience: string;
+  capabilityId: string;
+  deploymentId: string;
+  profile: DeploymentProfileName;
+}
+
 export interface MeetingMinutesRun {
   version: 1;
   runId: string;
@@ -215,10 +239,14 @@ export interface MeetingMinutesRun {
   diagnostics?: MeetingMinutesDiagnostics;
   /** A projection failure is secondary and must not overwrite the processing failure or completed result. */
   projectionFailure?: Required<Pick<MeetingMinutesDiagnostics, "stage" | "code" | "retryable" | "failedAt">>;
+  /** Non-secret authority inputs used to reissue a fresh context for delayed recovery. */
+  recoveryAuthorization?: MeetingMinutesRecoveryAuthorization;
   lifecycle?: {
     actionTs: string;
     deadlineAt: string;
     recoveredAt?: string;
+    /** A projection call has been claimed before the external Slack effect. */
+    recoveryProjectionClaimedAt?: string;
     /** A failed recovery projection has been attempted; redelivery must not repeat it. */
     recoveryProjectionAttemptedAt?: string;
     /** Durable result of the one-shot fallback after the recovery claim is saved. */

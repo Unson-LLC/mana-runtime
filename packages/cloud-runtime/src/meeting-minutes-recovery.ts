@@ -66,7 +66,8 @@ export async function armMeetingMinutesRecovery(fs: WorkspaceFs, selection: Meet
     run.updatedAt = new Date(now).toISOString();
     await saveMeetingMinutesRun(fs, run);
   }
-  if (run.lifecycle.recoveryProjectedAt || run.lifecycle.recoveryProjectionAttemptedAt) {
+  if (run.lifecycle.recoveryProjectedAt || run.lifecycle.recoveryProjectionClaimedAt ||
+    run.lifecycle.recoveryProjectionAttemptedAt) {
     return { event: { kind: "meeting_minutes_recovery", runId: run.runId,
       workspaceId: run.workspaceId, appId: run.sourceAppId,
       channelId: selection.channelId, threadTs: selection.threadTs,
@@ -94,7 +95,7 @@ export async function recoverStaleMeetingMinutesRun(fs: WorkspaceFs, event: Meet
   if (!run) return "terminal";
   if (run.lifecycle?.actionTs !== event.actionTs) return "superseded";
   if (run.status === "completed" || run.lifecycle.recoveryProjectedAt ||
-    run.lifecycle.recoveryProjectionAttemptedAt) return "terminal";
+    run.lifecycle.recoveryProjectionClaimedAt || run.lifecycle.recoveryProjectionAttemptedAt) return "terminal";
   const now = options.now?.() ?? Date.now();
   if (Date.parse(run.lifecycle.deadlineAt) > now) return "not_due";
   if (run.status !== "failed") {
@@ -105,6 +106,17 @@ export async function recoverStaleMeetingMinutesRun(fs: WorkspaceFs, event: Meet
   run.lifecycle.recoveredAt ??= new Date(now).toISOString();
   run.updatedAt = new Date(now).toISOString();
   await saveMeetingMinutesRun(fs, run);
+  // Claim before the external Slack projection. If the final completion save
+  // fails after Slack accepted the update, redelivery must not project again.
+  const projectionClaimedAt = new Date(now).toISOString();
+  run.lifecycle.recoveryProjectionClaimedAt = projectionClaimedAt;
+  run.updatedAt = projectionClaimedAt;
+  try { await saveMeetingMinutesRun(fs, run); }
+  catch {
+    console.error(JSON.stringify({ event: "meeting_minutes_recovery_projection_claim_save_failed",
+      runId: run.runId, stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+    throw new Error("meeting_minutes_recovery_projection_claim_save_failed");
+  }
   try {
     await options.updateStatus(run, "failed");
   } catch (error) {
@@ -112,20 +124,17 @@ export async function recoverStaleMeetingMinutesRun(fs: WorkspaceFs, event: Meet
     const projectionFailedAt = new Date().toISOString();
     run.projectionFailure = { stage: "status_projection", code: classified.code!, retryable: classified.retryable!,
       failedAt: projectionFailedAt };
-    // Claim the recovery projection before invoking the one-shot fallback. The
-    // Durable Object serializes deliveries for this workspace, while this
-    // persisted marker is the cross-delivery claim. If it cannot be written,
-    // fail the delivery before invoking fallback so Queue retries instead of
-    // creating an unclaimed Slack side effect.
+    // Retain the failed projection marker separately for the one-shot fallback
+    // diagnostics. The pre-projection claim above is already durable.
     run.lifecycle.recoveryProjectionAttemptedAt = projectionFailedAt;
     run.updatedAt = run.projectionFailure.failedAt;
     try { await saveMeetingMinutesRun(fs, run); }
     catch {
       console.error(JSON.stringify({ event: "meeting_minutes_recovery_projection_marker_save_failed",
         runId: run.runId, stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
-      // Preserve the original projection failure as the Queue retry signal;
-      // there is no fallback until the claim is durable.
-      throw error;
+      // The projection claim is already durable. Continue to the bounded
+      // fallback in this delivery so a diagnostics write outage does not
+      // strand the failed run without its one-shot user-visible result.
     }
     let fallbackCompleted = false;
     if (options.fallbackStatus) {

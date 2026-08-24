@@ -75,9 +75,13 @@ const expectedScope: ExpectedTenantScope = {
   deployment_id: DEPLOYMENT_ID,
 };
 
-async function signedRecoveryContext(): Promise<{ value: TenantContextEnvelope; publicKey: CryptoKey }> {
+async function signedRecoveryContext(options: {
+  eventId?: string;
+  issuedAt?: string;
+  expiresAt?: string;
+} = {}): Promise<{ value: TenantContextEnvelope; publicKey: CryptoKey }> {
   const keyPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-  const eventId = "EvRecovery";
+  const eventId = options.eventId ?? "meeting_minutes_recovery:Ev1_F1:2.1";
   const operationId = "op_01ARZ3NDEKTSV4RRFFQ69G5FB4";
   const idempotencyKey = await createIdempotencyKey({
     protocol_id: "mana-brainbase-tenant-context",
@@ -107,7 +111,7 @@ async function signedRecoveryContext(): Promise<{ value: TenantContextEnvelope; 
     actor: {
       principal_id: "person-a",
       principal_type: "person",
-      authenticated_subject_id: "slack-person-a",
+      authenticated_subject_id: "U1",
     },
     authorization: {
       organization_ids: [`organization-${TENANT_ID}`],
@@ -120,7 +124,7 @@ async function signedRecoveryContext(): Promise<{ value: TenantContextEnvelope; 
       event_id: eventId,
       channel_id: CHANNEL_ID,
       thread_ts: THREAD_TS,
-      requester_id: "slack-person-a",
+      requester_id: "U1",
     },
     correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FB5",
     operation_id: operationId,
@@ -131,8 +135,8 @@ async function signedRecoveryContext(): Promise<{ value: TenantContextEnvelope; 
       credential_ref: `credential-${TENANT_ID}`,
       billing_principal_id: `billing-${TENANT_ID}`,
     },
-    issued_at: new Date(envelopeNow - 60_000).toISOString(),
-    expires_at: new Date(envelopeNow + 240_000).toISOString(),
+    issued_at: options.issuedAt ?? new Date(envelopeNow - 60_000).toISOString(),
+    expires_at: options.expiresAt ?? new Date(envelopeNow + 240_000).toISOString(),
   };
   return { value: await signTenantContextEnvelope(unsigned, keyPair.privateKey, "test-key-1"), publicKey: keyPair.publicKey };
 }
@@ -149,12 +153,19 @@ function queueMessage(body: TenantQueueBody<MeetingMinutesRecovery>) {
 }
 
 describe("meeting-minutes recovery production wiring", () => {
-  it("executes Queue to tenant effect to recovery handler and projects the bounded Slack fallback", async () => {
+  it("reissues a fresh context after a 20-minute Queue delay before projecting the bounded Slack fallback", async () => {
     const fs = new MemoryFs();
     await saveMeetingMinutesRun(fs, run());
     const armed = await armMeetingMinutesRecovery(fs, selection, Date.parse(NOW) - 20 * 60 * 1_000 - 1_000);
-    const signed = await signedRecoveryContext();
-    const queue = queueMessage({ schema_version: "1.0", tenant_context: signed.value, payload: armed.event });
+    expect(armed.delaySeconds).toBeGreaterThanOrEqual(20 * 60);
+    const stale = await signedRecoveryContext({
+      issuedAt: new Date(Date.parse(NOW) - 26 * 60 * 1_000).toISOString(),
+      expiresAt: new Date(Date.parse(NOW) - 21 * 60 * 1_000).toISOString(),
+    });
+    const fresh = await signedRecoveryContext();
+    expect(Date.parse(fresh.value.expires_at) - Date.parse(fresh.value.issued_at))
+      .toBeLessThanOrEqual(5 * 60 * 1_000);
+    const queue = queueMessage({ schema_version: "1.0", tenant_context: stale.value, payload: armed.event });
     const effectBoundaries: string[] = [];
     const effectIds: string[] = [];
     const effectEvents: unknown[] = [];
@@ -166,19 +177,28 @@ describe("meeting-minutes recovery production wiring", () => {
         : Response.json({ ok: true });
     }) as typeof fetch;
     const ownership = new IdempotencyMemoryStore();
+    const preparedContexts: TenantContextEnvelope[] = [];
+    const refreshTenantContext = vi.fn(async (_env: Record<string, never>, body: TenantQueueBody<MeetingMinutesRecovery>) => {
+      expect(Date.parse(body.tenant_context.expires_at)).toBeLessThan(Date.parse(NOW) - 20 * 60 * 1_000);
+      return fresh.value;
+    });
     const dependencies: MeetingMinutesRecoveryRuntimeDependencies<Record<string, never>> = {
-      prepareQueue: (_env, body) => ({
-        runtimeTenantId: body.tenant_context.tenant.tenant_id,
-        verifier: new TenantRuntimeBoundaryVerifier({
-          read_authoritative_snapshot: async () => snapshot,
-          resolve_verification_key: async () => signed.publicKey,
-        }),
-        expectedScope,
-        now: () => NOW,
-        ownership,
-        payloadHash,
-        retentionUntil: (now) => new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
-      }),
+      refreshTenantContext,
+      prepareQueue: (_env, body) => {
+        preparedContexts.push(body.tenant_context);
+        return {
+          runtimeTenantId: body.tenant_context.tenant.tenant_id,
+          verifier: new TenantRuntimeBoundaryVerifier({
+            read_authoritative_snapshot: async () => snapshot,
+            resolve_verification_key: async () => fresh.publicKey,
+          }),
+          expectedScope,
+          now: () => NOW,
+          ownership,
+          payloadHash,
+          retentionUntil: (now) => new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+        };
+      },
       createEffects: ({ tenantContext, expectedScope: scope, verifier, now }) => ({
         boundary: (boundary, execute) => {
           effectBoundaries.push(boundary);
@@ -221,6 +241,8 @@ describe("meeting-minutes recovery production wiring", () => {
       { kind: "source_status", runId: "Ev1_F1", outcome: "failed" },
       { kind: "source_status_fallback", runId: "Ev1_F1", outcome: "failed" },
     ]);
+    expect(refreshTenantContext).toHaveBeenCalledOnce();
+    expect(preparedContexts).toEqual([fresh.value]);
     expect(requests.map((request) => request.url)).toEqual([
       "https://slack.com/api/assistant.threads.setStatus",
       "https://slack.com/api/chat.update",
