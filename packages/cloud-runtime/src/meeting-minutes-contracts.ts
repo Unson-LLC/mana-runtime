@@ -1,4 +1,5 @@
 import type { SlackFileReference } from "./types.js";
+import { deriveCorrelationId } from "./multitenancy/ids.js";
 
 export const MEETING_MINUTES_CHOOSE_ACTION_ID = "mana_meeting_minutes_choose_destination";
 export const MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID = "mana_meeting_minutes_choose_organization";
@@ -9,6 +10,29 @@ export const MEETING_MINUTES_TASK_EDIT_VIEW_ID = "mana_meeting_minutes_task_edit
 export const MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID = "mana_meeting_minutes_task_assignee";
 export const MEETING_MINUTES_REDO_ACTION_ID = "mana_meeting_minutes_redo";
 export const MEETING_MINUTES_CONFIRM_REDO_ACTION_ID = "mana_meeting_minutes_confirm_redo";
+
+/**
+ * The stable public failure envelope shared by the deferred Task action
+ * reporter and its Slack projection.  Keep the correlation id in this
+ * envelope: the projection must display the reporter's id rather than derive
+ * another id from an action-specific stage.
+ */
+export type MeetingMinutesTaskActionFailureCode = "TASK_ACTION_FAILED" | "TASK_SCOPE_MISMATCH"
+  | "TASK_SCOPE_MIGRATION_FAILED" | "TASK_ACTION_EXPIRED";
+
+export interface MeetingMinutesTaskActionFailure {
+  processingId: string;
+  stage: "task_action";
+  code: MeetingMinutesTaskActionFailureCode;
+  correlationId: string;
+  retryable: boolean;
+}
+
+export function meetingMinutesTaskActionFailure(processingId: string,
+  code: MeetingMinutesTaskActionFailureCode, retryable: boolean): MeetingMinutesTaskActionFailure {
+  const stage = "task_action" as const;
+  return { processingId, stage, code, correlationId: deriveCorrelationId(processingId, stage, code), retryable };
+}
 
 export interface MeetingMinutesDestination {
   id: string;

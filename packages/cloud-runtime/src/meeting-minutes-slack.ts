@@ -1,7 +1,8 @@
 import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
   MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
   MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
-  type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+  meetingMinutesTaskActionFailure, type MeetingMinutesRun,
+  type MeetingMinutesTaskActionFailure } from "./meeting-minutes-contracts.js";
 import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
 import type { UserFailure } from "./multitenancy/failure.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
@@ -198,6 +199,20 @@ function safeFailureDetails(run: MeetingMinutesRun): string[] {
   };
   return [`処理ID: ${run.runId}`, `失敗段階: ${stage ? stageLabels[stage] ?? "不明" : "不明（旧形式）"}`,
     `エラーコード: ${code}`, `問い合わせID: ${correlationId}`];
+}
+
+function taskActionFailureDetails(failure: MeetingMinutesTaskActionFailure): string[] {
+  return [`処理ID: ${failure.processingId}`, `失敗段階: タスク操作（${failure.stage}）`,
+    `エラーコード: ${failure.code}`, `問い合わせID: ${failure.correlationId}`,
+    `再試行可否: ${failure.retryable ? "可能" : "不可"}`];
+}
+
+function normalizeTaskActionFailure(run: MeetingMinutesRun,
+  failure: MeetingMinutesTaskActionFailure | string,
+  fallbackCode: MeetingMinutesTaskActionFailure["code"] = "TASK_ACTION_FAILED"): MeetingMinutesTaskActionFailure {
+  if (typeof failure !== "string") return failure;
+  return { ...meetingMinutesTaskActionFailure(run.runId, fallbackCode, fallbackCode !== "TASK_SCOPE_MISMATCH"),
+    correlationId: failure };
 }
 function failedRunDetails(run: MeetingMinutesRun): string[] {
   const destination = `保存先: ${run.destination!.name}`;
@@ -500,19 +515,26 @@ export class MeetingMinutesSlackClient {
     await this.post("chat.update", { channel: run.destination.slackChannelId, ts: run.slack.taskCardTs,
       ...meetingMinutesTaskCard(run) });
   }
-  async postTaskScopeMismatch(run: MeetingMinutesRun, userId: string): Promise<void> {
+  async postTaskScopeMismatch(run: MeetingMinutesRun, userId: string,
+    failure = meetingMinutesTaskActionFailure(run.runId, "TASK_SCOPE_MISMATCH", false)): Promise<void> {
     if (!run.destination || !run.slack?.parentTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
-    const correlationId = deriveCorrelationId(run.runId, "task_scope", "TASK_SCOPE_MISMATCH");
+    const details = taskActionFailureDetails(failure);
     await this.post("chat.postEphemeral", { channel: run.destination.slackChannelId, thread_ts: run.slack.parentTs,
-      user: userId, text: `このタスクは現在のBrainbaseプロジェクトに紐付いていないため、編集・取消できません。管理者がプロジェクト紐付けを確認してください。問い合わせID: ${correlationId}` });
+      user: userId, text: [`このタスクは現在のBrainbaseプロジェクトに紐付いていないため、編集・取消できません。`,
+        ...details, "再試行せず、管理者がプロジェクト紐付けを確認してください。"].join("\n") });
   }
   async postTaskActionFailure(run: MeetingMinutesRun, userId: string, action: string,
-    correlationId: string): Promise<void> {
+    failure: MeetingMinutesTaskActionFailure | string): Promise<void> {
     if (!run.destination || !run.slack?.parentTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
     const actionLabel = action === "cancel" ? "取消" : "編集";
+    const normalizedFailure = normalizeTaskActionFailure(run, failure);
+    const guidance = normalizedFailure.retryable
+      ? "もう一度操作してください。"
+      : "再試行せず、管理者がプロジェクト紐付けを確認してください。";
     await this.post("chat.postEphemeral", { channel: run.destination.slackChannelId, thread_ts: run.slack.parentTs,
       user: userId,
-      text: `議事録タスクの${actionLabel}に失敗しました。処理は安全に停止しました。問い合わせID: ${correlationId}` });
+      text: [`議事録タスクの${actionLabel}に失敗しました。処理は安全に停止しました。`,
+        ...taskActionFailureDetails(normalizedFailure), guidance].join("\n") });
   }
   async openTaskEditView(triggerId: string, view: Record<string, unknown>): Promise<void> {
     await this.post("views.open", { trigger_id: triggerId, view }, AbortSignal.timeout(2_000));

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleMeetingMinutesTaskAction, type MeetingMinutesTaskActionDependencies } from "../meeting-minutes-task-actions.js";
 import { meetingMinutesTaskCard } from "../meeting-minutes-task-cards.js";
-import type { MeetingMinutesRun } from "../meeting-minutes-contracts.js";
+import type { MeetingMinutesRun, MeetingMinutesTaskActionFailure } from "../meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig } from "../meeting-minutes-entrypoints.js";
+import { deriveCorrelationId } from "../multitenancy/ids.js";
 
 function run(): MeetingMinutesRun {
   return { version: 1, runId: "Ev_Fv", eventId: "Ev", workspaceId: "TU", sourceAppId: "AU", sourceChannelId: "CR",
@@ -36,8 +37,9 @@ function deps(current: MeetingMinutesRun) { return { destinationTeamIds: { "tech
     priority: "medium", project_codes: ["techknight"], assignee_person_id: null, assignee_display_name: null,
     due_at: null, waiting_on: null, completed_at: null })), deleteTask: vi.fn(async () => ({})),
   updateCard: vi.fn(async (_run: MeetingMinutesRun) => {}),
-  notifyScopeMismatch: vi.fn(async (_run: MeetingMinutesRun, _userId: string) => {}),
-  notifyTaskActionFailure: vi.fn(async (_run: MeetingMinutesRun, _userId: string, _action: "edit" | "cancel", _correlationId: string) => {}),
+  notifyScopeMismatch: vi.fn(async (_run: MeetingMinutesRun, _userId: string, _failure: MeetingMinutesTaskActionFailure) => {}),
+  notifyTaskActionFailure: vi.fn(async (_run: MeetingMinutesRun, _userId: string, _action: "edit" | "cancel",
+    _failure: MeetingMinutesTaskActionFailure) => {}),
   openView: vi.fn(async (_organizationId: string, _triggerId: string, _view: Record<string, unknown>) => {}),
   listPeople: vi.fn(async () => [{ id: "per_umeda", name: "梅田 遼", aliases: ["梅田"] }]), repairTaskBoard: vi.fn(async () => {}),
   defer: (work: Promise<void>) => { void work; } };
@@ -73,7 +75,11 @@ describe("meeting minutes task cards", () => {
     const card = meetingMinutesTaskCard(legacy); const serialized = JSON.stringify(card.blocks);
     expect(serialized).toContain("旧形式のため操作できません");
     expect(serialized).toContain("議事録を再生成してください");
+    expect(serialized).toContain("処理ID: Ev_Fv");
+    expect(serialized).toContain("失敗段階: タスク操作（task_action）");
+    expect(serialized).toContain("エラーコード: TASK_ACTION_EXPIRED");
     expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+    expect(serialized).toContain("再試行可否: 不可");
     expect(serialized).not.toContain("mana_meeting_minutes_task_edit");
     expect(serialized).not.toContain("mana_meeting_minutes_task_cancel");
   });
@@ -84,11 +90,17 @@ describe("meeting minutes task cards", () => {
       organizationId: "tech-knight", channelId: "CDEST" });
     const response = await handleMeetingMinutesTaskAction(legacyPayload, options);
     expect(response?.status).toBe(409);
-    await expect(response?.json()).resolves.toMatchObject({
+    const body = await response!.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
       error: "meeting_minutes_task_action_expired",
-      user_message: expect.stringContaining("このカードは旧形式のため操作できません。議事録を再生成してください。問い合わせID: cor_"),
+      user_message: expect.stringContaining("このカードは旧形式のため操作できません。議事録を再生成してください。処理ID: Ev_Fv"),
+      processing_id: "Ev_Fv",
+      stage: "task_action",
+      code: "TASK_ACTION_EXPIRED",
       correlation_id: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/),
+      retryable: false,
     });
+    expect(String(body.user_message)).toContain("失敗段階: タスク操作（task_action）");
     expect(options.loadRun).not.toHaveBeenCalled();
     expect(options.getTask).not.toHaveBeenCalled();
     expect(options.updateTask).not.toHaveBeenCalled();
@@ -105,7 +117,11 @@ describe("meeting minutes task cards", () => {
       expect(response?.status).toBe(200);
       await expect(Promise.all(work)).resolves.toEqual([undefined]);
       expect(options.notifyTaskActionFailure).toHaveBeenCalledWith(current, "U1", "edit",
-        expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/));
+        expect.objectContaining({ processingId: current.runId, stage: "task_action", code: "TASK_ACTION_FAILED",
+          correlationId: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/), retryable: true }));
+      const failure = options.notifyTaskActionFailure.mock.calls[0]?.[3];
+      expect(failure?.correlationId).toBe(deriveCorrelationId(current.runId, "task_action", "TASK_ACTION_FAILED"));
+      expect(failure?.correlationId).not.toBe(deriveCorrelationId(current.runId, "task_edit", "TASK_ACTION_FAILED"));
       expect(errorLog.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
     } finally {
       errorLog.mockRestore();
@@ -124,9 +140,11 @@ describe("meeting minutes task cards", () => {
       await expect(Promise.all(work)).resolves.toEqual([undefined, undefined]);
       expect(options.notifyTaskActionFailure).toHaveBeenCalledTimes(2);
       expect(options.notifyTaskActionFailure).toHaveBeenNthCalledWith(1, current, "U1", "edit",
-        expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/));
+        expect.objectContaining({ processingId: current.runId, stage: "task_action", code: "TASK_ACTION_FAILED",
+          correlationId: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/), retryable: true }));
       expect(options.notifyTaskActionFailure).toHaveBeenNthCalledWith(2, current, "U1", "cancel",
-        expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/));
+        expect.objectContaining({ processingId: current.runId, stage: "task_action", code: "TASK_ACTION_FAILED",
+          correlationId: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/), retryable: true }));
       expect(errorLog.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
     } finally {
       errorLog.mockRestore();
@@ -284,7 +302,9 @@ describe("meeting minutes task cards", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(options.deleteTask).not.toHaveBeenCalled();
     expect(options.updateCard).not.toHaveBeenCalled();
-    expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1");
+    expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1",
+      expect.objectContaining({ processingId: current.runId, stage: "task_action", code: "TASK_SCOPE_MISMATCH",
+        correlationId: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/), retryable: false }));
   });
   it("does not trust the historical projectId when the run item already records a modern scope", async () => {
     const current = run();
@@ -292,7 +312,9 @@ describe("meeting minutes task cards", () => {
     const options = deps(current);
     options.getTask.mockResolvedValue({ ...(await options.getTask()), project_codes: ["proj_pms"] });
     await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
-    await vi.waitFor(() => expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1"));
+    await vi.waitFor(() => expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1",
+      expect.objectContaining({ processingId: current.runId, stage: "task_action", code: "TASK_SCOPE_MISMATCH",
+        correlationId: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/), retryable: false })));
     expect(options.deleteTask).not.toHaveBeenCalled();
     expect(options.updateCard).not.toHaveBeenCalled();
   });
@@ -306,7 +328,9 @@ describe("meeting minutes task cards", () => {
           title: { value: { value: "新題" } }, due: { value: {} }, assignee: { mana_meeting_minutes_task_assignee: {} },
         } } } }, options);
     expect(response?.status).toBe(200);
-    await vi.waitFor(() => expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1"));
+    await vi.waitFor(() => expect(options.notifyScopeMismatch).toHaveBeenCalledWith(current, "U1",
+      expect.objectContaining({ processingId: current.runId, stage: "task_action", code: "TASK_SCOPE_MISMATCH",
+        correlationId: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/), retryable: false })));
     expect(options.updateTask).not.toHaveBeenCalled();
     expect(options.updateCard).not.toHaveBeenCalled();
   });

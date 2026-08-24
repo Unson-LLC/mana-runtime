@@ -1,7 +1,8 @@
 import type { CanonicalTask, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { MEETING_MINUTES_TASK_CANCEL_ACTION_ID, MEETING_MINUTES_TASK_EDIT_ACTION_ID,
   MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID,
-  meetingMinutesTaskProjectCodes, type MeetingMinutesDestination, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+  meetingMinutesTaskActionFailure, meetingMinutesTaskProjectCodes, type MeetingMinutesDestination,
+  type MeetingMinutesRun, type MeetingMinutesTaskActionFailure } from "./meeting-minutes-contracts.js";
 import { MEETING_MINUTES_ASSIGNEE_NONE, meetingMinutesTaskEditViewFromAction } from "./meeting-minutes-task-cards.js";
 import type { GraphPersonOption } from "./brainbase-graph-runtime.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
@@ -32,11 +33,15 @@ function sourceIdentity(value: ActionMetadata | undefined): MeetingMinutesSource
   } : undefined;
 }
 function expiredLegacyAction(runId?: string): Response {
-  const correlationId = deriveCorrelationId(runId ?? "legacy", "task_action", "TASK_ACTION_EXPIRED");
+  const failure = meetingMinutesTaskActionFailure(runId ?? "legacy", "TASK_ACTION_EXPIRED", false);
   return Response.json({
     error: "meeting_minutes_task_action_expired",
-    user_message: `このカードは旧形式のため操作できません。議事録を再生成してください。問い合わせID: ${correlationId}`,
-    correlation_id: correlationId,
+    user_message: `このカードは旧形式のため操作できません。議事録を再生成してください。処理ID: ${failure.processingId}、失敗段階: タスク操作（${failure.stage}）、エラーコード: ${failure.code}、問い合わせID: ${failure.correlationId}。再試行せず、議事録を再生成してください。`,
+    processing_id: failure.processingId,
+    stage: failure.stage,
+    code: failure.code,
+    correlation_id: failure.correlationId,
+    retryable: failure.retryable,
   }, { status: 409 });
 }
 export interface MeetingMinutesTaskActionDependencies {
@@ -49,10 +54,11 @@ export interface MeetingMinutesTaskActionDependencies {
   updateTask(taskId: string, input: UpdateTaskInput, idempotencyKey: string): Promise<CanonicalTask>;
   deleteTask(taskId: string, expectedVersion: number, idempotencyKey: string): Promise<unknown>;
   updateCard(run: MeetingMinutesRun): Promise<void>;
-  notifyScopeMismatch(run: MeetingMinutesRun, userId: string): Promise<void>;
+  notifyScopeMismatch(run: MeetingMinutesRun, userId: string,
+    failure: MeetingMinutesTaskActionFailure): Promise<void>;
   /** Optional safe Slack projection for a deferred non-scope task failure. */
   notifyTaskActionFailure?(run: MeetingMinutesRun, userId: string, action: "edit" | "cancel",
-    correlationId: string): Promise<void>;
+    failure: MeetingMinutesTaskActionFailure): Promise<void>;
   openView(organizationId: string, triggerId: string, view: Record<string, unknown>): Promise<void>;
   listPeople(): Promise<GraphPersonOption[] | undefined>;
   repairTaskBoard(targetId: string): Promise<void>;
@@ -90,11 +96,11 @@ async function reportDeferredTaskActionFailure(
   error: unknown,
 ): Promise<void> {
   if (isScopeMismatch(error)) {
-    const correlationId = deriveCorrelationId(run.runId, `task_${action}`, "TASK_SCOPE_MISMATCH");
+    const failure = meetingMinutesTaskActionFailure(run.runId, "TASK_SCOPE_MISMATCH", false);
     console.warn(JSON.stringify({ event: "meeting_minutes_task_scope_mismatch", runId: run.runId, taskId, action,
-      stage: "task_action", code: "TASK_SCOPE_MISMATCH", correlation_id: correlationId, retryable: false }));
+      stage: failure.stage, code: failure.code, correlation_id: failure.correlationId, retryable: failure.retryable }));
     try {
-      await deps.notifyScopeMismatch(run, userId);
+      await deps.notifyScopeMismatch(run, userId, failure);
     } catch {
       console.error(JSON.stringify({ event: "meeting_minutes_task_scope_mismatch_projection_failed", runId: run.runId,
         taskId, action, stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
@@ -103,12 +109,12 @@ async function reportDeferredTaskActionFailure(
     return;
   }
   const code = deferredTaskFailureCode(error);
-  const correlationId = deriveCorrelationId(run.runId, `task_${action}`, code);
+  const failure: MeetingMinutesTaskActionFailure = meetingMinutesTaskActionFailure(run.runId, code, true);
   console.error(JSON.stringify({ event: "meeting_minutes_task_action_failed", runId: run.runId, taskId, action,
-    stage: "task_action", code, correlation_id: correlationId, retryable: true }));
+    stage: failure.stage, code: failure.code, correlation_id: failure.correlationId, retryable: failure.retryable }));
   if (!deps.notifyTaskActionFailure) return;
   try {
-    await deps.notifyTaskActionFailure(run, userId, action, correlationId);
+    await deps.notifyTaskActionFailure(run, userId, action, failure);
   } catch {
     console.error(JSON.stringify({ event: "meeting_minutes_task_action_failure_projection_failed", runId: run.runId,
       taskId, action, stage: "status_projection", code: "STATUS_PROJECTION_FAILED",

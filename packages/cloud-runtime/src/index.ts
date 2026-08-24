@@ -2111,19 +2111,19 @@ export default {
               (tenantFetch) => new MeetingMinutesSlackClient(
                 undefined, tenantFetch).updateTaskCard(run));
             },
-            notifyScopeMismatch: async (run, userId) => {
+            notifyScopeMismatch: async (run, userId, failure) => {
               await effects.slackDelivery(`task-scope-mismatch:${run.runId}:${userId}`, {
                 channel_id: run.destination!.slackChannelId,
               }, { kind: "task_scope_mismatch", runId: run.runId, userId },
               (tenantFetch) => new MeetingMinutesSlackClient(
-                undefined, tenantFetch).postTaskScopeMismatch(run, userId));
+                undefined, tenantFetch).postTaskScopeMismatch(run, userId, failure));
             },
-            notifyTaskActionFailure: async (run, userId, action, correlationId) => {
+            notifyTaskActionFailure: async (run, userId, action, failure) => {
               await effects.slackDelivery(`task-action-failure:${run.runId}:${userId}:${action}`, {
                 channel_id: run.destination!.slackChannelId,
               }, { kind: "task_action_failure", runId: run.runId, userId, action },
               (tenantFetch) => new MeetingMinutesSlackClient(
-                undefined, tenantFetch).postTaskActionFailure(run, userId, action, correlationId));
+                undefined, tenantFetch).postTaskActionFailure(run, userId, action, failure));
             },
             openView: async (organizationId, triggerId, view) => {
               await effects.slackDelivery(`task-edit-view:${organizationId}`, {},

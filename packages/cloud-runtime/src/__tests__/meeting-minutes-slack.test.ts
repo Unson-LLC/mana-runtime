@@ -1,6 +1,7 @@
 import { immediateStatusFailedMessage, interactionActionFailedMessage, interactionEnqueueFailedMessage,
   selectionConfirmationFailedMessage, statusProjectionFailedMessage, tenantInteractionFailedMessage,
   threadCoordinateMissingMessage, MeetingMinutesSlackClient, redoFailedMessage } from "../meeting-minutes-slack.js";
+import { meetingMinutesTaskActionFailure } from "../meeting-minutes-contracts.js";
 import { deriveCorrelationId } from "../multitenancy/ids.js";
 
 describe("MeetingMinutesSlackClient", () => {
@@ -160,12 +161,41 @@ describe("MeetingMinutesSlackClient", () => {
       return Response.json({ ok: true });
     }) as typeof fetch;
     const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
-    await new MeetingMinutesSlackClient("token", fetchImpl).postTaskScopeMismatch(run, "U1");
+    const failure = meetingMinutesTaskActionFailure(run.runId, "TASK_SCOPE_MISMATCH", false);
+    await new MeetingMinutesSlackClient("token", fetchImpl).postTaskScopeMismatch(run, "U1", failure);
     expect(call?.url).toBe("https://slack.com/api/chat.postEphemeral");
     expect(call?.body).toMatchObject({ channel: "C2", thread_ts: "4.1", user: "U1" });
     expect(String(call?.body.text)).toContain("現在のBrainbaseプロジェクトに紐付いていない");
     expect(String(call?.body.text)).toContain("編集・取消できません");
+    expect(String(call?.body.text)).toContain("処理ID: run-1");
+    expect(String(call?.body.text)).toContain("失敗段階: タスク操作（task_action）");
+    expect(String(call?.body.text)).toContain("エラーコード: TASK_SCOPE_MISMATCH");
+    expect(String(call?.body.text)).toContain(`問い合わせID: ${failure.correlationId}`);
+    expect(String(call?.body.text)).toContain("再試行可否: 不可");
+    expect(String(call?.body.text)).toContain("再試行せず");
   });
+
+  it.each([["edit", "編集"], ["cancel", "取消"]] as const)(
+    "projects the typed retryable %s task action failure with its reporter correlation id",
+    async (action, actionLabel) => {
+      let call: { url: string; body: Record<string, unknown> } | undefined;
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        call = { url: String(input), body: JSON.parse(String(init?.body)) };
+        return Response.json({ ok: true });
+      }) as typeof fetch;
+      const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
+      const failure = meetingMinutesTaskActionFailure(run.runId, "TASK_ACTION_FAILED", true);
+      await new MeetingMinutesSlackClient("token", fetchImpl).postTaskActionFailure(run, "U1", action, failure);
+      const text = String(call?.body.text);
+      expect(text).toContain(`議事録タスクの${actionLabel}に失敗しました`);
+      expect(text).toContain("処理ID: run-1");
+      expect(text).toContain("失敗段階: タスク操作（task_action）");
+      expect(text).toContain("エラーコード: TASK_ACTION_FAILED");
+      expect(text).toContain(`問い合わせID: ${failure.correlationId}`);
+      expect(text).toContain("再試行可否: 可能");
+      expect(text).toContain("もう一度操作してください");
+    },
+  );
 
   it("posts processing as a second reply after the selector reply", async () => {
     const bodies: Array<Record<string, unknown>> = [];

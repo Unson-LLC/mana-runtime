@@ -47,7 +47,7 @@ Slack interactionでは、署名、時刻、workspace、app、action payloadを�
 
 すべてのユーザー向け失敗表示には、`runId`・失敗段階・固定エラーコードから決定的に導出した`問い合わせID`を付ける。上流から相関IDを受け取れない同期表示でも同じ導出規則を使い、再表示・再試行で同じ失敗を追跡できるようにする。受付停止判定とTask write承認コールバックの拒否は、raw errorを返さずHTTP 503の安全な`UserFailure` envelopeへ変換し、署名検証済みで利用資格のある`response_url`に限って同じ問い合わせID付きの固定文言を投影する。
 
-議事録Taskの遅延open・edit・cancelは、作業失敗を呼び出し元のPromiseへraw rejectとして残さない。固定コードと問い合わせIDだけを構造化ログへ記録し、利用可能な安全投影へ通知する。Taskのscope不一致は従来の利用者通知を維持し、通知自体が失敗した場合も安全な投影失敗ログへ閉じ込める。
+議事録Taskの遅延open・edit・cancelは、作業失敗を呼び出し元のPromiseへraw rejectとして残さない。reporterは`processingId`・固定`stage`（`task_action`）・公開`code`・決定的な`correlationId`・`retryable`を一つの失敗envelopeへ確定し、構造化ログと安全なSlack投影へ同じ値を渡す。Slack投影は別の段階や問い合わせIDを再導出せず、再試行可能な失敗には再試行案内を、scope不一致（`TASK_SCOPE_MISMATCH`）には再試行せず管理者が紐付けを確認する案内を表示する。旧形式・信頼できないカードは副作用の前に`TASK_ACTION_EXPIRED`として停止し、カードとHTTP応答へ処理ID・失敗段階・公開コード・問い合わせID・再試行可否を表示する。通知自体が失敗した場合も安全な投影失敗ログへ閉じ込める。
 
 ## 4. TODO
 
