@@ -244,6 +244,22 @@ describe("MeetingMinutesSlackClient", () => {
     expect(text).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
   });
 
+  it("does not accept a well-formed but unrelated legacy inquiry id", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
+    const unrelatedCorrelationId = "cor_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    await new MeetingMinutesSlackClient("token", fetchImpl)
+      .postTaskActionFailure(run, "U1", "edit", unrelatedCorrelationId);
+    const text = String(call?.body.text);
+    const expectedCorrelationId = deriveCorrelationId(run.runId, "task_action", "TASK_ACTION_FAILED");
+    expect(text).toContain(`問い合わせID: ${expectedCorrelationId}`);
+    expect(text).not.toContain(`問い合わせID: ${unrelatedCorrelationId}`);
+  });
+
   it("posts processing as a second reply after the selector reply", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

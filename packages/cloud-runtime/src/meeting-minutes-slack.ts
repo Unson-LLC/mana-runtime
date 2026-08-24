@@ -228,9 +228,10 @@ function normalizeTaskActionFailure(run: MeetingMinutesRun,
   fallbackCode: MeetingMinutesTaskActionFailure["code"] = "TASK_ACTION_FAILED"): MeetingMinutesTaskActionFailure {
   const fallback = meetingMinutesTaskActionFailure(run.runId, fallbackCode, fallbackCode !== "TASK_SCOPE_MISMATCH");
   if (typeof failure === "string") {
-    // Keep the legacy string API for old callers, but never expose an arbitrary
-    // error string (for example an Authorization header) as a public ID.
-    return isCanonicalCorrelationId(failure) ? { ...fallback, correlationId: failure } : fallback;
+    // A legacy string carries no stage/code context, so even a well-formed
+    // correlation id cannot be tied to this failure. Keep the public id
+    // deterministic from the run, stage, and fallback code.
+    return fallback;
   }
   if (!failure || typeof failure !== "object") return fallback;
   if (failure.processingId !== run.runId || failure.stage !== "task_action" ||
