@@ -87,6 +87,7 @@ async function signedRecoveryContext(): Promise<{ value: TenantContextEnvelope; 
     slack_event_id: eventId,
     operation_id: operationId,
   });
+  const envelopeNow = Date.now();
   const unsigned: UnsignedTenantContextEnvelope = {
     schema_version: "1.0",
     protocol_id: "mana-brainbase-tenant-context",
@@ -130,8 +131,8 @@ async function signedRecoveryContext(): Promise<{ value: TenantContextEnvelope; 
       credential_ref: `credential-${TENANT_ID}`,
       billing_principal_id: `billing-${TENANT_ID}`,
     },
-    issued_at: new Date(Date.now() - 60_000).toISOString(),
-    expires_at: new Date(Date.now() + 240_000).toISOString(),
+    issued_at: new Date(envelopeNow - 60_000).toISOString(),
+    expires_at: new Date(envelopeNow + 240_000).toISOString(),
   };
   return { value: await signTenantContextEnvelope(unsigned, keyPair.privateKey, "test-key-1"), publicKey: keyPair.publicKey };
 }
