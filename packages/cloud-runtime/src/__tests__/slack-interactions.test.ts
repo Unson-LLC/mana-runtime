@@ -106,6 +106,61 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
     expect(await response.json()).toEqual({ ok: true });
   });
+  it("converts a meeting task handler rejection into one safe failure response and does not double-handle", async () => {
+    const taskPayload = structuredClone(payload);
+    taskPayload.actions[0]!.action_id = "mana_meeting_minutes_task_edit";
+    taskPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", index: 0, fileName: "meeting.txt",
+      organizationId: "unson-business", projectId: "p1", channelId: "C1", sourceWorkspaceId: "T1",
+      sourceAppId: "A1", sourceChannelId: "C1", sourceThreadTs: "1.0" });
+    const handleMeetingTaskAction = vi.fn().mockRejectedValue(new Error("raw Bearer secret"));
+    const handleContractLedgerAction = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    const updateOriginal = vi.fn().mockResolvedValue(undefined);
+    const background = deferred();
+    const result = await handleMeetingMinutesInteraction(request(taskPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send: vi.fn(), updateOriginal, defer: background.defer,
+      handleMeetingTaskAction, handleContractLedgerAction });
+
+    expect(result.status).toBe(503);
+    await expect(result.json()).resolves.toMatchObject({ error: "temporary_failure",
+      message_key: "tenant.temporary_failure", next_actions: ["retry_later"],
+      correlation_id: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/) });
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    expect(handleMeetingTaskAction).toHaveBeenCalledOnce();
+    expect(handleContractLedgerAction).not.toHaveBeenCalled();
+    const projected = JSON.stringify(updateOriginal.mock.calls[0]?.[1]);
+    expect(updateOriginal).toHaveBeenCalledOnce();
+    expect(projected).toContain("処理ID: Ev1_F1");
+    expect(projected).toContain("失敗段階: 操作処理");
+    expect(projected).toContain("エラーコード: temporary_failure");
+    expect(projected).toContain("問い合わせID: cor_");
+    expect(projected).not.toContain("Bearer secret");
+  });
+  it("converts a contract handler rejection into a safe envelope and rejects an untrusted response_url", async () => {
+    const contractPayload = structuredClone(payload);
+    contractPayload.response_url = "https://example.com/actions/not-a-slack-capability";
+    contractPayload.actions[0]!.action_id = "mana_contract_ledger_approve";
+    contractPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt", envelopeId: "env_1" });
+    const handleMeetingTaskAction = vi.fn().mockResolvedValue(undefined);
+    const handleContractLedgerAction = vi.fn().mockRejectedValue(new Error("raw Bearer secret"));
+    const updateOriginal = vi.fn();
+    const send = vi.fn();
+    const background = deferred();
+    const result = await handleMeetingMinutesInteraction(request(contractPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer,
+      handleMeetingTaskAction, handleContractLedgerAction });
+
+    expect(result.status).toBe(503);
+    await expect(result.json()).resolves.toMatchObject({ error: "temporary_failure",
+      message_key: "tenant.temporary_failure", next_actions: ["retry_later"],
+      correlation_id: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/) });
+    await expect(Promise.all(background.work)).resolves.toEqual([]);
+    expect(handleMeetingTaskAction).toHaveBeenCalledOnce();
+    expect(handleContractLedgerAction).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).not.toHaveBeenCalled();
+  });
   it("replaces the selector with projects for the chosen organization without queueing", async () => {
     const organizationPayload = structuredClone(payload);
     organizationPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_organization:tech-knight";
@@ -212,6 +267,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(updateOriginal).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("INTERACTION_ENQUEUE_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("処理ID: Ev1_F1");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("失敗段階: 処理受付");
     expect(showProcessing).toHaveBeenCalledOnce();
     expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" }, expect.any(Function));
     const serialized = consoleError.mock.calls.flat().join(" ");
@@ -321,6 +377,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(fallback).toContain("STATUS_PROJECTION_FAILED");
     expect(fallback).toContain("処理ID: Ev1_F1");
     expect(fallback).toContain("失敗段階: 状態表示");
+    expect(fallback).toContain("エラーコード: STATUS_PROJECTION_FAILED");
   });
   it("queues a confirmed redo command", async () => {
     const confirmPayload = structuredClone(payload);

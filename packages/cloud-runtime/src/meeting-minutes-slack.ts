@@ -133,6 +133,16 @@ export function tenantInteractionFailedMessage(runId: string, fileName: string, 
       text: `:warning: *認証・接続確認に失敗しました*\n処理ID: ${runId}\n失敗段階: テナント認証\nエラーコード: ${failure.code}\n問い合わせID: ${failure.correlation_id}\n設定を確認してから再実行してください。` } }] };
 }
 
+/** Stable public failure shown when a shared interaction action handler rejects. */
+export function interactionActionFailedMessage(runId: string, fileName: string,
+  failure: UserFailure): SlackSelectionMessage {
+  const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
+  return { replace_original: true,
+    text: `${safeFileName} の操作に失敗しました。エラーコード: ${failure.code}`,
+    blocks: [{ type: "section", text: { type: "mrkdwn",
+      text: `:warning: *議事録の操作に失敗しました*\n処理ID: ${runId}\n失敗段階: 操作処理\nエラーコード: ${failure.code}\n問い合わせID: ${failure.correlation_id}\n処理を再実行してください。` } }] };
+}
+
 export function suggestedDestinationMessage(run: MeetingMinutesRun,
   destinations: readonly MeetingMinutesDestination[]): SlackSelectionMessage | undefined {
   const destination = destinations.find((item) => item.id === run.routing?.suggestedDestinationId);

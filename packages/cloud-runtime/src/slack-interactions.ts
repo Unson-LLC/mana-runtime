@@ -6,7 +6,8 @@ import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./m
 import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
   immediateStatusFailedMessage, interactionEnqueueFailedMessage, redoFailedMessage, redoProcessingMessage,
   selectionConfirmationFailedMessage, statusProjectionFailedMessage, threadCoordinateMissingMessage,
-  tenantInteractionFailedMessage, MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
+  tenantInteractionFailedMessage, interactionActionFailedMessage, MeetingMinutesSlackClient,
+  type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { TenantBoundaryError } from "./multitenancy/errors.js";
 import { createUserFailure } from "./multitenancy/failure.js";
 import { createDeterministicSharedId } from "./multitenancy/ids.js";
@@ -259,6 +260,41 @@ async function attemptInteractionFailureProjection(input: {
   }
 }
 
+async function interactionActionFailureResponse(input: {
+  action: "meeting_task" | "contract_ledger";
+  error: unknown;
+  interactionId: string;
+  payload: Record<string, unknown>;
+  actionValue: Record<string, unknown> | undefined;
+  channelId: string;
+  threadTs: string;
+  effects: TenantInteractionEffects;
+  options: InteractionOptions;
+}): Promise<Response> {
+  const correlationId = await createDeterministicSharedId("cor_", `${input.interactionId}:${input.action}`);
+  const failure = createUserFailure({ error: input.error, correlation_id: correlationId });
+  const runId = string(input.actionValue?.runId) ?? input.interactionId;
+  const fileName = string(input.actionValue?.fileName) ?? "議事録";
+  const responseUrl = slackResponseUrl(input.payload.response_url);
+  const projection = attemptInteractionFailureProjection({
+    effects: input.effects,
+    effectId: `interaction-action-failed:${input.action}:${input.interactionId}`,
+    effectTarget: target(input.channelId, input.threadTs),
+    effect: { kind: "interaction_action_failed", action: input.action, runId },
+    responseUrl,
+    runId,
+    message: interactionActionFailedMessage(runId, fileName, failure),
+    options: input.options,
+    failureEvent: "meeting_minutes_interaction_action_failure_projection_failed",
+  });
+  if (responseUrl && input.options.updateOriginal) {
+    const notice = projection.then(() => undefined);
+    if (input.options.defer) input.options.defer(notice); else await notice;
+  }
+  return Response.json({ error: failure.code, message_key: failure.message_key,
+    next_actions: failure.next_actions, correlation_id: failure.correlation_id }, { status: 503 });
+}
+
 function slackResponseUrl(value: unknown): string | undefined {
   const raw = string(value);
   if (!raw) return undefined;
@@ -423,12 +459,24 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       next_actions: failure.next_actions, correlation_id: failure.correlation_id }, { status: 503 });
   }
   if (options.handleMeetingTaskAction) {
-    const taskResponse = await options.handleMeetingTaskAction(payload!, tenantEffects);
-    if (taskResponse) return taskResponse;
+    try {
+      const taskResponse = await options.handleMeetingTaskAction(payload!, tenantEffects);
+      if (taskResponse) return taskResponse;
+    } catch (error) {
+      return interactionActionFailureResponse({ action: "meeting_task", error, interactionId,
+        payload: payload!, actionValue, channelId: interactionChannelId, threadTs: interactionThreadTs,
+        effects: tenantEffects, options });
+    }
   }
   if (options.handleContractLedgerAction) {
-    const contractResponse = await options.handleContractLedgerAction(payload!);
-    if (contractResponse) return contractResponse;
+    try {
+      const contractResponse = await options.handleContractLedgerAction(payload!);
+      if (contractResponse) return contractResponse;
+    } catch (error) {
+      return interactionActionFailureResponse({ action: "contract_ledger", error, interactionId,
+        payload: payload!, actionValue, channelId: interactionChannelId, threadTs: interactionThreadTs,
+        effects: tenantEffects, options });
+    }
   }
   const userId = string(user?.id);
   const channelId = string(channel?.id);
