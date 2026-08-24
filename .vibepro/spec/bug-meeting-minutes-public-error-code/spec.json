@@ -285,7 +285,7 @@
     {
       "id": "C-006",
       "type": "contract",
-      "statement": "stale recoveryはrecoveryProjectionAttemptedAtをfallback実行前にdurableに保存し、marker保存に失敗した配送ではfallbackを呼ばず元のprojection errorを再throwしてQueue retryへ渡す。fallback後はrecoveryFallbackOutcome（succeeded/failed）を最大2回の保存試行でdurableに記録し、保存不能ならMEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILEDをthrowする。markerが保存されたredeliveryはSlack投影を重複実行せず、fallback成否と元の処理エラーを保存する",
+      "statement": "stale recoveryは外部Slack投影前にrecoveryProjectionClaimedAtをdurableに保存し、claim保存に失敗した配送では主投影もfallbackも呼ばず元のprojection errorを再throwしてQueue retryへ渡す。claim保存後は主投影の失敗をrecoveryProjectionAttemptedAtへ記録してbounded fallbackを実行し、recoveryFallbackOutcome（succeeded/failed）を最大2回の保存試行でdurableに保存する。outcome保存不能ならMEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILEDをthrowし、claim済みredeliveryはSlack投影を重複実行せず、fallback成否と元の処理エラーを保存する",
       "origin": {
         "story_refs": [
           {
