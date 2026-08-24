@@ -27,7 +27,7 @@ Slackへ議事録ファイルを投稿した利用者として、選択したプ
 - [ ] AC19: 本番配備後、実Slack E2Eの前に、認証済み管理APIから本番と同じClaudeコマンド・設定・JSON Schema・Judgment Hook・Receipt注入を使う議事録生成プローブを実行できる。UserPromptSubmitとStopの成功Receiptを同一session・turn・event順序へ束縛できない場合は失敗とする。成功時は生成内容を返さず、失敗時は許可済みの診断コードだけを返す。プローブ成功を確認するまで利用者のSlack投稿を再実行させない。
 - [ ] AC20: 保存済みrunのorganizationだけが現行設定と異なる場合、SlackチャンネルとGitHub保存先が一致するときに限り、organizationを現行の認証経路へ更新して再実行できる。SlackチャンネルまたはGitHub保存先が異なる場合は、従来どおり`meeting_minutes_destination_changed`で拒否する。同じSlackチャンネルを複数organizationへ割り当てた曖昧な設定と、現行設定に存在しないチャンネルの資格情報解決はfail closedにする。
 - [ ] AC21: Claudeへ渡すBrainbase文脈は、100KB未満でも全量投入せず、プロジェクト不変条件などの必須アンカーと文字起こしに関連する証拠から決定的なworking setを構成する。入力順序が変わっても同じ証拠を保持し、100KBは品質目標ではなく搬送上限として扱う。選別後も上限を超える場合は無造作に本文を圧縮せず、生成前に明示的に拒否する。
-- [ ] AC22: 議事録操作のユーザー向け失敗表示（スレッド特定、状態表示、選択、保存先やり直し、受付停止、ライフサイクル、Task編集・取消）は、`runId`・失敗段階・固定コードから決定的に導出した問い合わせIDを付ける。受付判定とTask write承認コールバックの拒否はraw errorを返さずHTTP 503の安全な失敗envelopeとし、資格条件を満たす`response_url`だけへ安全に投影する。遅延Taskのopen・edit・cancelはPromiseをraw rejectで残さず、固定診断ログと安全投影へ収束させ、scope不一致通知は維持する。
+- [ ] AC22: 議事録操作のユーザー向け失敗表示（スレッド特定、状態表示、選択、保存先やり直し、受付停止、ライフサイクル、Task編集・取消）は、Queueの`runId`または実行前routerイベントの`eventId`・失敗段階・固定エラーコードから決定的に導出した問い合わせIDを付ける。上流から相関IDを受け取れない同期表示は`channel`・`thread`または`channel`・`user`から構成する決定的なfallback seedを使い、空のシードやraw errorを問い合わせIDにしない。受付判定とTask write承認コールバックの拒否はraw errorを返さずHTTP 503の安全な失敗envelopeとし、資格条件を満たす`response_url`だけへ安全に投影する。遅延Taskのopen・edit・cancelはPromiseをraw rejectで残さず、固定診断ログと安全投影へ収束させ、scope不一致通知は維持する。
 
 ## 運用モード
 
