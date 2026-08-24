@@ -81,14 +81,21 @@ export async function recoverStaleMeetingMinutesRun(fs: WorkspaceFs, event: Meet
     const projectionFailedAt = new Date().toISOString();
     run.projectionFailure = { stage: "status_projection", code: classified.code!, retryable: classified.retryable!,
       failedAt: projectionFailedAt };
-    // Claim the recovery projection before invoking the one-shot fallback. A
-    // redelivery after either outcome is terminal and cannot duplicate Slack
-    // updates or re-enter a fallback loop.
+    // Claim the recovery projection before invoking the one-shot fallback. The
+    // Durable Object serializes deliveries for this workspace, while this
+    // persisted marker is the cross-delivery claim. If it cannot be written,
+    // fail the delivery before invoking fallback so Queue retries instead of
+    // creating an unclaimed Slack side effect.
     run.lifecycle.recoveryProjectionAttemptedAt = projectionFailedAt;
     run.updatedAt = run.projectionFailure.failedAt;
     try { await saveMeetingMinutesRun(fs, run); }
-    catch { console.error(JSON.stringify({ event: "meeting_minutes_recovery_projection_marker_save_failed",
-      runId: run.runId, stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true })); }
+    catch {
+      console.error(JSON.stringify({ event: "meeting_minutes_recovery_projection_marker_save_failed",
+        runId: run.runId, stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+      // Preserve the original projection failure as the Queue retry signal;
+      // there is no fallback until the claim is durable.
+      throw error;
+    }
     let fallbackCompleted = false;
     if (options.fallbackStatus) {
       try {

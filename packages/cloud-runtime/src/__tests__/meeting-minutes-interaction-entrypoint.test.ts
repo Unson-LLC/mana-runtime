@@ -4,6 +4,7 @@ import {
   type TenantInteractionEffects,
   type TenantInteractionIdentity,
 } from "../slack-interactions.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 
 function tenantEffectResolver(overrides: Partial<TenantInteractionEffects> = {}) {
   return vi.fn(async (source: TenantInteractionIdentity): Promise<TenantInteractionEffects> => ({
@@ -273,7 +274,9 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1",
         contextProjectCode: "techknight", taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-techknight-board",
         name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" } }]), TECHKNIGHT_EVENTS: { send } };
-    const resolveTenantEffects = vi.fn(async () => { throw new Error("Bearer secret"); });
+    const resolveTenantEffects = vi.fn(async () => {
+      throw new TenantBoundaryError("worker_ingress", "UPSTREAM_UNAVAILABLE", "Bearer secret");
+    });
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", { method: "POST", body,
       headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature } }), env as never,
       { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]),

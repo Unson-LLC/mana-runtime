@@ -231,6 +231,114 @@
       "confidence": 0.99,
       "first_seen_at": "2026-08-24T04:20:00.000Z",
       "last_revised_at": "2026-08-24T04:36:06.125Z"
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "tenant解決前のresponse_url通知は明示的なeligibility allowlistに限定し、インストール不足・再認証・quota・既知の一時接続障害だけを許可する。TENANT_UNKNOWN、TENANT_AMBIGUOUS、workspace/app不一致、全scope不一致、stale revision、CROSS_TENANT_CANDIDATE、未分類コード、型なし例外では通知しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts",
+            "anchor": "isTenantFailureResponseUrlEligible"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "maps resolver failure %s to public code %s and notification eligibility %s"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "fails closed for untyped and unknown tenant failures before touching response_url"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "CROSS_TENANT_CANDIDATE"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "WORKSPACE_CONNECTION_REAUTH_REQUIRED"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-25T00:00:00.000Z",
+      "last_revised_at": "2026-08-25T00:00:00.000Z"
+    },
+    {
+      "id": "C-006",
+      "type": "contract",
+      "statement": "stale recoveryはrecoveryProjectionAttemptedAtをfallback実行前にdurableに保存し、marker保存に失敗した配送ではfallbackを呼ばず元のprojection errorを再throwしてQueue retryへ渡す。markerが保存されたredeliveryはSlack投影を重複実行せず、fallback成否と元の処理エラーを保存する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-recovery.ts",
+            "anchor": "recoverStaleMeetingMinutesRun"
+          },
+          {
+            "file": "packages/cloud-runtime/src/index.ts",
+            "anchor": "processTenantMeetingMinutesRecovery"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "uses one non-recursive fallback when stale recovery status projection fails"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "does not invoke fallback until the recovery claim marker is durable, then retries on redelivery"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "uses a bounded fallback when the back-action projection fails"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "must_cover": "recoveryProjectionAttemptedAt"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "STATUS_PROJECTION_FAILED"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-25T00:00:00.000Z",
+      "last_revised_at": "2026-08-25T00:00:00.000Z"
     }
   ],
   "multi_tenancy": {

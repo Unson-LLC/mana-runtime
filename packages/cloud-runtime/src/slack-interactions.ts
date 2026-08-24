@@ -214,37 +214,21 @@ const TENANT_RESPONSE_URL_ELIGIBLE_CODES = new Set([
   "WORKSPACE_CONNECTION_REVOKED",
   "CREDENTIAL_LEASE_EXPIRED",
   "CREDENTIAL_LEASE_INVALID",
-  // Known transient failures may be safely surfaced without revealing a binding.
+  // Known transient/quota failures may be safely surfaced without revealing a binding.
   "UPSTREAM_UNAVAILABLE",
   "WORKSPACE_CONNECTION_UNAVAILABLE",
   "QUOTA_EXCEEDED",
-  // These are emitted after the resolver has a typed tenant boundary.
-  "TENANT_CONTEXT_SIGNATURE_INVALID",
-  "TENANT_CONTEXT_INVALID",
-  "TENANT_CONTEXT_MISSING",
-  "TENANT_CONTEXT_EXPIRED",
-  "TENANT_CONTEXT_REQUIRED",
-  "WORKSPACE_CONNECTION_STALE_REVISION",
-  "WORKSPACE_SCOPE_INSUFFICIENT",
-  "ACTOR_SCOPE_MISMATCH",
-  "PROJECT_SCOPE_MISMATCH",
-  "CAPABILITY_SCOPE_MISMATCH",
-  "AUDIENCE_SCOPE_MISMATCH",
-  "DELIVERY_SCOPE_MISMATCH",
-  "CROSS_TENANT_CANDIDATE",
-  "PROTOCOL_VERSION_UNSUPPORTED",
-  "PROTOCOL_CAPABILITY_UNSUPPORTED",
   "QUOTA_APPROVAL_REQUIRED",
-  "REPLY_OWNERSHIP_CONFLICT",
 ]);
 
 export function isTenantFailureResponseUrlEligible(error: unknown): boolean {
-  // Untyped errors retain the existing transient/authentication behavior. A
-  // typed boundary error must be explicitly known to be safe; this also
-  // excludes TENANT_UNKNOWN, TENANT_AMBIGUOUS, WORKSPACE_OR_APP_MISMATCH, and
-  // any new binding code until its notification policy is reviewed.
+  // Tenant resolution has not established ownership at this point. Require a
+  // typed, explicitly allow-listed category; untyped errors and new boundary
+  // codes fail closed until their notification policy is reviewed. In
+  // particular, this excludes unknown/ambiguous tenants, workspace/app or
+  // scope mismatches, stale revisions, and cross-tenant candidates.
   const code = error instanceof TenantBoundaryError ? error.code : string(object(error)?.code);
-  return !code || TENANT_RESPONSE_URL_ELIGIBLE_CODES.has(code);
+  return !!code && TENANT_RESPONSE_URL_ELIGIBLE_CODES.has(code);
 }
 
 /**

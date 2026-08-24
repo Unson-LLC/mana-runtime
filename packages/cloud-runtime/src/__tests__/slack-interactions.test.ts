@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import {
   handleMeetingMinutesInteraction,
+  isTenantFailureResponseUrlEligible,
   updateSlackInteractionMessage,
   type TenantInteractionEffects,
   type TenantInteractionIdentity,
@@ -153,6 +154,22 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(send).not.toHaveBeenCalled();
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("雲孫 事業運営");
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("Tech Knight");
+  });
+  it("uses a bounded fallback when the back-action projection fails", async () => {
+    const backPayload = structuredClone(payload);
+    backPayload.actions[0]!.action_id = "mana_meeting_minutes_back_to_organizations";
+    backPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "定例.txt" });
+    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("selector unavailable"))
+      .mockResolvedValueOnce(undefined); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(backPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200);
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
   });
   it("rejects an unknown organization without updating or queueing", async () => {
     const unknownPayload = structuredClone(payload);
@@ -497,22 +514,33 @@ describe("handleMeetingMinutesInteraction", () => {
     ["INSTALLATION_REQUIRED", "installation_required", true],
     ["WORKSPACE_CONNECTION_UNINSTALLED", "installation_required", true],
     ["QUOTA_EXCEEDED", "usage_limit_reached", true],
-    ["TENANT_CONTEXT_SIGNATURE_INVALID", "temporary_failure", true],
+    ["QUOTA_APPROVAL_REQUIRED", "administrator_action_required", true],
+    ["CREDENTIAL_LEASE_EXPIRED", "reauthentication_required", true],
+    ["CREDENTIAL_LEASE_INVALID", "reauthentication_required", true],
+    ["TENANT_CONTEXT_SIGNATURE_INVALID", "temporary_failure", false],
+    ["TENANT_CONTEXT_INVALID", "temporary_failure", false],
+    ["TENANT_CONTEXT_MISSING", "temporary_failure", false],
+    ["TENANT_CONTEXT_EXPIRED", "temporary_failure", false],
+    ["TENANT_CONTEXT_REQUIRED", "temporary_failure", false],
     ["TENANT_UNKNOWN", "administrator_action_required", false],
     ["TENANT_AMBIGUOUS", "administrator_action_required", false],
     ["UPSTREAM_UNAVAILABLE", "temporary_failure", true],
     ["WORKSPACE_CONNECTION_UNAVAILABLE", "temporary_failure", true],
     ["WORKSPACE_CONNECTION_REAUTH_REQUIRED", "reauthentication_required", true],
     ["WORKSPACE_CONNECTION_REVOKED", "reauthentication_required", true],
-    ["WORKSPACE_CONNECTION_STALE_REVISION", "administrator_action_required", true],
-    ["WORKSPACE_SCOPE_INSUFFICIENT", "administrator_action_required", true],
+    ["WORKSPACE_CONNECTION_STALE_REVISION", "administrator_action_required", false],
+    ["WORKSPACE_SCOPE_INSUFFICIENT", "administrator_action_required", false],
     ["WORKSPACE_OR_APP_MISMATCH", "administrator_action_required", false],
-    ["AUDIENCE_SCOPE_MISMATCH", "temporary_failure", true],
-    ["CAPABILITY_SCOPE_MISMATCH", "administrator_action_required", true],
-    ["PROJECT_SCOPE_MISMATCH", "administrator_action_required", true],
-    ["ACTOR_SCOPE_MISMATCH", "administrator_action_required", true],
-    ["DELIVERY_SCOPE_MISMATCH", "temporary_failure", true],
-    ["CROSS_TENANT_CANDIDATE", "administrator_action_required", true],
+    ["AUDIENCE_SCOPE_MISMATCH", "temporary_failure", false],
+    ["CAPABILITY_SCOPE_MISMATCH", "administrator_action_required", false],
+    ["PROJECT_SCOPE_MISMATCH", "administrator_action_required", false],
+    ["ACTOR_SCOPE_MISMATCH", "administrator_action_required", false],
+    ["DELIVERY_SCOPE_MISMATCH", "temporary_failure", false],
+    ["CROSS_TENANT_CANDIDATE", "administrator_action_required", false],
+    ["PROTOCOL_VERSION_UNSUPPORTED", "administrator_action_required", false],
+    ["PROTOCOL_CAPABILITY_UNSUPPORTED", "administrator_action_required", false],
+    ["REPLY_OWNERSHIP_CONFLICT", "administrator_action_required", false],
+    ["NEW_UNKNOWN_BOUNDARY_CODE", "temporary_failure", false],
   ])("maps resolver failure %s to public code %s and notification eligibility %s", async (code, publicCode, shouldProject) => {
     const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
     const resolveTenantEffects = vi.fn(async () => {
@@ -542,9 +570,12 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send: vi.fn(), updateBeforeTenant });
     expect(await response.json()).toEqual(expect.objectContaining({ error: "temporary_failure",
       message_key: "tenant.temporary_failure", next_actions: ["retry_later"] }));
-    const projected = JSON.stringify(updateBeforeTenant.mock.calls);
-    expect(projected).toContain("エラーコード: temporary_failure");
-    expect(projected).not.toContain("Bearer secret");
+    expect(updateBeforeTenant).not.toHaveBeenCalled();
+  });
+  it("fails closed for untyped and unknown tenant failures before touching response_url", () => {
+    expect(isTenantFailureResponseUrlEligible(new Error("temporary connectivity"))).toBe(false);
+    expect(isTenantFailureResponseUrlEligible({ code: "NEW_UNKNOWN_BOUNDARY_CODE" })).toBe(false);
+    expect(isTenantFailureResponseUrlEligible({ code: "WORKSPACE_OR_APP_MISMATCH" })).toBe(false);
   });
   it("keeps the public HTTP failure when a signed payload has no response_url", async () => {
     const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
