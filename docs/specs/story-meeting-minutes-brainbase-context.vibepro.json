@@ -176,6 +176,41 @@
         ]
       },
       "confidence": 0.99
+    },
+    {
+      "id": "C-009",
+      "type": "contract",
+      "statement": "ユーザー向け失敗表示（スレッド特定、状態表示、選択、保存先やり直し、受付停止、ライフサイクル、Task操作）はrunId・失敗段階・固定エラーコードから導出した決定的な問い合わせIDを必ず含める。受付判定とTask write承認コールバックの拒否はraw errorを返さずHTTP 503の安全なUserFailure envelopeへ変換し、資格条件を満たすresponse_urlだけへ安全投影する。遅延Taskのopen・edit・cancelはPromiseをraw rejectで残さず、固定診断ログと安全投影へ収束させ、scope不一致通知を維持する",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-22" }],
+        "architecture_refs": [
+          { "file": "docs/architecture/05_error_design.md", "section": "Slack interactionの認証前失敗通知" },
+          { "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "失敗" }
+        ],
+        "code_refs": [
+          { "file": "packages/cloud-runtime/src/multitenancy/ids.ts" },
+          { "file": "packages/cloud-runtime/src/meeting-minutes-slack.ts" },
+          { "file": "packages/cloud-runtime/src/slack-interactions.ts" },
+          { "file": "packages/cloud-runtime/src/meeting-minutes-task-actions.ts" },
+          { "file": "packages/cloud-runtime/src/meeting-minutes-task-cards.ts" },
+          { "file": "packages/cloud-runtime/src/index.ts" }
+        ],
+        "test_refs": [
+          { "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts", "case": "converts an intake gate rejection into the safe temporary failure contract" },
+          { "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts", "case": "converts a task approval callback rejection into the safe temporary failure contract" },
+          { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-task-actions.test.ts", "case": "settles a deferred edit-view rejection with a fixed safe projection" },
+          { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-task-actions.test.ts", "case": "settles deferred edit and cancel failures without exposing raw errors" },
+          { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "case": "includes a deterministic inquiry id on the %s failure path" }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          { "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts", "must_cover": "safe temporary failure contract" },
+          { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-task-actions.test.ts", "must_cover": "deferred edit and cancel failures" },
+          { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts", "must_cover": "deterministic inquiry id" }
+        ]
+      },
+      "confidence": 0.99
     }
   ],
   "planned_test_suites": [{ "layer": "unit", "covers": ["Receipt identity", "provenance", "task reconciliation", "GitHub and Slack audit"] }, { "layer": "integration", "covers": ["pipeline retry", "required fail closed", "existing runtime regression"] }],

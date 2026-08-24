@@ -196,6 +196,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(updateOriginal).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
   });
   it("returns to the organization selector without queueing", async () => {
     const backPayload = structuredClone(payload);
@@ -225,6 +226,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(updateOriginal).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
   });
   it("rejects an unknown organization without updating or queueing", async () => {
     const unknownPayload = structuredClone(payload);
@@ -520,6 +522,23 @@ describe("handleMeetingMinutesInteraction", () => {
       text: expect.stringContaining("受付は一時停止中"),
     }), expect.any(Function));
   });
+  it("converts an intake gate rejection into the safe temporary failure contract", async () => {
+    const send = vi.fn(); const updateOriginal = vi.fn().mockResolvedValue(undefined); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), {
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, signingSecret: secret, destinations, send, updateOriginal, defer: background.defer,
+      isIntakePaused: vi.fn().mockRejectedValue(new Error("raw Bearer secret")),
+    });
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toEqual(expect.objectContaining({ error: "temporary_failure",
+      message_key: "tenant.temporary_failure", correlation_id: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/) }));
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    const projected = JSON.stringify(updateOriginal.mock.calls);
+    expect(projected).toContain("問い合わせID: cor_");
+    expect(projected).not.toContain("Bearer secret");
+    expect(send).not.toHaveBeenCalled();
+  });
   it("uses a bounded public fallback when the intake-paused projection fails", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("pause projection unavailable"))
       .mockResolvedValueOnce(undefined); const background = deferred();
@@ -532,6 +551,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(send).not.toHaveBeenCalled();
     expect(updateOriginal).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
   });
   it("delegates router channel authorization to the canonical tenant authority", async () => {
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
@@ -669,6 +689,25 @@ describe("handleMeetingMinutesInteraction", () => {
     }));
     expect(send).not.toHaveBeenCalled(); expect(updateOriginal).not.toHaveBeenCalled();
     expect(await response.json()).toEqual({ ok: true });
+  });
+  it("converts a task approval callback rejection into the safe temporary failure contract", async () => {
+    const send = vi.fn(); const updateOriginal = vi.fn().mockResolvedValue(undefined); const background = deferred();
+    const approvalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const approvalPayload = { ...payload, user: { id: "U_APPROVER" }, actions: [{ action_id: "mana_task_write_approve",
+      value: JSON.stringify({ approvalId, payloadHash: "a".repeat(64) }) }] };
+    const response = await handleMeetingMinutesInteraction(request(approvalPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, ...tenantBoundary,
+      send, updateOriginal, defer: background.defer, resolveDestinations: () => [],
+      approveTaskWrite: vi.fn().mockRejectedValue(new Error("raw Bearer secret")),
+    });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({ error: "temporary_failure",
+      message_key: "tenant.temporary_failure", correlation_id: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/) }));
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    const projected = JSON.stringify(updateOriginal.mock.calls);
+    expect(projected).toContain("問い合わせID: cor_");
+    expect(projected).not.toContain("Bearer secret");
+    expect(send).not.toHaveBeenCalled();
   });
 });
 describe("updateSlackInteractionMessage", () => {

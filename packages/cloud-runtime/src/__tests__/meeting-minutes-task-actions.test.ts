@@ -20,6 +20,11 @@ function payload(actionId: string) { return { team: { id: "TTK" }, channel: { id
   trigger_id: "trigger", actions: [{ action_id: actionId, value: JSON.stringify({ runId: "Ev_Fv", index: 0,
     organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms", title: "旧題", due: "2026-08-20",
     ...sourceIdentity }) }] }; }
+function editSubmissionPayload(title = "新題") { return { type: "view_submission", team: { id: "TTK" }, user: { id: "U1" },
+  view: { callback_id: "mana_meeting_minutes_task_edit_submit", private_metadata: JSON.stringify({ runId: "Ev_Fv", index: 0,
+    organizationId: "tech-knight", channelId: "CDEST", projectId: "proj_pms", ...sourceIdentity }), state: { values: {
+      title: { value: { value: title } }, due: { value: {} }, assignee: { mana_meeting_minutes_task_assignee: {} },
+    } } } }; }
 function deps(current: MeetingMinutesRun) { return { destinationTeamIds: { "tech-knight": "TTK" },
   destinations: [run().destination!],
   operatorUserIds: new Set(["U1"]),
@@ -32,6 +37,7 @@ function deps(current: MeetingMinutesRun) { return { destinationTeamIds: { "tech
     due_at: null, waiting_on: null, completed_at: null })), deleteTask: vi.fn(async () => ({})),
   updateCard: vi.fn(async (_run: MeetingMinutesRun) => {}),
   notifyScopeMismatch: vi.fn(async (_run: MeetingMinutesRun, _userId: string) => {}),
+  notifyTaskActionFailure: vi.fn(async (_run: MeetingMinutesRun, _userId: string, _action: "edit" | "cancel", _correlationId: string) => {}),
   openView: vi.fn(async (_organizationId: string, _triggerId: string, _view: Record<string, unknown>) => {}),
   listPeople: vi.fn(async () => [{ id: "per_umeda", name: "梅田 遼", aliases: ["梅田"] }]), repairTaskBoard: vi.fn(async () => {}),
   defer: (work: Promise<void>) => { void work; } };
@@ -67,6 +73,7 @@ describe("meeting minutes task cards", () => {
     const card = meetingMinutesTaskCard(legacy); const serialized = JSON.stringify(card.blocks);
     expect(serialized).toContain("旧形式のため操作できません");
     expect(serialized).toContain("議事録を再生成してください");
+    expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
     expect(serialized).not.toContain("mana_meeting_minutes_task_edit");
     expect(serialized).not.toContain("mana_meeting_minutes_task_cancel");
   });
@@ -77,15 +84,53 @@ describe("meeting minutes task cards", () => {
       organizationId: "tech-knight", channelId: "CDEST" });
     const response = await handleMeetingMinutesTaskAction(legacyPayload, options);
     expect(response?.status).toBe(409);
-    await expect(response?.json()).resolves.toEqual({
+    await expect(response?.json()).resolves.toMatchObject({
       error: "meeting_minutes_task_action_expired",
-      user_message: "このカードは旧形式のため操作できません。議事録を再生成してください。",
+      user_message: expect.stringContaining("このカードは旧形式のため操作できません。議事録を再生成してください。問い合わせID: cor_"),
+      correlation_id: expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/),
     });
     expect(options.loadRun).not.toHaveBeenCalled();
     expect(options.getTask).not.toHaveBeenCalled();
     expect(options.updateTask).not.toHaveBeenCalled();
     expect(options.deleteTask).not.toHaveBeenCalled();
     expect(options.updateCard).not.toHaveBeenCalled();
+  });
+  it("settles a deferred edit-view rejection with a fixed safe projection", async () => {
+    const current = run(); const options = deps(current); const work: Promise<void>[] = [];
+    options.defer = (promise) => { work.push(promise); };
+    options.openView.mockRejectedValue(new Error("raw Bearer secret"));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_edit"), options);
+      expect(response?.status).toBe(200);
+      await expect(Promise.all(work)).resolves.toEqual([undefined]);
+      expect(options.notifyTaskActionFailure).toHaveBeenCalledWith(current, "U1", "edit",
+        expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/));
+      expect(errorLog.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+  it("settles deferred edit and cancel failures without exposing raw errors", async () => {
+    const current = run(); const options = deps(current); const work: Promise<void>[] = [];
+    options.defer = (promise) => { work.push(promise); };
+    options.getTask.mockRejectedValue(new Error("raw Bearer secret"));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const editResponse = await handleMeetingMinutesTaskAction(editSubmissionPayload(), options);
+      const cancelResponse = await handleMeetingMinutesTaskAction(payload("mana_meeting_minutes_task_cancel"), options);
+      expect(editResponse?.status).toBe(200);
+      expect(cancelResponse?.status).toBe(200);
+      await expect(Promise.all(work)).resolves.toEqual([undefined, undefined]);
+      expect(options.notifyTaskActionFailure).toHaveBeenCalledTimes(2);
+      expect(options.notifyTaskActionFailure).toHaveBeenNthCalledWith(1, current, "U1", "edit",
+        expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/));
+      expect(options.notifyTaskActionFailure).toHaveBeenNthCalledWith(2, current, "U1", "cancel",
+        expect.stringMatching(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/));
+      expect(errorLog.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
+    } finally {
+      errorLog.mockRestore();
+    }
   });
   it("deletes only a task in the run destination project and redraws the card", async () => {
     const current = run(); const options = deps(current);

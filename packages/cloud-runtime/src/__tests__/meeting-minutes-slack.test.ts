@@ -1,6 +1,36 @@
-import { interactionEnqueueFailedMessage, MeetingMinutesSlackClient, redoFailedMessage } from "../meeting-minutes-slack.js";
+import { immediateStatusFailedMessage, interactionActionFailedMessage, interactionEnqueueFailedMessage,
+  selectionConfirmationFailedMessage, statusProjectionFailedMessage, tenantInteractionFailedMessage,
+  threadCoordinateMissingMessage, MeetingMinutesSlackClient, redoFailedMessage } from "../meeting-minutes-slack.js";
+import { deriveCorrelationId } from "../multitenancy/ids.js";
 
 describe("MeetingMinutesSlackClient", () => {
+  it("derives a stable inquiry id from the same run, stage, and code", () => {
+    const first = deriveCorrelationId("run-42", "status_projection", "STATUS_PROJECTION_FAILED");
+    expect(first).toBe(deriveCorrelationId("run-42", "status_projection", "STATUS_PROJECTION_FAILED"));
+    expect(first).not.toBe(deriveCorrelationId("run-42", "task_action", "STATUS_PROJECTION_FAILED"));
+    expect(first).toMatch(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/);
+  });
+
+  it.each([
+    ["thread", () => threadCoordinateMissingMessage("run-42", "meeting.txt")],
+    ["immediate", () => immediateStatusFailedMessage("run-42", "meeting.txt")],
+    ["selection", () => selectionConfirmationFailedMessage("run-42", "meeting.txt")],
+    ["status", () => statusProjectionFailedMessage("run-42", "meeting.txt")],
+    ["redo", () => redoFailedMessage("run-42", "meeting.txt")],
+    ["enqueue", () => interactionEnqueueFailedMessage("run-42", "meeting.txt")],
+    ["tenant", () => tenantInteractionFailedMessage("run-42", "meeting.txt", {
+      code: "temporary_failure", message_key: "tenant.temporary_failure", next_actions: ["retry_later"],
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    })],
+    ["action", () => interactionActionFailedMessage("run-42", "meeting.txt", {
+      code: "temporary_failure", message_key: "tenant.temporary_failure", next_actions: ["retry_later"],
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    })],
+  ])("includes a deterministic inquiry id on the %s failure path", (_name, makeMessage) => {
+    const serialized = JSON.stringify(makeMessage());
+    expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+  });
+
   it("shows a stable error code and run id when a button request cannot be queued", () => {
     const message = interactionEnqueueFailedMessage("run-42", "meeting.txt");
     const serialized = JSON.stringify(message);
@@ -21,6 +51,7 @@ describe("MeetingMinutesSlackClient", () => {
         retryable: true, failedAt: "2026-08-18T00:01:00.000Z" } };
     await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
     expect(JSON.stringify(body)).toContain("エラーコード: STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(body)).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
     expect(JSON.stringify(body)).toContain("mana_meeting_minutes_choose_destination:mana");
   });
   const routedRun = () => ({ version: 1 as const, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
@@ -205,6 +236,7 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).toContain("処理ID: run-1");
     expect(serialized).toContain("失敗段階: 議事録生成");
     expect(serialized).toContain("エラーコード: UNCLASSIFIED_FAILURE");
+    expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
     expect(serialized).not.toContain("secret-value");
     expect(serialized).not.toContain("raw upstream response");
   });
@@ -254,6 +286,7 @@ describe("MeetingMinutesSlackClient", () => {
     const serialized = JSON.stringify(body);
     expect(serialized).toContain("保存済みの議事録に見本文が含まれています");
     expect(serialized).toContain("以前の生成結果を自動では上書きしません");
+    expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
     expect(serialized).toContain("保存先をやり直す");
     expect(serialized).not.toContain("タスク処理を再実行");
     expect(serialized).not.toContain("meeting_minutes_persisted_placeholder_output");

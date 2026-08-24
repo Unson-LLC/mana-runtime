@@ -4,6 +4,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
 import type { UserFailure } from "./multitenancy/failure.js";
+import { deriveCorrelationId } from "./multitenancy/ids.js";
 import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
 
 export interface SlackSelectionMessage {
@@ -74,9 +75,10 @@ export function redoProcessingMessage(fileName: string, runId?: string): SlackSe
 function publicFailureMessage(runId: string, fileName: string, stage: string, code: string,
   headline: string, instruction: string): SlackSelectionMessage {
   const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
-  const details = `処理ID: ${runId}\n失敗段階: ${stage}\nエラーコード: ${code}`;
+  const correlationId = deriveCorrelationId(runId, stage, code);
+  const details = `処理ID: ${runId}\n失敗段階: ${stage}\nエラーコード: ${code}\n問い合わせID: ${correlationId}`;
   return { replace_original: true,
-    text: `${safeFileName} ${headline} エラーコード: ${code}`,
+    text: `${safeFileName} ${headline} エラーコード: ${code}（問い合わせID: ${correlationId}）`,
     blocks: [{ type: "section", text: { type: "mrkdwn",
       text: `:warning: *${headline}*\n${details}\n${instruction}` } }] };
 }
@@ -106,8 +108,9 @@ export function statusProjectionFailedMessage(runId: string, fileName: string): 
 }
 
 export function redoFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
-  const details = `処理ID: ${runId}\n失敗段階: 処理受付\nエラーコード: REDO_ENQUEUE_FAILED`;
-  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更に失敗しました。エラーコード: REDO_ENQUEUE_FAILED`, blocks: [
+  const correlationId = deriveCorrelationId(runId, "redo_enqueue", "REDO_ENQUEUE_FAILED");
+  const details = `処理ID: ${runId}\n失敗段階: 処理受付\nエラーコード: REDO_ENQUEUE_FAILED\n問い合わせID: ${correlationId}`;
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更に失敗しました。エラーコード: REDO_ENQUEUE_FAILED（問い合わせID: ${correlationId}）`, blocks: [
     { type: "section", text: { type: "mrkdwn",
       text: `:warning: *保存先のやり直しを完了できませんでした*\n${details}\n完了済みの取り消し工程は保持されています。下のボタンから続きを再実行できます。` } },
     { type: "actions", elements: [{ type: "button", style: "danger",
@@ -118,9 +121,10 @@ export function redoFailedMessage(runId: string, fileName: string): SlackSelecti
 
 export function interactionEnqueueFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
   const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
-  const details = `処理ID: ${runId}\n失敗段階: 処理受付\nエラーコード: INTERACTION_ENQUEUE_FAILED`;
+  const correlationId = deriveCorrelationId(runId, "interaction_enqueue", "INTERACTION_ENQUEUE_FAILED");
+  const details = `処理ID: ${runId}\n失敗段階: 処理受付\nエラーコード: INTERACTION_ENQUEUE_FAILED\n問い合わせID: ${correlationId}`;
   return { replace_original: true,
-    text: `${safeFileName} の議事録処理を開始できませんでした。エラーコード: INTERACTION_ENQUEUE_FAILED`,
+    text: `${safeFileName} の議事録処理を開始できませんでした。エラーコード: INTERACTION_ENQUEUE_FAILED（問い合わせID: ${correlationId}）`,
     blocks: [{ type: "section", text: { type: "mrkdwn",
       text: `:warning: *議事録処理を開始できませんでした*\n${details}\nもう一度保存先を選択してください。` } }] };
 }
@@ -128,7 +132,7 @@ export function interactionEnqueueFailedMessage(runId: string, fileName: string)
 export function tenantInteractionFailedMessage(runId: string, fileName: string, failure: UserFailure): SlackSelectionMessage {
   const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
   return { replace_original: true,
-    text: `${safeFileName} の認証・接続確認に失敗しました。エラーコード: ${failure.code}`,
+    text: `${safeFileName} の認証・接続確認に失敗しました。エラーコード: ${failure.code}（問い合わせID: ${failure.correlation_id}）`,
     blocks: [{ type: "section", text: { type: "mrkdwn",
       text: `:warning: *認証・接続確認に失敗しました*\n処理ID: ${runId}\n失敗段階: テナント認証\nエラーコード: ${failure.code}\n問い合わせID: ${failure.correlation_id}\n設定を確認してから再実行してください。` } }] };
 }
@@ -138,7 +142,7 @@ export function interactionActionFailedMessage(runId: string, fileName: string,
   failure: UserFailure): SlackSelectionMessage {
   const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
   return { replace_original: true,
-    text: `${safeFileName} の操作に失敗しました。エラーコード: ${failure.code}`,
+    text: `${safeFileName} の操作に失敗しました。エラーコード: ${failure.code}（問い合わせID: ${failure.correlation_id}）`,
     blocks: [{ type: "section", text: { type: "mrkdwn",
       text: `:warning: *議事録の操作に失敗しました*\n処理ID: ${runId}\n失敗段階: 操作処理\nエラーコード: ${failure.code}\n問い合わせID: ${failure.correlation_id}\n処理を再実行してください。` } }] };
 }
@@ -180,14 +184,20 @@ function isBrainbaseProjectBindingFailure(run: MeetingMinutesRun): boolean {
 }
 function safeFailureDetails(run: MeetingMinutesRun): string[] {
   const failure = run.projectionFailure ?? run.diagnostics;
-  const stage = failure?.stage;
+  const taskFailure = run.taskRegistration?.failure;
+  const stage = failure?.stage ?? taskFailure?.stage ?? run.failure?.stage;
+  const code = failure?.code ?? (taskFailure ? "TASK_REGISTRATION_FAILED" : "UNCLASSIFIED_FAILURE");
+  const correlationId = deriveCorrelationId(run.runId, stage ?? "unknown", code);
   const stageLabels: Record<string, string> = {
     interaction_enqueue: "処理受付", transcript_download: "文字起こし取得", context_resolve: "Brainbase文脈取得",
     context_gate: "Brainbase文脈検証", generation: "議事録生成", github_save: "GitHub保存",
-    slack_publish: "Slack投稿", task_registration: "タスク登録", status_projection: "状態表示",
+    slack_publish: "Slack投稿", task_registration: "タスク登録", task_board: "タスクボード反映",
+    task_card: "タスクカード投稿", task_action: "タスク操作", task_scope: "タスク紐付け確認",
+    redo_enqueue: "保存先変更受付", tenant_authentication: "テナント認証", intake: "受付制御",
+    status_projection: "状態表示",
   };
   return [`処理ID: ${run.runId}`, `失敗段階: ${stage ? stageLabels[stage] ?? "不明" : "不明（旧形式）"}`,
-    `エラーコード: ${failure?.code ?? "UNCLASSIFIED_FAILURE"}`];
+    `エラーコード: ${code}`, `問い合わせID: ${correlationId}`];
 }
 function failedRunDetails(run: MeetingMinutesRun): string[] {
   const destination = `保存先: ${run.destination!.name}`;
@@ -272,21 +282,23 @@ export class MeetingMinutesSlackClient {
     if (!result.ts) throw new Error("slack_response_ts_missing"); return result.ts;
   }
   async postIntakePaused(channelId: string, threadTs: string): Promise<void> {
+    const correlationId = deriveCorrelationId(`${channelId}:${threadTs}`, "intake", "INTAKE_PAUSED");
     await this.post("chat.postMessage", {
       channel: channelId,
       thread_ts: threadTs,
-      text: "議事録の新規受付は一時停止中です。復旧後にファイルを投稿し直してください。",
+      text: `議事録の新規受付は一時停止中です。復旧後にファイルを投稿し直してください。問い合わせID: ${correlationId}`,
       blocks: [{ type: "section", text: { type: "mrkdwn",
-        text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にファイルを投稿し直してください。" } }],
+        text: `:warning: *議事録の新規受付は一時停止中です*\n復旧後にファイルを投稿し直してください。\n問い合わせID: ${correlationId}` } }],
     });
   }
   async postIntakePausedToUser(channelId: string, userId: string): Promise<void> {
+    const correlationId = deriveCorrelationId(`${channelId}:${userId}`, "intake", "INTAKE_PAUSED");
     await this.post("chat.postEphemeral", {
       channel: channelId,
       user: userId,
-      text: "議事録の受付は一時停止中です。復旧後に、保存先の選択またはやり直しをもう一度実行してください。",
+      text: `議事録の受付は一時停止中です。復旧後に、保存先の選択またはやり直しをもう一度実行してください。問い合わせID: ${correlationId}`,
       blocks: [{ type: "section", text: { type: "mrkdwn",
-        text: ":warning: *議事録の受付は一時停止中です*\n復旧後に、保存先の選択またはやり直しをもう一度実行してください。" } }],
+        text: `:warning: *議事録の受付は一時停止中です*\n復旧後に、保存先の選択またはやり直しをもう一度実行してください。\n問い合わせID: ${correlationId}` } }],
     });
   }
   async postProcessingStatus(run: MeetingMinutesRun): Promise<string> {
@@ -385,7 +397,16 @@ export class MeetingMinutesSlackClient {
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
         `共有先: <#${run.destination.slackChannelId}>`].filter(Boolean).join("\n")
       : failedRunDetails(run).join("\n");
-    const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn", text: details } }];
+    const hasLifecycleFailure = !completed || Boolean(run.failure || run.projectionFailure || run.diagnostics || run.taskRegistration?.failure);
+    const lifecycleFailure = run.projectionFailure ?? run.diagnostics;
+    const lifecycleStage = lifecycleFailure?.stage ?? run.taskRegistration?.failure?.stage ?? run.failure?.stage ?? "unknown";
+    const lifecycleCode = lifecycleFailure?.code
+      ?? (run.taskRegistration?.failure ? "TASK_REGISTRATION_FAILED" : "UNCLASSIFIED_FAILURE");
+    const lifecycleCorrelationId = deriveCorrelationId(run.runId, lifecycleStage, lifecycleCode);
+    const userText = hasLifecycleFailure ? `${text}（問い合わせID: ${lifecycleCorrelationId}）` : text;
+    const userDetails = completed && hasLifecycleFailure
+      ? `${details}\n${safeFailureDetails(run).join("\n")}` : details;
+    const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn", text: userDetails } }];
     if (completed) {
       const elements: Array<Record<string, unknown>> = [];
       if (taskRegistrationPending) {
@@ -404,7 +425,7 @@ export class MeetingMinutesSlackClient {
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,
           sourceThreadTs: run.sourceThreadTs }) }] });
     }
-    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text, blocks });
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text: userText, blocks });
   }
   /**
    * One-shot, non-recursive fallback for a failed status projection. It deliberately
@@ -426,7 +447,8 @@ export class MeetingMinutesSlackClient {
       });
     } catch (error) {
       console.error(JSON.stringify({ event: "meeting_minutes_thread_status_failed", runId: run.runId,
-        stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+        stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+        correlation_id: deriveCorrelationId(run.runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
       if (required) throw error;
     }
   }
@@ -480,8 +502,17 @@ export class MeetingMinutesSlackClient {
   }
   async postTaskScopeMismatch(run: MeetingMinutesRun, userId: string): Promise<void> {
     if (!run.destination || !run.slack?.parentTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
+    const correlationId = deriveCorrelationId(run.runId, "task_scope", "TASK_SCOPE_MISMATCH");
     await this.post("chat.postEphemeral", { channel: run.destination.slackChannelId, thread_ts: run.slack.parentTs,
-      user: userId, text: "このタスクは現在のBrainbaseプロジェクトに紐付いていないため、編集・取消できません。管理者がプロジェクト紐付けを確認してください。" });
+      user: userId, text: `このタスクは現在のBrainbaseプロジェクトに紐付いていないため、編集・取消できません。管理者がプロジェクト紐付けを確認してください。問い合わせID: ${correlationId}` });
+  }
+  async postTaskActionFailure(run: MeetingMinutesRun, userId: string, action: string,
+    correlationId: string): Promise<void> {
+    if (!run.destination || !run.slack?.parentTs) throw new Error("meeting_minutes_task_card_coordinates_missing");
+    const actionLabel = action === "cancel" ? "取消" : "編集";
+    await this.post("chat.postEphemeral", { channel: run.destination.slackChannelId, thread_ts: run.slack.parentTs,
+      user: userId,
+      text: `議事録タスクの${actionLabel}に失敗しました。処理は安全に停止しました。問い合わせID: ${correlationId}` });
   }
   async openTaskEditView(triggerId: string, view: Record<string, unknown>): Promise<void> {
     await this.post("views.open", { trigger_id: triggerId, view }, AbortSignal.timeout(2_000));
@@ -521,7 +552,8 @@ export class MeetingMinutesSlackClient {
         return;
       } catch {
         console.error(JSON.stringify({ event: "meeting_minutes_redo_failure_projection_failed", runId: run.runId,
-          stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+          stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+          correlation_id: deriveCorrelationId(run.runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
       }
       throw error;
     }

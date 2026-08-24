@@ -45,6 +45,10 @@ Slack interactionでは、署名、時刻、workspace、app、action payloadを�
 
 状態投影は主経路1回、`STATUS_PROJECTION_FAILED`への安全なfallback 1回までとする。intake停止中・組織選択・戻る操作の非同期投影も同じガードを通し、fallback自身の失敗を非同期rejectとして残さない。即時状態表示と選択確認が同時に失敗した場合の公開コードは`STATUS_PROJECTION_FAILED`に固定する。stale recoveryはfallback実行前にclaim markerをdurableに保存し、fallback後の成否を`recoveryFallbackOutcome`へ最大2回の保存試行で記録する。保存不能時は`MEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILED`を運用エラーとして返し、claim markerにより再配信時の投影重複を防ぐ。保存成功時は元の処理・投影エラーを保持してQueueの処理契約を変えない。
 
+すべてのユーザー向け失敗表示には、`runId`・失敗段階・固定エラーコードから決定的に導出した`問い合わせID`を付ける。上流から相関IDを受け取れない同期表示でも同じ導出規則を使い、再表示・再試行で同じ失敗を追跡できるようにする。受付停止判定とTask write承認コールバックの拒否は、raw errorを返さずHTTP 503の安全な`UserFailure` envelopeへ変換し、署名検証済みで利用資格のある`response_url`に限って同じ問い合わせID付きの固定文言を投影する。
+
+議事録Taskの遅延open・edit・cancelは、作業失敗を呼び出し元のPromiseへraw rejectとして残さない。固定コードと問い合わせIDだけを構造化ログへ記録し、利用可能な安全投影へ通知する。Taskのscope不一致は従来の利用者通知を維持し、通知自体が失敗した場合も安全な投影失敗ログへ閉じ込める。
+
 ## 4. TODO
 
 - エラーパターン判定（isDeadSessionError等）の判定文字列一覧をこの文書に転記し、Claude CLI更新時の追従チェックリストにする

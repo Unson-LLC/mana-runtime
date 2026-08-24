@@ -10,7 +10,7 @@ import { destinationSelectedMessage, organizationSelectionMessage, projectSelect
   type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { TenantBoundaryError } from "./multitenancy/errors.js";
 import { createUserFailure } from "./multitenancy/failure.js";
-import { createDeterministicSharedId } from "./multitenancy/ids.js";
+import { deriveCorrelationId } from "./multitenancy/ids.js";
 import { verifySlackRequest } from "./slack.js";
 import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-request-body.js";
 
@@ -255,13 +255,14 @@ async function attemptInteractionFailureProjection(input: {
     return true;
   } catch {
     console.error(JSON.stringify({ event: input.failureEvent, runId: input.runId,
-      stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+      stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      correlation_id: deriveCorrelationId(input.runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
     return false;
   }
 }
 
 async function interactionActionFailureResponse(input: {
-  action: "meeting_task" | "contract_ledger";
+  action: "meeting_task" | "contract_ledger" | "task_write_approve" | "intake_gate";
   error: unknown;
   interactionId: string;
   payload: Record<string, unknown>;
@@ -271,10 +272,10 @@ async function interactionActionFailureResponse(input: {
   effects: TenantInteractionEffects;
   options: InteractionOptions;
 }): Promise<Response> {
-  const correlationId = await createDeterministicSharedId("cor_", `${input.interactionId}:${input.action}`);
-  const failure = createUserFailure({ error: input.error, correlation_id: correlationId });
   const runId = string(input.actionValue?.runId) ?? input.interactionId;
   const fileName = string(input.actionValue?.fileName) ?? "議事録";
+  const correlationId = deriveCorrelationId(runId, `interaction_${input.action}`, "INTERACTION_ACTION_FAILED");
+  const failure = createUserFailure({ error: input.error, correlation_id: correlationId });
   const responseUrl = slackResponseUrl(input.payload.response_url);
   const projection = attemptInteractionFailureProjection({
     effects: input.effects,
@@ -442,16 +443,18 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
     });
   } catch (error) {
-    const correlationId = await createDeterministicSharedId("cor_", interactionId);
-    const failure = createUserFailure({ error, correlation_id: correlationId });
     const responseUrl = slackResponseUrl(payload?.response_url);
     const runId = string(actionValue?.runId) ?? interactionId;
+    const failureSeedCode = error instanceof TenantBoundaryError ? error.code : "TENANT_RESOLUTION_FAILED";
+    const correlationId = deriveCorrelationId(runId, "tenant_authentication", failureSeedCode);
+    const failure = createUserFailure({ error, correlation_id: correlationId });
     if (responseUrl && options.updateBeforeTenant && isMeetingMinutesInteractionAction(actionId) &&
       isTenantFailureResponseUrlEligible(error)) {
       const notice = options.updateBeforeTenant(responseUrl,
         tenantInteractionFailedMessage(runId, string(actionValue?.fileName) ?? "議事録", failure)).catch(() => {
           console.error(JSON.stringify({ event: "meeting_minutes_tenant_failure_projection_failed", runId,
-            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+            stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+            correlation_id: deriveCorrelationId(runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
         });
       if (options.defer) options.defer(notice); else await notice;
     }
@@ -464,7 +467,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       if (taskResponse) return taskResponse;
     } catch (error) {
       return interactionActionFailureResponse({ action: "meeting_task", error, interactionId,
-        payload: payload!, actionValue, channelId: interactionChannelId, threadTs: interactionThreadTs,
+        payload: payload!, actionValue: actionValue ?? viewMetadata, channelId: interactionChannelId, threadTs: interactionThreadTs,
         effects: tenantEffects, options });
     }
   }
@@ -474,7 +477,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       if (contractResponse) return contractResponse;
     } catch (error) {
       return interactionActionFailureResponse({ action: "contract_ledger", error, interactionId,
-        payload: payload!, actionValue, channelId: interactionChannelId, threadTs: interactionThreadTs,
+        payload: payload!, actionValue: actionValue ?? viewMetadata, channelId: interactionChannelId, threadTs: interactionThreadTs,
         effects: tenantEffects, options });
     }
   }
@@ -483,7 +486,13 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   if (actionId === "mana_task_write_approve" && options.approveTaskWrite) {
     const approvalId = string(actionValue?.approvalId); const payloadHash = string(actionValue?.payloadHash);
     if (!userId || !channelId || !approvalId || !payloadHash) return response("slack_interaction_invalid", 400);
-    return options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId }, tenantEffects);
+    try {
+      return await options.approveTaskWrite({ approvalId, payloadHash, approverId: userId, channelId }, tenantEffects);
+    } catch (error) {
+      return interactionActionFailureResponse({ action: "task_write_approve", error, interactionId,
+        payload: payload!, actionValue, channelId: interactionChannelId, threadTs: interactionThreadTs,
+        effects: tenantEffects, options });
+    }
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
   const destinationAction = actionId === MEETING_MINUTES_CHOOSE_ACTION_ID || actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`);
@@ -498,8 +507,19 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
   const organizationId = string(value?.organizationId); const fileName = string(value?.fileName);
   const sourceThreadTs = threadTsCandidates[0];
-  if (options.isIntakePaused && await options.isIntakePaused()) {
+  let intakePaused = false;
+  if (options.isIntakePaused) {
+    try {
+      intakePaused = await options.isIntakePaused();
+    } catch (error) {
+      return interactionActionFailureResponse({ action: "intake_gate", error, interactionId,
+        payload: payload!, actionValue, channelId: interactionChannelId, threadTs: interactionThreadTs,
+        effects: tenantEffects, options });
+    }
+  }
+  if (intakePaused) {
     const responseUrl = slackResponseUrl(payload?.response_url);
+    const intakeCorrelationId = deriveCorrelationId(runId ?? interactionId, "intake", "INTAKE_PAUSED");
     if (responseUrl && options.updateOriginal && options.defer) {
       options.defer((async () => {
         try {
@@ -507,9 +527,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
             target(channelId, sourceThreadTs), { kind: "intake_paused" },
             (credentialFetch) => options.updateOriginal!(responseUrl, {
               replace_original: true,
-              text: "議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。",
+              text: `議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。問い合わせID: ${intakeCorrelationId}`,
               blocks: [{ type: "section", text: { type: "mrkdwn",
-                text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。" } }],
+                text: `:warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。\n問い合わせID: ${intakeCorrelationId}` } }],
             }, credentialFetch));
         } catch {
           await attemptInteractionFailureProjection({
@@ -573,7 +593,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       } catch {
         processingProjectionFailed = true;
         console.error(JSON.stringify({ event: "meeting_minutes_redo_processing_projection_failed", runId,
-          stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+          stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+          correlation_id: deriveCorrelationId(runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
       }
       try {
         await options.send({ kind: "meeting_minutes_redo", runId,
@@ -581,7 +602,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           channelId, threadTs: sourceThreadTs, userId, actionTs });
       } catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failed", runId,
-          stage: "redo_enqueue", code: "REDO_ENQUEUE_FAILED", retryable: true }));
+          stage: "redo_enqueue", code: "REDO_ENQUEUE_FAILED",
+          correlation_id: deriveCorrelationId(runId, "redo_enqueue", "REDO_ENQUEUE_FAILED"), retryable: true }));
         try {
           await guardedSlackEffect(tenantEffects, `redo-failed:${runId}`,
             target(channelId, sourceThreadTs), { kind: "redo_failed", runId },
@@ -676,12 +698,14 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       }
       catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_lookup_failed", runId,
-          stage: "interaction_enqueue", code: "THREAD_COORDINATE_LOOKUP_FAILED", retryable: true }));
+          stage: "interaction_enqueue", code: "THREAD_COORDINATE_LOOKUP_FAILED",
+          correlation_id: deriveCorrelationId(runId, "interaction_enqueue", "THREAD_COORDINATE_LOOKUP_FAILED"), retryable: true }));
       }
     }
     if (!feedbackThreadTs || !timestampPattern.test(feedbackThreadTs)) {
       console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_missing", runId,
-        stage: "interaction_enqueue", code: "THREAD_COORDINATE_MISSING", retryable: true }));
+        stage: "interaction_enqueue", code: "THREAD_COORDINATE_MISSING",
+        correlation_id: deriveCorrelationId(runId, "interaction_enqueue", "THREAD_COORDINATE_MISSING"), retryable: true }));
       await attemptInteractionFailureProjection({
         effects: tenantEffects,
         effectId: `thread-coordinate-failed:${runId}`,
@@ -707,7 +731,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       } catch {
         immediateStatusFailed = true;
         console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
-          stage: "status_projection", code: "IMMEDIATE_STATUS_FAILED", retryable: true }));
+          stage: "status_projection", code: "IMMEDIATE_STATUS_FAILED",
+          correlation_id: deriveCorrelationId(runId, "status_projection", "IMMEDIATE_STATUS_FAILED"), retryable: true }));
       }
     }
     let selectionConfirmationFailed = false;
@@ -720,7 +745,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       } catch {
         selectionConfirmationFailed = true;
         console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
-          stage: "status_projection", code: "SELECTION_CONFIRMATION_FAILED", retryable: true }));
+          stage: "status_projection", code: "SELECTION_CONFIRMATION_FAILED",
+          correlation_id: deriveCorrelationId(runId, "status_projection", "SELECTION_CONFIRMATION_FAILED"), retryable: true }));
       }
     }
     try {
@@ -737,14 +763,17 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         }
         catch (clearError) {
           console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_clear_failed", runId,
-            stage: "interaction_enqueue", code: "IMMEDIATE_STATUS_CLEAR_FAILED", retryable: true }));
+            stage: "interaction_enqueue", code: "IMMEDIATE_STATUS_CLEAR_FAILED",
+            correlation_id: deriveCorrelationId(runId, "interaction_enqueue", "IMMEDIATE_STATUS_CLEAR_FAILED"), retryable: true }));
         }
       }
+      const enqueueCorrelationId = deriveCorrelationId(runId, "interaction_enqueue", "INTERACTION_ENQUEUE_FAILED");
       console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failed", runId,
-        stage: "interaction_enqueue", code: "INTERACTION_ENQUEUE_FAILED", retryable: true }));
+        stage: "interaction_enqueue", code: "INTERACTION_ENQUEUE_FAILED", correlation_id: enqueueCorrelationId, retryable: true }));
       if (responseUrl && options.updateOriginal) {
         try {
-          const correlationId = await createDeterministicSharedId("cor_", `${interactionId}:enqueue`);
+          const correlationId = deriveCorrelationId(runId, "interaction_enqueue", error instanceof TenantBoundaryError
+            ? error.code : "INTERACTION_ENQUEUE_FAILED");
           const failure = createUserFailure({ error, correlation_id: correlationId });
           await guardedSlackEffect(tenantEffects, `enqueue-failed:${runId}`,
             target(channelId, feedbackThreadTs), { kind: "enqueue_failed", runId },

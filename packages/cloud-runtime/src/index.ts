@@ -2118,6 +2118,13 @@ export default {
               (tenantFetch) => new MeetingMinutesSlackClient(
                 undefined, tenantFetch).postTaskScopeMismatch(run, userId));
             },
+            notifyTaskActionFailure: async (run, userId, action, correlationId) => {
+              await effects.slackDelivery(`task-action-failure:${run.runId}:${userId}:${action}`, {
+                channel_id: run.destination!.slackChannelId,
+              }, { kind: "task_action_failure", runId: run.runId, userId, action },
+              (tenantFetch) => new MeetingMinutesSlackClient(
+                undefined, tenantFetch).postTaskActionFailure(run, userId, action, correlationId));
+            },
             openView: async (organizationId, triggerId, view) => {
               await effects.slackDelivery(`task-edit-view:${organizationId}`, {},
                 { kind: "task_edit_view", organizationId },
