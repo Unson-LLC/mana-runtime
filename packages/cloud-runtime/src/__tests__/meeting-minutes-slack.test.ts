@@ -1,4 +1,4 @@
-import { interactionEnqueueFailedMessage, MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
+import { interactionEnqueueFailedMessage, MeetingMinutesSlackClient, redoFailedMessage } from "../meeting-minutes-slack.js";
 
 describe("MeetingMinutesSlackClient", () => {
   it("shows a stable error code and run id when a button request cannot be queued", () => {
@@ -260,6 +260,10 @@ describe("MeetingMinutesSlackClient", () => {
   });
 
   it("keeps a failed redo visible with a durable retry action", async () => {
+    const directMessage = JSON.stringify(redoFailedMessage("run-1", "meeting.txt"));
+    expect(directMessage).toContain("処理ID: run-1");
+    expect(directMessage).toContain("失敗段階: 処理受付");
+    expect(directMessage).toContain("エラーコード: REDO_ENQUEUE_FAILED");
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
@@ -268,6 +272,9 @@ describe("MeetingMinutesSlackClient", () => {
     expect(body).toMatchObject({ channel: "C1", ts: "3.1" });
     const serialized = JSON.stringify(body);
     expect(serialized).toContain("保存先のやり直しを完了できませんでした");
+    expect(serialized).toContain("処理ID: run-1");
+    expect(serialized).toContain("失敗段階: 処理受付");
+    expect(serialized).toContain("エラーコード: REDO_ENQUEUE_FAILED");
     expect(serialized).toContain("取り消しを再実行");
     expect(serialized).toContain("mana_meeting_minutes_confirm_redo");
   });
@@ -282,6 +289,7 @@ describe("MeetingMinutesSlackClient", () => {
     expect(bodies).toHaveLength(2);
     expect(JSON.stringify(bodies[1])).toContain("STATUS_PROJECTION_FAILED");
     expect(JSON.stringify(bodies[1])).toContain("処理ID: run-1");
+    expect(JSON.stringify(bodies[1])).toContain("失敗段階: 状態表示");
   });
 
   it("explains how to recover when the destination Slack channel is unavailable", async () => {

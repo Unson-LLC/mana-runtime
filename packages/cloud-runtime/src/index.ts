@@ -121,8 +121,12 @@ import {
   runtimeDeliveryId,
 } from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
-import { armMeetingMinutesRecovery, isMeetingMinutesRecovery, recoverStaleMeetingMinutesRun,
+import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
   MEETING_MINUTES_RECOVERY_DELAY_SECONDS } from "./meeting-minutes-recovery.js";
+import {
+  processMeetingMinutesRecoveryQueue,
+  type MeetingMinutesRecoveryRuntimeDependencies,
+} from "./meeting-minutes-recovery-runtime.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
   gateMeetingMinutesCommandQueueMessage,
@@ -914,6 +918,28 @@ function meetingMinutesClients(
   };
 }
 
+function meetingMinutesRecoveryClients(
+  env: Env,
+  effects: Pick<MeetingMinutesTenantEffectGuard, "slack">,
+) {
+  const sourceSlack = (credentialFetch: typeof fetch) => new MeetingMinutesSlackClient(
+    undefined, credentialFetch);
+  return {
+    slack: {
+      updateRunStatus: (run: MeetingMinutesRun,
+        outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
+        effects.slack(`source-status:${run.runId}:${outcome}`,
+          { kind: "source_status", runId: run.runId, outcome },
+          (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome)),
+      fallbackStatus: (run: MeetingMinutesRun,
+        outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
+        effects.slack(`source-status-fallback:${run.runId}:${outcome}`,
+          { kind: "source_status_fallback", runId: run.runId, outcome },
+          (credentialFetch) => sourceSlack(credentialFetch).projectStatusFailure(run)),
+    },
+  };
+}
+
 function requiredRuntimeBinding(value: string | undefined): string {
   if (!value?.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
   return value;
@@ -1502,41 +1528,6 @@ async function processTenantMeetingMinutesSelection(input: {
   });
   await meetingMinutesDeploymentGate(env, tenantId).markTerminal(selection.runId);
   return { outcome: "completed" };
-}
-
-async function processTenantMeetingMinutesRecovery(input: {
-  env: Env;
-  recovery: MeetingMinutesRecovery;
-  tenantContext: TenantContextEnvelope;
-  expectedScope: ExpectedTenantScope;
-  verifier: TenantRuntimeBoundaryVerifier;
-  now(): string;
-}): Promise<{ outcome: "recovered" | "terminal" | "superseded" }> {
-  const { env, recovery, tenantContext, expectedScope, verifier, now } = input;
-  const effects = createMeetingMinutesTenantEffectGuard({
-    env,
-    tenant_context: tenantContext,
-    expected_scope: expectedScope,
-    verifier,
-    now,
-  });
-  return effects.boundary("durable_object", async () => {
-      const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
-        tenantContext.tenant.tenant_id, recovery.workspaceId, recovery.runId,
-      ));
-      const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-      return withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-        const clients = meetingMinutesClients(env, effects);
-        const outcome = await recoverStaleMeetingMinutesRun(workspace.fs, recovery, {
-          now: () => Date.parse(now()),
-          updateStatus: (run) => clients.slack.updateRunStatus(run, "failed"),
-          fallbackStatus: (run, outcome) => clients.slack.fallbackStatus(run, outcome),
-        });
-        if (outcome === "not_due") deny("queue_consumer", "UPSTREAM_UNAVAILABLE");
-        await meetingMinutesDeploymentGate(env, tenantContext.tenant.tenant_id).markTerminal(recovery.runId);
-        return { outcome };
-      });
-  });
 }
 
 async function processTenantMeetingMinutesRedo(input: {
@@ -2520,37 +2511,50 @@ export default {
       }
       if (isTenantMeetingMinutesRecoveryBody(message.body)) {
         const tenantBody = message.body;
-        const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
-        const verifier = new TenantRuntimeBoundaryVerifier({
-          read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
-          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-        });
-        const expectedScope = expectedTenantMeetingMinutesRecoveryScope(env, tenantBody);
-        const now = () => new Date().toISOString();
-        await consumeTenantQueueMessage({
+        const recoveryDependencies: MeetingMinutesRecoveryRuntimeDependencies<Env> = {
+          prepareQueue: (env, tenantBody) => {
+            const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
+            const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
+            const verifier = new TenantRuntimeBoundaryVerifier({
+              read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+            });
+            const expectedScope = expectedTenantMeetingMinutesRecoveryScope(env, tenantBody);
+            const now = () => new Date().toISOString();
+            return {
+              runtimeTenantId,
+              verifier,
+              expectedScope,
+              now,
+              ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, runtimeTenantId),
+              payloadHash: tenantPayloadHash,
+              retentionUntil: tenantRetentionUntil,
+            };
+          },
+          createEffects: ({ env: runtimeEnv, tenantContext, expectedScope, verifier, now }) =>
+            createMeetingMinutesTenantEffectGuard({
+              env: runtimeEnv,
+              tenant_context: tenantContext,
+              expected_scope: expectedScope,
+              verifier,
+              now,
+            }),
+          createClients: (runtimeEnv, effects) => meetingMinutesRecoveryClients(runtimeEnv, effects),
+          withWorkspace: ({ env: runtimeEnv, tenantContext, recovery, execute }) => {
+            const id = runtimeEnv.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+              tenantContext.tenant.tenant_id, recovery.workspaceId, recovery.runId,
+            ));
+            const handle = runtimeEnv.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+            return withDisposableResource(() => getWorkspace(handle), (workspace) => execute(workspace.fs));
+          },
+          markTerminal: (runtimeEnv, tenantId, runId) =>
+            meetingMinutesDeploymentGate(runtimeEnv, tenantId).markTerminal(runId),
+        };
+        await processMeetingMinutesRecoveryQueue({
           body: tenantBody,
           ack: () => message.ack(),
           retry: (options) => message.retry(options),
-        }, {
-          verifier,
-          expected_scope: () => expectedScope,
-          now,
-          ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, runtimeTenantId),
-          payload_hash: tenantPayloadHash,
-          retention_until: tenantRetentionUntil,
-          log: (entry) => console.log(JSON.stringify(entry)),
-          log_error: (entry) => console.error(JSON.stringify(entry)),
-          process: (recovery: MeetingMinutesRecovery, tenantContext: TenantContextEnvelope) =>
-            processTenantMeetingMinutesRecovery({
-            env,
-            recovery,
-            tenantContext,
-            expectedScope,
-            verifier,
-            now,
-          }),
-        });
+        }, env, recoveryDependencies);
         continue;
       }
       if (isMeetingMinutesRecovery(message.body)) {

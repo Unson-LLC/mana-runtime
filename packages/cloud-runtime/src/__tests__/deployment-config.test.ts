@@ -586,7 +586,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("expectedTenantMeetingMinutesRecoveryScope(env, tenantBody)");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
-    expect(worker).toContain("recoverStaleMeetingMinutesRun(");
+    expect(worker).toContain('from "./meeting-minutes-recovery-runtime.js"');
+    expect(worker).toContain("processMeetingMinutesRecoveryQueue(");
     expect(worker).toContain("gateMeetingMinutesRouterQueueMessage(");
     expect(worker).toContain("gateMeetingMinutesCommandQueueMessage(");
     expect(worker).toContain("postIntakePausedToUser(command.channelId, command.userId)");
