@@ -3,6 +3,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
   type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
+import type { UserFailure } from "./multitenancy/failure.js";
 import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
 
 export interface SlackSelectionMessage {
@@ -70,13 +71,31 @@ export function redoProcessingMessage(fileName: string): SlackSelectionMessage {
 }
 
 export function redoFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
-  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更に失敗しました。`, blocks: [
+  const details = `処理ID: ${runId}\n失敗段階: 処理受付\nエラーコード: REDO_ENQUEUE_FAILED`;
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更に失敗しました。エラーコード: REDO_ENQUEUE_FAILED`, blocks: [
     { type: "section", text: { type: "mrkdwn",
-      text: ":warning: *保存先のやり直しを完了できませんでした*\n完了済みの取り消し工程は保持されています。下のボタンから続きを再実行できます。" } },
+      text: `:warning: *保存先のやり直しを完了できませんでした*\n${details}\n完了済みの取り消し工程は保持されています。下のボタンから続きを再実行できます。` } },
     { type: "actions", elements: [{ type: "button", style: "danger",
       text: { type: "plain_text", text: "取り消しを再実行" }, action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
       value: JSON.stringify({ runId, fileName }) }] },
   ] };
+}
+
+export function interactionEnqueueFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
+  const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
+  const details = `処理ID: ${runId}\n失敗段階: 処理受付\nエラーコード: INTERACTION_ENQUEUE_FAILED`;
+  return { replace_original: true,
+    text: `${safeFileName} の議事録処理を開始できませんでした。エラーコード: INTERACTION_ENQUEUE_FAILED`,
+    blocks: [{ type: "section", text: { type: "mrkdwn",
+      text: `:warning: *議事録処理を開始できませんでした*\n${details}\nもう一度保存先を選択してください。` } }] };
+}
+
+export function tenantInteractionFailedMessage(runId: string, fileName: string, failure: UserFailure): SlackSelectionMessage {
+  const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
+  return { replace_original: true,
+    text: `${safeFileName} の認証・接続確認に失敗しました。エラーコード: ${failure.code}`,
+    blocks: [{ type: "section", text: { type: "mrkdwn",
+      text: `:warning: *認証・接続確認に失敗しました*\n処理ID: ${runId}\n失敗段階: テナント認証\nエラーコード: ${failure.code}\n問い合わせID: ${failure.correlation_id}\n設定を確認してから再実行してください。` } }] };
 }
 
 export function suggestedDestinationMessage(run: MeetingMinutesRun,
@@ -115,14 +134,15 @@ function isBrainbaseProjectBindingFailure(run: MeetingMinutesRun): boolean {
   ));
 }
 function safeFailureDetails(run: MeetingMinutesRun): string[] {
-  const stage = run.diagnostics?.stage;
+  const failure = run.projectionFailure ?? run.diagnostics;
+  const stage = failure?.stage;
   const stageLabels: Record<string, string> = {
     interaction_enqueue: "処理受付", transcript_download: "文字起こし取得", context_resolve: "Brainbase文脈取得",
     context_gate: "Brainbase文脈検証", generation: "議事録生成", github_save: "GitHub保存",
     slack_publish: "Slack投稿", task_registration: "タスク登録", status_projection: "状態表示",
   };
   return [`処理ID: ${run.runId}`, `失敗段階: ${stage ? stageLabels[stage] ?? "不明" : "不明（旧形式）"}`,
-    `エラーコード: ${run.diagnostics?.code ?? "UNCLASSIFIED_FAILURE"}`];
+    `エラーコード: ${failure?.code ?? "UNCLASSIFIED_FAILURE"}`];
 }
 function failedRunDetails(run: MeetingMinutesRun): string[] {
   const destination = `保存先: ${run.destination!.name}`;
@@ -148,7 +168,7 @@ function failedRunDetails(run: MeetingMinutesRun): string[] {
       "認証設定を修正するまで再実行しても成功しません。運用担当者へ確認してください。"];
   } else {
     details = ["*⚠️ 議事録の作成に失敗しました*", destination,
-      run.diagnostics?.retryable === false
+      (run.projectionFailure ?? run.diagnostics)?.retryable === false
         ? "同じ条件では再実行せず、処理IDを添えて運用担当者へ確認してください。"
         : "下のボタンから再実行できます。"];
   }
@@ -333,7 +353,7 @@ export class MeetingMinutesSlackClient {
         action_id: MEETING_MINUTES_REDO_ACTION_ID,
         value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) });
       blocks.push({ type: "actions", elements });
-    } else if (!permanentBrainbaseFailure && run.diagnostics?.retryable !== false) {
+    } else if (!permanentBrainbaseFailure && (run.projectionFailure ?? run.diagnostics)?.retryable !== false) {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,

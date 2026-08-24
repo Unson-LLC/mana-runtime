@@ -4,8 +4,11 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   type MeetingMinutesRedo, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
 import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
-  redoFailedMessage, redoProcessingMessage,
-  MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
+  interactionEnqueueFailedMessage, redoFailedMessage, redoProcessingMessage,
+  tenantInteractionFailedMessage, MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
+import { TenantBoundaryError } from "./multitenancy/errors.js";
+import { createUserFailure } from "./multitenancy/failure.js";
+import { createDeterministicSharedId } from "./multitenancy/ids.js";
 import { verifySlackRequest } from "./slack.js";
 import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-request-body.js";
 
@@ -32,6 +35,7 @@ interface InteractionOptions {
   clearProcessing?(input: { channelId: string; threadTs: string }, credentialFetch: typeof fetch): Promise<void>;
   resolveThreadTs?(runId: string): Promise<string | undefined>;
   updateOriginal?(responseUrl: string, message: SlackInteractionMessage, credentialFetch: typeof fetch): Promise<void>;
+  updateBeforeTenant?(responseUrl: string, message: SlackInteractionMessage): Promise<void>;
   defer?(work: Promise<void>): void;
   approveTaskWrite?(input: { approvalId: string; payloadHash: string; approverId: string; channelId: string },
     effects: TenantInteractionEffects): Promise<Response>;
@@ -247,6 +251,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
     resolveThreadTs,
     updateOriginal: (responseUrl, message, credentialFetch) => updateSlackInteractionMessage(
       responseUrl, message, credentialFetch),
+    updateBeforeTenant: (responseUrl, message) => updateSlackInteractionMessage(responseUrl, message),
     defer: (work) => ctx.waitUntil(work), approveTaskWrite, handleMeetingTaskAction,
     resolveTenantEffects, isIntakePaused, handleContractLedgerAction });
 }
@@ -339,8 +344,21 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       requester_id: interactionRequesterId,
       ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
     });
-  } catch {
-    return response("TENANT_INTERACTION_UNAVAILABLE", 503);
+  } catch (error) {
+    const correlationId = await createDeterministicSharedId("cor_", interactionId);
+    const failure = createUserFailure({ error, correlation_id: correlationId });
+    const responseUrl = slackResponseUrl(payload?.response_url);
+    const runId = string(actionValue?.runId) ?? interactionId;
+    if (responseUrl && options.updateBeforeTenant && isMeetingMinutesInteractionAction(actionId)) {
+      const notice = options.updateBeforeTenant(responseUrl,
+        tenantInteractionFailedMessage(runId, string(actionValue?.fileName) ?? "議事録", failure)).catch(() => {
+          console.error(JSON.stringify({ event: "meeting_minutes_tenant_failure_projection_failed", runId,
+            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+        });
+      if (options.defer) options.defer(notice); else await notice;
+    }
+    return Response.json({ error: failure.code, message_key: failure.message_key,
+      next_actions: failure.next_actions, correlation_id: failure.correlation_id }, { status: 503 });
   }
   if (options.handleMeetingTaskAction) {
     const taskResponse = await options.handleMeetingTaskAction(payload!, tenantEffects);
@@ -412,7 +430,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       }
       catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_redo_processing_projection_failed", runId,
-          error: error instanceof Error ? error.message : "unexpected_error" }));
+          stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
       }
       try {
         await options.send({ kind: "meeting_minutes_redo", runId,
@@ -420,7 +438,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           channelId, threadTs: sourceThreadTs, userId, actionTs });
       } catch (error) {
         console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failed", runId,
-          error: error instanceof Error ? error.message : "unexpected_error" }));
+          stage: "redo_enqueue", code: "REDO_ENQUEUE_FAILED", retryable: true }));
         try {
           await guardedSlackEffect(tenantEffects, `redo-failed:${runId}`,
             target(channelId, sourceThreadTs), { kind: "redo_failed", runId },
@@ -429,7 +447,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         }
         catch (projectionError) {
           console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failure_projection_failed", runId,
-            error: projectionError instanceof Error ? projectionError.message : "unexpected_error" }));
+            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
         }
       }
     })());
@@ -467,6 +485,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   }
   const destination = destinations?.find((item) => item.id === destinationId);
   options.defer((async () => {
+    const responseUrl = string(payload?.response_url);
     let feedbackThreadTs: string | undefined = sourceThreadTs;
     if (!feedbackThreadTs && options.resolveThreadTs) {
       try {
@@ -480,7 +499,20 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       }
     }
     if (!feedbackThreadTs || !timestampPattern.test(feedbackThreadTs)) {
-      throw new Error("meeting_minutes_thread_coordinate_missing");
+      console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_missing", runId,
+        stage: "interaction_enqueue", code: "THREAD_COORDINATE_MISSING", retryable: true }));
+      if (responseUrl && options.updateOriginal) {
+        try {
+          await guardedSlackEffect(tenantEffects, `thread-coordinate-failed:${runId}`,
+            target(channelId, undefined), { kind: "thread_coordinate_failed", runId },
+            (credentialFetch) => options.updateOriginal!(responseUrl,
+              interactionEnqueueFailedMessage(runId, fileName ?? "議事録"), credentialFetch));
+        } catch {
+          console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_failure_projection_failed", runId,
+            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+        }
+      }
+      return;
     }
     let processingShown = false;
     if (options.showProcessing && feedbackThreadTs && timestampPattern.test(feedbackThreadTs) && destination) {
@@ -496,7 +528,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       }
     }
     try {
-      const responseUrl = string(payload?.response_url);
       if (responseUrl && options.updateOriginal && destination && fileName) {
         try {
           await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
@@ -527,7 +558,22 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       }
       console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failed", runId,
         stage: "interaction_enqueue", code: "INTERACTION_ENQUEUE_FAILED", retryable: true }));
-      throw error;
+      if (responseUrl && options.updateOriginal) {
+        try {
+          const correlationId = await createDeterministicSharedId("cor_", `${interactionId}:enqueue`);
+          const failure = createUserFailure({ error, correlation_id: correlationId });
+          await guardedSlackEffect(tenantEffects, `enqueue-failed:${runId}`,
+            target(channelId, feedbackThreadTs), { kind: "enqueue_failed", runId },
+            (credentialFetch) => options.updateOriginal!(responseUrl,
+              error instanceof TenantBoundaryError
+                ? tenantInteractionFailedMessage(runId, fileName ?? "議事録", failure)
+                : interactionEnqueueFailedMessage(runId, fileName ?? "議事録"), credentialFetch));
+        } catch {
+          console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failure_projection_failed", runId,
+            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+        }
+      }
+      return;
     }
   })());
   return Response.json({ ok: true });

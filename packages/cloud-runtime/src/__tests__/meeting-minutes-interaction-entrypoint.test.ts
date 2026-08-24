@@ -203,7 +203,9 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined,
     handleMeetingTaskAction, env.TECHKNIGHT_EVENTS.send, resolveTenantEffects);
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({ error: "TENANT_INTERACTION_UNAVAILABLE" });
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({ error: "temporary_failure",
+      message_key: "tenant.temporary_failure", next_actions: ["retry_later"],
+      correlation_id: expect.stringMatching(/^cor_/) }));
     expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
       app_id: "A-UNSON", workspace_id: "T-TECHKNIGHT",
     }));
@@ -253,6 +255,65 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       method: "POST", body: JSON.stringify({ channel_id: "C1", thread_ts: "1.0",
         status: "議事録を作成しています…（ボード定例）" }),
     }));
+  });
+
+  it("projects a public tenant failure through the production response_url updater", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "secret";
+    const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },
+      response_url: "https://hooks.slack.com/actions/T1/B1/token", message: { ts: "1.1", thread_ts: "1.0" }, actions: [{
+        action_id: "mana_meeting_minutes_choose_destination:techknight-board", action_ts: "1.2",
+        value: JSON.stringify({ runId: "Ev1_F1", destinationId: "techknight-board" }),
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const slackUpdate = vi.fn().mockResolvedValue(new Response("ok")); vi.stubGlobal("fetch", slackUpdate);
+    const deferred: Promise<unknown>[] = []; const send = vi.fn();
+    const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T1", SLACK_EXPECTED_APP_ID: "A1",
+      MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C1", MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
+      MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1",
+        contextProjectCode: "techknight", taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-techknight-board",
+        name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" } }]), TECHKNIGHT_EVENTS: { send } };
+    const resolveTenantEffects = vi.fn(async () => { throw new Error("Bearer secret"); });
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", { method: "POST", body,
+      headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature } }), env as never,
+      { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]),
+      undefined, undefined, undefined, send, resolveTenantEffects);
+    expect(response.status).toBe(503); await Promise.all(deferred);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: "temporary_failure",
+      correlation_id: expect.stringMatching(/^cor_/) }));
+    const projected = JSON.stringify(slackUpdate.mock.calls);
+    expect(projected).toContain("エラーコード: temporary_failure");
+    expect(projected).toContain("問い合わせID: cor_");
+    expect(projected).not.toContain("Bearer secret");
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the public HTTP failure without fetching an unsafe response_url", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "secret";
+    const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },
+      response_url: "https://example.com/actions/T1/B1/token", actions: [{
+        action_id: "mana_meeting_minutes_choose_destination:techknight-board", action_ts: "1.2",
+        value: JSON.stringify({ runId: "Ev1_F1", destinationId: "techknight-board" }),
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const slackUpdate = vi.fn(); vi.stubGlobal("fetch", slackUpdate); const deferred: Promise<unknown>[] = [];
+    const send = vi.fn(); const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T1",
+      SLACK_EXPECTED_APP_ID: "A1", MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C1",
+      MEETING_MINUTES_OPERATOR_USER_IDS: "U1", MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{
+        id: "techknight-board", projectId: "p1", contextProjectCode: "techknight", taskProjectCodes: ["techknight"],
+        taskBoardTargetId: "minutes-techknight-board", name: "ボード定例",
+        organization: { id: "tech-knight", name: "Tech Knight" },
+      }]), TECHKNIGHT_EVENTS: { send } };
+    const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never,
+    new Set(["U1"]), undefined, undefined, undefined, send, vi.fn(async () => { throw new Error("Bearer secret"); }));
+    expect(response.status).toBe(503); await Promise.all(deferred);
+    expect(await response.json()).toEqual(expect.objectContaining({
+      error: "temporary_failure", correlation_id: expect.stringMatching(/^cor_/),
+    }));
+    expect(slackUpdate).not.toHaveBeenCalled(); vi.unstubAllGlobals();
   });
 
   it("explains that intake is paused without enqueueing a destination selection", async () => {

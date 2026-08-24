@@ -6,6 +6,7 @@ import {
   type TenantInteractionIdentity,
 } from "../slack-interactions.js";
 import { MAX_SLACK_REQUEST_BODY_BYTES } from "../slack-request-body.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 
 const secret = "secret"; const now = 1_786_420_000;
 function request(payload: unknown): Request {
@@ -173,8 +174,10 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
-    await expect(Promise.all(background.work)).rejects.toThrow("queue Authorization Bearer secret");
-    expect(updateOriginal).toHaveBeenCalledOnce();
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("INTERACTION_ENQUEUE_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("処理ID: Ev1_F1");
     expect(showProcessing).toHaveBeenCalledOnce();
     expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" }, expect.any(Function));
     const serialized = consoleError.mock.calls.flat().join(" ");
@@ -182,6 +185,21 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(serialized).toContain('"code":"INTERACTION_ENQUEUE_FAILED"');
     expect(serialized).not.toContain("Bearer secret");
     consoleError.mockRestore();
+  });
+  it("preserves a public tenant error code when queue ingress re-resolves authorization", async () => {
+    const send = vi.fn().mockRejectedValue(new TenantBoundaryError(
+      "worker_ingress", "WORKSPACE_CONNECTION_REAUTH_REQUIRED", "Authorization Bearer secret"));
+    const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200);
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    const projected = JSON.stringify(updateOriginal.mock.calls.at(-1));
+    expect(projected).toContain("エラーコード: reauthentication_required");
+    expect(projected).toContain("問い合わせID: cor_");
+    expect(projected).not.toContain("WORKSPACE_CONNECTION_REAUTH_REQUIRED");
+    expect(projected).not.toContain("Bearer secret");
   });
   it("still queues when immediate Slack feedback fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -249,15 +267,35 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
     expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("取り消しを再実行");
   });
-  it("fails closed when Slack omitted the tenant thread coordinate", async () => {
+  it("does not log raw errors when redo status projections fail", async () => {
+    const confirmPayload = structuredClone(payload);
+    confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn().mockRejectedValue(new Error("queue Authorization Bearer secret"));
+    const updateOriginal = vi.fn().mockRejectedValue(new Error("projection Authorization Bearer secret"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    const serialized = consoleError.mock.calls.flat().join(" ");
+    expect(serialized).toContain('"code":"REDO_ENQUEUE_FAILED"');
+    expect(serialized).toContain('"code":"STATUS_PROJECTION_FAILED"');
+    expect(serialized).not.toContain("Bearer secret");
+    consoleError.mockRestore();
+  });
+  it("shows a safe error code when Slack omitted the tenant thread coordinate", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;
-    const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
+    const send = vi.fn(); const showProcessing = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(missingThread), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
-      destinations, send, showProcessing, defer: background.defer });
+      destinations, send, showProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
-    await expect(Promise.all(background.work)).rejects.toThrow("meeting_minutes_thread_coordinate_missing");
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
     expect(send).not.toHaveBeenCalled(); expect(showProcessing).not.toHaveBeenCalled();
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("INTERACTION_ENQUEUE_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("処理ID: Ev1_F1");
   });
   it("shows immediate feedback for an existing retry button using the signed container thread", async () => {
     const retryPayload = structuredClone(payload);
@@ -335,6 +373,89 @@ describe("handleMeetingMinutesInteraction", () => {
       workspace_id: "T1", channel_id: "C1",
     }));
     expect(showProcessing).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+  it("projects a safe tenant error code and run id back to the clicked Slack message", async () => {
+    const background = deferred();
+    const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
+    const resolveTenantEffects = vi.fn(async () => {
+      throw new TenantBoundaryError("worker_ingress", "WORKSPACE_CONNECTION_REAUTH_REQUIRED", "Bearer secret");
+    });
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, resolveTenantEffects,
+      destinations, send: vi.fn(), updateBeforeTenant, defer: background.defer });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: "reauthentication_required",
+      message_key: "tenant.reauthentication_required", next_actions: ["reauthenticate_connection"] }));
+    await Promise.all(background.work);
+    const projected = JSON.stringify(updateBeforeTenant.mock.calls);
+    expect(projected).toContain("処理ID: Ev1_F1");
+    expect(projected).toContain("失敗段階: テナント認証");
+    expect(projected).toContain("エラーコード: reauthentication_required");
+    expect(projected).toContain("問い合わせID: cor_");
+    expect(projected).not.toContain("Bearer secret");
+  });
+  it.each([
+    ["INSTALLATION_REQUIRED", "installation_required"],
+    ["WORKSPACE_CONNECTION_UNINSTALLED", "installation_required"],
+    ["QUOTA_EXCEEDED", "usage_limit_reached"],
+    ["TENANT_CONTEXT_SIGNATURE_INVALID", "temporary_failure"],
+    ["TENANT_UNKNOWN", "administrator_action_required"], ["UPSTREAM_UNAVAILABLE", "temporary_failure"],
+    ["WORKSPACE_CONNECTION_UNAVAILABLE", "temporary_failure"],
+    ["WORKSPACE_CONNECTION_REAUTH_REQUIRED", "reauthentication_required"],
+    ["WORKSPACE_CONNECTION_REVOKED", "reauthentication_required"],
+    ["WORKSPACE_CONNECTION_STALE_REVISION", "administrator_action_required"],
+    ["WORKSPACE_SCOPE_INSUFFICIENT", "administrator_action_required"],
+    ["WORKSPACE_OR_APP_MISMATCH", "administrator_action_required"],
+    ["AUDIENCE_SCOPE_MISMATCH", "temporary_failure"],
+    ["CAPABILITY_SCOPE_MISMATCH", "administrator_action_required"],
+    ["PROJECT_SCOPE_MISMATCH", "administrator_action_required"],
+    ["ACTOR_SCOPE_MISMATCH", "administrator_action_required"],
+    ["DELIVERY_SCOPE_MISMATCH", "temporary_failure"],
+    ["CROSS_TENANT_CANDIDATE", "administrator_action_required"],
+  ])("maps resolver failure %s to public code %s", async (code, publicCode) => {
+    const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
+    const resolveTenantEffects = vi.fn(async () => {
+      throw new TenantBoundaryError("worker_ingress", code, "Bearer secret");
+    });
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, resolveTenantEffects,
+      destinations, send: vi.fn(), updateBeforeTenant });
+    expect(await response.json()).toEqual(expect.objectContaining({ error: publicCode,
+      message_key: `tenant.${publicCode}`, correlation_id: expect.stringMatching(/^cor_/) }));
+    const projected = JSON.stringify(updateBeforeTenant.mock.calls);
+    expect(projected).toContain(`エラーコード: ${publicCode}`);
+    expect(projected).not.toContain(code);
+    expect(projected).not.toContain("Bearer secret");
+  });
+  it("classifies tenant resolution deadlines without exposing the raw timeout", async () => {
+    const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
+    const resolveTenantEffects = vi.fn(async () => { throw new DOMException("Bearer secret", "TimeoutError"); });
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, resolveTenantEffects,
+      destinations, send: vi.fn(), updateBeforeTenant });
+    expect(await response.json()).toEqual(expect.objectContaining({ error: "temporary_failure",
+      message_key: "tenant.temporary_failure", next_actions: ["retry_later"] }));
+    const projected = JSON.stringify(updateBeforeTenant.mock.calls);
+    expect(projected).toContain("エラーコード: temporary_failure");
+    expect(projected).not.toContain("Bearer secret");
+  });
+  it("keeps the public HTTP failure when a signed payload has no response_url", async () => {
+    const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
+    const resolveTenantEffects = vi.fn(async () => {
+      throw new TenantBoundaryError("worker_ingress", "WORKSPACE_CONNECTION_UNINSTALLED", "Bearer secret");
+    });
+    const response = await handleMeetingMinutesInteraction(request({ ...payload, response_url: undefined }), {
+      signingSecret: secret, expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]),
+      nowMs: now * 1000, ...tenantBoundary, resolveTenantEffects, destinations, send: vi.fn(), updateBeforeTenant,
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(expect.objectContaining({
+      error: "installation_required", correlation_id: expect.stringMatching(/^cor_/),
+    }));
+    expect(updateBeforeTenant).not.toHaveBeenCalled();
   });
   it("routes a signed task approval with the immutable payload hash", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn();

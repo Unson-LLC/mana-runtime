@@ -35,6 +35,12 @@
 - 内部エラー文字列・スタックトレース・他所のURLを外部チャンネルへ出さない
 - 成功を偽装しない: スキップ・未検証があるなら結果にそう書く
 
+### Slack interactionの認証前失敗通知
+
+Slack interactionでは、署名、時刻、workspace、app、action payloadを検証した後、テナント解決だけが失敗する場合がある。この場合に限り、署名済みpayload内の`response_url`を単回利用の通知capabilityとして使い、元メッセージへ固定された公開エラーコードと問い合わせIDを表示してよい。operator認可はtenant解決後の業務処理に適用し、認証前通知に業務副作用を持たせない。
+
+この経路はtenant-scoped deliveryの例外であり、業務副作用には使わない。通知本文へtenant情報、生の例外、認証情報を含めず、HTTPSの`hooks.slack.com`、443番、userinfoなし、redirectなしを満たすURLだけを許可する。`response_url`がない、または検査に通らない場合はSlack更新を行わず、HTTP 503の安全な失敗envelopeを診断面として残す。Slackの`response_url`からworkspace/appを独立に再導出できないため、検証済み署名payloadとの結合をcapabilityの根拠とする。
+
 ## 4. TODO
 
 - エラーパターン判定（isDeadSessionError等）の判定文字列一覧をこの文書に転記し、Claude CLI更新時の追従チェックリストにする

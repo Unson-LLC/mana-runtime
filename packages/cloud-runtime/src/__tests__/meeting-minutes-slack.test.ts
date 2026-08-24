@@ -1,6 +1,28 @@
-import { MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
+import { interactionEnqueueFailedMessage, MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
 
 describe("MeetingMinutesSlackClient", () => {
+  it("shows a stable error code and run id when a button request cannot be queued", () => {
+    const message = interactionEnqueueFailedMessage("run-42", "meeting.txt");
+    const serialized = JSON.stringify(message);
+    expect(serialized).toContain("処理ID: run-42");
+    expect(serialized).toContain("失敗段階: 処理受付");
+    expect(serialized).toContain("エラーコード: INTERACTION_ENQUEUE_FAILED");
+  });
+
+  it("prefers projection failure diagnostics when Slack status projection fails", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "failed" as const,
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1" as const, stage: "github_save" as const,
+        code: "GITHUB_SAVE_FAILED", retryable: false, failedAt: "2026-08-18T00:00:00.000Z" },
+      projectionFailure: { stage: "status_projection" as const, code: "STATUS_PROJECTION_FAILED",
+        retryable: true, failedAt: "2026-08-18T00:01:00.000Z" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
+    expect(JSON.stringify(body)).toContain("エラーコード: STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(body)).toContain("mana_meeting_minutes_choose_destination:mana");
+  });
   const routedRun = () => ({ version: 1 as const, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
     sourceThreadTs: "1.0", sourceMessageTs: "1.0", file: { id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 10 },
     status: "completed" as const, destination: { id: "mana", projectId: "mana", contextProjectCode: "mana",
