@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { assessTenantRuntimeDeploymentConfig } from "../../scripts/tenant-runtime-deploy-readiness.mjs";
 
 interface DeploymentConfig {
   account_id?: string;
@@ -206,9 +207,9 @@ describe("会社別Cloudflare deployment", () => {
       DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
     expect(JSON.parse(unson.vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON)).toEqual({
-      unson: "T07LL5WV7N1",
+      unson: { workspace_id: "T07LL5WV7N1", app_id: "A093QM6QEPP" },
       "unson-business": { workspace_id: "T0882T8N9UH", app_id: "A0BPM2J33SN" },
-      "tech-knight": "T07A9J3PEMB",
+      "tech-knight": { workspace_id: "T07A9J3PEMB", app_id: "A0A1WER0LEQ" },
     });
     expect(JSON.parse(unson.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)).toEqual([
       expect.objectContaining({
@@ -251,6 +252,14 @@ describe("会社別Cloudflare deployment", () => {
         deliveryScopes: [{ connector: "slack", channelId: "C0BMNSP6C80" }],
       },
     ]);
+  });
+
+  it("passes the actual unson-business Wrangler config through deployment preflight", () => {
+    expect(assessTenantRuntimeDeploymentConfig(unson, [
+      "SLACK_SIGNING_SECRET",
+      "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
+      "DEVELOPMENT_CALLBACK_TOKEN",
+    ])).toEqual({ ready: true, missing_bindings: [] });
   });
 
   it("Claude Codeを検証済みのexact versionへ固定する", () => {

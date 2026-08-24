@@ -18,7 +18,7 @@
   "vars": {
     "TENANT_ID": "unson-business",
     "SLACK_EXPECTED_TEAM_ID": "T0882T8N9UH",
-    "MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON": "{\"unson\":\"T07LL5WV7N1\",\"unson-business\":{\"workspace_id\":\"T0882T8N9UH\",\"app_id\":\"A0BPM2J33SN\"},\"tech-knight\":\"T07A9J3PEMB\"}",
+    "MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON": "{\"unson\":{\"workspace_id\":\"T07LL5WV7N1\",\"app_id\":\"A093QM6QEPP\"},\"unson-business\":{\"workspace_id\":\"T0882T8N9UH\",\"app_id\":\"A0BPM2J33SN\"},\"tech-knight\":{\"workspace_id\":\"T07A9J3PEMB\",\"app_id\":\"A0A1WER0LEQ\"}}",
     "SLACK_EXPECTED_APP_ID": "A0BPM2J33SN",
     "SLACK_OAUTH_APP_ID": "A0BPM2J33SN",
     "SLACK_OAUTH_CLIENT_ID": "8274926757969.11803086105906",
