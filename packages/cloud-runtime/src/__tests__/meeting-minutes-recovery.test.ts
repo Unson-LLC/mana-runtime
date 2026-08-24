@@ -69,6 +69,21 @@ describe("meeting minutes stale recovery", () => {
     expect(updateStatus).not.toHaveBeenCalled();
   });
 
+  it("starts a fresh watchdog for a newer explicit retry after an old recovery marker", async () => {
+    const fs = new MemoryFs();
+    const failed = run("failed");
+    failed.lifecycle = { actionTs: selection.actionTs, deadlineAt: new Date(1_000).toISOString(),
+      recoveryProjectionAttemptedAt: new Date(1_000).toISOString(), recoveryProjectedAt: new Date(1_000).toISOString() };
+    await saveMeetingMinutesRun(fs, failed);
+    const retried = await armMeetingMinutesRecovery(fs, { ...selection, actionTs: "4.1" }, 2_000);
+    expect(retried.terminal).toBe(false);
+    expect(retried.delaySeconds).toBe(20 * 60);
+    const retriedRun = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(retriedRun).toMatchObject({ lifecycle: { actionTs: "4.1" } });
+    expect(retriedRun?.lifecycle).not.toHaveProperty("recoveryProjectionAttemptedAt");
+    expect(retriedRun?.lifecycle).not.toHaveProperty("recoveryProjectedAt");
+  });
+
   it("uses one non-recursive fallback when stale recovery status projection fails", async () => {
     const fs = new MemoryFs(); await saveMeetingMinutesRun(fs, run());
     const armed = await armMeetingMinutesRecovery(fs, selection, 1_000);
@@ -85,6 +100,32 @@ describe("meeting minutes stale recovery", () => {
       }) }), "failed", expect.objectContaining({ stage: "status_projection" }));
     expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
       projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED" },
+      lifecycle: { recoveryProjectionAttemptedAt: expect.any(String), recoveryProjectedAt: expect.any(String) },
     });
+    expect(await recoverStaleMeetingMinutesRun(fs, armed.event, {
+      now: () => 9_999_999, updateStatus, fallbackStatus,
+    })).toBe("terminal");
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(fallbackStatus).toHaveBeenCalledOnce();
+  });
+
+  it("marks a failed fallback attempt terminal without masking the original projection error", async () => {
+    const fs = new MemoryFs(); await saveMeetingMinutesRun(fs, run());
+    const armed = await armMeetingMinutesRecovery(fs, selection, 1_000);
+    const updateStatus = vi.fn().mockRejectedValue(new Error("slack update down"));
+    const fallbackStatus = vi.fn().mockRejectedValue(new Error("fallback unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(recoverStaleMeetingMinutesRun(fs, armed.event, {
+      now: () => 1_000 + 20 * 60 * 1_000, updateStatus, fallbackStatus,
+    })).rejects.toThrow("slack update down");
+    expect(await recoverStaleMeetingMinutesRun(fs, armed.event, {
+      now: () => 9_999_999, updateStatus, fallbackStatus,
+    })).toBe("terminal");
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(fallbackStatus).toHaveBeenCalledOnce();
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      lifecycle: { recoveryProjectionAttemptedAt: expect.any(String) },
+    });
+    consoleError.mockRestore();
   });
 });

@@ -200,6 +200,54 @@ function guardedSlackEffect(
 }
 
 /**
+ * A response_url is a capability from the signed Slack payload, but it is not
+ * safe to use it when tenant resolution did not establish which installation
+ * owns that payload.  Keep this gate explicit so a resolver can still surface
+ * typed transient/authentication failures without turning an unknown binding
+ * into a user-visible side channel.
+ */
+const TENANT_RESPONSE_URL_ELIGIBLE_CODES = new Set([
+  // Installation/authentication state is actionable for the signed Slack user.
+  "INSTALLATION_REQUIRED",
+  "WORKSPACE_CONNECTION_UNINSTALLED",
+  "WORKSPACE_CONNECTION_REAUTH_REQUIRED",
+  "WORKSPACE_CONNECTION_REVOKED",
+  "CREDENTIAL_LEASE_EXPIRED",
+  "CREDENTIAL_LEASE_INVALID",
+  // Known transient failures may be safely surfaced without revealing a binding.
+  "UPSTREAM_UNAVAILABLE",
+  "WORKSPACE_CONNECTION_UNAVAILABLE",
+  "QUOTA_EXCEEDED",
+  // These are emitted after the resolver has a typed tenant boundary.
+  "TENANT_CONTEXT_SIGNATURE_INVALID",
+  "TENANT_CONTEXT_INVALID",
+  "TENANT_CONTEXT_MISSING",
+  "TENANT_CONTEXT_EXPIRED",
+  "TENANT_CONTEXT_REQUIRED",
+  "WORKSPACE_CONNECTION_STALE_REVISION",
+  "WORKSPACE_SCOPE_INSUFFICIENT",
+  "ACTOR_SCOPE_MISMATCH",
+  "PROJECT_SCOPE_MISMATCH",
+  "CAPABILITY_SCOPE_MISMATCH",
+  "AUDIENCE_SCOPE_MISMATCH",
+  "DELIVERY_SCOPE_MISMATCH",
+  "CROSS_TENANT_CANDIDATE",
+  "PROTOCOL_VERSION_UNSUPPORTED",
+  "PROTOCOL_CAPABILITY_UNSUPPORTED",
+  "QUOTA_APPROVAL_REQUIRED",
+  "REPLY_OWNERSHIP_CONFLICT",
+]);
+
+export function isTenantFailureResponseUrlEligible(error: unknown): boolean {
+  // Untyped errors retain the existing transient/authentication behavior. A
+  // typed boundary error must be explicitly known to be safe; this also
+  // excludes TENANT_UNKNOWN, TENANT_AMBIGUOUS, WORKSPACE_OR_APP_MISMATCH, and
+  // any new binding code until its notification policy is reviewed.
+  const code = error instanceof TenantBoundaryError ? error.code : string(object(error)?.code);
+  return !code || TENANT_RESPONSE_URL_ELIGIBLE_CODES.has(code);
+}
+
+/**
  * Attempt exactly one safe update of the original interaction message. This is a
  * fallback, not a retry loop: failures are represented by a fixed public code and
  * never recurse back into the projection path.
@@ -378,7 +426,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     const failure = createUserFailure({ error, correlation_id: correlationId });
     const responseUrl = slackResponseUrl(payload?.response_url);
     const runId = string(actionValue?.runId) ?? interactionId;
-    if (responseUrl && options.updateBeforeTenant && isMeetingMinutesInteractionAction(actionId)) {
+    if (responseUrl && options.updateBeforeTenant && isMeetingMinutesInteractionAction(actionId) &&
+      isTenantFailureResponseUrlEligible(error)) {
       const notice = options.updateBeforeTenant(responseUrl,
         tenantInteractionFailedMessage(runId, string(actionValue?.fileName) ?? "議事録", failure)).catch(() => {
           console.error(JSON.stringify({ event: "meeting_minutes_tenant_failure_projection_failed", runId,
@@ -420,14 +469,30 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   if (options.isIntakePaused && await options.isIntakePaused()) {
     const responseUrl = slackResponseUrl(payload?.response_url);
     if (responseUrl && options.updateOriginal && options.defer) {
-      options.defer(guardedSlackEffect(tenantEffects, `intake-paused:${interactionId}`,
-        target(channelId, sourceThreadTs), { kind: "intake_paused" },
-        (credentialFetch) => options.updateOriginal!(responseUrl, {
-          replace_original: true,
-          text: "議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。",
-          blocks: [{ type: "section", text: { type: "mrkdwn",
-            text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。" } }],
-        }, credentialFetch)));
+      options.defer((async () => {
+        try {
+          await guardedSlackEffect(tenantEffects, `intake-paused:${interactionId}`,
+            target(channelId, sourceThreadTs), { kind: "intake_paused" },
+            (credentialFetch) => options.updateOriginal!(responseUrl, {
+              replace_original: true,
+              text: "議事録の新規受付は一時停止中です。復旧後にもう一度選択してください。",
+              blocks: [{ type: "section", text: { type: "mrkdwn",
+                text: ":warning: *議事録の新規受付は一時停止中です*\n復旧後にもう一度選択してください。" } }],
+            }, credentialFetch));
+        } catch {
+          await attemptInteractionFailureProjection({
+            effects: tenantEffects,
+            effectId: `intake-paused-projection:${interactionId}`,
+            effectTarget: target(channelId, sourceThreadTs),
+            effect: { kind: "intake_paused_projection_fallback", interactionId },
+            responseUrl,
+            runId: runId ?? interactionId,
+            message: statusProjectionFailedMessage(runId ?? interactionId, fileName ?? "議事録"),
+            options,
+            failureEvent: "meeting_minutes_intake_paused_projection_failed",
+          });
+        }
+      })());
     }
     return Response.json({ ok: true, intake_paused: true });
   }
@@ -536,9 +601,25 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         ? projectSelectionMessage(runId, fileName, organizationId ?? "", destinations)
         : organizationSelectionMessage(runId, fileName, destinations);
     } catch { return response("slack_interaction_invalid", 400); }
-    options.defer(guardedSlackEffect(tenantEffects, `destination-menu:${runId}:${organizationId ?? "root"}`,
-      target(channelId, sourceThreadTs), { kind: organizationAction ? "project_selection" : "organization_selection", runId },
-      (credentialFetch) => options.updateOriginal!(responseUrl, message, credentialFetch)));
+    options.defer((async () => {
+      try {
+        await guardedSlackEffect(tenantEffects, `destination-menu:${runId}:${organizationId ?? "root"}`,
+          target(channelId, sourceThreadTs), { kind: organizationAction ? "project_selection" : "organization_selection", runId },
+          (credentialFetch) => options.updateOriginal!(responseUrl, message, credentialFetch));
+      } catch {
+        await attemptInteractionFailureProjection({
+          effects: tenantEffects,
+          effectId: `destination-menu-projection:${runId}:${organizationId ?? "root"}`,
+          effectTarget: target(channelId, sourceThreadTs),
+          effect: { kind: "destination_menu_projection_fallback", runId },
+          responseUrl,
+          runId,
+          message: statusProjectionFailedMessage(runId, fileName),
+          options,
+          failureEvent: "meeting_minutes_destination_menu_projection_failed",
+        });
+      }
+    })());
     return Response.json({ ok: true });
   }
   if (!runId || !destinationId || !channelId || !actionTs || !options.defer) {
@@ -663,9 +744,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         effect: { kind: "status_projection_fallback", runId },
         responseUrl,
         runId,
-        message: selectionConfirmationFailed
-          ? selectionConfirmationFailedMessage(runId, fileName ?? "議事録")
-          : immediateStatusFailedMessage(runId, fileName ?? "議事録"),
+        message: immediateStatusFailed && selectionConfirmationFailed
+          ? statusProjectionFailedMessage(runId, fileName ?? "議事録")
+          : selectionConfirmationFailed
+            ? selectionConfirmationFailedMessage(runId, fileName ?? "議事録")
+            : immediateStatusFailedMessage(runId, fileName ?? "議事録"),
         options,
         failureEvent: "meeting_minutes_interaction_status_failure_projection_failed",
       });

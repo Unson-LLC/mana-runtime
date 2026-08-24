@@ -195,6 +195,8 @@ export interface MeetingMinutesRun {
     actionTs: string;
     deadlineAt: string;
     recoveredAt?: string;
+    /** A failed recovery projection has been attempted; redelivery must not repeat it. */
+    recoveryProjectionAttemptedAt?: string;
     recoveryProjectedAt?: string;
   };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */

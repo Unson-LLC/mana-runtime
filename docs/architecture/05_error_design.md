@@ -41,6 +41,10 @@ Slack interactionでは、署名、時刻、workspace、app、action payloadを�
 
 この経路はtenant-scoped deliveryの例外であり、業務副作用には使わない。通知本文へtenant情報、生の例外、認証情報を含めず、HTTPSの`hooks.slack.com`、443番、userinfoなし、redirectなしを満たすURLだけを許可する。`response_url`がない、または検査に通らない場合はSlack更新を行わず、HTTP 503の安全な失敗envelopeを診断面として残す。Slackの`response_url`からworkspace/appを独立に再導出できないため、検証済み署名payloadとの結合をcapabilityの根拠とする。
 
+ただし、テナント解決がworkspace/appの所有関係を確定できなかった場合は、このcapabilityを使わない。`TENANT_UNKNOWN`、`TENANT_AMBIGUOUS`、`WORKSPACE_OR_APP_MISMATCH` はresponse_url通知の対象外とし、未分類の新しい境界コードも同じくfail-closedで扱う。既知の一時障害、インストール不足、再認証要求など、署名済みpayloadと既知の接続境界に結び付く失敗だけを明示的なeligibility gateで許可する。
+
+状態投影は主経路1回、`STATUS_PROJECTION_FAILED`への安全なfallback 1回までとする。intake停止中・組織選択・戻る操作の非同期投影も同じガードを通し、fallback自身の失敗を非同期rejectとして残さない。即時状態表示と選択確認が同時に失敗した場合の公開コードは`STATUS_PROJECTION_FAILED`に固定する。stale recoveryはfallbackの成否をdurable markerへ記録し、再配信時に投影を重複実行しない。ただし元の処理エラーは保持してQueueの処理契約を変えない。
+
 ## 4. TODO
 
 - エラーパターン判定（isDeadSessionError等）の判定文字列一覧をこの文書に転記し、Claude CLI更新時の追従チェックリストにする

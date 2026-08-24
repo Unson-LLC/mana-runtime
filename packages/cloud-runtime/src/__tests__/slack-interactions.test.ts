@@ -124,6 +124,23 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(JSON.stringify(message)).not.toContain("Back Office");
     expect(JSON.stringify(message)).toContain("組織選択に戻る");
   });
+  it("uses a bounded public fallback when the organization selector projection fails", async () => {
+    const organizationPayload = structuredClone(payload);
+    organizationPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_organization:tech-knight";
+    organizationPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", organizationId: "tech-knight",
+      fileName: "定例.txt" });
+    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("selector unavailable"))
+      .mockResolvedValueOnce(undefined); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(organizationPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200);
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
+  });
   it("returns to the organization selector without queueing", async () => {
     const backPayload = structuredClone(payload);
     backPayload.actions[0]!.action_id = "mana_meeting_minutes_back_to_organizations";
@@ -226,6 +243,21 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(fallback).toContain("IMMEDIATE_STATUS_FAILED");
     expect(fallback).toContain("処理ID: Ev1_F1");
     expect(fallback).toContain("失敗段階: 状態表示");
+  });
+  it("uses one deterministic compound code when both status projections fail", async () => {
+    const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("status unavailable"));
+    const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("selection unavailable"))
+      .mockResolvedValueOnce(undefined); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, showProcessing, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200);
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    expect(send).toHaveBeenCalledOnce();
+    const fallback = JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1]);
+    expect(fallback).toContain("STATUS_PROJECTION_FAILED");
+    expect(fallback).not.toContain("IMMEDIATE_STATUS_FAILED");
+    expect(fallback).not.toContain("SELECTION_CONFIRMATION_FAILED");
   });
   it("still queues when the selection confirmation update fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -414,6 +446,19 @@ describe("handleMeetingMinutesInteraction", () => {
       text: expect.stringContaining("受付は一時停止中"),
     }), expect.any(Function));
   });
+  it("uses a bounded public fallback when the intake-paused projection fails", async () => {
+    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("pause projection unavailable"))
+      .mockResolvedValueOnce(undefined); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations: [], send, updateOriginal,
+      isIntakePaused: vi.fn().mockResolvedValue(true), defer: background.defer });
+    expect(response.status).toBe(200);
+    await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
+  });
   it("delegates router channel authorization to the canonical tenant authority", async () => {
     const send = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const resolveTenantEffects = vi.fn(async () => { throw new Error("channel_scope_mismatch"); });
@@ -449,24 +494,26 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(projected).not.toContain("Bearer secret");
   });
   it.each([
-    ["INSTALLATION_REQUIRED", "installation_required"],
-    ["WORKSPACE_CONNECTION_UNINSTALLED", "installation_required"],
-    ["QUOTA_EXCEEDED", "usage_limit_reached"],
-    ["TENANT_CONTEXT_SIGNATURE_INVALID", "temporary_failure"],
-    ["TENANT_UNKNOWN", "administrator_action_required"], ["UPSTREAM_UNAVAILABLE", "temporary_failure"],
-    ["WORKSPACE_CONNECTION_UNAVAILABLE", "temporary_failure"],
-    ["WORKSPACE_CONNECTION_REAUTH_REQUIRED", "reauthentication_required"],
-    ["WORKSPACE_CONNECTION_REVOKED", "reauthentication_required"],
-    ["WORKSPACE_CONNECTION_STALE_REVISION", "administrator_action_required"],
-    ["WORKSPACE_SCOPE_INSUFFICIENT", "administrator_action_required"],
-    ["WORKSPACE_OR_APP_MISMATCH", "administrator_action_required"],
-    ["AUDIENCE_SCOPE_MISMATCH", "temporary_failure"],
-    ["CAPABILITY_SCOPE_MISMATCH", "administrator_action_required"],
-    ["PROJECT_SCOPE_MISMATCH", "administrator_action_required"],
-    ["ACTOR_SCOPE_MISMATCH", "administrator_action_required"],
-    ["DELIVERY_SCOPE_MISMATCH", "temporary_failure"],
-    ["CROSS_TENANT_CANDIDATE", "administrator_action_required"],
-  ])("maps resolver failure %s to public code %s", async (code, publicCode) => {
+    ["INSTALLATION_REQUIRED", "installation_required", true],
+    ["WORKSPACE_CONNECTION_UNINSTALLED", "installation_required", true],
+    ["QUOTA_EXCEEDED", "usage_limit_reached", true],
+    ["TENANT_CONTEXT_SIGNATURE_INVALID", "temporary_failure", true],
+    ["TENANT_UNKNOWN", "administrator_action_required", false],
+    ["TENANT_AMBIGUOUS", "administrator_action_required", false],
+    ["UPSTREAM_UNAVAILABLE", "temporary_failure", true],
+    ["WORKSPACE_CONNECTION_UNAVAILABLE", "temporary_failure", true],
+    ["WORKSPACE_CONNECTION_REAUTH_REQUIRED", "reauthentication_required", true],
+    ["WORKSPACE_CONNECTION_REVOKED", "reauthentication_required", true],
+    ["WORKSPACE_CONNECTION_STALE_REVISION", "administrator_action_required", true],
+    ["WORKSPACE_SCOPE_INSUFFICIENT", "administrator_action_required", true],
+    ["WORKSPACE_OR_APP_MISMATCH", "administrator_action_required", false],
+    ["AUDIENCE_SCOPE_MISMATCH", "temporary_failure", true],
+    ["CAPABILITY_SCOPE_MISMATCH", "administrator_action_required", true],
+    ["PROJECT_SCOPE_MISMATCH", "administrator_action_required", true],
+    ["ACTOR_SCOPE_MISMATCH", "administrator_action_required", true],
+    ["DELIVERY_SCOPE_MISMATCH", "temporary_failure", true],
+    ["CROSS_TENANT_CANDIDATE", "administrator_action_required", true],
+  ])("maps resolver failure %s to public code %s and notification eligibility %s", async (code, publicCode, shouldProject) => {
     const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
     const resolveTenantEffects = vi.fn(async () => {
       throw new TenantBoundaryError("worker_ingress", code, "Bearer secret");
@@ -477,10 +524,14 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send: vi.fn(), updateBeforeTenant });
     expect(await response.json()).toEqual(expect.objectContaining({ error: publicCode,
       message_key: `tenant.${publicCode}`, correlation_id: expect.stringMatching(/^cor_/) }));
-    const projected = JSON.stringify(updateBeforeTenant.mock.calls);
-    expect(projected).toContain(`エラーコード: ${publicCode}`);
-    expect(projected).not.toContain(code);
-    expect(projected).not.toContain("Bearer secret");
+    if (shouldProject) {
+      const projected = JSON.stringify(updateBeforeTenant.mock.calls);
+      expect(projected).toContain(`エラーコード: ${publicCode}`);
+      expect(projected).not.toContain(code);
+      expect(projected).not.toContain("Bearer secret");
+    } else {
+      expect(updateBeforeTenant).not.toHaveBeenCalled();
+    }
   });
   it("classifies tenant resolution deadlines without exposing the raw timeout", async () => {
     const updateBeforeTenant = vi.fn().mockResolvedValue(undefined);
