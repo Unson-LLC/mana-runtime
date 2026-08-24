@@ -1,4 +1,5 @@
 import type { MeetingMinutesRecovery, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { classifyMeetingMinutesFailure } from "./meeting-minutes-diagnostics.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
@@ -45,6 +46,9 @@ export async function armMeetingMinutesRecovery(fs: WorkspaceFs, selection: Meet
 export interface MeetingMinutesRecoveryOptions {
   now?: () => number;
   updateStatus(run: MeetingMinutesRun, outcome: "failed"): Promise<void>;
+  /** One-shot fallback; it must not call updateStatus or re-enter recovery. */
+  fallbackStatus?(run: MeetingMinutesRun, outcome: "failed",
+    failure: NonNullable<MeetingMinutesRun["projectionFailure"]>): Promise<void>;
 }
 
 export async function recoverStaleMeetingMinutesRun(fs: WorkspaceFs, event: MeetingMinutesRecovery,
@@ -63,7 +67,25 @@ export async function recoverStaleMeetingMinutesRun(fs: WorkspaceFs, event: Meet
   run.lifecycle.recoveredAt ??= new Date(now).toISOString();
   run.updatedAt = new Date(now).toISOString();
   await saveMeetingMinutesRun(fs, run);
-  await options.updateStatus(run, "failed");
+  try {
+    await options.updateStatus(run, "failed");
+  } catch (error) {
+    const classified = classifyMeetingMinutesFailure("status_projection", error);
+    run.projectionFailure = { stage: "status_projection", code: classified.code!, retryable: classified.retryable!,
+      failedAt: new Date().toISOString() };
+    run.updatedAt = run.projectionFailure.failedAt;
+    await saveMeetingMinutesRun(fs, run);
+    if (options.fallbackStatus) {
+      try {
+        await options.fallbackStatus(run, "failed", run.projectionFailure);
+      } catch {
+        console.error(JSON.stringify({ event: "meeting_minutes_recovery_status_projection_fallback_failed",
+          runId: run.runId, outcome: "failed", stage: "status_projection",
+          code: "STATUS_PROJECTION_FAILED", retryable: true }));
+      }
+    }
+    throw error;
+  }
   run.lifecycle.recoveryProjectedAt = new Date(now).toISOString();
   run.updatedAt = new Date(now).toISOString();
   await saveMeetingMinutesRun(fs, run);

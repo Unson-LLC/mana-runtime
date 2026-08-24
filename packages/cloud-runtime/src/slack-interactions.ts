@@ -4,7 +4,8 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   type MeetingMinutesRedo, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
 import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
-  interactionEnqueueFailedMessage, redoFailedMessage, redoProcessingMessage,
+  immediateStatusFailedMessage, interactionEnqueueFailedMessage, redoFailedMessage, redoProcessingMessage,
+  selectionConfirmationFailedMessage, statusProjectionFailedMessage, threadCoordinateMissingMessage,
   tenantInteractionFailedMessage, MeetingMinutesSlackClient, type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { TenantBoundaryError } from "./multitenancy/errors.js";
 import { createUserFailure } from "./multitenancy/failure.js";
@@ -198,6 +199,34 @@ function guardedSlackEffect(
   return effects.slackDelivery(effectId, effectTarget, event, execute);
 }
 
+/**
+ * Attempt exactly one safe update of the original interaction message. This is a
+ * fallback, not a retry loop: failures are represented by a fixed public code and
+ * never recurse back into the projection path.
+ */
+async function attemptInteractionFailureProjection(input: {
+  effects: TenantInteractionEffects;
+  effectId: string;
+  effectTarget: TenantInteractionTarget;
+  effect: unknown;
+  responseUrl: string | undefined;
+  runId: string;
+  message: SlackInteractionMessage;
+  options: InteractionOptions;
+  failureEvent: string;
+}): Promise<boolean> {
+  if (!input.responseUrl || !input.options.updateOriginal) return false;
+  try {
+    await guardedSlackEffect(input.effects, input.effectId, input.effectTarget, input.effect,
+      (credentialFetch) => input.options.updateOriginal!(input.responseUrl!, input.message, credentialFetch));
+    return true;
+  } catch {
+    console.error(JSON.stringify({ event: input.failureEvent, runId: input.runId,
+      stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+    return false;
+  }
+}
+
 function slackResponseUrl(value: unknown): string | undefined {
   const raw = string(value);
   if (!raw) return undefined;
@@ -389,7 +418,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const organizationId = string(value?.organizationId); const fileName = string(value?.fileName);
   const sourceThreadTs = threadTsCandidates[0];
   if (options.isIntakePaused && await options.isIntakePaused()) {
-    const responseUrl = string(payload?.response_url);
+    const responseUrl = slackResponseUrl(payload?.response_url);
     if (responseUrl && options.updateOriginal && options.defer) {
       options.defer(guardedSlackEffect(tenantEffects, `intake-paused:${interactionId}`,
         target(channelId, sourceThreadTs), { kind: "intake_paused" },
@@ -406,29 +435,46 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   try { destinations = options.destinations ?? options.resolveDestinations?.(); }
   catch { return response("slack_interaction_invalid", 400); }
   if (redoAction) {
-    const responseUrl = string(payload?.response_url);
+    const responseUrl = slackResponseUrl(payload?.response_url);
     if (!runId || !fileName || !responseUrl || !options.updateOriginal || !options.defer) {
       return response("slack_interaction_invalid", 400);
     }
-    options.defer(guardedSlackEffect(tenantEffects, `redo-confirm:${runId}`,
-      target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId },
-      (credentialFetch) => options.updateOriginal!(
-        responseUrl, redoConfirmationMessage(runId, fileName), credentialFetch)));
+    options.defer((async () => {
+      try {
+        await guardedSlackEffect(tenantEffects, `redo-confirm:${runId}`,
+          target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId },
+          (credentialFetch) => options.updateOriginal!(
+            responseUrl, redoConfirmationMessage(runId, fileName), credentialFetch));
+      } catch {
+        await attemptInteractionFailureProjection({
+          effects: tenantEffects,
+          effectId: `redo-confirm-projection:${runId}`,
+          effectTarget: target(channelId, sourceThreadTs),
+          effect: { kind: "redo_confirmation_projection_fallback", runId },
+          responseUrl,
+          runId,
+          message: statusProjectionFailedMessage(runId, fileName),
+          options,
+          failureEvent: "meeting_minutes_redo_confirmation_failure_projection_failed",
+        });
+      }
+    })());
     return Response.json({ ok: true });
   }
   if (confirmRedoAction) {
-    const responseUrl = string(payload?.response_url);
+    const responseUrl = slackResponseUrl(payload?.response_url);
     if (!runId || !fileName || !channelId || !sourceThreadTs || !actionTs || !responseUrl ||
       !options.updateOriginal || !options.defer) {
       return response("slack_interaction_invalid", 400);
     }
     options.defer((async () => {
+      let processingProjectionFailed = false;
       try {
         await guardedSlackEffect(tenantEffects, `redo-processing:${runId}`,
           target(channelId, sourceThreadTs), { kind: "redo_processing", runId },
-          (credentialFetch) => options.updateOriginal!(responseUrl, redoProcessingMessage(fileName), credentialFetch));
-      }
-      catch (error) {
+          (credentialFetch) => options.updateOriginal!(responseUrl, redoProcessingMessage(fileName, runId), credentialFetch));
+      } catch {
+        processingProjectionFailed = true;
         console.error(JSON.stringify({ event: "meeting_minutes_redo_processing_projection_failed", runId,
           stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
       }
@@ -444,17 +490,39 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
             target(channelId, sourceThreadTs), { kind: "redo_failed", runId },
             (credentialFetch) => options.updateOriginal!(responseUrl,
               redoFailedMessage(runId, fileName), credentialFetch));
+        } catch {
+          await attemptInteractionFailureProjection({
+            effects: tenantEffects,
+            effectId: `redo-failed-projection:${runId}`,
+            effectTarget: target(channelId, sourceThreadTs),
+            effect: { kind: "redo_failure_projection_fallback", runId },
+            responseUrl,
+            runId,
+            message: statusProjectionFailedMessage(runId, fileName),
+            options,
+            failureEvent: "meeting_minutes_redo_enqueue_failure_projection_failed",
+          });
         }
-        catch (projectionError) {
-          console.error(JSON.stringify({ event: "meeting_minutes_redo_enqueue_failure_projection_failed", runId,
-            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
-        }
+        return;
+      }
+      if (processingProjectionFailed) {
+        await attemptInteractionFailureProjection({
+          effects: tenantEffects,
+          effectId: `redo-processing-projection:${runId}`,
+          effectTarget: target(channelId, sourceThreadTs),
+          effect: { kind: "redo_processing_projection_fallback", runId },
+          responseUrl,
+          runId,
+          message: statusProjectionFailedMessage(runId, fileName),
+          options,
+          failureEvent: "meeting_minutes_redo_processing_failure_projection_failed",
+        });
       }
     })());
     return Response.json({ ok: true });
   }
   if ((organizationAction || backAction)) {
-    const responseUrl = string(payload?.response_url);
+    const responseUrl = slackResponseUrl(payload?.response_url);
     const actionOrganizationId = organizationAction
       ? actionId?.slice(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`.length)
       : undefined;
@@ -485,7 +553,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   }
   const destination = destinations?.find((item) => item.id === destinationId);
   options.defer((async () => {
-    const responseUrl = string(payload?.response_url);
+    const responseUrl = slackResponseUrl(payload?.response_url);
     let feedbackThreadTs: string | undefined = sourceThreadTs;
     if (!feedbackThreadTs && options.resolveThreadTs) {
       try {
@@ -501,20 +569,21 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     if (!feedbackThreadTs || !timestampPattern.test(feedbackThreadTs)) {
       console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_missing", runId,
         stage: "interaction_enqueue", code: "THREAD_COORDINATE_MISSING", retryable: true }));
-      if (responseUrl && options.updateOriginal) {
-        try {
-          await guardedSlackEffect(tenantEffects, `thread-coordinate-failed:${runId}`,
-            target(channelId, undefined), { kind: "thread_coordinate_failed", runId },
-            (credentialFetch) => options.updateOriginal!(responseUrl,
-              interactionEnqueueFailedMessage(runId, fileName ?? "議事録"), credentialFetch));
-        } catch {
-          console.error(JSON.stringify({ event: "meeting_minutes_thread_coordinate_failure_projection_failed", runId,
-            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
-        }
-      }
+      await attemptInteractionFailureProjection({
+        effects: tenantEffects,
+        effectId: `thread-coordinate-failed:${runId}`,
+        effectTarget: target(channelId, undefined),
+        effect: { kind: "thread_coordinate_failed", runId },
+        responseUrl,
+        runId,
+        message: threadCoordinateMissingMessage(runId, fileName ?? "議事録"),
+        options,
+        failureEvent: "meeting_minutes_thread_coordinate_failure_projection_failed",
+      });
       return;
     }
     let processingShown = false;
+    let immediateStatusFailed = false;
     if (options.showProcessing && feedbackThreadTs && timestampPattern.test(feedbackThreadTs) && destination) {
       try {
         await guardedSlackEffect(tenantEffects, `processing-show:${runId}:${destination.id}`,
@@ -522,24 +591,26 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           (credentialFetch) => options.showProcessing!(
             { channelId, threadTs: feedbackThreadTs!, destinationName: destination.name }, credentialFetch));
         processingShown = true;
-      } catch (error) {
+      } catch {
+        immediateStatusFailed = true;
         console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
-          stage: "interaction_enqueue", code: "IMMEDIATE_STATUS_FAILED", retryable: true }));
+          stage: "status_projection", code: "IMMEDIATE_STATUS_FAILED", retryable: true }));
+      }
+    }
+    let selectionConfirmationFailed = false;
+    if (responseUrl && options.updateOriginal && destination && fileName) {
+      try {
+        await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
+          target(channelId, feedbackThreadTs), { kind: "destination_confirmation", runId, destinationId: destination.id },
+          (credentialFetch) => options.updateOriginal!(
+            responseUrl, destinationSelectedMessage(runId, fileName, destination), credentialFetch));
+      } catch {
+        selectionConfirmationFailed = true;
+        console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
+          stage: "status_projection", code: "SELECTION_CONFIRMATION_FAILED", retryable: true }));
       }
     }
     try {
-      if (responseUrl && options.updateOriginal && destination && fileName) {
-        try {
-          await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
-            target(channelId, feedbackThreadTs), { kind: "destination_confirmation", runId, destinationId: destination.id },
-            (credentialFetch) => options.updateOriginal!(
-              responseUrl, destinationSelectedMessage(runId, fileName, destination), credentialFetch));
-        }
-        catch (error) {
-          console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
-            stage: "interaction_enqueue", code: "SELECTION_CONFIRMATION_FAILED", retryable: true }));
-        }
-      }
       await options.send({ kind: "meeting_minutes_selection", runId, destinationId,
         workspaceId: interactionWorkspaceId, appId,
         channelId, threadTs: feedbackThreadTs, userId, actionTs });
@@ -569,11 +640,35 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
                 ? tenantInteractionFailedMessage(runId, fileName ?? "議事録", failure)
                 : interactionEnqueueFailedMessage(runId, fileName ?? "議事録"), credentialFetch));
         } catch {
-          console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failure_projection_failed", runId,
-            stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+          await attemptInteractionFailureProjection({
+            effects: tenantEffects,
+            effectId: `enqueue-failed-projection:${runId}`,
+            effectTarget: target(channelId, feedbackThreadTs),
+            effect: { kind: "enqueue_failure_projection_fallback", runId },
+            responseUrl,
+            runId,
+            message: statusProjectionFailedMessage(runId, fileName ?? "議事録"),
+            options,
+            failureEvent: "meeting_minutes_interaction_enqueue_failure_projection_failed",
+          });
         }
       }
       return;
+    }
+    if (selectionConfirmationFailed || immediateStatusFailed) {
+      await attemptInteractionFailureProjection({
+        effects: tenantEffects,
+        effectId: `status-failed:${runId}`,
+        effectTarget: target(channelId, feedbackThreadTs),
+        effect: { kind: "status_projection_fallback", runId },
+        responseUrl,
+        runId,
+        message: selectionConfirmationFailed
+          ? selectionConfirmationFailedMessage(runId, fileName ?? "議事録")
+          : immediateStatusFailedMessage(runId, fileName ?? "議事録"),
+        options,
+        failureEvent: "meeting_minutes_interaction_status_failure_projection_failed",
+      });
     }
   })());
   return Response.json({ ok: true });

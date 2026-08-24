@@ -799,6 +799,11 @@ function meetingMinutesClients(
         effects.slack(`source-status:${run.runId}:${outcome}`,
           { kind: "source_status", runId: run.runId, outcome },
           (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome)),
+      fallbackStatus: (run: MeetingMinutesRun,
+        outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
+        effects.slack(`source-status-fallback:${run.runId}:${outcome}`,
+          { kind: "source_status_fallback", runId: run.runId, outcome },
+          (credentialFetch) => sourceSlack(credentialFetch).projectStatusFailure(run)),
       downloadTextFile: (fileId: string) => effects.boundary("slack_delivery",
         (credentialFetch) => sourceSlack(credentialFetch).downloadTextFile(fileId)),
       requestDestination: (run: MeetingMinutesRun,
@@ -1481,6 +1486,7 @@ async function processTenantMeetingMinutesSelection(input: {
       try {
         await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, config, clients.resume, {
           updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
+          fallbackStatus: (run, outcome) => clients.slack.fallbackStatus(run, outcome),
           logProjectionError: (entry) => console.warn(JSON.stringify({
             event: "meeting_minutes_status_projection_failed", ...entry,
           })),
@@ -1520,9 +1526,11 @@ async function processTenantMeetingMinutesRecovery(input: {
       ));
       const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
       return withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+        const clients = meetingMinutesClients(env, effects);
         const outcome = await recoverStaleMeetingMinutesRun(workspace.fs, recovery, {
           now: () => Date.parse(now()),
-          updateStatus: (run) => meetingMinutesClients(env, effects).slack.updateRunStatus(run, "failed"),
+          updateStatus: (run) => clients.slack.updateRunStatus(run, "failed"),
+          fallbackStatus: (run, outcome) => clients.slack.fallbackStatus(run, outcome),
         });
         if (outcome === "not_due") deny("queue_consumer", "UPSTREAM_UNAVAILABLE");
         await meetingMinutesDeploymentGate(env, tenantContext.tenant.tenant_id).markTerminal(recovery.runId);

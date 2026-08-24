@@ -272,6 +272,18 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).toContain("mana_meeting_minutes_confirm_redo");
   });
 
+  it("uses one bounded safe projection when the redo failure notice cannot be posted", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return bodies.length === 1 ? Response.json({ ok: false, error: "message_not_found" }) : Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl).showRedoFailure(routedRun());
+    expect(bodies).toHaveLength(2);
+    expect(JSON.stringify(bodies[1])).toContain("STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(bodies[1])).toContain("処理ID: run-1");
+  });
+
   it("explains how to recover when the destination Slack channel is unavailable", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

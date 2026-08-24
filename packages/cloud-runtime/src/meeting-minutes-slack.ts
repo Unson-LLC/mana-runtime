@@ -63,11 +63,46 @@ export function redoConfirmationMessage(runId: string, fileName: string): SlackS
   ] };
 }
 
-export function redoProcessingMessage(fileName: string): SlackSelectionMessage {
+export function redoProcessingMessage(fileName: string, runId?: string): SlackSelectionMessage {
+  const processingDetails = runId ? `\n処理ID: ${runId}` : "";
   return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先をやり直しています。`, blocks: [
     { type: "section", text: { type: "mrkdwn",
-      text: `:hourglass_flowing_sand: *保存先をやり直しています…*\n旧保存先の議事録とタスクを取り消したあと、保存先選択へ切り替えます。` } },
+      text: `:hourglass_flowing_sand: *保存先をやり直しています…*${processingDetails}\n旧保存先の議事録とタスクを取り消したあと、保存先選択へ切り替えます。` } },
   ] };
+}
+
+function publicFailureMessage(runId: string, fileName: string, stage: string, code: string,
+  headline: string, instruction: string): SlackSelectionMessage {
+  const safeFileName = escapeUntrustedSlackMrkdwn(fileName);
+  const details = `処理ID: ${runId}\n失敗段階: ${stage}\nエラーコード: ${code}`;
+  return { replace_original: true,
+    text: `${safeFileName} ${headline} エラーコード: ${code}`,
+    blocks: [{ type: "section", text: { type: "mrkdwn",
+      text: `:warning: *${headline}*\n${details}\n${instruction}` } }] };
+}
+
+/** Stable public failure shown when the interaction could not identify the source thread. */
+export function threadCoordinateMissingMessage(runId: string, fileName: string): SlackSelectionMessage {
+  return publicFailureMessage(runId, fileName, "スレッド特定", "THREAD_COORDINATE_MISSING",
+    "議事録処理のスレッドを特定できませんでした。", "元の投稿からもう一度保存先を選択してください。");
+}
+
+/** Stable public failure shown when the short-lived Slack status projection fails. */
+export function immediateStatusFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
+  return publicFailureMessage(runId, fileName, "状態表示", "IMMEDIATE_STATUS_FAILED",
+    "議事録処理の状態表示に失敗しました。", "処理は継続しています。処理IDを添えて運用担当者へ確認してください。");
+}
+
+/** Stable public failure shown when the destination confirmation projection fails. */
+export function selectionConfirmationFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
+  return publicFailureMessage(runId, fileName, "選択確認", "SELECTION_CONFIRMATION_FAILED",
+    "保存先の選択結果を表示できませんでした。", "処理は継続しています。処理IDを添えて運用担当者へ確認してください。");
+}
+
+/** Stable public failure used by a one-shot fallback after any status projection failure. */
+export function statusProjectionFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
+  return publicFailureMessage(runId, fileName, "状態表示", "STATUS_PROJECTION_FAILED",
+    "議事録処理の状態表示に失敗しました。", "処理IDを添えて運用担当者へ確認してください。");
 }
 
 export function redoFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
@@ -361,6 +396,17 @@ export class MeetingMinutesSlackClient {
     }
     await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text, blocks });
   }
+  /**
+   * One-shot, non-recursive fallback for a failed status projection. It deliberately
+   * updates only the original processing message and does not call updateRunStatus
+   * or assistant.threads.setStatus again.
+   */
+  async projectStatusFailure(run: MeetingMinutesRun): Promise<void> {
+    if (!run.slack?.processingTs) throw new Error("meeting_minutes_status_coordinates_missing");
+    const message = statusProjectionFailedMessage(run.runId, run.file.name);
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
+      text: message.text, blocks: message.blocks });
+  }
   private async setThreadStatus(run: MeetingMinutesRun, status: string, required = false): Promise<void> {
     try {
       await this.post("assistant.threads.setStatus", {
@@ -452,7 +498,22 @@ export class MeetingMinutesSlackClient {
   async showRedoFailure(run: MeetingMinutesRun): Promise<void> {
     if (!run.slack?.processingTs) throw new Error("meeting_minutes_status_coordinates_missing");
     const message = redoFailedMessage(run.runId, run.file.name);
-    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
-      text: message.text, blocks: message.blocks });
+    try {
+      await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
+        text: message.text, blocks: message.blocks });
+    } catch (error) {
+      // A failed failure notice still gets one bounded, code-bearing update. Do
+      // not call showRedoFailure/updateRunStatus again from this fallback.
+      try {
+        const fallback = statusProjectionFailedMessage(run.runId, run.file.name);
+        await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
+          text: fallback.text, blocks: fallback.blocks });
+        return;
+      } catch {
+        console.error(JSON.stringify({ event: "meeting_minutes_redo_failure_projection_failed", runId: run.runId,
+          stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+      }
+      throw error;
+    }
   }
 }

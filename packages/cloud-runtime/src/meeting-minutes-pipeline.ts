@@ -603,9 +603,9 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
     await saveMeetingMinutesRun(fs, run);
     if (options.showRedoFailure) {
       try { await options.showRedoFailure(run); }
-      catch (notificationError) {
+      catch {
         console.error(JSON.stringify({ event: "meeting_minutes_redo_failure_projection_failed", runId: run.runId,
-          error: notificationError instanceof Error ? notificationError.message : "unexpected_error" }));
+          stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
       }
     }
     throw error;

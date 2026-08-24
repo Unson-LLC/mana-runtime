@@ -68,4 +68,23 @@ describe("meeting minutes stale recovery", () => {
     })).toBe("terminal");
     expect(updateStatus).not.toHaveBeenCalled();
   });
+
+  it("uses one non-recursive fallback when stale recovery status projection fails", async () => {
+    const fs = new MemoryFs(); await saveMeetingMinutesRun(fs, run());
+    const armed = await armMeetingMinutesRecovery(fs, selection, 1_000);
+    const updateStatus = vi.fn().mockRejectedValue(new Error("slack update down"));
+    const fallbackStatus = vi.fn().mockResolvedValue(undefined);
+    await expect(recoverStaleMeetingMinutesRun(fs, armed.event, {
+      now: () => 1_000 + 20 * 60 * 1_000, updateStatus, fallbackStatus,
+    })).rejects.toThrow("slack update down");
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(fallbackStatus).toHaveBeenCalledOnce();
+    expect(fallbackStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ projectionFailure: expect.objectContaining({
+        stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      }) }), "failed", expect.objectContaining({ stage: "status_projection" }));
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED" },
+    });
+  });
 });

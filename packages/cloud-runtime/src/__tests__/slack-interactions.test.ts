@@ -214,6 +214,19 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
     consoleError.mockRestore();
   });
+  it("projects a stable public code when immediate Slack status feedback fails", async () => {
+    const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("status unavailable"));
+    const updateOriginal = vi.fn().mockResolvedValue(undefined); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, showProcessing, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).toHaveBeenCalledOnce();
+    const fallback = JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1]);
+    expect(fallback).toContain("IMMEDIATE_STATUS_FAILED");
+    expect(fallback).toContain("処理ID: Ev1_F1");
+    expect(fallback).toContain("失敗段階: 状態表示");
+  });
   it("still queues when the selection confirmation update fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValue(new Error("Slack Bearer secret"));
@@ -222,7 +235,9 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(updateOriginal).toHaveBeenCalledOnce(); expect(send).toHaveBeenCalledOnce();
+    expect(updateOriginal).toHaveBeenCalledTimes(2); expect(send).toHaveBeenCalledOnce();
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("SELECTION_CONFIRMATION_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
     expect(consoleError.mock.calls.flat().join(" ")).toContain('"code":"SELECTION_CONFIRMATION_FAILED"');
     expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
     consoleError.mockRestore();
@@ -239,6 +254,24 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(send).not.toHaveBeenCalled();
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("GitHubの議事録・文字起こしと自動登録タスクを取り消し");
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("取り消して選び直す");
+  });
+  it("uses a bounded fallback when the redo confirmation projection fails", async () => {
+    const redoPayload = structuredClone(payload);
+    redoPayload.actions[0]!.action_id = "mana_meeting_minutes_redo";
+    redoPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn();
+    const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("confirmation projection unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(redoPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    const fallback = JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1]);
+    expect(fallback).toContain("STATUS_PROJECTION_FAILED");
+    expect(fallback).toContain("処理ID: Ev1_F1");
+    expect(fallback).toContain("失敗段階: 状態表示");
   });
   it("queues a confirmed redo command", async () => {
     const confirmPayload = structuredClone(payload);
@@ -285,6 +318,24 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(serialized).not.toContain("Bearer secret");
     consoleError.mockRestore();
   });
+  it("uses a bounded fallback when the redo processing projection fails", async () => {
+    const confirmPayload = structuredClone(payload);
+    confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("projection unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).toHaveBeenCalledTimes(2);
+    const fallback = JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1]);
+    expect(fallback).toContain("STATUS_PROJECTION_FAILED");
+    expect(fallback).toContain("処理ID: Ev1_F1");
+    expect(fallback).toContain("失敗段階: 状態表示");
+  });
   it("shows a safe error code when Slack omitted the tenant thread coordinate", async () => {
     const missingThread = structuredClone(payload); delete (missingThread as { message?: unknown }).message;
     const send = vi.fn(); const showProcessing = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
@@ -294,7 +345,9 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
     expect(send).not.toHaveBeenCalled(); expect(showProcessing).not.toHaveBeenCalled();
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("INTERACTION_ENQUEUE_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("THREAD_COORDINATE_MISSING");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).not.toContain("INTERACTION_ENQUEUE_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("失敗段階: スレッド特定");
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("処理ID: Ev1_F1");
   });
   it("shows immediate feedback for an existing retry button using the signed container thread", async () => {
