@@ -1,3 +1,4 @@
+import { describe, expect, it, vi } from "vitest";
 import { armMeetingMinutesRecovery, MeetingMinutesRecoveryOutcomePersistenceError,
   recoverStaleMeetingMinutesRun } from "../meeting-minutes-recovery.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
