@@ -285,7 +285,7 @@
     {
       "id": "C-006",
       "type": "contract",
-      "statement": "stale recoveryは外部Slack投影前にrecoveryProjectionClaimedAtをdurableに保存し、claim保存に失敗した配送では主投影もfallbackも呼ばず元のprojection errorを再throwしてQueue retryへ渡す。claim保存後は主投影の失敗をrecoveryProjectionAttemptedAtへ記録してbounded fallbackを実行し、recoveryFallbackOutcome（succeeded/failed）を最大2回の保存試行でdurableに保存する。outcome保存不能ならMEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILEDをthrowし、claim済みredeliveryはSlack投影を重複実行せず、fallback成否と元の処理エラーを保存する",
+      "statement": "stale recoveryは外部Slack投影前にrecoveryProjectionClaimedAtをdurableに保存し、claim保存に失敗した配送では投影前なので主投影もfallbackも呼ばず、元のprocessing failureだけを保持してQueue retryへ渡す。claim保存後は主投影の失敗をrecoveryProjectionAttemptedAtへ記録してbounded fallbackを実行し、recoveryFallbackOutcome（succeeded/failed）とrecoveryFallbackOutcomePersistedAtを最大2回の保存試行でdurableに保存する。outcome保存不能ならrecoveryFallbackOutcomePersistenceFailedAtを明示的なterminal markerとしてbest-effortで保存し、MEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILEDをthrowする。claim後・attempted前はSlackが送信済みか不明なためredeliveryで外部投影を再実行せずterminalで運用診断を残し、自動完遂より重複防止を優先して運用介入とする。attempted後にknown outcomeが残る場合はSlackを呼ばずoutcome保存だけをbounded retryし、outcomeが失われていればoperational errorを返して外部投影を再実行しない。通常選択経路のmain/fallback各1回は単一処理試行内のbounded保証であり、このstale recovery redelivery契約を適用しない",
       "origin": {
         "story_refs": [
           {
@@ -319,6 +319,22 @@
             "case": "does not invoke fallback until the recovery claim marker is durable, then retries on redelivery"
           },
           {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "redelivery persists a claimed fallback outcome without re-projecting Slack"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "redelivery retries a known fallback outcome without re-projecting Slack"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "treats a claim-only recovery as indeterminate without re-projecting Slack"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "does not duplicate Slack projection when the final completion save fails"
+          },
+          {
             "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
             "case": "uses a bounded fallback when the back-action projection fails"
           }
@@ -328,7 +344,7 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
-            "must_cover": "recoveryFallbackOutcome"
+            "must_cover": "recoveryFallbackOutcomePersistedAt"
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",

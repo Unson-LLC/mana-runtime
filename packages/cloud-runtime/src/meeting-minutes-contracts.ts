@@ -248,12 +248,16 @@ export interface MeetingMinutesRun {
     actionTs: string;
     deadlineAt: string;
     recoveredAt?: string;
-    /** A projection call has been claimed before the external Slack effect. */
+    /** Recovery projection was claimed before Slack; claim-only redelivery is indeterminate. */
     recoveryProjectionClaimedAt?: string;
     /** A failed recovery projection has been attempted; redelivery must not repeat it. */
     recoveryProjectionAttemptedAt?: string;
     /** Durable result of the one-shot fallback after the recovery claim is saved. */
     recoveryFallbackOutcome?: "succeeded" | "failed";
+    /** Set only after recoveryFallbackOutcome is durably written. */
+    recoveryFallbackOutcomePersistedAt?: string;
+    /** Terminal diagnostic when the fallback result could not be persisted. */
+    recoveryFallbackOutcomePersistenceFailedAt?: string;
     recoveryProjectedAt?: string;
   };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */

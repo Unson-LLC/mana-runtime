@@ -20,11 +20,13 @@ function run(status: MeetingMinutesRun["status"] = "routed"): MeetingMinutesRun 
 class FailOnWriteFs extends MemoryFs {
   writeCount = 0;
   failOnWrite?: number;
+  failWrites?: Set<number>;
   failWritesFrom?: number;
 
   override async writeFile(path: string, value: string): Promise<void> {
     this.writeCount += 1;
     if (this.failOnWrite === this.writeCount ||
+      this.failWrites?.has(this.writeCount) ||
       (this.failWritesFrom !== undefined && this.writeCount >= this.failWritesFrom)) {
       if (this.failOnWrite === this.writeCount) this.failOnWrite = undefined;
       throw new Error("recovery marker unavailable");
@@ -141,7 +143,9 @@ describe("meeting minutes stale recovery", () => {
     })).rejects.toThrow("meeting_minutes_recovery_projection_claim_save_failed");
     expect(updateStatus).not.toHaveBeenCalled();
     expect(fallbackStatus).not.toHaveBeenCalled();
-    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "failed" });
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "failed",
+      failure: { stage: "routed", message: "meeting_minutes_processing_interrupted" } });
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).not.toHaveProperty("projectionFailure");
     expect(await loadMeetingMinutesRun(fs, selection.runId)).not.toMatchObject({
       lifecycle: { recoveryProjectionAttemptedAt: expect.any(String) },
     });
@@ -211,18 +215,119 @@ describe("meeting minutes stale recovery", () => {
     await expect(outcomePromise).rejects.toBeInstanceOf(MeetingMinutesRecoveryOutcomePersistenceError);
     await expect(outcomePromise).rejects.toMatchObject({ code: "MEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILED" });
     expect(fallbackStatus).toHaveBeenCalledOnce();
-    expect(fs.writeCount).toBe(7);
+    expect(fs.writeCount).toBe(8);
     expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
       lifecycle: { recoveryProjectionAttemptedAt: expect.any(String) },
     });
     expect(await loadMeetingMinutesRun(fs, selection.runId)).not.toMatchObject({
       lifecycle: { recoveryFallbackOutcome: expect.any(String) },
     });
+    await expect(recoverStaleMeetingMinutesRun(fs, armed.event, {
+      now: () => 9_999_999, updateStatus, fallbackStatus,
+    })).rejects.toBeInstanceOf(MeetingMinutesRecoveryOutcomePersistenceError);
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(fallbackStatus).toHaveBeenCalledOnce();
+    consoleError.mockRestore();
+  });
+
+  it("redelivery retries a known fallback outcome without re-projecting Slack", async () => {
+    const fs = new FailOnWriteFs(); await saveMeetingMinutesRun(fs, run());
+    const armed = await armMeetingMinutesRecovery(fs, selection, 1_000);
+    // Writes 6 and 7 are the bounded outcome attempts. The best-effort
+    // persistence-failure marker at write 8 succeeds with the known outcome.
+    fs.failWrites = new Set([6, 7]);
+    const updateStatus = vi.fn().mockRejectedValue(new Error("slack update down"));
+    const fallbackStatus = vi.fn().mockResolvedValue(undefined);
+    await expect(recoverStaleMeetingMinutesRun(fs, armed.event, {
+      now: () => 1_000 + 20 * 60 * 1_000, updateStatus, fallbackStatus,
+    })).rejects.toBeInstanceOf(MeetingMinutesRecoveryOutcomePersistenceError);
+    expect(fallbackStatus).toHaveBeenCalledOnce();
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      lifecycle: { recoveryFallbackOutcome: "succeeded",
+        recoveryFallbackOutcomePersistenceFailedAt: expect.any(String) },
+    });
+
+    fs.failWrites = new Set();
     expect(await recoverStaleMeetingMinutesRun(fs, armed.event, {
       now: () => 9_999_999, updateStatus, fallbackStatus,
     })).toBe("terminal");
     expect(updateStatus).toHaveBeenCalledOnce();
     expect(fallbackStatus).toHaveBeenCalledOnce();
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      lifecycle: { recoveryFallbackOutcome: "succeeded", recoveryFallbackOutcomePersistedAt: expect.any(String) },
+    });
+  });
+
+  it("redelivery persists a claimed fallback outcome without re-projecting Slack", async () => {
+    const fs = new MemoryFs();
+    const failed = run("failed");
+    failed.failure = { stage: "github_save", message: "github down" };
+    failed.projectionFailure = { stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      retryable: true, failedAt: new Date(1_000).toISOString() };
+    failed.lifecycle = { actionTs: selection.actionTs, deadlineAt: new Date(1_000).toISOString(),
+      recoveryProjectionClaimedAt: new Date(1_000).toISOString(),
+      recoveryProjectionAttemptedAt: new Date(1_001).toISOString(), recoveryFallbackOutcome: "succeeded" };
+    await saveMeetingMinutesRun(fs, failed);
+    const updateStatus = vi.fn();
+    const fallbackStatus = vi.fn();
+    expect(await recoverStaleMeetingMinutesRun(fs, {
+      kind: "meeting_minutes_recovery", runId: selection.runId, workspaceId: selection.workspaceId,
+      appId: selection.appId, channelId: selection.channelId, threadTs: selection.threadTs,
+      userId: selection.userId, actionTs: selection.actionTs,
+    }, { now: () => 9_999_999, updateStatus, fallbackStatus })).toBe("terminal");
+    expect(updateStatus).not.toHaveBeenCalled();
+    expect(fallbackStatus).not.toHaveBeenCalled();
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      failure: { stage: "github_save", message: "github down" },
+      lifecycle: { recoveryFallbackOutcome: "succeeded", recoveryFallbackOutcomePersistedAt: expect.any(String) },
+    });
+  });
+
+  it("fails closed when an attempted recovery has no fallback outcome", async () => {
+    const fs = new MemoryFs();
+    const failed = run("failed");
+    failed.failure = { stage: "github_save", message: "github down" };
+    failed.lifecycle = { actionTs: selection.actionTs, deadlineAt: new Date(1_000).toISOString(),
+      recoveryProjectionAttemptedAt: new Date(1_001).toISOString(),
+      recoveryFallbackOutcomePersistedAt: new Date(1_002).toISOString() };
+    await saveMeetingMinutesRun(fs, failed);
+    const updateStatus = vi.fn();
+    const fallbackStatus = vi.fn();
+    await expect(recoverStaleMeetingMinutesRun(fs, {
+      kind: "meeting_minutes_recovery", runId: selection.runId, workspaceId: selection.workspaceId,
+      appId: selection.appId, channelId: selection.channelId, threadTs: selection.threadTs,
+      userId: selection.userId, actionTs: selection.actionTs,
+    }, { now: () => 9_999_999, updateStatus, fallbackStatus })).rejects
+      .toBeInstanceOf(MeetingMinutesRecoveryOutcomePersistenceError);
+    expect(updateStatus).not.toHaveBeenCalled();
+    expect(fallbackStatus).not.toHaveBeenCalled();
+  });
+
+  it("treats a claim-only recovery as indeterminate without re-projecting Slack", async () => {
+    const fs = new MemoryFs();
+    const failed = run("failed");
+    failed.failure = { stage: "routed", message: "meeting_minutes_processing_interrupted" };
+    failed.lifecycle = { actionTs: selection.actionTs, deadlineAt: new Date(1_000).toISOString(),
+      recoveryProjectionClaimedAt: new Date(1_001).toISOString() };
+    await saveMeetingMinutesRun(fs, failed);
+    const updateStatus = vi.fn();
+    const fallbackStatus = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await recoverStaleMeetingMinutesRun(fs, {
+      kind: "meeting_minutes_recovery", runId: selection.runId, workspaceId: selection.workspaceId,
+      appId: selection.appId, channelId: selection.channelId, threadTs: selection.threadTs,
+      userId: selection.userId, actionTs: selection.actionTs,
+    }, { now: () => 9_999_999, updateStatus, fallbackStatus })).toBe("terminal");
+    expect(updateStatus).not.toHaveBeenCalled();
+    expect(fallbackStatus).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(
+      "MEETING_MINUTES_RECOVERY_PROJECTION_INDETERMINATE"));
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      lifecycle: { recoveryProjectionClaimedAt: expect.any(String) },
+    });
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).not.toMatchObject({
+      lifecycle: { recoveryProjectedAt: expect.any(String) },
+    });
     consoleError.mockRestore();
   });
 
@@ -234,6 +339,7 @@ describe("meeting minutes stale recovery", () => {
     // write 5, which fails once.
     fs.failOnWrite = 5;
     const updateStatus = vi.fn().mockResolvedValue(undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(recoverStaleMeetingMinutesRun(fs, armed.event, {
       now: () => 1_000 + 20 * 60 * 1_000, updateStatus,
     })).rejects.toThrow("recovery marker unavailable");
@@ -246,5 +352,8 @@ describe("meeting minutes stale recovery", () => {
       now: () => 9_999_999, updateStatus,
     })).toBe("terminal");
     expect(updateStatus).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(
+      "MEETING_MINUTES_RECOVERY_PROJECTION_INDETERMINATE"));
+    consoleError.mockRestore();
   });
 });
