@@ -24,6 +24,26 @@ describe("task write capability", () => {
     })).toThrow("write_intent_denied");
   });
 
+  it("supports an explicit non-human service actor without person impersonation", async () => {
+    const serviceClaims: TaskWriteCapabilityClaims = {
+      ...claims,
+      requestId: "run-1",
+      actor: { provider: "service", id: "mana_autonomy_v0", workspace: "T1" },
+      nonce: "run-1",
+    };
+    const token = await signTaskWriteCapability(serviceClaims, secret);
+    const verified = await verifyTaskWriteCapability(token, secret, { requestId: "run-1", workspace: "T1", placementId: "C1" });
+    expect(verified.actor).toEqual(serviceClaims.actor);
+    expect(() => authorizeTaskWriteIntent(verified, {
+      requestId: "run-1", actor: serviceClaims.actor, placementId: "C1", project: "back-office",
+      operation: "task.create", idempotencyKey: "autonomy:run-1:1",
+    })).not.toThrow();
+    expect(() => authorizeTaskWriteIntent(verified, {
+      requestId: "run-1", actor: { provider: "slack", id: "mana_autonomy_v0", workspace: "T1" }, placementId: "C1",
+      project: "back-office", operation: "task.create", idempotencyKey: "autonomy:run-1:2",
+    })).toThrow("write_intent_actor_mismatch");
+  });
+
   it("rejects tampering expiry and runtime scope mismatch", async () => {
     const token = await signTaskWriteCapability(claims, secret);
     await expect(verifyTaskWriteCapability(`${token}x`, secret, { requestId: "Ev1", workspace: "T1", placementId: "C1" })).rejects.toThrow();
