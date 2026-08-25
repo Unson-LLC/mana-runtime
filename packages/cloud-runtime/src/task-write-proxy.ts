@@ -1,7 +1,8 @@
 import { TaskApiClient, TaskApiError, type CanonicalTask, type CreateTaskInput, type TransitionTaskInput, type UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { authorizeTaskWriteIntent, evaluateTaskWritePolicy, verifyTaskWriteCapability, type TaskWriteIntent, type TaskWriteOperation, type TaskWritePolicy } from "@openryoko/write-broker";
 import { parseRuntimePlacements, parseRuntimeProjectCodes } from "./runtime-config.js";
-import { claimTaskWriteBudgetSlot, type TaskWriteBudgetNamespace } from "./task-write-budget.js";
+import { claimTaskWriteBudgetSlot, completeTaskWriteReceipt, readTaskWriteReceipt,
+  type AutonomyExperimentGuard, type TaskWriteBudgetClaim, type TaskWriteBudgetNamespace } from "./task-write-budget.js";
 import { consumeTaskWriteApproval, createTaskWriteApproval, type TaskWriteApprovalNamespace } from "./task-write-approval.js";
 
 export const TASK_WRITE_PROXY_HOST = "task-write.internal";
@@ -22,6 +23,8 @@ export interface TaskWriteProxyEnv {
   SLACK_ALLOWED_CHANNEL_ID?: string;
   TASK_WRITE_APPROVAL_CHANNEL_ID?: string;
   TASK_WRITE_BUDGETS?: TaskWriteBudgetNamespace;
+  MANA_AUTONOMY_EXPERIMENT_JSON?: string;
+  MANA_AUTONOMY_DISABLED?: string;
 }
 
 function parsePolicy(value: string | undefined): TaskWritePolicy {
@@ -154,6 +157,37 @@ function capabilityPlacementId(token: string): string {
   }
 }
 
+function parseAutonomyExperiment(raw: string | undefined, disabled: string | undefined): AutonomyExperimentGuard {
+  if (!raw?.trim()) throw new Error("autonomy_experiment_not_configured");
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new Error("autonomy_experiment_not_configured"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("autonomy_experiment_not_configured");
+  const config = value as Record<string, unknown>;
+  const startsAt = typeof config.starts_at === "string" ? Date.parse(config.starts_at) : NaN;
+  const expiresAt = typeof config.expires_at === "string" ? Date.parse(config.expires_at) : NaN;
+  if (typeof config.id !== "string" || !config.id || config.id.length > 128
+    || typeof config.actor_id !== "string" || !config.actor_id || config.actor_id.length > 128
+    || typeof config.project !== "string" || !config.project || config.project.length > 128
+    || !Number.isFinite(startsAt) || !Number.isFinite(expiresAt) || expiresAt <= startsAt
+    || expiresAt - startsAt > 24 * 60 * 60 * 1000
+    || !Number.isInteger(config.max_writes) || Number(config.max_writes) < 1 || Number(config.max_writes) > 100) {
+    throw new Error("autonomy_experiment_not_configured");
+  }
+  return {
+    id: config.id,
+    actorId: config.actor_id,
+    project: config.project,
+    startsAt,
+    expiresAt,
+    maxWrites: Number(config.max_writes),
+    disabled: disabled === "true",
+  };
+}
+
+function taskIdempotencyKey(provider: "slack" | "service", requestId: string, callIndex: number): string {
+  return `${provider === "service" ? "autonomy" : "slack"}:${requestId}:${callIndex}`;
+}
+
 export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
   const brokered = fetchImpl !== undefined;
   const providerFetch = fetchImpl ?? fetch;
@@ -172,14 +206,19 @@ export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
         : undefined;
       const projects = placement?.projectCodes ?? parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
       const placementId = placement?.placementId ?? env.RUNTIME_PLACEMENT_ID;
-      const writeChannelId = placement?.channelId ?? env.SLACK_ALLOWED_CHANNEL_ID;
       if (!secret || projects.length === 0 || (!env.BRAINBASE_TASK_API_TOKEN && !brokered)
         || !env.SLACK_EXPECTED_TEAM_ID || !placementId) throw new Error("task_write_not_configured");
       const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId });
       const operation = `task.${body.operation}` as TaskWriteOperation;
+      const idempotencyKey = taskIdempotencyKey(claims.actor.provider, body.request_id, body.call_index);
       const intent: TaskWriteIntent = { requestId: body.request_id, actor: claims.actor, placementId: claims.placementId,
-        project: body.project, operation, targetId: body.task_id, idempotencyKey: `slack:${body.request_id}:${body.call_index}` };
+        project: body.project, operation, targetId: body.task_id, idempotencyKey };
       authorizeTaskWriteIntent(claims, intent);
+      const experiment = claims.actor.provider === "service"
+        ? parseAutonomyExperiment(env.MANA_AUTONOMY_EXPERIMENT_JSON, env.MANA_AUTONOMY_DISABLED)
+        : undefined;
+      if (experiment && (claims.actor.id !== experiment.actorId || body.project !== experiment.project
+        || claims.expiresAt > experiment.expiresAt)) throw new Error("autonomy_authority_scope_mismatch");
       const decision = evaluateTaskWritePolicy(parsePolicy(env.TASK_WRITE_POLICY_JSON), intent);
       const fingerprint = await requestFingerprint(body);
       let approvedBy: string | undefined;
@@ -214,21 +253,32 @@ export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
         }
       }
       if (!projects.includes(body.project) || body.call_index > Math.min(3, claims.budget) || !env.TASK_WRITE_BUDGETS) throw new Error("task_write_denied");
-      await claimTaskWriteBudgetSlot(env.TASK_WRITE_BUDGETS, {
+      const writeClaim: TaskWriteBudgetClaim = {
         requestId: claims.requestId,
         nonce: claims.nonce,
         placementId: claims.placementId,
+        actorId: claims.actor.id,
+        project: body.project,
+        operation,
         callIndex: body.call_index,
         budget: Math.min(3, claims.budget),
         expiresAt: claims.expiresAt,
         fingerprint,
-      });
-      let beforeVersion: number | undefined;
+        ...(experiment ? { experiment } : {}),
+      };
       const client = new TaskApiClient({
         baseUrl: upstreamOrigin(env.BRAINBASE_TASK_API_BASE_URL),
         token: env.BRAINBASE_TASK_API_TOKEN,
         fetchImpl: providerFetch,
       });
+      const disposition = await claimTaskWriteBudgetSlot(env.TASK_WRITE_BUDGETS, writeClaim);
+      if (disposition === "replay") {
+        const receipt = await readTaskWriteReceipt(env.TASK_WRITE_BUDGETS, writeClaim);
+        if (!receipt || receipt.state !== "completed" || !receipt.resultRef) throw new Error("task_write_receipt_pending");
+        const replayed = await client.getTask(receipt.resultRef);
+        return Response.json(cleanTask(replayed));
+      }
+      let beforeVersion: number | undefined;
       let result: CanonicalTask;
       if (body.operation === "create") {
         const input: CreateTaskInput = {
@@ -241,7 +291,7 @@ export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
             ? { assignee_person_id: body.assignee_person_id }
             : {}),
         };
-        result = await client.createTask(input, `slack:${body.request_id}:${body.call_index}`);
+        result = await client.createTask(input, idempotencyKey);
       } else {
         const before = await client.getTask(body.task_id!);
         beforeVersion = before.version;
@@ -257,18 +307,19 @@ export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
             ...(body.due_at !== undefined ? { due_at: body.due_at } : {}),
             ...(body.assignee_person_id !== undefined ? { assignee_person_id: body.assignee_person_id } : {}),
           };
-          result = await client.updateTask(body.task_id!, input, `slack:${body.request_id}:${body.call_index}`);
+          result = await client.updateTask(body.task_id!, input, idempotencyKey);
         } else {
           const input: TransitionTaskInput = { expected_version: body.expected_version!, to_status: body.to_status! };
           if (body.waiting_on) input.waiting_on = body.waiting_on;
           if (body.review_at) input.review_at = body.review_at;
-          result = await client.transitionTask(body.task_id!, input, `slack:${body.request_id}:${body.call_index}`);
+          result = await client.transitionTask(body.task_id!, input, idempotencyKey);
         }
       }
+      await completeTaskWriteReceipt(env.TASK_WRITE_BUDGETS, writeClaim, result.id);
       console.log(JSON.stringify({ event: "task_write_receipt", requestId: body.request_id, operation,
-        requester: claims.actor.id, approver: approvedBy ?? null, project: body.project, taskId: result.id,
-        policyVersion: decision.policyVersion, payloadHash: fingerprint, beforeVersion: beforeVersion ?? null,
-        afterVersion: result.version, result: "executed" }));
+        requester: claims.actor.id, actorProvider: claims.actor.provider, approver: approvedBy ?? null, project: body.project,
+        taskId: result.id, experimentId: experiment?.id ?? null, policyVersion: decision.policyVersion,
+        payloadHash: fingerprint, beforeVersion: beforeVersion ?? null, afterVersion: result.version, result: "executed" }));
       return Response.json(cleanTask(result));
     } catch (cause) {
       if (cause instanceof TaskApiError) {
@@ -277,8 +328,15 @@ export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
         return error("task_write_upstream_failed", 502);
       }
       const code = cause instanceof Error ? cause.message : "task_write_failed";
-      if (["invalid_write_capability","expired_write_capability","write_capability_scope_mismatch","write_intent_denied","task_write_denied","task_write_scope_violation","task_write_budget_slot_reused","task_write_budget_exceeded"].includes(code)) return error(code, 403);
-      if (code === "task_write_not_configured" || code === "task_write_policy_not_configured" || code === "task_write_approval_not_configured" || code === "invalid_write_policy" || code === "not_configured") return error("task_write_not_configured", 503);
+      if (["invalid_write_capability","expired_write_capability","write_capability_scope_mismatch","write_intent_denied",
+        "task_write_denied","task_write_scope_violation","task_write_budget_slot_reused","task_write_budget_exceeded",
+        "autonomy_authority_scope_mismatch","autonomy_experiment_not_started","autonomy_experiment_expired",
+        "autonomy_capability_outlives_experiment","autonomy_write_budget_exceeded"].includes(code)) return error(code, 403);
+      if (code === "task_write_receipt_pending") return error(code, 409);
+      if (code === "autonomy_kill_switch_active") return error(code, 503);
+      if (code === "task_write_not_configured" || code === "task_write_policy_not_configured"
+        || code === "task_write_approval_not_configured" || code === "invalid_write_policy"
+        || code === "not_configured" || code === "autonomy_experiment_not_configured") return error("task_write_not_configured", 503);
       if (code.startsWith("task_write_approval_") || code === "task_write_approver_forbidden") return error(code, 403);
       logUpstreamFailure(cause, body);
       return error("task_write_upstream_failed", 502);
