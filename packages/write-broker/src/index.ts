@@ -1,10 +1,14 @@
 export type TaskWriteOperation = "task.create" | "task.update" | "task.transition";
 
+export type TaskWriteActor =
+  | { provider: "slack"; id: string; workspace: string; personId?: string }
+  | { provider: "service"; id: string; workspace: string };
+
 export interface TaskWriteCapabilityClaims {
   version: 1;
   audience: "mana-task-write";
   requestId: string;
-  actor: { provider: "slack"; id: string; workspace: string; personId?: string };
+  actor: TaskWriteActor;
   placementId: string;
   projects: string[];
   operations: Array<TaskWriteOperation | "*">;
@@ -135,15 +139,19 @@ export async function verifyTaskWriteCapability(
   const now = expected.now ?? Date.now();
   if (claims.version !== 1 || claims.audience !== "mana-task-write" || claims.expiresAt <= now) throw new Error("expired_write_capability");
   if (claims.requestId !== expected.requestId || claims.actor.workspace !== expected.workspace || claims.placementId !== expected.placementId) throw new Error("write_capability_scope_mismatch");
-  if (!claims.actor.id || claims.actor.provider !== "slack" ||
-    (claims.actor.personId !== undefined && (typeof claims.actor.personId !== "string" || !claims.actor.personId)) ||
-    claims.projects.length === 0 || claims.budget < 1) throw new Error("invalid_write_capability");
+  if (!claims.actor.id || !["slack", "service"].includes(claims.actor.provider)
+    || (claims.actor.provider === "slack" && claims.actor.personId !== undefined
+      && (typeof claims.actor.personId !== "string" || !claims.actor.personId))
+    || claims.projects.length === 0 || claims.budget < 1) throw new Error("invalid_write_capability");
   return claims;
 }
 
 export function authorizeTaskWriteIntent(claims: TaskWriteCapabilityClaims, intent: TaskWriteIntent): void {
   if (intent.requestId !== claims.requestId || intent.actor.id !== claims.actor.id ||
-    intent.actor.workspace !== claims.actor.workspace || intent.actor.personId !== claims.actor.personId ||
+    intent.actor.workspace !== claims.actor.workspace ||
+    (intent.actor.provider === "slack" ? intent.actor.personId : undefined)
+      !== (claims.actor.provider === "slack" ? claims.actor.personId : undefined) ||
+    intent.actor.provider !== claims.actor.provider ||
     intent.placementId !== claims.placementId) throw new Error("write_intent_actor_mismatch");
   if (!claims.projects.includes(intent.project) || !claims.operations.includes(intent.operation)) throw new Error("write_intent_denied");
   if ((intent.operation === "task.update" || intent.operation === "task.transition") && !intent.targetId) throw new Error("write_target_required");
