@@ -17,7 +17,7 @@ export interface AutonomyExperimentGuard {
   disabled: boolean;
 }
 
-interface TaskWriteBudgetClaim {
+export interface TaskWriteBudgetClaim {
   requestId: string;
   nonce: string;
   placementId: string;
@@ -107,13 +107,17 @@ function stub(namespace: TaskWriteBudgetNamespace, key: string): DurableObjectSt
 export async function claimTaskWriteBudgetSlot(
   namespace: TaskWriteBudgetNamespace,
   claim: TaskWriteBudgetClaim,
-): Promise<void> {
+): Promise<"claimed" | "replay"> {
   const response = await stub(namespace, namespaceKey(claim)).fetch(new Request("https://task-write-budget.internal/claim", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(claim),
   }));
-  if (response.ok) return;
+  if (response.status === 200) {
+    const payload = await response.json().catch(() => null) as { disposition?: unknown } | null;
+    if (payload?.disposition === "replay") return "replay";
+  }
+  if (response.ok) return "claimed";
   const payload = await response.json().catch(() => null) as { error?: unknown } | null;
   const code = typeof payload?.error === "string" ? payload.error : "task_write_budget_exceeded";
   throw new Error(code);
@@ -218,6 +222,7 @@ export class TaskWriteBudget {
       } satisfies TaskWriteReceipt);
       return "claimed";
     });
+    if (outcome === "replay") return Response.json({ disposition: "replay" });
     if (outcome === "reused") return Response.json({ error: "task_write_budget_slot_reused" }, { status: 409 });
     if (outcome === "exceeded") return Response.json({ error: "task_write_budget_exceeded" }, { status: 429 });
     if (outcome === "experiment_exceeded") return Response.json({ error: "autonomy_write_budget_exceeded" }, { status: 429 });
