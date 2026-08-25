@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { armMeetingMinutesRecovery } from "../meeting-minutes-recovery.js";
 import {
-  processMeetingMinutesRecoveryQueue,
-  type MeetingMinutesRecoveryRuntimeDependencies,
-} from "../meeting-minutes-recovery-runtime.js";
+  handleMeetingMinutesRecoveryQueue,
+  type MeetingMinutesRecoveryProductionPorts,
+} from "../meeting-minutes-recovery-production.js";
 import {
   executeTenantBoundary,
   TenantRuntimeBoundaryVerifier,
@@ -178,11 +178,12 @@ describe("meeting-minutes recovery production wiring", () => {
     }) as typeof fetch;
     const ownership = new IdempotencyMemoryStore();
     const preparedContexts: TenantContextEnvelope[] = [];
+    const markTerminal = vi.fn(async () => undefined);
     const refreshTenantContext = vi.fn(async (_env: Record<string, never>, body: TenantQueueBody<MeetingMinutesRecovery>) => {
       expect(Date.parse(body.tenant_context.expires_at)).toBeLessThan(Date.parse(NOW) - 20 * 60 * 1_000);
       return fresh.value;
     });
-    const dependencies: MeetingMinutesRecoveryRuntimeDependencies<Record<string, never>> = {
+    const ports: MeetingMinutesRecoveryProductionPorts<Record<string, never>> = {
       refreshTenantContext,
       prepareQueue: (_env, body) => {
         preparedContexts.push(body.tenant_context);
@@ -228,21 +229,27 @@ describe("meeting-minutes recovery production wiring", () => {
         },
       }),
       withWorkspace: ({ execute }) => execute(fs),
-      markTerminal: vi.fn(async () => undefined),
+      markTerminal,
     };
 
-    await processMeetingMinutesRecoveryQueue(queue, {}, dependencies);
+    await handleMeetingMinutesRecoveryQueue(queue, {}, ports);
+    const redelivery = queueMessage(queue.body);
+    await handleMeetingMinutesRecoveryQueue(redelivery, {}, ports);
 
     expect(queue.retry).toHaveBeenCalledOnce();
     expect(queue.ack).not.toHaveBeenCalled();
-    expect(effectBoundaries).toEqual(["durable_object", "slack_delivery", "slack_delivery"]);
+    expect(redelivery.ack).toHaveBeenCalledOnce();
+    expect(redelivery.retry).not.toHaveBeenCalled();
+    expect(effectBoundaries).toEqual(["durable_object", "slack_delivery", "slack_delivery", "durable_object"]);
     expect(effectIds).toEqual(["source-status:Ev1_F1:failed", "source-status-fallback:Ev1_F1:failed"]);
     expect(effectEvents).toEqual([
       { kind: "source_status", runId: "Ev1_F1", outcome: "failed" },
       { kind: "source_status_fallback", runId: "Ev1_F1", outcome: "failed" },
     ]);
-    expect(refreshTenantContext).toHaveBeenCalledOnce();
-    expect(preparedContexts).toEqual([fresh.value]);
+    expect(refreshTenantContext).toHaveBeenCalledTimes(2);
+    expect(preparedContexts).toEqual([fresh.value, fresh.value]);
+    expect(markTerminal).toHaveBeenCalledOnce();
+    expect(markTerminal).toHaveBeenCalledWith({}, TENANT_ID, "Ev1_F1");
     expect(requests.map((request) => request.url)).toEqual([
       "https://slack.com/api/assistant.threads.setStatus",
       "https://slack.com/api/chat.update",

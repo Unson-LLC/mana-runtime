@@ -131,9 +131,8 @@ import { runRuntimeTriage } from "./runtime-triage.js";
 import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
   MEETING_MINUTES_RECOVERY_DELAY_SECONDS } from "./meeting-minutes-recovery.js";
 import {
-  processMeetingMinutesRecoveryQueue,
-  type MeetingMinutesRecoveryRuntimeDependencies,
-} from "./meeting-minutes-recovery-runtime.js";
+  handleMeetingMinutesRecoveryQueue,
+} from "./meeting-minutes-recovery-production.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
   gateMeetingMinutesCommandQueueMessage,
@@ -2664,7 +2663,11 @@ export default {
       }
       if (isTenantMeetingMinutesRecoveryBody(message.body)) {
         const tenantBody = message.body;
-        const recoveryDependencies: MeetingMinutesRecoveryRuntimeDependencies<Env> = {
+        await handleMeetingMinutesRecoveryQueue({
+          body: tenantBody,
+          ack: () => message.ack(),
+          retry: (options) => message.retry(options),
+        }, env, {
           refreshTenantContext: (runtimeEnv, body) =>
             reissueMeetingMinutesRecoveryTenantContext(runtimeEnv, body),
           prepareQueue: (env, tenantBody) => {
@@ -2704,12 +2707,7 @@ export default {
           },
           markTerminal: (runtimeEnv, tenantId, runId) =>
             meetingMinutesDeploymentGate(runtimeEnv, tenantId).markTerminal(runId),
-        };
-        await processMeetingMinutesRecoveryQueue({
-          body: tenantBody,
-          ack: () => message.ack(),
-          retry: (options) => message.retry(options),
-        }, env, recoveryDependencies);
+        });
         continue;
       }
       if (isMeetingMinutesRecovery(message.body)) {
