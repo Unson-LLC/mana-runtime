@@ -2,11 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { armMeetingMinutesRecovery } from "../meeting-minutes-recovery.js";
 import {
   handleMeetingMinutesRecoveryQueue,
-  type MeetingMinutesRecoveryProductionPorts,
+  type MeetingMinutesRecoveryPlatform,
 } from "../meeting-minutes-recovery-production.js";
 import {
   executeTenantBoundary,
-  TenantRuntimeBoundaryVerifier,
   type TenantQueueBody,
 } from "../multitenancy/runtime-boundaries.js";
 import type {
@@ -17,7 +16,6 @@ import type {
 } from "../multitenancy/contracts.js";
 import { signTenantContextEnvelope } from "../multitenancy/envelope.js";
 import { IdempotencyMemoryStore, createIdempotencyKey } from "../multitenancy/idempotency.js";
-import { MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
 import type { MeetingMinutesRecovery, MeetingMinutesRun, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
@@ -183,58 +181,43 @@ describe("meeting-minutes recovery production wiring", () => {
       expect(Date.parse(body.tenant_context.expires_at)).toBeLessThan(Date.parse(NOW) - 20 * 60 * 1_000);
       return fresh.value;
     });
-    const ports: MeetingMinutesRecoveryProductionPorts<Record<string, never>> = {
-      refreshTenantContext,
-      prepareQueue: (_env, body) => {
-        preparedContexts.push(body.tenant_context);
-        return {
-          runtimeTenantId: body.tenant_context.tenant.tenant_id,
-          verifier: new TenantRuntimeBoundaryVerifier({
-            read_authoritative_snapshot: async () => snapshot,
-            resolve_verification_key: async () => fresh.publicKey,
-          }),
-          expectedScope,
-          now: () => NOW,
-          ownership,
-          payloadHash,
-          retentionUntil: (now) => new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
-        };
+    const platform: MeetingMinutesRecoveryPlatform<Record<string, never>> = {
+      reissueTenantContext: refreshTenantContext,
+      readAuthoritativeSnapshot: async (_env, tenantContext) => {
+        preparedContexts.push(tenantContext);
+        return snapshot;
       },
-      createEffects: ({ tenantContext, expectedScope: scope, verifier, now }) => ({
-        boundary: (boundary, execute) => {
-          effectBoundaries.push(boundary);
-          return executeTenantBoundary({ boundary, tenant_context: tenantContext, expected_scope: scope,
-            verifier, now: now(), execute: () => execute(credentialFetch) });
-        },
-        slack: (effectId, event, execute) => {
-          effectIds.push(effectId);
-          effectEvents.push(event);
-          effectBoundaries.push("slack_delivery");
-          return executeTenantBoundary({ boundary: "slack_delivery", tenant_context: tenantContext,
-            expected_scope: scope, verifier, now: now(), execute: () => execute(credentialFetch) });
-        },
+      resolveVerificationKey: async () => fresh.publicKey,
+      deploymentProfile: () => "shared_cloud",
+      requiredAudience: () => expectedScope.audience,
+      requiredCapabilityId: () => expectedScope.capability_id,
+      resolveProjectScope: () => ({
+        project_id: expectedScope.project_id,
+        project_ids: expectedScope.project_ids!,
       }),
-      createClients: (_env, effects) => ({
-        slack: {
-          updateRunStatus: (recoveryRun, outcome) => effects.slack(
-            `source-status:${recoveryRun.runId}:${outcome}`,
-            { kind: "source_status", runId: recoveryRun.runId, outcome },
-            (fetchImpl) => new MeetingMinutesSlackClient(undefined, fetchImpl).updateRunStatus(recoveryRun, outcome),
-          ),
-          fallbackStatus: (recoveryRun, outcome) => effects.slack(
-            `source-status-fallback:${recoveryRun.runId}:${outcome}`,
-            { kind: "source_status_fallback", runId: recoveryRun.runId, outcome },
-            (fetchImpl) => new MeetingMinutesSlackClient(undefined, fetchImpl).projectStatusFailure(recoveryRun),
-          ),
-        },
-      }),
+      now: () => NOW,
+      ownership: () => ownership,
+      payloadHash,
+      retentionUntil: (now) => new Date(Date.parse(now) + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+      executeBoundary: ({ boundary, tenantContext, expectedScope: scope, verifier, now, execute }) => {
+        effectBoundaries.push(boundary);
+        return executeTenantBoundary({ boundary, tenant_context: tenantContext, expected_scope: scope,
+          verifier, now: now(), execute: () => execute(credentialFetch) });
+      },
+      executeSlack: ({ effectId, event, tenantContext, expectedScope: scope, verifier, now, execute }) => {
+        effectIds.push(effectId);
+        effectEvents.push(event);
+        effectBoundaries.push("slack_delivery");
+        return executeTenantBoundary({ boundary: "slack_delivery", tenant_context: tenantContext,
+          expected_scope: scope, verifier, now: now(), execute: () => execute(credentialFetch) });
+      },
       withWorkspace: ({ execute }) => execute(fs),
       markTerminal,
     };
 
-    await handleMeetingMinutesRecoveryQueue(queue, {}, ports);
+    await handleMeetingMinutesRecoveryQueue(queue, {}, platform);
     const redelivery = queueMessage(queue.body);
-    await handleMeetingMinutesRecoveryQueue(redelivery, {}, ports);
+    await handleMeetingMinutesRecoveryQueue(redelivery, {}, platform);
 
     expect(queue.retry).toHaveBeenCalledOnce();
     expect(queue.ack).not.toHaveBeenCalled();
@@ -247,7 +230,8 @@ describe("meeting-minutes recovery production wiring", () => {
       { kind: "source_status_fallback", runId: "Ev1_F1", outcome: "failed" },
     ]);
     expect(refreshTenantContext).toHaveBeenCalledTimes(2);
-    expect(preparedContexts).toEqual([fresh.value, fresh.value]);
+    expect(preparedContexts.length).toBeGreaterThanOrEqual(2);
+    expect(preparedContexts.every((context) => context === fresh.value)).toBe(true);
     expect(markTerminal).toHaveBeenCalledOnce();
     expect(markTerminal).toHaveBeenCalledWith({}, TENANT_ID, "Ev1_F1");
     expect(requests.map((request) => request.url)).toEqual([

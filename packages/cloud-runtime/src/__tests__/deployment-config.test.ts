@@ -616,7 +616,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isTenantMeetingMinutesRedoBody(message.body)");
     expect(worker).toContain("isTenantMeetingMinutesRecoveryBody(message.body)");
     expect(worker).toContain("expectedTenantMeetingMinutesRedoScope(env, tenantBody)");
-    expect(worker).toContain("expectedTenantMeetingMinutesRecoveryScope(env, tenantBody)");
+    expect(worker).toContain("resolveProjectScope: (runtimeEnv, body) => expectedProjectScopeForEvent");
+    expect(worker).toContain("readAuthoritativeSnapshot: (runtimeEnv, tenantContext, connectionId)");
+    expect(worker).toContain("executeSlack: ({ env: runtimeEnv, effectId, event, tenantContext");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
     expect(worker).toContain('from "./meeting-minutes-recovery-production.js"');
@@ -651,7 +653,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
     expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
     expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
-    expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context\)/g)).toHaveLength(5);
+    expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context\)/g)).toHaveLength(4);
+    expect(worker).toContain("tenantRuntimeClients(runtimeEnv, tenantContext).authority.read_workspace_connection");
   });
 
   it("fails deployment closed behind the authenticated meeting-minutes drain gate", () => {

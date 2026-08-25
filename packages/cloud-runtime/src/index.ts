@@ -1044,28 +1044,6 @@ function meetingMinutesClients(
   };
 }
 
-function meetingMinutesRecoveryClients(
-  env: Env,
-  effects: Pick<MeetingMinutesTenantEffectGuard, "slack">,
-) {
-  const sourceSlack = (credentialFetch: typeof fetch) => new MeetingMinutesSlackClient(
-    undefined, credentialFetch);
-  return {
-    slack: {
-      updateRunStatus: (run: MeetingMinutesRun,
-        outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
-        effects.slack(`source-status:${run.runId}:${outcome}`,
-          { kind: "source_status", runId: run.runId, outcome },
-          (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome)),
-      fallbackStatus: (run: MeetingMinutesRun,
-        outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
-        effects.slack(`source-status-fallback:${run.runId}:${outcome}`,
-          { kind: "source_status_fallback", runId: run.runId, outcome },
-          (credentialFetch) => sourceSlack(credentialFetch).projectStatusFailure(run)),
-    },
-  };
-}
-
 function requiredRuntimeBinding(value: string | undefined): string {
   if (!value?.trim()) deny("runtime_configuration", "CONFIGURATION_INVALID");
   return value;
@@ -1435,46 +1413,6 @@ function expectedTenantMeetingMinutesRedoScope(
     app_id: command.appId,
     channel_id: command.channelId,
     thread_ts: command.threadTs,
-    actor_principal_id: envelope.actor.principal_id,
-    ...placementProjectScope,
-    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
-    deployment_id: envelope.placement.deployment_id,
-  };
-}
-
-function expectedTenantMeetingMinutesRecoveryScope(
-  env: Env,
-  body: TenantQueueBody<MeetingMinutesRecovery>,
-): ExpectedTenantScope {
-  const recovery = body.payload;
-  const envelope = body.tenant_context;
-  if (recovery.workspaceId !== envelope.workspace_connection.workspace_id
-    || recovery.appId !== envelope.workspace_connection.app_id
-    || recovery.channelId !== envelope.slack.channel_id
-    || recovery.threadTs !== envelope.slack.thread_ts
-    || meetingMinutesRecoveryEventId(recovery) !== envelope.slack.event_id
-    || recovery.userId !== envelope.actor.authenticated_subject_id
-    || envelope.placement.profile !== tenantDeploymentProfile(env)) {
-    deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
-  }
-  const placementProjectScope = expectedProjectScopeForEvent(env, {
-    tenantId: envelope.tenant.tenant_id,
-    eventId: meetingMinutesRecoveryEventId(recovery),
-    workspaceId: recovery.workspaceId,
-    channelId: recovery.channelId,
-    threadTs: recovery.threadTs,
-    messageTs: recovery.threadTs,
-    userId: recovery.userId,
-    eventType: "message",
-    text: "",
-    receivedAt: recovery.actionTs,
-  }, envelope);
-  return {
-    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-    workspace_id: recovery.workspaceId,
-    app_id: recovery.appId,
-    channel_id: recovery.channelId,
-    thread_ts: recovery.threadTs,
     actor_principal_id: envelope.actor.principal_id,
     ...placementProjectScope,
     capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
@@ -2668,36 +2606,37 @@ export default {
           ack: () => message.ack(),
           retry: (options) => message.retry(options),
         }, env, {
-          refreshTenantContext: (runtimeEnv, body) =>
+          reissueTenantContext: (runtimeEnv, body) =>
             reissueMeetingMinutesRecoveryTenantContext(runtimeEnv, body),
-          prepareQueue: (env, tenantBody) => {
-            const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-            const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
-            const verifier = new TenantRuntimeBoundaryVerifier({
-              read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
-              resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
-            });
-            const expectedScope = expectedTenantMeetingMinutesRecoveryScope(env, tenantBody);
-            const now = () => new Date().toISOString();
-            return {
-              runtimeTenantId,
-              verifier,
-              expectedScope,
-              now,
-              ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, runtimeTenantId),
-              payloadHash: tenantPayloadHash,
-              retentionUntil: tenantRetentionUntil,
-            };
-          },
-          createEffects: ({ env: runtimeEnv, tenantContext, expectedScope, verifier, now }) =>
-            createMeetingMinutesTenantEffectGuard({
-              env: runtimeEnv,
-              tenant_context: tenantContext,
-              expected_scope: expectedScope,
-              verifier,
-              now,
-            }),
-          createClients: (runtimeEnv, effects) => meetingMinutesRecoveryClients(runtimeEnv, effects),
+          readAuthoritativeSnapshot: (runtimeEnv, tenantContext, connectionId) =>
+            tenantRuntimeClients(runtimeEnv, tenantContext).authority.read_workspace_connection(connectionId),
+          resolveVerificationKey: (runtimeEnv, keyId) => resolveTenantVerificationKey(runtimeEnv, keyId),
+          deploymentProfile: tenantDeploymentProfile,
+          requiredAudience: (runtimeEnv) => requiredRuntimeBinding(runtimeEnv.MANA_REQUIRED_AUDIENCE),
+          requiredCapabilityId: (runtimeEnv) => requiredRuntimeBinding(runtimeEnv.MANA_REQUIRED_CAPABILITY_ID),
+          resolveProjectScope: (runtimeEnv, body) => expectedProjectScopeForEvent(runtimeEnv, {
+            tenantId: body.tenant_context.tenant.tenant_id,
+            eventId: meetingMinutesRecoveryEventId(body.payload),
+            workspaceId: body.payload.workspaceId,
+            channelId: body.payload.channelId,
+            threadTs: body.payload.threadTs,
+            messageTs: body.payload.threadTs,
+            userId: body.payload.userId,
+            eventType: "message",
+            text: "",
+            receivedAt: body.payload.actionTs,
+          }, body.tenant_context),
+          now: () => new Date().toISOString(),
+          ownership: (runtimeEnv, tenantId) =>
+            createDurableTenantStateClient(runtimeEnv.TENANT_RUNTIME_STATE, tenantId),
+          payloadHash: tenantPayloadHash,
+          retentionUntil: tenantRetentionUntil,
+          executeBoundary: ({ env: runtimeEnv, boundary, tenantContext, expectedScope, verifier, now, execute }) =>
+            createMeetingMinutesTenantEffectGuard({ env: runtimeEnv, tenant_context: tenantContext,
+              expected_scope: expectedScope, verifier, now }).boundary(boundary, execute),
+          executeSlack: ({ env: runtimeEnv, effectId, event, tenantContext, expectedScope, verifier, now, execute }) =>
+            createMeetingMinutesTenantEffectGuard({ env: runtimeEnv, tenant_context: tenantContext,
+              expected_scope: expectedScope, verifier, now }).slack(effectId, event, execute),
           withWorkspace: ({ env: runtimeEnv, tenantContext, recovery, execute }) => {
             const id = runtimeEnv.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
               tenantContext.tenant.tenant_id, recovery.workspaceId, recovery.runId,
