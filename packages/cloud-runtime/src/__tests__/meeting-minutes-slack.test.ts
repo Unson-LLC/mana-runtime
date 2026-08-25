@@ -1,6 +1,60 @@
-import { MeetingMinutesSlackClient } from "../meeting-minutes-slack.js";
+import { immediateStatusFailedMessage, interactionActionFailedMessage, interactionEnqueueFailedMessage,
+  selectionConfirmationFailedMessage, statusProjectionFailedMessage, tenantInteractionFailedMessage,
+  threadCoordinateMissingMessage, MeetingMinutesSlackClient, redoFailedMessage } from "../meeting-minutes-slack.js";
+import { meetingMinutesTaskActionFailure } from "../meeting-minutes-contracts.js";
+import { deriveCorrelationId } from "../multitenancy/ids.js";
 
 describe("MeetingMinutesSlackClient", () => {
+  it("derives a stable inquiry id from the same run, stage, and code", () => {
+    const first = deriveCorrelationId("run-42", "status_projection", "STATUS_PROJECTION_FAILED");
+    expect(first).toBe(deriveCorrelationId("run-42", "status_projection", "STATUS_PROJECTION_FAILED"));
+    expect(first).not.toBe(deriveCorrelationId("run-42", "task_action", "STATUS_PROJECTION_FAILED"));
+    expect(first).toMatch(/^cor_[0-9A-HJKMNP-TV-Z]{26}$/);
+  });
+
+  it.each([
+    ["thread", () => threadCoordinateMissingMessage("run-42", "meeting.txt")],
+    ["immediate", () => immediateStatusFailedMessage("run-42", "meeting.txt")],
+    ["selection", () => selectionConfirmationFailedMessage("run-42", "meeting.txt")],
+    ["status", () => statusProjectionFailedMessage("run-42", "meeting.txt")],
+    ["redo", () => redoFailedMessage("run-42", "meeting.txt")],
+    ["enqueue", () => interactionEnqueueFailedMessage("run-42", "meeting.txt")],
+    ["tenant", () => tenantInteractionFailedMessage("run-42", "meeting.txt", {
+      code: "temporary_failure", message_key: "tenant.temporary_failure", next_actions: ["retry_later"],
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    })],
+    ["action", () => interactionActionFailedMessage("run-42", "meeting.txt", {
+      code: "temporary_failure", message_key: "tenant.temporary_failure", next_actions: ["retry_later"],
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    })],
+  ])("includes a deterministic inquiry id on the %s failure path", (_name, makeMessage) => {
+    const serialized = JSON.stringify(makeMessage());
+    expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+  });
+
+  it("shows a stable error code and run id when a button request cannot be queued", () => {
+    const message = interactionEnqueueFailedMessage("run-42", "meeting.txt");
+    const serialized = JSON.stringify(message);
+    expect(serialized).toContain("処理ID: run-42");
+    expect(serialized).toContain("失敗段階: 処理受付");
+    expect(serialized).toContain("エラーコード: INTERACTION_ENQUEUE_FAILED");
+  });
+
+  it("prefers projection failure diagnostics when Slack status projection fails", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "failed" as const,
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1" as const, stage: "github_save" as const,
+        code: "GITHUB_SAVE_FAILED", retryable: false, failedAt: "2026-08-18T00:00:00.000Z" },
+      projectionFailure: { stage: "status_projection" as const, code: "STATUS_PROJECTION_FAILED",
+        retryable: true, failedAt: "2026-08-18T00:01:00.000Z" } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
+    expect(JSON.stringify(body)).toContain("エラーコード: STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(body)).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+    expect(JSON.stringify(body)).toContain("mana_meeting_minutes_choose_destination:mana");
+  });
   const routedRun = () => ({ version: 1 as const, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
     sourceThreadTs: "1.0", sourceMessageTs: "1.0", file: { id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 10 },
     status: "completed" as const, destination: { id: "mana", projectId: "mana", contextProjectCode: "mana",
@@ -70,6 +124,23 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(call?.body)).toContain("復旧後にファイルを投稿し直してください");
   });
 
+  it("derives the router intake inquiry id from the event id and uses a deterministic fallback", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const client = new MeetingMinutesSlackClient("token", fetchImpl);
+    await client.postIntakePaused("C1", "1.0", "event-1");
+    await client.postIntakePaused("C1", "1.0");
+    const eventText = String(bodies[0]?.text);
+    const fallbackText = String(bodies[1]?.text);
+    expect(eventText).toContain(`問い合わせID: ${deriveCorrelationId("event-1", "intake", "INTAKE_PAUSED")}`);
+    expect(eventText).not.toContain(deriveCorrelationId("C1:1.0", "intake", "INTAKE_PAUSED"));
+    expect(fallbackText).toContain(`問い合わせID: ${deriveCorrelationId("legacy-intake:C1:1.0", "intake", "INTAKE_PAUSED")}`);
+    expect(fallbackText).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+  });
+
   it("explains a blocked queued command privately to the operator", async () => {
     let call: { url: string; body: Record<string, unknown> } | undefined;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -81,6 +152,20 @@ describe("MeetingMinutesSlackClient", () => {
     expect(call?.body).toMatchObject({ channel: "C1", user: "U1" });
     expect(JSON.stringify(call?.body)).toContain("議事録の受付は一時停止中です");
     expect(JSON.stringify(call?.body)).toContain("保存先の選択またはやり直しをもう一度実行してください");
+  });
+
+  it("derives a queued command inquiry id from runId", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl)
+      .postIntakePausedToUser("C1", "U1", "run-1");
+    expect(String(call?.body.text)).toContain(`問い合わせID: ${deriveCorrelationId("run-1", "intake", "INTAKE_PAUSED")}`);
+    expect(String(call?.body.text)).not.toContain(
+      deriveCorrelationId("C1:U1", "intake", "INTAKE_PAUSED"),
+    );
   });
 
   it("does not stop minutes processing when the optional assistant status is unavailable", async () => {
@@ -107,11 +192,72 @@ describe("MeetingMinutesSlackClient", () => {
       return Response.json({ ok: true });
     }) as typeof fetch;
     const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
-    await new MeetingMinutesSlackClient("token", fetchImpl).postTaskScopeMismatch(run, "U1");
+    const failure = meetingMinutesTaskActionFailure(run.runId, "TASK_SCOPE_MISMATCH", false);
+    await new MeetingMinutesSlackClient("token", fetchImpl).postTaskScopeMismatch(run, "U1", failure);
     expect(call?.url).toBe("https://slack.com/api/chat.postEphemeral");
     expect(call?.body).toMatchObject({ channel: "C2", thread_ts: "4.1", user: "U1" });
     expect(String(call?.body.text)).toContain("現在のBrainbaseプロジェクトに紐付いていない");
     expect(String(call?.body.text)).toContain("編集・取消できません");
+    expect(String(call?.body.text)).toContain("処理ID: run-1");
+    expect(String(call?.body.text)).toContain("失敗段階: タスク操作（task_action）");
+    expect(String(call?.body.text)).toContain("エラーコード: TASK_SCOPE_MISMATCH");
+    expect(String(call?.body.text)).toContain(`問い合わせID: ${failure.correlationId}`);
+    expect(String(call?.body.text)).toContain("再試行可否: 不可");
+    expect(String(call?.body.text)).toContain("再試行せず");
+  });
+
+  it.each([["edit", "編集"], ["cancel", "取消"]] as const)(
+    "projects the typed retryable %s task action failure with its reporter correlation id",
+    async (action, actionLabel) => {
+      let call: { url: string; body: Record<string, unknown> } | undefined;
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        call = { url: String(input), body: JSON.parse(String(init?.body)) };
+        return Response.json({ ok: true });
+      }) as typeof fetch;
+      const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
+      const failure = meetingMinutesTaskActionFailure(run.runId, "TASK_ACTION_FAILED", true);
+      await new MeetingMinutesSlackClient("token", fetchImpl).postTaskActionFailure(run, "U1", action, failure);
+      const text = String(call?.body.text);
+      expect(text).toContain(`議事録タスクの${actionLabel}に失敗しました`);
+      expect(text).toContain("処理ID: run-1");
+      expect(text).toContain("失敗段階: タスク操作（task_action）");
+      expect(text).toContain("エラーコード: TASK_ACTION_FAILED");
+      expect(text).toContain(`問い合わせID: ${failure.correlationId}`);
+      expect(text).toContain("再試行可否: 可能");
+      expect(text).toContain("もう一度操作してください");
+    },
+  );
+
+  it("does not expose a legacy raw failure string as a public inquiry id", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
+    const rawFailure = "Bearer super-secret-token";
+    await new MeetingMinutesSlackClient("token", fetchImpl)
+      .postTaskActionFailure(run, "U1", "edit", rawFailure);
+    const text = String(call?.body.text);
+    expect(text).not.toContain(rawFailure);
+    expect(text).toContain(`問い合わせID: ${deriveCorrelationId(run.runId, "task_action", "TASK_ACTION_FAILED")}`);
+    expect(text).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
+  });
+
+  it("does not accept a well-formed but unrelated legacy inquiry id", async () => {
+    let call: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      call = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), slack: { ...routedRun().slack, parentTs: "4.1" } };
+    const unrelatedCorrelationId = "cor_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    await new MeetingMinutesSlackClient("token", fetchImpl)
+      .postTaskActionFailure(run, "U1", "edit", unrelatedCorrelationId);
+    const text = String(call?.body.text);
+    const expectedCorrelationId = deriveCorrelationId(run.runId, "task_action", "TASK_ACTION_FAILED");
+    expect(text).toContain(`問い合わせID: ${expectedCorrelationId}`);
+    expect(text).not.toContain(`問い合わせID: ${unrelatedCorrelationId}`);
   });
 
   it("posts processing as a second reply after the selector reply", async () => {
@@ -183,6 +329,7 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).toContain("処理ID: run-1");
     expect(serialized).toContain("失敗段階: 議事録生成");
     expect(serialized).toContain("エラーコード: UNCLASSIFIED_FAILURE");
+    expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
     expect(serialized).not.toContain("secret-value");
     expect(serialized).not.toContain("raw upstream response");
   });
@@ -232,12 +379,17 @@ describe("MeetingMinutesSlackClient", () => {
     const serialized = JSON.stringify(body);
     expect(serialized).toContain("保存済みの議事録に見本文が含まれています");
     expect(serialized).toContain("以前の生成結果を自動では上書きしません");
+    expect(serialized).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
     expect(serialized).toContain("保存先をやり直す");
     expect(serialized).not.toContain("タスク処理を再実行");
     expect(serialized).not.toContain("meeting_minutes_persisted_placeholder_output");
   });
 
   it("keeps a failed redo visible with a durable retry action", async () => {
+    const directMessage = JSON.stringify(redoFailedMessage("run-1", "meeting.txt"));
+    expect(directMessage).toContain("処理ID: run-1");
+    expect(directMessage).toContain("失敗段階: 処理受付");
+    expect(directMessage).toContain("エラーコード: REDO_ENQUEUE_FAILED");
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
@@ -246,8 +398,24 @@ describe("MeetingMinutesSlackClient", () => {
     expect(body).toMatchObject({ channel: "C1", ts: "3.1" });
     const serialized = JSON.stringify(body);
     expect(serialized).toContain("保存先のやり直しを完了できませんでした");
+    expect(serialized).toContain("処理ID: run-1");
+    expect(serialized).toContain("失敗段階: 処理受付");
+    expect(serialized).toContain("エラーコード: REDO_ENQUEUE_FAILED");
     expect(serialized).toContain("取り消しを再実行");
     expect(serialized).toContain("mana_meeting_minutes_confirm_redo");
+  });
+
+  it("uses one bounded safe projection when the redo failure notice cannot be posted", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return bodies.length === 1 ? Response.json({ ok: false, error: "message_not_found" }) : Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl).showRedoFailure(routedRun());
+    expect(bodies).toHaveLength(2);
+    expect(JSON.stringify(bodies[1])).toContain("STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(bodies[1])).toContain("処理ID: run-1");
+    expect(JSON.stringify(bodies[1])).toContain("失敗段階: 状態表示");
   });
 
   it("explains how to recover when the destination Slack channel is unavailable", async () => {

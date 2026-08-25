@@ -8,6 +8,13 @@ import { classifyMeetingMinutesFailure, meetingMinutesFailureLog } from "./meeti
 
 export interface MeetingMinutesStatusProjectionOptions {
   updateStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void>;
+  /**
+   * One-shot fallback for the original status message. Implementations must not
+   * call updateStatus again; a rejected fallback is recorded and never retried
+   * recursively by this lifecycle helper.
+   */
+  fallbackStatus?(run: MeetingMinutesRun, outcome: "completed" | "failed",
+    failure: NonNullable<MeetingMinutesRun["projectionFailure"]>): Promise<void>;
   logProjectionError?(entry: { runId: string; outcome: "completed" | "failed"; stage: string;
     code: string; retryable: boolean; receipt?: unknown; checkpoint?: unknown }): void;
 }
@@ -20,6 +27,14 @@ async function recordProjectionFailure(fs: WorkspaceFs, run: MeetingMinutesRun,
   run.updatedAt = run.projectionFailure.failedAt;
   await saveMeetingMinutesRun(fs, run);
   options.logProjectionError?.({ outcome, ...meetingMinutesFailureLog(run) });
+  if (options.fallbackStatus) {
+    try {
+      await options.fallbackStatus(run, outcome, run.projectionFailure);
+    } catch {
+      console.error(JSON.stringify({ event: "meeting_minutes_status_projection_fallback_failed", runId: run.runId,
+        outcome, stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true }));
+    }
+  }
 }
 
 async function clearProjectionFailure(fs: WorkspaceFs, run: MeetingMinutesRun): Promise<void> {

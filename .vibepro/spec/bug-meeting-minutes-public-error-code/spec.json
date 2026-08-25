@@ -1,0 +1,521 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "bug-meeting-minutes-public-error-code",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "ai_synthesis"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "議事録作成ボタン後の各失敗段階はSlack上の元メッセージへ処理IDと安全な公開エラーコードを表示し、テナント解決失敗では相関IDも表示する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts",
+            "anchor": "createUserFailure"
+          },
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-slack.ts",
+            "anchor": "tenantInteractionFailedMessage"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "projects a safe tenant error code and run id back to the clicked Slack message"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-slack.test.ts",
+            "case": "shows a stable error code and run id when a button request cannot be queued"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/*.test.ts",
+            "must_cover": "temporary_failure"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-24T04:01:35.188Z",
+      "last_revised_at": "2026-08-24T04:36:06.125Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "Slack、HTTP応答、構造化ログ、非同期rejectに、生の例外、stack、Bearer token、内部テナント情報を含めない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts",
+            "anchor": "createUserFailure"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "projects a safe tenant error code and run id back to the clicked Slack message"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "Bearer secret"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-24T04:01:35.188Z",
+      "last_revised_at": "2026-08-24T04:36:06.125Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "テナント解決失敗を installation_required、reauthentication_required、administrator_action_required、usage_limit_reached、temporary_failure のいずれかへ安定分類する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts",
+            "anchor": "createUserFailure"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "maps resolver failure %s to public code %s and notification eligibility %s"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "installation_required"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-24T04:01:35.188Z",
+      "last_revised_at": "2026-08-24T04:36:06.125Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "共有interaction入口は失敗時のHTTP 503と安全な公開failure envelopeを維持し、認証後の通常処理はtenant-scoped deliveryを通す",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts",
+            "anchor": "handleMeetingMinutesInteraction"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "case": "does not accept a destination-team payload signed by the source Slack app"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "case": "acknowledges immediately and defers Queue without replacing the selector"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "must_cover": "temporary_failure"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-24T04:20:00.000Z",
+      "last_revised_at": "2026-08-24T04:36:06.125Z"
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "response_urlがない、または安全性検査に通らない場合はSlack更新を行わずHTTP 503の公開failure envelopeを残す",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts",
+            "anchor": "updateBeforeTenant"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "keeps the public HTTP failure when a signed payload has no response_url"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-interaction-entrypoint.test.ts",
+            "case": "keeps the public HTTP failure without fetching an unsafe response_url"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "installation_required"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-24T04:20:00.000Z",
+      "last_revised_at": "2026-08-24T04:36:06.125Z"
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "tenant解決前のresponse_url通知は、実体がTenantBoundaryError（または明示的に信頼されたwrapper）である場合に限り、明示的なeligibility allowlistへ限定する。インストール不足・再認証・quota・既知の一時接続障害だけを許可し、TENANT_UNKNOWN、TENANT_AMBIGUOUS、workspace/app不一致、全scope不一致、stale revision、CROSS_TENANT_CANDIDATE、未分類コード、型なし例外では通知しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/slack-interactions.ts",
+            "anchor": "isTenantFailureResponseUrlEligible"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "maps resolver failure %s to public code %s and notification eligibility %s"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "fails closed for untyped and unknown tenant failures before touching response_url"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "CROSS_TENANT_CANDIDATE"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "WORKSPACE_CONNECTION_REAUTH_REQUIRED"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-25T00:00:00.000Z",
+      "last_revised_at": "2026-08-25T00:00:00.000Z"
+    },
+    {
+      "id": "C-006",
+      "type": "contract",
+      "statement": "stale recoveryは外部Slack投影前にrecoveryProjectionClaimedAtをdurableに保存し、claim保存に失敗した配送では投影前なので主投影もfallbackも呼ばず、元のprocessing failureだけを保持してQueue retryへ渡す。claim保存後は主投影の失敗をrecoveryProjectionAttemptedAtへ記録してbounded fallbackを実行し、recoveryFallbackOutcome（succeeded/failed）とrecoveryFallbackOutcomePersistedAtを最大2回の保存試行でdurableに保存する。outcome保存不能ならrecoveryFallbackOutcomePersistenceFailedAtを明示的なterminal markerとしてbest-effortで保存し、MEETING_MINUTES_RECOVERY_OUTCOME_PERSIST_FAILEDをthrowする。claim後・attempted前はSlackが送信済みか不明なためredeliveryで外部投影を再実行せずterminalで運用診断を残し、自動完遂より重複防止を優先して運用介入とする。attempted後にknown outcomeが残る場合はSlackを呼ばずoutcome保存だけをbounded retryし、outcomeが失われていればoperational errorを返して外部投影を再実行しない。通常選択経路のmain/fallback各1回は単一処理試行内のbounded保証であり、このstale recovery redelivery契約を適用しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/05_error_design.md",
+            "section": "Slack interactionの認証前失敗通知"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-recovery.ts",
+            "anchor": "recoverStaleMeetingMinutesRun"
+          },
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-recovery-runtime.ts",
+            "anchor": "processTenantMeetingMinutesRecovery"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "uses one non-recursive fallback when stale recovery status projection fails"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "does not invoke fallback until the recovery claim marker is durable, then retries on redelivery"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "redelivery persists a claimed fallback outcome without re-projecting Slack"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "redelivery retries a known fallback outcome without re-projecting Slack"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "treats a claim-only recovery as indeterminate without re-projecting Slack"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "case": "does not duplicate Slack projection when the final completion save fails"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "case": "uses a bounded fallback when the back-action projection fails"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-recovery.test.ts",
+            "must_cover": "recoveryFallbackOutcomePersistedAt"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/slack-interactions.test.ts",
+            "must_cover": "STATUS_PROJECTION_FAILED"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-08-25T00:00:00.000Z",
+      "last_revised_at": "2026-08-25T00:00:00.000Z"
+    }
+  ],
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenant_id",
+      "resolved_from": [
+        "signed Slack workspace_id/app_id via Brainbase workspace connection"
+      ],
+      "resolution_point": "Slack interaction ingress before queueing or business effects",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "Slack ingress",
+        "public failure envelope",
+        "tenant-scoped delivery"
+      ],
+      "verified_surfaces": [
+        "Slack ingress",
+        "public failure envelope",
+        "tenant-scoped delivery"
+      ]
+    },
+    "resources": [
+      {
+        "name": "Slack interaction failure projection",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/correlation_id",
+        "trust_zone": "signed Slack interaction ingress",
+        "residue_policy": "fixed public failure text only; no raw exception or tenant data",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "single signed response_url capability"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenant_id",
+      "scope": "signed interaction response_url for fixed failure notification only",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "Brainbase"
+      ],
+      "residency": "no tenant data is added to the pre-tenant notification",
+      "migration": "not applicable",
+      "rollback": "disable updateBeforeTenant while retaining the HTTP failure envelope"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_shared",
+      "managed_dedicated"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "no_data",
+      "cross_tenant_candidate"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "Slack workspace",
+        "Slack app",
+        "Brainbase tenant"
+      ],
+      "boundary_edges": [
+        "signed Slack interaction to public failure",
+        "resolved tenant to tenant-scoped delivery"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected",
+      "evidence": {
+        "propagation_surfaces": [
+          "Slack ingress",
+          "public failure envelope",
+          "tenant-scoped delivery"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "no_data",
+          "cross_tenant_candidate"
+        ],
+        "scanner_results": {
+          "tenant_boundary": "inconclusive",
+          "tenant_key_propagation": "inconclusive",
+          "cross_tenant_authorization": "inconclusive",
+          "state_partitioning": "inconclusive",
+          "sandbox_isolation": "inconclusive",
+          "connection_routing": "inconclusive",
+          "secret_scope": "inconclusive",
+          "canonical_data_owner": "inconclusive",
+          "deployment_topology": "inconclusive",
+          "cross_tenant_negative_evidence": "inconclusive"
+        },
+        "graph": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated"
+          ],
+          "tenant_entities": [
+            {
+              "tenant_scope": "Brainbase tenant",
+              "tenant_key_source": "verified workspace connection",
+              "trust_zone": "signed Slack ingress",
+              "data_owner": "Brainbase"
+            }
+          ],
+          "boundary_edges": [
+            {
+              "tenant_scope": "Slack workspace/app to Brainbase tenant",
+              "tenant_key_source": "verified workspace connection",
+              "sharing_mode": "tenant_partitioned",
+              "credential_scope": "signed response_url capability",
+              "connection_mode": "Slack interaction",
+              "deployment_mode": "managed_shared"
+            }
+          ]
+        },
+        "spec": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated"
+          ]
+        },
+        "implementation": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated"
+          ]
+        }
+      }
+    }
+  },
+  "generated_at": "2026-08-24T04:01:35.186Z",
+  "previous_spec_id": "2026-08-24T04:01:35.186Z"
+}

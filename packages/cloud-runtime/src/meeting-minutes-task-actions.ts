@@ -1,9 +1,11 @@
 import type { CanonicalTask, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { MEETING_MINUTES_TASK_CANCEL_ACTION_ID, MEETING_MINUTES_TASK_EDIT_ACTION_ID,
   MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID,
-  meetingMinutesTaskProjectCodes, type MeetingMinutesDestination, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+  meetingMinutesTaskActionFailure, meetingMinutesTaskProjectCodes, type MeetingMinutesDestination,
+  type MeetingMinutesRun, type MeetingMinutesTaskActionFailure } from "./meeting-minutes-contracts.js";
 import { MEETING_MINUTES_ASSIGNEE_NONE, meetingMinutesTaskEditViewFromAction } from "./meeting-minutes-task-cards.js";
 import type { GraphPersonOption } from "./brainbase-graph-runtime.js";
+import { deriveCorrelationId } from "./multitenancy/ids.js";
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as ObjectValue : undefined; }
@@ -30,10 +32,16 @@ function sourceIdentity(value: ActionMetadata | undefined): MeetingMinutesSource
     channelId: value.sourceChannelId, threadTs: value.sourceThreadTs,
   } : undefined;
 }
-function expiredLegacyAction(): Response {
+function expiredLegacyAction(runId?: string): Response {
+  const failure = meetingMinutesTaskActionFailure(runId ?? "legacy", "TASK_ACTION_EXPIRED", false);
   return Response.json({
     error: "meeting_minutes_task_action_expired",
-    user_message: "このカードは旧形式のため操作できません。議事録を再生成してください。",
+    user_message: `このカードは旧形式のため操作できません。議事録を再生成してください。処理ID: ${failure.processingId}、失敗段階: タスク操作（${failure.stage}）、エラーコード: ${failure.code}、問い合わせID: ${failure.correlationId}。再試行せず、議事録を再生成してください。`,
+    processing_id: failure.processingId,
+    stage: failure.stage,
+    code: failure.code,
+    correlation_id: failure.correlationId,
+    retryable: failure.retryable,
   }, { status: 409 });
 }
 export interface MeetingMinutesTaskActionDependencies {
@@ -46,7 +54,11 @@ export interface MeetingMinutesTaskActionDependencies {
   updateTask(taskId: string, input: UpdateTaskInput, idempotencyKey: string): Promise<CanonicalTask>;
   deleteTask(taskId: string, expectedVersion: number, idempotencyKey: string): Promise<unknown>;
   updateCard(run: MeetingMinutesRun): Promise<void>;
-  notifyScopeMismatch(run: MeetingMinutesRun, userId: string): Promise<void>;
+  notifyScopeMismatch(run: MeetingMinutesRun, userId: string,
+    failure: MeetingMinutesTaskActionFailure): Promise<void>;
+  /** Optional safe Slack projection for a deferred non-scope task failure. */
+  notifyTaskActionFailure?(run: MeetingMinutesRun, userId: string, action: "edit" | "cancel",
+    failure: MeetingMinutesTaskActionFailure): Promise<void>;
   openView(organizationId: string, triggerId: string, view: Record<string, unknown>): Promise<void>;
   listPeople(): Promise<GraphPersonOption[] | undefined>;
   repairTaskBoard(targetId: string): Promise<void>;
@@ -68,6 +80,71 @@ function candidate(run: MeetingMinutesRun, index: number) {
   return run.taskRegistration?.registered.find((item) => item.index === index && item.status !== "removed");
 }
 function status(error: unknown): number | undefined { return object(error)?.status as number | undefined; }
+function isScopeMismatch(error: unknown): boolean {
+  return error instanceof Error && error.message === "meeting_minutes_task_scope_mismatch";
+}
+function deferredTaskFailureCode(error: unknown): "TASK_SCOPE_MIGRATION_FAILED" | "TASK_ACTION_FAILED" {
+  return error instanceof Error && error.message === "meeting_minutes_task_scope_migration_failed"
+    ? "TASK_SCOPE_MIGRATION_FAILED" : "TASK_ACTION_FAILED";
+}
+async function reportDeferredTaskActionFailure(
+  deps: MeetingMinutesTaskActionDependencies,
+  run: MeetingMinutesRun,
+  userId: string,
+  action: "edit" | "cancel",
+  taskId: string,
+  error: unknown,
+): Promise<void> {
+  if (isScopeMismatch(error)) {
+    const failure = meetingMinutesTaskActionFailure(run.runId, "TASK_SCOPE_MISMATCH", false);
+    console.warn(JSON.stringify({ event: "meeting_minutes_task_scope_mismatch", runId: run.runId, taskId, action,
+      stage: failure.stage, code: failure.code, correlation_id: failure.correlationId, retryable: failure.retryable }));
+    try {
+      await deps.notifyScopeMismatch(run, userId, failure);
+    } catch {
+      console.error(JSON.stringify({ event: "meeting_minutes_task_scope_mismatch_projection_failed", runId: run.runId,
+        taskId, action, stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+        correlation_id: deriveCorrelationId(run.runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
+    }
+    return;
+  }
+  const code = deferredTaskFailureCode(error);
+  const failure: MeetingMinutesTaskActionFailure = meetingMinutesTaskActionFailure(run.runId, code, true);
+  console.error(JSON.stringify({ event: "meeting_minutes_task_action_failed", runId: run.runId, taskId, action,
+    stage: failure.stage, code: failure.code, correlation_id: failure.correlationId, retryable: failure.retryable }));
+  if (!deps.notifyTaskActionFailure) return;
+  try {
+    await deps.notifyTaskActionFailure(run, userId, action, failure);
+  } catch {
+    console.error(JSON.stringify({ event: "meeting_minutes_task_action_failure_projection_failed", runId: run.runId,
+      taskId, action, stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      correlation_id: deriveCorrelationId(run.runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
+  }
+}
+function deferTaskAction(
+  deps: MeetingMinutesTaskActionDependencies,
+  run: MeetingMinutesRun,
+  userId: string,
+  action: "edit" | "cancel",
+  taskId: string,
+  work: () => Promise<void>,
+): void {
+  deps.defer((async () => {
+    try {
+      await work();
+    } catch (error) {
+      try {
+        await reportDeferredTaskActionFailure(deps, run, userId, action, taskId, error);
+      } catch {
+        // The deferred boundary must always settle. Keep this last-resort log
+        // fixed and secret-free if a future reporter implementation changes.
+        console.error(JSON.stringify({ event: "meeting_minutes_task_action_failure_report_failed", runId: run.runId,
+          taskId, action, stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+          correlation_id: deriveCorrelationId(run.runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
+      }
+    }
+  })());
+}
 function sameTaskScope(actual: readonly string[] | undefined, expected: readonly string[] | undefined): boolean {
   return Boolean(actual && expected && actual.length === expected.length && expected.every((code) => actual.includes(code)));
 }
@@ -102,7 +179,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     const value = metadata(view?.private_metadata); const userId = text(object(payload.user)?.id);
     const teamId = text(object(payload.team)?.id); const expectedTeam = value?.organizationId && deps.destinationTeamIds[value.organizationId];
     const source = sourceIdentity(value);
-    if (value && !source) return expiredLegacyAction();
+    if (value && !source) return expiredLegacyAction(value.runId);
     const run = value && source ? await deps.loadRun(value.runId, source) : undefined;
     if (!value || !source || !run || !candidate(run, value.index) || !allowed(payload, run, source, deps) ||
       !userId || !deps.operatorUserIds.has(userId) || teamId !== expectedTeam) {
@@ -131,7 +208,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const value = callbackId ? metadata(view?.private_metadata) : metadata(action?.value);
   if (!value) return Response.json({ error: "meeting_minutes_task_action_invalid" }, { status: 400 });
   const source = sourceIdentity(value);
-  if (!source) return expiredLegacyAction();
+  if (!source) return expiredLegacyAction(value.runId);
   const userId = text(object(payload.user)?.id);
   if (!userId || !deps.operatorUserIds.has(userId)) return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
   const run = await deps.loadRun(value.runId, source);
@@ -144,18 +221,20 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     const expectedTeam = value.organizationId && deps.destinationTeamIds[value.organizationId];
     if (!triggerId || !value.organizationId || !value.channelId || !value.title || teamId !== expectedTeam || channelId !== value.channelId)
       return Response.json({ error: "meeting_minutes_task_action_forbidden" }, { status: 403 });
-    deps.defer(deps.openView(value.organizationId, triggerId, meetingMinutesTaskEditViewFromAction({ runId: value.runId,
-      index: value.index, title: value.title, due: value.due, organizationId: value.organizationId,
-      channelId: value.channelId, projectId: value.projectId, assigneePersonId: value.assigneePersonId,
-      assigneeDisplayName: value.assigneeDisplayName, sourceWorkspaceId: source.workspaceId,
-      sourceAppId: source.appId, sourceChannelId: source.channelId, sourceThreadTs: source.threadTs })));
+    deferTaskAction(deps, run, userId, "edit", item.taskId, async () => {
+      await deps.openView(value.organizationId!, triggerId, meetingMinutesTaskEditViewFromAction({ runId: value.runId,
+        index: value.index, title: value.title!, due: value.due, organizationId: value.organizationId!,
+        channelId: value.channelId!, projectId: value.projectId, assigneePersonId: value.assigneePersonId,
+        assigneeDisplayName: value.assigneeDisplayName, sourceWorkspaceId: source.workspaceId,
+        sourceAppId: source.appId, sourceChannelId: source.channelId, sourceThreadTs: source.threadTs }));
+    });
     return Response.json({ ok: true });
   }
   const legacyTaskScopes = trustedLegacyTaskScopes(run, item);
   await reconcileTaskDestination(run, deps);
   const currentTaskScope = meetingMinutesTaskProjectCodes(run.destination);
   if (actionId === MEETING_MINUTES_TASK_CANCEL_ACTION_ID) {
-    deps.defer((async () => { let current: CanonicalTask;
+    deferTaskAction(deps, run, userId, "cancel", item.taskId, async () => { let current: CanonicalTask;
       try { current = await deps.getTask(item.taskId); }
       catch (error) { if (status(error) !== 404) throw error;
         item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
@@ -165,14 +244,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
         throw new Error("meeting_minutes_task_scope_mismatch");
       await deps.deleteTask(item.taskId, current.version, `meeting-minutes-${run.runId}-cancel-${value.index}`);
       item.status = "removed"; run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-      await deps.repairTaskBoard(run.destination!.taskBoardTargetId); })().catch(async (error) => {
-      if (error instanceof Error && error.message === "meeting_minutes_task_scope_mismatch") {
-        console.warn("meeting_minutes_task_scope_mismatch", { runId: run.runId, taskId: item.taskId, action: "cancel" });
-        await deps.notifyScopeMismatch(run, userId);
-        return;
-      }
-      throw error;
-    }));
+      await deps.repairTaskBoard(run.destination!.taskBoardTargetId); });
     return Response.json({ ok: true });
   }
   const values = object(object(view?.state)?.values); const title = text(object(object(values?.title)?.value)?.value);
@@ -180,7 +252,7 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
   const assigneeState = object(object(values?.assignee)?.[MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID]);
   const assigneeSelection = text(object(assigneeState?.selected_option)?.value);
   if (!title || title.length > 120) return Response.json({ response_action: "errors", errors: { title: "タイトルを入力してください" } });
-  deps.defer((async () => { const current = await deps.getTask(item.taskId);
+  deferTaskAction(deps, run, userId, "edit", item.taskId, async () => { const current = await deps.getTask(item.taskId);
     const scopeIsCurrent = sameTaskScope(current.project_codes, currentTaskScope);
     const scopeIsTrustedLegacy = !scopeIsCurrent && legacyTaskScopes.some((scope) => sameTaskScope(current.project_codes, scope));
     if (!scopeIsCurrent && !scopeIsTrustedLegacy) throw new Error("meeting_minutes_task_scope_mismatch");
@@ -201,13 +273,6 @@ export async function handleMeetingMinutesTaskAction(payload: ObjectValue,
     if (generated) { generated.title = title; if (due) generated.due_at = `${due}T00:00:00+09:00`;
       if (assigneeSelection) generated.assignee_name = updated.assignee_display_name ?? undefined; }
     run.updatedAt = new Date().toISOString(); await deps.saveRun(run); await deps.updateCard(run);
-    await deps.repairTaskBoard(run.destination!.taskBoardTargetId); })().catch(async (error) => {
-    if (error instanceof Error && error.message === "meeting_minutes_task_scope_mismatch") {
-      console.warn("meeting_minutes_task_scope_mismatch", { runId: run.runId, taskId: item.taskId, action: "edit" });
-      await deps.notifyScopeMismatch(run, userId);
-      return;
-    }
-    throw error;
-  }));
+    await deps.repairTaskBoard(run.destination!.taskBoardTargetId); });
   return Response.json({ ok: true });
 }

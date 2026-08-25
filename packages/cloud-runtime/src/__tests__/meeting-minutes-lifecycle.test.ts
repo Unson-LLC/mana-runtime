@@ -97,6 +97,22 @@ describe("meeting minutes source status lifecycle", () => {
     expect(JSON.stringify(logProjectionError.mock.calls)).not.toContain("slack update down");
   });
 
+  it("uses a single non-recursive fallback for a failed completion projection", async () => {
+    const fs = await setup(); const logProjectionError = vi.fn();
+    const updateStatus = vi.fn().mockRejectedValue(new Error("slack update down"));
+    const fallbackStatus = vi.fn().mockResolvedValue(undefined);
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus, fallbackStatus, logProjectionError,
+    })).rejects.toThrow("slack update down");
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(fallbackStatus).toHaveBeenCalledOnce();
+    expect(fallbackStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ projectionFailure: expect.objectContaining({
+        stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      }) }),
+      "completed", expect.objectContaining({ stage: "status_projection", code: "STATUS_PROJECTION_FAILED" }));
+  });
+
   it("preserves the processing error when the failure projection also fails", async () => {
     const fs = await setup(); const logProjectionError = vi.fn();
     await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config,

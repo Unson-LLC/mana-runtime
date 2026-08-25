@@ -35,6 +35,20 @@
 - 内部エラー文字列・スタックトレース・他所のURLを外部チャンネルへ出さない
 - 成功を偽装しない: スキップ・未検証があるなら結果にそう書く
 
+### Slack interactionの認証前失敗通知
+
+Slack interactionでは、署名、時刻、workspace、app、action payloadを検証した後、テナント解決だけが失敗する場合がある。この場合に限り、署名済みpayload内の`response_url`を単回利用の通知capabilityとして使い、元メッセージへ固定された公開エラーコードと問い合わせIDを表示してよい。operator認可はtenant解決後の業務処理に適用し、認証前通知に業務副作用を持たせない。
+
+この経路はtenant-scoped deliveryの例外であり、業務副作用には使わない。通知本文へtenant情報、生の例外、認証情報を含めず、HTTPSの`hooks.slack.com`、443番、userinfoなし、redirectなしを満たすURLだけを許可する。`response_url`がない、または検査に通らない場合はSlack更新を行わず、HTTP 503の安全な失敗envelopeを診断面として残す。Slackの`response_url`からworkspace/appを独立に再導出できないため、検証済み署名payloadとの結合をcapabilityの根拠とする。
+
+ただし、テナント解決がworkspace/appの所有関係を確定できなかった場合は、このcapabilityを使わない。`TENANT_UNKNOWN`、`TENANT_AMBIGUOUS`、`WORKSPACE_OR_APP_MISMATCH` はresponse_url通知の対象外とし、未分類の新しい境界コードも同じくfail-closedで扱う。既知の一時障害、インストール不足、再認証要求など、署名済みpayloadと既知の接続境界に結び付く失敗だけを明示的なeligibility gateで許可する。
+
+状態投影は主経路1回、安全なfallback 1回までとする。intake停止中・組織選択・戻る操作の非同期投影も同じガードを通し、通常選択経路のmain/fallback各1回は単一処理試行内のbounded保証として扱う。即時状態表示と選択確認が同時に失敗した場合も、安全な単一の投影失敗として扱う。stale recoveryは外部投影前にclaimを永続化し、結果が不明な再配信ではSlackを再投影せずfail closedで運用介入へ渡す。既知の投影結果が残る場合は外部作用を再実行せず、結果の保存だけをbounded retryする。具体的な永続フィールド、試行上限、公開コード、状態遷移はSpec C-006を正本とする。
+
+すべてのユーザー向け失敗表示には、`runId`または実行前イベントの`eventId`・失敗段階・固定エラーコードから決定的に導出した`問い合わせID`を付ける。上流から相関IDを受け取れない同期表示は、channel・threadまたはchannel・userから構成する決定的なfallback seedを使い、再表示・再試行で同じ失敗を追跡できるようにする。空のシードやraw errorは問い合わせIDにしない。受付停止判定とTask write承認コールバックの拒否は、raw errorを返さずHTTP 503の安全な`UserFailure` envelopeへ変換し、署名検証済みで利用資格のある`response_url`に限って同じ問い合わせID付きの固定文言を投影する。
+
+議事録Taskの遅延open・edit・cancelは、作業失敗を呼び出し元のPromiseへraw rejectとして残さない。reporterは`processingId`・固定`stage`（`task_action`）・公開`code`・決定的な`correlationId`・`retryable`を一つの失敗envelopeへ確定し、構造化ログと安全なSlack投影へ同じ値を渡す。Slack投影は別の段階や問い合わせIDを再導出せず、再試行可能な失敗には再試行案内を、scope不一致（`TASK_SCOPE_MISMATCH`）には再試行せず管理者が紐付けを確認する案内を表示する。旧形式・信頼できないカードは副作用の前に`TASK_ACTION_EXPIRED`として停止し、カードとHTTP応答へ処理ID・失敗段階・公開コード・問い合わせID・再試行可否を表示する。通知自体が失敗した場合も安全な投影失敗ログへ閉じ込める。
+
 ## 4. TODO
 
 - エラーパターン判定（isDeadSessionError等）の判定文字列一覧をこの文書に転記し、Claude CLI更新時の追従チェックリストにする

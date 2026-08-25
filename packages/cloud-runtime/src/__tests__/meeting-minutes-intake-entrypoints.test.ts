@@ -87,7 +87,7 @@ describe("meeting minutes intake entrypoints", () => {
       notify,
     })).resolves.toBe(true);
 
-    expect(notify).toHaveBeenCalledWith(fileEvent.channelId, fileEvent.threadTs);
+    expect(notify).toHaveBeenCalledWith(fileEvent.channelId, fileEvent.threadTs, fileEvent.eventId);
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
   });
@@ -165,7 +165,7 @@ describe("meeting minutes intake entrypoints", () => {
 
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(fileEvent.channelId, fileEvent.threadTs);
+    expect(notify).toHaveBeenCalledWith(fileEvent.channelId, fileEvent.threadTs, fileEvent.eventId);
   });
 
   it("allows only an enabled and unpaused router file into minutes processing", async () => {

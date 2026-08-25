@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { assessTenantRuntimeDeploymentConfig } from "../../scripts/tenant-runtime-deploy-readiness.mjs";
 
 interface DeploymentConfig {
   account_id?: string;
@@ -205,6 +206,19 @@ describe("会社別Cloudflare deployment", () => {
       RUNTIME_CLAUDE_EFFORT: "xhigh",
       DEVELOPMENT_CALLBACK_BASE_URL: "https://unson-business-mana-runtime.unson.workers.dev",
     });
+    expect(JSON.parse(unson.vars.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON)).toEqual({
+      unson: { workspace_id: "T07LL5WV7N1", app_id: "A093QM6QEPP" },
+      "unson-business": { workspace_id: "T0882T8N9UH", app_id: "A0BPM2J33SN" },
+      "tech-knight": { workspace_id: "T07A9J3PEMB", app_id: "A0A1WER0LEQ" },
+    });
+    expect(JSON.parse(unson.vars.BRAINBASE_WORKSPACE_CONNECTIONS_JSON)).toEqual([
+      expect.objectContaining({
+        workspace_id: "T0882T8N9UH",
+        app_id: "A0BPM2J33SN",
+        deployment_id: "dep_01M0JK4PXCSV1P2V6Q4FJRBY7B",
+        contract_revision: "2",
+      }),
+    ]);
     expect(JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON)).toEqual([
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", channelName: "9960-back-office", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true,
         taskInventoryAllowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
@@ -238,6 +252,14 @@ describe("会社別Cloudflare deployment", () => {
         deliveryScopes: [{ connector: "slack", channelId: "C0BMNSP6C80" }],
       },
     ]);
+  });
+
+  it("passes the actual unson-business Wrangler config through deployment preflight", () => {
+    expect(assessTenantRuntimeDeploymentConfig(unson, [
+      "SLACK_SIGNING_SECRET",
+      "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
+      "DEVELOPMENT_CALLBACK_TOKEN",
+    ])).toEqual({ ready: true, missing_bindings: [] });
   });
 
   it("Claude Codeを検証済みのexact versionへ固定する", () => {
@@ -567,6 +589,7 @@ describe("会社別Cloudflare deployment", () => {
       expect.objectContaining({ tag: "v8", new_sqlite_classes: ["TaskBoardBinding"] }),
     ]));
     const raw = readFileSync(fileURLToPath(new URL("../../wrangler.unson-business.jsonc", import.meta.url)), "utf8");
+    expect(raw.match(/"BRAINBASE_WORKSPACE_CONNECTIONS_JSON"/g) ?? []).toHaveLength(1);
     expect(raw).not.toContain('"GITHUB_TOKEN":');
   });
 
@@ -576,6 +599,16 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("handleMeetingMinutesInteractionEntrypoint(request");
     expect(worker).toContain("createTenantInteractionEffectResolver(env)");
     expect(worker).toContain("createMeetingMinutesTenantEffectGuard({");
+    expect(worker).toContain("preflightMeetingMinutesDestinationSlackBindings");
+    expect(worker).toContain("effects.preflightDestinationSlack(destinations)");
+    const guardStart = worker.indexOf("function createMeetingMinutesTenantEffectGuard(");
+    const guardEnd = worker.indexOf("function meetingMinutesClients(", guardStart);
+    const guard = worker.slice(guardStart, guardEnd);
+    expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeGreaterThanOrEqual(0);
+    expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeLessThan(
+      guard.indexOf("resolveDerivedSlackTenantContext"),
+    );
+    expect(guard).toContain("app_id: appId");
     expect(worker).not.toContain("meetingMinutesClients(env)");
     expect(worker).not.toContain("env.TENANT_ID, env.SLACK_EXPECTED_TEAM_ID, runId");
     expect(worker).toContain('release: "on_expiration"');
@@ -583,13 +616,16 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isTenantMeetingMinutesRedoBody(message.body)");
     expect(worker).toContain("isTenantMeetingMinutesRecoveryBody(message.body)");
     expect(worker).toContain("expectedTenantMeetingMinutesRedoScope(env, tenantBody)");
-    expect(worker).toContain("expectedTenantMeetingMinutesRecoveryScope(env, tenantBody)");
+    expect(worker).toContain("resolveProjectScope: (runtimeEnv, body) => expectedProjectScopeForEvent");
+    expect(worker).toContain("readAuthoritativeSnapshot: (runtimeEnv, tenantContext, connectionId)");
+    expect(worker).toContain("executeSlack: ({ env: runtimeEnv, effectId, event, tenantContext");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");
     expect(worker).toContain("armMeetingMinutesRecovery(");
-    expect(worker).toContain("recoverStaleMeetingMinutesRun(");
+    expect(worker).toContain('from "./meeting-minutes-recovery-production.js"');
+    expect(worker).toContain("handleMeetingMinutesRecoveryQueue(");
     expect(worker).toContain("gateMeetingMinutesRouterQueueMessage(");
     expect(worker).toContain("gateMeetingMinutesCommandQueueMessage(");
-    expect(worker).toContain("postIntakePausedToUser(command.channelId, command.userId)");
+    expect(worker).toContain("postIntakePausedToUser(command.channelId, command.userId, command.runId)");
     expect(worker).toContain("resolveSlackWorkerIngress({");
     expect(worker).toContain("meetingMinutesRecoveryEventId(recovery)");
     expect(worker).toContain('{ event: "meeting_minutes_recovery_failed", code: "FALLBACK_FORBIDDEN" }');
@@ -617,7 +653,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
     expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
     expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
-    expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context\)/g)).toHaveLength(5);
+    expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context\)/g)).toHaveLength(4);
+    expect(worker).toContain("tenantRuntimeClients(runtimeEnv, tenantContext).authority.read_workspace_connection");
   });
 
   it("fails deployment closed behind the authenticated meeting-minutes drain gate", () => {

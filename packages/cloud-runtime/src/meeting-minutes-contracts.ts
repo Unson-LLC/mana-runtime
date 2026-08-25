@@ -1,4 +1,6 @@
 import type { SlackFileReference } from "./types.js";
+import type { DeploymentProfileName } from "./multitenancy/contracts.js";
+import { deriveCorrelationId } from "./multitenancy/ids.js";
 
 export const MEETING_MINUTES_CHOOSE_ACTION_ID = "mana_meeting_minutes_choose_destination";
 export const MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID = "mana_meeting_minutes_choose_organization";
@@ -9,6 +11,29 @@ export const MEETING_MINUTES_TASK_EDIT_VIEW_ID = "mana_meeting_minutes_task_edit
 export const MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID = "mana_meeting_minutes_task_assignee";
 export const MEETING_MINUTES_REDO_ACTION_ID = "mana_meeting_minutes_redo";
 export const MEETING_MINUTES_CONFIRM_REDO_ACTION_ID = "mana_meeting_minutes_confirm_redo";
+
+/**
+ * The stable public failure envelope shared by the deferred Task action
+ * reporter and its Slack projection.  Keep the correlation id in this
+ * envelope: the projection must display the reporter's id rather than derive
+ * another id from an action-specific stage.
+ */
+export type MeetingMinutesTaskActionFailureCode = "TASK_ACTION_FAILED" | "TASK_SCOPE_MISMATCH"
+  | "TASK_SCOPE_MIGRATION_FAILED" | "TASK_ACTION_EXPIRED";
+
+export interface MeetingMinutesTaskActionFailure {
+  processingId: string;
+  stage: "task_action";
+  code: MeetingMinutesTaskActionFailureCode;
+  correlationId: string;
+  retryable: boolean;
+}
+
+export function meetingMinutesTaskActionFailure(processingId: string,
+  code: MeetingMinutesTaskActionFailureCode, retryable: boolean): MeetingMinutesTaskActionFailure {
+  const stage = "task_action" as const;
+  return { processingId, stage, code, correlationId: deriveCorrelationId(processingId, stage, code), retryable };
+}
 
 export interface MeetingMinutesDestination {
   id: string;
@@ -22,6 +47,9 @@ export interface MeetingMinutesDestination {
   name: string;
   organization: { id: string; name: string };
   slackChannelId: string;
+  /** Optional exact destination Slack connection; legacy deployments use the team-id map. */
+  slackWorkspaceId?: string;
+  slackAppId?: string;
   github: { owner: string; repo: string; branch?: string; pathPrefix?: string };
 }
 
@@ -158,6 +186,29 @@ export interface MeetingMinutesDiagnostics {
   generation?: MeetingMinutesGenerationDiagnostics;
 }
 
+/**
+ * Non-secret authorization and identity retained for a delayed recovery.
+ * Provider credentials and tenant-context integrity material must never be
+ * persisted here; Queue execution reissues a fresh context from this record.
+ */
+export interface MeetingMinutesRecoveryAuthorization {
+  tenantId: string;
+  tenantRevision: string;
+  connectionId: string;
+  connectionRevision: string;
+  workspaceId: string;
+  appId: string;
+  channelId: string;
+  threadTs: string;
+  requesterId: string;
+  actorPrincipalId: string;
+  projectIds: string[];
+  audience: string;
+  capabilityId: string;
+  deploymentId: string;
+  profile: DeploymentProfileName;
+}
+
 export interface MeetingMinutesRun {
   version: 1;
   runId: string;
@@ -191,10 +242,22 @@ export interface MeetingMinutesRun {
   diagnostics?: MeetingMinutesDiagnostics;
   /** A projection failure is secondary and must not overwrite the processing failure or completed result. */
   projectionFailure?: Required<Pick<MeetingMinutesDiagnostics, "stage" | "code" | "retryable" | "failedAt">>;
+  /** Non-secret authority inputs used to reissue a fresh context for delayed recovery. */
+  recoveryAuthorization?: MeetingMinutesRecoveryAuthorization;
   lifecycle?: {
     actionTs: string;
     deadlineAt: string;
     recoveredAt?: string;
+    /** Recovery projection was claimed before Slack; claim-only redelivery is indeterminate. */
+    recoveryProjectionClaimedAt?: string;
+    /** A failed recovery projection has been attempted; redelivery must not repeat it. */
+    recoveryProjectionAttemptedAt?: string;
+    /** Durable result of the one-shot fallback after the recovery claim is saved. */
+    recoveryFallbackOutcome?: "succeeded" | "failed";
+    /** Set only after recoveryFallbackOutcome is durably written. */
+    recoveryFallbackOutcomePersistedAt?: string;
+    /** Terminal diagnostic when the fallback result could not be persisted. */
+    recoveryFallbackOutcomePersistenceFailedAt?: string;
     recoveryProjectedAt?: string;
   };
   /** Increments after each completed-run redo so external idempotency keys remain unique. */

@@ -1,5 +1,6 @@
 import { MEETING_MINUTES_TASK_CANCEL_ACTION_ID, MEETING_MINUTES_TASK_EDIT_ACTION_ID,
-  MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+  MEETING_MINUTES_TASK_EDIT_VIEW_ID, MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID,
+  meetingMinutesTaskActionFailure, type MeetingMinutesRun } from "./meeting-minutes-contracts.js";
 
 export const MEETING_MINUTES_ASSIGNEE_NONE = "__none__";
 
@@ -16,8 +17,11 @@ export function meetingMinutesTaskCard(run: MeetingMinutesRun): { text: string; 
   const blocks: Array<Record<string, unknown>> = [{ type: "section", text: { type: "mrkdwn",
     text: `📋 *議事録のタスク確認* — ${summary}` } },
     { type: "divider" }];
-  if (!run.sourceAppId) blocks.push({ type: "section", text: { type: "mrkdwn",
-    text: "⚠️ このカードは旧形式のため操作できません。議事録を再生成してください。" } });
+  if (!run.sourceAppId) {
+    const failure = meetingMinutesTaskActionFailure(run.runId, "TASK_ACTION_EXPIRED", false);
+    blocks.push({ type: "section", text: { type: "mrkdwn",
+      text: `⚠️ このカードは旧形式のため操作できません。議事録を再生成してください。\n処理ID: ${failure.processingId}\n失敗段階: タスク操作（${failure.stage}）\nエラーコード: ${failure.code}\n問い合わせID: ${failure.correlationId}\n再試行可否: 不可。再試行せず、議事録を再生成してください。` } });
+  }
   for (const item of [...registered].sort((left, right) => left.index - right.index)) {
     const candidate = run.generated?.tasks?.[item.index]; const removed = item.status === "removed";
     const marker = removed ? "🗑" : item.status === "reused" ? "♻️" : item.status === "needs_review" ? "⚠️" : "✅";
