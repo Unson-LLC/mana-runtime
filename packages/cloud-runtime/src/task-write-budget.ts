@@ -1,3 +1,8 @@
+import {
+  AUTONOMY_RUN_HISTORY_HOST,
+  handleAutonomyRunHistoryRequest,
+} from "./autonomy-run-history.js";
+
 interface DurableObjectStubLike {
   fetch(request: Request): Promise<Response>;
 }
@@ -153,7 +158,12 @@ export class TaskWriteBudget {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.hostname !== "task-write-budget.internal") return Response.json({ error: "not_found" }, { status: 404 });
+    if (url.hostname === AUTONOMY_RUN_HISTORY_HOST) {
+      return handleAutonomyRunHistoryRequest(this.state, request);
+    }
+    if (url.hostname !== "task-write-budget.internal") {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
 
     if (request.method === "GET" && url.pathname === "/receipt") {
       const fingerprint = url.searchParams.get("fingerprint") ?? "";
