@@ -17,7 +17,7 @@ const canonicalState: AutonomyCanonicalState = {
   connectionRevision: "11",
   actorPrincipalId: "mana_autonomy_v0",
   actorSubjectId: "mana_autonomy_v0",
-  projectIds: ["brainbase-deployment"],
+  projectIds: ["brainbase"],
   capabilityIds: ["task.create"],
   authorityScopes: ["company_authority:decision:auto"],
   contractRevision: "13",
@@ -43,7 +43,9 @@ function input(createSandbox: (id: string) => ReplySandbox) {
   return {
     runId: "mana-autonomy-24h-v0:2026-08-26T01:00:00.000Z",
     actorId: "mana_autonomy_v0",
-    project: "brainbase-deployment",
+    placementId: "mana-autonomy",
+    project: "brainbase",
+    writeBudget: 2,
     taskWriteCapability: "signed-service-capability",
     tenantBoundaryHandle: `tb_${"a".repeat(32)}`,
     canonicalState,
@@ -92,17 +94,35 @@ describe("bounded autonomy agent", () => {
     const prompt = [...current.files.entries()].find(([path]) => path.includes("prompt"))?.[1] ?? "";
     const mcp = [...current.files.entries()].find(([path]) => path.includes("mcp"))?.[1] ?? "";
     expect(prompt).toContain("過去履歴は証拠候補");
-    expect(prompt).toContain("対象projectは brainbase-deployment だけ");
+    expect(prompt).toContain("対象placementは mana-autonomy、対象projectは brainbase だけ");
+    expect(prompt).toContain("最大2回");
     expect(mcp).toContain('"brainbase"');
     expect(mcp).toContain('"task-search"');
     expect(mcp).toContain('"task-write"');
+    expect(mcp).toContain('"MANA_TRACE_PLACEMENT_ID":"mana-autonomy"');
+    expect(mcp).toContain('"MANA_TRACE_PROJECT_CODES":"brainbase"');
     const exec = vi.mocked(current.value.exec).mock.calls[0];
     expect(exec?.[1]?.env).toMatchObject({
+      MANA_TRACE_PLACEMENT_ID: "mana-autonomy",
+      MANA_TRACE_PROJECT_CODES: "brainbase",
       MANA_TASK_WRITE_REQUEST_ID: input(createSandbox).runId,
       MANA_TASK_WRITE_CAPABILITY: "signed-service-capability",
     });
     expect(JSON.stringify(exec?.[1]?.env)).not.toContain("requester");
     expect(current.value.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an invalid placement or budget before creating a sandbox", async () => {
+    const createSandbox = vi.fn(() => sandbox("").value);
+    await expect(runAutonomyAgent({
+      ...input(createSandbox),
+      placementId: "bad placement",
+    })).rejects.toMatchObject({ code: "autonomy_agent_not_configured" });
+    await expect(runAutonomyAgent({
+      ...input(createSandbox),
+      writeBudget: 4,
+    })).rejects.toMatchObject({ code: "autonomy_agent_not_configured" });
+    expect(createSandbox).not.toHaveBeenCalled();
   });
 
   it("returns no_action without fabricating evidence", async () => {
