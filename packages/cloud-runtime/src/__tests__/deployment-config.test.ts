@@ -251,6 +251,14 @@ describe("会社別Cloudflare deployment", () => {
         dataScopes: { graph: { mode: "read-only", scopes: ["org:unson"] } },
         deliveryScopes: [{ connector: "slack", channelId: "C0BMNSP6C80" }],
       },
+      {
+        placementId: "mana-autonomy",
+        channelId: "C0BKE4D0TK9",
+        channelName: "mana-autonomy",
+        projectCodes: ["brainbase"],
+        taskWriteEnabled: true,
+        capabilities: { mcp: ["brainbase"], gatewayTools: [] },
+      },
     ]);
   });
 

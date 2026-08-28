@@ -199,7 +199,10 @@ describe("autonomy scheduled entrypoint", () => {
         channelId: "C_BRAINBASE",
         tenantRevision: "1",
       });
-      expect(input.workspaceConnection).toEqual(workspaceConnection);
+      expect(input.workspaceConnection).toEqual({
+        ...workspaceConnection,
+        tenant_revision: "1",
+      });
       return canonical;
     });
     const dispose = vi.fn(async () => undefined);
