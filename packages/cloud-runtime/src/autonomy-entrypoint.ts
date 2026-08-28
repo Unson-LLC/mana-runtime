@@ -23,19 +23,22 @@ import {
 } from "./multitenancy/http-clients.js";
 import type { ReplySandbox } from "./reply-pipeline.js";
 
-export interface AutonomyEntrypointEnv extends AutonomyScheduledEnv, ClaudeRuntimeBindings, SandboxRuntimeEnv {
-  BRAINBASE_WORKSPACE_CONNECTIONS_JSON?: string;
-  BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
-  BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
-  BRAINBASE_TENANT_RUNTIME_SERVICE?: TenantRuntimeServiceBinding;
-  SLACK_EXPECTED_APP_ID?: string;
-  MANA_REQUIRED_AUDIENCE?: string;
-  MANA_AUTONOMY_PLACEMENT_ID?: string;
-  MANA_AUTONOMY_CHANNEL_ID?: string;
-  MANA_AUTONOMY_CAPABILITY_ID?: string;
-  MANA_AUTONOMY_PER_RUN_BUDGET?: string;
-  MANA_AUTONOMY_CLAUDE_MODEL?: string;
-}
+export type AutonomyEntrypointEnv = AutonomyScheduledEnv
+  & ClaudeRuntimeBindings
+  & Omit<SandboxRuntimeEnv, "TASK_WRITE_BUDGETS">
+  & {
+    BRAINBASE_WORKSPACE_CONNECTIONS_JSON?: string;
+    BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
+    BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
+    BRAINBASE_TENANT_RUNTIME_SERVICE?: TenantRuntimeServiceBinding;
+    SLACK_EXPECTED_APP_ID?: string;
+    MANA_REQUIRED_AUDIENCE?: string;
+    MANA_AUTONOMY_PLACEMENT_ID?: string;
+    MANA_AUTONOMY_CHANNEL_ID?: string;
+    MANA_AUTONOMY_CAPABILITY_ID?: string;
+    MANA_AUTONOMY_PER_RUN_BUDGET?: string;
+    MANA_AUTONOMY_CLAUDE_MODEL?: string;
+  };
 
 export interface AutonomyTenantBoundaryLease {
   handle: string;
@@ -49,7 +52,7 @@ export interface AutonomyEntrypointDependencies {
     kind: "task" | "receipt" | "artifact" | "run";
     id: string;
   }> }>;
-  createSandbox(env: SandboxRuntimeEnv, id: string): ReplySandbox;
+  createSandbox(env: AutonomyEntrypointEnv, id: string): ReplySandbox;
   registerTenantBoundary(
     env: AutonomyEntrypointEnv,
     resolved: ResolvedAutonomyTenantContext,
@@ -119,7 +122,10 @@ const defaultDependencies: AutonomyEntrypointDependencies = {
   now: () => Date.now(),
   resolveTenantContext: resolveAutonomyTenantContext,
   runAgent: runAutonomyAgent,
-  createSandbox: (env, id) => createTechKnightSandbox(env, id) as unknown as ReplySandbox,
+  createSandbox: (env, id) => createTechKnightSandbox(
+    env as unknown as SandboxRuntimeEnv,
+    id,
+  ) as unknown as ReplySandbox,
   registerTenantBoundary: async (env, resolved, now) => {
     const registry = createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE);
     const handle = await registry.register({
