@@ -1,0 +1,48 @@
+name: Autonomy service entry
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/autonomy-service-entry.yml"
+      - "packages/cloud-runtime/src/autonomy-*.ts"
+      - "packages/cloud-runtime/src/__tests__/autonomy-*.test.ts"
+      - "packages/cloud-runtime/scripts/autonomy-worker-config.*"
+      - "packages/cloud-runtime/scripts/build-unson-business-autonomy.mjs"
+      - "packages/cloud-runtime/wrangler.unson-business.jsonc"
+  push:
+    branches:
+      - "codex/mana-autonomy-service-entry"
+    paths:
+      - ".github/workflows/autonomy-service-entry.yml"
+      - "packages/cloud-runtime/src/autonomy-*.ts"
+      - "packages/cloud-runtime/src/__tests__/autonomy-*.test.ts"
+      - "packages/cloud-runtime/scripts/autonomy-worker-config.*"
+      - "packages/cloud-runtime/scripts/build-unson-business-autonomy.mjs"
+      - "packages/cloud-runtime/wrangler.unson-business.jsonc"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autonomy-service-entry-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Cloud Runtime
+        run: pnpm --dir packages/cloud-runtime exec tsc --noEmit -p tsconfig.json
+      - name: Run Cloud Runtime tests
+        run: pnpm --dir packages/cloud-runtime exec vitest run
+      - name: Build Unson Business autonomy Worker
+        run: node packages/cloud-runtime/scripts/build-unson-business-autonomy.mjs
