@@ -37,6 +37,11 @@ export interface AutonomyEntrypointEnv extends AutonomyScheduledEnv, ClaudeRunti
   MANA_AUTONOMY_CLAUDE_MODEL?: string;
 }
 
+export interface AutonomyTenantBoundaryLease {
+  handle: string;
+  dispose(): Promise<void>;
+}
+
 export interface AutonomyEntrypointDependencies {
   now(): number;
   resolveTenantContext(input: ResolveAutonomyTenantContextInput): Promise<ResolvedAutonomyTenantContext>;
@@ -45,6 +50,11 @@ export interface AutonomyEntrypointDependencies {
     id: string;
   }> }>;
   createSandbox(env: SandboxRuntimeEnv, id: string): ReplySandbox;
+  registerTenantBoundary(
+    env: AutonomyEntrypointEnv,
+    resolved: ResolvedAutonomyTenantContext,
+    now: string,
+  ): Promise<AutonomyTenantBoundaryLease>;
   resolveVerificationKey(rawJwks: string | undefined, keyId: string): Promise<CryptoKey | undefined>;
 }
 
@@ -110,6 +120,18 @@ const defaultDependencies: AutonomyEntrypointDependencies = {
   resolveTenantContext: resolveAutonomyTenantContext,
   runAgent: runAutonomyAgent,
   createSandbox: (env, id) => createTechKnightSandbox(env, id) as unknown as ReplySandbox,
+  registerTenantBoundary: async (env, resolved, now) => {
+    const registry = createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE);
+    const handle = await registry.register({
+      tenant_context: resolved.tenant_context,
+      expected_scope: resolved.expected_scope,
+      now,
+    });
+    return {
+      handle,
+      dispose: () => registry.dispose(handle),
+    };
+  },
   resolveVerificationKey: importVerificationKey,
 };
 
@@ -186,12 +208,11 @@ export async function runAutonomyScheduledEntrypoint(
     run: async (scheduled: AutonomyScheduledRun<AutonomyCanonicalState>) => {
       const resolved = resolvedByRun.get(scheduled.runId);
       if (!resolved) throw new Error("autonomy_runtime_not_configured");
-      const registry = createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE);
-      const handle = await registry.register({
-        tenant_context: resolved.tenant_context,
-        expected_scope: resolved.expected_scope,
-        now: new Date(now).toISOString(),
-      });
+      const lease = await dependencies.registerTenantBoundary(
+        env,
+        resolved,
+        new Date(now).toISOString(),
+      );
       try {
         return await dependencies.runAgent({
           runId: scheduled.runId,
@@ -200,14 +221,14 @@ export async function runAutonomyScheduledEntrypoint(
           project: scheduled.project,
           writeBudget,
           taskWriteCapability: scheduled.taskWriteCapability,
-          tenantBoundaryHandle: handle,
+          tenantBoundaryHandle: lease.handle,
           canonicalState: scheduled.canonicalState,
           historicalContext: scheduled.historicalContext,
           claudeRuntime: resolveClaudeRuntimeConfig(env, autonomyModel(env.MANA_AUTONOMY_CLAUDE_MODEL)),
           createSandbox: (id) => dependencies.createSandbox(env, id),
         });
       } finally {
-        await registry.dispose(handle);
+        await lease.dispose();
       }
     },
   });
