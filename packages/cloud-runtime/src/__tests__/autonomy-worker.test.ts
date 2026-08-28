@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+type AutonomyOutcome = "inactive" | "disabled" | "busy" | "replayed" | "ran";
+
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(async () => new Response("ok")),
   queue: vi.fn(async () => undefined),
   scheduled: vi.fn(async () => undefined),
-  runAutonomy: vi.fn(async () => "inactive" as const),
+  runAutonomy: vi.fn(async (): Promise<AutonomyOutcome> => "inactive"),
 }));
 
 vi.mock("../index.js", () => ({
