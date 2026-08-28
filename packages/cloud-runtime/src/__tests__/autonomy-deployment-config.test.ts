@@ -28,10 +28,10 @@ function config(): WranglerConfig {
 }
 
 describe("Unson Business autonomy deployment contract", () => {
-  it("deploys the wrapper while leaving the experiment absent and kill-switched", () => {
+  it("keeps the canonical Worker entrypoint while leaving autonomy absent and kill-switched", () => {
     const current = config();
 
-    expect(current.main).toBe("src/autonomy-worker.ts");
+    expect(current.main).toBe("src/index.ts");
     expect(current.vars.MANA_AUTONOMY_DISABLED).toBe("true");
     expect(current.vars).not.toHaveProperty("MANA_AUTONOMY_EXPERIMENT_JSON");
     expect(current.vars.MANA_AUTONOMY_CRON).toBe("*/15 * * * *");

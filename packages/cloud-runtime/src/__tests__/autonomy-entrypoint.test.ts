@@ -10,6 +10,14 @@ import type { ResolvedAutonomyTenantContext } from "../autonomy-tenant-context.j
 import { TaskWriteBudget } from "../task-write-budget.js";
 import type { TenantContextEnvelope, WorkspaceConnectionSnapshot } from "../multitenancy/contracts.js";
 
+const sandboxMocks = vi.hoisted(() => ({
+  createTechKnightSandbox: vi.fn(),
+}));
+
+vi.mock("../sandbox-runtime.js", () => ({
+  createTechKnightSandbox: sandboxMocks.createTechKnightSandbox,
+}));
+
 const SECRET = "autonomy-capability-secret-at-least-32-bytes";
 const NOW = Date.parse("2026-08-26T01:00:00Z");
 const RUN_ID = `mana-autonomy-24h-v0:${new Date(NOW).toISOString()}`;
@@ -191,7 +199,10 @@ describe("autonomy scheduled entrypoint", () => {
         channelId: "C_BRAINBASE",
         tenantRevision: "1",
       });
-      expect(input.workspaceConnection).toEqual(workspaceConnection);
+      expect(input.workspaceConnection).toEqual({
+        ...workspaceConnection,
+        tenant_revision: "1",
+      });
       return canonical;
     });
     const dispose = vi.fn(async () => undefined);
