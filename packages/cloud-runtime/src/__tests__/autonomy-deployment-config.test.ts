@@ -61,7 +61,7 @@ describe("Unson Business autonomy deployment contract", () => {
     expect(current.vars.RUNTIME_PROJECT_CODES.split(",")).not.toContain("brainbase");
   });
 
-  it("grants the service actor task.create only and no update or transition authority", () => {
+  it("uses read-scoped runtime authority and grants task.create only through the write broker", () => {
     const current = config();
     const policy = JSON.parse(current.vars.TASK_WRITE_POLICY_JSON) as {
       version: string;
@@ -70,6 +70,7 @@ describe("Unson Business autonomy deployment contract", () => {
     const serviceRules = policy.rules.filter((rule) => rule.actors.includes("mana_autonomy_v0"));
 
     expect(policy.version).toBe("unson-business-v3");
+    expect(current.vars.MANA_AUTONOMY_CAPABILITY_ID).toBe("runtime.execute");
     expect(serviceRules).toEqual([{
       effect: "auto",
       actors: ["mana_autonomy_v0"],
@@ -77,7 +78,6 @@ describe("Unson Business autonomy deployment contract", () => {
       projects: ["brainbase"],
       operations: ["task.create"],
     }]);
-    expect(current.vars.MANA_AUTONOMY_CAPABILITY_ID).toBe("task.create");
     expect(current.vars.MANA_AUTONOMY_PER_RUN_BUDGET).toBe("2");
     expect(JSON.stringify(serviceRules)).not.toMatch(/task\.(?:update|transition)/u);
   });
