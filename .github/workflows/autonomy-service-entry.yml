@@ -41,9 +41,11 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+      - name: Build workspace dependencies
+        run: pnpm build:shared
       - name: Typecheck Cloud Runtime
-        run: pnpm --dir packages/cloud-runtime exec tsc --noEmit -p tsconfig.json
+        run: pnpm -C packages/cloud-runtime typecheck
       - name: Run Cloud Runtime tests
-        run: pnpm --dir packages/cloud-runtime exec vitest run
+        run: pnpm -C packages/cloud-runtime test
       - name: Build Unson Business autonomy Worker
         run: node packages/cloud-runtime/scripts/build-unson-business-autonomy.mjs
