@@ -35,7 +35,7 @@ export async function issueAutonomyTaskWriteCapability(input: {
     actor: { provider: "service", id: input.config.actorId, workspace: input.config.workspaceId },
     placementId: input.config.placementId,
     projects: [input.config.project],
-    operations: ["task.create", "task.update", "task.transition"],
+    operations: ["task.create"],
     expiresAt: Math.min(now + 180_000, input.config.experimentExpiresAt),
     nonce: input.runId,
     budget,
