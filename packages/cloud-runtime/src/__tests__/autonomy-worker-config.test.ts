@@ -18,7 +18,16 @@ describe("Unson autonomy Worker config", () => {
     expect(rendered.replace("src/autonomy-worker.ts", "src/index.ts")).toBe(source);
   });
 
-  it("fails closed when main is absent, duplicated or already drifted", () => {
+  it("accepts the checked-in autonomy entrypoint without rewriting the config", () => {
+    const source = `{
+      "name": "mana-runtime-unson-business",
+      "main": "src/autonomy-worker.ts",
+      "vars": { "MANA_AUTONOMY_DISABLED": "true" }
+    }`;
+    expect(renderAutonomyWorkerConfig(source)).toBe(source);
+  });
+
+  it("fails closed when main is absent, duplicated or drifted", () => {
     for (const source of [
       '{ "name": "missing-main" }',
       '{ "main": "src/index.ts", "nested": { "main": "src/index.ts" } }',
