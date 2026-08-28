@@ -40,8 +40,10 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+      - name: Build shared packages
+        run: pnpm build:shared
       - name: Typecheck Cloud Runtime
-        run: pnpm --dir packages/cloud-runtime exec tsc --noEmit -p tsconfig.json
+        run: pnpm --dir packages/cloud-runtime typecheck
       - name: Run Cloud Runtime tests
         run: pnpm --dir packages/cloud-runtime exec vitest run
       - name: Build Unson Business autonomy Worker
