@@ -30,11 +30,54 @@ function approvalNamespace() {
 
 function budgetNamespace() {
   const slots = new Map<string, string>();
-  const fetch = vi.fn(async (_request: Request) => new Response(null, { status: 204 }));
+  const receipts = new Map<string, {
+    state: "claimed" | "completed";
+    resultRef?: string;
+  }>();
+  const fetch = vi.fn(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/claim") {
+      const body = await request.json() as {
+        requestId: string;
+        nonce: string;
+        callIndex: number;
+        fingerprint: string;
+      };
+      const key = `${body.requestId}:${body.nonce}:${body.callIndex}`;
+      const existing = slots.get(key);
+      if (existing === body.fingerprint) return Response.json({ disposition: "replay" });
+      if (existing) {
+        return Response.json({ error: "task_write_budget_slot_reused" }, { status: 409 });
+      }
+      slots.set(key, body.fingerprint);
+      receipts.set(body.fingerprint, { state: "claimed" });
+      return new Response(null, { status: 204 });
+    }
+    if (request.method === "POST" && url.pathname === "/complete") {
+      const body = await request.json() as { fingerprint: string; resultRef?: string };
+      const receipt = receipts.get(body.fingerprint);
+      if (!receipt) {
+        return Response.json({ error: "task_write_receipt_missing" }, { status: 404 });
+      }
+      receipts.set(body.fingerprint, {
+        state: "completed",
+        ...(body.resultRef ? { resultRef: body.resultRef } : {}),
+      });
+      return new Response(null, { status: 204 });
+    }
+    if (request.method === "GET" && url.pathname === "/receipt") {
+      const receipt = receipts.get(url.searchParams.get("fingerprint") ?? "");
+      return receipt
+        ? Response.json(receipt)
+        : Response.json({ error: "not_found" }, { status: 404 });
+    }
+    return Response.json({ error: "not_found" }, { status: 404 });
+  });
   return {
     idFromName: vi.fn((name: string) => name),
     get: vi.fn(() => ({ fetch })),
     slots,
+    receipts,
     fetch,
   };
 }
@@ -345,9 +388,6 @@ describe("Cloudflare requester-scoped task write proxy", () => {
 
   it("rejects reuse of one capability call slot for a different mutation", async () => {
     const budget = budgetNamespace();
-    budget.fetch
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(Response.json({ error: "task_write_budget_slot_reused" }, { status: 409 }));
     const bindings = { ...env(), TASK_WRITE_BUDGETS: budget };
     const upstream = vi.fn().mockResolvedValue(Response.json(task));
     const handler = createTaskWriteProxyHandler(upstream);
@@ -358,6 +398,6 @@ describe("Cloudflare requester-scoped task write proxy", () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(403);
     expect(upstream).toHaveBeenCalledOnce();
-    expect(budget.fetch).toHaveBeenCalledTimes(2);
+    expect(budget.fetch).toHaveBeenCalledTimes(3);
   });
 });
