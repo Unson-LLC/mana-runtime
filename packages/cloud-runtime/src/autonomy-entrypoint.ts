@@ -34,6 +34,7 @@ export interface AutonomyEntrypointEnv extends AutonomyScheduledEnv, ClaudeRunti
   MANA_AUTONOMY_CHANNEL_ID?: string;
   MANA_AUTONOMY_CAPABILITY_ID?: string;
   MANA_AUTONOMY_PER_RUN_BUDGET?: string;
+  MANA_AUTONOMY_CLAUDE_MODEL?: string;
 }
 
 export interface AutonomyEntrypointDependencies {
@@ -68,6 +69,14 @@ function perRunBudget(value: string | undefined): number {
     throw new Error("autonomy_runtime_not_configured");
   }
   return parsed;
+}
+
+function autonomyModel(value: string | undefined): "opus" | "sonnet" | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (value !== "opus" && value !== "sonnet") {
+    throw new Error("autonomy_runtime_not_configured");
+  }
+  return value;
 }
 
 async function importVerificationKey(
@@ -140,13 +149,15 @@ export async function runAutonomyScheduledEntrypoint(
   const dependencies = { ...defaultDependencies, ...dependencyOverrides };
   const now = dependencies.now();
   const resolvedByRun = new Map<string, ResolvedAutonomyTenantContext>();
+  const placementId = env.MANA_AUTONOMY_PLACEMENT_ID ?? "";
+  const writeBudget = perRunBudget(env.MANA_AUTONOMY_PER_RUN_BUDGET);
 
   return runScheduledAutonomy<AutonomyCanonicalState>({
     env,
     now,
     config: {
-      placementId: env.MANA_AUTONOMY_PLACEMENT_ID ?? "",
-      perRunBudget: perRunBudget(env.MANA_AUTONOMY_PER_RUN_BUDGET),
+      placementId,
+      perRunBudget: writeBudget,
     },
     readCanonicalState: async (request: AutonomyCanonicalStateRequest) => {
       const connection = workspaceConnection(env);
@@ -185,12 +196,14 @@ export async function runAutonomyScheduledEntrypoint(
         return await dependencies.runAgent({
           runId: scheduled.runId,
           actorId: scheduled.actorId,
+          placementId: required(placementId),
           project: scheduled.project,
+          writeBudget,
           taskWriteCapability: scheduled.taskWriteCapability,
           tenantBoundaryHandle: handle,
           canonicalState: scheduled.canonicalState,
           historicalContext: scheduled.historicalContext,
-          claudeRuntime: resolveClaudeRuntimeConfig(env),
+          claudeRuntime: resolveClaudeRuntimeConfig(env, autonomyModel(env.MANA_AUTONOMY_CLAUDE_MODEL)),
           createSandbox: (id) => dependencies.createSandbox(env, id),
         });
       } finally {
