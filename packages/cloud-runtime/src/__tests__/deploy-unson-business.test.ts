@@ -18,6 +18,15 @@ function runScript(script: string, env: NodeJS.ProcessEnv): Promise<{ status: nu
 }
 
 describe("unson business deploy wrapper", () => {
+  it("installs dependencies without creating an untracked lockfile before the clean checkout gate", async () => {
+    const workflow = await readFile(
+      fileURLToPath(new URL("../../../../.github/workflows/deploy-unson-business.yml", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workflow).toContain("pnpm install --no-frozen-lockfile --lockfile=false");
+  });
+
   it("stops before deployment when Brainbase project preflight fails", () => {
     const script = fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url));
     const result = spawnSync(process.execPath, [script], {

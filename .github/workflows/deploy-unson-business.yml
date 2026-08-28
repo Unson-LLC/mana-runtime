@@ -41,7 +41,7 @@ jobs:
           node-version: 22
 
       - name: 依存関係を取得
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --lockfile=false
 
       - name: CI用秘密情報の存在を確認
         shell: bash
