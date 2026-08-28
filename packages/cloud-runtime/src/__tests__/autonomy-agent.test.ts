@@ -18,8 +18,8 @@ const canonicalState: AutonomyCanonicalState = {
   actorPrincipalId: "mana_autonomy_v0",
   actorSubjectId: "mana_autonomy_v0",
   projectIds: ["brainbase"],
-  capabilityIds: ["task.create"],
-  authorityScopes: ["company_authority:decision:auto"],
+  capabilityIds: ["runtime.execute"],
+  authorityScopes: ["company_authority:decision:auto", "company_authority:effect:read"],
   contractRevision: "13",
 };
 
@@ -79,7 +79,7 @@ describe("bounded autonomy agent", () => {
     }))).toThrow(AutonomyAgentError);
   });
 
-  it("runs with Brainbase, task-search and task-write only, without Slack user identity", async () => {
+  it("runs a read-scoped loop with Brainbase, task-search and a separate create-only write capability", async () => {
     const current = sandbox(JSON.stringify({
       outcome: "task_written",
       summary: "重複確認後に作成",
@@ -96,6 +96,8 @@ describe("bounded autonomy agent", () => {
     expect(prompt).toContain("過去履歴は証拠候補");
     expect(prompt).toContain("対象placementは mana-autonomy、対象projectは brainbase だけ");
     expect(prompt).toContain("最大2回");
+    expect(prompt).toContain('"capabilityIds":["runtime.execute"]');
+    expect(prompt).toContain("company_authority:effect:read");
     expect(mcp).toContain('"brainbase"');
     expect(mcp).toContain('"task-search"');
     expect(mcp).toContain('"task-write"');
