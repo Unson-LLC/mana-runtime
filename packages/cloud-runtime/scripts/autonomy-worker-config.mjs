@@ -19,6 +19,9 @@ export function renderAutonomyWorkerConfig(source) {
     throw new AutonomyWorkerConfigError("autonomy_worker_main_ambiguous");
   }
   const current = matches[0][2];
+  if (current === AUTONOMY_ENTRY || current === `./${AUTONOMY_ENTRY}`) {
+    return source;
+  }
   if (!CANONICAL_ENTRIES.has(current)) {
     throw new AutonomyWorkerConfigError("autonomy_worker_main_drifted");
   }
