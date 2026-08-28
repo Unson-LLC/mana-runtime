@@ -80,14 +80,14 @@ function tenantContext(): TenantContextEnvelope {
     authorization: {
       organization_ids: ["unson-business"],
       project_ids: ["proj_brainbase"],
-      capability_ids: ["task.create"],
+      capability_ids: ["runtime.execute"],
       data_scopes: [
         "company_authority:decision:auto",
         "company_authority:membership:svc-membership@1",
         "company_authority:resource:project:brainbase@1",
         "company_authority:raci:1",
         "company_authority:policy:1",
-        "company_authority:effect:write",
+        "company_authority:effect:read",
         "company_authority:placement:mana-autonomy",
         "company_authority:identity_receipt:idres-service",
         "company_authority:authority_receipt:authres-service",
@@ -132,7 +132,7 @@ function resolved(): ResolvedAutonomyTenantContext {
       actor_principal_id: "mana_autonomy_v0",
       project_id: "proj_brainbase",
       project_ids: ["proj_brainbase"],
-      capability_id: "task.create",
+      capability_id: "runtime.execute",
       deployment_id: DEPLOYMENT_ID,
     },
   };
@@ -154,7 +154,7 @@ function env(
     MANA_AUTONOMY_DISABLED: "false",
     MANA_AUTONOMY_PLACEMENT_ID: "mana-autonomy",
     MANA_AUTONOMY_CHANNEL_ID: "C_BRAINBASE",
-    MANA_AUTONOMY_CAPABILITY_ID: "task.create",
+    MANA_AUTONOMY_CAPABILITY_ID: "runtime.execute",
     MANA_AUTONOMY_PER_RUN_BUDGET: "2",
     MANA_AUTONOMY_CLAUDE_MODEL: "sonnet",
     MANA_REQUIRED_AUDIENCE: "mana-runtime",
@@ -178,14 +178,14 @@ function env(
 }
 
 describe("autonomy scheduled entrypoint", () => {
-  it("resolves canonical service authority, registers one boundary and runs a create-only scoped agent", async () => {
+  it("resolves read-scoped service authority and runs with a separate create-only write capability", async () => {
     const current = history();
     const canonical = resolved();
     const resolveTenantContext = vi.fn(async (input) => {
       expect(input).toMatchObject({
         actorId: "mana_autonomy_v0",
         project: "brainbase",
-        capabilityId: "task.create",
+        capabilityId: "runtime.execute",
         audience: "mana-runtime",
         runId: RUN_ID,
         channelId: "C_BRAINBASE",
@@ -214,7 +214,8 @@ describe("autonomy scheduled entrypoint", () => {
         tenantId: TENANT_ID,
         actorPrincipalId: "mana_autonomy_v0",
         projectIds: ["proj_brainbase"],
-        capabilityIds: ["task.create"],
+        capabilityIds: ["runtime.execute"],
+        authorityScopes: expect.arrayContaining(["company_authority:effect:read"]),
       });
       expect(input.historicalContext.untrustedHistoricalContext).toBe(true);
       const claims = await verifyTaskWriteCapability(input.taskWriteCapability, SECRET, {
