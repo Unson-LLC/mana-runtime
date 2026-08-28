@@ -51,13 +51,13 @@ function context(): TenantContextEnvelope {
       authenticated_subject_id: "mana_autonomy_v0",
     },
     authorization: {
-      organization_ids: ["unson"],
-      project_ids: ["brainbase-deployment"],
+      organization_ids: ["unson-business"],
+      project_ids: ["proj_brainbase"],
       capability_ids: ["task.create"],
       data_scopes: [
         "company_authority:decision:auto",
         "company_authority:membership:svc-membership@1",
-        "company_authority:resource:project:brainbase-deployment@1",
+        "company_authority:resource:project:brainbase@1",
         "company_authority:raci:1",
         "company_authority:policy:1",
         "company_authority:effect:write",
@@ -98,7 +98,7 @@ function input(service: { fetch(input: RequestInfo | URL, init?: RequestInit): P
     workspaceConnection,
     tenantRevision: "7",
     actorId: "mana_autonomy_v0",
-    project: "brainbase-deployment",
+    project: "brainbase",
     capabilityId: "task.create",
     audience: "mana-runtime",
     runId: RUN_ID,
@@ -149,9 +149,9 @@ describe("autonomy service tenant context", () => {
     expect(JSON.stringify(issue)).not.toContain("requester_id");
     expect(issue.requested_action).toEqual({
       capability_id: "task.create",
-      resource_ref: "project:brainbase-deployment",
-      project_hint: "brainbase-deployment",
-      project_ids: ["brainbase-deployment"],
+      resource_ref: "project:brainbase",
+      project_hint: "brainbase",
+      project_ids: ["brainbase"],
       desired_effect: "write",
     });
     expect(result.tenant_context.actor).toMatchObject({
@@ -160,7 +160,8 @@ describe("autonomy service tenant context", () => {
     });
     expect(result.expected_scope).toMatchObject({
       audience: "mana-runtime",
-      project_id: "brainbase-deployment",
+      project_id: "proj_brainbase",
+      project_ids: ["proj_brainbase"],
       capability_id: "task.create",
       actor_principal_id: "mana_autonomy_v0",
       channel_id: "C_MANA_AUTONOMY",
@@ -184,6 +185,21 @@ describe("autonomy service tenant context", () => {
         ));
       expect(captures).toHaveLength(1);
     }
+  });
+
+  it("rejects an opaque project id when the signed resource maps another project code", async () => {
+    const value = context();
+    value.authorization.data_scopes = value.authorization.data_scopes.map((scope) => (
+      scope.startsWith("company_authority:resource:")
+        ? "company_authority:resource:project:other@1"
+        : scope
+    ));
+    const captures: Array<{ url: string; body: unknown }> = [];
+    await expect(resolveAutonomyTenantContext(input(serviceFor(value, captures))))
+      .rejects.toSatisfy((error: unknown) => (
+        error instanceof TenantBoundaryError && error.code === "PROJECT_SCOPE_MISMATCH"
+      ));
+    expect(captures).toHaveLength(1);
   });
 
   it("rejects missing authority evidence before signature validation", async () => {
