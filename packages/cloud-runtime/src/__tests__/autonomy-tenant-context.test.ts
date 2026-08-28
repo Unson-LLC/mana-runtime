@@ -53,14 +53,14 @@ function context(): TenantContextEnvelope {
     authorization: {
       organization_ids: ["unson-business"],
       project_ids: ["proj_brainbase"],
-      capability_ids: ["task.create"],
+      capability_ids: ["runtime.execute"],
       data_scopes: [
         "company_authority:decision:auto",
         "company_authority:membership:svc-membership@1",
         "company_authority:resource:project:brainbase@1",
         "company_authority:raci:1",
         "company_authority:policy:1",
-        "company_authority:effect:write",
+        "company_authority:effect:read",
         "company_authority:placement:mana-autonomy",
         "company_authority:identity_receipt:svc-identity-receipt",
         "company_authority:authority_receipt:svc-authority-receipt",
@@ -99,7 +99,7 @@ function input(service: { fetch(input: RequestInfo | URL, init?: RequestInit): P
     tenantRevision: "7",
     actorId: "mana_autonomy_v0",
     project: "brainbase",
-    capabilityId: "task.create",
+    capabilityId: "runtime.execute",
     audience: "mana-runtime",
     runId: RUN_ID,
     channelId: "C_MANA_AUTONOMY",
@@ -128,7 +128,7 @@ function serviceFor(value: TenantContextEnvelope, captures: Array<{ url: string;
 }
 
 describe("autonomy service tenant context", () => {
-  it("issues provider=service authority without impersonating a Slack requester", async () => {
+  it("issues read-scoped provider=service authority without impersonating a Slack requester", async () => {
     const captures: Array<{ url: string; body: unknown }> = [];
     const validate = vi.spyOn(TenantRuntimeBoundaryVerifier.prototype, "validate")
       .mockImplementation(async ({ expected_scope }) => expected_scope as never);
@@ -148,11 +148,11 @@ describe("autonomy service tenant context", () => {
     });
     expect(JSON.stringify(issue)).not.toContain("requester_id");
     expect(issue.requested_action).toEqual({
-      capability_id: "task.create",
+      capability_id: "runtime.execute",
       resource_ref: "project:brainbase",
       project_hint: "brainbase",
       project_ids: ["brainbase"],
-      desired_effect: "write",
+      desired_effect: "read",
     });
     expect(result.tenant_context.actor).toMatchObject({
       principal_type: "service",
@@ -162,7 +162,7 @@ describe("autonomy service tenant context", () => {
       audience: "mana-runtime",
       project_id: "proj_brainbase",
       project_ids: ["proj_brainbase"],
-      capability_id: "task.create",
+      capability_id: "runtime.execute",
       actor_principal_id: "mana_autonomy_v0",
       channel_id: "C_MANA_AUTONOMY",
       thread_ts: RUN_ID,
