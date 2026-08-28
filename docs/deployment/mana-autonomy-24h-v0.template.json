@@ -1,0 +1,12 @@
+{
+  "version": "mana-autonomy-experiment.v1",
+  "experiment_id": "mana-autonomy-24h-v0",
+  "enabled": false,
+  "starts_at": "REPLACE_WITH_RFC3339_UTC",
+  "ends_at": "REPLACE_WITH_RFC3339_UTC",
+  "actor_id": "mana_autonomy_v0",
+  "placement_id": "mana-autonomy",
+  "project": "REPLACE_WITH_CANONICAL_PROJECT_CODE",
+  "max_total_writes": 12,
+  "capability_ttl_seconds": 180
+}
