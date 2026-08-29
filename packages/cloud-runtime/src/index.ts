@@ -279,6 +279,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   TASK_WRITE_CAPABILITY_SECRET?: string;
   RUNTIME_PLACEMENT_ID?: string;
   RUNTIME_PLACEMENTS_JSON?: string;
+  RUNTIME_AUTHORITY_PROJECT_IDS_JSON?: string;
   RUNTIME_TASK_BOARD_ENABLED?: string;
   TASK_BOARD_TARGETS_JSON?: string;
   RUNTIME_CLAUDE_MODEL?: string;
@@ -1277,7 +1278,19 @@ function placementProjectScopeForEvent(
       placements,
     });
     if (placement.projectCodes.length === 0) throw new RuntimeBindingError("project_binding_missing");
-    return { project_id: placement.projectCodes[0]!, project_ids: [...placement.projectCodes] };
+    const configuredAuthorityIds = env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON
+      ? JSON.parse(env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON) as Record<string, unknown>
+      : {};
+    const mappedAuthorityIds = configuredAuthorityIds[placement.placementId];
+    if (mappedAuthorityIds !== undefined && (
+      !Array.isArray(mappedAuthorityIds) ||
+      mappedAuthorityIds.length !== placement.projectCodes.length ||
+      mappedAuthorityIds.some((id) => typeof id !== "string" || !/^prj_[A-Za-z0-9]+$/.test(id)) ||
+      new Set(mappedAuthorityIds).size !== mappedAuthorityIds.length
+    )) throw new RuntimeBindingError("authority_project_ids_invalid");
+    const authorityProjectIds = mappedAuthorityIds as string[] | undefined
+      ?? placement.projectCodes;
+    return { project_id: authorityProjectIds[0]!, project_ids: [...authorityProjectIds] };
   } catch (error) {
     deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
       reason: error instanceof RuntimeBindingError ? error.code : "placement_resolution_failed",
