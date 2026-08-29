@@ -128,9 +128,20 @@ function assertManagedSnapshot(snapshot: WorkspaceConnectionSnapshot): Workspace
   assertCanonicalSharedId(snapshot.connection_id, "wsc_", "workspace_connection");
   assertCanonicalSharedId(snapshot.tenant_id, "ten_", "workspace_connection");
   assertCanonicalSharedId(snapshot.deployment_id, "dep_", "workspace_connection");
-  if (!snapshot.connection_revision || !snapshot.contract_revision || !snapshot.workspace_id
-    || !snapshot.app_id || !snapshot.installation_id || !snapshot.installer_id) {
-    deny("workspace_connection", "WORKSPACE_CONNECTION_UNAVAILABLE");
+  const missing = [
+    ["connection_revision", snapshot.connection_revision],
+    ["contract_revision", snapshot.contract_revision],
+    ["workspace_id", snapshot.workspace_id],
+    ["app_id", snapshot.app_id],
+    ["installation_id", snapshot.installation_id],
+    ["installer_id", snapshot.installer_id],
+  ].filter((entry) => !entry[1]).map((entry) => entry[0]);
+  if (missing.length > 0) {
+    deny("workspace_connection", "WORKSPACE_CONNECTION_UNAVAILABLE", {
+      phase: "managed_snapshot_contract",
+      path: "workspace_connection",
+      error_name: `MissingFields:${missing.join(",")}`,
+    });
   }
   return structuredClone(snapshot);
 }
