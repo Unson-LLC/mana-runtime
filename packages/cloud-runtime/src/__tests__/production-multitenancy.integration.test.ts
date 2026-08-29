@@ -14,6 +14,7 @@ import { TenantBoundaryError } from "../multitenancy/errors.js";
 import {
   TenantRuntimeBoundaryVerifier,
   consumeTenantQueueMessage,
+  safeOperationalFailureReason,
 } from "../multitenancy/runtime-boundaries.js";
 import {
   executeTenantRuntimeOperation,
@@ -182,6 +183,14 @@ function queueMessage(value: TenantContextEnvelope) {
 }
 
 describe("production multitenancy integration", () => {
+  it("only exposes exact bounded operational failure reasons", () => {
+    expect(safeOperationalFailureReason(new Error("meeting_minutes_run_not_found")))
+      .toBe("meeting_minutes_run_not_found");
+    expect(safeOperationalFailureReason(new Error("meeting_minutes_unknown_provider_value"))).toBeUndefined();
+    expect(safeOperationalFailureReason(new Error(`meeting_minutes_${"x".repeat(200)}`))).toBeUndefined();
+    expect(safeOperationalFailureReason(new Error("task_board_schedule_enqueue_failed"))).toBeUndefined();
+    expect(safeOperationalFailureReason("meeting_minutes_run_not_found")).toBeUndefined();
+  });
   it("runs the production queue, quota, Slack delivery, and accounting path once across redelivery", async () => {
     const { value, publicKey } = await signedEnvelope({
       tenant_id: TENANT_A,

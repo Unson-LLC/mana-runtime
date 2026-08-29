@@ -245,11 +245,23 @@ export interface TenantQueueMessageLike<T> {
 
 const RETRYABLE_BOUNDARY_CODES = new Set(["WORKSPACE_CONNECTION_UNAVAILABLE", "UPSTREAM_UNAVAILABLE"]);
 
-function safeOperationalFailureReason(error: unknown): string | undefined {
+const SAFE_OPERATIONAL_FAILURE_REASONS = new Set([
+  "meeting_minutes_run_not_found",
+  "meeting_minutes_run_corrupt",
+  "meeting_minutes_selection_boundary_mismatch",
+  "meeting_minutes_destination_forbidden",
+  "meeting_minutes_destination_changed",
+  "meeting_minutes_transcript_empty",
+  "meeting_minutes_context_client_unconfigured",
+  "meeting_minutes_context_invalid_response",
+  "meeting_minutes_generation_result_error",
+  "meeting_minutes_task_registration_failed",
+]);
+
+export function safeOperationalFailureReason(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
-  return /^(?:meeting_minutes|task_board)_[a-z0-9_]+$/.test(error.message)
-    ? error.message
-    : undefined;
+  return error.message.length <= 96 && SAFE_OPERATIONAL_FAILURE_REASONS.has(error.message)
+    ? error.message : undefined;
 }
 
 function inProgressRetryDelaySeconds(claim: IdempotencyClaim, now: string): number {
