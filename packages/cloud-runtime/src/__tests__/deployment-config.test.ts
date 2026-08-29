@@ -642,6 +642,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig)");
     expect(worker).toContain("const childEventId = await childInteractionEventId(event.eventId, `meeting-minutes-file:${file.id}`)");
     expect(worker).toContain("const runId = `${childEvent.eventId}_${file.id}`");
+    expect(worker).toContain('env.BRAINBASE_TASK_API_BASE_URL ?? "", env.BRAINBASE_TASK_API_TOKEN).resolve(identity, receiptId)');
+    expect(worker).not.toContain('env.BRAINBASE_TASK_API_BASE_URL ?? "", undefined, credentialFetch).resolve(identity, receiptId)');
     expect(worker).toContain("const childTenantContext = await resolveDerivedSlackTenantContext");
     expect(worker).toContain("tenant_context: childTenantContext");
     const ingestionStart = worker.indexOf("if (isMeetingMinutesSlackEvent(tenantBody.payload, meetingMinutesConfig))");
