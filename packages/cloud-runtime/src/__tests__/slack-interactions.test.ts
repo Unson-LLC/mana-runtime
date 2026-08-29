@@ -85,7 +85,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(result.status).toBe(200);
     expect(send).toHaveBeenCalledOnce();
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
-      text: "meeting.txt の保存先に Back Office を選択しました。",
+      text: "meeting.txt の保存先に Back Office を受け付けました。議事録を作成中です。",
     }), expect.any(Function));
   });
 
@@ -99,11 +99,12 @@ describe("handleMeetingMinutesInteraction", () => {
       runId: "Ev1_F1", destinationId: "mana", threadTs: "1.0",
     }));
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
-      text: "meeting.txt の保存先に Back Office を選択しました。",
+      text: "meeting.txt の保存先に Back Office を受け付けました。議事録を作成中です。",
     }), expect.any(Function));
     expect(showProcessing).toHaveBeenCalledWith(
       { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
-    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
+    expect(send.mock.invocationCallOrder[0]).toBeLessThan(showProcessing.mock.invocationCallOrder[0]!);
+    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(updateOriginal.mock.invocationCallOrder[0]!);
     expect(await response.json()).toEqual({ ok: true });
   });
   it("converts a meeting task handler rejection into one safe failure response and does not double-handle", async () => {
@@ -256,7 +257,7 @@ describe("handleMeetingMinutesInteraction", () => {
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).not.toHaveBeenCalled();
   });
-  it("clears processing when the queue rejects the selection", async () => {
+  it("does not show processing when the queue rejects the selection", async () => {
     const send = vi.fn().mockRejectedValue(new Error("queue Authorization Bearer secret")); const updateOriginal = vi.fn();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const showProcessing = vi.fn(); const clearProcessing = vi.fn().mockRejectedValue(new Error("clear Bearer secret"));
@@ -266,12 +267,12 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
-    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(updateOriginal).toHaveBeenCalledOnce();
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("INTERACTION_ENQUEUE_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("処理ID: Ev1_F1");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("失敗段階: 処理受付");
-    expect(showProcessing).toHaveBeenCalledOnce();
-    expect(clearProcessing).toHaveBeenCalledWith({ channelId: "C1", threadTs: "1.0" }, expect.any(Function));
+    expect(showProcessing).not.toHaveBeenCalled();
+    expect(clearProcessing).not.toHaveBeenCalled();
     const serialized = consoleError.mock.calls.flat().join(" ");
     expect(serialized).toContain('"stage":"interaction_enqueue"');
     expect(serialized).toContain('"code":"INTERACTION_ENQUEUE_FAILED"');
@@ -482,7 +483,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(resolveThreadTs).toHaveBeenCalledWith("Ev1_F1");
     expect(showProcessing).toHaveBeenCalledWith(
       { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
-    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
+    expect(send.mock.invocationCallOrder[0]).toBeLessThan(showProcessing.mock.invocationCallOrder[0]!);
   });
   it("uses the durable retry thread coordinate and rejects conflicting signed coordinates", async () => {
     const retryPayload = structuredClone(payload);

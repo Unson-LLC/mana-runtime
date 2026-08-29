@@ -379,8 +379,20 @@
         "started_at": null,
         "due_at": null,
         "contract_type": null
+      },
+      {
+        "story_id": "meeting-minutes-honest-selection-status",
+        "title": "議事録の保存先選択を処理受付後に表示する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "contract_type": null
       }
     ],
-    "current_story_id": "bug-meeting-task-idempotency-409"
+    "current_story_id": "meeting-minutes-honest-selection-status"
   }
 }
