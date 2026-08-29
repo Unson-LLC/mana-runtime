@@ -545,4 +545,37 @@ describe("production multitenancy integration", () => {
       failure_reason: "meeting_minutes_run_not_found",
     }));
   });
+
+  it("logs content-free meeting-minutes generation diagnostics", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, workspace_id: "T-A", channel_id: "C-A",
+      actor_principal_id: "person-a", project_id: "project-a", deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-PROD-005", operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FBE",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FBF",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshot({ tenant_id: TENANT_A, connection_id: CONNECTION_A,
+        workspace_id: "T-A", deployment_id: DEPLOYMENT_A }),
+      resolve_verification_key: async () => publicKey,
+    });
+    const error = Object.assign(new Error("meeting_minutes_generation_failed"), {
+      generationDiagnostics: { outcome: "nonzero_exit", stderrCode: "HOOK_FAILED", exitCode: 1,
+        elapsedMs: 17_842, progress: { prompt_written: true, exec_started: true, stdout_observed: true,
+          hook_observed: true, result_observed: false } },
+    });
+    const logError = vi.fn();
+    const message = queueMessage(value);
+    await consumeTenantQueueMessage(message, {
+      verifier, expected_scope: () => expectedScopeA, now: () => NOW,
+      process: async () => { throw error; }, ownership: new IdempotencyMemoryStore(),
+      payload_hash: () => `sha256:${"f".repeat(64)}`, retention_until: () => RETENTION_UNTIL,
+      log_error: logError,
+    });
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      failure_reason: "meeting_minutes_generation_failed", generation_outcome: "nonzero_exit",
+      generation_stderr_code: "HOOK_FAILED", generation_exit_code: "1", generation_elapsed_ms: "17842",
+      generation_prompt_written: "true", generation_exec_started: "true", generation_stdout_observed: "true",
+      generation_hook_observed: "true", generation_result_observed: "false",
+    }));
+  });
 });
