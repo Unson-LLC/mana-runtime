@@ -175,6 +175,7 @@ async function postJson(
   unavailableCode = "UPSTREAM_UNAVAILABLE",
 ): Promise<unknown> {
   assertSecretArtifactFree(body);
+  let phase = "fetch";
   try {
     const response = await bindings.service.fetch(`${CANONICAL_ORIGIN}${RUNTIME_PREFIX}${path}`, {
       method: "POST",
@@ -186,12 +187,19 @@ async function postJson(
       redirect: "manual",
       signal: AbortSignal.timeout(bindings.timeout_ms),
     });
+    phase = "response_body";
     const parsed = await responseBody(response);
+    phase = "response_status";
     if (!response.ok) upstreamError(boundary, response.status, parsed, unavailableCode);
+    phase = "response_contract";
     return parsed;
   } catch (error) {
     if (error instanceof TenantBoundaryError) throw error;
-    throw new TenantBoundaryError(boundary, unavailableCode);
+    throw new TenantBoundaryError(boundary, unavailableCode, unavailableCode, {
+      phase,
+      path,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+    });
   }
 }
 
