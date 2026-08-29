@@ -774,7 +774,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
   verifier: TenantRuntimeBoundaryVerifier;
   now(): string;
 }): MeetingMinutesTenantEffectGuard {
-  const clients = tenantRuntimeClients(input.env);
+  const clients = tenantRuntimeClients(input.env, input.tenant_context);
   const trustedWorkspaceConnections = parseWorkspaceConnectionHints(input.env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON);
   const preflightDestinationSlack = (destinations: readonly MeetingMinutesDestination[]) =>
     preflightMeetingMinutesDestinationSlackBindings({
