@@ -255,8 +255,36 @@ const SAFE_OPERATIONAL_FAILURE_REASONS = new Set([
   "meeting_minutes_context_client_unconfigured",
   "meeting_minutes_context_invalid_response",
   "meeting_minutes_generation_result_error",
+  "meeting_minutes_generation_failed",
   "meeting_minutes_task_registration_failed",
 ]);
+
+function safeGenerationFailureDiagnostics(error: unknown): Record<string, string> {
+  if (!error || typeof error !== "object" || !("generationDiagnostics" in error)) return {};
+  const diagnostics = (error as { generationDiagnostics?: unknown }).generationDiagnostics;
+  if (!diagnostics || typeof diagnostics !== "object" || Array.isArray(diagnostics)) return {};
+  const value = diagnostics as Record<string, unknown>;
+  const progress = value.progress && typeof value.progress === "object" && !Array.isArray(value.progress)
+    ? value.progress as Record<string, unknown> : {};
+  return {
+    ...(typeof value.outcome === "string" ? { generation_outcome: value.outcome.slice(0, 32) } : {}),
+    ...(typeof value.stderrCode === "string" ? { generation_stderr_code: value.stderrCode.slice(0, 64) } : {}),
+    ...(typeof value.exitCode === "number" && Number.isSafeInteger(value.exitCode)
+      ? { generation_exit_code: String(value.exitCode) } : {}),
+    ...(typeof value.elapsedMs === "number" && Number.isFinite(value.elapsedMs)
+      ? { generation_elapsed_ms: String(Math.max(0, Math.round(value.elapsedMs))) } : {}),
+    ...(typeof progress.prompt_written === "boolean"
+      ? { generation_prompt_written: String(progress.prompt_written) } : {}),
+    ...(typeof progress.exec_started === "boolean"
+      ? { generation_exec_started: String(progress.exec_started) } : {}),
+    ...(typeof progress.stdout_observed === "boolean"
+      ? { generation_stdout_observed: String(progress.stdout_observed) } : {}),
+    ...(typeof progress.hook_observed === "boolean"
+      ? { generation_hook_observed: String(progress.hook_observed) } : {}),
+    ...(typeof progress.result_observed === "boolean"
+      ? { generation_result_observed: String(progress.result_observed) } : {}),
+  };
+}
 
 export function safeOperationalFailureReason(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
@@ -429,6 +457,7 @@ export async function consumeTenantQueueMessage<T, R>(
           : {}),
       } : {}),
       ...(failureReason ? { failure_reason: failureReason } : {}),
+      ...safeGenerationFailureDiagnostics(error),
     });
     if (idempotencyClaimed) {
       try {
