@@ -449,7 +449,11 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
     });
     await expect(forwarder.forward({ lease: LEASE, expected_binding: BINDING,
       request: jsonRequest("https://api.anthropic.com/v1/messages", "POST", { messages: [] }), now: "2026-08-17T01:00:01.000Z" }))
-      .rejects.toMatchObject({ boundary: "credential_lease", code: "UPSTREAM_INVALID_RESPONSE" });
+      .rejects.toMatchObject({
+        boundary: "credential_lease",
+        code: "UPSTREAM_INVALID_RESPONSE",
+        details: { provider_operation: "anthropic.messages.create", status: 502 },
+      });
   });
 
   it("rejects malformed or lease-reflecting success wrappers", async () => {

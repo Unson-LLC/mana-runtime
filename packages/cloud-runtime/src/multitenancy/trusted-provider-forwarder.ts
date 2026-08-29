@@ -427,7 +427,10 @@ export function createBrainbaseTrustedProviderForwarderFromEnv(
         }
       })();
       if (!validWrapper) {
-        if (!response.ok) deny("credential_lease", problemCode(payload));
+        if (!response.ok) deny("credential_lease", problemCode(payload), {
+          provider_operation: mapped.provider_operation,
+          status: response.status,
+        });
         deny("credential_lease", "UPSTREAM_INVALID_RESPONSE");
       }
       if (validWrapper.status !== response.status
