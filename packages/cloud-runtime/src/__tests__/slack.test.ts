@@ -2,9 +2,11 @@ import { createHmac } from "node:crypto";
 
 import {
   handleSlackRequest,
+  handleTenantSlackRequest,
   normalizeSlackEvent,
   verifySlackRequest,
 } from "../slack.js";
+import { TenantBoundaryError } from "../multitenancy/index.js";
 import { interceptMeetingMinutesIntakePause } from "../meeting-minutes-intake-entrypoints.js";
 
 const signingSecret = "test-signing-secret";
@@ -375,5 +377,56 @@ describe("handleSlackRequest", () => {
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "slack_app_forbidden" });
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleTenantSlackRequest diagnostics", () => {
+  it("logs and returns a safe diagnosable envelope when tenant-context resolution is unavailable", async () => {
+    const body = JSON.stringify({
+      type: "event_callback", api_app_id: "A_UNSON", team_id: "T_UNSON", event_id: "EvUnavailable",
+      event: { type: "message", subtype: "file_share", channel: "C_ROUTER", ts: "1786420000.000300",
+        user: "U123", text: "", files: [{ id: "F1", name: "meeting.txt", mimetype: "text/plain" }] },
+    });
+    const request = new Request("https://example.com/slack/events", { method: "POST", headers: {
+      "content-type": "application/json", "x-slack-request-timestamp": String(nowSeconds),
+      "x-slack-signature": signature(nowSeconds, body),
+    }, body });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const authority = {
+      resolve_workspace_connection: vi.fn().mockRejectedValue(
+        new TenantBoundaryError("workspace_connection", "UPSTREAM_UNAVAILABLE"),
+      ),
+      read_workspace_connection: vi.fn(),
+      issue_tenant_context: vi.fn(),
+    };
+
+    const response = await handleTenantSlackRequest(request, {
+      signing_secret: signingSecret, expected_app_id: "A_UNSON", now_ms: nowSeconds * 1_000,
+      required_scopes: ["files:read"],
+      required_authorization: { audience: "mana-runtime", capability_id: "task.write" },
+      placement_config: { tenantId: "unson", workspaceId: "T_UNSON", placements: [{
+        placementId: "minutes", channelId: "C_ROUTER", projectCodes: ["back-office"],
+        taskWriteEnabled: true,
+      }] },
+      authority, resolve_verification_key: async () => undefined, send: vi.fn(),
+    });
+
+    expect(response.status).toBe(503);
+    const payload = await response.json() as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      error: "UPSTREAM_UNAVAILABLE",
+      stage: "tenant_context_resolution",
+      retryable: true,
+    });
+    expect(payload.correlation_id).toMatch(/^cor_[A-Za-z0-9_-]+$/);
+    expect(response.headers.get("x-mana-error-code")).toBe("UPSTREAM_UNAVAILABLE");
+    expect(response.headers.get("x-mana-failure-stage")).toBe("tenant_context_resolution");
+    expect(response.headers.get("x-mana-correlation-id")).toBe(payload.correlation_id);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+      event: "slack_tenant_ingress_failed", event_id: "EvUnavailable",
+      stage: "tenant_context_resolution", code: "UPSTREAM_UNAVAILABLE",
+      correlation_id: payload.correlation_id, retryable: true,
+    });
+    log.mockRestore();
   });
 });

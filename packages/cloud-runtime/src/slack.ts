@@ -13,6 +13,7 @@ import {
   type TenantContextIssueRequest,
   type TenantQueueBody,
 } from "./multitenancy/index.js";
+import { deriveCorrelationId } from "./multitenancy/ids.js";
 
 const SLACK_REPLAY_WINDOW_SECONDS = 300;
 const MAX_SLACK_FILES = 10;
@@ -253,6 +254,52 @@ function tenantBoundaryStatus(error: TenantBoundaryError): number {
   return 403;
 }
 
+type SlackIngressFailureStage =
+  | "event_normalization"
+  | "runtime_placement"
+  | "tenant_context_resolution"
+  | "queue_enqueue";
+
+function tenantSlackIngressFailureResponse(input: {
+  error: unknown;
+  stage: SlackIngressFailureStage;
+  eventId: string;
+  workspaceId: string;
+  channelId: string;
+}): Response {
+  const code = input.error instanceof TenantBoundaryError || input.error instanceof RuntimeBindingError
+    ? input.error.code : "WORKSPACE_CONNECTION_UNAVAILABLE";
+  const status = input.error instanceof TenantBoundaryError
+    ? tenantBoundaryStatus(input.error)
+    : input.error instanceof RuntimeBindingError ? 403 : 503;
+  const retryable = status === 503;
+  const correlationId = deriveCorrelationId(input.eventId, input.stage, code);
+  console.error(JSON.stringify({
+    event: "slack_tenant_ingress_failed",
+    event_id: input.eventId,
+    workspace_id: input.workspaceId,
+    channel_id: input.channelId,
+    stage: input.stage,
+    code,
+    correlation_id: correlationId,
+    retryable,
+    ...(input.error instanceof TenantBoundaryError ? { boundary: input.error.boundary } : {}),
+  }));
+  return Response.json({
+    error: code,
+    stage: input.stage,
+    correlation_id: correlationId,
+    retryable,
+  }, {
+    status,
+    headers: {
+      "x-mana-error-code": code,
+      "x-mana-failure-stage": input.stage,
+      "x-mana-correlation-id": correlationId,
+    },
+  });
+}
+
 export async function handleTenantSlackRequest(
   request: Request,
   options: HandleTenantSlackRequestOptions,
@@ -302,6 +349,7 @@ export async function handleTenantSlackRequest(
     return jsonResponse({ error: "slack_event_invalid" }, 400);
   }
 
+  let failureStage: SlackIngressFailureStage = "event_normalization";
   try {
     const receivedAt = new Date(options.now_ms ?? Date.now()).toISOString();
     const event = normalizeSlackEvent(
@@ -310,6 +358,7 @@ export async function handleTenantSlackRequest(
       receivedAt,
       options.placement_config.tenantId,
     );
+    failureStage = "runtime_placement";
     const placement = resolveRuntimePlacement(event, options.placement_config);
     const placementProjectIds = [...placement.projectCodes];
     const requiredAuthorization = {
@@ -318,6 +367,7 @@ export async function handleTenantSlackRequest(
       // placement set is carried separately and checked for exact equality.
       project_id: placementProjectIds[0]!,
     };
+    failureStage = "tenant_context_resolution";
     const resolved = await resolveSlackWorkerIngress({
       identity: {
         provider: "slack",
@@ -342,15 +392,16 @@ export async function handleTenantSlackRequest(
       payload: { ...event, tenantId: resolved.tenant_context.tenant.tenant_id },
     };
     assertSecretArtifactFree(message);
+    failureStage = "queue_enqueue";
     await options.send(message);
     return jsonResponse({ ok: true }, 200);
   } catch (error) {
-    if (error instanceof TenantBoundaryError) {
-      return jsonResponse({ error: error.code }, tenantBoundaryStatus(error));
-    }
-    if (error instanceof RuntimeBindingError) {
-      return jsonResponse({ error: error.code }, 403);
-    }
-    return jsonResponse({ error: "WORKSPACE_CONNECTION_UNAVAILABLE" }, 503);
+    return tenantSlackIngressFailureResponse({
+      error,
+      stage: failureStage,
+      eventId,
+      workspaceId,
+      channelId,
+    });
   }
 }

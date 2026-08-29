@@ -18,6 +18,20 @@ describe("tenant Slack runtime wiring", () => {
     expect(ingress).not.toContain("handleSlackRequest(request");
   });
 
+  it("keeps pre-handler Slack ingress failures diagnosable without exposing raw errors", () => {
+    const eventStart = source.indexOf('url.pathname !== "/slack/events"');
+    const queueStart = source.indexOf("async queue(", eventStart);
+    const ingress = source.slice(eventStart, queueStart);
+
+    expect(ingress).toContain('event: "slack_tenant_ingress_failed"');
+    expect(ingress).toContain('const stage = "runtime_configuration"');
+    expect(ingress).toContain('"x-mana-error-code": code');
+    expect(ingress).toContain('"x-mana-failure-stage": stage');
+    expect(ingress).toContain('"x-mana-correlation-id": correlationId');
+    expect(ingress).not.toContain("error.message");
+    expect(ingress).not.toContain("error.stack");
+  });
+
   it("validates canonical Queue envelopes before dispatching the legacy Slack payload", () => {
     const queueStart = source.indexOf("async queue(");
     const queue = source.slice(queueStart);
