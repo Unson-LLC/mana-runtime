@@ -245,6 +245,13 @@ export interface TenantQueueMessageLike<T> {
 
 const RETRYABLE_BOUNDARY_CODES = new Set(["WORKSPACE_CONNECTION_UNAVAILABLE", "UPSTREAM_UNAVAILABLE"]);
 
+function safeOperationalFailureReason(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  return /^(?:meeting_minutes|task_board)_[a-z0-9_]+$/.test(error.message)
+    ? error.message
+    : undefined;
+}
+
 function inProgressRetryDelaySeconds(claim: IdempotencyClaim, now: string): number {
   const nowMs = Date.parse(now);
   const leaseUntilMs = claim.lease_until
@@ -393,6 +400,7 @@ export async function consumeTenantQueueMessage<T, R>(
     message.ack();
   } catch (error) {
     const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
+    const failureReason = safeOperationalFailureReason(error);
     options.log_error?.({
       event: "tenant_queue_failed",
       event_id: eventId,
@@ -408,6 +416,7 @@ export async function consumeTenantQueueMessage<T, R>(
           ? { provider_operation: error.details.provider_operation }
           : {}),
       } : {}),
+      ...(failureReason ? { failure_reason: failureReason } : {}),
     });
     if (idempotencyClaimed) {
       try {

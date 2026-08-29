@@ -492,4 +492,48 @@ describe("production multitenancy integration", () => {
       provider_operation: "slack.files.info.get",
     }));
   });
+
+  it("logs allowlisted operational failure reasons without exposing arbitrary error messages", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      workspace_id: "T-A",
+      channel_id: "C-A",
+      actor_principal_id: "person-a",
+      project_id: "project-a",
+      deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-PROD-004",
+      operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FBC",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FBD",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshot({
+        tenant_id: TENANT_A,
+        connection_id: CONNECTION_A,
+        workspace_id: "T-A",
+        deployment_id: DEPLOYMENT_A,
+      }),
+      resolve_verification_key: async () => publicKey,
+    });
+    const logError = vi.fn();
+    const message = queueMessage(value);
+
+    await consumeTenantQueueMessage(message, {
+      verifier,
+      expected_scope: () => expectedScopeA,
+      now: () => NOW,
+      process: async () => { throw new Error("meeting_minutes_run_not_found"); },
+      ownership: new IdempotencyMemoryStore(),
+      payload_hash: () => `sha256:${"e".repeat(64)}`,
+      retention_until: () => RETENTION_UNTIL,
+      log_error: logError,
+    });
+
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      code: "UPSTREAM_UNAVAILABLE",
+      stage: "tenant_process",
+      failure_reason: "meeting_minutes_run_not_found",
+    }));
+  });
 });
