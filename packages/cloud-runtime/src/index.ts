@@ -2865,7 +2865,7 @@ export default {
                           verifier,
                           now: tenantConsumerOptions.now,
                         });
-                    const runId = `${event.eventId}_${file.id}`;
+                    const runId = `${childEvent.eventId}_${file.id}`;
                     const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
                       runtimeTenantId, event.workspaceId, runId,
                     ));
