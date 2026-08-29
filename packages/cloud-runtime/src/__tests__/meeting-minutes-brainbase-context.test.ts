@@ -55,6 +55,28 @@ describe("meeting minutes Brainbase context", () => {
     expect(runtimeFetch).toHaveBeenCalledOnce();
   });
 
+  it("retries one transient context timeout before failing the run", async () => {
+    const runtimeFetch = vi.fn()
+      .mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 201 }));
+    const client = new MeetingMinutesBrainbaseContextClient("https://bb.example", "secret", runtimeFetch);
+
+    await expect(client.resolve(receipt.identity)).resolves.toEqual(receipt);
+    expect(runtimeFetch).toHaveBeenCalledTimes(2);
+    expect(runtimeFetch).toHaveBeenNthCalledWith(1, expect.any(URL),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(runtimeFetch).toHaveBeenNthCalledWith(2, expect.any(URL),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("does not retry a non-retryable context failure", async () => {
+    const runtimeFetch = vi.fn().mockRejectedValue(new Error("invalid request"));
+    const client = new MeetingMinutesBrainbaseContextClient("https://bb.example", "secret", runtimeFetch);
+
+    await expect(client.resolve(receipt.identity)).rejects.toThrow("invalid request");
+    expect(runtimeFetch).toHaveBeenCalledOnce();
+  });
+
   it("uses the redirect mode supported by Cloudflare Workers", async () => {
     const runtimeFetch = vi.fn(function (this: unknown, _input: string | URL | Request, init?: RequestInit) {
       if (this !== globalThis) throw new TypeError("Illegal invocation");
