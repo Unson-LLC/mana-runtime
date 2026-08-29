@@ -50,8 +50,10 @@ export function projectSelectionMessage(runId: string, fileName: string, organiz
 
 export function destinationSelectedMessage(runId: string, fileName: string,
   destination: MeetingMinutesDestination): SlackSelectionMessage {
-  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先に ${destination.name} を選択しました。`, blocks: [
-    { type: "section", text: { type: "mrkdwn", text: `*✅ 保存先を選択しました*\n保存先: ${destination.name}` } },
+  return { replace_original: true,
+    text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先に ${destination.name} を受け付けました。議事録を作成中です。`, blocks: [
+    { type: "section", text: { type: "mrkdwn",
+      text: `*⏳ 保存先を受け付けました*\n保存先: ${destination.name}\n議事録を作成中です。共有が完了すると、このスレッドにURLを表示します。` } },
   ] };
 }
 
