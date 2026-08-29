@@ -10,6 +10,7 @@ import {
 import { TenantAccountingLedger } from "../multitenancy/accounting.js";
 import { signTenantContextEnvelope } from "../multitenancy/envelope.js";
 import { IdempotencyMemoryStore, createIdempotencyKey } from "../multitenancy/idempotency.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 import {
   TenantRuntimeBoundaryVerifier,
   consumeTenantQueueMessage,
@@ -429,6 +430,52 @@ describe("production multitenancy integration", () => {
     expect(process).not.toHaveBeenCalled();
     expect(logError).toHaveBeenCalledWith(expect.objectContaining({
       code: "WORKSPACE_CONNECTION_UNAVAILABLE",
+      stage: "queue_context_validation",
+      boundary: "queue_consumer",
+    }));
+  });
+
+  it("logs the failing tenant boundary and process stage for retryable processing failures", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      workspace_id: "T-A",
+      channel_id: "C-A",
+      actor_principal_id: "person-a",
+      project_id: "project-a",
+      deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-PROD-003",
+      operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FBA",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FBB",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshot({
+        tenant_id: TENANT_A,
+        connection_id: CONNECTION_A,
+        workspace_id: "T-A",
+        deployment_id: DEPLOYMENT_A,
+      }),
+      resolve_verification_key: async () => publicKey,
+    });
+    const logError = vi.fn();
+    const message = queueMessage(value);
+
+    await consumeTenantQueueMessage(message, {
+      verifier,
+      expected_scope: () => expectedScopeA,
+      now: () => NOW,
+      process: async () => { throw new TenantBoundaryError("slack_delivery", "WORKSPACE_CONNECTION_UNAVAILABLE"); },
+      ownership: new IdempotencyMemoryStore(),
+      payload_hash: () => `sha256:${"d".repeat(64)}`,
+      retention_until: () => RETENTION_UNTIL,
+      log_error: logError,
+    });
+
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      code: "WORKSPACE_CONNECTION_UNAVAILABLE",
+      stage: "tenant_process",
+      boundary: "slack_delivery",
     }));
   });
 });
