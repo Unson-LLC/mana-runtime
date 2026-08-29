@@ -404,6 +404,9 @@ export async function consumeTenantQueueMessage<T, R>(
         ...(typeof error.details?.path === "string" ? { path: error.details.path } : {}),
         ...(typeof error.details?.error_name === "string" ? { error_name: error.details.error_name } : {}),
         ...(typeof error.details?.status === "number" ? { status: String(error.details.status) } : {}),
+        ...(typeof error.details?.provider_operation === "string"
+          ? { provider_operation: error.details.provider_operation }
+          : {}),
       } : {}),
     });
     if (idempotencyClaimed) {

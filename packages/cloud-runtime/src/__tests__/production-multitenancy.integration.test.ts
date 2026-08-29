@@ -468,7 +468,12 @@ describe("production multitenancy integration", () => {
         "slack_delivery",
         "WORKSPACE_CONNECTION_UNAVAILABLE",
         "WORKSPACE_CONNECTION_UNAVAILABLE",
-        { phase: "response_body", path: "/workspace-connections:validate-revision", error_name: "TypeError" },
+        {
+          phase: "response_body",
+          path: "/workspace-connections:validate-revision",
+          error_name: "TypeError",
+          provider_operation: "slack.files.info.get",
+        },
       ); },
       ownership: new IdempotencyMemoryStore(),
       payload_hash: () => `sha256:${"d".repeat(64)}`,
@@ -484,6 +489,7 @@ describe("production multitenancy integration", () => {
       phase: "response_body",
       path: "/workspace-connections:validate-revision",
       error_name: "TypeError",
+      provider_operation: "slack.files.info.get",
     }));
   });
 });
