@@ -653,6 +653,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).not.toContain("credentialLeaseHandle");
     expect(worker).toContain("createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE)");
+    expect(worker).toContain("tenantRuntimeClients(this.env, input.tenant_context)");
+    expect(worker).not.toContain("const clients = tenantRuntimeClients(this.env);");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toContain("placement, requesterResolution.personId");
