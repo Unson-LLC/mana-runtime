@@ -296,7 +296,14 @@ function canonicalSnapshot(
   context: TenantContextEnvelope,
   hint?: WorkspaceConnectionHint,
 ): WorkspaceConnectionSnapshot {
-  const value = record(response, "workspace_connection", "WORKSPACE_CONNECTION_UNAVAILABLE");
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    deny("workspace_connection", "WORKSPACE_CONNECTION_UNAVAILABLE", {
+      phase: "response_contract",
+      path: "/workspace-connections:validate-revision",
+      error_name: response === undefined ? "EmptyResponseBody" : "InvalidResponseBody",
+    });
+  }
+  const value = response as Record<string, unknown>;
   const installation = value.installation && typeof value.installation === "object"
     ? value.installation as Record<string, unknown>
     : {};
