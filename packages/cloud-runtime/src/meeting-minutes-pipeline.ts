@@ -543,18 +543,24 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     const generationDiagnostics = error && typeof error === "object" && "generationDiagnostics" in error
       ? (error as { generationDiagnostics?: MeetingMinutesGenerationDiagnostics }).generationDiagnostics
       : undefined;
-    if (generationDiagnostics) {
-      console.error(JSON.stringify({
-        event: "meeting_minutes_generation_failed",
-        run_id: run.runId,
-        failure_reason: error instanceof Error ? error.message : "meeting_minutes_generation_failed",
+    const safeFailureReason = error instanceof Error && /^meeting_minutes_[a-z0-9_:.-]+$/.test(error.message)
+      ? error.message : undefined;
+    console.error(JSON.stringify({
+      event: "meeting_minutes_pipeline_failed",
+      run_id: run.runId,
+      failure_stage: classified.stage,
+      failure_code: classified.code,
+      failure_retryable: classified.retryable,
+      ...(safeFailureReason ? { failure_reason: safeFailureReason } : {}),
+      ...(error instanceof Error ? { error_name: error.name.slice(0, 64) } : {}),
+      ...(generationDiagnostics ? {
         generation_outcome: generationDiagnostics.outcome,
         generation_stderr_code: generationDiagnostics.stderrCode,
         generation_exit_code: generationDiagnostics.exitCode,
         generation_elapsed_ms: generationDiagnostics.elapsedMs,
         generation_progress: generationDiagnostics.progress,
-      }));
-    }
+      } : {}),
+    }));
     run.status = "failed";
     run.failure = { stage: failedStage, message: error instanceof Error ? error.message : "meeting_minutes_failed" };
     run.diagnostics = { ...run.diagnostics, schemaVersion: "meeting_minutes_diagnostics.v1", ...classified,
