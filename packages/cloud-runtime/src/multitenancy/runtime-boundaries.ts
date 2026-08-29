@@ -398,7 +398,13 @@ export async function consumeTenantQueueMessage<T, R>(
       event_id: eventId,
       code,
       stage: failureStage,
-      ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+      ...(error instanceof TenantBoundaryError ? {
+        boundary: error.boundary,
+        ...(typeof error.details?.phase === "string" ? { phase: error.details.phase } : {}),
+        ...(typeof error.details?.path === "string" ? { path: error.details.path } : {}),
+        ...(typeof error.details?.error_name === "string" ? { error_name: error.details.error_name } : {}),
+        ...(typeof error.details?.status === "number" ? { status: String(error.details.status) } : {}),
+      } : {}),
     });
     if (idempotencyClaimed) {
       try {

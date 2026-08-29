@@ -464,7 +464,12 @@ describe("production multitenancy integration", () => {
       verifier,
       expected_scope: () => expectedScopeA,
       now: () => NOW,
-      process: async () => { throw new TenantBoundaryError("slack_delivery", "WORKSPACE_CONNECTION_UNAVAILABLE"); },
+      process: async () => { throw new TenantBoundaryError(
+        "slack_delivery",
+        "WORKSPACE_CONNECTION_UNAVAILABLE",
+        "WORKSPACE_CONNECTION_UNAVAILABLE",
+        { phase: "response_body", path: "/workspace-connections:validate-revision", error_name: "TypeError" },
+      ); },
       ownership: new IdempotencyMemoryStore(),
       payload_hash: () => `sha256:${"d".repeat(64)}`,
       retention_until: () => RETENTION_UNTIL,
@@ -476,6 +481,9 @@ describe("production multitenancy integration", () => {
       code: "WORKSPACE_CONNECTION_UNAVAILABLE",
       stage: "tenant_process",
       boundary: "slack_delivery",
+      phase: "response_body",
+      path: "/workspace-connections:validate-revision",
+      error_name: "TypeError",
     }));
   });
 });
