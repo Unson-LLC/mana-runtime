@@ -23,6 +23,7 @@ import {
   type SandboxRuntimeEnv,
 } from "./sandbox-runtime.js";
 import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
+import { deriveCorrelationId } from "./multitenancy/ids.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
   currentMeetingMinutesActionTs,
@@ -2397,8 +2398,35 @@ export default {
         send: (event) => env.TECHKNIGHT_EVENTS.send(event),
       });
     } catch (error) {
-      const code = error instanceof TenantBoundaryError ? error.code : "CONFIGURATION_INVALID";
-      return Response.json({ error: code }, { status: 503 });
+      const code = error instanceof TenantBoundaryError || error instanceof RuntimeBindingError
+        ? error.code : "CONFIGURATION_INVALID";
+      const stage = "runtime_configuration";
+      const requestSeed = [
+        request.headers.get("x-slack-request-timestamp") ?? "unknown",
+        request.headers.get("x-slack-retry-num") ?? "0",
+      ].join(":");
+      const correlationId = deriveCorrelationId(requestSeed, stage, code);
+      console.error(JSON.stringify({
+        event: "slack_tenant_ingress_failed",
+        stage,
+        code,
+        correlation_id: correlationId,
+        retryable: true,
+        ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+      }));
+      return Response.json({
+        error: code,
+        stage,
+        correlation_id: correlationId,
+        retryable: true,
+      }, {
+        status: 503,
+        headers: {
+          "x-mana-error-code": code,
+          "x-mana-failure-stage": stage,
+          "x-mana-correlation-id": correlationId,
+        },
+      });
     }
   },
 
