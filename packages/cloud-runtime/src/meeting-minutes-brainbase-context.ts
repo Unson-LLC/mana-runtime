@@ -8,6 +8,13 @@ import type {
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 const RECEIPT_STATUSES = new Set(["resolved", "confirmed_empty", "partial", "unavailable"]);
+const CONTEXT_REQUEST_TIMEOUT_MS = 30_000;
+const CONTEXT_REQUEST_ATTEMPTS = 2;
+
+function retryableTransportError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "TimeoutError"
+    || error instanceof TypeError;
+}
 
 function nonEmpty(value: unknown, max = 4_000): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
@@ -54,13 +61,22 @@ export class MeetingMinutesBrainbaseContextClient {
       url.searchParams.set("project_code", identity.project_code);
       url.searchParams.set("transcript_sha256", identity.transcript_sha256);
     }
-    const response = await this.fetchImpl.call(globalThis, url, {
-      method: receiptId ? "GET" : "POST",
-      headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), accept: "application/json",
-        ...(receiptId ? {} : { "content-type": "application/json" }) },
-      ...(receiptId ? {} : { body: JSON.stringify(identity) }), redirect: "manual",
-      signal: AbortSignal.timeout(15_000),
-    });
+    let response: Response | undefined;
+    for (let attempt = 1; attempt <= CONTEXT_REQUEST_ATTEMPTS; attempt += 1) {
+      try {
+        response = await this.fetchImpl.call(globalThis, url, {
+          method: receiptId ? "GET" : "POST",
+          headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), accept: "application/json",
+            ...(receiptId ? {} : { "content-type": "application/json" }) },
+          ...(receiptId ? {} : { body: JSON.stringify(identity) }), redirect: "manual",
+          signal: AbortSignal.timeout(CONTEXT_REQUEST_TIMEOUT_MS),
+        });
+        break;
+      } catch (error) {
+        if (attempt === CONTEXT_REQUEST_ATTEMPTS || !retryableTransportError(error)) throw error;
+      }
+    }
+    if (!response) throw new Error("meeting_minutes_context_request_failed");
     if (response.status >= 300 && response.status < 400) {
       throw new Error("meeting_minutes_context_redirect_rejected");
     }
