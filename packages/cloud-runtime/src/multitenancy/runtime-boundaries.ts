@@ -286,6 +286,7 @@ export async function consumeTenantQueueMessage<T, R>(
   let idempotencyPartitionKey: string | undefined;
   let idempotencyClaimToken: string | undefined;
   let idempotencyTerminalAt: string | undefined;
+  let failureStage = "queue_context_validation";
   try {
     assertSecretArtifactFree(message.body);
     await options.verifier.validate({
@@ -302,6 +303,7 @@ export async function consumeTenantQueueMessage<T, R>(
     const observedAt = options.now();
     const retentionUntil = options.retention_until(observedAt);
     const payloadHash = await options.payload_hash(message.body.payload);
+    failureStage = "idempotency_claim";
     await validateCanonicalIdempotencyClaim({
       message_type: "idempotency_claim",
       owner: "mana_runtime",
@@ -369,12 +371,14 @@ export async function consumeTenantQueueMessage<T, R>(
     };
     heartbeatTimer = setInterval(heartbeat, heartbeatIntervalMs);
     try {
+      failureStage = "tenant_process";
       await options.process(message.body.payload, tenantContext);
     } finally {
       if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
       if (heartbeatInFlight) await heartbeatInFlight;
     }
     if (heartbeatError !== undefined) throw heartbeatError;
+    failureStage = "idempotency_complete";
     const completedAt = terminalTimestamp(idempotencyTerminalAt, options.now());
     await completeIdempotency(options.ownership, {
       key: tenantContext.idempotency_key,
@@ -389,7 +393,13 @@ export async function consumeTenantQueueMessage<T, R>(
     message.ack();
   } catch (error) {
     const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
-    options.log_error?.({ event: "tenant_queue_failed", event_id: eventId, code });
+    options.log_error?.({
+      event: "tenant_queue_failed",
+      event_id: eventId,
+      code,
+      stage: failureStage,
+      ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+    });
     if (idempotencyClaimed) {
       try {
         if (RETRYABLE_BOUNDARY_CODES.has(code)) {
