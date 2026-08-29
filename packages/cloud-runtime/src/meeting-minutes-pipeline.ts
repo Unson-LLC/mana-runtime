@@ -543,6 +543,18 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     const generationDiagnostics = error && typeof error === "object" && "generationDiagnostics" in error
       ? (error as { generationDiagnostics?: MeetingMinutesGenerationDiagnostics }).generationDiagnostics
       : undefined;
+    if (generationDiagnostics) {
+      console.error(JSON.stringify({
+        event: "meeting_minutes_generation_failed",
+        run_id: run.runId,
+        failure_reason: error instanceof Error ? error.message : "meeting_minutes_generation_failed",
+        generation_outcome: generationDiagnostics.outcome,
+        generation_stderr_code: generationDiagnostics.stderrCode,
+        generation_exit_code: generationDiagnostics.exitCode,
+        generation_elapsed_ms: generationDiagnostics.elapsedMs,
+        generation_progress: generationDiagnostics.progress,
+      }));
+    }
     run.status = "failed";
     run.failure = { stage: failedStage, message: error instanceof Error ? error.message : "meeting_minutes_failed" };
     run.diagnostics = { ...run.diagnostics, schemaVersion: "meeting_minutes_diagnostics.v1", ...classified,
