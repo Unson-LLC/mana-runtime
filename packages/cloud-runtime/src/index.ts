@@ -348,7 +348,7 @@ export class TenantRuntimeState extends DurableObject<Env> {
   readonly #boundaryContext = new TenantBoundaryContextHandler(
     this.ctx.storage,
     async (input) => {
-      const clients = tenantRuntimeClients(this.env);
+      const clients = tenantRuntimeClients(this.env, input.tenant_context);
       const verifier = new TenantRuntimeBoundaryVerifier({
         read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(this.env, keyId),
