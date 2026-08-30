@@ -27,7 +27,8 @@ export interface StartMeetingMinutesOptions {
 export interface ResumeMeetingMinutesOptions {
   destinations: readonly MeetingMinutesDestination[]; now?: () => Date;
   contextMode: MeetingMinutesContextMode;
-  resolveContext(identity: MeetingMinutesContextReceipt["identity"], receiptId?: string): Promise<MeetingMinutesContextReceipt>;
+  resolveContext(identity: MeetingMinutesContextReceipt["identity"], receiptId?: string,
+    projectId?: string): Promise<MeetingMinutesContextReceipt>;
   postProcessingStatus(run: MeetingMinutesRun): Promise<string>;
   download(fileId: string): Promise<string>;
   generate(transcript: string, destination: MeetingMinutesDestination, context: MeetingMinutesContextReceipt,
@@ -386,7 +387,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       try {
         const receipt = await options.resolveContext({ run_id: run.runId,
           project_code: meetingMinutesContextProjectCode(run.destination),
-          transcript_sha256: run.transcriptSha256 }, run.context?.receiptId);
+          transcript_sha256: run.transcriptSha256 }, run.context?.receiptId, run.destination.projectId);
         assertMeetingMinutesContextUsable(receipt, options.contextMode);
         await registerGeneratedTasks(fs, run, receipt, options);
       } catch (error) {
@@ -453,7 +454,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     const contextIdentity = { run_id: run.runId, project_code: meetingMinutesContextProjectCode(run.destination),
       transcript_sha256: run.transcriptSha256! };
     diagnosticStage = "context_resolve";
-    contextReceipt = await options.resolveContext(contextIdentity, run.context?.receiptId);
+    contextReceipt = await options.resolveContext(contextIdentity, run.context?.receiptId, run.destination.projectId);
     diagnosticStage = "context_gate";
     run.diagnostics = { schemaVersion: "meeting_minutes_diagnostics.v1", stage: diagnosticStage,
       receiptSnapshot: meetingMinutesReceiptSnapshot(contextReceipt) };

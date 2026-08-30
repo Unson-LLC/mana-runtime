@@ -67,15 +67,16 @@ describe("tenant Slack runtime wiring", () => {
     );
   });
 
-  it("routes meeting-minutes context reads through the tenant credential broker", () => {
+  it("routes meeting-minutes context reads through the private Brainbase Service Binding", () => {
     const clientsStart = source.indexOf("function meetingMinutesClients(");
     const clientsEnd = source.indexOf("function ", clientsStart + 1);
     const clients = source.slice(clientsStart, clientsEnd);
 
     expect(clientsStart).toBeGreaterThan(-1);
-    expect(clients).toContain('effects.boundary("brainbase_proxy", (credentialFetch) =>');
-    expect(clients).toContain(
-      'env.BRAINBASE_TASK_API_BASE_URL ?? "", env.BRAINBASE_TASK_API_TOKEN, credentialFetch',
-    );
+    expect(clients).toContain("env.BRAINBASE_TENANT_RUNTIME_SERVICE?.fetch.bind");
+    expect(clients).toContain('"https://tenant-runtime.internal"');
+    expect(clients).toContain("tenantContext");
+    expect(clients).toContain('effects.boundary("brainbase_proxy", () => new MeetingMinutesBrainbaseContextClient(');
+    expect(clients).not.toContain("BRAINBASE_TASK_API_TOKEN");
   });
 });

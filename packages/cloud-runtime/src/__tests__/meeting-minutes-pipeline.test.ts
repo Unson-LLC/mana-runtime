@@ -226,7 +226,7 @@ describe("meeting minutes pipeline", () => {
       resolved_at: "2026-08-15T00:00:00.000Z", context: { source_refs: [], open_tasks: [] } }));
     const options = resumeOptions({ destinations: [kartz], resolveContext });
     const run = await resumeMeetingMinutesRun(fs, { ...selection, destinationId: "kartz" }, options);
-    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), undefined, "proj_kartz");
     expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
       taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
   });
@@ -250,7 +250,7 @@ describe("meeting minutes pipeline", () => {
       destinations: [configuredKartz], resolveContext,
     }));
 
-    expect(resolveContext).toHaveBeenLastCalledWith(expect.objectContaining({ project_code: "unson" }), undefined);
+    expect(resolveContext).toHaveBeenLastCalledWith(expect.objectContaining({ project_code: "unson" }), undefined, "proj_kartz");
     expect(run.destination).toMatchObject({ projectId: "proj_kartz", contextProjectCode: "unson",
       taskProjectCodes: ["unson"], taskBoardTargetId: "minutes-kartz" });
   });
@@ -287,7 +287,7 @@ describe("meeting minutes pipeline", () => {
       destinations: [configuredKartz], resolveContext, generate,
     }));
 
-    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "kartz" }), undefined);
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "kartz" }), undefined, "proj_kartz");
     expect(generate).toHaveBeenCalledTimes(1);
     expect(run).toMatchObject({ status: "completed", context: { receiptId: "receipt-kartz" },
       destination: { contextProjectCode: "kartz", taskProjectCodes: ["kartz"] }, generated: { title: "新議事録" } });
@@ -320,7 +320,7 @@ describe("meeting minutes pipeline", () => {
       destinations: [configuredKartz], resolveContext, createTask, updateTask,
     }));
 
-    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1");
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1", "proj_kartz");
     expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["unson"] }), expect.any(String));
     expect(updateTask).toHaveBeenCalledWith("task-kartz", { expected_version: 7, project_codes: ["kartz"] },
       expect.any(String));
@@ -1094,7 +1094,7 @@ describe("meeting minutes pipeline", () => {
     const retried = await resumeMeetingMinutesRun(fs, selection,
       resumeOptions({ contextMode: "required", resolveContext, generate }));
 
-    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ run_id: selection.runId }), undefined);
+    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ run_id: selection.runId }), undefined, "mana");
     expect(resolveContext).not.toHaveBeenCalledWith(expect.anything(), `receipt-${status}`);
     expect(generate).toHaveBeenCalledTimes(1);
     expect(retried).toMatchObject({ status: "completed", context: { receiptId: "receipt-fresh",

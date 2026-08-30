@@ -277,14 +277,6 @@ async function mapProviderRequest(
         return { provider_operation: operation, request: addBody(withQuery(url, { ...(path_params ? { path_params } : {}), ...(key ? { idempotency_key: key } : {}) })) };
       }
     }
-    if (segments.slice(0, 3).join("/") === "api/meeting-minutes/context-receipts") {
-      if (segments.length === 3 && method === "POST") {
-        return { provider_operation: "brainbase.meeting_context.create", request: addBody({}) };
-      }
-      if (segments.length === 4 && method === "GET") {
-        return { provider_operation: "brainbase.meeting_context.get", request: withQuery(url, { path_params: { receipt_id: segments[3] } }) };
-      }
-    }
   }
 
   const graphPath = relativePath(url, configuredBase(env.BRAINBASE_GRAPH_API_BASE_URL));

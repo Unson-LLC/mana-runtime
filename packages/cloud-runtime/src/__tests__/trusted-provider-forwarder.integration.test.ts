@@ -198,12 +198,6 @@ const FORWARD_CASES: ForwardCase[] = [
   { label: "Graph context", operation: "brainbase.graph.context.get",
     request: () => jsonRequest("https://graph.example.test/api/info/context?project=mana&workspace=T-A&humanReadable=true", "GET"),
     wireRequest: { query: { project: "mana", workspace: "T-A", humanReadable: "true" } } },
-  { label: "Meeting context create", operation: "brainbase.meeting_context.create",
-    request: () => jsonRequest("https://tasks.example.test/api/meeting-minutes/context-receipts", "POST", { run_id: "run-a" }),
-    wireRequest: { body: { run_id: "run-a" } } },
-  { label: "Meeting context get", operation: "brainbase.meeting_context.get",
-    request: () => jsonRequest("https://tasks.example.test/api/meeting-minutes/context-receipts/receipt-a?run_id=run-a&project_code=mana&transcript_sha256=abc", "GET"),
-    wireRequest: { path_params: { receipt_id: "receipt-a" }, query: { run_id: "run-a", project_code: "mana", transcript_sha256: "abc" } } },
   { label: "Brainbase MCP", operation: "brainbase.mcp.post",
     request: () => jsonRequest("https://mcp.example.test/mcp", "POST", { jsonrpc: "2.0", method: "tools/list", id: 1 }),
     wireRequest: { body: { jsonrpc: "2.0", method: "tools/list", id: 1 } } },
@@ -215,6 +209,23 @@ const FORWARD_CASES: ForwardCase[] = [
 ];
 
 describe("Brainbase trusted provider forwarder HTTP integration", () => {
+  it.each([
+    ["create", jsonRequest("https://tasks.example.test/api/meeting-minutes/context-receipts", "POST", { run_id: "run-a" })],
+    ["get", jsonRequest("https://tasks.example.test/api/meeting-minutes/context-receipts/receipt-a?run_id=run-a&project_code=mana&transcript_sha256=abc", "GET")],
+  ])("keeps meeting context %s outside the provider credential forwarder", async (_label, request) => {
+    const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
+      env: BASE_ENV,
+      tenant_context: TENANT_CONTEXT,
+    });
+
+    await expect(forwarder.forward({
+      lease: LEASE,
+      expected_binding: { ...BINDING, audience: new URL(request.url).hostname },
+      request,
+      now: LEASE.issued_at,
+    })).rejects.toMatchObject({ code: "PROVIDER_OPERATION_UNSUPPORTED" });
+  });
+
   it("materializes provider credentials only inside the trusted service before a successful provider request", async () => {
     const providerCredential = "provider-secret-confined-to-brainbase-test-service";
     let providerHeaders: Record<string, string | string[] | undefined> | undefined;
