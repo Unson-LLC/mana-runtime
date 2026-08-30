@@ -259,7 +259,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-30T05:59:46.848Z",
-      "last_revised_at": "2026-08-30T05:59:46.848Z"
+      "last_revised_at": "2026-08-30T06:35:48.348Z"
     },
     {
       "id": "INV-001",
@@ -300,7 +300,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:59:46.848Z"
+      "last_revised_at": "2026-08-30T06:35:48.348Z"
     },
     {
       "id": "S-001",
@@ -353,7 +353,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:54:36.386Z",
-      "last_revised_at": "2026-08-30T05:59:46.848Z"
+      "last_revised_at": "2026-08-30T06:35:48.348Z"
     },
     {
       "id": "INV-003",
@@ -432,12 +432,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-30T05:59:46.848Z",
-      "last_revised_at": "2026-08-30T05:59:46.848Z"
+      "last_revised_at": "2026-08-30T06:35:48.348Z"
     },
     {
-      "id": "C-002",
+      "id": "C-001",
       "type": "contract",
-      "statement": "議事録生成はJSON SchemaとJudgment Stop監査行を同じ最終回答へ強制しない。Hook event付きstreamのStop監査行と最終回答先頭を原文・順序・回数で完全一致させ、後続JSONだけを解析し、同じ監査行をSlack親投稿へ投影する。新規生成と保存済みrunの再開のどちらでも、欠落、改変、重複回数差、余分な監査行は外部副作用より前にfail closedにする",
+      "statement": "議事録生成はJSON SchemaとJudgment Stop監査行を同じ最終回答へ強制しない。Hook event付きstreamのStop監査行と最終回答先頭を原文・順序・回数で完全一致させ、同じ行をReceipt attestationの監査スナップショットへ結合する。後続JSONだけを解析し、監査行をSlack親投稿へ投影する。新規生成とcompleted retryを含む保存済みrunの再開のどちらでも、欠落、改変、重複回数差、余分な監査行は外部副作用より前にfail closedにする",
       "origin": {
         "story_refs": [
           {
@@ -481,6 +481,26 @@
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "fails closed before external effects when a persisted generated run lacks its audit attestation"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "rejects a persisted generated run with changed audit projection before external effects"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "rejects a persisted generated run with extra audit projection before external effects"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "rejects a persisted generated run with duplicate-count audit projection before external effects"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "validates a completed GitHub-saved run before retrying any task or board effect"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "case": "saves GitHub before Slack and completes"
           }
         ]
@@ -501,13 +521,33 @@
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "persisted generated run lacks its audit attestation"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "persisted generated run with changed audit projection"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "persisted generated run with extra audit projection"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "persisted generated run with duplicate-count audit projection"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "validates a completed GitHub-saved run before retrying any task or board effect"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "must_cover": "saves GitHub before Slack and completes"
           }
         ]
       },
       "confidence": 0.99,
-      "first_seen_at": "2026-08-30T05:21:25.843Z",
-      "last_revised_at": "2026-08-30T05:59:46.848Z"
+      "first_seen_at": "2026-08-30T06:34:40.315Z",
+      "last_revised_at": "2026-08-30T06:35:48.348Z"
     }
   ],
   "planned_test_suites": [
@@ -530,6 +570,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-30T05:59:46.847Z",
-  "previous_spec_id": "2026-08-30T05:33:58.207Z"
+  "generated_at": "2026-08-30T06:35:48.347Z",
+  "previous_spec_id": "2026-08-30T06:34:40.314Z"
 }

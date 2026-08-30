@@ -39,8 +39,9 @@ function resume(overrides: Record<string, unknown> = {}) {
       receipt_id: context.receipt_id, checksum: context.checksum,
       run_id: context.identity.run_id, project_code: context.identity.project_code,
       transcript_sha256: context.identity.transcript_sha256, session_id: "session-test",
+      judgment_audit_lines: [...judgmentAuditLines],
     },
-    brainbase_judgment_audit_lines: judgmentAuditLines,
+    brainbase_judgment_audit_lines: [...judgmentAuditLines],
   }));
   return { contextMode: "observe" as const,
     resolveContext: vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,

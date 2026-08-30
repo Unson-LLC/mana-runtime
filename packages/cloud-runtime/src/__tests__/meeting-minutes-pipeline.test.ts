@@ -22,14 +22,17 @@ const judgmentAuditLines = [
   "🧠 判断参照: 「議事録を生成する」を参照 → general/answer ✓",
   "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓",
 ];
+const persistedTranscriptSha256 = "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6";
 function audited(minutes: GeneratedMeetingMinutes, context: MeetingMinutesContextReceipt) {
-  return { ...minutes, brainbase_context_attestation: {
+  return { ...minutes, brainbase_context_receipt_id: context.receipt_id,
+    brainbase_context_checksum: context.checksum, brainbase_context_attestation: {
     schema_version: "meeting_minutes_context_attestation.v1" as const,
     tool_name: "mcp__brainbase__brainbase_get_meeting_minutes_context" as const,
     receipt_id: context.receipt_id, checksum: context.checksum,
     run_id: context.identity.run_id, project_code: context.identity.project_code,
     transcript_sha256: context.identity.transcript_sha256, session_id: "session-test",
-  }, brainbase_judgment_audit_lines: judgmentAuditLines };
+    judgment_audit_lines: [...judgmentAuditLines],
+  }, brainbase_judgment_audit_lines: [...judgmentAuditLines] };
 }
 function resumeOptions(overrides: Record<string, unknown> = {}) {
   const overriddenGenerate = overrides.generate as ((...args: unknown[]) => Promise<GeneratedMeetingMinutes>) | undefined;
@@ -49,6 +52,30 @@ function resumeOptions(overrides: Record<string, unknown> = {}) {
       transcriptUrl: "https://github/t", minutesUrl: "https://github/m" }),
     postParent: vi.fn().mockResolvedValue("10.1"), postThreadChunk: vi.fn().mockResolvedValue("10.2"),
     ...overrides, generate };
+}
+function persistedContext(): MeetingMinutesContextReceipt {
+  return { schema_version: "meeting_minutes_context_receipt.v1", receipt_id: "receipt-1",
+    identity: { run_id: selection.runId, project_code: "mana", transcript_sha256: persistedTranscriptSha256 },
+    status: "resolved", checksum: "checksum-1", resolved_at: "2026-08-17T09:27:00.000Z",
+    context: { source_refs: [], open_tasks: [] } };
+}
+async function persistGeneratedRun(fs: MemoryFs, generated: GeneratedMeetingMinutes,
+  status: "failed" | "completed" = "failed", github = false): Promise<void> {
+  await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+    destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+  const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+  const context = persistedContext();
+  persisted.destination = structuredClone(destination);
+  persisted.approvedBy = selection.userId;
+  persisted.status = status;
+  persisted.transcriptSha256 = persistedTranscriptSha256;
+  persisted.context = { receiptId: context.receipt_id, checksum: context.checksum, status: context.status,
+    mode: "observe", resolvedAt: context.resolved_at, sourceRefs: [] };
+  persisted.generated = generated;
+  persisted.slack = { postedChunkIndexes: [] };
+  if (github) persisted.github = { transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
+    transcriptUrl: "https://github/t", minutesUrl: "https://github/m" };
+  await saveMeetingMinutesRun(fs, persisted);
 }
 
 describe("meeting minutes pipeline", () => {
@@ -168,6 +195,105 @@ describe("meeting minutes pipeline", () => {
     expect(repairTaskBoard).not.toHaveBeenCalled();
   });
 
+  it("fails closed before external effects when a persisted generated run lacks its audit attestation", async () => {
+    const fs = new MemoryFs();
+    const context = persistedContext();
+    const generated: GeneratedMeetingMinutes = audited(
+      { title: "保存済み議事録", overview: "概要", body: "本文" }, context);
+    delete generated.brainbase_context_attestation;
+    await persistGeneratedRun(fs, generated);
+    const repairTaskBoard = vi.fn(); const postTaskCard = vi.fn();
+    const options = resumeOptions({ repairTaskBoard, postTaskCard });
+
+    await expect(resumeMeetingMinutesRun(fs, selection, options))
+      .rejects.toThrow("meeting_minutes_context_attestation_mismatch");
+    expect(options.postProcessingStatus).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+    expect(repairTaskBoard).not.toHaveBeenCalled();
+    expect(postTaskCard).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before external effects when a persisted audit attestation does not match its Receipt", async () => {
+    const fs = new MemoryFs();
+    const context = persistedContext();
+    const generated = audited({ title: "保存済み議事録", overview: "概要", body: "本文" }, context);
+    generated.brainbase_context_attestation!.checksum = "checksum-poisoned";
+    await persistGeneratedRun(fs, generated);
+    const repairTaskBoard = vi.fn(); const postTaskCard = vi.fn();
+    const options = resumeOptions({ repairTaskBoard, postTaskCard });
+
+    await expect(resumeMeetingMinutesRun(fs, selection, options))
+      .rejects.toThrow("meeting_minutes_context_attestation_mismatch");
+    expect(options.postProcessingStatus).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+    expect(repairTaskBoard).not.toHaveBeenCalled();
+    expect(postTaskCard).not.toHaveBeenCalled();
+  });
+
+  async function expectPersistedAuditProjectionRejected(projectedAuditLines: readonly string[]) {
+      const fs = new MemoryFs();
+      const context = persistedContext();
+      const generated = audited({ title: "保存済み議事録", overview: "概要", body: "本文" }, context);
+      generated.brainbase_judgment_audit_lines = [...projectedAuditLines];
+      await persistGeneratedRun(fs, generated);
+      const repairTaskBoard = vi.fn(); const postTaskCard = vi.fn();
+      const options = resumeOptions({ repairTaskBoard, postTaskCard });
+
+      await expect(resumeMeetingMinutesRun(fs, selection, options))
+        .rejects.toThrow("meeting_minutes_judgment_projection_mismatch");
+      expect(options.postProcessingStatus).not.toHaveBeenCalled();
+      expect(options.saveGitHub).not.toHaveBeenCalled();
+      expect(options.postParent).not.toHaveBeenCalled();
+      expect(options.postThreadChunk).not.toHaveBeenCalled();
+      expect(options.createTask).not.toHaveBeenCalled();
+      expect(repairTaskBoard).not.toHaveBeenCalled();
+      expect(postTaskCard).not.toHaveBeenCalled();
+  }
+
+  it("rejects a persisted generated run with changed audit projection before external effects", async () => {
+    await expectPersistedAuditProjectionRejected(
+      [judgmentAuditLines[0]!, "📚 Brainbase未参照: 改変された監査行"]);
+  });
+
+  it("rejects a persisted generated run with extra audit projection before external effects", async () => {
+    await expectPersistedAuditProjectionRejected([...judgmentAuditLines, judgmentAuditLines[0]!]);
+  });
+
+  it("rejects a persisted generated run with duplicate-count audit projection before external effects", async () => {
+    await expectPersistedAuditProjectionRejected([judgmentAuditLines[0]!, judgmentAuditLines[0]!]);
+  });
+
+  it("validates a completed GitHub-saved run before retrying any task or board effect", async () => {
+    const fs = new MemoryFs();
+    const context = persistedContext();
+    const generated = audited({ title: "保存済み議事録", overview: "概要", body: "本文" }, context);
+    generated.brainbase_judgment_audit_lines = [...judgmentAuditLines, judgmentAuditLines[0]!];
+    await persistGeneratedRun(fs, generated, "completed", true);
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.slack = { parentTs: "10.1", postedChunkIndexes: [0] };
+    persisted.taskRegistration = { registered: [{ index: 0, title: "確認する", taskId: "task-1" }],
+      failure: { index: 0, stage: "task_card", message: "meeting_minutes_task_card_failed", failedAt: "now" } };
+    await saveMeetingMinutesRun(fs, persisted);
+    const repairTaskBoard = vi.fn(); const postTaskCard = vi.fn();
+    const options = resumeOptions({ repairTaskBoard, postTaskCard });
+
+    await expect(resumeMeetingMinutesRun(fs, selection, options))
+      .rejects.toThrow("meeting_minutes_judgment_projection_mismatch");
+    expect(options.postProcessingStatus).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+    expect(repairTaskBoard).not.toHaveBeenCalled();
+    expect(postTaskCard).not.toHaveBeenCalled();
+  });
+
   it("persists the canonical source Slack app with every new run", async () => {
     const fs = new MemoryFs();
     const [created] = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
@@ -206,8 +332,13 @@ describe("meeting minutes pipeline", () => {
     persisted.approvedBy = selection.userId;
     persisted.status = "failed";
     persisted.failure = { stage: "github_saved", message: "slack_api_failed:channel_not_found" };
-    persisted.generated = { title: "法務定例", overview: "概要", body: "本文",
-      brainbase_judgment_audit_lines: judgmentAuditLines };
+    persisted.generated = audited({ title: "法務定例", overview: "概要", body: "本文" }, {
+      schema_version: "meeting_minutes_context_receipt.v1", receipt_id: "receipt-1",
+      identity: { run_id: selection.runId, project_code: "mana",
+        transcript_sha256: "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6" },
+      status: "resolved", checksum: "checksum-1", resolved_at: "2026-08-17T09:27:00.000Z",
+      context: { source_refs: [], open_tasks: [] },
+    });
     persisted.github = { transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
       transcriptUrl: "https://github/t", minutesUrl: "https://github/m" };
     persisted.context = { receiptId: "receipt-1", checksum: "checksum-1", status: "resolved", mode: "observe",

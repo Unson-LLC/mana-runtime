@@ -624,6 +624,7 @@ export function parseReceiptBoundGeneratedMeetingMinutesOutput(stdout: string,
     project_code: expected.identity.project_code,
     transcript_sha256: expected.identity.transcript_sha256,
     session_id: generated.sessionId,
+    judgment_audit_lines: [...auditLines],
   }, brainbase_judgment_audit_lines: auditLines };
 }
 

@@ -109,6 +109,8 @@ export interface MeetingMinutesMcpContextAttestation {
   project_code: string;
   transcript_sha256: string;
   session_id: string;
+  /** Exact Stop-owned audit projection bound to this generated output. */
+  judgment_audit_lines?: string[];
 }
 
 export interface MeetingMinutesReceiptContextAttestation {
@@ -120,6 +122,8 @@ export interface MeetingMinutesReceiptContextAttestation {
   project_code: string;
   transcript_sha256: string;
   session_id: string;
+  /** Exact Stop-owned audit projection bound to this generated output. */
+  judgment_audit_lines?: string[];
 }
 
 export type MeetingMinutesContextAttestation =

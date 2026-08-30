@@ -60,14 +60,45 @@ export interface RedoMeetingMinutesOptions {
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
 
-function assertMeetingMinutesJudgmentAuditProjection(value: GeneratedMeetingMinutes): string[] {
+function assertMeetingMinutesJudgmentAuditProjection(value: GeneratedMeetingMinutes,
+  expected?: readonly string[]): string[] {
   const auditLines = value.brainbase_judgment_audit_lines;
   if (!Array.isArray(auditLines) || auditLines.length < 1
     || auditLines.some((line) => typeof line !== "string"
       || !/^(?:🧠 判断参照:|⚠️ 判断参照:|📚 Brainbase|⚠️ Brainbase)/u.test(line))) {
     throw new Error("meeting_minutes_judgment_projection_missing");
   }
-  return auditLines as string[];
+  if (expected !== undefined && (auditLines.length !== expected.length
+    || auditLines.some((line, index) => line !== expected[index]))) {
+    throw new Error("meeting_minutes_judgment_projection_mismatch");
+  }
+  return auditLines;
+}
+
+function isLegacyGeneratedOutputForRegeneration(run: MeetingMinutesRun): boolean {
+  return !run.github && !run.context && !run.generated?.brainbase_context_attestation
+    && run.failure?.message === "meeting_minutes_context_output_mismatch";
+}
+
+function assertPersistedMeetingMinutesAudit(run: MeetingMinutesRun): void {
+  const generated = run.generated;
+  if (!generated || isLegacyGeneratedOutputForRegeneration(run)) return;
+  const attestation = generated.brainbase_context_attestation;
+  if (!attestation) throw new Error("meeting_minutes_context_attestation_mismatch");
+  const snapshot = attestation.judgment_audit_lines;
+  if (!Array.isArray(snapshot)) throw new Error("meeting_minutes_judgment_projection_missing");
+  assertMeetingMinutesJudgmentAuditProjection(generated, snapshot);
+  const context = run.context;
+  if (!context || !run.destination || !run.transcriptSha256
+    || generated.brainbase_context_receipt_id !== context.receiptId
+    || generated.brainbase_context_checksum !== context.checksum
+    || attestation.receipt_id !== context.receiptId
+    || attestation.checksum !== context.checksum
+    || attestation.run_id !== run.runId
+    || attestation.project_code !== meetingMinutesContextProjectCode(run.destination)
+    || attestation.transcript_sha256 !== run.transcriptSha256) {
+    throw new Error("meeting_minutes_context_attestation_mismatch");
+  }
 }
 
 async function generateWithDiagnostics(fs: WorkspaceFs, run: MeetingMinutesRun, transcript: string,
@@ -372,6 +403,19 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
       }
     }
   }
+  if (!run.github && options.contextMode === "required" && run.context &&
+    (run.context.status === "partial" || run.context.status === "unavailable")) {
+    delete run.context;
+    delete run.generated;
+  }
+  if (run.status === "failed" && !run.github
+    && run.failure?.message === "meeting_minutes_context_source_ref_unknown") {
+    delete run.generated;
+  }
+  // A persisted generated output is untrusted until its exact Stop-owned
+  // audit projection and Receipt binding have both been revalidated. Keep
+  // this before the completed retry path and before processing-status output.
+  assertPersistedMeetingMinutesAudit(run);
   if (run.status === "completed") {
     if (run.taskRegistration?.failure && run.destination && run.transcriptSha256) {
       const retryStage = run.taskRegistration.failure.stage;
@@ -429,15 +473,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     }
     return run;
   }
-  if (!run.github && options.contextMode === "required" && run.context &&
-    (run.context.status === "partial" || run.context.status === "unavailable")) {
-    delete run.context;
-    delete run.generated;
-  }
   if (run.status === "failed") {
-    if (!run.github && run.failure?.message === "meeting_minutes_context_source_ref_unknown") {
-      delete run.generated;
-    }
     run.status = run.github ? (run.slack?.parentTs ? "posting" : "github_saved") :
       run.generated ? "generated" : "routed";
   }
@@ -449,16 +485,6 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   let contextReceipt: MeetingMinutesContextReceipt | undefined;
   let diagnosticStage: MeetingMinutesDiagnosticStage = "slack_publish";
   try {
-    const persistedAttestation = run.generated?.brainbase_context_attestation;
-    if (run.generated && run.context && persistedAttestation
-      && persistedAttestation.receipt_id === run.context.receiptId
-      && persistedAttestation.checksum === run.context.checksum
-      && persistedAttestation.run_id === run.runId
-      && persistedAttestation.project_code === meetingMinutesContextProjectCode(run.destination!)
-      && persistedAttestation.transcript_sha256 === run.transcriptSha256) {
-      diagnosticStage = "generation";
-      assertMeetingMinutesJudgmentAuditProjection(run.generated);
-    }
     if (!run.slack.processingTs) {
       run.slack.processingTs = await options.postProcessingStatus(run);
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
@@ -509,7 +535,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         }
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
       }
-      assertMeetingMinutesJudgmentAuditProjection(run.generated!);
+      assertPersistedMeetingMinutesAudit(run);
       diagnosticStage = "github_save";
       run.github = await options.saveGitHub({ destination: run.destination, transcript, minutes: run.generated,
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
