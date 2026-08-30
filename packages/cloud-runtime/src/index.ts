@@ -954,8 +954,9 @@ function meetingMinutesClients(
     resume: {
       contextMode,
       resolveContext: (identity: Parameters<MeetingMinutesBrainbaseContextClient["resolve"]>[0], receiptId?: string) =>
-        effects.boundary("brainbase_proxy", () => new MeetingMinutesBrainbaseContextClient(
-          env.BRAINBASE_TASK_API_BASE_URL ?? "", env.BRAINBASE_TASK_API_TOKEN).resolve(identity, receiptId)),
+        effects.boundary("brainbase_proxy", (credentialFetch) => new MeetingMinutesBrainbaseContextClient(
+          env.BRAINBASE_TASK_API_BASE_URL ?? "", env.BRAINBASE_TASK_API_TOKEN, credentialFetch)
+          .resolve(identity, receiptId)),
       postProcessingStatus: (run: MeetingMinutesRun) => effects.slack(`processing-status:${run.runId}`,
         { kind: "processing_status", runId: run.runId },
         (credentialFetch) => sourceSlack(credentialFetch).postProcessingStatus(run)),
