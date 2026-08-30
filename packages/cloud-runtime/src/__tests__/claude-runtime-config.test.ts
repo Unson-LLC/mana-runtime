@@ -72,7 +72,7 @@ describe("Cloudflare Claude runtime config", () => {
       .not.toContain("--mcp-config");
   });
 
-  it("story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 always enables bounded Brainbase MCP and command Hooks for meeting-minutes", () => {
+  it("story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 enables command Hooks without model-origin Brainbase MCP for meeting-minutes", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
     expect(runtimeMeetingMinutesMcpConfigPath()).toBe("/tmp/mana-meeting-minutes-mcp.json");
     expect(buildRuntimeClaudeCommand("meeting-minutes", config)).toBe(

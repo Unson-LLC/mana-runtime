@@ -14,7 +14,7 @@ import {
 import { createTaskWriteProxyHandler, TASK_WRITE_PROXY_HOST } from "./task-write-proxy.js";
 import type { TaskBoardRepairEvent } from "./task-board.js";
 import { handleNocodbProxyRequest, NOCODB_PROXY_HOST, type NocodbProxyEnv } from "./nocodb-proxy.js";
-import { BRAINBASE_MCP_PROXY_HOST, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
+import { BRAINBASE_MCP_PROXY_HOST, handleBrainbaseMcpProxyRequest, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
 import { GOOGLE_DRIVE_MCP_PROXY_HOST, handleGoogleDriveMcpProxyRequest, type GoogleDriveMcpProxyEnv } from "./google-drive-mcp-proxy.js";
 import { createRuntimeGatewayProxyHandler, RUNTIME_GATEWAY_PROXY_HOST, type RuntimeGatewayProxyEnv } from "./runtime-gateway-proxy.js";
 import {
@@ -129,7 +129,12 @@ TechKnightSandbox.outboundByHost = {
       handleNocodbProxyRequest(authorized, proxyEnv, credentialFetch),
   ),
   [BRAINBASE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) =>
-    authorizeRuntimeBrainbaseOutbound(request, env),
+    new URL(request.url).pathname === "/host/judgment/hook"
+      ? authorizeRuntimeBrainbaseOutbound(request, env)
+      : authorizeTenantRuntimeProxy(
+        request, env, (authorized, credentialFetch, proxyEnv) =>
+          handleBrainbaseMcpProxyRequest(authorized, proxyEnv, credentialFetch),
+      ),
   [GOOGLE_DRIVE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
     request, env, (authorized, credentialFetch, proxyEnv) =>
       handleGoogleDriveMcpProxyRequest(authorized, proxyEnv, credentialFetch),

@@ -98,7 +98,7 @@ async function prepareMeetingMinutesRuntime(
 ): Promise<void> {
   await sandbox.writeFile(runtimeClaudePromptPath("meeting-minutes"), prompt);
   await sandbox.writeFile(runtimeMeetingMinutesMcpConfigPath(), JSON.stringify(buildRuntimeMcpConfig({
-    mcp: ["brainbase"], gatewayTools: [],
+    mcp: [], gatewayTools: [],
   }, tenantBoundaryHandle)));
 }
 

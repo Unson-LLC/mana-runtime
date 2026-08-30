@@ -4,6 +4,8 @@ import {
   type TenantBoundaryContextNamespace,
 } from "./multitenancy/durable-tenant-boundary.js";
 import {
+  BRAINBASE_JUDGMENT_HOOK_PROXY_PATH,
+  BRAINBASE_MCP_PROXY_HOST,
   handleBrainbaseMcpProxyRequest,
   type BrainbaseMcpProxyEnv,
 } from "./brainbase-mcp-proxy.js";
@@ -21,6 +23,17 @@ export async function authorizeRuntimeBrainbaseOutbound(
   env: RuntimeBrainbaseOutboundEnv,
   fetchImpl?: typeof fetch,
 ): Promise<Response> {
+  const url = new URL(request.url);
+  if (
+    url.hostname !== BRAINBASE_MCP_PROXY_HOST
+    || url.pathname !== BRAINBASE_JUDGMENT_HOOK_PROXY_PATH
+    || request.method !== "POST"
+  ) {
+    return Response.json(
+      { error: { code: "BRAINBASE_OPERATION_FORBIDDEN", retryable: false } },
+      { status: 403 },
+    );
+  }
   const resolved = await resolveDurableTenantBoundaryContext(
     env.TENANT_RUNTIME_STATE,
     request,
