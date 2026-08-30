@@ -115,6 +115,41 @@ describe("meeting minutes Brainbase context", () => {
     expect(fetch.mock.calls[1]?.[0].toString()).toContain(`/api/meeting-minutes/context-receipts/${receipt.receipt_id}`);
   });
 
+  it("uses the private tenant runtime service without a Slack credential lease", async () => {
+    const runtimeFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 200 }));
+    const tenantContext = {
+      placement: { deployment_id: "dep_unson" },
+    } as never;
+    const client = new MeetingMinutesBrainbaseContextClient(
+      "https://tenant-runtime.internal", undefined, runtimeFetch, tenantContext,
+    );
+
+    await client.resolve(receipt.identity);
+    await client.resolve(receipt.identity, receipt.receipt_id);
+
+    expect(runtimeFetch.mock.calls[0]?.[0].toString()).toBe(
+      "https://tenant-runtime.internal/api/v1/runtime/meeting-minutes/context-receipts:create",
+    );
+    expect(runtimeFetch.mock.calls[1]?.[0].toString()).toBe(
+      "https://tenant-runtime.internal/api/v1/runtime/meeting-minutes/context-receipts:get",
+    );
+    for (const call of runtimeFetch.mock.calls) {
+      expect(call[1]).toMatchObject({
+        method: "POST",
+        headers: expect.objectContaining({
+          "brainbase-protocol-version": "1.0",
+          "brainbase-deployment-id": "dep_unson",
+        }),
+      });
+      expect(JSON.parse(String(call[1]?.body))).toMatchObject({
+        tenant_context: tenantContext,
+      });
+      expect(call[1]?.headers).not.toHaveProperty("authorization");
+    }
+  });
+
   it("rejects a Receipt whose identity does not match the run", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...receipt,
       identity: { ...receipt.identity, project_code: "other" } }), { status: 201 }));

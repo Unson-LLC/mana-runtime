@@ -900,6 +900,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
 function meetingMinutesClients(
   env: Env,
   effects: MeetingMinutesTenantEffectGuard,
+  tenantContext: TenantContextEnvelope,
   tenantBoundaryHandle?: string,
 ) {
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
@@ -953,10 +954,16 @@ function meetingMinutesClients(
     },
     resume: {
       contextMode,
-      resolveContext: (identity: Parameters<MeetingMinutesBrainbaseContextClient["resolve"]>[0], receiptId?: string) =>
-        effects.boundary("brainbase_proxy", (credentialFetch) => new MeetingMinutesBrainbaseContextClient(
-          env.BRAINBASE_TASK_API_BASE_URL ?? "", env.BRAINBASE_TASK_API_TOKEN, credentialFetch)
-          .resolve(identity, receiptId)),
+      resolveContext: (identity: Parameters<MeetingMinutesBrainbaseContextClient["resolve"]>[0], receiptId?: string,
+        projectId?: string) => {
+        const contextDestination = destinations.find((destination) => destination.projectId === projectId
+          && destination.contextProjectCode === identity.project_code);
+        if (!contextDestination) throw new Error("meeting_minutes_context_project_mismatch");
+        return effects.boundary("brainbase_proxy", () => new MeetingMinutesBrainbaseContextClient(
+          "https://tenant-runtime.internal", undefined,
+          env.BRAINBASE_TENANT_RUNTIME_SERVICE?.fetch.bind(env.BRAINBASE_TENANT_RUNTIME_SERVICE),
+          tenantContext).resolve(identity, receiptId));
+      },
       postProcessingStatus: (run: MeetingMinutesRun) => effects.slack(`processing-status:${run.runId}`,
         { kind: "processing_status", runId: run.runId },
         (credentialFetch) => sourceSlack(credentialFetch).postProcessingStatus(run)),
@@ -1566,7 +1573,7 @@ async function processTenantMeetingMinutesSelection(input: {
     ));
     const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-      const clients = meetingMinutesClients(env, effects, tenantBoundaryHandle);
+      const clients = meetingMinutesClients(env, effects, tenantContext, tenantBoundaryHandle);
       const recoveryEvent: MeetingMinutesRecovery = {
         kind: "meeting_minutes_recovery",
         runId: selection.runId,
@@ -1681,7 +1688,7 @@ async function processTenantMeetingMinutesRedo(input: {
     ));
     const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-      const clients = meetingMinutesClients(env, effects, tenantBoundaryHandle);
+      const clients = meetingMinutesClients(env, effects, tenantContext, tenantBoundaryHandle);
       await processMeetingMinutesRedo(workspace.fs, command, config, clients.redo);
     });
   });
@@ -2875,6 +2882,7 @@ export default {
                       const meetingClients = meetingMinutesClients(
                         env,
                         effects,
+                        childTenantContext,
                         tenantBoundaryHandle,
                       );
                       await processMeetingMinutesSlackEvent(workspace.fs, childEvent, meetingMinutesConfig, {

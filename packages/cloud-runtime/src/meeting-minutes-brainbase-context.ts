@@ -5,6 +5,7 @@ import type {
   MeetingMinutesContextSourceRef,
   MeetingMinutesTaskCandidate,
 } from "./meeting-minutes-contracts.js";
+import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 const RECEIPT_STATUSES = new Set(["resolved", "confirmed_empty", "partial", "unavailable"]);
@@ -46,17 +47,22 @@ export class MeetingMinutesBrainbaseContextClient {
   private readonly brokered: boolean;
 
   constructor(private readonly baseUrl: string, private readonly token?: string,
-    fetchImpl?: FetchLike) {
+    fetchImpl?: FetchLike, private readonly tenantContext?: TenantContextEnvelope) {
     this.fetchImpl = fetchImpl ?? fetch;
     this.brokered = fetchImpl !== undefined;
   }
 
   async resolve(identity: MeetingMinutesContextReceipt["identity"], receiptId?: string): Promise<MeetingMinutesContextReceipt> {
     if (!this.baseUrl || (!this.token && !this.brokered)) throw new Error("meeting_minutes_context_client_unconfigured");
-    const url = receiptId
-      ? new URL(`/api/meeting-minutes/context-receipts/${encodeURIComponent(receiptId)}`, this.baseUrl)
-      : new URL("/api/meeting-minutes/context-receipts", this.baseUrl);
-    if (receiptId) {
+    const privateRuntime = this.tenantContext !== undefined;
+    const url = privateRuntime
+      ? new URL(receiptId
+        ? "/api/v1/runtime/meeting-minutes/context-receipts:get"
+        : "/api/v1/runtime/meeting-minutes/context-receipts:create", this.baseUrl)
+      : receiptId
+        ? new URL(`/api/meeting-minutes/context-receipts/${encodeURIComponent(receiptId)}`, this.baseUrl)
+        : new URL("/api/meeting-minutes/context-receipts", this.baseUrl);
+    if (receiptId && !privateRuntime) {
       url.searchParams.set("run_id", identity.run_id);
       url.searchParams.set("project_code", identity.project_code);
       url.searchParams.set("transcript_sha256", identity.transcript_sha256);
@@ -65,10 +71,17 @@ export class MeetingMinutesBrainbaseContextClient {
     for (let attempt = 1; attempt <= CONTEXT_REQUEST_ATTEMPTS; attempt += 1) {
       try {
         response = await this.fetchImpl.call(globalThis, url, {
-          method: receiptId ? "GET" : "POST",
+          method: privateRuntime ? "POST" : receiptId ? "GET" : "POST",
           headers: { ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), accept: "application/json",
-            ...(receiptId ? {} : { "content-type": "application/json" }) },
-          ...(receiptId ? {} : { body: JSON.stringify(identity) }), redirect: "manual",
+            ...(!privateRuntime && receiptId ? {} : { "content-type": "application/json" }),
+            ...(privateRuntime ? {
+              "brainbase-protocol-version": "1.0",
+              "brainbase-deployment-id": this.tenantContext!.placement.deployment_id,
+            } : {}) },
+          ...(!privateRuntime && receiptId ? {} : { body: JSON.stringify(privateRuntime
+            ? { tenant_context: this.tenantContext,
+              ...(receiptId ? { receipt_id: receiptId } : {}), identity }
+            : identity) }), redirect: "manual",
           signal: AbortSignal.timeout(CONTEXT_REQUEST_TIMEOUT_MS),
         });
         break;
