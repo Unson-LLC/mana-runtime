@@ -66,4 +66,16 @@ describe("tenant Slack runtime wiring", () => {
       "createSlackInstallationControlPlaneClient(\n        env.SLACK_INSTALLATION_CONTROL_PLANE",
     );
   });
+
+  it("routes meeting-minutes context reads through the tenant credential broker", () => {
+    const clientsStart = source.indexOf("function meetingMinutesClients(");
+    const clientsEnd = source.indexOf("function ", clientsStart + 1);
+    const clients = source.slice(clientsStart, clientsEnd);
+
+    expect(clientsStart).toBeGreaterThan(-1);
+    expect(clients).toContain('effects.boundary("brainbase_proxy", (credentialFetch) =>');
+    expect(clients).toContain(
+      'env.BRAINBASE_TASK_API_BASE_URL ?? "", env.BRAINBASE_TASK_API_TOKEN, credentialFetch',
+    );
+  });
 });
