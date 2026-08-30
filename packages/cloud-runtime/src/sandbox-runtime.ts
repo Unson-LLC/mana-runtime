@@ -14,7 +14,7 @@ import {
 import { createTaskWriteProxyHandler, TASK_WRITE_PROXY_HOST } from "./task-write-proxy.js";
 import type { TaskBoardRepairEvent } from "./task-board.js";
 import { handleNocodbProxyRequest, NOCODB_PROXY_HOST, type NocodbProxyEnv } from "./nocodb-proxy.js";
-import { BRAINBASE_MCP_PROXY_HOST, handleBrainbaseMcpProxyRequest, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
+import { BRAINBASE_MCP_PROXY_HOST, type BrainbaseMcpProxyEnv } from "./brainbase-mcp-proxy.js";
 import { GOOGLE_DRIVE_MCP_PROXY_HOST, handleGoogleDriveMcpProxyRequest, type GoogleDriveMcpProxyEnv } from "./google-drive-mcp-proxy.js";
 import { createRuntimeGatewayProxyHandler, RUNTIME_GATEWAY_PROXY_HOST, type RuntimeGatewayProxyEnv } from "./runtime-gateway-proxy.js";
 import {
@@ -24,6 +24,7 @@ import {
 import { deliverTenantGatewaySlackMessage } from "./multitenancy/tenant-gateway-delivery.js";
 import { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
 import { authorizeRuntimeAnthropicOutbound, type RuntimeAnthropicOutboundEnv } from "./runtime-anthropic-outbound.js";
+import { authorizeRuntimeBrainbaseOutbound } from "./runtime-brainbase-outbound.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
 export { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
@@ -127,10 +128,8 @@ TechKnightSandbox.outboundByHost = {
     request, env, (authorized, credentialFetch, proxyEnv) =>
       handleNocodbProxyRequest(authorized, proxyEnv, credentialFetch),
   ),
-  [BRAINBASE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
-    request, env, (authorized, credentialFetch, proxyEnv) =>
-      handleBrainbaseMcpProxyRequest(authorized, proxyEnv, credentialFetch),
-  ),
+  [BRAINBASE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) =>
+    authorizeRuntimeBrainbaseOutbound(request, env),
   [GOOGLE_DRIVE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
     request, env, (authorized, credentialFetch, proxyEnv) =>
       handleGoogleDriveMcpProxyRequest(authorized, proxyEnv, credentialFetch),
