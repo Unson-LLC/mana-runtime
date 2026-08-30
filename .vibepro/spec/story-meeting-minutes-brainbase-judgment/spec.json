@@ -74,7 +74,7 @@
       "cross_tenant_candidate": "deny_and_audit"
     },
     "deployment_modes": [
-      "managed_dedicated"
+      "shared_cloud"
     ],
     "negative_scenarios": [
       "unknown_tenant",
@@ -129,7 +129,7 @@
             "tenant_partitioned"
           ],
           "deployment_modes": [
-            "managed_dedicated"
+            "shared_cloud"
           ],
           "tenant_entities": [
             {
@@ -146,7 +146,7 @@
               "sharing_mode": "tenant_partitioned",
               "credential_scope": "target organization and workspace",
               "connection_mode": "Slack API",
-              "deployment_mode": "managed_dedicated"
+              "deployment_mode": "shared_cloud"
             }
           ]
         },
@@ -157,7 +157,7 @@
             "tenant_partitioned"
           ],
           "deployment_modes": [
-            "managed_dedicated"
+            "shared_cloud"
           ]
         },
         "implementation": {
@@ -167,7 +167,7 @@
             "tenant_partitioned"
           ],
           "deployment_modes": [
-            "managed_dedicated"
+            "shared_cloud"
           ]
         }
       }

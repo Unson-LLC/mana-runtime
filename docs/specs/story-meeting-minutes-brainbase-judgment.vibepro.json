@@ -68,7 +68,7 @@
       "no_data": "empty",
       "cross_tenant_candidate": "deny_and_audit"
     },
-    "deployment_modes": ["managed_dedicated"],
+    "deployment_modes": ["shared_cloud"],
     "negative_scenarios": [
       "unknown_tenant",
       "ambiguous_tenant",
@@ -118,7 +118,7 @@
         "graph": {
           "tenant_key": "tenantId",
           "sharing_modes": ["dedicated", "tenant_partitioned"],
-          "deployment_modes": ["managed_dedicated"],
+          "deployment_modes": ["shared_cloud"],
           "tenant_entities": [
             {
               "tenant_scope": "Worker tenant",
@@ -134,19 +134,19 @@
               "sharing_mode": "tenant_partitioned",
               "credential_scope": "target organization and workspace",
               "connection_mode": "Slack API",
-              "deployment_mode": "managed_dedicated"
+              "deployment_mode": "shared_cloud"
             }
           ]
         },
         "spec": {
           "tenant_key": "tenantId",
           "sharing_modes": ["dedicated", "tenant_partitioned"],
-          "deployment_modes": ["managed_dedicated"]
+          "deployment_modes": ["shared_cloud"]
         },
         "implementation": {
           "tenant_key": "tenantId",
           "sharing_modes": ["dedicated", "tenant_partitioned"],
-          "deployment_modes": ["managed_dedicated"]
+          "deployment_modes": ["shared_cloud"]
         }
       }
     }
