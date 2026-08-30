@@ -98,16 +98,29 @@ describe("Cloudflare Claude runtime config", () => {
   it("keeps Judgment Hook events without requiring a model-initiated Brainbase tool call", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
     const command = buildRuntimeClaudeCommand("meeting-minutes", config, {
-      structuredOutput: "meeting-minutes",
       includeJudgmentHookEvents: true,
     });
     expect(command).toContain("--include-hook-events");
+    expect(command).not.toContain("--json-schema");
     expect(command).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
     expect(command).toContain("--mcp-config /tmp/mana-meeting-minutes-mcp.json");
     expect(command).toContain("--strict-mcp-config");
     const reply = buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true });
     expect(reply).toContain("--output-format stream-json --verbose --include-hook-events");
     expect(reply).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
+  });
+
+  it("does not combine Judgment audit output with a JSON Schema that forbids the required prefix", () => {
+    const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "sonnet" });
+    const command = buildRuntimeClaudeCommand("meeting-minutes", config, {
+      includeJudgmentHookEvents: true,
+    });
+    expect(command).toContain("--output-format stream-json --verbose --include-hook-events");
+    expect(command).not.toContain("--json-schema");
+    expect(() => buildRuntimeClaudeCommand("meeting-minutes", config, {
+      includeJudgmentHookEvents: true,
+      structuredOutput: "meeting-minutes",
+    })).toThrow("runtime_claude_audit_output_invalid");
   });
 
   it("starts then resumes the same validated Claude session", () => {

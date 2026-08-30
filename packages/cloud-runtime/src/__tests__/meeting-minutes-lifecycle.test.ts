@@ -15,6 +15,10 @@ const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId:
   files: [{ id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 100 }] };
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana",
   workspaceId: "T1", appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
+const judgmentAuditLines = [
+  "🧠 判断参照: 「議事録を生成する」を参照 → general/answer ✓",
+  "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓",
+];
 
 async function setup() {
   const fs = new MemoryFs();
@@ -36,6 +40,7 @@ function resume(overrides: Record<string, unknown> = {}) {
       run_id: context.identity.run_id, project_code: context.identity.project_code,
       transcript_sha256: context.identity.transcript_sha256, session_id: "session-test",
     },
+    brainbase_judgment_audit_lines: judgmentAuditLines,
   }));
   return { contextMode: "observe" as const,
     resolveContext: vi.fn(async (identity) => ({ schema_version: "meeting_minutes_context_receipt.v1" as const,

@@ -119,12 +119,15 @@ export function buildRuntimeClaudeCommand(
   if (options.auditBrainbaseToolUse && (purpose !== "meeting-minutes" || options.structuredOutput !== "meeting-minutes")) {
     throw new ClaudeRuntimeConfigError("runtime_claude_audit_output_invalid");
   }
-  if (options.includeJudgmentHookEvents && purpose === "meeting-minutes"
-      && options.structuredOutput !== "meeting-minutes") {
+  if (options.includeJudgmentHookEvents && options.structuredOutput) {
     throw new ClaudeRuntimeConfigError("runtime_claude_audit_output_invalid");
   }
+  // Judgment Stop requires its exact owner-visible audit prefix at the start of
+  // the assistant response. A JSON Schema would forbid that prefix, so audited
+  // meeting-minutes use an unstructured stream and validate the embedded JSON
+  // deterministically after the Hook lifecycle completes.
   const structuredOutputArg = options.structuredOutput
-    ? options.auditBrainbaseToolUse || options.includeJudgmentHookEvents
+    ? options.auditBrainbaseToolUse
       ? ` --output-format stream-json --verbose --include-hook-events --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : options.includeJudgmentHookEvents ? " --output-format stream-json --verbose --include-hook-events" : "";

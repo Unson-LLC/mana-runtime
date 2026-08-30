@@ -1,6 +1,10 @@
 import { handleSandboxAdminRequest } from "../sandbox-admin.js";
 
 const TENANT_BOUNDARY_HANDLE = `tb_${"P".repeat(32)}`;
+const judgmentAuditLines = [
+  "🧠 判断参照: 「議事録を生成する」を参照 → general/answer ✓",
+  "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓",
+];
 
 function env(overrides: Record<string, unknown> = {}) {
   return {
@@ -31,7 +35,10 @@ function judgmentHook(event: "UserPromptSubmit" | "Stop") {
     ...(event === "UserPromptSubmit" ? { route_resolution_sha256: "c".repeat(64) } : {}),
   };
   return { type: "system", subtype: "hook_response", hook_event: event, exit_code: 0, outcome: "success",
-    stdout: JSON.stringify({ systemMessage: `__MANA_JUDGMENT_RECEIPT_V1__:${JSON.stringify(receipt)}` }) };
+    stdout: JSON.stringify({ systemMessage: [
+      ...(event === "Stop" ? judgmentAuditLines : []),
+      `__MANA_JUDGMENT_RECEIPT_V1__:${JSON.stringify(receipt)}`,
+    ].join("\n") }) };
 }
 
 describe("handleSandboxAdminRequest", () => {
@@ -102,9 +109,9 @@ describe("handleSandboxAdminRequest", () => {
         JSON.stringify({ type: "system", subtype: "init", session_id: "probe-session" }),
         JSON.stringify(judgmentHook("UserPromptSubmit")),
         JSON.stringify(judgmentHook("Stop")),
-        JSON.stringify({ type: "result", session_id: "probe-session", structured_output: {
+        JSON.stringify({ type: "result", session_id: "probe-session", result: `${judgmentAuditLines.join("\n")}\n${JSON.stringify({
           title: "議事録生成プローブ", overview: "生成経路を確認した。", body: "------------\n生成経路\n本番と同じ設定を確認した。", tasks: [], used_source_refs: [], decision_candidates: [],
-        } }),
+        })}` }),
       ].join("\n"),
       stderr: "secret-output-must-not-leak",
     });
@@ -118,12 +125,13 @@ describe("handleSandboxAdminRequest", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, probe: "meeting-minutes-generation" });
     expect(client.exec).toHaveBeenCalledWith(
-      expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
+      expect.stringContaining("--output-format stream-json --verbose --include-hook-events"),
       expect.objectContaining({
         timeout: 780_000,
         env: { IS_SANDBOX: "1", MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_HANDLE },
       }),
     );
+    expect(client.exec.mock.calls[0]?.[0]).not.toContain("--json-schema");
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("議事録生成プローブ"));
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("文脈モードはrequiredです"));
   });

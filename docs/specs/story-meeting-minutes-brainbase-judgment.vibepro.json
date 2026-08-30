@@ -2,11 +2,161 @@
   "schema_version": "0.1.0",
   "story_id": "story-meeting-minutes-brainbase-judgment",
   "generated_by": { "caller": "codex", "stage": "architecture" },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "dedicated",
+    "tenant_identity": {
+      "canonical_key": "tenantId",
+      "resolved_from": [
+        "Worker TENANT_ID",
+        "trusted meeting-minutes destination"
+      ],
+      "resolution_point": "Slack Queue eventのtenantId確定後、保存済みrunのimmutable Slack/GitHub座標を照合してorganization認証経路を解決する",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "Queue event tenantId",
+        "meeting-minutes run destination snapshot",
+        "Slack organization token resolution"
+      ],
+      "verified_surfaces": [
+        "Queue event tenantId",
+        "meeting-minutes run destination snapshot",
+        "Slack organization token resolution"
+      ]
+    },
+    "resources": [
+      {
+        "name": "meeting-minutes run destination snapshot",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenantId",
+        "partition_key": "tenantId/workspaceId/runId",
+        "trust_zone": "tenant workspace storage",
+        "residue_policy": "retention with the meeting-minutes run",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and trusted meeting-minutes destination"
+      },
+      {
+        "name": "Slack meeting-minutes delivery",
+        "sharing": "dedicated",
+        "tenant_key": "tenantId",
+        "trust_zone": "trusted Slack workspace and channel",
+        "residue_policy": "retention in Slack under workspace policy",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and current configured destination organization"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenantId",
+      "scope": "tenantId plus current configured destination organization and immutable Slack/GitHub coordinates",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": ["mana-runtime"],
+      "residency": "run snapshot in tenant workspace storage; delivery in the configured Slack workspace",
+      "migration": "legacy organization routing is refreshed only when destination id, project, Slack channel, and GitHub coordinates match current trusted configuration",
+      "rollback": "revert the code change; mismatched delivery coordinates remain denied by meeting_minutes_destination_changed"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": ["managed_dedicated"],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "no_data",
+      "cross_tenant_candidate"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "Worker tenant",
+        "Slack workspace",
+        "trusted meeting-minutes destination"
+      ],
+      "boundary_edges": [
+        "Queue event to meeting-minutes run",
+        "configured organization to workspace-scoped Slack token",
+        "run destination snapshot to Slack and GitHub coordinates"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected",
+      "evidence": {
+        "propagation_surfaces": [
+          "Queue event tenantId",
+          "meeting-minutes run destination snapshot",
+          "Slack organization token resolution"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "no_data",
+          "cross_tenant_candidate"
+        ],
+        "scanner_results": {
+          "tenant_boundary": "inconclusive",
+          "tenant_key_propagation": "inconclusive",
+          "cross_tenant_authorization": "inconclusive",
+          "state_partitioning": "inconclusive",
+          "sandbox_isolation": "inconclusive",
+          "connection_routing": "inconclusive",
+          "secret_scope": "inconclusive",
+          "canonical_data_owner": "inconclusive",
+          "deployment_topology": "inconclusive",
+          "cross_tenant_negative_evidence": "inconclusive"
+        },
+        "graph": {
+          "tenant_key": "tenantId",
+          "sharing_modes": ["dedicated", "tenant_partitioned"],
+          "deployment_modes": ["managed_dedicated"],
+          "tenant_entities": [
+            {
+              "tenant_scope": "Worker tenant",
+              "tenant_key_source": "TENANT_ID",
+              "trust_zone": "Cloudflare Worker",
+              "data_owner": "mana-runtime"
+            }
+          ],
+          "boundary_edges": [
+            {
+              "tenant_scope": "Worker tenant to Slack workspace",
+              "tenant_key_source": "TENANT_ID and trusted target",
+              "sharing_mode": "tenant_partitioned",
+              "credential_scope": "target organization and workspace",
+              "connection_mode": "Slack API",
+              "deployment_mode": "managed_dedicated"
+            }
+          ]
+        },
+        "spec": {
+          "tenant_key": "tenantId",
+          "sharing_modes": ["dedicated", "tenant_partitioned"],
+          "deployment_modes": ["managed_dedicated"]
+        },
+        "implementation": {
+          "tenant_key": "tenantId",
+          "sharing_modes": ["dedicated", "tenant_partitioned"],
+          "deployment_modes": ["managed_dedicated"]
+        }
+      }
+    }
+  },
   "clauses": [
-    { "id": "C-001", "type": "contract", "statement": "議事録ClaudeはWorkerが検証したBrainbase Receiptと判断command Hooksを常に有効化し、モデル起点Brainbase MCPを公開しない", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }, { "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-7" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "データフロー" }], "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/claude-runtime-config.ts" }, { "file": "packages/cloudflare-techknight-poc/container/meeting-minutes-claude-settings.json" }], "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/claude-runtime-config.test.ts", "case": "story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 story-meeting-minutes-brainbase-context:ac:8 enables command Hooks without exposing model-initiated Brainbase MCP for meeting-minutes" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "classifies a bounded transcript in an isolated Sandbox" }] }, "confidence": 0.99 },
-    { "id": "INV-001", "type": "invariant", "statement": "SandboxはBrainbase tokenを持たずproxyが認証とmana-runtime bindingを固定する", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "信頼境界" }], "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/brainbase-mcp-proxy.ts" }], "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-mcp-proxy.test.ts", "case": "forwards the judgment Hook with a trusted project binding" }] }, "confidence": 0.99 },
-    { "id": "S-001", "type": "scenario", "statement": "3つのHook eventは同じturn identityで中央処理され、1 MiB超の入力、中央障害、または要求と束縛されない応答では生成を停止する", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-4" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "データフロー" }], "code_refs": [{ "file": "packages/cloudflare-techknight-poc/container/brainbase-judgment-hook.mjs" }], "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-judgment-hook.test.ts", "case": "preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop" }, { "file": "packages/cloudflare-techknight-poc/src/__tests__/brainbase-judgment-hook.test.ts", "case": "fails closed when the Brainbase Hook endpoint is unavailable" }] }, "confidence": 0.99 },
-    { "id": "INV-002", "type": "invariant", "statement": "既存議事録promptとJSON parserを維持し、検証済みBrainbase Receiptをpromptへ固定してモデル用MCP configを書かない", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "非対象" }], "code_refs": [{ "file": "packages/cloudflare-techknight-poc/src/meeting-minutes-generator.ts" }], "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }] }, "confidence": 0.99 }
+    { "id": "C-001", "type": "contract", "statement": "議事録ClaudeはWorkerが検証したBrainbase Receiptと判断command Hooksを常に有効化し、モデル起点Brainbase MCPを公開しない", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-1" }, { "kind": "acceptance_criteria", "ac_id": "AC-2" }, { "kind": "acceptance_criteria", "ac_id": "AC-7" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "データフロー" }], "code_refs": [{ "file": "packages/cloud-runtime/src/claude-runtime-config.ts" }, { "file": "packages/cloud-runtime/container/meeting-minutes-claude-settings.json" }], "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts", "case": "does not combine Judgment audit output with a JSON Schema that forbids the required prefix" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }] }, "confidence": 0.99 },
+    { "id": "INV-001", "type": "invariant", "statement": "SandboxはBrainbase tokenを持たずproxyが認証とmana-runtime bindingを固定する", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-5" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "信頼境界" }], "code_refs": [{ "file": "packages/cloud-runtime/src/brainbase-mcp-proxy.ts" }], "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/brainbase-mcp-proxy.test.ts", "case": "forwards the judgment Hook with a trusted project binding" }] }, "confidence": 0.99 },
+    { "id": "S-001", "type": "scenario", "statement": "3つのHook eventは同じturn identityで中央処理され、1 MiB超の入力、中央障害、または要求と束縛されない応答では生成を停止する", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-3" }, { "kind": "acceptance_criteria", "ac_id": "AC-4" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "データフロー" }], "code_refs": [{ "file": "packages/cloud-runtime/container/brainbase-judgment-hook.mjs" }], "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts", "case": "preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop" }, { "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts", "case": "fails closed when the Brainbase Hook endpoint is unavailable" }] }, "confidence": 0.99 },
+    { "id": "INV-002", "type": "invariant", "statement": "既存議事録JSON parserを維持し、検証済みBrainbase Receiptをpromptへ固定してモデル用MCP configを書かない", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "非対象" }], "code_refs": [{ "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts" }], "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call" }] }, "confidence": 0.99 },
+    { "id": "C-002", "type": "contract", "statement": "議事録生成はJSON SchemaとJudgment Stop監査行を同じ最終回答へ強制しない。Hook event付きstreamのStop監査行と最終回答先頭を原文・順序・回数で完全一致させ、後続JSONだけを解析し、同じ監査行をSlack親投稿へ投影する。欠落、改変、重複回数差、余分な監査行はfail closedにする", "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-6" }, { "kind": "acceptance_criteria", "ac_id": "AC-8" }], "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-judgment.md", "section": "データフロー" }], "code_refs": [{ "file": "packages/cloud-runtime/src/claude-runtime-config.ts" }, { "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts" }, { "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts" }], "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts", "case": "does not combine Judgment audit output with a JSON Schema that forbids the required prefix" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "fails closed when the projected audit lines are missing, changed, or supplemented" }, { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "case": "saves GitHub before Slack and completes" }] }, "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts", "must_cover": "does not combine Judgment audit output with a JSON Schema" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "must_cover": "projected audit lines are missing, changed, or supplemented" }, { "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts", "must_cover": "saves GitHub before Slack and completes" }] }, "confidence": 0.99 }
   ],
   "planned_test_suites": [
     { "layer": "unit", "covers": ["command", "proxy", "model MCP config absence", "Docker assets"] },

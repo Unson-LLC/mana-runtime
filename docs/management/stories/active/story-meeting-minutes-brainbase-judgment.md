@@ -11,8 +11,9 @@ Slackへ議事録ファイルを投稿した利用者として、Cloudflare Work
 - [x] AC3: Hook入口または判断処理が失敗した場合、Claude実行はfail closedとなり、管理外の議事録を保存・共有しない。
 - [x] AC4: 同じClaude session内のHookは同じ`turn_id`を利用する。
 - [x] AC5: SandboxへBrainbase bearer tokenを渡さず、Workerのsynthetic-host proxyだけがHook認証情報と`mana-runtime` project bindingを付与する。
-- [x] AC6: 既存の議事録JSON解析、GitHub保存、タスク登録、Slack共有、および議事録以外のClaude実行契約を変更しない。
+- [x] AC6: 既存の議事録JSON解析、GitHub保存、タスク登録、および議事録以外のClaude実行契約を変更しない。Slack共有の先頭にはHostが生成した監査行を原文・順序・回数どおり表示する。
 - [x] AC7: Receipt取得前の保存先自動判定も同じ議事録用Claude実行境界を使い、モデル用Brainbase MCPを公開せず、候補外・判定不能時は既存の手動選択へ戻す。
+- [x] AC8: Judgment Stopが要求する監査行とJSON Schemaを同じ最終回答へ強制しない。生成はHook event付きstreamを使い、最終回答先頭の監査行がStop応答と完全一致した場合だけ、後続JSONを決定的に解析して保存・共有する。欠落・改変・重複回数差・余分な監査行はfail closedにする。
 
 ## 成功指標
 

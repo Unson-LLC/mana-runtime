@@ -54,9 +54,9 @@ GitHub frontmatterへReceipt id/checksum/project/hash/statusと文脈警告を�
 
 ## 生成診断
 
-本番配備後の実Slack E2Eより先に、認証済み管理APIから議事録生成プローブを実行する。プローブは本番と同じClaudeコマンド、モデル・effort設定、JSON Schema、Judgment Hook、検証済みBrainbase Receipt注入を使い、固定の無害な文字起こしだけを処理する。これにより、OAuth疎通だけでは検出できないstream-json形式、schema、Hook、Receipt境界の不一致を利用者の投稿前に検出する。
+本番配備後の実Slack E2Eより先に、認証済み管理APIから議事録生成プローブを実行する。プローブは本番と同じClaudeコマンド、モデル・effort設定、Judgment Hook、検証済みBrainbase Receipt注入、監査行付きJSON解析を使い、固定の無害な文字起こしだけを処理する。JSON SchemaはStopが要求する監査行と同居できないため使わない。これにより、OAuth疎通だけでは検出できないstream-json形式、Hook、Receipt、監査投影、JSON解析境界の不一致を利用者の投稿前に検出する。
 
-UserPromptSubmitとStopのJudgment Receiptは、最終resultと同じsession・turnに属し、UserPromptSubmit→Stop→resultの順で成功していることを必須にする。UserPromptSubmit ReceiptにはHost Receipt IDと正規ルーティングSHAが必要で、Hook欠落・失敗・Receipt不正・identity不一致・順序不正を成功へ丸めない。
+UserPromptSubmitとStopのJudgment Receiptは、最終resultと同じsession・turnに属し、UserPromptSubmit→Stop→resultの順で成功していることを必須にする。UserPromptSubmit ReceiptにはHost Receipt IDと正規ルーティングSHAが必要で、Hook欠落・失敗・Receipt不正・identity不一致・順序不正を成功へ丸めない。Stop応答の監査行は最終result先頭と原文・順序・回数を完全一致させ、同じ行をSlack親投稿へ投影する。欠落・改変・重複回数差・余分な監査行も成功へ丸めない。
 
 応答は成功可否と許可済み診断コードだけに限定する。文字起こし、生成本文、Claudeのstdout・stderr、資格情報は返さない。streamが大きすぎる、event数超過、JSON不正、result欠落、Claude result error、schema不一致、Judgment lifecycle不成立を別の診断コードとして保持し、それ以外は汎用コードへ丸める。プローブが成功するまで実Slack E2Eへ進まない。
 

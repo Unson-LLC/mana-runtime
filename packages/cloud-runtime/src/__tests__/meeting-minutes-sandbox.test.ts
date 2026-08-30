@@ -41,8 +41,12 @@ function auditedStream(minutes: Record<string, unknown>, options: { receipt?: un
 }
 
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const judgmentAuditLines = [
+  "🧠 判断参照: 「議事録を生成する」を参照 → general/answer ✓",
+  "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓",
+];
 function judgmentHook(event: "UserPromptSubmit" | "Stop", options: {
-  session?: string; turn?: string; success?: boolean; route?: boolean;
+  session?: string; turn?: string; success?: boolean; route?: boolean; auditLines?: string[];
 } = {}): Record<string, unknown> {
   const receipt = {
     schema_version: "mana_judgment_hook_receipt.v1",
@@ -57,17 +61,20 @@ function judgmentHook(event: "UserPromptSubmit" | "Stop", options: {
     type: "system", subtype: "hook_response", hook_event: event,
     exit_code: options.success === false ? 2 : 0,
     outcome: options.success === false ? "error" : "success",
-    stdout: JSON.stringify({ systemMessage: `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}` }),
+    stdout: JSON.stringify({ systemMessage: [
+      ...(event === "Stop" ? options.auditLines ?? judgmentAuditLines : []),
+      `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`,
+    ].join("\n") }),
   };
 }
 
 function receiptBoundStream(minutes: Record<string, unknown>, options: {
   prompt?: Record<string, unknown> | false; stop?: Record<string, unknown> | false;
-  resultSession?: string; stopAfterResult?: boolean;
+  resultSession?: string; stopAfterResult?: boolean; resultAuditLines?: string[];
 } = {}): string {
   const prompt = options.prompt === false ? [] : [options.prompt ?? judgmentHook("UserPromptSubmit")];
   const stop = options.stop === false ? [] : [options.stop ?? judgmentHook("Stop")];
-  const result = { type: "result", structured_output: minutes,
+  const result = { type: "result", result: `${(options.resultAuditLines ?? judgmentAuditLines).join("\n")}\n${JSON.stringify(minutes)}`,
     session_id: options.resultSession ?? "session-1" };
   return [
     { type: "system", subtype: "init", session_id: "session-1" },
@@ -102,7 +109,7 @@ describe("generateMeetingMinutesInSandbox", () => {
       brainbase_context_attestation: expect.objectContaining({
         schema_version: "meeting_minutes_context_attestation.v2",
         source: "worker_context_receipt", receipt_id: "mmctx_1", session_id: "session-1",
-      }) });
+      }), brainbase_judgment_audit_lines: judgmentAuditLines });
     expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("transcript"));
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
@@ -142,8 +149,9 @@ describe("generateMeetingMinutesInSandbox", () => {
           MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
         },
       }));
-    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--output-format stream-json --verbose --include-hook-events"),
       expect.any(Object));
+    expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--json-schema"), expect.any(Object));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--model sonnet"), expect.any(Object));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.not.stringContaining("--effort xhigh"), expect.any(Object));
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--mcp-config"), expect.any(Object));
@@ -278,6 +286,28 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
       receiptBoundStream(minutes, { stopAfterResult: true }), context,
     )).toThrow("meeting_minutes_judgment_event_order_invalid");
+  });
+
+  it("projects the exact Stop-owned audit lines without dropping duplicate occurrences", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const duplicateAuditLines = [judgmentAuditLines[0]!, judgmentAuditLines[0]!, judgmentAuditLines[1]!];
+    expect(parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      stop: judgmentHook("Stop", { auditLines: duplicateAuditLines }),
+      resultAuditLines: duplicateAuditLines,
+    }), context).brainbase_judgment_audit_lines).toEqual(duplicateAuditLines);
+  });
+
+  it("fails closed when the projected audit lines are missing, changed, or supplemented", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      stop: judgmentHook("Stop", { auditLines: [] }), resultAuditLines: [],
+    }), context)).toThrow("meeting_minutes_judgment_projection_missing");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      resultAuditLines: [judgmentAuditLines[0]!, "📚 Brainbase未参照: 変更済み"],
+    }), context)).toThrow("meeting_minutes_judgment_projection_mismatch");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
+      resultAuditLines: [...judgmentAuditLines, judgmentAuditLines[0]!],
+    }), context)).toThrow("meeting_minutes_judgment_projection_mismatch");
   });
 
   it("fails closed unless the exact Brainbase call, Receipt, and PostToolUse audit are all present", () => {

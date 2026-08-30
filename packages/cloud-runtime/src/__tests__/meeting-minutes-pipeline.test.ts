@@ -18,6 +18,10 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
   workspaceId: "T1", appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
 const redo: MeetingMinutesRedo = { kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
   appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "20.1" };
+const judgmentAuditLines = [
+  "🧠 判断参照: 「議事録を生成する」を参照 → general/answer ✓",
+  "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓",
+];
 function audited(minutes: GeneratedMeetingMinutes, context: MeetingMinutesContextReceipt) {
   return { ...minutes, brainbase_context_attestation: {
     schema_version: "meeting_minutes_context_attestation.v1" as const,
@@ -25,7 +29,7 @@ function audited(minutes: GeneratedMeetingMinutes, context: MeetingMinutesContex
     receipt_id: context.receipt_id, checksum: context.checksum,
     run_id: context.identity.run_id, project_code: context.identity.project_code,
     transcript_sha256: context.identity.transcript_sha256, session_id: "session-test",
-  } };
+  }, brainbase_judgment_audit_lines: judgmentAuditLines };
 }
 function resumeOptions(overrides: Record<string, unknown> = {}) {
   const overriddenGenerate = overrides.generate as ((...args: unknown[]) => Promise<GeneratedMeetingMinutes>) | undefined;
@@ -166,7 +170,8 @@ describe("meeting minutes pipeline", () => {
     persisted.approvedBy = selection.userId;
     persisted.status = "failed";
     persisted.failure = { stage: "github_saved", message: "slack_api_failed:channel_not_found" };
-    persisted.generated = { title: "法務定例", overview: "概要", body: "本文" };
+    persisted.generated = { title: "法務定例", overview: "概要", body: "本文",
+      brainbase_judgment_audit_lines: judgmentAuditLines };
     persisted.github = { transcriptPath: "docs/transcripts/a.txt", minutesPath: "docs/minutes/a.md",
       transcriptUrl: "https://github/t", minutesUrl: "https://github/m" };
     persisted.context = { receiptId: "receipt-1", checksum: "checksum-1", status: "resolved", mode: "observe",
@@ -772,7 +777,8 @@ describe("meeting minutes pipeline", () => {
     });
     const run = await resumeMeetingMinutesRun(fs, selection, options);
     expect(run.status).toBe("completed"); expect(order).toEqual(["github", "slack-parent", "slack-chunk"]);
-    expect(options.postParent).toHaveBeenCalledWith("CDEST", "meeting.txt", "*定例*\n概要", "Ev1_F1-revision-0-parent");
+    expect(options.postParent).toHaveBeenCalledWith("CDEST", "meeting.txt",
+      `${judgmentAuditLines.join("\n")}\n*定例*\n概要`, "Ev1_F1-revision-0-parent");
     expect(options.postThreadChunk).toHaveBeenCalledWith(
       "CDEST",
       "10.1",

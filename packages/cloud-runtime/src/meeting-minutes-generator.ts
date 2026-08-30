@@ -1,5 +1,5 @@
 import type { AuditedGeneratedMeetingMinutes, GeneratedMeetingMinutes, MeetingMinutesDestination,
-  MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
+  MeetingMinutesContextAttestation, MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
   MeetingMinutesGenerationDiagnostics, MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinutesMcpConfigPath,
   type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
@@ -40,6 +40,8 @@ const MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES = new Set([
   "meeting_minutes_judgment_event_order_invalid",
   "meeting_minutes_judgment_identity_mismatch",
   "meeting_minutes_judgment_route_receipt_missing",
+  "meeting_minutes_judgment_projection_missing",
+  "meeting_minutes_judgment_projection_mismatch",
 ]);
 const MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES = new Set([
   "meeting_minutes_generation_result_schema_invalid_title",
@@ -50,6 +52,9 @@ const MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES = new Set([
   "meeting_minutes_generation_result_schema_invalid_decision_candidates",
 ]);
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+type ContextAttestedGeneratedMeetingMinutes = GeneratedMeetingMinutes & {
+  brainbase_context_attestation: MeetingMinutesContextAttestation;
+};
 const SLACK_ACTIVE_CONSTRUCT_RE = /<([@#!]|https?:|mailto:)/gi;
 const CONTROL_CHARACTERS_RE = /[\u0000-\u001f\u007f]/g;
 function safeExitCode(value: unknown): number | undefined {
@@ -314,10 +319,13 @@ export function parseGeneratedMeetingMinutesOutput(stdout: string): GeneratedMee
       const unwrapped = wrapper?.structured_output ?? wrapper?.structuredOutput ?? value;
       try { return parseGeneratedMeetingMinutes(unwrapped); } catch (error) {
         if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+        if (error instanceof Error && MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(error.message)
+          && typeof wrapper?.result !== "string") throw error;
         if (typeof wrapper?.result === "string") {
           for (const nested of [wrapper.result.trim(), ...balancedJsonObjects(wrapper.result)]) {
             try { return parseGeneratedMeetingMinutes(JSON.parse(nested)); } catch (nestedError) {
-              if (nestedError instanceof Error && nestedError.message === "meeting_minutes_generation_placeholder_output") {
+              if (nestedError instanceof Error && (nestedError.message === "meeting_minutes_generation_placeholder_output"
+                || MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(nestedError.message))) {
                 throw nestedError;
               }
               /* try next candidate */
@@ -326,7 +334,8 @@ export function parseGeneratedMeetingMinutesOutput(stdout: string): GeneratedMee
         }
       }
     } catch (error) {
-      if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+      if (error instanceof Error && (error.message === "meeting_minutes_generation_placeholder_output"
+        || MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(error.message))) throw error;
       /* try next candidate */
     }
   }
@@ -389,7 +398,7 @@ function findReceipt(value: unknown, expected: MeetingMinutesContextReceipt, dep
 }
 
 function resultMinutes(events: Array<Record<string, unknown>>): {
-  minutes: GeneratedMeetingMinutes; index: number; sessionId?: string;
+  minutes: GeneratedMeetingMinutes; index: number; sessionId?: string; rawResult?: string;
 } {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!;
@@ -401,7 +410,7 @@ function resultMinutes(events: Array<Record<string, unknown>>): {
       if (structured !== undefined) return { minutes: parseGeneratedMeetingMinutes(structured), index,
         ...(typeof sessionId === "string" ? { sessionId } : {}) };
       if (typeof event.result === "string") return { minutes: parseGeneratedMeetingMinutesOutput(event.result), index,
-        ...(typeof sessionId === "string" ? { sessionId } : {}) };
+        rawResult: event.result, ...(typeof sessionId === "string" ? { sessionId } : {}) };
     } catch (error) {
       if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
       if (error instanceof Error && MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(error.message)) throw error;
@@ -419,6 +428,33 @@ interface JudgmentHookReceipt {
   turn_id: string;
   host_receipt_id?: string;
   route_resolution_sha256?: string;
+  ownerAuditLines: string[];
+}
+
+function hookSystemMessages(value: unknown, depth = 0): string[] {
+  if (depth > 6 || value === null || value === undefined) return [];
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length <= 1_000_000) {
+      try { return hookSystemMessages(JSON.parse(trimmed), depth + 1); } catch { return []; }
+    }
+    return [];
+  }
+  if (typeof value !== "object") return [];
+  if (!Array.isArray(value) && typeof (value as Record<string, unknown>).systemMessage === "string") {
+    return [(value as Record<string, unknown>).systemMessage as string];
+  }
+  return (Array.isArray(value) ? value : Object.values(value as Record<string, unknown>))
+    .flatMap((item) => hookSystemMessages(item, depth + 1));
+}
+
+function ownerAuditLines(value: unknown): string[] {
+  const message = hookSystemMessages(value).find((text) =>
+    /^(?:🧠 判断参照:|⚠️ 判断参照:|📚 Brainbase|⚠️ Brainbase)/mu.test(text));
+  if (!message) return [];
+  return message.replaceAll("\r\n", "\n").split("\n")
+    .map((line) => line.replace(/[ \t]+$/u, ""))
+    .filter((line) => /^(?:🧠 判断参照:|⚠️ 判断参照:|📚 Brainbase|⚠️ Brainbase)/u.test(line));
 }
 
 function nestedStrings(value: unknown, depth = 0): string[] {
@@ -452,7 +488,8 @@ function judgmentReceipt(event: Record<string, unknown>): JudgmentHookReceipt {
         || !nonEmpty(value.session_id, 200) || !nonEmpty(value.turn_id, 200)) {
         throw new Error("meeting_minutes_judgment_hook_receipt_invalid");
       }
-      return value as unknown as JudgmentHookReceipt;
+      return { ...(value as unknown as Omit<JudgmentHookReceipt, "ownerAuditLines">),
+        ownerAuditLines: ownerAuditLines([event.stdout, event.output]) };
     } catch (error) {
       if (error instanceof Error && error.message === "meeting_minutes_judgment_hook_receipt_invalid") throw error;
       throw new Error("meeting_minutes_judgment_hook_receipt_invalid");
@@ -462,7 +499,7 @@ function judgmentReceipt(event: Record<string, unknown>): JudgmentHookReceipt {
 }
 
 function assertMeetingMinutesJudgmentLifecycle(events: Array<Record<string, unknown>>,
-  generated: { index: number; sessionId?: string }): void {
+  generated: { index: number; sessionId?: string; rawResult?: string }): string[] {
   const hooks: Array<{ index: number; receipt: JudgmentHookReceipt }> = [];
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index]!;
@@ -490,6 +527,20 @@ function assertMeetingMinutesJudgmentLifecycle(events: Array<Record<string, unkn
     || !/^[a-f0-9]{64}$/iu.test(prompt.receipt.route_resolution_sha256 ?? "")) {
     throw new Error("meeting_minutes_judgment_route_receipt_missing");
   }
+  const auditLines = stop.receipt.ownerAuditLines;
+  if (!generated.rawResult || auditLines.length < 1) {
+    throw new Error("meeting_minutes_judgment_projection_missing");
+  }
+  const responseLines = generated.rawResult.replaceAll("\r\n", "\n").split("\n")
+    .map((line) => line.replace(/[ \t]+$/u, ""));
+  const projectedAuditLines = responseLines.filter((line) =>
+    /^(?:🧠 判断参照:|⚠️ 判断参照:|📚 Brainbase|⚠️ Brainbase)/u.test(line));
+  if (projectedAuditLines.length !== auditLines.length
+    || !auditLines.every((line, index) => responseLines[index] === line)
+    || !auditLines.every((line, index) => projectedAuditLines[index] === line)) {
+    throw new Error("meeting_minutes_judgment_projection_mismatch");
+  }
+  return auditLines;
 }
 
 /** Parses the audited Claude stream after the Worker has deterministically resolved the Receipt. */
@@ -498,7 +549,7 @@ export function parseReceiptBoundGeneratedMeetingMinutesOutput(stdout: string,
   const events = streamEvents(stdout);
   const generated = resultMinutes(events);
   if (!generated.sessionId) throw new Error("meeting_minutes_brainbase_session_missing");
-  assertMeetingMinutesJudgmentLifecycle(events, generated);
+  const auditLines = assertMeetingMinutesJudgmentLifecycle(events, generated);
   return { ...generated.minutes, brainbase_context_attestation: {
     schema_version: "meeting_minutes_context_attestation.v2",
     source: "worker_context_receipt",
@@ -508,12 +559,12 @@ export function parseReceiptBoundGeneratedMeetingMinutesOutput(stdout: string,
     project_code: expected.identity.project_code,
     transcript_sha256: expected.identity.transcript_sha256,
     session_id: generated.sessionId,
-  } };
+  }, brainbase_judgment_audit_lines: auditLines };
 }
 
 /** Parses Claude's event stream and proves the exact Brainbase Receipt was read and audited. */
 export function parseAuditedGeneratedMeetingMinutesOutput(stdout: string,
-  expected: MeetingMinutesContextReceipt): AuditedGeneratedMeetingMinutes {
+  expected: MeetingMinutesContextReceipt): ContextAttestedGeneratedMeetingMinutes {
   const events = streamEvents(stdout);
   const calls: Array<{ index: number; id: string; name: string; input: unknown; sessionId?: string }> = [];
   for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
@@ -692,7 +743,7 @@ function generationPrompt(transcript: string, destination: MeetingMinutesDestina
     "bodyにはアクションアイテムやタスクの一覧を含めないでください。アクションアイテムの唯一の正本はtasksです。",
     "tasksには、会議中に実行することが明示されたアクションだけを最大20件入れてください。推測でタスク、担当者、期限を補わないでください。期限や担当者が不明なら該当フィールドを省略し、該当するアクションがなければ空配列にしてください。",
     "文字起こしにない事実、決定、約束、肩書きを発明しないでください。根拠が薄い場合は不足している根拠を明記してください。",
-    "出力はMarkdown fenceや前後の説明を付けず、JSONオブジェクトだけにしてください。",
+    "Brainbase Judgment Resolverが指定した監査行を最終回答の先頭に指定順で各1回だけ置き、その直後にMarkdown fenceや説明を付けずJSONオブジェクトを続けてください。",
     "必須キーはtitle、overview、body、tasks、used_source_refs、decision_candidatesです。JSON Schemaに従い、各値にはこの会議の文字起こしから確認できる固有の内容を書いてください。",
     "見本・説明文・型の選択肢を値として出力してはいけません。title、overview、body、各taskが会議固有の内容になっていることを確認してから出力してください。",
     "", "文字起こし:", bounded,
@@ -730,7 +781,6 @@ export async function generateMeetingMinutesInSandbox(
     // transcripts. Keep the same audited prompt/schema contract, but execute
     // meeting-minutes generation with Sonnet so the job can finish in-band.
     const execution = sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", generationRuntime, {
-      structuredOutput: "meeting-minutes",
       includeJudgmentHookEvents: true,
     }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,

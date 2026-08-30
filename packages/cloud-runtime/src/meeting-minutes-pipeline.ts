@@ -481,7 +481,8 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
           run.generated = bindGeneratedMeetingMinutesContext(run.generated, contextReceipt, options.contextMode);
         } catch (error) {
           if (!(error instanceof Error) || !["meeting_minutes_context_source_ref_unknown",
-            "meeting_minutes_context_attestation_mismatch"].includes(error.message)) throw error;
+            "meeting_minutes_context_attestation_mismatch", "meeting_minutes_judgment_projection_missing"]
+            .includes(error.message)) throw error;
           diagnosticStage = "generation";
           const candidate = await generateWithDiagnostics(fs, run, transcript, contextReceipt, options);
           run.generated = bindGeneratedMeetingMinutesContext(candidate, contextReceipt, options.contextMode);
@@ -493,7 +494,13 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
-    const parentText = `*${run.generated!.title}*\n${run.generated!.overview}`;
+    const auditLines = run.generated!.brainbase_judgment_audit_lines;
+    if (!Array.isArray(auditLines) || auditLines.length < 1
+      || auditLines.some((line) => typeof line !== "string"
+        || !/^(?:🧠 判断参照:|⚠️ 判断参照:|📚 Brainbase|⚠️ Brainbase)/u.test(line))) {
+      throw new Error("meeting_minutes_judgment_projection_missing");
+    }
+    const parentText = `${auditLines.join("\n")}\n*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = stripMeetingMinutesActionItems(run.generated!.body).trimStart();
     const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;
     const chunks = splitMeetingMinutesForSlack(narrativeText);

@@ -2,6 +2,104 @@
   "schema_version": "0.1.0",
   "story_id": "story-meeting-minutes-brainbase-context",
   "generated_by": { "caller": "codex", "stage": "architecture" },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "dedicated",
+    "tenant_identity": {
+      "canonical_key": "tenantId",
+      "resolved_from": ["Worker TENANT_ID", "trusted meeting-minutes destination"],
+      "resolution_point": "Slack Queue eventのtenantId確定後、保存済みrunのimmutable Slack/GitHub座標を照合してorganization認証経路を解決する",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": ["Queue event tenantId", "meeting-minutes run destination snapshot", "Slack organization token resolution"],
+      "verified_surfaces": ["Queue event tenantId", "meeting-minutes run destination snapshot", "Slack organization token resolution"]
+    },
+    "resources": [
+      {
+        "name": "meeting-minutes run destination snapshot",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenantId",
+        "partition_key": "tenantId/workspaceId/runId",
+        "trust_zone": "tenant workspace storage",
+        "residue_policy": "retention with the meeting-minutes run",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and trusted meeting-minutes destination"
+      },
+      {
+        "name": "Slack meeting-minutes delivery",
+        "sharing": "dedicated",
+        "tenant_key": "tenantId",
+        "trust_zone": "trusted Slack workspace and channel",
+        "residue_policy": "retention in Slack under workspace policy",
+        "data_owner": "mana-runtime",
+        "credential_scope": "tenantId and current configured destination organization"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenantId",
+      "scope": "tenantId plus current configured destination organization and immutable Slack/GitHub coordinates",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": ["mana-runtime"],
+      "residency": "run snapshot in tenant workspace storage; delivery in the configured Slack workspace",
+      "migration": "legacy organization routing is refreshed only when destination id, project, Slack channel, and GitHub coordinates match current trusted configuration",
+      "rollback": "revert the code change; mismatched delivery coordinates remain denied by meeting_minutes_destination_changed"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": ["managed_dedicated"],
+    "negative_scenarios": ["unknown_tenant", "ambiguous_tenant", "unavailable_connection", "no_data", "cross_tenant_candidate"],
+    "graph_metadata": {
+      "tenant_entities": ["Worker tenant", "Slack workspace", "trusted meeting-minutes destination"],
+      "boundary_edges": ["Queue event to meeting-minutes run", "configured organization to workspace-scoped Slack token", "run destination snapshot to Slack and GitHub coordinates"]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected",
+      "evidence": {
+        "propagation_surfaces": ["Queue event tenantId", "meeting-minutes run destination snapshot", "Slack organization token resolution"],
+        "negative_scenarios": ["unknown_tenant", "ambiguous_tenant", "unavailable_connection", "no_data", "cross_tenant_candidate"],
+        "scanner_results": {
+          "tenant_boundary": "inconclusive",
+          "tenant_key_propagation": "inconclusive",
+          "cross_tenant_authorization": "inconclusive",
+          "state_partitioning": "inconclusive",
+          "sandbox_isolation": "inconclusive",
+          "connection_routing": "inconclusive",
+          "secret_scope": "inconclusive",
+          "canonical_data_owner": "inconclusive",
+          "deployment_topology": "inconclusive",
+          "cross_tenant_negative_evidence": "inconclusive"
+        },
+        "graph": {
+          "tenant_key": "tenantId",
+          "sharing_modes": ["dedicated", "tenant_partitioned"],
+          "deployment_modes": ["managed_dedicated"],
+          "tenant_entities": [{"tenant_scope": "Worker tenant", "tenant_key_source": "TENANT_ID", "trust_zone": "Cloudflare Worker", "data_owner": "mana-runtime"}],
+          "boundary_edges": [{"tenant_scope": "Worker tenant to Slack workspace", "tenant_key_source": "TENANT_ID and trusted target", "sharing_mode": "tenant_partitioned", "credential_scope": "target organization and workspace", "connection_mode": "Slack API", "deployment_mode": "managed_dedicated"}]
+        },
+        "spec": {
+          "tenant_key": "tenantId",
+          "sharing_modes": ["dedicated", "tenant_partitioned"],
+          "deployment_modes": ["managed_dedicated"]
+        },
+        "implementation": {
+          "tenant_key": "tenantId",
+          "sharing_modes": ["dedicated", "tenant_partitioned"],
+          "deployment_modes": ["managed_dedicated"]
+        }
+      }
+    }
+  },
   "clauses": [
     {
       "id": "C-001",
@@ -146,7 +244,7 @@
     {
       "id": "C-008",
       "type": "contract",
-      "statement": "本番配備後、実Slack E2Eの前に、認証済み管理APIから本番と同じClaudeコマンド・設定・JSON Schema・Judgment Hook・Receipt注入を使う議事録生成プローブを実行する。UserPromptSubmitとStopの成功Receiptを同一session・turn・event順序へ束縛できない場合は失敗とする。成功時は生成内容を返さず、失敗時は許可済み診断コードだけを返し、成功するまで利用者投稿を再実行しない",
+      "statement": "本番配備後、実Slack E2Eの前に、認証済み管理APIから本番と同じClaudeコマンド・設定・Judgment Hook・Receipt注入・監査行付きJSON解析を使う議事録生成プローブを実行する。UserPromptSubmitとStopの成功Receiptを同一session・turn・event順序へ束縛し、Stop監査行と最終回答先頭が原文・順序・回数どおり一致しない場合は失敗とする。成功時は生成内容を返さず、失敗時は許可済み診断コードだけを返し、成功するまで利用者投稿を再実行しない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-19" }],
         "architecture_refs": [{ "file": "docs/architecture/story-meeting-minutes-brainbase-context.md", "section": "生成診断" }],
@@ -162,6 +260,7 @@
           { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "fails closed when the Judgment lifecycle is missing or failed" },
           { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "binds Judgment receipts to one session and turn before the final result" },
           { "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "requires the routed host receipt and preserves event order" }
+          ,{ "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts", "case": "fails closed when the projected audit lines are missing, changed, or supplemented" }
         ]
       },
       "verifiable_by": {

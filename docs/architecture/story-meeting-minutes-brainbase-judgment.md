@@ -12,7 +12,7 @@ Claude Codeのcommand Hooksを薄い転送層としてContainerへ配置する�
 3. Sandboxのsynthetic host proxyがBearerと`mana-runtime` bindingを付け、Brainbaseへ送る。
 4. Claudeはpromptへ注入された検証済みReceiptだけを文脈として使い、Brainbase MCPを直接呼ばない。
 5. `Stop`で監査を検証する。将来明示的に許可したBrainbase toolを呼ぶ場合は`PostToolUse`も同じepisodeへ記録する。不足時はblockしてClaudeを継続させる。
-6. completeな終了だけを既存JSON parserへ渡し、GitHub保存・タスク登録・Slack共有へ進む。
+6. ClaudeのJSON Schemaは使わない。Stopが要求した監査行を最終回答の先頭に原文・順序・回数どおり置き、その後ろのJSONだけを既存parserへ渡す。WorkerはHook応答と最終回答の監査行を完全一致で検証し、同じ行をSlack親投稿の先頭へ投影する。欠落・改変・重複回数差・余分な監査行があれば、GitHub保存・タスク登録・Slack共有へ進まない。
 
 ## 信頼境界
 

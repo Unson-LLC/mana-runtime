@@ -25,21 +25,28 @@ const selection: MeetingMinutesSelection = {
   kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana", workspaceId: "T1",
   appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1",
 };
+const judgmentAuditLines = [
+  "🧠 判断参照: 「議事録を生成する」を参照 → general/answer ✓",
+  "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓",
+];
 
 function hook(event: "UserPromptSubmit" | "Stop") {
   const receipt = { schema_version: "mana_judgment_hook_receipt.v1", hook_event_name: event,
     session_id: "session-1", turn_id: "turn-1", host_receipt_id: `host-${event}`,
     ...(event === "UserPromptSubmit" ? { route_resolution_sha256: "c".repeat(64) } : {}) };
   return { type: "system", subtype: "hook_response", hook_event: event, exit_code: 0, outcome: "success",
-    stdout: JSON.stringify({ systemMessage: `__MANA_JUDGMENT_RECEIPT_V1__:${JSON.stringify(receipt)}` }) };
+    stdout: JSON.stringify({ systemMessage: [
+      ...(event === "Stop" ? judgmentAuditLines : []),
+      `__MANA_JUDGMENT_RECEIPT_V1__:${JSON.stringify(receipt)}`,
+    ].join("\n") }) };
 }
 
 function successfulStream() {
   return [
     { type: "system", subtype: "init", session_id: "session-1" }, hook("UserPromptSubmit"), hook("Stop"),
-    { type: "result", session_id: "session-1", structured_output: {
+    { type: "result", session_id: "session-1", result: `${judgmentAuditLines.join("\n")}\n${JSON.stringify({
       title: "定例", overview: "概要", body: "本文", tasks: [], used_source_refs: [], decision_candidates: [],
-    } },
+    })}` },
   ].map((item) => JSON.stringify(item)).join("\n");
 }
 

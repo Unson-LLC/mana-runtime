@@ -75,6 +75,8 @@ export interface GeneratedMeetingMinutes {
   brainbase_context_attestation?: MeetingMinutesContextAttestation;
   /** Safe, content-free execution metadata. The pipeline moves this into durable run diagnostics. */
   generationDiagnostics?: MeetingMinutesGenerationDiagnostics;
+  /** Exact Host-generated lines preserved from the model response for Slack projection. */
+  brainbase_judgment_audit_lines?: string[];
 }
 
 export interface MeetingMinutesGenerationDiagnostics {
@@ -126,6 +128,7 @@ export type MeetingMinutesContextAttestation =
 
 export type AuditedGeneratedMeetingMinutes = GeneratedMeetingMinutes & {
   brainbase_context_attestation: MeetingMinutesContextAttestation;
+  brainbase_judgment_audit_lines: string[];
 };
 
 export type MeetingMinutesContextStatus = "resolved" | "confirmed_empty" | "partial" | "unavailable";
