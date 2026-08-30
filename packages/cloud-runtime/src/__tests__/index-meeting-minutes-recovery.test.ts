@@ -151,7 +151,7 @@ function queueMessage(body: TenantQueueBody<MeetingMinutesRecovery>) {
 }
 
 describe("meeting-minutes recovery production wiring", () => {
-  it("reissues a fresh context after a 20-minute Queue delay before projecting the bounded Slack fallback", async () => {
+  it("reissues a fresh context and projects the durable result when assistant status cleanup is unavailable", async () => {
     const fs = new MemoryFs();
     await saveMeetingMinutesRun(fs, run());
     const armed = await armMeetingMinutesRecovery(fs, selection, Date.parse(NOW) - 20 * 60 * 1_000 - 1_000);
@@ -216,21 +216,16 @@ describe("meeting-minutes recovery production wiring", () => {
     };
 
     await handleMeetingMinutesRecoveryQueue(queue, {}, platform);
-    const redelivery = queueMessage(queue.body);
-    await handleMeetingMinutesRecoveryQueue(redelivery, {}, platform);
 
-    expect(queue.retry).toHaveBeenCalledOnce();
-    expect(queue.ack).not.toHaveBeenCalled();
-    expect(redelivery.ack).toHaveBeenCalledOnce();
-    expect(redelivery.retry).not.toHaveBeenCalled();
-    expect(effectBoundaries).toEqual(["durable_object", "slack_delivery", "slack_delivery", "durable_object"]);
-    expect(effectIds).toEqual(["source-status:Ev1_F1:failed", "source-status-fallback:Ev1_F1:failed"]);
+    expect(queue.ack).toHaveBeenCalledOnce();
+    expect(queue.retry).not.toHaveBeenCalled();
+    expect(effectBoundaries).toEqual(["durable_object", "slack_delivery"]);
+    expect(effectIds).toEqual(["source-status:Ev1_F1:failed"]);
     expect(effectEvents).toEqual([
       { kind: "source_status", runId: "Ev1_F1", outcome: "failed" },
-      { kind: "source_status_fallback", runId: "Ev1_F1", outcome: "failed" },
     ]);
-    expect(refreshTenantContext).toHaveBeenCalledTimes(2);
-    expect(preparedContexts.length).toBeGreaterThanOrEqual(2);
+    expect(refreshTenantContext).toHaveBeenCalledOnce();
+    expect(preparedContexts.length).toBeGreaterThanOrEqual(1);
     expect(preparedContexts.every((context) => context === fresh.value)).toBe(true);
     expect(markTerminal).toHaveBeenCalledOnce();
     expect(markTerminal).toHaveBeenCalledWith({}, TENANT_ID, "Ev1_F1");
@@ -239,13 +234,12 @@ describe("meeting-minutes recovery production wiring", () => {
       "https://slack.com/api/chat.update",
     ]);
     expect(requests.every((request) => !JSON.stringify(request.init?.headers ?? {}).includes("Bearer"))).toBe(true);
-    const fallbackBody = String(requests[1]?.init?.body);
-    expect(fallbackBody).toContain("処理ID: Ev1_F1");
-    expect(fallbackBody).toContain("失敗段階: 状態表示");
-    expect(fallbackBody).toContain("エラーコード: STATUS_PROJECTION_FAILED");
+    const durableBody = String(requests[1]?.init?.body);
+    expect(durableBody).toContain("処理ID: Ev1_F1");
+    expect(durableBody).toContain("議事録の作成に失敗しました");
     expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
-      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED" },
-      lifecycle: { recoveryFallbackOutcome: "succeeded", recoveryProjectedAt: expect.any(String) },
+      lifecycle: { recoveryProjectedAt: expect.any(String) },
     });
+    expect((await loadMeetingMinutesRun(fs, selection.runId))?.projectionFailure).toBeUndefined();
   });
 });
