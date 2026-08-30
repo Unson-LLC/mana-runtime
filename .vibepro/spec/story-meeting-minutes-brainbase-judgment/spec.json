@@ -220,7 +220,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:24:06.112Z"
+      "last_revised_at": "2026-08-30T05:31:49.780Z"
     },
     {
       "id": "INV-001",
@@ -247,13 +247,21 @@
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/brainbase-mcp-proxy.test.ts",
-            "case": "forwards the judgment Hook with a trusted project binding"
+            "case": "forwards only the Hook with a fixed project binding and strict headers"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/brainbase-mcp-proxy.test.ts",
+            "must_cover": "forwards only the Hook with a fixed project binding and strict headers"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:24:06.112Z"
+      "last_revised_at": "2026-08-30T05:31:49.780Z"
     },
     {
       "id": "S-001",
@@ -292,9 +300,21 @@
           }
         ]
       },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
+            "must_cover": "preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
+            "must_cover": "fails closed when the Brainbase Hook endpoint is unavailable"
+          }
+        ]
+      },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:54:36.386Z",
-      "last_revised_at": "2026-08-30T05:24:06.112Z"
+      "last_revised_at": "2026-08-30T05:31:49.780Z"
     },
     {
       "id": "INV-002",
@@ -325,9 +345,17 @@
           }
         ]
       },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call"
+          }
+        ]
+      },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:24:06.112Z"
+      "last_revised_at": "2026-08-30T05:31:49.780Z"
     },
     {
       "id": "C-002",
@@ -394,7 +422,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-30T05:21:25.843Z",
-      "last_revised_at": "2026-08-30T05:24:06.112Z"
+      "last_revised_at": "2026-08-30T05:31:49.780Z"
     }
   ],
   "planned_test_suites": [
@@ -417,6 +445,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-30T05:24:06.111Z",
-  "previous_spec_id": "2026-08-30T05:21:25.842Z"
+  "generated_at": "2026-08-30T05:31:49.779Z",
+  "previous_spec_id": "2026-08-30T05:24:06.111Z"
 }
