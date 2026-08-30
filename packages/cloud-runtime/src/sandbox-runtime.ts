@@ -23,14 +23,11 @@ import {
 } from "./multitenancy/tenant-provider-outbound.js";
 import { deliverTenantGatewaySlackMessage } from "./multitenancy/tenant-gateway-delivery.js";
 import { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
-import { createAnthropicServiceFetch } from "./multitenancy/tenant-service-fetch.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
 export { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
 
 export interface SandboxRuntimeEnv extends SandboxAdminEnv, NocodbProxyEnv, BrainbaseMcpProxyEnv, GoogleDriveMcpProxyEnv, RuntimeGatewayProxyEnv {
-  ANTHROPIC_API_KEY?: string;
-  CLAUDE_CODE_OAUTH_TOKEN?: string;
   TECHKNIGHT_SANDBOX: DurableObjectNamespace<TechKnightSandbox>;
   RUNTIME_TASK_SEARCH_ENABLED?: string;
   RUNTIME_PROJECT_CODES?: string;
@@ -109,11 +106,7 @@ async function authorizeTenantRuntimeProxy(
 
 TechKnightSandbox.outboundByHost = {
   "api.anthropic.com": async (request: Request, env: SandboxRuntimeEnv) => {
-    const resolved = await resolveDurableTenantBoundaryContext(
-      env.TENANT_RUNTIME_STATE, request, ["mcp_gateway", "brainbase_proxy"], new Date().toISOString(),
-    );
-    if (resolved instanceof Response) return resolved;
-    return createAnthropicServiceFetch(env)(request);
+    return authorizeTenantProviderOutbound(request, env);
   },
   "github.com": async (request: Request, env: SandboxRuntimeEnv) => {
     return authorizeTenantProviderOutbound(request, env);

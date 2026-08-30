@@ -178,7 +178,6 @@ import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import { resolveCanonicalProjectScope } from "./multitenancy/project-scope.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
-import { createBrainbaseServiceFetch } from "./multitenancy/tenant-service-fetch.js";
 import { createBrainbaseTrustedProviderForwarderFromEnv } from "./multitenancy/trusted-provider-forwarder.js";
 import {
   createDurableTenantBoundaryRegistry,
@@ -838,9 +837,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
   return {
     preflightDestinationSlack,
     boundary: (boundary, execute) => {
-      const credentialFetch = boundary === "brainbase_proxy"
-        ? createBrainbaseServiceFetch(input.env)
-        : createCredentialFetch(input.tenant_context, input.expected_scope);
+      const credentialFetch = createCredentialFetch(input.tenant_context, input.expected_scope);
       return executeTenantBoundary({
         boundary,
         tenant_context: input.tenant_context,
