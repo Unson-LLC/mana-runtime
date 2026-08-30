@@ -2,7 +2,7 @@
   "schema_version": "0.1.0",
   "story_id": "story-meeting-minutes-brainbase-judgment",
   "generated_by": {
-    "caller": "codex",
+    "caller": "unknown",
     "stage": "architecture"
   },
   "multi_tenancy": {
@@ -175,9 +175,9 @@
   },
   "clauses": [
     {
-      "id": "C-001",
+      "id": "C-003",
       "type": "contract",
-      "statement": "議事録ClaudeはWorkerが検証したBrainbase Receiptと判断command Hooksを常に有効化し、モデル起点Brainbase MCPを公開しない",
+      "statement": "議事録ClaudeはWorkerが検証したBrainbase Receiptと判断command Hooksを常に有効化し、モデル起点Brainbase MCPを公開しない。保存先自動判定は設定済み候補だけを受理し、候補外・判定不能時は手動選択へ戻す",
       "origin": {
         "story_refs": [
           {
@@ -205,22 +205,61 @@
           },
           {
             "file": "packages/cloud-runtime/container/meeting-minutes-claude-settings.json"
+          },
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts"
           }
         ],
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
-            "case": "does not combine Judgment audit output with a JSON Schema that forbids the required prefix"
+            "case": "story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 enables command Hooks without model-origin Brainbase MCP for meeting-minutes"
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
             "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "accepts only a configured project and preserves the reason"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "classifies a bounded transcript in an isolated Sandbox"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "falls back to the manual selector when classification cannot decide"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
+            "must_cover": "story-meeting-minutes-brainbase-judgment:ac:1 story-meeting-minutes-brainbase-judgment:ac:2 enables command Hooks without model-origin Brainbase MCP for meeting-minutes"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "accepts only a configured project and preserves the reason"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "classifies a bounded transcript in an isolated Sandbox"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "falls back to the manual selector when classification cannot decide"
           }
         ]
       },
       "confidence": 0.99,
-      "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:33:58.208Z"
+      "first_seen_at": "2026-08-30T05:59:46.848Z",
+      "last_revised_at": "2026-08-30T05:59:46.848Z"
     },
     {
       "id": "INV-001",
@@ -261,7 +300,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:33:58.208Z"
+      "last_revised_at": "2026-08-30T05:59:46.848Z"
     },
     {
       "id": "S-001",
@@ -314,12 +353,12 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:54:36.386Z",
-      "last_revised_at": "2026-08-30T05:33:58.208Z"
+      "last_revised_at": "2026-08-30T05:59:46.848Z"
     },
     {
-      "id": "INV-002",
+      "id": "INV-003",
       "type": "invariant",
-      "statement": "既存議事録JSON parserを維持し、検証済みBrainbase Receiptをpromptへ固定してモデル用MCP configを書かない",
+      "statement": "議事録JSONは必須6キー、未知キー拒否、型・列挙値・長さ上限を決定的に検証する。検証済みBrainbase Receiptをpromptへ固定してモデル用MCP configを書かず、GitHub保存、タスク登録、議事録以外のClaude実行契約を維持する",
       "origin": {
         "story_refs": [
           {
@@ -336,12 +375,34 @@
         "code_refs": [
           {
             "file": "packages/cloud-runtime/src/meeting-minutes-generator.ts"
+          },
+          {
+            "file": "packages/cloud-runtime/src/claude-runtime-config.ts"
+          },
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts"
           }
         ],
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
             "case": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "case": "fails closed for schema violations that normalization used to hide"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "shares minutes before registering tasks with stable idempotency and trusted project scope"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "accepts minutes with no explicit tasks without creating a task"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
+            "case": "builds commands exclusively from finite validated tokens"
           }
         ]
       },
@@ -350,17 +411,33 @@
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
             "must_cover": "injects the validated Brainbase Receipt context without requiring a model-initiated MCP call"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-sandbox.test.ts",
+            "must_cover": "fails closed for schema violations that normalization used to hide"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "shares minutes before registering tasks with stable idempotency and trusted project scope"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "accepts minutes with no explicit tasks without creating a task"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
+            "must_cover": "builds commands exclusively from finite validated tokens"
           }
         ]
       },
       "confidence": 0.99,
-      "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:33:58.208Z"
+      "first_seen_at": "2026-08-30T05:59:46.848Z",
+      "last_revised_at": "2026-08-30T05:59:46.848Z"
     },
     {
       "id": "C-002",
       "type": "contract",
-      "statement": "議事録生成はJSON SchemaとJudgment Stop監査行を同じ最終回答へ強制しない。Hook event付きstreamのStop監査行と最終回答先頭を原文・順序・回数で完全一致させ、後続JSONだけを解析し、同じ監査行をSlack親投稿へ投影する。欠落、改変、重複回数差、余分な監査行はfail closedにする",
+      "statement": "議事録生成はJSON SchemaとJudgment Stop監査行を同じ最終回答へ強制しない。Hook event付きstreamのStop監査行と最終回答先頭を原文・順序・回数で完全一致させ、後続JSONだけを解析し、同じ監査行をSlack親投稿へ投影する。新規生成と保存済みrunの再開のどちらでも、欠落、改変、重複回数差、余分な監査行は外部副作用より前にfail closedにする",
       "origin": {
         "story_refs": [
           {
@@ -400,6 +477,10 @@
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "fails closed before external effects when a persisted generated run lacks judgment audit lines"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "case": "saves GitHub before Slack and completes"
           }
         ]
@@ -416,13 +497,17 @@
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "fails closed before external effects when a persisted generated run lacks judgment audit lines"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
             "must_cover": "saves GitHub before Slack and completes"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-30T05:21:25.843Z",
-      "last_revised_at": "2026-08-30T05:33:58.208Z"
+      "last_revised_at": "2026-08-30T05:59:46.848Z"
     }
   ],
   "planned_test_suites": [
@@ -445,6 +530,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-30T05:33:58.207Z",
-  "previous_spec_id": "2026-08-30T05:31:49.779Z"
+  "generated_at": "2026-08-30T05:59:46.847Z",
+  "previous_spec_id": "2026-08-30T05:33:58.207Z"
 }

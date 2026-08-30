@@ -60,6 +60,16 @@ export interface RedoMeetingMinutesOptions {
 
 function now(options: { now?: () => Date }): string { return (options.now?.() ?? new Date()).toISOString(); }
 
+function assertMeetingMinutesJudgmentAuditProjection(value: GeneratedMeetingMinutes): string[] {
+  const auditLines = value.brainbase_judgment_audit_lines;
+  if (!Array.isArray(auditLines) || auditLines.length < 1
+    || auditLines.some((line) => typeof line !== "string"
+      || !/^(?:🧠 判断参照:|⚠️ 判断参照:|📚 Brainbase|⚠️ Brainbase)/u.test(line))) {
+    throw new Error("meeting_minutes_judgment_projection_missing");
+  }
+  return auditLines as string[];
+}
+
 async function generateWithDiagnostics(fs: WorkspaceFs, run: MeetingMinutesRun, transcript: string,
   context: MeetingMinutesContextReceipt, options: ResumeMeetingMinutesOptions): Promise<AuditedGeneratedMeetingMinutes> {
   const candidate = await options.generate(transcript, run.destination!, context, options.contextMode,
@@ -439,6 +449,16 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   let contextReceipt: MeetingMinutesContextReceipt | undefined;
   let diagnosticStage: MeetingMinutesDiagnosticStage = "slack_publish";
   try {
+    const persistedAttestation = run.generated?.brainbase_context_attestation;
+    if (run.generated && run.context && persistedAttestation
+      && persistedAttestation.receipt_id === run.context.receiptId
+      && persistedAttestation.checksum === run.context.checksum
+      && persistedAttestation.run_id === run.runId
+      && persistedAttestation.project_code === meetingMinutesContextProjectCode(run.destination!)
+      && persistedAttestation.transcript_sha256 === run.transcriptSha256) {
+      diagnosticStage = "generation";
+      assertMeetingMinutesJudgmentAuditProjection(run.generated);
+    }
     if (!run.slack.processingTs) {
       run.slack.processingTs = await options.postProcessingStatus(run);
       run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
@@ -489,17 +509,13 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         }
         run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
       }
+      assertMeetingMinutesJudgmentAuditProjection(run.generated!);
       diagnosticStage = "github_save";
       run.github = await options.saveGitHub({ destination: run.destination, transcript, minutes: run.generated,
         sourceFileName: run.file.name, sourceTs: run.sourceMessageTs });
       run.status = "github_saved"; run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
-    const auditLines = run.generated!.brainbase_judgment_audit_lines;
-    if (!Array.isArray(auditLines) || auditLines.length < 1
-      || auditLines.some((line) => typeof line !== "string"
-        || !/^(?:🧠 判断参照:|⚠️ 判断参照:|📚 Brainbase|⚠️ Brainbase)/u.test(line))) {
-      throw new Error("meeting_minutes_judgment_projection_missing");
-    }
+    const auditLines = assertMeetingMinutesJudgmentAuditProjection(run.generated!);
     const parentText = `${auditLines.join("\n")}\n*${run.generated!.title}*\n${run.generated!.overview}`;
     const body = stripMeetingMinutesActionItems(run.generated!.body).trimStart();
     const narrativeText = body.startsWith("------------") ? body : `------------\n\n${body}`;

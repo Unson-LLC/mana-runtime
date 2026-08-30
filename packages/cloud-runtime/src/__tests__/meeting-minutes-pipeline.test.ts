@@ -132,6 +132,42 @@ describe("meeting minutes pipeline", () => {
     expect(options.createTask).not.toHaveBeenCalled();
   });
 
+  it("fails closed before external effects when a persisted generated run lacks judgment audit lines", async () => {
+    const fs = new MemoryFs();
+    await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    const transcriptSha256 = "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6";
+    persisted.destination = structuredClone(destination);
+    persisted.approvedBy = selection.userId;
+    persisted.status = "failed";
+    persisted.failure = { stage: "github_save", message: "github unavailable" };
+    persisted.transcriptSha256 = transcriptSha256;
+    persisted.context = { receiptId: "receipt-1", checksum: "checksum-1", status: "resolved", mode: "observe",
+      resolvedAt: "2026-08-17T09:27:00.000Z", sourceRefs: [] };
+    persisted.generated = { title: "保存済み議事録", overview: "概要", body: "本文",
+      brainbase_context_receipt_id: "receipt-1", brainbase_context_checksum: "checksum-1",
+      brainbase_context_attestation: {
+        schema_version: "meeting_minutes_context_attestation.v1",
+        tool_name: "mcp__brainbase__brainbase_get_meeting_minutes_context",
+        receipt_id: "receipt-1", checksum: "checksum-1", run_id: selection.runId,
+        project_code: "mana", transcript_sha256: transcriptSha256, session_id: "session-test",
+      } };
+    persisted.slack = { postedChunkIndexes: [] };
+    await saveMeetingMinutesRun(fs, persisted);
+    const repairTaskBoard = vi.fn();
+    const options = resumeOptions({ repairTaskBoard });
+
+    await expect(resumeMeetingMinutesRun(fs, selection, options))
+      .rejects.toThrow("meeting_minutes_judgment_projection_missing");
+    expect(options.postProcessingStatus).not.toHaveBeenCalled();
+    expect(options.saveGitHub).not.toHaveBeenCalled();
+    expect(options.postParent).not.toHaveBeenCalled();
+    expect(options.postThreadChunk).not.toHaveBeenCalled();
+    expect(options.createTask).not.toHaveBeenCalled();
+    expect(repairTaskBoard).not.toHaveBeenCalled();
+  });
+
   it("persists the canonical source Slack app with every new run", async () => {
     const fs = new MemoryFs();
     const [created] = await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",

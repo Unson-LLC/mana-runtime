@@ -109,7 +109,7 @@ describe("generateMeetingMinutesInSandbox", () => {
       brainbase_context_attestation: expect.objectContaining({
         schema_version: "meeting_minutes_context_attestation.v2",
         source: "worker_context_receipt", receipt_id: "mmctx_1", session_id: "session-1",
-      }), brainbase_judgment_audit_lines: judgmentAuditLines });
+      }), brainbase_judgment_audit_lines: judgmentAuditLines, decision_candidates: [] });
     expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("transcript"));
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/meeting-minutes-prompt.txt",
@@ -360,18 +360,65 @@ describe("generateMeetingMinutesInSandbox", () => {
   it("recovers JSON from Claude prose and a markdown fence", () => {
     expect(parseGeneratedMeetingMinutesOutput([
       "議事録を作成しました。", "```json",
-      JSON.stringify({ title: "定例", overview: "概要", body: "本文", tasks: [] }),
+      JSON.stringify({ title: "定例", overview: "概要", body: "本文", tasks: [],
+        used_source_refs: [], decision_candidates: [] }),
       "```",
-    ].join("\n"))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
+    ].join("\n"))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [], decision_candidates: [] });
   });
 
-  it("accepts Claude JSON envelopes and omitted empty tasks", () => {
+  it("accepts Claude JSON envelopes with all required meeting-minutes keys", () => {
     expect(parseGeneratedMeetingMinutesOutput(JSON.stringify({
-      type: "result", result: JSON.stringify({ title: "定例", overview: "概要", body: "本文" }),
-    }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
+      type: "result", result: JSON.stringify({ title: "定例", overview: "概要", body: "本文", tasks: [],
+        used_source_refs: [], decision_candidates: [] }),
+    }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [], decision_candidates: [] });
     expect(parseGeneratedMeetingMinutesOutput(JSON.stringify({
-      structured_output: { title: "定例", overview: "概要", body: "本文", tasks: [] },
-    }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [] });
+      structured_output: { title: "定例", overview: "概要", body: "本文", tasks: [],
+        used_source_refs: [], decision_candidates: [] },
+    }))).toEqual({ title: "定例", overview: "概要", body: "本文", tasks: [],
+      used_source_refs: [], decision_candidates: [] });
+  });
+
+  it("fails closed for schema violations that normalization used to hide", () => {
+    const valid = {
+      title: "定例", overview: "概要", body: "本文", tasks: [], used_source_refs: [], decision_candidates: [],
+    } as Record<string, unknown>;
+    for (const key of ["title", "overview", "body", "tasks", "used_source_refs", "decision_candidates"]) {
+      const missing = { ...valid };
+      delete missing[key];
+      expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify(missing)))
+        .toThrow(`meeting_minutes_generation_result_schema_invalid_${key}`);
+    }
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid, unexpected: "drop me" })))
+      .toThrow("meeting_minutes_generation_result_schema_invalid");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid, title: "あ".repeat(201) })))
+      .toThrow("meeting_minutes_generation_result_schema_invalid_title");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid, overview: "あ".repeat(601) })))
+      .toThrow("meeting_minutes_generation_result_schema_invalid_overview");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid, body: "あ".repeat(100_001) })))
+      .toThrow("meeting_minutes_generation_result_schema_invalid_body");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      tasks: [{ title: "作業", priority: "critical" }] }))).toThrow("meeting_minutes_generation_result_schema_invalid_tasks");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      tasks: [{ title: "作業", priority: "" }] }))).toThrow("meeting_minutes_generation_result_schema_invalid_tasks");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      tasks: [{ title: "作業", priority: " high " }] }))).toThrow("meeting_minutes_generation_result_schema_invalid_tasks");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      tasks: [{ title: "作業", description: "   " }] }))).toThrow("meeting_minutes_generation_result_schema_invalid_tasks");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      tasks: [{ title: "作業", due_at: "not-a-date" }] }))).toThrow("meeting_minutes_generation_result_schema_invalid_tasks");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      tasks: [{ title: "作業", description: "あ".repeat(4_001) }] }))).toThrow("meeting_minutes_generation_result_schema_invalid_tasks");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      used_source_refs: [{ type: "graph_entity", id: "source-1", unexpected: true }] })))
+      .toThrow("meeting_minutes_generation_result_schema_invalid_used_source_refs");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      decision_candidates: [{ title: "判断", source_ref_ids: [""] }] })))
+      .toThrow("meeting_minutes_generation_result_schema_invalid_decision_candidates");
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({ ...valid,
+      decision_candidates: [{ title: "判断", source_ref_ids: ["source-1".repeat(301)] }] })))
+      .toThrow("meeting_minutes_generation_result_schema_invalid_decision_candidates");
   });
 
   it("rejects the production prompt example when it is copied as meeting minutes", () => {
@@ -391,12 +438,17 @@ describe("generateMeetingMinutesInSandbox", () => {
     }))).toThrow("meeting_minutes_generation_placeholder_output");
   });
 
-  it("enforces the overview hard limit and strips a legacy action-item tail", () => {
+  it("rejects oversized overview and strips a legacy action-item tail", () => {
+    expect(() => parseGeneratedMeetingMinutesOutput(JSON.stringify({
+      title: "定例", overview: "あ".repeat(601), body: "本文", tasks: [],
+      used_source_refs: [], decision_candidates: [],
+    }))).toThrow("meeting_minutes_generation_result_schema_invalid_overview");
     const minutes = parseGeneratedMeetingMinutesOutput(JSON.stringify({
-      title: "定例", overview: "あ".repeat(601),
+      title: "定例", overview: "概要",
       body: "------------\n議論本文\n\n*アクションアイテム*\n- 重複タスク", tasks: [{ title: "正本タスク" }],
+      used_source_refs: [], decision_candidates: [],
     }));
-    expect(minutes.overview).toHaveLength(600);
+    expect(minutes.overview).toBe("概要");
     expect(minutes.body).toBe("------------\n議論本文");
     expect(minutes.tasks).toEqual([{ title: "正本タスク" }]);
   });

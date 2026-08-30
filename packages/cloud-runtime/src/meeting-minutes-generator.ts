@@ -44,6 +44,7 @@ const MEETING_MINUTES_GENERATION_DIAGNOSTIC_CODES = new Set([
   "meeting_minutes_judgment_projection_mismatch",
 ]);
 const MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES = new Set([
+  "meeting_minutes_generation_result_schema_invalid",
   "meeting_minutes_generation_result_schema_invalid_title",
   "meeting_minutes_generation_result_schema_invalid_overview",
   "meeting_minutes_generation_result_schema_invalid_body",
@@ -137,6 +138,57 @@ function containsMeetingMinutesPlaceholder(record: Record<string, unknown>): boo
   ));
 }
 
+const MEETING_MINUTES_REQUIRED_KEYS = [
+  "title", "overview", "body", "tasks", "used_source_refs", "decision_candidates",
+] as const;
+const MEETING_MINUTES_TASK_KEYS = [
+  "title", "description", "assignee_name", "priority", "due_at",
+] as const;
+const MEETING_MINUTES_SOURCE_REF_KEYS = ["type", "id", "ref"] as const;
+const MEETING_MINUTES_DECISION_KEYS = ["title", "reason", "source_ref_ids"] as const;
+const MEETING_MINUTES_PRIORITIES = new Set(["low", "medium", "high", "urgent"]);
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function schemaString(value: unknown, max: number, errorCode: string, required = false): string | undefined {
+  if (typeof value !== "string" || Array.from(value).length > max) {
+    throw new Error(errorCode);
+  }
+  const normalized = value.trim();
+  if (required && !normalized) throw new Error(errorCode);
+  return normalized || undefined;
+}
+
+function requiredSchemaString(record: Record<string, unknown>, key: string, max: number, errorCode: string): string {
+  if (!hasOwn(record, key)) throw new Error(errorCode);
+  return schemaString(record[key], max, errorCode, true) as string;
+}
+
+function optionalSchemaString(value: unknown, max: number, errorCode: string): string | undefined {
+  if (typeof value !== "string" || Array.from(value).length > max) {
+    throw new Error(errorCode);
+  }
+  if (value && !value.trim()) throw new Error(errorCode);
+  return value.trim() || undefined;
+}
+
+function schemaObject(value: unknown, allowedKeys: readonly string[], errorCode: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(errorCode);
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !allowedKeys.includes(key))) throw new Error(errorCode);
+  return record;
+}
+
+function parseMeetingMinutesSourceRefIds(value: unknown, errorCode: string): string[] {
+  if (!Array.isArray(value) || value.length > 20) throw new Error(errorCode);
+  return Array.from(value, (id) => {
+    const normalized = schemaString(id, 300, errorCode, true);
+    return normalized as string;
+  });
+}
+
 export function assertGeneratedMeetingMinutesNotPlaceholder(value: unknown): void {
   const record = value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : {};
@@ -158,67 +210,80 @@ export function meetingMinutesGenerationDiagnosticCode(error: unknown): string {
 export function parseGeneratedMeetingMinutes(value: unknown): GeneratedMeetingMinutes {
   const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   assertGeneratedMeetingMinutesNotPlaceholder(record);
-  const title = nonEmpty(record.title, 200);
-  if (!title) throw new Error("meeting_minutes_generation_result_schema_invalid_title");
-  const overview = nonEmpty(record.overview, 600);
-  if (!overview) throw new Error("meeting_minutes_generation_result_schema_invalid_overview");
-  const body = stripMeetingMinutesActionItems(nonEmpty(record.body, 100_000) ?? "");
+  const invalidSchema = "meeting_minutes_generation_result_schema_invalid";
+  if (Object.keys(record).some((key) => !(MEETING_MINUTES_REQUIRED_KEYS as readonly string[]).includes(key))) {
+    throw new Error(invalidSchema);
+  }
+  const title = requiredSchemaString(record, "title", 200, "meeting_minutes_generation_result_schema_invalid_title");
+  const overview = requiredSchemaString(record, "overview", 600, "meeting_minutes_generation_result_schema_invalid_overview");
+  const rawBody = requiredSchemaString(record, "body", 100_000, "meeting_minutes_generation_result_schema_invalid_body");
+  const body = stripMeetingMinutesActionItems(rawBody ?? "");
   if (!body) throw new Error("meeting_minutes_generation_result_schema_invalid_body");
-  const rawTasks = record.tasks === undefined ? [] : record.tasks;
+  const rawTasks = record.tasks;
   if (!Array.isArray(rawTasks) || rawTasks.length > 20) {
     throw new Error("meeting_minutes_generation_result_schema_invalid_tasks");
   }
-  const tasks = rawTasks.map((item): MeetingMinutesTaskCandidate | undefined => {
-    const task = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
-    const taskTitle = nonEmpty(task.title, 200); if (!taskTitle) return undefined;
-    const description = nonEmpty(task.description, 4_000);
-    const assignee_name = nonEmpty(task.assignee_name, 200);
-    const rawPriority = nonEmpty(task.priority, 16)?.toLowerCase();
-    const priority = rawPriority && ["low", "medium", "high", "urgent"].includes(rawPriority)
-      ? rawPriority as MeetingMinutesTaskCandidate["priority"] : undefined;
-    const rawDueAt = nonEmpty(task.due_at, 64);
-    const due_at = rawDueAt && /^\d{4}-\d{2}-\d{2}$/.test(rawDueAt) ? `${rawDueAt}T00:00:00+09:00`
-      : rawDueAt && !Number.isNaN(Date.parse(rawDueAt)) ? rawDueAt : undefined;
-    return { title: taskTitle, ...(description ? { description } : {}), ...(assignee_name ? { assignee_name } : {}), ...(priority ? { priority } : {}),
-      ...(due_at ? { due_at } : {}) };
+  const tasks = Array.from(rawTasks, (item): MeetingMinutesTaskCandidate => {
+    const task = schemaObject(item, MEETING_MINUTES_TASK_KEYS,
+      "meeting_minutes_generation_result_schema_invalid_tasks");
+    const taskTitle = requiredSchemaString(task, "title", 200, "meeting_minutes_generation_result_schema_invalid_tasks");
+    const description = hasOwn(task, "description")
+      ? optionalSchemaString(task.description, 4_000, "meeting_minutes_generation_result_schema_invalid_tasks") : undefined;
+    const assignee_name = hasOwn(task, "assignee_name")
+      ? optionalSchemaString(task.assignee_name, 200, "meeting_minutes_generation_result_schema_invalid_tasks") : undefined;
+    const priorityValue = hasOwn(task, "priority") ? task.priority : undefined;
+    const rawPriority = hasOwn(task, "priority")
+      ? optionalSchemaString(priorityValue, 16, "meeting_minutes_generation_result_schema_invalid_tasks") : undefined;
+    if (hasOwn(task, "priority") && (rawPriority === undefined
+      || priorityValue !== rawPriority || !MEETING_MINUTES_PRIORITIES.has(rawPriority))) {
+      throw new Error("meeting_minutes_generation_result_schema_invalid_tasks");
+    }
+    const priority = rawPriority as MeetingMinutesTaskCandidate["priority"] | undefined;
+    let due_at: string | undefined;
+    if (hasOwn(task, "due_at")) {
+      const rawDueAt = optionalSchemaString(task.due_at, 64, "meeting_minutes_generation_result_schema_invalid_tasks");
+      if (rawDueAt) {
+        due_at = /^\d{4}-\d{2}-\d{2}$/.test(rawDueAt) ? `${rawDueAt}T00:00:00+09:00`
+          : Number.isNaN(Date.parse(rawDueAt)) ? undefined : rawDueAt;
+        if (!due_at) throw new Error("meeting_minutes_generation_result_schema_invalid_tasks");
+      }
+    }
+    return { title: taskTitle as string, ...(description ? { description } : {}),
+      ...(assignee_name ? { assignee_name } : {}), ...(priority ? { priority } : {}), ...(due_at ? { due_at } : {}) };
   });
-  if (tasks.some((task) => !task)) {
-    throw new Error("meeting_minutes_generation_result_schema_invalid_tasks");
-  }
-  const brainbase_context_receipt_id = nonEmpty(record.brainbase_context_receipt_id, 200);
-  const brainbase_context_checksum = nonEmpty(record.brainbase_context_checksum, 128);
-  const rawRefs = record.used_source_refs ?? [];
+  const rawRefs = record.used_source_refs;
   if (!Array.isArray(rawRefs) || rawRefs.length > 100) {
     throw new Error("meeting_minutes_generation_result_schema_invalid_used_source_refs");
   }
-  const used_source_refs = rawRefs.map((item): MeetingMinutesContextSourceRef | undefined => {
-    const ref = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
-    const type = nonEmpty(ref.type, 100); const id = nonEmpty(ref.id, 300); const sourceRef = nonEmpty(ref.ref, 2_000);
-    return type && id ? { type, id, ...(sourceRef ? { ref: sourceRef } : {}) } : undefined;
+  const used_source_refs = Array.from(rawRefs, (item): MeetingMinutesContextSourceRef => {
+    const ref = schemaObject(item, MEETING_MINUTES_SOURCE_REF_KEYS,
+      "meeting_minutes_generation_result_schema_invalid_used_source_refs");
+    const type = requiredSchemaString(ref, "type", 100, "meeting_minutes_generation_result_schema_invalid_used_source_refs");
+    const id = requiredSchemaString(ref, "id", 300, "meeting_minutes_generation_result_schema_invalid_used_source_refs");
+    const sourceRef = hasOwn(ref, "ref")
+      ? optionalSchemaString(ref.ref, 2_000, "meeting_minutes_generation_result_schema_invalid_used_source_refs") : undefined;
+    return { type: type as string, id: id as string, ...(sourceRef ? { ref: sourceRef } : {}) };
   });
-  if (used_source_refs.some((ref) => !ref)) {
-    throw new Error("meeting_minutes_generation_result_schema_invalid_used_source_refs");
-  }
-  const rawDecisions = record.decision_candidates ?? [];
+  const rawDecisions = record.decision_candidates;
   if (!Array.isArray(rawDecisions) || rawDecisions.length > 20) {
     throw new Error("meeting_minutes_generation_result_schema_invalid_decision_candidates");
   }
-  const decision_candidates = rawDecisions.map((item) => {
-    const decision = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
-    const decisionTitle = nonEmpty(decision.title, 300); if (!decisionTitle) return undefined;
-    const reason = nonEmpty(decision.reason, 2_000);
-    const ids = Array.isArray(decision.source_ref_ids)
-      ? decision.source_ref_ids.map((id) => nonEmpty(id, 300)).filter((id): id is string => Boolean(id)).slice(0, 20) : [];
-    return { title: decisionTitle, ...(reason ? { reason } : {}), ...(ids.length ? { source_ref_ids: ids } : {}) };
+  const decision_candidates = Array.from(rawDecisions, (item) => {
+    const decision = schemaObject(item, MEETING_MINUTES_DECISION_KEYS,
+      "meeting_minutes_generation_result_schema_invalid_decision_candidates");
+    const decisionTitle = requiredSchemaString(decision, "title", 300,
+      "meeting_minutes_generation_result_schema_invalid_decision_candidates");
+    const reason = hasOwn(decision, "reason")
+      ? optionalSchemaString(decision.reason, 2_000, "meeting_minutes_generation_result_schema_invalid_decision_candidates") : undefined;
+    const source_ref_ids = hasOwn(decision, "source_ref_ids")
+      ? parseMeetingMinutesSourceRefIds(decision.source_ref_ids,
+        "meeting_minutes_generation_result_schema_invalid_decision_candidates") : undefined;
+    return { title: decisionTitle as string, ...(reason ? { reason } : {}),
+      ...(source_ref_ids !== undefined ? { source_ref_ids } : {}) };
   });
-  if (decision_candidates.some((decision) => !decision)) {
-    throw new Error("meeting_minutes_generation_result_schema_invalid_decision_candidates");
-  }
-  return { title, overview, body, tasks: tasks as MeetingMinutesTaskCandidate[],
-    ...(brainbase_context_receipt_id ? { brainbase_context_receipt_id } : {}),
-    ...(brainbase_context_checksum ? { brainbase_context_checksum } : {}),
-    ...(used_source_refs.length ? { used_source_refs: used_source_refs as MeetingMinutesContextSourceRef[] } : {}),
-    ...(decision_candidates.length ? { decision_candidates: decision_candidates as NonNullable<GeneratedMeetingMinutes["decision_candidates"]> } : {}) };
+  return { title: title as string, overview: overview as string, body, tasks,
+    used_source_refs: used_source_refs as MeetingMinutesContextSourceRef[],
+    decision_candidates: decision_candidates as NonNullable<GeneratedMeetingMinutes["decision_candidates"]> };
 }
 
 /** Removes a legacy generated action-item tail so tasks[] remains the only action-item source. */
