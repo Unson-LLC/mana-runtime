@@ -370,7 +370,11 @@ export class MeetingMinutesSlackClient {
   }
   async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void> {
     if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
-    await this.setThreadStatus(run, "", true);
+    // The assistant status is a transient convenience. Some Slack threads do
+    // not allow assistant.threads.setStatus even though chat.update is valid.
+    // Do not let that optional cleanup hide the durable completion/failure
+    // message or turn an otherwise successful run into a projection failure.
+    await this.setThreadStatus(run, "");
     const completed = outcome === "completed";
     const permanentProjectBindingFailure = isBrainbaseProjectBindingFailure(run);
     const permanentAuthenticationFailure = isBrainbaseAuthenticationFailure(run);

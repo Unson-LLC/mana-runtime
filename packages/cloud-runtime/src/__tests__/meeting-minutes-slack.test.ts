@@ -176,13 +176,14 @@ describe("MeetingMinutesSlackClient", () => {
       .resolves.toBe("3.1");
   });
 
-  it("propagates a completion assistant status failure for durable lifecycle diagnostics", async () => {
+  it("still projects the durable completion when assistant status cleanup is unavailable", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).includes("assistant.threads.setStatus")
       ? Response.json({ ok: false, error: "not_allowed" })
       : Response.json({ ok: true })) as typeof fetch;
     await expect(new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(routedRun(), "completed"))
-      .rejects.toThrow("slack_api_failed:assistant.threads.setStatus:not_allowed");
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+      .resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "https://slack.com/api/chat.update", expect.any(Object));
   });
 
   it("explains a canonical task project scope mismatch to the operator", async () => {
