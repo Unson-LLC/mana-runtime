@@ -220,7 +220,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:31:49.780Z"
+      "last_revised_at": "2026-08-30T05:33:58.208Z"
     },
     {
       "id": "INV-001",
@@ -261,7 +261,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:31:49.780Z"
+      "last_revised_at": "2026-08-30T05:33:58.208Z"
     },
     {
       "id": "S-001",
@@ -292,11 +292,11 @@
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
-            "case": "preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop"
+            "case": "story-meeting-minutes-brainbase-judgment:ac:4 preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop"
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
-            "case": "fails closed when the Brainbase Hook endpoint is unavailable"
+            "case": "story-meeting-minutes-brainbase-judgment:ac:3 fails closed when the Brainbase Hook endpoint is unavailable"
           }
         ]
       },
@@ -304,17 +304,17 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
-            "must_cover": "preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop"
+            "must_cover": "story-meeting-minutes-brainbase-judgment:ac:4 preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop"
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
-            "must_cover": "fails closed when the Brainbase Hook endpoint is unavailable"
+            "must_cover": "story-meeting-minutes-brainbase-judgment:ac:3 fails closed when the Brainbase Hook endpoint is unavailable"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:54:36.386Z",
-      "last_revised_at": "2026-08-30T05:31:49.780Z"
+      "last_revised_at": "2026-08-30T05:33:58.208Z"
     },
     {
       "id": "INV-002",
@@ -355,7 +355,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-14T09:40:45.325Z",
-      "last_revised_at": "2026-08-30T05:31:49.780Z"
+      "last_revised_at": "2026-08-30T05:33:58.208Z"
     },
     {
       "id": "C-002",
@@ -422,7 +422,7 @@
       },
       "confidence": 0.99,
       "first_seen_at": "2026-08-30T05:21:25.843Z",
-      "last_revised_at": "2026-08-30T05:31:49.780Z"
+      "last_revised_at": "2026-08-30T05:33:58.208Z"
     }
   ],
   "planned_test_suites": [
@@ -445,6 +445,6 @@
     }
   ],
   "open_questions": [],
-  "generated_at": "2026-08-30T05:31:49.779Z",
-  "previous_spec_id": "2026-08-30T05:24:06.111Z"
+  "generated_at": "2026-08-30T05:33:58.207Z",
+  "previous_spec_id": "2026-08-30T05:31:49.779Z"
 }
