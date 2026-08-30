@@ -24,11 +24,12 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
       expect(headers.get("authorization")).toBe("Bearer runtime-brainbase-token");
       expect(headers.get("x-mana-tenant-boundary-handle")).toBeNull();
       expect(headers.get("cookie")).toBeNull();
+      expect(headers.get("x-brainbase-project-code")).toBe("mana-runtime");
       return Response.json({ jsonrpc: "2.0", result: {} });
     }) as unknown as typeof fetch;
 
     const response = await authorizeRuntimeBrainbaseOutbound(
-      new Request("https://brainbase-mcp.internal/mcp", {
+      new Request("https://brainbase-mcp.internal/host/judgment/hook", {
         method: "POST",
         headers: {
           authorization: "Bearer hostile-input",
@@ -54,7 +55,7 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
     boundaryMocks.resolve.mockResolvedValue(new Response("rejected", { status: 403 }));
     const providerFetch = vi.fn();
     const response = await authorizeRuntimeBrainbaseOutbound(
-      new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: "{}" }),
+      new Request("https://brainbase-mcp.internal/host/judgment/hook", { method: "POST", body: "{}" }),
       {
         TENANT_RUNTIME_STATE: {} as TenantBoundaryContextNamespace,
         BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp",
@@ -67,6 +68,23 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
     expect(await response.json()).toEqual({
       error: { code: "TENANT_BOUNDARY_REJECTED", retryable: true },
     });
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects generic model-origin MCP before resolving a tenant boundary", async () => {
+    const providerFetch = vi.fn();
+    const response = await authorizeRuntimeBrainbaseOutbound(
+      new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: "{}" }),
+      {
+        TENANT_RUNTIME_STATE: {} as TenantBoundaryContextNamespace,
+        BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp",
+        BRAINBASE_MCP_TOKEN: "runtime-brainbase-token",
+      },
+      providerFetch as typeof fetch,
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: { code: "BRAINBASE_OPERATION_FORBIDDEN", retryable: false } });
+    expect(boundaryMocks.resolve).not.toHaveBeenCalled();
     expect(providerFetch).not.toHaveBeenCalled();
   });
 });

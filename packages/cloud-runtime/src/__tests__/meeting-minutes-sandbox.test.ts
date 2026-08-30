@@ -132,7 +132,7 @@ describe("generateMeetingMinutesInSandbox", () => {
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/mana-meeting-minutes-mcp.json",
-      expect.stringContaining('"brainbase"'),
+      JSON.stringify({ mcpServers: {} }),
     );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("< /tmp/meeting-minutes-prompt.txt"),
       expect.objectContaining({
@@ -402,7 +402,7 @@ describe("classifyMeetingMinutesDestinationInSandbox", () => {
       expect.any(Object));
     expect(sandbox.writeFile).toHaveBeenCalledWith(
       "/tmp/mana-meeting-minutes-mcp.json",
-      expect.stringContaining('"brainbase"'),
+      JSON.stringify({ mcpServers: {} }),
     );
     expect(sandbox.exec).toHaveBeenCalledWith(expect.stringContaining("--mcp-config"), expect.any(Object));
     expect(sandbox.destroy).toHaveBeenCalled();
