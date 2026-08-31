@@ -455,6 +455,9 @@ export async function consumeTenantQueueMessage<T, R>(
         ...(typeof error.details?.provider_operation === "string"
           ? { provider_operation: error.details.provider_operation }
           : {}),
+        ...(typeof error.details?.scope_reason === "string"
+          ? { scope_reason: error.details.scope_reason }
+          : {}),
       } : {}),
       ...(failureReason ? { failure_reason: failureReason } : {}),
       ...safeGenerationFailureDiagnostics(error),

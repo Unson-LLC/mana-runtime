@@ -314,6 +314,16 @@ function problemCode(value: unknown): string {
   return "UPSTREAM_UNAVAILABLE";
 }
 
+function safeProblemDetails(value: unknown): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const details = (value as { details?: unknown }).details;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return {};
+  const scopeReason = (details as { scope_reason?: unknown }).scope_reason;
+  return typeof scopeReason === "string" && scopeReason.length <= 120
+    ? { scope_reason: scopeReason }
+    : {};
+}
+
 function containsSecret(value: unknown, secrets: readonly string[]): boolean {
   if (typeof value === "string") return secrets.some((secret) => secret.length >= 8 && value.includes(secret));
   if (Array.isArray(value)) return value.some((child) => containsSecret(child, secrets));
@@ -422,6 +432,7 @@ export function createBrainbaseTrustedProviderForwarderFromEnv(
         if (!response.ok) deny("credential_lease", problemCode(payload), {
           provider_operation: mapped.provider_operation,
           status: response.status,
+          ...safeProblemDetails(payload),
         });
         deny("credential_lease", "UPSTREAM_INVALID_RESPONSE");
       }

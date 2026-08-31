@@ -467,6 +467,30 @@ describe("Brainbase trusted provider forwarder HTTP integration", () => {
       });
   });
 
+  it("preserves only the safe scope reason from a Brainbase lease rejection", async () => {
+    const port = await listen((_request, response) => {
+      response.writeHead(403, { "content-type": "application/problem+json" });
+      response.end(JSON.stringify({
+        code: "CREDENTIAL_LEASE_SCOPE_MISMATCH",
+        details: { scope_reason: "provider_forwarder_mismatch", secret: "must-not-leak" },
+      }));
+    });
+    const forwarder = createBrainbaseTrustedProviderForwarderFromEnv({
+      env: trustedServiceEnv(port), tenant_context: TENANT_CONTEXT,
+    });
+    await expect(forwarder.forward({ lease: LEASE, expected_binding: BINDING,
+      request: jsonRequest("https://api.anthropic.com/v1/messages", "POST", { messages: [] }), now: "2026-08-17T01:00:01.000Z" }))
+      .rejects.toMatchObject({
+        boundary: "credential_lease",
+        code: "CREDENTIAL_LEASE_SCOPE_MISMATCH",
+        details: {
+          provider_operation: "anthropic.messages.create",
+          status: 403,
+          scope_reason: "provider_forwarder_mismatch",
+        },
+      });
+  });
+
   it("rejects malformed or lease-reflecting success wrappers", async () => {
     const bodies = [
       { provider: "anthropic", operation_id: BINDING.operation_id, provider_operation: "anthropic.messages.create", status: 200,
