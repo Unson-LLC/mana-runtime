@@ -87,10 +87,10 @@
   "deploy_allowed": true,
   "deployment_authorization": {
     "reviewer_identity": "user:ksato",
-    "reviewer_provenance": "codex:user-authorized-production-e2e",
-      "reviewed_commit_sha": "0db3a9ae1da5463d6eaeb775ab390f33b930176a",
+    "reviewer_provenance": "codex:user-authorized-production-deploy",
+      "reviewed_commit_sha": "07fdf68e5a3c396f8f81c77c6ea11aade5464400",
     "target": "unson-business-mana-runtime",
-      "authorized_at": "2026-08-31T01:59:00.000Z",
-      "expires_at": "2026-08-31T03:59:00.000Z"
+      "authorized_at": "2026-08-31T07:08:11.000Z",
+      "expires_at": "2026-08-31T09:08:11.000Z"
   }
 }
