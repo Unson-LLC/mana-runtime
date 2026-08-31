@@ -1,6 +1,8 @@
 const ID = /^[A-Z0-9]{2,32}$/;
 const TARGET_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const TENANT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// Brainbase canonical tenant IDs are opaque identifiers (for example,
+// `ten_01M0HMA228ES64N4TFX846V8T8`), not only tenant-key slugs.
+const TENANT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 interface DurableObjectStubLike {
   fetch(request: Request): Promise<Response>;

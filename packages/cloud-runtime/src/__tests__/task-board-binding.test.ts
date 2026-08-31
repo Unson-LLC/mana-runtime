@@ -42,4 +42,12 @@ describe("task board runtime binding", () => {
     expect(await reserveTaskBoardBinding(namespace, coordinates)).toEqual({ status: "reserved" });
     expect(await reserveTaskBoardBinding(namespace, coordinates)).toEqual({ status: "provisioning" });
   });
+
+  it("accepts the canonical opaque tenant ID returned by Brainbase", async () => {
+    const { namespace } = bindingHarness();
+    expect(await reserveTaskBoardBinding(namespace, {
+      ...coordinates,
+      tenantId: "ten_01M0HMA228ES64N4TFX846V8T8",
+    })).toEqual({ status: "reserved" });
+  });
 });
