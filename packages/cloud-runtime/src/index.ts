@@ -269,6 +269,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_UNSON?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
+  GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   MEETING_MINUTES_CONTEXT_MODE?: string;
@@ -979,8 +980,8 @@ function meetingMinutesClients(
           tenantBoundaryHandle, observe));
       },
       saveGitHub: (input: Parameters<CloudflareMeetingMinutesGitHubClient["save"]>[0]) =>
-        effects.boundary("mcp_gateway", (credentialFetch) => new CloudflareMeetingMinutesGitHubClient(
-          undefined, credentialFetch).save(input)),
+        effects.boundary("mcp_gateway", () => new CloudflareMeetingMinutesGitHubClient(
+          env.GITHUB_TOKEN ?? "").save(input)),
       createTask: async (input: Parameters<TaskApiClient["createTask"]>[0], idempotencyKey: string) => {
         return effects.boundary("brainbase_proxy",
           (credentialFetch) => taskClient(credentialFetch).createTask(input, idempotencyKey));

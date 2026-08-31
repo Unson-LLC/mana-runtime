@@ -432,7 +432,9 @@ describe("会社別Cloudflare deployment", () => {
     const workerRuntime = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(workerRuntime).not.toContain('audience: "github.com"');
     expect(workerRuntime).not.toContain("githubCredentialLeaseHandle");
-    expect(workerRuntime).not.toContain("GITHUB_TOKEN?: string");
+    expect(workerRuntime).toContain("GITHUB_TOKEN?: string");
+    expect(workerRuntime).toContain('env.GITHUB_TOKEN ?? ""');
+    expect(workerRuntime).not.toContain("undefined, credentialFetch).save(input)");
     expect(sandboxRuntime).toContain('[DEVELOPMENT_CALLBACK_PROXY_HOST]: async (request: Request, env: SandboxRuntimeEnv)');
     expect(sandboxRuntime).toContain("[TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).toContain("[TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
