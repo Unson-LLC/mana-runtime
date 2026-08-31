@@ -292,6 +292,9 @@ export async function classifyMeetingMinutesDestinationInSandbox(
       timeout: MEETING_MINUTES_ROUTING_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
+        // The Hook must route the authenticated operation intent, not the large
+        // schema prompt containing transcript and Brainbase context.
+        MANA_JUDGMENT_REQUEST: "Slack議事録を生成し、承認済みの共有先へ保存する",
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
@@ -397,16 +400,93 @@ function resultMinutes(events: Array<Record<string, unknown>>): {
     if (event.is_error === true) throw new Error("meeting_minutes_generation_result_error");
     const structured = event.structured_output ?? event.structuredOutput;
     const sessionId = event.session_id ?? event.sessionId;
-    try {
-      if (structured !== undefined) return { minutes: parseGeneratedMeetingMinutes(structured), index,
-        ...(typeof sessionId === "string" ? { sessionId } : {}) };
-      if (typeof event.result === "string") return { minutes: parseGeneratedMeetingMinutesOutput(event.result), index,
-        ...(typeof sessionId === "string" ? { sessionId } : {}) };
-    } catch (error) {
-      if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
-      if (error instanceof Error && MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(error.message)) throw error;
-      throw new Error("meeting_minutes_generation_result_schema_invalid");
+    const candidates: unknown[] = [];
+    const candidateErrors: string[] = [];
+    if (structured !== undefined && structured !== null) candidates.push(structured);
+    if (event.result !== undefined && event.result !== null) candidates.push(event.result);
+    let fieldError: Error | undefined;
+    for (const candidate of candidates) {
+      try {
+        const minutes = typeof candidate === "string"
+          ? parseGeneratedMeetingMinutesOutput(candidate)
+          : parseGeneratedMeetingMinutes(candidate);
+        return { minutes, index, ...(typeof sessionId === "string" ? { sessionId } : {}) };
+      } catch (error) {
+        if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+        candidateErrors.push(error instanceof Error ? error.message : "unknown");
+        if (error instanceof Error && MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(error.message)) {
+          fieldError ??= error;
+        }
+      }
     }
+    for (let assistantIndex = index - 1; assistantIndex >= 0; assistantIndex -= 1) {
+      const assistantEvent = events[assistantIndex]!;
+      if (assistantEvent.type !== "assistant") continue;
+      const assistantSessionId = assistantEvent.session_id ?? assistantEvent.sessionId;
+      if (typeof sessionId === "string" && typeof assistantSessionId === "string"
+        && assistantSessionId !== sessionId) continue;
+      const textCandidates = contentItems(assistantEvent)
+        .filter((item) => item.type === "text" && typeof item.text === "string")
+        .map((item) => item.text as string);
+      for (const candidate of textCandidates) {
+        try {
+          const minutes = parseGeneratedMeetingMinutesOutput(candidate);
+          return { minutes, index, ...(typeof sessionId === "string" ? { sessionId } : {}) };
+        } catch (error) {
+          if (error instanceof Error && error.message === "meeting_minutes_generation_placeholder_output") throw error;
+          candidateErrors.push(error instanceof Error ? error.message : "unknown");
+          if (error instanceof Error && MEETING_MINUTES_RESULT_FIELD_DIAGNOSTIC_CODES.has(error.message)) {
+            fieldError ??= error;
+          }
+        }
+      }
+    }
+    if (fieldError) throw fieldError;
+    const resultObjects = typeof event.result === "string" ? balancedJsonObjects(event.result) : [];
+    const parsedResultObjectKeys = resultObjects.slice(-20).flatMap((candidate) => {
+      try {
+        const value = JSON.parse(candidate) as unknown;
+        return value && typeof value === "object" && !Array.isArray(value)
+          ? [Object.keys(value as Record<string, unknown>).sort()] : [];
+      } catch { return []; }
+    });
+    const assistantTextSummary = events.slice(0, index).flatMap((candidateEvent, candidateIndex) =>
+      candidateEvent.type === "assistant" ? contentItems(candidateEvent)
+        .filter((item) => item.type === "text" && typeof item.text === "string")
+        .map((item) => {
+          const value = item.text as string;
+          return { index: candidateIndex, length: value.length,
+            format: value.trimStart().startsWith("{") ? "object_text"
+              : value.trimStart().startsWith("[") ? "array_text" : "plain_text",
+            balanced_object_count: balancedJsonObjects(value).length,
+            field_markers: { title: value.includes('"title"'), overview: value.includes('"overview"'),
+              body: value.includes('"body"'), tasks: value.includes('"tasks"'),
+              used_source_refs: value.includes('"used_source_refs"'),
+              decision_candidates: value.includes('"decision_candidates"') } };
+        }) : []).slice(-20);
+    console.warn(JSON.stringify({ event: "meeting_minutes_result_shape_invalid",
+      event_keys: Object.keys(event).sort(),
+      structured_type: Array.isArray(structured) ? "array" : typeof structured,
+      structured_keys: structured && typeof structured === "object" && !Array.isArray(structured)
+        ? Object.keys(structured as Record<string, unknown>).sort() : [],
+      result_type: Array.isArray(event.result) ? "array" : typeof event.result,
+      result_keys: event.result && typeof event.result === "object" && !Array.isArray(event.result)
+        ? Object.keys(event.result as Record<string, unknown>).sort() : [],
+      result_length: typeof event.result === "string" ? event.result.length : undefined,
+      result_format: typeof event.result === "string"
+        ? event.result.trimStart().startsWith("{") ? "object_text"
+          : event.result.trimStart().startsWith("[") ? "array_text" : "plain_text"
+        : undefined,
+      balanced_object_count: resultObjects.length,
+      parsed_object_keys: parsedResultObjectKeys,
+      field_markers: typeof event.result === "string" ? {
+        title: event.result.includes('"title"'), overview: event.result.includes('"overview"'),
+        body: event.result.includes('"body"'), tasks: event.result.includes('"tasks"'),
+        used_source_refs: event.result.includes('"used_source_refs"'),
+        decision_candidates: event.result.includes('"decision_candidates"'),
+      } : undefined,
+      assistant_text_summary: assistantTextSummary,
+      candidate_errors: candidateErrors }));
     throw new Error("meeting_minutes_generation_result_schema_invalid");
   }
   throw new Error("meeting_minutes_generation_result_missing");
@@ -736,6 +816,9 @@ export async function generateMeetingMinutesInSandbox(
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
+        // Route the authenticated operation intent, not the large generation
+        // prompt containing transcript and Brainbase context.
+        MANA_JUDGMENT_REQUEST: "Slack議事録を生成し、承認済みの共有先へ保存する",
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });

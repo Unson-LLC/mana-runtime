@@ -129,6 +129,47 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(new Set(payloads.map((payload) => payload.turn_id)).size).toBe(1);
   }, 15_000);
 
+  it.each(["UserPromptSubmit", "Stop"])(
+    "keeps the %s receipt without reinjecting an interactive response rewrite",
+    async (hookEventName) => {
+      const server = createServer(async (request, response) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(chunk as Buffer);
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          schema_version: "1", accepted: true, hook_event_name: payload.hook_event_name,
+          session_id: payload.session_id, turn_id: payload.turn_id, receipt_id: `receipt-${hookEventName}`,
+          ...(payload.hook_event_name === "UserPromptSubmit"
+            ? { route_resolution_sha256: "c".repeat(64) }
+            : {}),
+          output: {
+            systemMessage: "監査行の後に元の回答本文を続けてください。",
+            ...(payload.hook_event_name === "UserPromptSubmit" ? { hookSpecificOutput: {
+              hookEventName: "UserPromptSubmit", additionalContext: "Judgment route resolved",
+            } } : {}),
+          },
+        }));
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test_server_missing");
+      const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+      cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+      const env = { BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+        BRAINBASE_JUDGMENT_TURN_DIR: stateDir };
+      if (hookEventName === "Stop") {
+        await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-stop" }, env);
+      }
+      const result = await runHook({ hook_event_name: hookEventName, session_id: "session-stop" }, env);
+      expect(result.code).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output.systemMessage).not.toContain("監査行の後に");
+      expect(output.systemMessage).toContain(receiptPrefix);
+    },
+  );
+
   it("story-meeting-minutes-brainbase-judgment:ac:3 fails closed when the Brainbase Hook endpoint is unavailable", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
     cleanup.push(() => rm(stateDir, { recursive: true, force: true }));

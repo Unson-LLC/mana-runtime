@@ -58,7 +58,12 @@ function validatedOutput(envelope, payload) {
       ? { host_receipt_id: envelope.receipt_id } : {}),
     ...(routeResolutionSha256 ? { route_resolution_sha256: routeResolutionSha256 } : {}),
   };
-  const existingSystemMessage = typeof documentedOutput.systemMessage === "string"
+  // UserPromptSubmit and Stop systemMessages are interactive response-rewrite
+  // instructions. Passing either back into a schema-constrained runtime turn can
+  // replace structured_output with audit prose. PostToolUse is the one lifecycle
+  // event whose non-empty audit message is part of the validated contract.
+  const existingSystemMessage = payload.hook_event_name === "PostToolUse"
+    && typeof documentedOutput.systemMessage === "string"
     ? documentedOutput.systemMessage.trim()
     : "";
   return {
