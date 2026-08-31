@@ -1,0 +1,256 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-brainbase-owned-company-authority-consumer",
+  "acceptance_criterion": "AC-012",
+  "status": "not_collected",
+  "environment": "future production-like 2 tenant x 2 person E2E",
+  "canonical_code_source": {
+    "repository": "Unson-LLC/brainbase-unson",
+    "ref": "develop",
+    "sha": "ad908bce7b90678f9ed7f1c570f808bdf1a500ad",
+    "path": "contracts/mana-brainbase-company-authority/v1",
+    "fixture_set_sha256": "1d7af5b850abeb10e07db281c17341636d80a74cb37679b2c2b6ab5ce9b0a6ea"
+  },
+  "undefined_code_policy": {
+    "expected_code": null,
+    "expected_code_status": "not_defined",
+    "owner": "T0",
+    "success_eligible": false,
+    "coverage_eligible": false,
+    "next_action": "define the canonical rejection code in the producer contract before collecting E2E evidence"
+  },
+  "surface_contract": {
+    "implementation_status": "not_implemented_or_not_verified_by_A0",
+    "planned_surfaces": [
+      "operator CLI or test harness result",
+      "operator-visible Slack response when the scenario enters through Slack",
+      "runtime log with no secret or customer payload",
+      "OperationReceipt and authority-resolution receipt readback"
+    ],
+    "rule": "A planned surface is not evidence that the surface exists. An unavailable observation remains not_collected with a next action."
+  },
+  "common_assertions": {
+    "forbidden_ui_states": ["success", "empty", "in_progress"],
+    "business_effect": false,
+    "side_effect_count": 0,
+    "correlation": "request, visible rejection, OperationReceipt, authority receipt, and readback use the same correlation_id",
+    "unknown_handling": "unknown and unavailable observations remain not_collected and include next_action",
+    "production_proof": "not_collected"
+  },
+  "runtime_execution_evidence": {
+    "AC-004": {
+      "status": "not_collected",
+      "owner": "T0",
+      "required_surfaces": [
+        "Worker",
+        "Queue",
+        "Durable Object",
+        "Container",
+        "MCP",
+        "Brainbase proxy",
+        "Slack delivery"
+      ],
+      "exit_condition": "wire the fixture-validated consumer into every listed runtime boundary and collect deterministic rejection and no-effect evidence",
+      "fixture_mock_is_runtime_integration_proof": false,
+      "assertCanonicalAuthorityRetrieval_is_runtime_integration_proof": false
+    },
+    "AC-010": {
+      "status": "not_collected",
+      "owner": "T0",
+      "required_assertions": [
+        "duplicate delivery executes model, Brainbase write, external side effect, and Slack delivery exactly once",
+        "both deliveries preserve the same Receipt, correlation ID, and idempotency identity"
+      ],
+      "exit_condition": "collect deterministic runtime effect counters and identity-linked receipt readback after the T0 adapter exists",
+      "fixture_mock_is_production_proof": false
+    },
+    "AC-011": {
+      "status": "not_collected",
+      "owner": "T0",
+      "required_assertions": [
+        "OperationReceipt, UsageEvent, external readback, and authority-resolution receipt share one correlation ID",
+        "completion remains incomplete when any required evidence is absent"
+      ],
+      "exit_condition": "collect the correlated runtime artifacts after the T0 adapter and receipt surfaces exist",
+      "fixture_mock_is_production_proof": false
+    }
+  },
+  "cases": [
+    {
+      "id": "tenant-boundary",
+      "entry_point": "future Slack or CLI E2E request from Tenant A targeting Tenant B",
+      "scenario": "cross-tenant organization or project access",
+      "operator_visible_surface": "planned Slack rejection or CLI result, sanitized runtime log, OperationReceipt readback",
+      "operator_remediation": { "rejection_reason": "別組織の権限では実行できません。", "retryability": "do_not_retry", "next_action": "対象組織とプロジェクトを確認し、正しいSlackワークスペースからやり直してください。", "support_route": "解決しない場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
+      "expected_code": "AUTHORITY_CROSS_ORG",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-CROSS-ORG-TENANT-A-PERSON-SATO", "NEG-CROSS-ORG-TENANT-B-PERSON-UMEDA"],
+      "coverage_status": "not_collected",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after T0 and the runtime trust store exist, provision isolated Tenant A/B fixtures and collect the rejection plus receipt readback",
+      "retry_redelivery_expectation": "each delivery is rejected; business effect remains zero"
+    },
+    {
+      "id": "personal-owner-boundary",
+      "entry_point": "future Slack or CLI E2E request by Sato for Umeda Personal KG, and inverse",
+      "scenario": "cross-person Personal KG access",
+      "operator_visible_surface": "planned non-disclosing Slack rejection or CLI result, sanitized log, OperationReceipt readback",
+      "operator_remediation": { "rejection_reason": "別の利用者が所有するPersonal領域にはアクセスできません。", "retryability": "do_not_retry", "next_action": "自分のPersonal領域を選び直してください。", "support_route": "所有者表示が誤っている場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
+      "expected_code": "PERSONAL_SCOPE_MISMATCH",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-PERSONAL-CROSS-PERSON-SATO-TO-UMEDA", "NEG-PERSONAL-CROSS-PERSON-UMEDA-TO-SATO"],
+      "coverage_status": "not_collected",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after approved production-safe personas and trust infrastructure exist, collect both direction checks without exposing Personal KG content",
+      "retry_redelivery_expectation": "each delivery is rejected; business effect remains zero"
+    },
+    {
+      "id": "unknown-person",
+      "entry_point": "future provider-authenticated request whose subject has no canonical person",
+      "scenario": "unknown authority subject",
+      "operator_visible_surface": "planned Slack AUTHORITY_UNAVAILABLE response or CLI error, sanitized log, authority receipt readback",
+      "operator_remediation": { "rejection_reason": "利用者の会社権限を確認できないため実行を停止しました。", "retryability": "retry_after_remediation", "next_action": "Brainbaseの人物登録を確認してから再試行してください。", "support_route": "登録済みでも解決しない場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
+      "expected_code": "AUTHORITY_UNAVAILABLE",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"],
+      "coverage_status": "not_collected",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "create a non-customer unknown subject after T0 and trust-store readiness, then collect the fail-closed evidence",
+      "retry_redelivery_expectation": "retry remains rejected until authoritative resolution exists"
+    },
+    {
+      "id": "ambiguous-person",
+      "entry_point": "future provider-authenticated request resolving to multiple candidate persons",
+      "scenario": "ambiguous authority subject",
+      "operator_visible_surface": "planned Slack AUTHORITY_UNAVAILABLE response or CLI error, sanitized log, authority receipt readback",
+      "operator_remediation": { "rejection_reason": "利用者候補が複数あり会社権限を確定できません。", "retryability": "retry_after_remediation", "next_action": "Brainbaseで人物対応を一意にしてから再試行してください。", "support_route": "候補を判断できない場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
+      "expected_code": "AUTHORITY_UNAVAILABLE",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"],
+      "coverage_status": "not_collected",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "prepare an approved ambiguous mapping fixture after T0 and collect explicit rejection evidence",
+      "retry_redelivery_expectation": "retry remains rejected until ambiguity is resolved authoritatively"
+    },
+    {
+      "id": "stale-raci",
+      "entry_point": "future request carrying a superseded RACI revision",
+      "scenario": "stale RACI authority context",
+      "operator_visible_surface": "planned Slack stale-revision rejection or CLI error, sanitized log, OperationReceipt and authority receipt readback",
+      "operator_remediation": { "rejection_reason": "RACIが更新され、受信した権限情報が古いため拒否しました。", "retryability": "retry_after_remediation", "next_action": "最新の権限情報を取得してから再試行してください。", "support_route": "更新後も拒否される場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
+      "expected_code": "AUTHORITY_CONTEXT_STALE",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-STALE-RACI-BEFORE-QUEUE", "NEG-STALE-RACI-BEFORE-MCP"],
+      "coverage_status": "not_collected",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after revision readback exists, rotate the RACI revision and submit only the superseded context",
+      "retry_redelivery_expectation": "redelivery of the stale context remains rejected with zero effect"
+    },
+    {
+      "id": "stale-policy",
+      "entry_point": "future request carrying a superseded policy revision",
+      "scenario": "stale policy authority context",
+      "operator_visible_surface": "planned Slack stale-revision rejection or CLI error, sanitized log, OperationReceipt and authority receipt readback",
+      "operator_remediation": { "rejection_reason": "ポリシーが更新され、受信した権限情報が古いため拒否しました。", "retryability": "retry_after_remediation", "next_action": "最新のポリシーを取得してから再試行してください。", "support_route": "更新後も拒否される場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
+      "expected_code": "AUTHORITY_CONTEXT_STALE",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-STALE-POLICY-BEFORE-WORKER"],
+      "coverage_status": "not_collected",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after policy revision readback exists, rotate the policy revision and submit only the superseded context",
+      "retry_redelivery_expectation": "redelivery of the stale context remains rejected with zero effect"
+    },
+    {
+      "id": "wrong-approver",
+      "entry_point": "future approval response from a person other than Brainbase approver_person_id",
+      "scenario": "approval by the wrong person or workspace",
+      "operator_visible_surface": "planned Slack rejection or CLI result, sanitized log, OperationReceipt and authority receipt readback",
+      "operator_remediation": { "rejection_reason": "承認者がBrainbaseで指定された担当者と一致しません。", "retryability": "do_not_retry", "next_action": "指定された承認者へ承認を依頼してください。", "support_route": "承認者設定が不明な場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
+      "expected_code": "APPROVER_MISMATCH",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-WRONG-APPROVER"],
+      "coverage_status": "not_collected",
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id across approval response rejection and receipts",
+      "current_state": "not_collected",
+      "next_action": "after approval routing exists, submit an approved non-approver response without using customer data",
+      "retry_redelivery_expectation": "repeated wrong-approver responses remain rejected with zero effect"
+    },
+    {
+      "id": "queue-redelivery",
+      "entry_point": "future Queue redelivery with the same authority context, idempotency key, and correlation ID",
+      "scenario": "duplicate delivery after a rejected first delivery",
+      "operator_visible_surface": "planned CLI harness result, sanitized Queue log, OperationReceipt and external readback",
+      "operator_remediation": { "rejection_reason": "元の配送で権限を確認できなかったため、再配送も同じ理由で拒否しました。", "retryability": "retry_after_remediation", "next_action": "権限解決を復旧してから新しい要求として再試行してください。", "support_route": "重複配送が続く場合はcorrelation IDを添えて運用担当へ問い合わせてください。" },
+      "expected_code": "AUTHORITY_UNAVAILABLE",
+      "expected_code_status": "defined",
+      "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"],
+      "coverage_status": "not_collected",
+      "first_delivery_outcome": "rejected",
+      "original_rejection_code": "AUTHORITY_UNAVAILABLE",
+      "redelivery_rejection_code": "AUTHORITY_UNAVAILABLE",
+      "original_effect_count": 0,
+      "redelivery_effect_delta": 0,
+      "aggregate_effect_count": 0,
+      "forbidden_display": ["success", "empty", "in_progress"],
+      "business_effect": false,
+      "side_effect_count": 0,
+      "receipt_readback": "same correlation_id and idempotency key link both deliveries and the single authoritative receipt chain",
+      "current_state": "not_collected",
+      "next_action": "after Queue and receipt readback are production-ready, redeliver the same envelope and compare effect counters",
+      "retry_redelivery_expectation": "redelivery preserves the original AUTHORITY_UNAVAILABLE rejection and aggregate effect remains zero",
+      "accepted_first_delivery_plan": "out_of_scope_not_counted_as_negative_case_evidence"
+    },
+    {
+      "id": "key-rotation-old-kid", "entry_point": "future Slack or CLI request signed with the pre-rotation kid after the rotation cutover", "scenario": "old signing kid after key rotation", "operator_visible_surface": "planned Slack rejection and CLI error with Receipt readback", "operator_remediation": { "rejection_reason": "署名鍵が更新され、古い鍵の要求は受け付けられません。", "retryability": "retry_after_remediation", "next_action": "最新の署名鍵で要求を作り直して再試行してください。", "support_route": "鍵更新状況が不明な場合はkidとcorrelation IDを添えて管理者へ問い合わせてください。" }, "kid_before": "future_pre_rotation_kid", "kid_after": "future_post_rotation_kid", "expected_code": null, "expected_code_status": "not_defined", "code_owner": "T0", "success_eligible": false, "coverage_eligible": false, "producer_fixture_ids": [], "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across Slack or CLI rejection, OperationReceipt, authority receipt, and key-state readback", "current_state": "not_collected", "next_action": "T0がcanonical rejection codeとtrust-store rotationを実装した後に収集する", "retry_redelivery_expectation": "old kid remains rejected with zero effect"
+    },
+    {
+      "id": "key-revocation", "entry_point": "future Slack or CLI request signed by a kid after that kid is revoked", "scenario": "revoked signing kid", "operator_visible_surface": "planned Slack rejection and CLI error with Receipt and revocation readback", "operator_remediation": { "rejection_reason": "署名鍵が失効しているため要求を拒否しました。", "retryability": "retry_after_remediation", "next_action": "有効な署名鍵で要求を作り直して再試行してください。", "support_route": "失効理由が不明な場合はkidとcorrelation IDを添えて管理者へ問い合わせてください。" }, "kid_before": "future_active_kid", "kid_after": "future_revoked_kid", "expected_code": null, "expected_code_status": "not_defined", "code_owner": "T0", "success_eligible": false, "coverage_eligible": false, "producer_fixture_ids": [], "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across Slack or CLI rejection, OperationReceipt, authority receipt, and revocation-state readback", "current_state": "not_collected", "next_action": "T0がcanonical rejection codeとtrust-store revocationを実装した後に収集する", "retry_redelivery_expectation": "revoked kid remains rejected with zero effect"
+    },
+    {
+      "id": "legacy-runtime", "entry_point": "future CLI invocation through the legacy runtime adapter", "scenario": "legacy runtime must not synthesize or bypass company authority", "operator_visible_surface": "planned CLI rejection with migration guidance, log, and Receipt readback", "operator_remediation": { "rejection_reason": "旧runtimeでは会社権限を安全に検証できないため業務操作を停止しました。", "retryability": "retry_after_remediation", "next_action": "company_authority_v1対応runtimeへ切り替えて再試行してください。", "support_route": "移行先が不明な場合はcorrelation IDを添えて運用担当へ問い合わせてください。" }, "expected_code": "COMPANY_AUTHORITY_REQUIRED", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-MISSING-COMPANY-AUTHORITY"], "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across CLI rejection, OperationReceipt, authority receipt, and legacy-route readback", "current_state": "not_collected", "next_action": "T0 adapter後にlegacy routeを隔離して実行する", "retry_redelivery_expectation": "legacy fallback remains rejected with zero effect"
+    },
+    {
+      "id": "dual-read-migration", "entry_point": "future Slack or CLI request while legacy and company_authority_v1 reads coexist", "scenario": "dual-read disagreement must fail closed without legacy fallback", "operator_visible_surface": "planned Slack rejection or CLI error with comparison Receipt readback", "operator_remediation": { "rejection_reason": "新旧の権限結果が一致しないため実行を停止しました。", "retryability": "retry_after_remediation", "next_action": "権限移行状態を同期してから再試行してください。", "support_route": "不一致が続く場合はcorrelation IDを添えて移行担当へ問い合わせてください。" }, "expected_code": "AUTHORITY_UNAVAILABLE", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"], "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across Slack or CLI rejection, OperationReceipt, authority receipt, and both readbacks", "current_state": "not_collected", "next_action": "T0 migration adapter後に不一致状態を注入して収集する", "retry_redelivery_expectation": "disagreement remains rejected with zero effect"
+    },
+    {
+      "id": "company-authority-missing", "entry_point": "future CLI request without company_authority_v1", "scenario": "diagnostics are allowed but business operations are rejected", "operator_visible_surface": "planned CLI diagnostic result or business-operation rejection with Receipt readback", "operator_remediation": { "rejection_reason": "会社権限がないため業務操作は実行できません。診断操作だけ利用できます。", "retryability": "diagnostic_only", "next_action": "接続診断を実行し、会社権限を取得してから業務操作を再試行してください。", "support_route": "権限を取得できない場合はcorrelation IDを添えて管理者へ問い合わせてください。" }, "expected_code": "COMPANY_AUTHORITY_REQUIRED", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-MISSING-COMPANY-AUTHORITY"], "allowed_operations": ["health", "protocol_negotiation", "provisioning", "connection_diagnostics", "tenant_isolation_test"], "business_operation": "rejected", "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across CLI result, OperationReceipt, authority receipt, and diagnostic readback", "current_state": "not_collected", "next_action": "T0 adapter後に診断allowlistと業務拒否を別々に収集する", "retry_redelivery_expectation": "business operation remains rejected with zero effect"
+    },
+    {
+      "id": "brainbase-unavailable-no-fallback", "entry_point": "future Slack or CLI request while authoritative Brainbase readback is unavailable", "scenario": "Brainbase unavailable must not use cached legacy or default authority", "operator_visible_surface": "planned Slack temporary-failure response or CLI error with Receipt readback", "operator_remediation": { "rejection_reason": "Brainbaseから会社権限を確認できないため実行を停止しました。", "retryability": "retry_after_remediation", "next_action": "Brainbase接続の復旧後に再試行してください。", "support_route": "復旧後も失敗する場合はcorrelation IDを添えて運用担当へ問い合わせてください。" }, "expected_code": "AUTHORITY_UNAVAILABLE", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"], "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across Slack or CLI rejection, OperationReceipt, authority receipt, and availability readback", "current_state": "not_collected", "next_action": "T0 adapter後にBrainbase outageを注入しno-fallbackを収集する", "retry_redelivery_expectation": "retry before recovery remains rejected with zero effect"
+    }
+  ],
+  "dependencies": {
+    "T0": "not_done",
+    "runtime_trust_store": "not_implemented",
+    "key_rotation": "not_implemented",
+    "key_revocation": "not_implemented",
+    "production_e2e": "not_collected"
+  }
+}

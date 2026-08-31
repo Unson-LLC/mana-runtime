@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CANONICAL_FIXTURE_SET_SHA256,
   CanonicalContractError,
+  assertCanonicalAuthorityRetrieval,
   negotiateCanonicalProtocol,
   validateCanonicalConsumerFlow,
   validateCanonicalCredentialLease,
@@ -16,6 +17,14 @@ import {
   validateCanonicalUsageEvent,
 } from "../multitenancy/canonical-consumer.js";
 import { jcsCanonicalize } from "../multitenancy/jcs.js";
+const {
+  COMPANY_AUTHORITY_CAPABILITY,
+  applyFixtureMutations,
+  validateCanonicalExecutionContext,
+  validateObservedExecutionRequest,
+  verifyDetachedJws,
+// @ts-expect-error The exact producer reference validator is intentionally vendored as an .mjs contract artifact.
+} = await import("../../../../contracts/mana-brainbase-company-authority/v1/reference/wire.mjs");
 
 const contractRoot = new URL("../../../../contracts/mana-brainbase-tenant-context/v1/", import.meta.url);
 const fixtureRoot = new URL("fixtures/", contractRoot);
@@ -156,5 +165,153 @@ describe("mana-runtime canonical consumer", () => {
   it("rejects canonical contract violations with a stable code", () => {
     expect(() => validateCanonicalQuotaDecision({ message_type: "quota_decision", quota_revision: 1 }))
       .toThrow(CanonicalContractError);
+  });
+});
+
+describe("Brainbase-owned company authority A0 fixture consumer", () => {
+  const companyContractRoot = new URL(
+    "../../../../contracts/mana-brainbase-company-authority/v1/",
+    import.meta.url,
+  );
+
+  it("pins the exact producer source lock and artifact digests", async () => {
+    const lock = await readJson<{
+      accepted_producer: {
+        repository: string;
+        ref: string;
+        merged_sha: string;
+        root_path: string;
+        fixture_set_sha256: string;
+        artifact_sha256: Record<string, string>;
+      };
+      consumer_boundary: { production_proof: string; behavior: string; semantic_generation: string };
+    }>("consumer-source-lock.json", companyContractRoot);
+    const manifest = await readJson<{ fixture_files: string[]; fixture_set_sha256: string }>(
+      "fixtures/manifest.json",
+      companyContractRoot,
+    );
+
+    expect(lock.accepted_producer).toMatchObject({
+      repository: "Unson-LLC/brainbase-unson",
+      ref: "develop",
+      merged_sha: "ad908bce7b90678f9ed7f1c570f808bdf1a500ad",
+      root_path: "contracts/mana-brainbase-company-authority/v1",
+      fixture_set_sha256: "1d7af5b850abeb10e07db281c17341636d80a74cb37679b2c2b6ab5ce9b0a6ea",
+    });
+    for (const [path, digest] of Object.entries(lock.accepted_producer.artifact_sha256)) {
+      expect(createHash("sha256").update(await readFile(new URL(path, companyContractRoot))).digest("hex"), path)
+        .toBe(digest);
+    }
+    const hash = createHash("sha256");
+    for (const path of manifest.fixture_files) {
+      hash.update(path);
+      hash.update(Buffer.from([0]));
+      hash.update(await readFile(new URL(path, companyContractRoot)));
+    }
+    expect(hash.digest("hex")).toBe(lock.accepted_producer.fixture_set_sha256);
+    expect(lock.consumer_boundary).toMatchObject({
+      behavior: "verify_and_propagate_only",
+      semantic_generation: "forbidden",
+      production_proof: "not_collected",
+    });
+  });
+
+  it("accepts all signed positive contexts without generating Mana authority semantics", async () => {
+    const contract = await readJson<{ signature: { audience: string } }>("producer.contract.json", companyContractRoot);
+    const fixtures = await readJson<{
+      positive: Array<Record<string, any>>;
+    }>("fixtures/cases.json", companyContractRoot);
+    const key = await readJson<{ public_jwk: JsonWebKey }>("fixtures/test-key.json", companyContractRoot);
+    const decisions = new Set<string>();
+
+    expect(fixtures.positive).toHaveLength(9);
+    for (const fixture of fixtures.positive) {
+      validateObservedExecutionRequest(fixture.request);
+      if (!fixture.context) continue;
+      const accepted = validateCanonicalExecutionContext(fixture.context, {
+        expectedAudience: contract.signature.audience,
+        now: fixture.evaluation_time,
+        request: fixture.request,
+      });
+      verifyDetachedJws(fixture.context, key.public_jwk);
+      expect(accepted).toBe(fixture.context);
+      expect(fixture.context.tenant_context.authorization.capability_ids)
+        .toContain(COMPANY_AUTHORITY_CAPABILITY);
+      expect(fixture.context.authority.capability_id).toBe(fixture.request.requested_action.capability_id);
+      expect(fixture.context.evidence.authority_resolution_receipt_id).toEqual(expect.any(String));
+      expect(fixture.context.tenant_context.idempotency_key).toMatch(/^ik1_/);
+      decisions.add(fixture.context.authority.decision);
+    }
+    expect([...decisions].sort()).toEqual(["approval", "auto", "deny", "human_action"]);
+  });
+
+  it("fails closed for all producer negative fixtures and preserves their no-effect contract", async () => {
+    const contract = await readJson<{ signature: { audience: string } }>("producer.contract.json", companyContractRoot);
+    const fixtures = await readJson<{
+      positive: Array<Record<string, any>>;
+      negative: Array<Record<string, any>>;
+    }>("fixtures/cases.json", companyContractRoot);
+    const key = await readJson<{ public_jwk: JsonWebKey }>("fixtures/test-key.json", companyContractRoot);
+    expect(fixtures.negative).toHaveLength(52);
+    for (const fixture of fixtures.negative) {
+      const base = fixtures.positive.find(({ id }) => id === fixture.base_fixture);
+      expect(base, fixture.id).toBeDefined();
+      const mutated = applyFixtureMutations({ request: base!.request, context: base!.context }, fixture.mutations);
+      let code: string | undefined;
+      try {
+        if (fixture.target === "request") validateObservedExecutionRequest(mutated.request);
+        else if (fixture.target === "context") {
+          validateCanonicalExecutionContext(mutated.context, {
+            expectedAudience: contract.signature.audience,
+            now: fixture.evaluation_time ?? base!.evaluation_time,
+          });
+          verifyDetachedJws(mutated.context, key.public_jwk);
+        } else {
+          validateCanonicalExecutionContext(mutated.context, {
+            expectedAudience: contract.signature.audience,
+            now: fixture.evaluation_time ?? base!.evaluation_time,
+            request: mutated.request,
+            expectedRevisions: fixture.expected_revisions,
+            identityStatus: fixture.identity_status,
+            crossOrg: fixture.cross_org,
+            scopeMismatch: fixture.scope_mismatch,
+            membershipStatus: fixture.membership_status,
+            authorityUnavailable: fixture.authority_unavailable,
+            approvalSubjectId: fixture.approval_subject_id,
+            personalTargetPersonId: fixture.personal_target_person_id,
+            replayConflict: fixture.replay_conflict,
+          });
+        }
+      } catch (error) {
+        code = (error as { code?: string }).code;
+      }
+      expect(code, fixture.id).toBe(fixture.expected.code);
+      expect(fixture.expected.business_effects).toEqual({
+        business_api_called: false,
+        llm_called: false,
+        credential_lease_issued: false,
+        external_side_effect: false,
+      });
+    }
+
+    const retrievalSchema = await readJson<Record<string, any>>(
+      "consumer-conformance/authority-retrieval-state.schema.json",
+      companyContractRoot,
+    );
+    expect(retrievalSchema.properties.cases.items.properties.state.enum).toEqual([
+      "no_data", "unknown", "partial", "not_collected",
+    ]);
+    expect(retrievalSchema.properties.cases.items.properties.expected_code.const).toBe("AUTHORITY_UNAVAILABLE");
+
+    const retrievalFixtures = await readJson<{
+      cases: Array<{ id: string; state: "no_data" | "unknown" | "partial" | "not_collected"; expected_code: string; business_effect: false }>;
+    }>("consumer-conformance/authority-retrieval-state.fixture.json", companyContractRoot);
+    expect(retrievalFixtures.cases).toHaveLength(4);
+    for (const fixture of retrievalFixtures.cases) {
+      expect(() => assertCanonicalAuthorityRetrieval(fixture.state), fixture.id).toThrow(
+        expect.objectContaining({ code: fixture.expected_code }),
+      );
+      expect(fixture.business_effect).toBe(false);
+    }
   });
 });
