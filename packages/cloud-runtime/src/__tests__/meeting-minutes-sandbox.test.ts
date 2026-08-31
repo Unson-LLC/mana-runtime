@@ -139,6 +139,7 @@ describe("generateMeetingMinutesInSandbox", () => {
         timeout: 780_000,
         env: {
           IS_SANDBOX: "1",
+          MANA_JUDGMENT_REQUEST: "Slack議事録を生成し、承認済みの共有先へ保存する",
           MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
         },
       }));
@@ -233,6 +234,90 @@ describe("generateMeetingMinutesInSandbox", () => {
     expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream({
       title: "", overview: "", body: "", tasks: [],
     }), context)).toThrow("meeting_minutes_generation_result_schema_invalid");
+  });
+
+  it("accepts the current Claude CLI result-string fallback when structured_output is null", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const stream = receiptBoundStream(minutes).split("\n").map((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      return event.type === "result"
+        ? JSON.stringify({ ...event, structured_output: null, result: JSON.stringify(minutes) })
+        : line;
+    }).join("\n");
+    expect(parseReceiptBoundGeneratedMeetingMinutesOutput(stream, context)).toMatchObject({
+      title: minutes.title, overview: minutes.overview, body: minutes.body, tasks: minutes.tasks,
+    });
+  });
+
+  it("accepts a JSON string in structured_output", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const stream = receiptBoundStream(minutes).split("\n").map((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      return event.type === "result"
+        ? JSON.stringify({ ...event, structured_output: JSON.stringify(minutes) })
+        : line;
+    }).join("\n");
+    expect(parseReceiptBoundGeneratedMeetingMinutesOutput(stream, context)).toMatchObject({
+      title: minutes.title, overview: minutes.overview, body: minutes.body, tasks: minutes.tasks,
+    });
+  });
+
+  it("falls back to result when structured_output has an invalid object", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const stream = receiptBoundStream(minutes).split("\n").map((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      return event.type === "result"
+        ? JSON.stringify({ ...event, structured_output: {}, result: JSON.stringify(minutes) })
+        : line;
+    }).join("\n");
+    expect(parseReceiptBoundGeneratedMeetingMinutesOutput(stream, context)).toMatchObject({
+      title: minutes.title, overview: minutes.overview, body: minutes.body, tasks: minutes.tasks,
+    });
+  });
+
+  it("accepts an object in result", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const stream = receiptBoundStream(minutes).split("\n").map((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      return event.type === "result"
+        ? JSON.stringify({ ...event, structured_output: null, result: minutes })
+        : line;
+    }).join("\n");
+    expect(parseReceiptBoundGeneratedMeetingMinutesOutput(stream, context)).toMatchObject({
+      title: minutes.title, overview: minutes.overview, body: minutes.body, tasks: minutes.tasks,
+    });
+  });
+
+  it("recovers the schema-valid assistant response when a Stop hook replaces the final result", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const stream = receiptBoundStream(minutes).split("\n").flatMap((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.type !== "result") return [line];
+      return [
+        JSON.stringify({ type: "assistant", session_id: "session-1",
+          message: { content: [{ type: "text", text: JSON.stringify(minutes) }] } }),
+        JSON.stringify({ ...event, structured_output: null,
+          result: "Brainbase監査行の後に元の回答本文を続けてください。" }),
+      ];
+    }).join("\n");
+    expect(parseReceiptBoundGeneratedMeetingMinutesOutput(stream, context)).toMatchObject({
+      title: minutes.title, overview: minutes.overview, body: minutes.body, tasks: minutes.tasks,
+    });
+  });
+
+  it("does not recover an assistant response from another session", () => {
+    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
+    const stream = receiptBoundStream(minutes).split("\n").flatMap((line) => {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.type !== "result") return [line];
+      return [
+        JSON.stringify({ type: "assistant", session_id: "session-2",
+          message: { content: [{ type: "text", text: JSON.stringify(minutes) }] } }),
+        JSON.stringify({ ...event, structured_output: null, result: "監査本文" }),
+      ];
+    }).join("\n");
+    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(stream, context))
+      .toThrow("meeting_minutes_generation_result_schema_invalid");
   });
 
   it.each([

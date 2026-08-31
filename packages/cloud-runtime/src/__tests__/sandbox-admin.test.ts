@@ -121,7 +121,11 @@ describe("handleSandboxAdminRequest", () => {
       expect.stringContaining("--output-format stream-json --verbose --include-hook-events --json-schema"),
       expect.objectContaining({
         timeout: 780_000,
-        env: { IS_SANDBOX: "1", MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_HANDLE },
+        env: {
+          IS_SANDBOX: "1",
+          MANA_JUDGMENT_REQUEST: "Slack議事録を生成し、承認済みの共有先へ保存する",
+          MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_HANDLE,
+        },
       }),
     );
     expect(client.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-prompt.txt", expect.stringContaining("議事録生成プローブ"));
