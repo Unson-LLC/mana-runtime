@@ -11,6 +11,14 @@ const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_JUDGMENT_REQUEST_CHARS = 4_000;
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
+// Meeting-minutes generation is a non-interactive, schema-constrained batch
+// operation. Its audit boundary is the Worker-issued context receipt, so an
+// organization-managed interactive Hook must not rewrite or block its result.
+// Keep the Hook enabled for every other runtime purpose.
+if (process.env.MANA_DISABLE_INTERACTIVE_JUDGMENT_HOOK === "1") {
+  process.exit(0);
+}
+
 async function readStdin() {
   const chunks = [];
   let size = 0;

@@ -23,6 +23,19 @@ function runHook(payload: Record<string, unknown>, env: Record<string, string>) 
 }
 
 describe("Brainbase judgment Hook forwarder", () => {
+  it("does not run the interactive Hook for receipt-bound meeting-minutes batches", async () => {
+    const result = await runHook({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "session-meeting-minutes",
+      prompt: "schema-constrained meeting-minutes prompt",
+    }, {
+      MANA_DISABLE_INTERACTIVE_JUDGMENT_HOOK: "1",
+      BRAINBASE_JUDGMENT_HOOK_URL: "http://127.0.0.1:1/must-not-be-called",
+    });
+
+    expect(result).toEqual({ code: 0, stdout: "", stderr: "" });
+  });
+
   it("routes a Slack reply from the trusted user request instead of model scaffolding", async () => {
     let forwarded: Record<string, unknown> | undefined;
     const server = createServer(async (request, response) => {
