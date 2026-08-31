@@ -43,6 +43,7 @@ describe("Brainbase Graph runtime", () => {
       .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
     const url = fetchImpl.mock.calls[0][0] as URL;
     expect(url.searchParams.get("type")).toBe("person");
+    expect(url.searchParams.get("includeMerged")).toBe("true");
     expect(url.searchParams.get("project")).toBe("mana");
   });
 
@@ -52,6 +53,40 @@ describe("Brainbase Graph runtime", () => {
     ] }));
     await expect(resolveGraphPersonByName("梅田恵伍さん", "mana", { ...options, fetch: fetchImpl }))
       .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
+  });
+
+  it("resolves an active person and its merged alias to the canonical ID", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_umeda", payload: { name: "梅田 遼", aliases: [] } },
+      { id: "per_legacy", payload: { name: "梅田 遼", aliases: [], status: "merged", canonical_entity_id: "per_umeda" } },
+    ] }));
+    await expect(resolveGraphPersonByName("梅田 遼", "mana", { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
+  });
+
+  it("resolves a merged-only person through its canonical entity ID", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_legacy", payload: { name: "梅田 遼", aliases: [], status: "merged", canonical_entity_id: "per_umeda" } },
+    ] }));
+    await expect(resolveGraphPersonByName("梅田 遼", "mana", { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status: "resolved", personId: "per_umeda" });
+  });
+
+  it("returns unknown for a merged person without a canonical entity ID", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_legacy", payload: { name: "梅田 遼", aliases: [], status: "merged" } },
+    ] }));
+    await expect(resolveGraphPersonByName("梅田 遼", "mana", { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status: "unknown" });
+  });
+
+  it("keeps two distinct active people with the same name ambiguous", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_one", payload: { name: "梅田 遼", aliases: [], status: "active" } },
+      { id: "per_two", payload: { name: "梅田 遼", aliases: [], status: "active" } },
+    ] }));
+    await expect(resolveGraphPersonByName("梅田 遼", "mana", { ...options, fetch: fetchImpl }))
+      .resolves.toEqual({ status: "ambiguous" });
   });
 
   it("does not confuse a task destination ID with a Graph person project scope", async () => {
@@ -72,7 +107,18 @@ describe("Brainbase Graph runtime", () => {
       { id: "per_umeda", name: "梅田 遼", aliases: ["Haruka Umeda"] },
     ]);
     const url = fetchImpl.mock.calls[0][0] as URL;
+    expect(url.searchParams.get("includeMerged")).toBe("true");
     expect(url.searchParams.get("project")).toBe("proj_pms");
+  });
+
+  it("deduplicates listed people by canonical entity ID", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ records: [
+      { id: "per_umeda", payload: { name: "梅田 遼", aliases: [] } },
+      { id: "per_legacy", payload: { name: "梅田 遼", aliases: [], status: "merged", canonical_entity_id: "per_umeda" } },
+    ] }));
+    await expect(listGraphPeople("proj_pms", { ...options, fetch: fetchImpl })).resolves.toEqual([
+      { id: "per_umeda", name: "梅田 遼", aliases: [] },
+    ]);
   });
 
   it.each([

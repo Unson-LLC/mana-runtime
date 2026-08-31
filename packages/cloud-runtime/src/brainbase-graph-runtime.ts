@@ -21,10 +21,58 @@ export interface BrainbaseGraphRuntimeOptions {
 
 export interface GraphPersonOption { id: string; name: string; aliases: string[] }
 
+interface GraphPersonRecord {
+  id: string;
+  name: string;
+  aliases: string[];
+  status?: string;
+  entityType?: string;
+  canonicalEntityId?: string;
+}
+
+function parseGraphPersonRecord(item: unknown): GraphPersonRecord | undefined {
+  if (!item || typeof item !== "object") return undefined;
+  const record = item as {
+    id?: unknown;
+    entity_type?: unknown;
+    status?: unknown;
+    canonical_entity_id?: unknown;
+    payload?: {
+      name?: unknown;
+      aliases?: unknown;
+      status?: unknown;
+      canonical_entity_id?: unknown;
+    };
+  };
+  if (typeof record.id !== "string" || typeof record.payload?.name !== "string") return undefined;
+  const aliases = Array.isArray(record.payload.aliases)
+    ? record.payload.aliases.filter((alias): alias is string => typeof alias === "string") : [];
+  const status = typeof record.payload.status === "string" ? record.payload.status
+    : typeof record.status === "string" ? record.status : undefined;
+  const canonicalEntityId = typeof record.payload.canonical_entity_id === "string"
+    ? record.payload.canonical_entity_id.trim() || undefined
+    : typeof record.canonical_entity_id === "string" ? record.canonical_entity_id.trim() || undefined : undefined;
+  return {
+    id: record.id,
+    name: record.payload.name,
+    aliases,
+    ...(status ? { status } : {}),
+    ...(typeof record.entity_type === "string" ? { entityType: record.entity_type } : {}),
+    ...(canonicalEntityId ? { canonicalEntityId } : {}),
+  };
+}
+
+function canonicalGraphPersonId(record: GraphPersonRecord): string | undefined {
+  const isMerged = record.status === "merged" || record.entityType === "person_alias";
+  if (isMerged) return record.canonicalEntityId;
+  return record.id;
+}
+
 export async function listGraphPeople(projectCode: string | undefined, options: BrainbaseGraphRuntimeOptions): Promise<GraphPersonOption[] | undefined> {
   if (!configured(options)) return undefined;
   const url = new URL("/api/info/graph/entities", options.baseUrl);
   url.searchParams.set("type", "person"); url.searchParams.set("limit", "500");
+  url.searchParams.set("includeMerged", "true");
   if (projectCode?.trim()) url.searchParams.set("project", projectCode.trim());
   const response = await graphGet(url, options);
   if (!response?.ok) return undefined;
@@ -32,14 +80,18 @@ export async function listGraphPeople(projectCode: string | undefined, options: 
   const records = body && typeof body === "object" && Array.isArray((body as { records?: unknown }).records)
     ? (body as { records: unknown[] }).records : undefined;
   if (!records || records.length >= 500) return undefined;
-  return records.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const record = item as { id?: unknown; payload?: { name?: unknown; aliases?: unknown } };
-    if (typeof record.id !== "string" || typeof record.payload?.name !== "string") return [];
-    const aliases = Array.isArray(record.payload.aliases)
-      ? record.payload.aliases.filter((alias): alias is string => typeof alias === "string") : [];
-    return [{ id: record.id, name: record.payload.name, aliases }];
-  });
+  const people = new Map<string, { person: GraphPersonOption; merged: boolean }>();
+  for (const item of records) {
+    const record = parseGraphPersonRecord(item);
+    if (!record) continue;
+    const id = canonicalGraphPersonId(record);
+    if (!id) continue;
+    const merged = record.status === "merged" || record.entityType === "person_alias";
+    const person = { id, name: record.name, aliases: record.aliases };
+    const existing = people.get(id);
+    if (!existing || (existing.merged && !merged)) people.set(id, { person, merged });
+  }
+  return [...people.values()].map(({ person }) => person);
 }
 
 function configured(options: BrainbaseGraphRuntimeOptions): options is BrainbaseGraphRuntimeOptions & { baseUrl: string } {
@@ -101,6 +153,7 @@ export async function resolveGraphPersonByName(
   const url = new URL("/api/info/graph/entities", options.baseUrl);
   url.searchParams.set("type", "person");
   url.searchParams.set("limit", "500");
+  url.searchParams.set("includeMerged", "true");
   if (projectCode?.trim()) url.searchParams.set("project", projectCode.trim());
   const response = await graphGet(url, options);
   if (!response?.ok) return { status: "unavailable" };
@@ -111,13 +164,10 @@ export async function resolveGraphPersonByName(
   if (!records || records.length >= 500) return { status: "unavailable" };
   const target = normalizedPersonName(name);
   const matches = records.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const record = item as { id?: unknown; payload?: { name?: unknown; aliases?: unknown } };
-    if (typeof record.id !== "string" || typeof record.payload?.name !== "string") return [];
-    const aliases = Array.isArray(record.payload.aliases)
-      ? record.payload.aliases.filter((alias): alias is string => typeof alias === "string") : [];
-    return [record.payload.name, ...aliases].some((candidate) => normalizedPersonName(candidate) === target)
-      ? [record.id] : [];
+    const record = parseGraphPersonRecord(item);
+    const id = record && canonicalGraphPersonId(record);
+    return record && id && [record.name, ...record.aliases].some((candidate) => normalizedPersonName(candidate) === target)
+      ? [id] : [];
   });
   const unique = [...new Set(matches)];
   if (unique.length === 0) return { status: "unknown" };
