@@ -85,6 +85,7 @@ describe("generateMeetingMinutesInSandbox", () => {
       { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle);
     expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ env: expect.objectContaining({
       MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
+      MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
     }) }));
     expect(sandbox.exec.mock.calls[0]?.[0]).toContain("/opt/mana/tenant-claude-runner.mjs");
     expect(JSON.stringify(sandbox.exec.mock.calls[0]?.[1])).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
@@ -139,7 +140,7 @@ describe("generateMeetingMinutesInSandbox", () => {
         timeout: 780_000,
         env: {
           IS_SANDBOX: "1",
-          MANA_JUDGMENT_REQUEST: "Slack議事録を生成し、承認済みの共有先へ保存する",
+          MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
           MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
         },
       }));

@@ -294,7 +294,7 @@ export async function classifyMeetingMinutesDestinationInSandbox(
         IS_SANDBOX: "1",
         // The Hook must route the authenticated operation intent, not the large
         // schema prompt containing transcript and Brainbase context.
-        MANA_JUDGMENT_REQUEST: "Slack議事録を生成し、承認済みの共有先へ保存する",
+        MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
@@ -464,9 +464,6 @@ function resultMinutes(events: Array<Record<string, unknown>>): {
               used_source_refs: value.includes('"used_source_refs"'),
               decision_candidates: value.includes('"decision_candidates"') } };
         }) : []).slice(-20);
-    const compactResultPreview = typeof event.result === "string"
-      ? event.result.replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim()
-      : undefined;
     console.warn(JSON.stringify({ event: "meeting_minutes_result_shape_invalid",
       event_keys: Object.keys(event).sort(),
       structured_type: Array.isArray(structured) ? "array" : typeof structured,
@@ -476,8 +473,6 @@ function resultMinutes(events: Array<Record<string, unknown>>): {
       result_keys: event.result && typeof event.result === "object" && !Array.isArray(event.result)
         ? Object.keys(event.result as Record<string, unknown>).sort() : [],
       result_length: typeof event.result === "string" ? event.result.length : undefined,
-      result_prefix: compactResultPreview?.slice(0, 600),
-      result_suffix: compactResultPreview?.slice(-600),
       result_format: typeof event.result === "string"
         ? event.result.trimStart().startsWith("{") ? "object_text"
           : event.result.trimStart().startsWith("[") ? "array_text" : "plain_text"
@@ -823,7 +818,7 @@ export async function generateMeetingMinutesInSandbox(
         IS_SANDBOX: "1",
         // Route the authenticated operation intent, not the large generation
         // prompt containing transcript and Brainbase context.
-        MANA_JUDGMENT_REQUEST: "Slack議事録を生成し、承認済みの共有先へ保存する",
+        MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
