@@ -62,15 +62,31 @@ function validatedOutput(envelope, payload) {
   // instructions. Passing either back into a schema-constrained runtime turn can
   // replace structured_output with audit prose. PostToolUse is the one lifecycle
   // event whose non-empty audit message is part of the validated contract.
+  const receiptMarker = `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
   const existingSystemMessage = payload.hook_event_name === "PostToolUse"
     && typeof documentedOutput.systemMessage === "string"
     ? documentedOutput.systemMessage.trim()
     : "";
+  if (payload.hook_event_name === "UserPromptSubmit") {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        // The upstream context is written for an interactive assistant turn and
+        // can replace the schema-constrained meeting-minutes response. The
+        // signed route receipt is the only context the runtime needs here.
+        additionalContext: receiptMarker,
+      },
+      systemMessage: receiptMarker,
+    };
+  }
+  if (payload.hook_event_name === "Stop") {
+    return { systemMessage: receiptMarker };
+  }
   return {
     ...documentedOutput,
     // Claude Code documents systemMessage as Hook output. Keep the machine
     // receipt inside that supported field so --include-hook-events preserves it.
-    systemMessage: [existingSystemMessage, `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`]
+    systemMessage: [existingSystemMessage, receiptMarker]
       .filter(Boolean).join("\n"),
   };
 }
