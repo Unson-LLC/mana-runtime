@@ -76,7 +76,7 @@ describe("Cloudflare Claude runtime config", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
     expect(runtimeMeetingMinutesMcpConfigPath()).toBe("/tmp/mana-meeting-minutes-mcp.json");
     expect(buildRuntimeClaudeCommand("meeting-minutes", config)).toBe(
-      "node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions --settings /opt/mana/meeting-minutes-claude-settings.json --mcp-config /tmp/mana-meeting-minutes-mcp.json --strict-mcp-config < /tmp/meeting-minutes-prompt.txt",
+      "node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions --setting-sources '' --settings /opt/mana/meeting-minutes-claude-settings.json --mcp-config /tmp/mana-meeting-minutes-mcp.json --strict-mcp-config < /tmp/meeting-minutes-prompt.txt",
     );
   });
 
@@ -102,6 +102,7 @@ describe("Cloudflare Claude runtime config", () => {
       includeJudgmentHookEvents: true,
     });
     expect(command).toContain("--include-hook-events");
+    expect(command).toContain("--setting-sources ''");
     expect(command).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
     expect(command).toContain("--mcp-config /tmp/mana-meeting-minutes-mcp.json");
     expect(command).toContain("--strict-mcp-config");

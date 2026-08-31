@@ -130,7 +130,7 @@ export function buildRuntimeClaudeCommand(
     : options.includeJudgmentHookEvents ? " --output-format stream-json --verbose --include-hook-events" : "";
   const claude = "node /opt/mana/tenant-claude-runner.mjs --";
   const base = purpose === "meeting-minutes"
-    ? `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg}`
+    ? `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --setting-sources '' --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg}`
       + ` --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config < ${promptPath}`
     : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}`
       + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${MEETING_MINUTES_SETTINGS_PATH}` : ""}`
