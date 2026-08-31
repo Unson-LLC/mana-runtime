@@ -124,6 +124,7 @@ describe("handleSandboxAdminRequest", () => {
         env: {
           IS_SANDBOX: "1",
           MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
+          BRAINBASE_JUDGMENT_PROJECT_CODE: "mana",
           MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_HANDLE,
         },
       }),

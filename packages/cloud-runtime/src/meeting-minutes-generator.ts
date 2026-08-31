@@ -295,6 +295,7 @@ export async function classifyMeetingMinutesDestinationInSandbox(
         // The Hook must route the authenticated operation intent, not the large
         // schema prompt containing transcript and Brainbase context.
         MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
+        BRAINBASE_JUDGMENT_PROJECT_CODE: "mana",
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
@@ -819,6 +820,7 @@ export async function generateMeetingMinutesInSandbox(
         // Route the authenticated operation intent, not the large generation
         // prompt containing transcript and Brainbase context.
         MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
+        BRAINBASE_JUDGMENT_PROJECT_CODE: "mana",
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
       },
     });
