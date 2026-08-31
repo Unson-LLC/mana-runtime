@@ -727,6 +727,7 @@ export async function generateMeetingMinutesInSandbox(
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
+        MANA_DISABLE_INTERACTIVE_JUDGMENT_HOOK: "1",
         // Route the authenticated operation intent, not the large generation
         // prompt containing transcript and Brainbase context.
         MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,

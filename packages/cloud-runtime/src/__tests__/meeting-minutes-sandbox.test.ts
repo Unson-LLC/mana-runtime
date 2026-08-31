@@ -139,6 +139,7 @@ describe("generateMeetingMinutesInSandbox", () => {
         timeout: 780_000,
         env: {
           IS_SANDBOX: "1",
+          MANA_DISABLE_INTERACTIVE_JUDGMENT_HOOK: "1",
           MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
         },
       }));
