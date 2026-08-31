@@ -85,8 +85,6 @@ describe("generateMeetingMinutesInSandbox", () => {
       { model: "opus", effort: "xhigh" }, sandbox, tenantBoundaryHandle);
     expect(sandbox.exec).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ env: expect.objectContaining({
       MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
-      MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
-      BRAINBASE_JUDGMENT_PROJECT_CODE: "mana",
     }) }));
     expect(sandbox.exec.mock.calls[0]?.[0]).toContain("/opt/mana/tenant-claude-runner.mjs");
     expect(JSON.stringify(sandbox.exec.mock.calls[0]?.[1])).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
@@ -141,8 +139,6 @@ describe("generateMeetingMinutesInSandbox", () => {
         timeout: 780_000,
         env: {
           IS_SANDBOX: "1",
-          MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
-          BRAINBASE_JUDGMENT_PROJECT_CODE: "mana",
           MANA_TENANT_BOUNDARY_HANDLE: tenantBoundaryHandle,
         },
       }));
@@ -338,34 +334,13 @@ describe("generateMeetingMinutesInSandbox", () => {
     )).toThrow(`meeting_minutes_generation_result_schema_invalid_${field}`);
   });
 
-  it("fails closed when the Judgment lifecycle is missing or failed", () => {
+  it("uses the server-issued context Receipt without interactive Judgment hooks", () => {
     const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
-    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
+    expect(parseReceiptBoundGeneratedMeetingMinutesOutput(
       receiptBoundStream(minutes, { prompt: false, stop: false }), context,
-    )).toThrow("meeting_minutes_judgment_lifecycle_incomplete");
-    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
-      receiptBoundStream(minutes, { prompt: judgmentHook("UserPromptSubmit", { success: false }) }), context,
-    )).toThrow("meeting_minutes_judgment_hook_failed");
-  });
-
-  it("binds Judgment receipts to one session and turn before the final result", () => {
-    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
-    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
-      stop: judgmentHook("Stop", { session: "session-2" }),
-    }), context)).toThrow("meeting_minutes_judgment_identity_mismatch");
-    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
-      stop: judgmentHook("Stop", { turn: "turn-2" }),
-    }), context)).toThrow("meeting_minutes_judgment_identity_mismatch");
-  });
-
-  it("requires the routed host receipt and preserves event order", () => {
-    const minutes = { title: "定例", overview: "概要", body: "本文", tasks: [], ...auditOutput };
-    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(receiptBoundStream(minutes, {
-      prompt: judgmentHook("UserPromptSubmit", { route: false }),
-    }), context)).toThrow("meeting_minutes_judgment_route_receipt_missing");
-    expect(() => parseReceiptBoundGeneratedMeetingMinutesOutput(
-      receiptBoundStream(minutes, { stopAfterResult: true }), context,
-    )).toThrow("meeting_minutes_judgment_event_order_invalid");
+    ).brainbase_context_attestation).toEqual(expect.objectContaining({
+      source: "worker_context_receipt", receipt_id: context.receipt_id, checksum: context.checksum,
+    }));
   });
 
   it("fails closed unless the exact Brainbase call, Receipt, and PostToolUse audit are all present", () => {

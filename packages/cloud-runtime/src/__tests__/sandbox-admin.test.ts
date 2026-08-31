@@ -123,8 +123,6 @@ describe("handleSandboxAdminRequest", () => {
         timeout: 780_000,
         env: {
           IS_SANDBOX: "1",
-          MANA_JUDGMENT_REQUEST: "mana-runtime本番でSlack議事録を生成し、承認済みの共有先へ保存する",
-          BRAINBASE_JUDGMENT_PROJECT_CODE: "mana",
           MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_HANDLE,
         },
       }),
@@ -148,7 +146,7 @@ describe("handleSandboxAdminRequest", () => {
     expect(client.destroy).toHaveBeenCalledOnce();
   });
 
-  it("rejects a model result when the production Judgment hooks are absent", async () => {
+  it("accepts a model result bound to the server-issued context Receipt without interactive hooks", async () => {
     const client = sandbox({ success: true, stdout: [
       JSON.stringify({ type: "system", subtype: "init", session_id: "probe-session" }),
       JSON.stringify({ type: "result", session_id: "probe-session", structured_output: {
@@ -162,10 +160,8 @@ describe("handleSandboxAdminRequest", () => {
       { createSandbox: () => client, tenantBoundaryHandle: TENANT_BOUNDARY_HANDLE },
     );
 
-    expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toEqual(expect.objectContaining({
-      ok: false, code: "meeting_minutes_judgment_lifecycle_incomplete",
-    }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({ ok: true }));
   });
 
   it("fails closed before generation when the production context mode is invalid", async () => {
