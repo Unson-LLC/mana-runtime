@@ -107,8 +107,10 @@ describe("Brainbase judgment Hook forwarder", () => {
       const output = JSON.parse(result.stdout);
       if (hook_event_name === "PostToolUse") {
         expect(output.systemMessage).toContain("recorded");
-      } else {
+      } else if (hook_event_name === "UserPromptSubmit") {
         expect(output).toHaveProperty("hookSpecificOutput");
+      } else {
+        expect(output).not.toHaveProperty("hookSpecificOutput");
       }
       expect(output).not.toHaveProperty("manaJudgmentReceipt");
       const receiptLine = output.systemMessage.split("\n")
@@ -167,6 +169,12 @@ describe("Brainbase judgment Hook forwarder", () => {
       const output = JSON.parse(result.stdout);
       expect(output.systemMessage).not.toContain("監査行の後に");
       expect(output.systemMessage).toContain(receiptPrefix);
+      if (hookEventName === "UserPromptSubmit") {
+        expect(output.hookSpecificOutput.additionalContext).not.toContain("Judgment route resolved");
+        expect(output.hookSpecificOutput.additionalContext).toContain(receiptPrefix);
+      } else {
+        expect(output).not.toHaveProperty("hookSpecificOutput");
+      }
     },
   );
 
