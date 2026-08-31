@@ -482,6 +482,7 @@ describe("production multitenancy integration", () => {
           path: "/workspace-connections:validate-revision",
           error_name: "TypeError",
           provider_operation: "slack.files.info.get",
+          scope_reason: "provider_forwarder_mismatch",
         },
       ); },
       ownership: new IdempotencyMemoryStore(),
@@ -499,6 +500,7 @@ describe("production multitenancy integration", () => {
       path: "/workspace-connections:validate-revision",
       error_name: "TypeError",
       provider_operation: "slack.files.info.get",
+      scope_reason: "provider_forwarder_mismatch",
     }));
   });
 
