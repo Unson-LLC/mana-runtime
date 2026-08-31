@@ -54,6 +54,7 @@ describe("Unson Business autonomy deployment contract", () => {
       channelName: "mana-autonomy",
       projectCodes: ["brainbase"],
       taskWriteEnabled: true,
+      taskBoardEnabled: true,
       capabilities: { mcp: ["brainbase"], gatewayTools: [] },
     }]);
     expect(current.vars.MANA_AUTONOMY_PLACEMENT_ID).toBe("mana-autonomy");

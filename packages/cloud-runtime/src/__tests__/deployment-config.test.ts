@@ -223,6 +223,13 @@ describe("会社別Cloudflare deployment", () => {
       { placementId: "mana-accounting", channelId: "C0BKS6RL99T", channelName: "9960-back-office", projectCodes: ["back-office"], taskWriteEnabled: true, taskBoardEnabled: true,
         taskInventoryAllowedUserIds: ["U088D1HBY6L", "U0BKP8D3KPD"] },
       { placementId: "biz-meeting-router", channelId: "C0BKTFQ9V38", projectCodes: ["unson"], taskWriteEnabled: true },
+      { placementId: "minutes-baao-growin", channelId: "C0BKTFU9YS2", projectCodes: ["baao"], taskBoardEnabled: true },
+      { placementId: "minutes-zeims", channelId: "C0BKE4CM25V", projectCodes: ["zeims"], taskBoardEnabled: true },
+      { placementId: "minutes-ncom-catalyst", channelId: "C0BKP89E79R", projectCodes: ["ncom"], taskBoardEnabled: true },
+      { placementId: "minutes-legal-affairs", channelId: "C0BKZ6CF3J8", projectCodes: ["unson"], taskBoardEnabled: true },
+      { placementId: "minutes-cursorvers", channelId: "C0BHVFJGFK3", projectCodes: ["unson"], taskBoardEnabled: true },
+      { placementId: "minutes-kartz", channelId: "C0BQA5BGTEH", projectCodes: ["kartz"], taskBoardEnabled: true },
+      { placementId: "minutes-unson-board", channelId: "C0BKXCVSDCH", projectCodes: ["unson"], taskBoardEnabled: true },
       {
         placementId: "mana-dev-biz",
         channelId: "C0BMNSP6C80",
@@ -257,6 +264,7 @@ describe("会社別Cloudflare deployment", () => {
         channelName: "mana-autonomy",
         projectCodes: ["brainbase"],
         taskWriteEnabled: true,
+        taskBoardEnabled: true,
         capabilities: { mcp: ["brainbase"], gatewayTools: [] },
       },
     ]);
@@ -268,6 +276,24 @@ describe("会社別Cloudflare deployment", () => {
       "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
       "DEVELOPMENT_CALLBACK_TOKEN",
     ])).toEqual({ ready: true, missing_bindings: [] });
+  });
+
+  it("keeps every same-tenant task board target inside an enabled runtime placement", () => {
+    const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
+      organizationId: string; workspaceId: string; channelId: string; projectCodes: string[]; enabled: boolean;
+    }>;
+    const placements = JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON) as Array<{
+      channelId: string; projectCodes: string[]; taskBoardEnabled?: boolean;
+    }>;
+    const uncovered = targets.filter((target) => target.enabled
+      && target.organizationId === unson.vars.TENANT_ID
+      && target.workspaceId === unson.vars.SLACK_EXPECTED_TEAM_ID
+      && !placements.some((placement) => placement.taskBoardEnabled
+        && placement.channelId === target.channelId
+        && placement.projectCodes.length === target.projectCodes.length
+        && placement.projectCodes.every((project) => target.projectCodes.includes(project))));
+
+    expect(uncovered).toEqual([]);
   });
 
   it("Claude Codeを検証済みのexact versionへ固定する", () => {
