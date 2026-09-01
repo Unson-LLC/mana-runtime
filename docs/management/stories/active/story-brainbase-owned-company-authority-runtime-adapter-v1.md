@@ -37,7 +37,7 @@ A0は、Brainbase producerのexact source lock、`ObservedExecutionRequestV1`、
 - [ ] AC-005: authority取得が`no_data / unknown / partial / not_collected / unavailable`、またはresponseが不正な場合、`AUTHORITY_UNAVAILABLE`またはproducer由来の安定codeで停止し、business callbackとlegacy authorization fallbackを各0回にする。
 - [ ] AC-006: 受理した`CanonicalExecutionContextV1`をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへ変更せず伝播し、各境界で再検証する。既存`TenantContextEnvelope`検証は置換せず内側のtenant safetyとして維持する。
 - [ ] AC-007: `auto / approval / human_action / deny`を変更しない。`deny`は全business effect前に拒否し、`approval`と`human_action`を`auto`として実行しない。
-- [ ] AC-008: `company_authority_v1`へopt-inしたoperationは、Brainbase unavailable、schema rejection、dual-read不一致、stale context時に旧`authorization.data_scopes`へfallbackしない。
+- [ ] AC-008: 明示的なruntime routing selectorでCompany Authorityへopt-inしたoperationは、Brainbase unavailable、schema rejection、dual-read不一致、stale context時に旧`authorization.data_scopes`へfallbackしない。`company_authority_v1`はnested TenantContextのprotocol markerであり、operation selectorとして流用しない。production selectorはT0-AUTH-003で未実装のため、現時点でproduction opt-in済みoperationは0件とする。
 - [ ] AC-009: 現行v1はSlack providerだけを受理する。service、Codex、Claude CodeをSlackへ偽装せず、provider固有契約ができるまで`not_implemented`で拒否する。
 - [ ] AC-010: 最初のRED testは、authority endpoint取得不能時のWorker ingressで`AUTHORITY_UNAVAILABLE`、business callback 0、legacy fallback 0を観測する。live endpointやsecretを必要としない。
 - [ ] AC-011: duplicate／redeliveryでは、model、Brainbase write、external side effect、Slack deliveryを各1回以下にし、OperationReceipt、UsageEvent、authority receipt、readbackを同一correlation IDへ結ぶ。

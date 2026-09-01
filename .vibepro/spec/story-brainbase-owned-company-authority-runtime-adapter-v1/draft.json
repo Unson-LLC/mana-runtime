@@ -6,8 +6,9 @@
     "stage": "ai_synthesis"
   },
   "implementation_state": {
-    "status": "planned",
-    "runtime_adapter": "not_implemented",
+    "status": "in_progress",
+    "adapter_foundation": "implemented",
+    "runtime_surface_binding": "not_implemented",
     "endpoint_binding": "not_defined",
     "production_trust_store": "not_implemented",
     "runtime_evidence": "not_collected",
@@ -17,6 +18,12 @@
     "a0_original_head": "167116c8b4aa92a9d2a50b70c8222f0336ffd792",
     "t0_base": "6d57193969eac4ca685a66f1f9e37434bcf71923",
     "reconciliation": "three A0 commits applied patch-equivalently onto the T0 base; git range-diff reports all three equivalent"
+  },
+  "routing_contract": {
+    "requested_operation": "ObservedExecutionRequestV1.requested_action.capability_id and CanonicalExecutionContextV1.authority.capability_id identify the business operation and must match under the producer contract",
+    "protocol_marker": "TenantContextEnvelope.authorization.capability_ids contains company_authority_v1 only as a protocol capability marker, not as the requested business operation",
+    "production_opt_in_selector": "not_implemented",
+    "pre_binding_behavior": "no production operation is treated as opted in until an explicit routing selector and its pre-fix failing test are implemented; once opted in, authority failure rejects the operation and never falls back to legacy authorization"
   },
   "multi_tenancy": {
     "schema_version": "0.1.0",
@@ -136,8 +143,8 @@
         ],
         "code_refs": [
           {
-            "file": "packages/cloud-runtime/src/multitenancy/http-clients.ts",
-            "anchor": "desiredEffectForCapability"
+            "file": "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
+            "anchor": "createObservedExecutionRequest"
           },
           {
             "file": "contracts/mana-brainbase-company-authority/v1/reference/wire.mjs",
@@ -168,8 +175,8 @@
         ],
         "code_refs": [
           {
-            "file": "packages/cloud-runtime/src/multitenancy/http-clients.ts",
-            "anchor": "createTenantRuntimeHttpClients"
+            "file": "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
+            "anchor": "CompanyAuthorityClient"
           }
         ]
       },
@@ -234,12 +241,12 @@
         ],
         "code_refs": [
           {
-            "file": "packages/cloud-runtime/src/multitenancy/canonical-consumer.ts",
-            "anchor": "assertCanonicalAuthorityRetrieval"
+            "file": "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
+            "anchor": "executeCompanyAuthorityWorkerIngress"
           },
           {
-            "file": "packages/cloud-runtime/src/multitenancy/http-clients.ts",
-            "anchor": "assertCanonicalCompanyAuthority"
+            "file": "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
+            "anchor": "executeCompanyAuthorityRuntimeBoundary"
           }
         ]
       },
@@ -265,6 +272,10 @@
           }
         ],
         "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
+            "anchor": "executeCompanyAuthorityRuntimeBoundary"
+          },
           {
             "file": "packages/cloud-runtime/src/multitenancy/runtime-boundaries.ts",
             "anchor": "TenantRuntimeBoundaryVerifier"
@@ -326,8 +337,14 @@
         ],
         "code_refs": [
           {
-            "file": "packages/cloud-runtime/src/multitenancy/runtime-boundaries.ts",
-            "anchor": "resolveSlackWorkerIngress"
+            "file": "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
+            "anchor": "executeCompanyAuthorityWorkerIngress"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+            "case": "fails closed before business or legacy effects when authority is unavailable"
           }
         ]
       },

@@ -33,6 +33,8 @@ A0の`acceptCompanyAuthorityResponse`はfixture conformance testからだけ呼�
 
 禁止fieldは型とruntime validationの両方で拒否する。未知capabilityは`read`に寄せない。
 
+`requested_action.capability_id`と受理contextの`authority.capability_id`は業務operationを表す。nested TenantContextの`authorization.capability_ids`に含まれる`company_authority_v1`はprotocol markerであり、業務operationやrouting selectorではない。productionのopt-inは明示的なruntime routing selectorと、そのselectorが旧経路へ流れないことを示すpre-fix failing testを追加して初めて成立する。selectorはT0-AUTH-003で未実装のため、現時点のproduction opt-in operationは0件である。
+
 ### 4.2 CompanyAuthorityClient port
 
 ```ts
@@ -105,8 +107,9 @@ decisionを上位へ昇格したり、approver／responsible personをMANA側で
 3. Slack mapperと明示desired-effect mappingを追加する。
 4. outer contextを7 surfaceへ伝播し、各境界のnegative testを追加する。
 5. Brainbase live endpoint契約後にtransport bindingを追加する。
-6. dual-readは比較だけに使い、company-authority opt-in operationの認可結果をlegacyへ委ねない。
-7. tenant read-only canary、negative E2E、write、external side effectの順に進める。
+6. 明示的なruntime routing selectorとpre-fix failing routing testを追加する。nested TenantContextの`company_authority_v1` markerだけでopt-in判定しない。
+7. dual-readは比較だけに使い、company-authority opt-in operationの認可結果をlegacyへ委ねない。
+8. tenant read-only canary、negative E2E、write、external side effectの順に進める。
 
 rollbackはcompany-authority opt-in operationを拒否する。旧権限へ戻して業務を続行しない。
 
@@ -115,7 +118,7 @@ rollbackはcompany-authority opt-in operationを拒否する。旧権限へ戻�
 最初のRED:
 
 ```text
-given: Worker ingressがcompany_authority_v1必須operationを受ける
+given: Worker ingressが明示的なruntime routing selectorでCompany Authority必須と判定したoperationを受ける
 and: CompanyAuthorityClientがunavailableを返す
 when: operationを実行する
 then: AUTHORITY_UNAVAILABLE
