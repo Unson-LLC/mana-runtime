@@ -703,7 +703,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("classifyMeetingMinutesDestinationInSandbox(");
     expect(worker).toContain("download: (fileId) => meetingClients.slack.downloadTextFile(fileId)");
     expect(worker).toContain("classifyDestination: (transcript, destinations) => meetingClients.classify(transcript, destinations)");
-    expect(worker).not.toContain("resolveMeetingMinutesDestinationSlackToken");
+    expect(worker).toContain("resolveCrossWorkspaceMeetingMinutesSlackToken");
+    expect(worker).toContain("destinationToken");
     expect(worker).toContain("credentialFetch");
     expect(worker).toContain("destinations.find((candidate) => candidate.slackChannelId === channelId)");
     expect(worker).toContain("isTenantTaskBoardRepairBody(message.body)");

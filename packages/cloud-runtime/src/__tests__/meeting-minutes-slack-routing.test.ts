@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveMeetingMinutesDestinationSlackToken } from "../meeting-minutes-slack-routing.js";
+import {
+  resolveCrossWorkspaceMeetingMinutesSlackToken,
+  resolveMeetingMinutesDestinationSlackToken,
+} from "../meeting-minutes-slack-routing.js";
 
 const tokens = {
   SLACK_BOT_TOKEN: "unson-ops-token",
@@ -23,5 +26,34 @@ describe("resolveMeetingMinutesDestinationSlackToken", () => {
   it("fails closed when a workspace-specific token is missing", () => {
     expect(resolveMeetingMinutesDestinationSlackToken({ SLACK_BOT_TOKEN: "unson-ops-token" }, "unson")).toBe("");
     expect(resolveMeetingMinutesDestinationSlackToken({ SLACK_BOT_TOKEN: "unson-ops-token" }, "tech-knight")).toBe("");
+  });
+});
+
+describe("resolveCrossWorkspaceMeetingMinutesSlackToken", () => {
+  it("uses the explicitly configured destination token across workspaces", () => {
+    expect(resolveCrossWorkspaceMeetingMinutesSlackToken(
+      tokens,
+      "tech-knight",
+      "T-UNSON",
+      { workspace_id: "T-TECHKNIGHT" },
+    )).toBe("tech-knight-token");
+  });
+
+  it("keeps same-workspace delivery on the credential broker", () => {
+    expect(resolveCrossWorkspaceMeetingMinutesSlackToken(
+      tokens,
+      "tech-knight",
+      "T-TECHKNIGHT",
+      { workspace_id: "T-TECHKNIGHT" },
+    )).toBeUndefined();
+  });
+
+  it("fails over to the credential broker when no destination token is configured", () => {
+    expect(resolveCrossWorkspaceMeetingMinutesSlackToken(
+      {},
+      "tech-knight",
+      "T-UNSON",
+      { workspace_id: "T-TECHKNIGHT" },
+    )).toBeUndefined();
   });
 });
