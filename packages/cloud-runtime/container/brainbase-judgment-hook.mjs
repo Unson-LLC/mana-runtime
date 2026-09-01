@@ -10,6 +10,8 @@ const turnDir = process.env.BRAINBASE_JUDGMENT_TURN_DIR || "/tmp/mana-judgment-t
 const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_JUDGMENT_REQUEST_CHARS = 4_000;
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const JUDGMENT_AUDIT_PREFIXES = ["🧠 判断参照:", "⚠️ 判断参照:"];
+const BRAINBASE_AUDIT_PREFIXES = ["📚 Brainbase検索:", "📚 Brainbase未参照:"];
 
 // Meeting-minutes generation is a non-interactive, schema-constrained batch
 // operation. Its audit boundary is the Worker-issued context receipt, so an
@@ -89,10 +91,37 @@ function validatedOutput(envelope, payload) {
     };
   }
   if (payload.hook_event_name === "Stop") {
-    const stopSystemMessage = existingSystemMessage || [
-      "🧠 判断参照: Host監査結果なし → 本文返信を継続（監査未完了） ⚠️",
-      "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）",
-    ].join("\n");
+    if (documentedOutput.decision === "block"
+        && typeof documentedOutput.reason === "string"
+        && documentedOutput.reason.trim()) {
+      return {
+        decision: "block",
+        reason: documentedOutput.reason.trim(),
+        systemMessage: receiptMarker,
+      };
+    }
+    let stopSystemMessage = existingSystemMessage;
+    if (documentedOutput.schema_version === "brainbase-judgment-final-v1"
+        && documentedOutput.completion_status === "complete") {
+      // A completed Host receipt binds answer_digest to last_assistant_message
+      // and proves the exact audit prefix. Recover those already-verified lines
+      // for the runtime stream instead of replacing them with an incomplete
+      // fallback that would make every successful repair fail closed.
+      const verifiedAnswer = typeof payload.last_assistant_message === "string"
+        ? payload.last_assistant_message : "";
+      const verifiedAuditLines = verifiedAnswer.split(/\r?\n/).filter((line) =>
+        JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
+        || BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      const hasJudgmentAudit = verifiedAuditLines.some((line) =>
+        JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      const hasBrainbaseAudit = verifiedAuditLines.some((line) =>
+        BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      if (!hasJudgmentAudit || !hasBrainbaseAudit) {
+        throw new Error("judgment_hook_final_audit_missing");
+      }
+      stopSystemMessage = verifiedAuditLines.join("\n");
+    }
+    if (!stopSystemMessage) throw new Error("judgment_hook_stop_output_invalid");
     return {
       // Stop carries the canonical final audit block. Keep it so Claude can
       // place the audit lines at the beginning of the final response, while the
