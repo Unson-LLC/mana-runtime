@@ -979,6 +979,23 @@ describe("TechKnight Slack reply pipeline", () => {
     errorSpy.mockRestore();
   });
 
+  it("records the safe stage and summary for an unexpected delivery failure", async () => {
+    const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { options } = harness({
+      postReply: vi.fn().mockRejectedValue(new Error("delivery adapter unavailable")),
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toThrow("delivery adapter unavailable");
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failed",
+      reasonCode: "reply_judgment_attempt_failed",
+      failureStage: "slack_delivery",
+      errorSummary: "delivery adapter unavailable",
+    }));
+    errorSpy.mockRestore();
+  });
+
   it("keeps replying when Slack rejects the processing status", async () => {
     const fs = new MemoryFs();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);

@@ -687,8 +687,10 @@ export async function processReplyEvent(
       hydratedEvent,
       options.now?.() ?? new Date().toISOString(),
     );
+    let failureStage = "reply_generation";
     try {
       const judgment = await generateClaudeReply(hydratedEvent, { ...options, requesterIdentity });
+      failureStage = "judgment_persistence";
       await auditReplyJudgmentAttempt(
         fs,
         event.eventId,
@@ -696,12 +698,14 @@ export async function processReplyEvent(
         judgment,
         options.now?.() ?? new Date().toISOString(),
       );
+      failureStage = "slack_delivery";
       const responseTs = options.postReply
         ? await options.postReply(hydratedEvent, judgment.reply)
         : await postSlackReply(hydratedEvent, judgment.reply, options);
       emitTurnLog("log", "mana_slack_reply_posted", event, {
         ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
       }, { outcome: "success", responseTs });
+      failureStage = "completion_persistence";
       const completedAt = options.now?.() ?? new Date().toISOString();
       await completeReplyJudgmentAttempt(fs, event.eventId, attemptId, responseTs, completedAt);
       await persistReplyCompletion(fs, { eventId: event.eventId, responseTs, completedAt });
@@ -716,7 +720,11 @@ export async function processReplyEvent(
       }, {
         outcome: "error",
         reasonCode: failureCode,
+        failureStage,
         ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+        ...(failureCode === "reply_judgment_attempt_failed" && error instanceof Error
+          ? { errorSummary: safeExecutionErrorSummary(error.message) }
+          : {}),
       });
       await failReplyJudgmentAttempt(
         fs,
