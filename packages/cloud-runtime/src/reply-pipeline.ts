@@ -37,6 +37,7 @@ import {
   freshTenantContainerId,
 } from "./multitenancy/container-lifecycle.js";
 import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
+import { TenantBoundaryError } from "./multitenancy/errors.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -707,10 +708,16 @@ export async function processReplyEvent(
       await markWorkspaceEngaged(fs, completedAt);
       return { outcome: "replied", responseTs };
     } catch (error) {
-      const failureCode = error instanceof ReplyPipelineError ? error.code : "reply_judgment_attempt_failed";
+      const failureCode = error instanceof ReplyPipelineError || error instanceof TenantBoundaryError
+        ? error.code
+        : "reply_judgment_attempt_failed";
       emitTurnLog("error", "mana_reply_failed", event, {
         ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
-      }, { outcome: "error", reasonCode: failureCode });
+      }, {
+        outcome: "error",
+        reasonCode: failureCode,
+        ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+      });
       await failReplyJudgmentAttempt(
         fs,
         event.eventId,

@@ -7,6 +7,7 @@ import {
   withSlackThreadStatus,
   type ReplyPipelineOptions,
 } from "../reply-pipeline.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 import type { SlackQueueEvent } from "../types.js";
 import { resolveClaudeRuntimeConfig } from "../claude-runtime-config.js";
 
@@ -953,6 +954,27 @@ describe("TechKnight Slack reply pipeline", () => {
       event: "mana_reply_failed",
       outcome: "error",
       reasonCode: "slack_post_failed",
+    }));
+    errorSpy.mockRestore();
+  });
+
+  it("preserves tenant-boundary delivery failures in the turn diagnostic", async () => {
+    const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { options } = harness({
+      postReply: vi.fn().mockRejectedValue(
+        new TenantBoundaryError("slack_delivery", "REPLY_OWNERSHIP_CONFLICT"),
+      ),
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toEqual(
+      expect.objectContaining({ code: "REPLY_OWNERSHIP_CONFLICT" }),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failed",
+      outcome: "error",
+      reasonCode: "REPLY_OWNERSHIP_CONFLICT",
+      boundary: "slack_delivery",
     }));
     errorSpy.mockRestore();
   });
