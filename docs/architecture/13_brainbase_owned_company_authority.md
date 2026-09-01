@@ -259,6 +259,29 @@ MANAはPersonal KG本文を組織Graphへ転送しない。組織共有はBrainb
 6. tenant単位でwrite有効化
 7.旧runtime actor／authorization constructionを削除
 
+### runtime adapter transition contract
+
+A0は移行契約だけを固定し、runtime adapter自体は実装しない。T0でSlack ingressから公開contractへ変換するときは次を守る。
+
+| 旧Slack request | `ObservedExecutionRequestV1` | 扱い |
+|---|---|---|
+| `slack.requester_id` | `provider_identity.authenticated_subject_id` | 認証済みsubjectとして移す |
+| 固定値`slack` | `provider_identity.provider` | 現行v1の唯一のprovider |
+| `workspace_connection.app_id` | `provider_identity.app_id` | nestedへ移す |
+| `workspace_connection.workspace_id` | `provider_identity.workspace_id` | nestedへ移す |
+| `slack.enterprise_id` | `provider_identity.enterprise_id` | 存在する場合だけ移す |
+| `required_authorization.capability_id` | `requested_action.capability_id` | capabilityだけを観測値として移す |
+| `project:${required_authorization.project_id}` | `requested_action.resource_ref` | resourceの観測値として移す |
+| `required_authorization.project_id` | `requested_action.project_hint` | authorityではなくhintとして移す |
+| `slack.event_id/channel_id/thread_ts` | `delivery.*` | transport情報として移す |
+| `correlation_id` | `correlation_id` | 同一値を保つ |
+
+`tenant_id`、tenant／connection revision、`connection_id`、top-level `workspace_id`／`app_id`、`operation_id`、`requested_action.project_ids`は公開bodyへ送らない。routingとstalenessの内部入力に限定する。`desired_effect`はcall siteから明示するか閉じたcapability mappingで決め、未知capabilityを`read`へdefaultせず拒否する。
+
+`provider=service`は現行v1では`not_implemented`であり、Slack requestへ変換しない。会社権限resolution endpointはproducer contractに未定義のため、endpoint bindingもT0 ownerの`not_defined`とする。
+
+切替はA0 fixture契約、T0 adapter、dual-read診断、tenant単位read-only、negative E2E、writeの順で行う。dual-readのlegacy結果は会社権限の成功証拠に使わない。v1 opt-in後にschema rejection、Brainbase unavailable、結果不一致が起きても旧authorizationへfallbackしない。rollbackは旧権限で業務を継続することではなく、v1 opt-inを止めてbusiness operationを拒否することとする。
+
 ## 11. Verification matrix
 
 | Case | 期待結果 |

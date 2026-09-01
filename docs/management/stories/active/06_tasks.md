@@ -3,18 +3,20 @@
 - Program: `brainbase-program-master-roadmap-v1`
 - Story: `story-brainbase-owned-company-authority-consumer`
 - Architecture: `docs/architecture/13_brainbase_owned_company_authority.md`
-- Accepted Spec: `.vibepro/spec/story-brainbase-owned-company-authority-consumer/spec.json`
+- Contract-ready Spec draft: `.vibepro/spec/story-brainbase-owned-company-authority-consumer/draft.json`
+- Final Spec validation: `rejected`（exit 2、`success_claim=false`）
+  - Evidence: `.vibepro/pr/story-brainbase-owned-company-authority-consumer/spec-final-negative-evidence/manifest.json`
 - Owner branch: `codex/a0/company-authority-consumer-reconcile`
 - Status ceiling: `contract_ready`（`done=false`）
 
 | Task | 目的 | 変更範囲 | 完了条件 | 状態 |
 |---|---|---|---|---|
-| A0-TASK-001 | Brainbase-owned company authorityをManaが独自生成せず検証・伝播するconsumer fixture契約と証拠を固定する | A0 Story、Architecture、accepted Spec、source-lock/vendor fixture、consumer helper/conformance test、VibePro証拠 | producer 10 artifact hash一致、positive 9 / negative 52、current HEAD/baseのunit・evidence・typecheck、production/runtime 4 caseは`not_collected`のまま、独立review準備 | implementing |
+| A0-TASK-001 | Brainbase-owned company authorityをManaが独自生成せず検証・伝播するconsumer fixture契約と証拠を固定する | A0 Story、Architecture、contract-ready Spec draft、source-lock/vendor fixture、consumer helper/conformance test、VibePro証拠 | producer 10 artifact hash一致、positive 9 / negative 52、current HEAD/baseのunit・evidence・typecheck、production/runtime証拠は`not_collected`のまま、独立review準備 | implementing |
 
 ## 実施順序
 
 1. StoryとArchitectureでBrainbase owner / Mana verify-and-propagate-only境界を確認する。
-2. accepted SpecとTaskをsource-lock、fixture、consumer helper、testへ結ぶ。
+2. contract-ready Spec draftとTaskをsource-lock、fixture、consumer helper、testへ結ぶ。
 3. current HEAD/baseで決定論的検証とVibePro証拠を再生成する。
 4. owner自身でGateをpassにせず、current exact HEADを独立reviewへ渡す。
 

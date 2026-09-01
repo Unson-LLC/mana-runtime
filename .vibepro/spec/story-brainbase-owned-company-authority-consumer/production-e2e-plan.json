@@ -38,6 +38,19 @@
     "production_proof": "not_collected"
   },
   "runtime_execution_evidence": {
+    "AC-005": {
+      "status": "not_collected",
+      "owner": "T0",
+      "a0_fixture_boundary": "acceptance preserves auto, approval, and human_action decisions and rejects deny or nested-signature tampering before effects",
+      "required_assertions": [
+        "auto executes only the signed allowed effects",
+        "approval creates the Brainbase-specified approval path without protected effect",
+        "human_action remains pending until the Brainbase-specified person completes it",
+        "deny executes no model, credential, Graph, Task, or external effect"
+      ],
+      "exit_condition": "collect decision-specific runtime state and zero-effect evidence after the T0 adapter exists",
+      "fixture_acceptance_is_runtime_execution_proof": false
+    },
     "AC-004": {
       "status": "not_collected",
       "owner": "T0",
@@ -75,6 +88,54 @@
       "fixture_mock_is_production_proof": false
     }
   },
+  "runtime_adapter_transition": {
+    "owner": "T0",
+    "implementation_status": "not_implemented",
+    "evidence_status": "not_collected",
+    "implementation_claim": "none",
+    "endpoint_binding": "not_defined",
+    "eligible_providers": ["slack"],
+    "unsupported_providers": { "service": "not_implemented" },
+    "mapping": {
+      "slack.requester_id": "provider_identity.authenticated_subject_id",
+      "provider_constant_slack": "provider_identity.provider",
+      "workspace_connection.app_id": "provider_identity.app_id",
+      "workspace_connection.workspace_id": "provider_identity.workspace_id",
+      "slack.enterprise_id": "provider_identity.enterprise_id",
+      "required_authorization.capability_id": "requested_action.capability_id",
+      "project_resource_ref": "requested_action.resource_ref",
+      "required_authorization.project_id": "requested_action.project_hint",
+      "slack.event_id": "delivery.event_id",
+      "slack.channel_id": "delivery.channel_id",
+      "slack.thread_ts": "delivery.thread_ts",
+      "correlation_id": "correlation_id"
+    },
+    "forbidden_public_body_fields": [
+      "tenant_id",
+      "expected_tenant_revision",
+      "connection_id",
+      "expected_connection_revision",
+      "workspace_id",
+      "app_id",
+      "slack",
+      "operation_id",
+      "requested_action.project_ids"
+    ],
+    "desired_effect_policy": "explicit call-site value or closed capability mapping; unknown capability is rejected and never defaults to read",
+    "cutover_order": ["A0 fixture contract", "T0 Slack adapter", "dual-read diagnostics", "tenant read-only", "negative E2E", "tenant write"],
+    "legacy_fallback_after_v1_opt_in": "forbidden",
+    "dual_read_disagreement": "AUTHORITY_UNAVAILABLE with business effect 0",
+    "rollback": "disable v1 opt-in and reject the business operation; do not resume legacy authorization",
+    "future_tests": [
+      "legacy Slack body is rejected by the public validator before adapter implementation",
+      "adapter output has only public-contract fields and passes the public validator",
+      "legacy fields and requested_action.project_ids are absent after mapping",
+      "unknown capability is rejected instead of defaulting to read",
+      "provider service is not sent as Slack",
+      "schema rejection, unavailability, or dual-read disagreement never retries legacy authorization"
+    ],
+    "exit_condition": "implement the Slack adapter at the defined endpoint, run the compatibility and no-fallback tests, and collect exact-head runtime evidence"
+  },
   "cases": [
     {
       "id": "tenant-boundary",
@@ -84,7 +145,7 @@
       "operator_remediation": { "rejection_reason": "別組織の権限では実行できません。", "retryability": "do_not_retry", "next_action": "対象組織とプロジェクトを確認し、正しいSlackワークスペースからやり直してください。", "support_route": "解決しない場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
       "expected_code": "AUTHORITY_CROSS_ORG",
       "expected_code_status": "defined",
-      "producer_fixture_ids": ["NEG-CROSS-ORG-TENANT-A-PERSON-SATO", "NEG-CROSS-ORG-TENANT-B-PERSON-UMEDA"],
+      "producer_fixture_ids": ["NEG-CROSS-ORG-TENANT-A-PERSON-SATO", "NEG-CROSS-ORG-TENANT-A-PERSON-UMEDA", "NEG-CROSS-ORG-TENANT-B-PERSON-SATO", "NEG-CROSS-ORG-TENANT-B-PERSON-UMEDA"],
       "coverage_status": "not_collected",
       "forbidden_display": ["success", "empty", "in_progress"],
       "business_effect": false,
@@ -116,11 +177,11 @@
       "id": "unknown-person",
       "entry_point": "future provider-authenticated request whose subject has no canonical person",
       "scenario": "unknown authority subject",
-      "operator_visible_surface": "planned Slack AUTHORITY_UNAVAILABLE response or CLI error, sanitized log, authority receipt readback",
+      "operator_visible_surface": "planned Slack PERSON_UNKNOWN response or CLI error, sanitized log, authority receipt readback",
       "operator_remediation": { "rejection_reason": "利用者の会社権限を確認できないため実行を停止しました。", "retryability": "retry_after_remediation", "next_action": "Brainbaseの人物登録を確認してから再試行してください。", "support_route": "登録済みでも解決しない場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
-      "expected_code": "AUTHORITY_UNAVAILABLE",
+      "expected_code": "PERSON_UNKNOWN",
       "expected_code_status": "defined",
-      "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"],
+      "producer_fixture_ids": ["NEG-UNKNOWN-PERSON"],
       "coverage_status": "not_collected",
       "forbidden_display": ["success", "empty", "in_progress"],
       "business_effect": false,
@@ -134,11 +195,11 @@
       "id": "ambiguous-person",
       "entry_point": "future provider-authenticated request resolving to multiple candidate persons",
       "scenario": "ambiguous authority subject",
-      "operator_visible_surface": "planned Slack AUTHORITY_UNAVAILABLE response or CLI error, sanitized log, authority receipt readback",
+      "operator_visible_surface": "planned Slack PERSON_AMBIGUOUS response or CLI error, sanitized log, authority receipt readback",
       "operator_remediation": { "rejection_reason": "利用者候補が複数あり会社権限を確定できません。", "retryability": "retry_after_remediation", "next_action": "Brainbaseで人物対応を一意にしてから再試行してください。", "support_route": "候補を判断できない場合はcorrelation IDを添えて管理者へ問い合わせてください。" },
-      "expected_code": "AUTHORITY_UNAVAILABLE",
+      "expected_code": "PERSON_AMBIGUOUS",
       "expected_code_status": "defined",
-      "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"],
+      "producer_fixture_ids": ["NEG-AMBIGUOUS-PERSON"],
       "coverage_status": "not_collected",
       "forbidden_display": ["success", "empty", "in_progress"],
       "business_effect": false,
@@ -240,7 +301,7 @@
       "id": "dual-read-migration", "entry_point": "future Slack or CLI request while legacy and company_authority_v1 reads coexist", "scenario": "dual-read disagreement must fail closed without legacy fallback", "operator_visible_surface": "planned Slack rejection or CLI error with comparison Receipt readback", "operator_remediation": { "rejection_reason": "新旧の権限結果が一致しないため実行を停止しました。", "retryability": "retry_after_remediation", "next_action": "権限移行状態を同期してから再試行してください。", "support_route": "不一致が続く場合はcorrelation IDを添えて移行担当へ問い合わせてください。" }, "expected_code": "AUTHORITY_UNAVAILABLE", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"], "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across Slack or CLI rejection, OperationReceipt, authority receipt, and both readbacks", "current_state": "not_collected", "next_action": "T0 migration adapter後に不一致状態を注入して収集する", "retry_redelivery_expectation": "disagreement remains rejected with zero effect"
     },
     {
-      "id": "company-authority-missing", "entry_point": "future CLI request without company_authority_v1", "scenario": "diagnostics are allowed but business operations are rejected", "operator_visible_surface": "planned CLI diagnostic result or business-operation rejection with Receipt readback", "operator_remediation": { "rejection_reason": "会社権限がないため業務操作は実行できません。診断操作だけ利用できます。", "retryability": "diagnostic_only", "next_action": "接続診断を実行し、会社権限を取得してから業務操作を再試行してください。", "support_route": "権限を取得できない場合はcorrelation IDを添えて管理者へ問い合わせてください。" }, "expected_code": "COMPANY_AUTHORITY_REQUIRED", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-MISSING-COMPANY-AUTHORITY"], "allowed_operations": ["health", "protocol_negotiation", "provisioning", "connection_diagnostics", "tenant_isolation_test"], "business_operation": "rejected", "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across CLI result, OperationReceipt, authority receipt, and diagnostic readback", "current_state": "not_collected", "next_action": "T0 adapter後に診断allowlistと業務拒否を別々に収集する", "retry_redelivery_expectation": "business operation remains rejected with zero effect"
+      "id": "company-authority-missing", "entry_point": "future CLI request without company_authority_v1", "scenario": "diagnostics are allowed but business operations are rejected", "operator_visible_surface": "planned CLI diagnostic result or business-operation rejection with Receipt readback", "operator_remediation": { "rejection_reason": "会社権限がないため業務操作は実行できません。診断操作だけ利用できます。", "retryability": "diagnostic_only", "next_action": "接続診断を実行し、会社権限を取得してから業務操作を再試行してください。", "support_route": "権限を取得できない場合はcorrelation IDを添えて管理者へ問い合わせてください。" }, "expected_code": "COMPANY_AUTHORITY_REQUIRED", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-MISSING-COMPANY-AUTHORITY"], "allowed_operations": ["health", "protocol_negotiation", "provisioning", "connection_diagnostic", "tenant_isolation_test"], "business_operation": "rejected", "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across CLI result, OperationReceipt, authority receipt, and diagnostic readback", "current_state": "not_collected", "next_action": "T0 adapter後に診断allowlistと業務拒否を別々に収集する", "retry_redelivery_expectation": "business operation remains rejected with zero effect"
     },
     {
       "id": "brainbase-unavailable-no-fallback", "entry_point": "future Slack or CLI request while authoritative Brainbase readback is unavailable", "scenario": "Brainbase unavailable must not use cached legacy or default authority", "operator_visible_surface": "planned Slack temporary-failure response or CLI error with Receipt readback", "operator_remediation": { "rejection_reason": "Brainbaseから会社権限を確認できないため実行を停止しました。", "retryability": "retry_after_remediation", "next_action": "Brainbase接続の復旧後に再試行してください。", "support_route": "復旧後も失敗する場合はcorrelation IDを添えて運用担当へ問い合わせてください。" }, "expected_code": "AUTHORITY_UNAVAILABLE", "expected_code_status": "defined", "producer_fixture_ids": ["NEG-AUTHORITY-UNAVAILABLE"], "implementation_status": "not_implemented", "coverage_status": "not_collected", "forbidden_display": ["success", "empty", "in_progress"], "business_effect": false, "side_effect_count": 0, "receipt_readback": "same correlation_id across Slack or CLI rejection, OperationReceipt, authority receipt, and availability readback", "current_state": "not_collected", "next_action": "T0 adapter後にBrainbase outageを注入しno-fallbackを収集する", "retry_redelivery_expectation": "retry before recovery remains rejected with zero effect"

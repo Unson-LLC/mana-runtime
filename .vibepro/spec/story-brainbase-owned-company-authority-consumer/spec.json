@@ -95,10 +95,24 @@
     },
     {
       "id": "INV-001", "type": "invariant",
-      "statement": "Manaは会社権限を生成・昇格せず、company_authority_v1 protocol marker、署名、期限、audience、tenant、project、actor、source、idempotency、receiptを検証してそのまま伝播する",
-      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-005" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Runtime rule" }], "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "case": "accepts all signed positive contexts without generating Mana authority semantics" }] },
-      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "must_cover": "accepts all signed positive contexts" }] },
+      "statement": "A0 fixture consumerは外側とnested TenantContextの署名をconsumer trustで検証し、受理したauto／approval／human_action decisionとcontextを変更せず返す。denyまたはnested署名改竄はbusiness effect前に拒否する",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-005" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "authority decisionの動作" }], "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "case": "accepts positive decisions unchanged and rejects deny or nested-signature tampering without effects" }] },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "must_cover": "accepts positive decisions unchanged" }] },
       "confidence": 1, "first_seen_at": "2026-08-22T00:00:00.000Z", "last_revised_at": "2026-08-22T00:00:00.000Z"
+    },
+    {
+      "id": "BND-006", "type": "contract",
+      "statement": "AC-005のauto／approval／human_action／denyを各runtime surfaceで実行し、protected effectを制御する証拠はT0 runtime adapter後までnot_collectedとする。A0のfixture acceptanceをruntime decision execution証拠へ昇格させない",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-005" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "authority decisionの動作" }], "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-005 runtime decision execution remains not_collected" }] },
+      "verifiable_by": {},
+      "confidence": 1, "first_seen_at": "2026-09-02T00:00:00.000Z", "last_revised_at": "2026-09-02T00:00:00.000Z"
+    },
+    {
+      "id": "BND-005", "type": "contract",
+      "statement": "旧Slack requestからObservedExecutionRequestV1へのmapping、service除外、endpoint未定義、切替順、v1 opt-in後のlegacy fallback禁止をA0の計画契約として固定する。adapter実装と互換性実行証拠はT0 ownerのnot_implemented／not_collectedである",
+      "origin": { "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-001" }, { "kind": "acceptance_criteria", "ac_id": "AC-002" }, { "kind": "acceptance_criteria", "ac_id": "AC-007" }], "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "runtime adapter transition contract" }], "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/a0-evidence-conformance.test.mjs", "case": "production E2E plan is bound to the locked producer and remains not_collected" }] },
+      "verifiable_by": {},
+      "confidence": 1, "first_seen_at": "2026-09-02T00:00:00.000Z", "last_revised_at": "2026-09-02T00:00:00.000Z"
     },
     {
       "id": "BND-004", "type": "contract",

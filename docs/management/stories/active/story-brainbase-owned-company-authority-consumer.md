@@ -11,7 +11,7 @@ architecture_docs:
   - docs/architecture/10_company_brain.md
   - docs/architecture/04_auth_permission.md
 spec_docs:
-  - .vibepro/spec/story-brainbase-owned-company-authority-consumer/spec.json
+  - .vibepro/spec/story-brainbase-owned-company-authority-consumer/draft.json
 related_tasks:
   - docs/management/milestones/M0-brainbase-owned-company-authority.md
 ---
@@ -62,6 +62,10 @@ A0 company-authority contractはcredential lease固有fixture／negative caseを
 AC-010のduplicate delivery、各effect 1回、Receipt／correlation／idempotency identity同一性と、AC-011のOperationReceipt／UsageEvent／external readback／authority receiptの同一correlation結合は、T0 runtime adapter未実装のため未収集である。A0のfixture/mockはkey形式とreceipt参照を検証するだけで、この実行証拠やproduction proofへ昇格させない。両ACのexit conditionは`production-e2e-plan.json`に固定する。
 
 AC-012のproduction E2Eは未収集である。将来の実行では、`.vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json`を正本test planとして使い、locked producer fixtureに存在するcanonical拒否code、利用者に見える拒否、side effect 0、同一correlation IDのReceipt/readback、未確認状態を収集する。再配送negative caseはrejected-first-deliveryだけを対象にし、original／redelivery／aggregate effectをすべて0に固定する。accepted-first-deliveryはこの8 negative caseの成功証拠に数えない。計画に記載した画面、Slack応答、CLI、log、Receiptは予定面であり、A0で実装済みとは扱わない。
+
+旧runtime requestから`ObservedExecutionRequestV1`へのmapping、cutover、fallback禁止はA0の計画契約として固定する。adapter実装、endpoint binding、dual-read、互換性実行証拠はT0 ownerの`not_implemented / not_defined / not_collected`であり、A0 fixture conformanceをruntime互換性証拠へ昇格させない。現行v1で未対応の`provider=service`をSlackへ偽装しない。
+
+AC-005についてA0が証明するのは、fixture consumerが署名済みcontextを受理するときに`auto / approval / human_action`を変更せず、`deny`とnested署名改竄をbusiness effect前に拒否する境界までである。各decisionをWorker／Queue／Container等で実行するruntime証拠はT0まで`not_collected`とする。
 
 ## Release gate
 

@@ -16,11 +16,12 @@ const readJson = async (url) => JSON.parse(await readFile(url, "utf8"));
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 test("production E2E plan is bound to the locked producer and remains not_collected", async () => {
-  const [plan, lock, producer, fixtures, spec] = await Promise.all([
+  const [plan, lock, producer, fixtures, requestSchema, spec] = await Promise.all([
     readJson(new URL("production-e2e-plan.json", specRoot)),
     readJson(new URL("consumer-source-lock.json", contractRoot)),
     readJson(new URL("producer.contract.json", contractRoot)),
     readJson(new URL("fixtures/cases.json", contractRoot)),
+    readJson(new URL("schema/observed-execution-request.schema.json", contractRoot)),
     readJson(new URL("spec.json", specRoot)),
   ]);
 
@@ -45,6 +46,39 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   const canonicalCodes = new Set(producer.canonical_error_codes);
   const fixturesById = new Map(fixtures.negative.map((fixture) => [fixture.id, fixture]));
   assert.equal(plan.cases.length, 14);
+
+  const expectedPersonFixtureBindings = {
+    "unknown-person": { fixtureId: "NEG-UNKNOWN-PERSON", expectedCode: "PERSON_UNKNOWN" },
+    "ambiguous-person": { fixtureId: "NEG-AMBIGUOUS-PERSON", expectedCode: "PERSON_AMBIGUOUS" },
+  };
+  for (const [caseId, { fixtureId, expectedCode }] of Object.entries(expectedPersonFixtureBindings)) {
+    const plannedCase = plan.cases.find(({ id }) => id === caseId);
+    assert.ok(plannedCase, caseId);
+    assert.deepEqual(plannedCase.producer_fixture_ids, [fixtureId], caseId);
+    assert.equal(plannedCase.expected_code, expectedCode, caseId);
+    assert.ok(canonicalCodes.has(expectedCode), `${caseId}: ${expectedCode}`);
+    const fixture = fixturesById.get(fixtureId);
+    assert.ok(fixture, `${caseId}: ${fixtureId}`);
+    assert.equal(fixture.category, "unknown_person", `${caseId}: ${fixtureId}`);
+    assert.equal(fixture.expected.code, expectedCode, `${caseId}: ${fixtureId}`);
+  }
+
+  const crossOrg = plan.cases.find(({ id }) => id === "tenant-boundary");
+  const expectedCrossOrgFixtureIds = [
+    "NEG-CROSS-ORG-TENANT-A-PERSON-SATO",
+    "NEG-CROSS-ORG-TENANT-A-PERSON-UMEDA",
+    "NEG-CROSS-ORG-TENANT-B-PERSON-SATO",
+    "NEG-CROSS-ORG-TENANT-B-PERSON-UMEDA",
+  ];
+  assert.deepEqual([...crossOrg.producer_fixture_ids].sort(), [...expectedCrossOrgFixtureIds].sort());
+  assert.equal(new Set(crossOrg.producer_fixture_ids).size, expectedCrossOrgFixtureIds.length);
+  for (const fixtureId of expectedCrossOrgFixtureIds) {
+    const fixture = fixturesById.get(fixtureId);
+    assert.ok(fixture, `tenant-boundary: ${fixtureId}`);
+    assert.equal(fixture.category, "cross_org", `tenant-boundary: ${fixtureId}`);
+    assert.equal(fixture.expected.code, "AUTHORITY_CROSS_ORG", `tenant-boundary: ${fixtureId}`);
+  }
+
   for (const plannedCase of plan.cases) {
     assert.equal(plannedCase.current_state, "not_collected", plannedCase.id);
     assert.equal(plannedCase.coverage_status, "not_collected", plannedCase.id);
@@ -99,7 +133,9 @@ test("production E2E plan is bound to the locked producer and remains not_collec
     assert.ok(keyCase.kid_after);
   }
   const missingAuthority = plan.cases.find(({ id }) => id === "company-authority-missing");
-  assert.deepEqual(missingAuthority.allowed_operations, ["health", "protocol_negotiation", "provisioning", "connection_diagnostics", "tenant_isolation_test"]);
+  const diagnosticAllowlist = ["health", "protocol_negotiation", "provisioning", "connection_diagnostic", "tenant_isolation_test"];
+  assert.deepEqual(producer.fixture_coverage.diagnostic_allowlist, diagnosticAllowlist);
+  assert.deepEqual(missingAuthority.allowed_operations, producer.fixture_coverage.diagnostic_allowlist);
   assert.equal(missingAuthority.business_operation, "rejected");
 
   const queue = plan.cases.find(({ id }) => id === "queue-redelivery");
@@ -112,6 +148,19 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   assert.equal(queue.accepted_first_delivery_plan, "out_of_scope_not_counted_as_negative_case_evidence");
 
   assert.deepEqual(plan.runtime_execution_evidence, {
+    "AC-005": {
+      status: "not_collected",
+      owner: "T0",
+      a0_fixture_boundary: "acceptance preserves auto, approval, and human_action decisions and rejects deny or nested-signature tampering before effects",
+      required_assertions: [
+        "auto executes only the signed allowed effects",
+        "approval creates the Brainbase-specified approval path without protected effect",
+        "human_action remains pending until the Brainbase-specified person completes it",
+        "deny executes no model, credential, Graph, Task, or external effect",
+      ],
+      exit_condition: "collect decision-specific runtime state and zero-effect evidence after the T0 adapter exists",
+      fixture_acceptance_is_runtime_execution_proof: false,
+    },
     "AC-004": {
       status: "not_collected",
       owner: "T0",
@@ -149,6 +198,36 @@ test("production E2E plan is bound to the locked producer and remains not_collec
       fixture_mock_is_production_proof: false,
     },
   });
+
+  const transition = plan.runtime_adapter_transition;
+  assert.equal(transition.owner, "T0");
+  assert.equal(transition.implementation_status, "not_implemented");
+  assert.equal(transition.evidence_status, "not_collected");
+  assert.equal(transition.implementation_claim, "none");
+  assert.equal(transition.endpoint_binding, "not_defined");
+  assert.deepEqual(transition.eligible_providers, requestSchema["x-supported-providers"]);
+  assert.deepEqual(transition.unsupported_providers, { service: "not_implemented" });
+  assert.deepEqual(
+    [...new Set(Object.values(transition.mapping).map((path) => path.split(".")[0]))].sort(),
+    Object.keys(requestSchema.properties).sort(),
+  );
+  assert.deepEqual(transition.forbidden_public_body_fields, [
+    "tenant_id",
+    "expected_tenant_revision",
+    "connection_id",
+    "expected_connection_revision",
+    "workspace_id",
+    "app_id",
+    "slack",
+    "operation_id",
+    "requested_action.project_ids",
+  ]);
+  assert.match(transition.desired_effect_policy, /unknown capability is rejected/);
+  assert.equal(transition.legacy_fallback_after_v1_opt_in, "forbidden");
+  assert.match(transition.dual_read_disagreement, /AUTHORITY_UNAVAILABLE/);
+  assert.match(transition.rollback, /reject the business operation/);
+  assert.ok(transition.future_tests.length >= 6);
+
   const clauseById = new Map(spec.clauses.map((clause) => [clause.id, clause]));
   assert.deepEqual(
     clauseById.get("INV-001").origin.story_refs.map(({ ac_id }) => ac_id),
@@ -156,6 +235,11 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   );
   assert.equal(clauseById.get("C-002").origin.story_refs[0].ac_id, "AC-003");
   assert.equal(clauseById.get("BND-004").origin.story_refs[0].ac_id, "AC-004");
+  assert.equal(clauseById.get("BND-006").origin.story_refs[0].ac_id, "AC-005");
+  assert.deepEqual(
+    clauseById.get("BND-005").origin.story_refs.map(({ ac_id }) => ac_id),
+    ["AC-001", "AC-002", "AC-007"],
+  );
   assert.equal(clauseById.get("BND-002").origin.story_refs[0].ac_id, "AC-010");
   assert.equal(clauseById.get("BND-003").origin.story_refs[0].ac_id, "AC-011");
 });

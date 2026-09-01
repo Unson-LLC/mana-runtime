@@ -19,7 +19,9 @@ import {
 import { jcsCanonicalize } from "../multitenancy/jcs.js";
 const {
   COMPANY_AUTHORITY_CAPABILITY,
+  acceptCompanyAuthorityResponse,
   applyFixtureMutations,
+  createDetachedJws,
   validateCanonicalExecutionContext,
   validateObservedExecutionRequest,
   verifyDetachedJws,
@@ -243,6 +245,98 @@ describe("Brainbase-owned company authority A0 fixture consumer", () => {
       decisions.add(fixture.context.authority.decision);
     }
     expect([...decisions].sort()).toEqual(["approval", "auto", "deny", "human_action"]);
+  });
+
+  it("accepts positive decisions unchanged and rejects deny or nested-signature tampering without effects", async () => {
+    const contract = await readJson<{ signature: { audience: string } }>("producer.contract.json", companyContractRoot);
+    const fixtures = await readJson<{
+      positive: Array<Record<string, any>>;
+    }>("fixtures/cases.json", companyContractRoot);
+    const key = await readJson<{
+      key_id: string;
+      private_jwk: JsonWebKey;
+      public_jwk: JsonWebKey;
+    }>("fixtures/test-key.json", companyContractRoot);
+    const positiveByDecision = new Map(
+      fixtures.positive
+        .filter(({ context }) => context?.authority?.decision !== undefined && context.authority.decision !== "deny")
+        .map((fixture) => [fixture.context.authority.decision, fixture] as const),
+    );
+    const acceptedDecisions = ["auto", "approval", "human_action"] as const;
+    const businessEffect = vi.fn();
+    const acceptAndApply = (response: any, options: any, effect: () => void) => {
+      const accepted = acceptCompanyAuthorityResponse(response, options);
+      if (accepted.context !== null) effect();
+      return accepted;
+    };
+
+    expect([...positiveByDecision.keys()].sort()).toEqual([...acceptedDecisions].sort());
+    for (const decision of acceptedDecisions) {
+      const fixture = positiveByDecision.get(decision);
+      expect(fixture, decision).toBeDefined();
+      const response = {
+        schema_version: "1.0",
+        contract_id: "mana-brainbase-company-authority/v1",
+        correlation_id: fixture!.request.correlation_id,
+        context: fixture!.context,
+        error: null,
+      };
+      const accepted = acceptAndApply(response, {
+        expectedAudience: contract.signature.audience,
+        now: fixture!.evaluation_time,
+        publicJwk: key.public_jwk,
+        tenantContextPublicJwk: key.public_jwk,
+        tenantContextKeyId: key.key_id,
+        request: fixture!.request,
+      }, businessEffect);
+
+      expect(accepted.context).toBe(fixture!.context);
+      expect(accepted.context.authority.decision).toBe(decision);
+    }
+    expect(businessEffect).toHaveBeenCalledTimes(acceptedDecisions.length);
+
+    const denyFixture = fixtures.positive.find(({ context }) => context?.authority?.decision === "deny");
+    expect(denyFixture).toBeDefined();
+    const denyBusinessEffect = vi.fn();
+    const denyResponse = {
+      schema_version: "1.0",
+      contract_id: "mana-brainbase-company-authority/v1",
+      correlation_id: denyFixture!.request.correlation_id,
+      context: denyFixture!.context,
+      error: null,
+    };
+    await expect(Promise.resolve().then(() => acceptAndApply(denyResponse, {
+      expectedAudience: contract.signature.audience,
+      now: denyFixture!.evaluation_time,
+      publicJwk: key.public_jwk,
+      tenantContextPublicJwk: key.public_jwk,
+      tenantContextKeyId: key.key_id,
+      request: denyFixture!.request,
+    }, denyBusinessEffect))).rejects.toEqual(expect.objectContaining({ code: "COMPANY_AUTHORITY_DENIED" }));
+    expect(denyBusinessEffect).toHaveBeenCalledTimes(0);
+
+    const baseFixture = positiveByDecision.get("auto")!;
+    const tamperedContext = structuredClone(baseFixture.context);
+    tamperedContext.tenant_context.authorization.data_scopes = ["tampered"];
+    tamperedContext.integrity.value = createDetachedJws(tamperedContext, key.private_jwk, key.key_id);
+    const tamperedResponse = {
+      schema_version: "1.0",
+      contract_id: "mana-brainbase-company-authority/v1",
+      correlation_id: baseFixture.request.correlation_id,
+      context: tamperedContext,
+      error: null,
+    };
+    const tamperedBusinessEffect = vi.fn();
+    await expect(Promise.resolve().then(() => acceptAndApply(tamperedResponse, {
+      expectedAudience: contract.signature.audience,
+      now: baseFixture.evaluation_time,
+      publicJwk: key.public_jwk,
+      tenantContextPublicJwk: key.public_jwk,
+      tenantContextKeyId: key.key_id,
+      request: baseFixture.request,
+    }, tamperedBusinessEffect))).rejects.toEqual(expect.objectContaining({ code: "AUTHORITY_CONTEXT_INVALID_SIGNATURE" }));
+    expect(tamperedBusinessEffect).toHaveBeenCalledTimes(0);
+    expect(businessEffect).toHaveBeenCalledTimes(acceptedDecisions.length);
   });
 
   it("fails closed for all producer negative fixtures and preserves their no-effect contract", async () => {
