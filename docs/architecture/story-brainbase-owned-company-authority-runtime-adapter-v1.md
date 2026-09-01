@@ -33,7 +33,9 @@ A0の`acceptCompanyAuthorityResponse`はfixture conformance testからだけ呼�
 
 禁止fieldは型とruntime validationの両方で拒否する。未知capabilityは`read`に寄せない。
 
-`requested_action.capability_id`と受理contextの`authority.capability_id`は業務operationを表す。nested TenantContextの`authorization.capability_ids`に含まれる`company_authority_v1`はprotocol markerであり、業務operationやrouting selectorではない。productionのopt-inは明示的なruntime routing selectorと、そのselectorが旧経路へ流れないことを示すpre-fix failing testを追加して初めて成立する。selectorはT0-AUTH-003で未実装のため、現時点のproduction opt-in operationは0件である。
+`requested_action.capability_id`と受理contextの`authority.capability_id`は業務operationを表す。nested TenantContextの`authorization.capability_ids`に含まれる`company_authority_v1`はprotocol markerであり、業務operationやrouting selectorではない。`handleTenantSlackRequest`は`opted_in_capability_ids`による明示selectorを持ち、選択時はCompany Authority専用の送信口を使って旧authorityへfallbackしない。同一runの一時的なpre-fix REDでは選択operationのtransport failureが旧経路へ流れることを観測したが、durable RED artifactは保存していない。現行regression testは`AUTHORITY_UNAVAILABLE`、新旧送信0、旧authority 0を固定する。productionのclient／送信口設定はまだ存在せず、現時点のproduction opt-in operationは0件である。
+
+Company Authority v1のrequestは単一`resource_ref`／`project_hint`だけを表すため、明示選択されたSlack placementの`projectCodes`が複数ならauthority retrieval前に`AUTHORITY_SCOPE_MISMATCH`で拒否する。先頭projectへ縮退しない。local routingの`RuntimePlacement.placementId`と署名contextのdeployment IDは別概念である。後者はtrusted runtime設定の`expected_deployment_id`とA0 consumerで照合し、local placement IDとは比較しない。
 
 ### 4.2 CompanyAuthorityClient port
 
@@ -109,13 +111,15 @@ decisionを上位へ昇格したり、approver／responsible personをMANA側で
 1. A0 locked fixtureをproduction adapter port経由で受理する。
 2. unavailable transportのWorker REDを追加し、effect 0／fallback 0を固定する。
 3. Slack mapperと明示desired-effect mappingを追加する。
-4. outer contextを7 surfaceへ伝播し、各境界のnegative testを追加する。
+4. outer contextをQueue以降の6 surfaceへ伝播し、Workerのpositive routingを含む各境界のnegative testを追加する。
 5. Brainbase live endpoint契約後にtransport bindingを追加する。
-6. 明示的なruntime routing selectorとpre-fix failing routing testを追加する。nested TenantContextの`company_authority_v1` markerだけでopt-in判定しない。
+6. `handleTenantSlackRequest`へ明示的なruntime routing selectorを追加し、現行regression testで選択時のno-fallbackとmarker単独非選択を固定する。nested TenantContextの`company_authority_v1` markerだけでopt-in判定しない。（同一runのpre-fix REDは一時観測。ローカル実装・negative test完了。本番設定は0件）
 7. dual-readは比較だけに使い、company-authority opt-in operationの認可結果をlegacyへ委ねない。
 8. tenant read-only canary、negative E2E、write、external side effectの順に進める。
 
 rollbackはcompany-authority opt-in operationを拒否する。旧権限へ戻して業務を続行しない。
+
+選択されたoperationのpositive fixtureを実HTTP handlerから専用送信口まで通す証拠と、`approval`／`human_action`のQueue以降の効果0はまだ`not_collected`である。foundation単体testやnegative routing testから推定しない。
 
 ## 8. 初期テスト戦略
 

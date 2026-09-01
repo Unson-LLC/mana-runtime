@@ -8,7 +8,12 @@ import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-req
 import {
   TenantBoundaryError,
   assertSecretArtifactFree,
+  resolveCompanyAuthorityRuntimeEnvelope,
   resolveSlackWorkerIngress,
+  type CompanyAuthorityAcceptanceOptions,
+  type CompanyAuthorityClient,
+  type CompanyAuthorityDesiredEffect,
+  type CompanyAuthorityRuntimeEnvelope,
   type TenantAuthorityClient,
   type TenantContextIssueRequest,
   type TenantQueueBody,
@@ -47,6 +52,18 @@ export interface HandleTenantSlackRequestOptions {
   /** Placement configuration is mandatory so a global project cannot authorize every channel. */
   placement_config: RuntimePlacementConfig;
   authority: TenantAuthorityClient;
+  /**
+   * Explicit business-operation opt-in for the Company Authority path.
+   * Omitting this block keeps every operation on the existing path; a protocol
+   * marker inside TenantContext never selects this route.
+   */
+  company_authority?: {
+    opted_in_capability_ids: readonly string[];
+    desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
+    client: CompanyAuthorityClient;
+    acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
+    send(event: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>): Promise<unknown>;
+  };
   now_ms?: number;
   resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
   send(event: TenantQueueBody<SlackQueueEvent>): Promise<unknown>;
@@ -249,7 +266,9 @@ export async function handleSlackRequest(
 }
 
 function tenantBoundaryStatus(error: TenantBoundaryError): number {
-  if (error.code === "WORKSPACE_CONNECTION_UNAVAILABLE" || error.code === "UPSTREAM_UNAVAILABLE") return 503;
+  if (error.code === "WORKSPACE_CONNECTION_UNAVAILABLE"
+    || error.code === "UPSTREAM_UNAVAILABLE"
+    || error.code === "AUTHORITY_UNAVAILABLE") return 503;
   if (error.code === "TENANT_CONTEXT_EXPIRED" || error.code === "WORKSPACE_CONNECTION_STALE_REVISION") return 409;
   return 403;
 }
@@ -368,6 +387,51 @@ export async function handleTenantSlackRequest(
       project_id: placementProjectIds[0]!,
     };
     failureStage = "tenant_context_resolution";
+    const companyAuthority = options.company_authority;
+    if (companyAuthority?.opted_in_capability_ids.includes(requiredAuthorization.capability_id)) {
+      if (placementProjectIds.length !== 1) {
+        throw new TenantBoundaryError(
+          "worker_ingress",
+          "AUTHORITY_SCOPE_MISMATCH",
+          "AUTHORITY_SCOPE_MISMATCH",
+          {
+            phase: "company_authority_project_binding",
+            expected_project_count: 1,
+            observed_project_count: placementProjectIds.length,
+          },
+        );
+      }
+      const correlationId = deriveCorrelationId(
+        eventId,
+        "company_authority",
+        requiredAuthorization.capability_id,
+      );
+      const accepted = await resolveCompanyAuthorityRuntimeEnvelope({
+        observation: {
+          provider: "slack",
+          authentication: { status: "verified", scheme: "slack_signature_v0" },
+          authenticated_subject_id: requesterId,
+          workspace_id: workspaceId,
+          app_id: options.expected_app_id,
+          ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
+          capability_id: requiredAuthorization.capability_id,
+          resource_ref: `project:${requiredAuthorization.project_id}`,
+          project_hint: requiredAuthorization.project_id,
+          channel_id: channelId,
+          thread_ts: threadTs,
+          event_id: eventId,
+          correlation_id: correlationId,
+        },
+        desired_effect_by_capability: companyAuthority.desired_effect_by_capability,
+        client: companyAuthority.client,
+        acceptance: { ...companyAuthority.acceptance, now: receivedAt },
+        payload: event,
+      });
+      assertSecretArtifactFree(accepted.envelope);
+      failureStage = "queue_enqueue";
+      await companyAuthority.send(accepted.envelope);
+      return jsonResponse({ ok: true }, 200);
+    }
     const resolved = await resolveSlackWorkerIngress({
       identity: {
         provider: "slack",

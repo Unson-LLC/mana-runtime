@@ -8,7 +8,7 @@
   "implementation_state": {
     "status": "in_progress",
     "adapter_foundation": "implemented",
-    "runtime_surface_binding": "not_implemented",
+    "runtime_surface_binding": "worker_ingress_selector_implemented; successful Worker propagation and Queue through Slack delivery not_collected",
     "endpoint_binding": "not_defined",
     "production_trust_store": "not_implemented",
     "runtime_evidence": "not_collected",
@@ -22,9 +22,11 @@
   "routing_contract": {
     "requested_operation": "ObservedExecutionRequestV1.requested_action.capability_id and CanonicalExecutionContextV1.authority.capability_id identify the business operation and must match under the producer contract",
     "protocol_marker": "TenantContextEnvelope.authorization.capability_ids contains company_authority_v1 only as a protocol capability marker, not as the requested business operation",
-    "production_opt_in_selector": "not_implemented",
-    "foundation_boundary": "executeCompanyAuthorityWorkerIngress is tested by direct invocation as the boundary a future routing selector calls only after an operation is explicitly opted in; the helper does not implement or infer that selector",
-    "pre_binding_behavior": "no production operation is treated as opted in until an explicit routing selector and its pre-fix failing test are implemented; company_authority_v1 alone never selects this path; once opted in, authority failure rejects the operation and never falls back to legacy authorization"
+    "production_opt_in_selector": "implemented as explicit HandleTenantSlackRequestOptions.company_authority.opted_in_capability_ids routing seam; production configuration is absent and production opt-in operations remain 0",
+    "foundation_boundary": "handleTenantSlackRequest invokes resolveCompanyAuthorityRuntimeEnvelope only for an explicitly opted-in business capability and uses a distinct Company Authority envelope sender; the direct executeCompanyAuthorityWorkerIngress foundation remains independently fixture-tested",
+    "pre_binding_behavior": "a same-run transient pre-fix actual-handler RED observed the selected operation flowing to the legacy path; no durable RED artifact was retained. The current regression test proves that an unavailable CompanyAuthorityClient yields AUTHORITY_UNAVAILABLE with Company Authority sender 0 and legacy authority calls 0. A selector containing only company_authority_v1 does not select task.write. No production client or sender is configured, so production opt-in operations remain 0",
+    "scope_binding": "Company Authority v1 carries one resource_ref/project_hint. An opted-in Slack placement with more than one projectCode fails before retrieval with AUTHORITY_SCOPE_MISMATCH instead of collapsing to its first project. RuntimePlacement.placementId is a local route identifier and is not the signed deployment ID; trusted expected_deployment_id is checked by the A0 consumer against the signed context",
+    "positive_handler_decision_evidence": "not_collected; positive fixture propagation from the HTTP handler and approval/human_action downstream effect-zero are not inferred from foundation or negative routing tests"
   },
   "multi_tenancy": {
     "schema_version": "0.1.0",
@@ -322,7 +324,7 @@
     {
       "id": "S-001",
       "type": "scenario",
-      "statement": "将来の明示的runtime routing selectorがoperationをopt-in済みと判定した後に呼ぶ共通Worker基盤境界を直接検証する。CompanyAuthorityClientがunavailableを返すとAUTHORITY_UNAVAILABLE、business callback 0、legacy fallback 0を観測する。company_authority_v1 marker単独ではこの境界を選択せず、production selector未実装の現時点では本番operationへ接続しない",
+      "statement": "handleTenantSlackRequestの明示的runtime routing selectorがtask.writeをopt-in済みと判定するとCompanyAuthorityClientを1回呼び、unavailableではAUTHORITY_UNAVAILABLE、Company Authority sender 0、legacy authority 0を観測する。selectorにcompany_authority_v1 markerだけを指定してもtask.writeを選択せず旧経路を維持する。複数project placementは単一projectへ縮退せずretrieval前にAUTHORITY_SCOPE_MISMATCHで拒否する。本番client／sender設定は未実装のためproduction opt-in operationは0件である。同一runのpre-fix REDは一時観測でありdurable artifactではない",
       "origin": {
         "story_refs": [
           {
@@ -338,11 +340,27 @@
         ],
         "code_refs": [
           {
+            "file": "packages/cloud-runtime/src/slack.ts",
+            "anchor": "handleTenantSlackRequest"
+          },
+          {
             "file": "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
             "anchor": "executeCompanyAuthorityWorkerIngress"
           }
         ],
         "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack.test.ts",
+            "case": "fails closed through Company Authority for an explicitly selected capability"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack.test.ts",
+            "case": "keeps a non-opted-in business capability on the legacy path despite the protocol marker"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/slack.test.ts",
+            "case": "rejects an opted-in multi-project placement before authority retrieval or queue effects"
+          },
           {
             "file": "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
             "case": "foundation boundary fails closed after explicit opt-in when authority is unavailable"
@@ -351,7 +369,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-01T17:22:23.527Z"
+      "last_revised_at": "2026-09-01T18:51:52Z"
     },
     {
       "id": "C-004",
