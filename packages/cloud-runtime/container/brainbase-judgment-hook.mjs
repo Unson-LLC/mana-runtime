@@ -71,24 +71,31 @@ function validatedOutput(envelope, payload) {
   // replace structured_output with audit prose. PostToolUse is the one lifecycle
   // event whose non-empty audit message is part of the validated contract.
   const receiptMarker = `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
-  const existingSystemMessage = payload.hook_event_name === "PostToolUse"
-    && typeof documentedOutput.systemMessage === "string"
+  const existingSystemMessage = typeof documentedOutput.systemMessage === "string"
     ? documentedOutput.systemMessage.trim()
     : "";
   if (payload.hook_event_name === "UserPromptSubmit") {
+    const canonicalContext = documentedOutput.hookSpecificOutput.additionalContext.trim();
     return {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        // The upstream context is written for an interactive assistant turn and
-        // can replace the schema-constrained meeting-minutes response. The
-        // signed route receipt is the only context the runtime needs here.
-        additionalContext: receiptMarker,
+        // This Hook is used only by interactive reply turns. Preserve the Host's
+        // canonical routing context and append the machine receipt used by the
+        // runtime validator; replacing the context makes the final audit block
+        // impossible to produce.
+        additionalContext: [canonicalContext, receiptMarker].join("\n"),
       },
       systemMessage: receiptMarker,
     };
   }
   if (payload.hook_event_name === "Stop") {
-    return { systemMessage: receiptMarker };
+    return {
+      // Stop carries the canonical final audit block. Keep it so Claude can
+      // place the audit lines at the beginning of the final response, while the
+      // receipt remains available to the stream validator.
+      systemMessage: [existingSystemMessage, receiptMarker]
+        .filter(Boolean).join("\n"),
+    };
   }
   return {
     ...documentedOutput,

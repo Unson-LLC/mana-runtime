@@ -145,7 +145,7 @@ describe("Brainbase judgment Hook forwarder", () => {
   }, 15_000);
 
   it.each(["UserPromptSubmit", "Stop"])(
-    "keeps the %s receipt without reinjecting an interactive response rewrite",
+    "keeps the %s canonical Host output together with the runtime receipt",
     async (hookEventName) => {
       const server = createServer(async (request, response) => {
         const chunks: Buffer[] = [];
@@ -180,12 +180,13 @@ describe("Brainbase judgment Hook forwarder", () => {
       const result = await runHook({ hook_event_name: hookEventName, session_id: "session-stop" }, env);
       expect(result.code).toBe(0);
       const output = JSON.parse(result.stdout);
-      expect(output.systemMessage).not.toContain("監査行の後に");
       expect(output.systemMessage).toContain(receiptPrefix);
       if (hookEventName === "UserPromptSubmit") {
-        expect(output.hookSpecificOutput.additionalContext).not.toContain("Judgment route resolved");
+        expect(output.systemMessage).not.toContain("監査行の後に");
+        expect(output.hookSpecificOutput.additionalContext).toContain("Judgment route resolved");
         expect(output.hookSpecificOutput.additionalContext).toContain(receiptPrefix);
       } else {
+        expect(output.systemMessage).toContain("監査行の後に");
         expect(output).not.toHaveProperty("hookSpecificOutput");
       }
     },

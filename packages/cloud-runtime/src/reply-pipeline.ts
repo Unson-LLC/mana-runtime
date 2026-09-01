@@ -358,6 +358,11 @@ export async function generateClaudeReply(
       const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
         ? error.message
         : "reply_judgment_stream_invalid";
+      emitTurnLog("error", "mana_claude_failed", event, trace, {
+        outcome: "error",
+        reasonCode: code,
+        durationMs: Date.now() - startedAt,
+      });
       throw new ReplyPipelineError(code);
     }
     const reply = normalizeReply(judgment.reply);

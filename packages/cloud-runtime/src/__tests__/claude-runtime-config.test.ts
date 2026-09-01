@@ -117,7 +117,7 @@ describe("Cloudflare Claude runtime config", () => {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>>;
     };
     expect(Object.keys(settings.hooks)).toEqual(["UserPromptSubmit", "PostToolUse", "Stop"]);
-    expect(settings.hooks.PostToolUse?.[0]?.matcher).toBe("mcp__brainbase__.*");
+    expect(settings.hooks.PostToolUse?.[0]?.matcher).toBe("^mcp__brainbase__.*$");
     for (const eventName of ["UserPromptSubmit", "PostToolUse", "Stop"] as const) {
       expect(settings.hooks[eventName]?.[0]?.hooks).toEqual([
         {

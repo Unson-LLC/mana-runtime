@@ -249,7 +249,7 @@
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "本番配備後のfresh Slack eventで返信、Judgment、必要な取得、Stop、episode receipt、response_tsを同一eventとしてreadbackするまでAC10をnot_collectedのまま扱う",
+      "statement": "本番配備後のfresh Slack eventで返信、Judgment、必要な取得、Stop、episode receipt、response_tsを同一eventとしてreadbackするまでAC5をnot_collectedのまま扱う",
       "origin": {
         "story_refs": [
           {
@@ -341,7 +341,7 @@
       "layer": "release",
       "covers": [
         "fresh Slack event readback",
-        "AC10 not_collected until deployed"
+        "AC5 not_collected until deployed"
       ]
     }
   ],
