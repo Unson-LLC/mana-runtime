@@ -1308,6 +1308,24 @@ function placementProjectScopeForEvent(
   }
 }
 
+function canonicalRuntimePlacements(env: Env): ReturnType<typeof parseRuntimePlacements> {
+  const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+  const configured = env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON
+    ? JSON.parse(env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON) as Record<string, unknown>
+    : {};
+  return placements.map((placement) => {
+    const mapped = configured[placement.placementId];
+    if (mapped === undefined) return placement;
+    if (!Array.isArray(mapped)
+      || mapped.length !== placement.projectCodes.length
+      || mapped.some((id) => typeof id !== "string" || !/^prj_[A-Za-z0-9]+$/.test(id))
+      || new Set(mapped).size !== mapped.length) {
+      throw new RuntimeBindingError("authority_project_ids_invalid");
+    }
+    return { ...placement, projectCodes: [...mapped] as string[] };
+  });
+}
+
 function expectedProjectScopeForEvent(
   env: Env,
   event: SlackQueueEvent,
@@ -1960,7 +1978,7 @@ export default {
       return Response.json({ ok: true, queued: true, runId: event.runId, idempotencyKey: event.idempotencyKey });
     }
     if (request.method === "POST" && url.pathname === "/development/callback") {
-      const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      const placements = canonicalRuntimePlacements(env);
       const callbackBoundary = await resolveDurableTenantBoundaryContext(
         env.TENANT_RUNTIME_STATE,
         request,
@@ -2433,7 +2451,7 @@ export default {
       const clients = tenantRuntimeClients(env);
       const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
         .split(",").map((value) => value.trim()).filter(Boolean);
-      const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
+      const placements = canonicalRuntimePlacements(env);
       return handleTenantSlackRequest(request, {
         signing_secret: env.SLACK_SIGNING_SECRET,
         expected_app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
