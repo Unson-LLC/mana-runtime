@@ -316,7 +316,7 @@
         "code_refs": [
           {
             "file": "packages/cloud-runtime/src/multitenancy/company-authority-human-handoff.ts",
-            "anchor": "persistCompanyAuthorityHumanHandoff"
+            "anchor": "processCompanyAuthorityHumanHandoff"
           },
           {
             "file": "packages/cloud-runtime/src/multitenancy/tenant-runtime-state.ts",
