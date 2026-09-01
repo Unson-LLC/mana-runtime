@@ -316,4 +316,26 @@ describe("Slack reply Judgment lifecycle", () => {
       { attemptId: second, status: "started" },
     ]);
   });
+
+  it("rejects reuse of an event id across tenant boundaries", async () => {
+    const fs = new MemoryFs();
+    const event = {
+      tenantId: "tenant-a",
+      eventId: "EvTenantBoundary",
+      workspaceId: "T1",
+      channelId: "C1",
+      threadTs: "1.1",
+      messageTs: "1.2",
+      eventType: "app_mention",
+      text: "tenant boundary",
+      receivedAt: "2026-08-17T00:00:00.000Z",
+    } satisfies SlackQueueEvent;
+    await startReplyJudgmentAttempt(fs, event, "2026-08-17T00:00:01.000Z");
+
+    await expect(startReplyJudgmentAttempt(
+      fs,
+      { ...event, tenantId: "tenant-b" },
+      "2026-08-17T00:00:02.000Z",
+    )).rejects.toThrow("reply_judgment_episode_identity_mismatch");
+  });
 });

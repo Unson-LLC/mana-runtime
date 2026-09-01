@@ -119,7 +119,8 @@ export async function startReplyJudgmentAttempt(
     threadTs: event.threadTs,
     attempts: [],
   };
-  if (episode.workspaceId !== event.workspaceId || episode.channelId !== event.channelId
+  if (episode.tenantId !== event.tenantId || episode.workspaceId !== event.workspaceId
+      || episode.channelId !== event.channelId
       || episode.threadTs !== event.threadTs) throw new Error("reply_judgment_episode_identity_mismatch");
   const attemptId = crypto.randomUUID();
   episode.attempts.push({ attemptId, status: "started", startedAt });
