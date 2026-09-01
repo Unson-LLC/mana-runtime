@@ -7,7 +7,7 @@
   },
   "provenance": {
     "input_path": "docs/management/tasks/story-brainbase-owned-company-authority-runtime-adapter-v1.json",
-    "input_sha256": "e755562d3b581ae2548644f0776c5c30a9bcdc0b4d763368a5fd5974b27d514b"
+    "input_sha256": "9f3bc25b58c842593ba6185695fe02e1c46b1cf10393fbbdf38f775aeba5de1c"
   },
   "tasks": [
     {
@@ -54,7 +54,7 @@
       "depends_on": [
         "T0-AUTH-001"
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "task_id": "T0-AUTH-003",
@@ -69,9 +69,13 @@
         "packages/cloud-runtime/src/__tests__/**",
         "packages/cloud-runtime/src/autonomy-worker.ts",
         "packages/cloud-runtime/src/brainbase-mcp-proxy.ts",
+        "packages/cloud-runtime/src/index.ts",
         "packages/cloud-runtime/src/multitenancy/**",
         "packages/cloud-runtime/src/queue-consumer.ts",
-        "packages/cloud-runtime/src/runtime-gateway-proxy.ts"
+        "packages/cloud-runtime/src/runtime-brainbase-outbound.ts",
+        "packages/cloud-runtime/src/runtime-gateway-proxy.ts",
+        "packages/cloud-runtime/src/sandbox-runtime.ts",
+        "packages/cloud-runtime/src/slack.ts"
       ],
       "acceptance_criteria": [
         "Worker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryで外側の会社権限と内側のTenantContextEnvelopeを各境界で再検証する",
@@ -81,7 +85,7 @@
       "depends_on": [
         "T0-AUTH-002"
       ],
-      "status": "planned"
+      "status": "in_progress"
     },
     {
       "task_id": "T0-AUTH-004",

@@ -46,7 +46,7 @@
       "depends_on": [
         "T0-AUTH-001"
       ],
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "task_id": "T0-AUTH-003",
@@ -54,6 +54,10 @@
       "title": "署名済み会社権限を7つのruntime surfaceへ伝播する",
       "allowed_paths": [
         "packages/cloud-runtime/src/multitenancy/**",
+        "packages/cloud-runtime/src/index.ts",
+        "packages/cloud-runtime/src/slack.ts",
+        "packages/cloud-runtime/src/sandbox-runtime.ts",
+        "packages/cloud-runtime/src/runtime-brainbase-outbound.ts",
         "packages/cloud-runtime/src/autonomy-worker.ts",
         "packages/cloud-runtime/src/queue-consumer.ts",
         "packages/cloud-runtime/src/brainbase-mcp-proxy.ts",
@@ -73,7 +77,7 @@
       "depends_on": [
         "T0-AUTH-002"
       ],
-      "status": "planned"
+      "status": "in_progress"
     },
     {
       "task_id": "T0-AUTH-004",
