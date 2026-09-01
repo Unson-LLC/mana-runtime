@@ -931,6 +931,7 @@ describe("TechKnight Slack reply pipeline", () => {
 
   it("leaves the event retryable when Slack rejects the post", async () => {
     const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { options } = harness({
       fetch: vi.fn().mockImplementation(() => Promise.resolve(new Response(
         JSON.stringify({ ok: false, error: "missing_scope" }),
@@ -942,6 +943,18 @@ describe("TechKnight Slack reply pipeline", () => {
       expect.objectContaining<Partial<ReplyPipelineError>>({ code: "slack_post_failed" }),
     );
     expect([...fs.files.keys()].some((path) => path.startsWith("/replies/"))).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(JSON.stringify({
+      event: "mana_slack_reply_failed",
+      code: "slack_post_failed",
+      status: 200,
+      slack_error: "missing_scope",
+    }));
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failed",
+      outcome: "error",
+      reasonCode: "slack_post_failed",
+    }));
+    errorSpy.mockRestore();
   });
 
   it("keeps replying when Slack rejects the processing status", async () => {

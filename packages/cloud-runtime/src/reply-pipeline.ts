@@ -104,6 +104,23 @@ export class ReplyPipelineError extends Error {
   }
 }
 
+function safeFailureCode(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.length > 0
+    ? value.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 80)
+    : fallback;
+}
+
+function logSlackPostFailure(code: string, details: { status?: number; slackError?: unknown } = {}): void {
+  console.error(JSON.stringify({
+    event: "mana_slack_reply_failed",
+    code: safeFailureCode(code, "unknown"),
+    ...(details.status === undefined ? {} : { status: details.status }),
+    ...(details.slackError === undefined ? {} : {
+      slack_error: safeFailureCode(details.slackError, "unknown"),
+    }),
+  }));
+}
+
 export function isReplyEligible(
   event: SlackQueueEvent,
   options: Pick<ReplyPipelineOptions, "expectedTenantId" | "expectedWorkspaceId" | "allowedChannelId" | "respondPolicy" | "isEngagedThread" | "botAttributedAppMentionUserIds">,
@@ -407,15 +424,22 @@ export async function postSlackReply(
       }),
       signal: AbortSignal.timeout(15_000),
     });
-  } catch {
+  } catch (error) {
+    logSlackPostFailure("slack_api_unavailable", {
+      slackError: error instanceof Error ? error.message : undefined,
+    });
     throw new ReplyPipelineError("slack_api_unavailable");
   }
-  if (!response.ok) throw new ReplyPipelineError("slack_api_unavailable");
+  if (!response.ok) {
+    logSlackPostFailure("slack_api_unavailable", { status: response.status });
+    throw new ReplyPipelineError("slack_api_unavailable");
+  }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
+    logSlackPostFailure("slack_api_invalid_response", { status: response.status });
     throw new ReplyPipelineError("slack_api_invalid_response");
   }
   if (
@@ -424,6 +448,12 @@ export async function postSlackReply(
     (payload as { ok?: unknown }).ok !== true ||
     typeof (payload as { ts?: unknown }).ts !== "string"
   ) {
+    logSlackPostFailure("slack_post_failed", {
+      status: response.status,
+      slackError: typeof (payload as { error?: unknown }).error === "string"
+        ? (payload as { error: string }).error
+        : undefined,
+    });
     throw new ReplyPipelineError("slack_post_failed");
   }
   return (payload as { ts: string }).ts;
@@ -678,6 +708,9 @@ export async function processReplyEvent(
       return { outcome: "replied", responseTs };
     } catch (error) {
       const failureCode = error instanceof ReplyPipelineError ? error.code : "reply_judgment_attempt_failed";
+      emitTurnLog("error", "mana_reply_failed", event, {
+        ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
+      }, { outcome: "error", reasonCode: failureCode });
       await failReplyJudgmentAttempt(
         fs,
         event.eventId,
