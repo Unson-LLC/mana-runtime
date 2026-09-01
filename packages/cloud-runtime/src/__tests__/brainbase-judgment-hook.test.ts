@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -95,7 +96,13 @@ describe("Brainbase judgment Hook forwarder", () => {
         output: payload.hook_event_name === "PostToolUse"
           ? { systemMessage: "Brainbase tool use recorded" }
           : payload.hook_event_name === "Stop"
-            ? { schema_version: "brainbase-judgment-final-v1", completion_status: "complete" }
+            ? {
+              schema_version: "brainbase-judgment-final-v1",
+              completion_status: "complete",
+              answer_digest: createHash("sha256")
+                .update(String(payload.last_assistant_message ?? ""))
+                .digest("hex"),
+            }
             : {
               hookSpecificOutput: {
                 hookEventName: payload.hook_event_name,
@@ -245,6 +252,7 @@ describe("Brainbase judgment Hook forwarder", () => {
   it("emits Host-verified audit lines after a completed Stop repair", async () => {
     const judgmentLine = "🧠 判断参照: 「確認して」を参照 → 運用依頼として対応 ✓";
     const brainbaseLine = "📚 Brainbase未参照: 今回は検索不要 ✓";
+    const verifiedAnswer = `${judgmentLine}\n${brainbaseLine}\n本文`;
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk as Buffer);
@@ -263,7 +271,7 @@ describe("Brainbase judgment Hook forwarder", () => {
         } : {
           schema_version: "brainbase-judgment-final-v1",
           completion_status: "complete",
-          answer_digest: "host-verified",
+          answer_digest: createHash("sha256").update(verifiedAnswer).digest("hex"),
         },
       }));
     });
@@ -280,7 +288,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-complete" }, env);
     const result = await runHook({
       hook_event_name: "Stop", session_id: "session-complete",
-      last_assistant_message: `${judgmentLine}\n${brainbaseLine}\n本文`,
+      last_assistant_message: verifiedAnswer,
     }, env);
     expect(result.code).toBe(0);
     const output = JSON.parse(result.stdout);

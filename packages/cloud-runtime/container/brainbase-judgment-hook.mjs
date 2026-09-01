@@ -109,6 +109,10 @@ function validatedOutput(envelope, payload) {
       // fallback that would make every successful repair fail closed.
       const verifiedAnswer = typeof payload.last_assistant_message === "string"
         ? payload.last_assistant_message : "";
+      if (typeof documentedOutput.answer_digest !== "string"
+          || documentedOutput.answer_digest !== createHash("sha256").update(verifiedAnswer).digest("hex")) {
+        throw new Error("judgment_hook_final_answer_digest_mismatch");
+      }
       const verifiedAuditLines = verifiedAnswer.split(/\r?\n/).filter((line) =>
         JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
         || BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
