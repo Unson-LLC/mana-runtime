@@ -127,7 +127,7 @@
     {
       "id": "C-001",
       "type": "contract",
-      "statement": "Manaはbrainbase-unson PR #1302のmerge SHAとfixture digestを固定し、observed requestとCanonicalExecutionContextV1をexact schemaで受け入れる",
+      "statement": "Manaはbrainbase-unson PR #1302のmerge SHAとfixture digestを固定し、現行v1ではlocked Slack fixtureのobserved requestとCanonicalExecutionContextV1だけをexact schemaで受け入れる。Codex、Claude Code、serviceはprovider固有nested envelopeが契約化されるまでfuture / not_implementedであり、AC-001のverified範囲に含めない",
       "origin": {
         "story_refs": [
           {
@@ -188,7 +188,7 @@
         "architecture_refs": [
           {
             "file": "docs/architecture/13_brainbase_owned_company_authority.md",
-            "section": "Runtime rule"
+            "section": "authority decisionの動作"
           }
         ],
         "test_refs": [

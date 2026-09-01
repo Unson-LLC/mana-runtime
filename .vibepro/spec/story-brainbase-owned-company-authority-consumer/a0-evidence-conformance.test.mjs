@@ -16,14 +16,30 @@ const readJson = async (url) => JSON.parse(await readFile(url, "utf8"));
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 test("production E2E plan is bound to the locked producer and remains not_collected", async () => {
-  const [plan, lock, producer, fixtures, requestSchema, spec] = await Promise.all([
+  const [plan, lock, producer, fixtures, requestSchema, draft, spec] = await Promise.all([
     readJson(new URL("production-e2e-plan.json", specRoot)),
     readJson(new URL("consumer-source-lock.json", contractRoot)),
     readJson(new URL("producer.contract.json", contractRoot)),
     readJson(new URL("fixtures/cases.json", contractRoot)),
     readJson(new URL("schema/observed-execution-request.schema.json", contractRoot)),
+    readJson(new URL("draft.json", specRoot)),
     readJson(new URL("spec.json", specRoot)),
   ]);
+
+  const clause = (document, id) => document.clauses.find((candidate) => candidate.id === id);
+  for (const id of ["C-001", "INV-001"]) {
+    assert.ok(clause(draft, id), `draft:${id}`);
+    assert.ok(clause(spec, id), `spec:${id}`);
+    assert.equal(clause(draft, id).statement, clause(spec, id).statement, `${id}:statement`);
+    assert.deepEqual(clause(draft, id).origin, clause(spec, id).origin, `${id}:origin`);
+    assert.deepEqual(clause(draft, id).verifiable_by, clause(spec, id).verifiable_by, `${id}:verifiable_by`);
+  }
+  assert.match(clause(draft, "C-001").statement, /locked Slack fixture/);
+  assert.match(clause(draft, "C-001").statement, /Codex、Claude Code、service.*future \/ not_implemented/);
+  assert.equal(
+    clause(draft, "INV-001").origin.architecture_refs[0].section,
+    "authority decisionの動作",
+  );
 
   assert.equal(plan.status, "not_collected");
   assert.equal(plan.acceptance_criterion, "AC-012");

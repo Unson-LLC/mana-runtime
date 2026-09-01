@@ -263,10 +263,10 @@ describe("Brainbase-owned company authority A0 fixture consumer", () => {
         .map((fixture) => [fixture.context.authority.decision, fixture] as const),
     );
     const acceptedDecisions = ["auto", "approval", "human_action"] as const;
-    const businessEffect = vi.fn();
-    const acceptAndApply = (response: any, options: any, effect: () => void) => {
+    const protectedBusinessEffect = vi.fn();
+    const acceptAndDispatchProtectedEffect = (response: any, options: any, effect: () => void) => {
       const accepted = acceptCompanyAuthorityResponse(response, options);
-      if (accepted.context !== null) effect();
+      if (accepted.context?.authority.decision === "auto") effect();
       return accepted;
     };
 
@@ -281,19 +281,23 @@ describe("Brainbase-owned company authority A0 fixture consumer", () => {
         context: fixture!.context,
         error: null,
       };
-      const accepted = acceptAndApply(response, {
+      const protectedEffectsBefore = protectedBusinessEffect.mock.calls.length;
+      const accepted = acceptAndDispatchProtectedEffect(response, {
         expectedAudience: contract.signature.audience,
         now: fixture!.evaluation_time,
         publicJwk: key.public_jwk,
         tenantContextPublicJwk: key.public_jwk,
         tenantContextKeyId: key.key_id,
         request: fixture!.request,
-      }, businessEffect);
+      }, protectedBusinessEffect);
 
       expect(accepted.context).toBe(fixture!.context);
       expect(accepted.context.authority.decision).toBe(decision);
+      expect(protectedBusinessEffect).toHaveBeenCalledTimes(
+        protectedEffectsBefore + (decision === "auto" ? 1 : 0),
+      );
     }
-    expect(businessEffect).toHaveBeenCalledTimes(acceptedDecisions.length);
+    expect(protectedBusinessEffect).toHaveBeenCalledTimes(1);
 
     const denyFixture = fixtures.positive.find(({ context }) => context?.authority?.decision === "deny");
     expect(denyFixture).toBeDefined();
@@ -305,7 +309,7 @@ describe("Brainbase-owned company authority A0 fixture consumer", () => {
       context: denyFixture!.context,
       error: null,
     };
-    await expect(Promise.resolve().then(() => acceptAndApply(denyResponse, {
+    await expect(Promise.resolve().then(() => acceptAndDispatchProtectedEffect(denyResponse, {
       expectedAudience: contract.signature.audience,
       now: denyFixture!.evaluation_time,
       publicJwk: key.public_jwk,
@@ -327,7 +331,7 @@ describe("Brainbase-owned company authority A0 fixture consumer", () => {
       error: null,
     };
     const tamperedBusinessEffect = vi.fn();
-    await expect(Promise.resolve().then(() => acceptAndApply(tamperedResponse, {
+    await expect(Promise.resolve().then(() => acceptAndDispatchProtectedEffect(tamperedResponse, {
       expectedAudience: contract.signature.audience,
       now: baseFixture.evaluation_time,
       publicJwk: key.public_jwk,
@@ -336,7 +340,7 @@ describe("Brainbase-owned company authority A0 fixture consumer", () => {
       request: baseFixture.request,
     }, tamperedBusinessEffect))).rejects.toEqual(expect.objectContaining({ code: "AUTHORITY_CONTEXT_INVALID_SIGNATURE" }));
     expect(tamperedBusinessEffect).toHaveBeenCalledTimes(0);
-    expect(businessEffect).toHaveBeenCalledTimes(acceptedDecisions.length);
+    expect(protectedBusinessEffect).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed for all producer negative fixtures and preserves their no-effect contract", async () => {
