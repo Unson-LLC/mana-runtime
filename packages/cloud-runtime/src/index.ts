@@ -1840,6 +1840,10 @@ export default {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
+      const adminBoundary = await resolveDurableTenantBoundaryContext(
+        env.TENANT_RUNTIME_STATE, request, ["brainbase_proxy"], new Date().toISOString(),
+      );
+      if (adminBoundary instanceof Response) return adminBoundary;
       const tenantId = url.searchParams.get("tenant_id");
       const workspaceId = url.searchParams.get("workspace_id");
       const channelId = url.searchParams.get("channel_id");
@@ -1849,6 +1853,13 @@ export default {
         || !channelId || !/^[A-Z0-9]{3,32}$/.test(channelId)
         || !threadTs || !/^\d{1,20}(?:\.\d{1,12})?$/.test(threadTs)) {
         return Response.json({ error: "reply_judgment_scope_invalid" }, { status: 400 });
+      }
+      const tenantContext = adminBoundary.tenant_context;
+      if (tenantId !== tenantContext.tenant.tenant_id
+        || workspaceId !== tenantContext.workspace_connection.workspace_id
+        || channelId !== tenantContext.slack.channel_id
+        || threadTs !== tenantContext.slack.thread_ts) {
+        return Response.json({ error: "reply_judgment_scope_mismatch" }, { status: 403 });
       }
       const id = env.TECHKNIGHT_WORKSPACE.idFromName(runtimeWorkspaceName({
         tenantId, workspaceId, channelId, threadTs,

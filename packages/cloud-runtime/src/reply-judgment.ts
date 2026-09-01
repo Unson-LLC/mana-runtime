@@ -350,6 +350,12 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       || !expectedAuditLines.some((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX))) {
     throw new Error("reply_judgment_audit_lines_missing");
   }
+  if (expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
+    // Stop is the canonical completed-episode receipt. Incremental PostToolUse
+    // receipts prove individual calls, but cannot upgrade an explicitly
+    // incomplete final audit into a completed Judgment episode.
+    throw new Error("reply_judgment_audit_lines_missing");
+  }
   if (calls.length > 0) {
     // PostToolUse can carry either the latest audit line or a cumulative Host
     // journal. The last completed Brainbase line is the receipt for that call.
@@ -361,22 +367,11 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
     const completedStopAuditLines = completedBrainbaseAuditLines(expectedAuditLines);
-    if (completedStopAuditLines.length === 0
-        && expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
-      // A blank Stop response is converted by the trusted forwarder to an
-      // explicit incomplete marker. The already-bound PostToolUse receipts are
-      // stronger evidence, so deterministically complete the final audit block.
-      expectedAuditLines = [judgmentAuditLines[0]!, ...incrementalToolAuditLines as string[]];
-    } else if (completedStopAuditLines.length !== calls.length) {
+    if (completedStopAuditLines.length !== calls.length) {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
   } else if (completedBrainbaseAuditLines(expectedAuditLines).length > 0) {
     throw new Error("reply_judgment_tool_audit_mismatch");
-  } else if (expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
-    // With no observed Brainbase tool call there is no trusted incremental
-    // receipt that can complete an empty Stop response. Never promote the
-    // forwarder's diagnostic fallback into a completed Judgment episode.
-    throw new Error("reply_judgment_audit_lines_missing");
   }
   let actualAuditLines = auditLinesInReply(final.reply);
   if (actualAuditLines.length === 0) {
