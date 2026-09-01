@@ -45,7 +45,10 @@ import {
   type TenantInteractionTarget,
 } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
-import { meetingMinutesSelectionDestination } from "./meeting-minutes-selection-scope.js";
+import {
+  meetingMinutesSelectionDestination,
+  resolveMeetingMinutesDestinationProjectScope,
+} from "./meeting-minutes-selection-scope.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
 import { handleMeetingMinutesTaskAction, type MeetingMinutesSourceIdentity } from "./meeting-minutes-task-actions.js";
@@ -1443,13 +1446,18 @@ function expectedTenantMeetingMinutesSelectionScope(
     meetingMinutesRuntimeConfig(env).destinations,
   );
   const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
-  const trustedProjectIds = destinationAuthorization?.trusted_project_ids
-    ?? placementProjectScopeForEvent(env, selectionEvent).project_ids;
-  const placementProjectScope = resolveCanonicalProjectScope(
-    envelope.authorization,
-    trustedProjectIds,
-    "queue_consumer",
-  );
+  const placementProjectScope = destinationAuthorization
+    ? resolveMeetingMinutesDestinationProjectScope(
+      envelope.authorization,
+      destination,
+      destinationAuthorization.required_authorization.project_id,
+      "queue_consumer",
+    )
+    : resolveCanonicalProjectScope(
+      envelope.authorization,
+      placementProjectScopeForEvent(env, selectionEvent).project_ids,
+      "queue_consumer",
+    );
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: selection.workspaceId,
