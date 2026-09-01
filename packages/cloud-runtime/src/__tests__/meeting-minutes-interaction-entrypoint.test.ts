@@ -181,7 +181,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       workspaceId: "T-TECHKNIGHT",
       appId: "A-TECHKNIGHT",
       channelId: "CDEST",
-    }));
+    }), expect.objectContaining({ id: "techknight-board", contextProjectCode: "techknight" }));
   });
 
   it("does not accept a destination-team payload signed by the source Slack app", async () => {

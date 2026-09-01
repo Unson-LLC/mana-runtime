@@ -531,6 +531,17 @@ describe("会社別Cloudflare deployment", () => {
   it("enables Cloudflare meeting minutes with the confirmed cutover authority", () => {
     expect(unson.vars.MEETING_MINUTES_ENABLED).toBe("true");
     expect(unson.vars.MEETING_MINUTES_CONTEXT_MODE).toBe("required");
+    const routerPlacement = (JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON) as Array<{
+      placementId: string; projectCodes: string[];
+    }>).find((placement) => placement.placementId === "biz-meeting-router");
+    expect(routerPlacement?.projectCodes).toEqual(["unson"]);
+    expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)["biz-meeting-router"]).toEqual([
+      "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
+    ]);
+    expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
+      unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
+      techknight: "prj_01M1DDJ9V6EER4676YPXBSHBZX",
+    });
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD,U07B19N048G");
     for (const name of ["MEETING_MINUTES_DESTINATIONS_JSON", "MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON"]) {

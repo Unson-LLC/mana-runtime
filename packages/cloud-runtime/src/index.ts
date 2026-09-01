@@ -261,6 +261,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   SLACK_EXPECTED_TEAM_ID: string;
   SLACK_EXPECTED_APP_ID?: string;
   MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON?: string;
+  MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON?: string;
   RUNTIME_CRON_JOBS_JSON?: string;
   DEVELOPMENT_CALLBACK_BASE_URL?: string;
   DEVELOPMENT_CALLBACK_TOKEN?: string;
@@ -1363,6 +1364,34 @@ function placementAuthorizationForIdentity(
   });
 }
 
+function destinationAuthorizationForSelection(
+  env: Env,
+  destination: MeetingMinutesDestination | undefined,
+): ReturnType<typeof placementAuthorizationForIdentity> | undefined {
+  if (!destination?.contextProjectCode) return undefined;
+  let configured: Record<string, unknown>;
+  try {
+    configured = env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON
+      ? JSON.parse(env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON) as Record<string, unknown>
+      : {};
+  } catch {
+    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_ids_invalid" });
+  }
+  const projectId = configured[destination.contextProjectCode];
+  if (projectId === undefined) return undefined;
+  if (typeof projectId !== "string" || !/^prj_[A-Za-z0-9]+$/.test(projectId)) {
+    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_id_missing" });
+  }
+  return {
+    required_authorization: {
+      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+      project_id: projectId,
+      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    },
+    trusted_project_ids: [projectId],
+  };
+}
+
 function expectedTenantMeetingMinutesSelectionScope(
   env: Env,
   body: TenantQueueBody<MeetingMinutesSelection>,
@@ -2255,7 +2284,7 @@ export default {
             ),
             defer: (work) => ctx.waitUntil(work),
           });
-        }, async (command) => {
+        }, async (command, destination) => {
           const clients = tenantRuntimeClients(env);
           const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
             .split(",").map((value) => value.trim()).filter(Boolean);
@@ -2269,10 +2298,13 @@ export default {
             thread_ts: command.threadTs,
             requester_id: command.userId,
           };
+          const destinationAuthorization = command.kind === "meeting_minutes_selection"
+            ? destinationAuthorizationForSelection(env, destination)
+            : undefined;
           const resolved = await resolveSlackWorkerIngress({
             identity: { provider: "slack", ...commandIdentity },
             required_scopes: requiredScopes,
-            ...placementAuthorizationForIdentity(env, commandIdentity),
+            ...(destinationAuthorization ?? placementAuthorizationForIdentity(env, commandIdentity)),
             authority: clients.authority,
             now: new Date().toISOString(),
             resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),

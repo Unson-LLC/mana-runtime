@@ -31,7 +31,8 @@ interface InteractionOptions {
   destinations?: readonly MeetingMinutesDestination[];
   resolveDestinations?(): readonly MeetingMinutesDestination[];
   nowMs?: number;
-  send(selection: MeetingMinutesSelection | MeetingMinutesRedo): Promise<unknown>;
+  send(selection: MeetingMinutesSelection | MeetingMinutesRedo,
+    destination?: MeetingMinutesDestination): Promise<unknown>;
   showProcessing?(input: { channelId: string; threadTs: string; destinationName: string },
     credentialFetch: typeof fetch): Promise<void>;
   clearProcessing?(input: { channelId: string; threadTs: string }, credentialFetch: typeof fetch): Promise<void>;
@@ -723,7 +724,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     try {
       await options.send({ kind: "meeting_minutes_selection", runId, destinationId,
         workspaceId: interactionWorkspaceId, appId,
-        channelId, threadTs: feedbackThreadTs, userId, actionTs });
+        channelId, threadTs: feedbackThreadTs, userId, actionTs }, destination);
     } catch (error) {
       const enqueueCorrelationId = deriveCorrelationId(runId, "interaction_enqueue", "INTERACTION_ENQUEUE_FAILED");
       console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failed", runId,

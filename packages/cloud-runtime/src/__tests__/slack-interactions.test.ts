@@ -97,7 +97,7 @@ describe("handleMeetingMinutesInteraction", () => {
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({
       runId: "Ev1_F1", destinationId: "mana", threadTs: "1.0",
-    }));
+    }), expect.objectContaining({ id: "mana", contextProjectCode: "back-office" }));
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "meeting.txt の保存先に Back Office を受け付けました。議事録を作成中です。",
     }), expect.any(Function));
