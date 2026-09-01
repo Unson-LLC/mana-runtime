@@ -4,7 +4,11 @@ import type {
   ExpectedTenantScope,
   TenantContextEnvelope,
 } from "./contracts.js";
-import type { TenantRuntimeBoundaryVerifier } from "./runtime-boundaries.js";
+import {
+  consumeTenantQueueMessage,
+  type TenantRuntimeBoundaryVerifier,
+} from "./runtime-boundaries.js";
+import type { IdempotencyStore } from "./idempotency.js";
 
 const {
   acceptCompanyAuthorityResponse,
@@ -93,6 +97,35 @@ export interface CompanyAuthorityRuntimeEnvelope<T> {
   readonly company_authority_request: ObservedExecutionRequestV1;
   readonly company_authority_response: unknown;
   readonly payload: T;
+}
+
+export interface CompanyAuthorityQueueMessageLike<T> {
+  readonly body: CompanyAuthorityRuntimeEnvelope<T>;
+  ack(): void;
+  retry(options?: { delaySeconds?: number }): void;
+}
+
+export function isCompanyAuthorityRuntimeEnvelope<T = unknown>(
+  value: unknown,
+): value is CompanyAuthorityRuntimeEnvelope<T> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const envelope = value as Partial<CompanyAuthorityRuntimeEnvelope<T>>;
+  const request = envelope.company_authority_request;
+  const response = envelope.company_authority_response;
+  return envelope.schema_version === "1.0"
+    && typeof envelope.correlation_id === "string"
+    && envelope.correlation_id.length > 0
+    && !!request
+    && typeof request === "object"
+    && request.correlation_id === envelope.correlation_id
+    && !!request.provider_identity
+    && typeof request.provider_identity === "object"
+    && !!request.requested_action
+    && typeof request.requested_action === "object"
+    && !!response
+    && typeof response === "object"
+    && !Array.isArray(response)
+    && "payload" in envelope;
 }
 
 function fail(code: string, details?: Readonly<Record<string, unknown>>): never {
@@ -382,6 +415,99 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
     payload,
     result: await input.execute_auto(context, payload),
   };
+}
+
+/**
+ * Revalidates both signed authority layers at Queue ingress, then uses the
+ * nested TenantContext idempotency claim to route exactly one unchanged
+ * decision. A non-auto decision is never sent to the protected auto callback.
+ */
+export async function consumeCompanyAuthorityQueueMessage<T, R>(
+  message: CompanyAuthorityQueueMessageLike<T>,
+  options: {
+    acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
+    tenant_verifier: TenantRuntimeBoundaryVerifier;
+    expected_tenant_scope: ExpectedTenantScope;
+    validate_payload_binding(
+      context: AcceptedCompanyAuthorityContext,
+      request: ObservedExecutionRequestV1,
+      payload: T,
+    ): void;
+    process_auto(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
+    route_approval(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
+    route_human_action(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
+    ownership: IdempotencyStore;
+    execution_hash(envelope: CompanyAuthorityRuntimeEnvelope<T>): string | Promise<string>;
+    retention_until(now: string): string;
+    now(): string;
+    heartbeat_interval_ms?: number;
+    log?(entry: Record<string, string>): void;
+    log_error?(entry: Record<string, string>): void;
+  },
+): Promise<void> {
+  let accepted: Awaited<ReturnType<typeof executeCompanyAuthorityRuntimeBoundary<T, void>>>;
+  try {
+    const now = options.now();
+    accepted = await executeCompanyAuthorityRuntimeBoundary({
+      boundary: "queue_consumer",
+      envelope: message.body,
+      acceptance: { ...options.acceptance, now },
+      tenant_verifier: options.tenant_verifier,
+      expected_tenant_scope: options.expected_tenant_scope,
+      validate_payload_binding: options.validate_payload_binding,
+      execute_auto: async () => undefined,
+    });
+  } catch (error) {
+    const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
+    options.log_error?.({
+      event: "company_authority_queue_failed",
+      correlation_id: typeof message.body?.correlation_id === "string"
+        ? message.body.correlation_id
+        : "unknown",
+      code,
+      ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+    });
+    if (code === "WORKSPACE_CONNECTION_UNAVAILABLE" || code === "UPSTREAM_UNAVAILABLE") {
+      message.retry();
+    } else {
+      message.ack();
+    }
+    return;
+  }
+
+  await consumeTenantQueueMessage({
+    body: {
+      schema_version: "1.0",
+      tenant_context: accepted.context.tenant_context as unknown as TenantContextEnvelope,
+      payload: accepted.payload,
+    },
+    ack: () => message.ack(),
+    retry: (retryOptions) => message.retry(retryOptions),
+  }, {
+    verifier: options.tenant_verifier,
+    expected_scope: () => options.expected_tenant_scope,
+    now: options.now,
+    ownership: options.ownership,
+    // Bind the idempotency claim to the accepted outer decision as well as the
+    // nested context and payload. A redelivery cannot replace approval with
+    // auto while retaining the nested idempotency key.
+    payload_hash: () => options.execution_hash(message.body),
+    retention_until: options.retention_until,
+    ...(options.heartbeat_interval_ms !== undefined
+      ? { heartbeat_interval_ms: options.heartbeat_interval_ms }
+      : {}),
+    log: options.log,
+    log_error: options.log_error,
+    process: async (payload) => {
+      if (accepted.decision === "approval") {
+        return options.route_approval(accepted.context, payload);
+      }
+      if (accepted.decision === "human_action") {
+        return options.route_human_action(accepted.context, payload);
+      }
+      return options.process_auto(accepted.context, payload);
+    },
+  });
 }
 
 /**

@@ -111,7 +111,7 @@ decisionを上位へ昇格したり、approver／responsible personをMANA側で
 1. A0 locked fixtureをproduction adapter port経由で受理する。
 2. unavailable transportのWorker REDを追加し、effect 0／fallback 0を固定する。
 3. Slack mapperと明示desired-effect mappingを追加する。
-4. outer contextをQueue以降の6 surfaceへ伝播し、Workerのpositive routingを含む各境界のnegative testを追加する。
+4. outer contextをQueue以降の6 surfaceへ伝播し、Workerのpositive routingを含む各境界のnegative testを追加する。Queueは、envelopeをlegacy fallbackとしてACKしないfail-closed入口guardと、outer／nested再検証・decision不変・成功完了後のredelivery重複抑止を担う純粋consumer helperまでをローカル実装済みとする。外部作用後の不確定失敗に対するexactly-once、production trust、受理後tenant scope／ownership解決が未定義のため、実`worker.queue`からhelperへの正の接続は`not_collected`を維持する。
 5. Brainbase live endpoint契約後にtransport bindingを追加する。
 6. `handleTenantSlackRequest`へ明示的なruntime routing selectorを追加し、現行regression testで選択時のno-fallbackとmarker単独非選択を固定する。nested TenantContextの`company_authority_v1` markerだけでopt-in判定しない。（同一runのpre-fix REDは一時観測。ローカル実装・negative test完了。本番設定は0件）
 7. dual-readは比較だけに使い、company-authority opt-in operationの認可結果をlegacyへ委ねない。

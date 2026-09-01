@@ -24,6 +24,10 @@ import {
 } from "./sandbox-runtime.js";
 import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
+import {
+  isCompanyAuthorityRuntimeEnvelope,
+  type CompanyAuthorityRuntimeEnvelope,
+} from "./multitenancy/company-authority-runtime-adapter.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
   currentMeetingMinutesActionTs,
@@ -2545,6 +2549,7 @@ export default {
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
     | TenantQueueBody<TaskBoardRepairEvent>
+    | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
     | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>, env: Env): Promise<void> {
     const executeTenantContainerOperation = <T>(input: {
@@ -2600,6 +2605,16 @@ export default {
             runId: message.body.runId, error: error instanceof Error ? error.message : "unexpected_error" }));
           message.retry();
         }
+        continue;
+      }
+      if (isCompanyAuthorityRuntimeEnvelope(message.body)) {
+        console.error(JSON.stringify({
+          event: "company_authority_queue_failed",
+          code: "UPSTREAM_UNAVAILABLE",
+          correlation_id: message.body.correlation_id,
+          stage: "company_authority_runtime_configuration",
+        }));
+        message.retry();
         continue;
       }
       if (ackMalformedTenantQueueMessage(message,

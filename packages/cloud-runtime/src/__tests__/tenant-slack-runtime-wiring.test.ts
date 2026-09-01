@@ -44,6 +44,16 @@ describe("tenant Slack runtime wiring", () => {
     expect(queue).toContain('code: "FALLBACK_FORBIDDEN"');
   });
 
+  it("does not acknowledge a company-authority envelope as an unknown legacy fallback", () => {
+    const queueStart = source.indexOf("async queue(");
+    const queue = source.slice(queueStart);
+
+    expect(queue).toContain("isCompanyAuthorityRuntimeEnvelope(message.body)");
+    expect(queue).toContain('event: "company_authority_queue_failed"');
+    expect(queue).toContain('code: "UPSTREAM_UNAVAILABLE"');
+    expect(queue).toContain("message.retry()");
+  });
+
   it("exposes installation lifecycle and single-use OAuth intent routes", () => {
     expect(source).toContain('url.pathname === "/internal/slack/installations/lifecycle"');
     expect(source).toContain('url.pathname === "/slack/installations/oauth/start"');
