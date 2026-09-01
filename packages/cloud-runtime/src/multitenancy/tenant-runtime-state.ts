@@ -21,6 +21,12 @@ import {
 import { deny, TenantBoundaryError } from "./errors.js";
 import { tenantPartitionKey } from "./isolation.js";
 import type { TenantContextEnvelope } from "./contracts.js";
+import {
+  assertSameEffect,
+  assertValidTransition,
+  type ExternalEffectOutboxRecord,
+  type ExternalEffectOutboxStore,
+} from "./company-authority-external-effect-outbox.js";
 
 export interface TenantStateTransaction {
   get<T>(key: string): Promise<T | undefined>;
@@ -38,6 +44,77 @@ function clone<T>(value: T): T {
 
 function idempotencyStorageKey(partitionKey: string): string {
   return `idempotency:${partitionKey}`;
+}
+
+function externalEffectStorageKey(tenantId: string, effectId: string): string {
+  return `external-effect-outbox:${JSON.stringify([tenantId, effectId])}`;
+}
+
+class DurableExternalEffectOutboxStore implements ExternalEffectOutboxStore {
+  constructor(
+    private readonly storage: TenantStateStorage,
+    private readonly scope: { tenant_id: string; effect_id: string },
+  ) {}
+
+  #assertScope(record: Pick<ExternalEffectOutboxRecord, "tenant_id" | "effect_id">): void {
+    if (record.tenant_id !== this.scope.tenant_id || record.effect_id !== this.scope.effect_id) {
+      deny("external_effect", "CROSS_TENANT_CANDIDATE");
+    }
+  }
+
+  async begin(record: ExternalEffectOutboxRecord): Promise<{
+    record: ExternalEffectOutboxRecord;
+    created: boolean;
+  }> {
+    this.#assertScope(record);
+    return this.storage.transaction(async (transaction) => {
+      const key = externalEffectStorageKey(record.tenant_id, record.effect_id);
+      const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
+      if (existing) {
+        assertSameEffect(existing, record);
+        return { record: clone(existing), created: false };
+      }
+      await transaction.put(key, clone(record));
+      return { record: clone(record), created: true };
+    });
+  }
+
+  async write(record: ExternalEffectOutboxRecord): Promise<void> {
+    this.#assertScope(record);
+    await this.storage.transaction(async (transaction) => {
+      const key = externalEffectStorageKey(record.tenant_id, record.effect_id);
+      const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
+      if (!existing) deny("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
+      assertSameEffect(existing, record);
+      assertValidTransition(existing, record);
+      await transaction.put(key, clone(record));
+    });
+  }
+
+  async claim(record: ExternalEffectOutboxRecord): Promise<{
+    record: ExternalEffectOutboxRecord;
+    claimed: boolean;
+  }> {
+    this.#assertScope(record);
+    return this.storage.transaction(async (transaction) => {
+      const key = externalEffectStorageKey(record.tenant_id, record.effect_id);
+      const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
+      if (!existing) deny("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
+      assertSameEffect(existing, record);
+      if (existing.state !== "pending") return { record: clone(existing), claimed: false };
+      assertValidTransition(existing, record);
+      await transaction.put(key, clone(record));
+      return { record: clone(record), claimed: true };
+    });
+  }
+
+  async read(tenantId: string, effectId: string): Promise<ExternalEffectOutboxRecord | null> {
+    this.#assertScope({ tenant_id: tenantId, effect_id: effectId });
+    const record = await this.storage.get<ExternalEffectOutboxRecord>(
+      externalEffectStorageKey(tenantId, effectId),
+    );
+    return record ? clone(record) : null;
+  }
 }
 
 function createStoredClaim(input: IdempotencyClaimInput): IdempotencyClaim {
@@ -354,6 +431,13 @@ export function createDurableTenantAccountingStore(storage: TenantStateStorage):
     complete: (claim) => store.completeAccounting(claim),
     release: (claim) => store.releaseAccounting(claim),
   };
+}
+
+export function createDurableExternalEffectOutboxStore(
+  storage: TenantStateStorage,
+  scope: { tenant_id: string; effect_id: string },
+): ExternalEffectOutboxStore {
+  return new DurableExternalEffectOutboxStore(storage, scope);
 }
 
 interface DurableObjectStubLike {

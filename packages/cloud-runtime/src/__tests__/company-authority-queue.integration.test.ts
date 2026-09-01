@@ -7,6 +7,10 @@ import {
   type CompanyAuthorityRuntimeEnvelope,
   type ObservedExecutionRequestV1,
 } from "../multitenancy/company-authority-runtime-adapter.js";
+import {
+  ExternalEffectOutboxMemoryStore,
+  processCompanyAuthorityExternalEffect,
+} from "../multitenancy/company-authority-external-effect-outbox.js";
 import type { ExpectedTenantScope, TenantContextEnvelope } from "../multitenancy/contracts.js";
 import { IdempotencyMemoryStore } from "../multitenancy/idempotency.js";
 import { jcsCanonicalize } from "../multitenancy/jcs.js";
@@ -377,5 +381,45 @@ describe("company authority Queue consumer", () => {
     expect(terminal.retry).not.toHaveBeenCalled();
     expect(terminalRedelivery.ack).toHaveBeenCalledTimes(1);
     expect(terminalCallbacks.process_auto).toHaveBeenCalledTimes(1);
+  });
+
+  it("records provider response loss as unknown and ACKs identical redelivery without replay", async () => {
+    const selected = fixture("POS-QUEUE-REDELIVERY-IDEMPOTENT");
+    const outbox = new ExternalEffectOutboxMemoryStore();
+    const providerSend = vi.fn(async () => ({
+      // The provider applied the effect, but its response was lost in transit.
+      applied: true as const,
+      response_observed: false as const,
+    }));
+    const callbacks = {
+      process_auto: vi.fn(async (context: AcceptedCompanyAuthorityContext, payload: { event_id: string }) => (
+        processCompanyAuthorityExternalEffect({
+          context,
+          payload,
+          outbox,
+          provider_send: providerSend,
+        })
+      )),
+      route_approval: vi.fn(async () => "approval"),
+      route_human_action: vi.fn(async () => "human_action"),
+    };
+    const ownership = new IdempotencyMemoryStore();
+    const first = message(envelope(selected));
+    const redelivery = message(envelope(selected));
+
+    await consumeCompanyAuthorityQueueMessage(first, options(selected, callbacks, ownership));
+    await consumeCompanyAuthorityQueueMessage(redelivery, options(selected, callbacks, ownership));
+
+    await expect(outbox.read(
+      selected.context.tenant_context.tenant.tenant_id,
+      selected.context.tenant_context.idempotency_key,
+    )).resolves.toMatchObject({
+      state: "unknown_requires_reconcile",
+    });
+    expect(providerSend).toHaveBeenCalledTimes(1);
+    expect(first.ack).toHaveBeenCalledTimes(1);
+    expect(redelivery.ack).toHaveBeenCalledTimes(1);
+    expect(first.retry).not.toHaveBeenCalled();
+    expect(redelivery.retry).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@
     "status": "in_progress",
     "adapter_foundation": "implemented",
     "runtime_surface_binding": "worker_ingress_selector_implemented; successful Worker propagation and Queue through Slack delivery not_collected",
+    "external_effect_outbox": "local contract implemented with tenant-bound durable-state storage and atomic pending claim; Durable Object RPC/provider binding and production reconciliation evidence not_collected",
     "endpoint_binding": "not_defined",
     "production_trust_store": "not_implemented",
     "runtime_evidence": "not_collected",
