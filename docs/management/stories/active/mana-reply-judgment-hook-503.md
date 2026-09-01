@@ -27,7 +27,7 @@ related_stories:
 - [x] AC2: 通常返信専用settingsは `UserPromptSubmit`、Brainbase MCPを対象とする`PostToolUse`、`Stop`を `brainbase-judgment-hook.mjs` へ接続する。
 - [x] AC3: `meeting-minutes` purposeは従来の議事録専用settingsを使い続け、通常返信用settingsへ混線しない。
 - [x] AC4: container imageは通常返信専用settingsを `/opt/mana` へ読み取り専用で同梱する。
-- [ ] AC5: 対象の単体テストと既存の関連テストが通り、本番配備後のfresh Slack mentionで同一threadの回答と完了したJudgment lifecycleを確認する。
+- [x] AC5: 対象の単体テストと既存の関連テストが通り、本番配備後のfresh Slack mentionで同一threadの回答と完了したJudgment lifecycleを確認する。
 
 ## 非対象
 
@@ -38,4 +38,4 @@ related_stories:
 
 ## 最小の検証可能な変更
 
-通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。parser、Queue、Slack投稿ロジックは変更しない。
+通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。加えて、Slack配送payloadのJCS正規化と、信頼済みStop監査行をモデルが本文へ転記しない場合の決定論的な補完を、境界テスト付きで行う。Queueの再試行方針と議事録経路は変更しない。
