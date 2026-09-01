@@ -1,0 +1,112 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-brainbase-owned-company-authority-runtime-adapter-v1",
+  "authority": {
+    "status": "accepted",
+    "scope": "story"
+  },
+  "provenance": {
+    "input_path": "docs/management/tasks/story-brainbase-owned-company-authority-runtime-adapter-v1.json",
+    "input_sha256": "e755562d3b581ae2548644f0776c5c30a9bcdc0b4d763368a5fd5974b27d514b"
+  },
+  "tasks": [
+    {
+      "task_id": "T0-AUTH-001",
+      "story_id": "story-brainbase-owned-company-authority-runtime-adapter-v1",
+      "title": "会社権限runtime adapterのStory・Architecture・Spec・Taskを固定する",
+      "allowed_paths": [
+        ".vibepro/config.json",
+        ".vibepro/spec/story-brainbase-owned-company-authority-runtime-adapter-v1/**",
+        ".vibepro/stories/story-brainbase-owned-company-authority-runtime-adapter-v1/tasks/**",
+        "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/stories/active/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/tasks/story-brainbase-owned-company-authority-runtime-adapter-v1.json"
+      ],
+      "acceptance_criteria": [
+        "Story、Architecture、8つのSpec clause、4つのTaskが同じstory_idへ結び付いている",
+        "Brainbase live endpoint、production trust store、runtime evidence、production evidenceを未確定または未収集のまま明示する",
+        "最初のREDと、本番完了に必要な同一run証跡をローカル実装の完了条件から分離する"
+      ],
+      "depends_on": [],
+      "status": "completed"
+    },
+    {
+      "task_id": "T0-AUTH-002",
+      "story_id": "story-brainbase-owned-company-authority-runtime-adapter-v1",
+      "title": "Worker入口の会社権限取得をfail-closedにする",
+      "allowed_paths": [
+        ".vibepro/spec/story-brainbase-owned-company-authority-runtime-adapter-v1/**",
+        ".vibepro/stories/story-brainbase-owned-company-authority-runtime-adapter-v1/tasks/**",
+        "contracts/mana-brainbase-company-authority/v1/**",
+        "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/stories/active/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/tasks/story-brainbase-owned-company-authority-runtime-adapter-v1.json",
+        "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+        "packages/cloud-runtime/src/multitenancy/canonical-consumer.ts",
+        "packages/cloud-runtime/src/multitenancy/company-authority-runtime-adapter.ts",
+        "packages/cloud-runtime/src/multitenancy/http-clients.ts"
+      ],
+      "acceptance_criteria": [
+        "authority取得不能時のWorker入口がAUTHORITY_UNAVAILABLEを返し、business callbackとlegacy fallbackを各0回にするRED testを先に観測する",
+        "認証済みSlack observationだけをObservedExecutionRequestV1へ変換し、未知capabilityをreadへ既定化しない",
+        "注入可能なCompanyAuthorityClientとA0のacceptCompanyAuthorityResponseを同じadapter境界で使い、decisionを変更しない"
+      ],
+      "depends_on": [
+        "T0-AUTH-001"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "task_id": "T0-AUTH-003",
+      "story_id": "story-brainbase-owned-company-authority-runtime-adapter-v1",
+      "title": "署名済み会社権限を7つのruntime surfaceへ伝播する",
+      "allowed_paths": [
+        ".vibepro/spec/story-brainbase-owned-company-authority-runtime-adapter-v1/**",
+        ".vibepro/stories/story-brainbase-owned-company-authority-runtime-adapter-v1/tasks/**",
+        "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/stories/active/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/tasks/story-brainbase-owned-company-authority-runtime-adapter-v1.json",
+        "packages/cloud-runtime/src/__tests__/**",
+        "packages/cloud-runtime/src/autonomy-worker.ts",
+        "packages/cloud-runtime/src/brainbase-mcp-proxy.ts",
+        "packages/cloud-runtime/src/multitenancy/**",
+        "packages/cloud-runtime/src/queue-consumer.ts",
+        "packages/cloud-runtime/src/runtime-gateway-proxy.ts"
+      ],
+      "acceptance_criteria": [
+        "Worker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryで外側の会社権限と内側のTenantContextEnvelopeを各境界で再検証する",
+        "deny、approval、human_actionをautoへ昇格せず、会社権限opt-in operationは旧authorizationへfallbackしない",
+        "duplicateまたはredelivery時のmodel、write、external side effect、Slack deliveryを各1回以下にするためのcorrelation境界を保持する"
+      ],
+      "depends_on": [
+        "T0-AUTH-002"
+      ],
+      "status": "planned"
+    },
+    {
+      "task_id": "T0-AUTH-004",
+      "story_id": "story-brainbase-owned-company-authority-runtime-adapter-v1",
+      "title": "live endpoint・production trust・本番同一run証跡を閉じる",
+      "allowed_paths": [
+        ".vibepro/spec/story-brainbase-owned-company-authority-runtime-adapter-v1/**",
+        ".vibepro/stories/story-brainbase-owned-company-authority-runtime-adapter-v1/tasks/**",
+        "contracts/mana-brainbase-company-authority/v1/**",
+        "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/evidence/**",
+        "docs/management/stories/active/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+        "docs/management/tasks/story-brainbase-owned-company-authority-runtime-adapter-v1.json",
+        "packages/cloud-runtime/src/__tests__/**",
+        "packages/cloud-runtime/src/multitenancy/**"
+      ],
+      "acceptance_criteria": [
+        "Brainbase live endpoint、service binding、authentication、production JWK owner、rotation、revocationを正本契約とreadbackで確定する",
+        "2 tenant x 2 person、7 runtime surface、read、write、approval、deny、negative effect 0をexact deployの同一runで実証する",
+        "OperationReceipt、UsageEvent、authority receipt、外部作用、Slack readbackを同じcorrelation IDで照合し、duplicateとredeliveryのexactly-onceを実証する"
+      ],
+      "depends_on": [
+        "T0-AUTH-003"
+      ],
+      "status": "blocked"
+    }
+  ]
+}

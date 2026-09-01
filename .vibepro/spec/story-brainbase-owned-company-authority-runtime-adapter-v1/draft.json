@@ -1,0 +1,383 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-brainbase-owned-company-authority-runtime-adapter-v1",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "ai_synthesis"
+  },
+  "implementation_state": {
+    "status": "planned",
+    "runtime_adapter": "not_implemented",
+    "endpoint_binding": "not_defined",
+    "production_trust_store": "not_implemented",
+    "runtime_evidence": "not_collected",
+    "production_evidence": "not_collected"
+  },
+  "source_lock": {
+    "a0_original_head": "167116c8b4aa92a9d2a50b70c8222f0336ffd792",
+    "t0_base": "6d57193969eac4ca685a66f1f9e37434bcf71923",
+    "reconciliation": "three A0 commits applied patch-equivalently onto the T0 base; git range-diff reports all three equivalent"
+  },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenant_id",
+      "resolved_from": [
+        "Brainbase signed CanonicalExecutionContextV1"
+      ],
+      "resolution_point": "Worker ingress accepts the signed company authority context before any business effect",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "worker",
+        "queue",
+        "durable_object",
+        "container",
+        "mcp",
+        "brainbase_proxy",
+        "slack_delivery"
+      ],
+      "verified_surfaces": []
+    },
+    "resources": [
+      {
+        "name": "canonical_company_authority_context",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/connection_id/correlation_id",
+        "trust_zone": "brainbase_to_mana_control_plane",
+        "residue_policy": "production retention not defined by this planning slice",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "opaque credential_ref only"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenant_id",
+      "scope": "tenant_id/connection_id/operation_id/audience",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "Brainbase"
+      ],
+      "residency": "not_collected",
+      "migration": "not_performed",
+      "rollback": "reject company_authority_v1 operations; do not fall back to legacy authorization"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_shared",
+      "managed_dedicated",
+      "customer_managed"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "cross_tenant_candidate",
+      "no_data"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "ObservedExecutionRequestV1",
+        "CanonicalExecutionContextV1",
+        "TenantContextEnvelope"
+      ],
+      "boundary_edges": [
+        "SlackIngress->CompanyAuthorityAdapter",
+        "CompanyAuthorityAdapter->RuntimeBoundaries"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "graphify collected; runtime coverage not_collected",
+      "evidence_state": "not_collected",
+      "evidence": {
+        "propagation_surfaces": [],
+        "negative_scenarios": [],
+        "evidence_refs": [
+          ".vibepro/diagnostics/2026-09-01T171941Z/evidence.json"
+        ]
+      }
+    }
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "認証済みSlack observationだけをObservedExecutionRequestV1へ変換し、canonical person、organization、project、RACI、approver、policy、tenant、connection、credentialを入力に含めない。desired_effectは明示mappingを要求し、未知capabilityをreadへ既定化しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-001"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-002"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "Observation mapper"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/http-clients.ts",
+            "anchor": "desiredEffectForCapability"
+          },
+          {
+            "file": "contracts/mana-brainbase-company-authority/v1/reference/wire.mjs",
+            "anchor": "validateObservedExecutionRequest"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "CompanyAuthorityClientをtransport portとして注入する。fixtureとunavailableを同じproduction adapter境界へ入力できるようにするが、Brainbase live endpoint、service binding、authentication、retry policyはproducer契約が確定するまでnot_definedとする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-003"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "CompanyAuthorityClient port"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/http-clients.ts",
+            "anchor": "createTenantRuntimeHttpClients"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "会社権限responseはA0 source lockのacceptCompanyAuthorityResponseだけで受理し、外側とnested TenantContextの署名、TTL、audience、deployment、tenant、connection、membership、resource、RACI、policyをfail-closedで検証する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-004"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "Response acceptance"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "contracts/mana-brainbase-company-authority/v1/reference/wire.mjs",
+            "anchor": "acceptCompanyAuthorityResponse"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "accepts positive decisions unchanged and rejects deny or nested-signature tampering without effects"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "authority取得がno_data、unknown、partial、not_collected、unavailable、schema不正、署名不正、stale、binding不一致の場合はbusiness callbackとlegacy authorization fallbackを各0回にする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-005"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-008"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "Failure semantics"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/canonical-consumer.ts",
+            "anchor": "assertCanonicalAuthorityRetrieval"
+          },
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/http-clients.ts",
+            "anchor": "assertCanonicalCompanyAuthority"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "受理したCanonicalExecutionContextV1をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへ変更せず伝播し、各境界で外側company authorityと内側TenantContextEnvelopeを再検証する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-006"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "Runtime propagation"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/runtime-boundaries.ts",
+            "anchor": "TenantRuntimeBoundaryVerifier"
+          },
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/envelope.ts",
+            "anchor": "validateTenantBoundary"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    },
+    {
+      "id": "INV-003",
+      "type": "invariant",
+      "statement": "Brainbaseのauto、approval、human_action、denyを変更しない。deny、approval、human_actionではprotected business effectを実行せず、approverまたはresponsible personをMANA側で差し替えない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-007"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "Decision handling"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "accepts positive decisions unchanged and rejects deny or nested-signature tampering without effects"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "company_authority_v1必須のWorker ingressでCompanyAuthorityClientがunavailableを返すと、AUTHORITY_UNAVAILABLEを返し、business callback 0、legacy fallback 0を観測する。これはlive endpointやsecretなしで最初にREDにする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-010"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "初期テスト戦略"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/runtime-boundaries.ts",
+            "anchor": "resolveSlackWorkerIngress"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "adapterのローカルtest成功後も、live endpoint、production trust、2 tenant x 2 person、7 surface同一run、negative effect 0、exactly-once、same-correlation、鍵rotation、production readbackはnot_collectedを維持し、acceptance-e2e-runtime-flow-not-collectedをcloseしない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-011"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-012"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md",
+            "section": "Production evidence gate"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs",
+            "case": "runtime and production evidence remain not_collected"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-09-01T17:22:08.974Z",
+      "last_revised_at": "2026-09-01T17:22:23.527Z"
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "OQ-001",
+      "question": "Brainbase company-authority resolutionをHTTP route、service binding、または別transportのどれで公開するか。producer正本で未定義のためT0 consumerから発明しない"
+    },
+    {
+      "id": "OQ-002",
+      "question": "production JWK setの配布、kid rotation、revocation、cache TTL、failure policyをどのcontrol planeが所有するか"
+    }
+  ],
+  "generated_at": "2026-09-01T17:22:08.972Z",
+  "previous_spec_id": null
+}
