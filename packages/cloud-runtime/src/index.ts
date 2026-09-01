@@ -26,6 +26,8 @@ import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
 import {
   consumeCompanyAuthorityQueueMessage,
+  diagnoseCompanyAuthorityRuntimeEnvelope,
+  isCompanyAuthorityRuntimeEnvelopeCandidate,
   isCompanyAuthorityRuntimeEnvelope,
   type CompanyAuthorityRuntimeEnvelope,
 } from "./multitenancy/company-authority-runtime-adapter.js";
@@ -2629,7 +2631,19 @@ export default {
         }
         continue;
       }
-      if (isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)) {
+      if (isCompanyAuthorityRuntimeEnvelopeCandidate(message.body)) {
+        if (!isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)) {
+          const diagnostic = diagnoseCompanyAuthorityRuntimeEnvelope(message.body);
+          console.error(JSON.stringify({
+            event: "company_authority_queue_failed",
+            code: diagnostic.code,
+            correlation_id: diagnostic.correlation_id,
+            stage: diagnostic.stage,
+            reason: diagnostic.reason,
+          }));
+          message.retry();
+          continue;
+        }
         const companyAuthorityEnvelope = message.body;
         let runtimeConfig: ReturnType<typeof parseCompanyAuthorityRuntimeConfiguration>;
         try {

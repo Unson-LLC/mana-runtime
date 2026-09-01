@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
   consumeCompanyAuthorityQueueMessage,
+  diagnoseCompanyAuthorityRuntimeEnvelope,
+  isCompanyAuthorityRuntimeEnvelopeCandidate,
   isCompanyAuthorityRuntimeEnvelope,
   type AcceptedCompanyAuthorityContext,
   type CompanyAuthorityQueueDecisionSnapshot,
@@ -177,6 +179,41 @@ describe("company authority Queue consumer", () => {
     expect(isCompanyAuthorityRuntimeEnvelope(valid)).toBe(true);
     expect(isCompanyAuthorityRuntimeEnvelope(mismatched)).toBe(false);
     expect(isCompanyAuthorityRuntimeEnvelope(missingResponse)).toBe(false);
+  });
+
+  it("keeps Company Authority-shaped invalid envelopes on the diagnostic retry path", () => {
+    const selected = fixture("POS-QUEUE-REDELIVERY-IDEMPOTENT");
+    const valid = envelope(selected);
+    const mismatched = structuredClone(valid);
+    mismatched.company_authority_request.correlation_id = "corr-mismatch";
+    const { company_authority_response: _missingResponse, ...missingResponse } = structuredClone(valid);
+    const unknownSchema = { ...valid, schema_version: "9.9" };
+    const ordinarySlackEvent = { type: "event_callback", event_id: "ordinary" };
+
+    expect(isCompanyAuthorityRuntimeEnvelopeCandidate(valid)).toBe(true);
+    expect(isCompanyAuthorityRuntimeEnvelopeCandidate(mismatched)).toBe(true);
+    expect(isCompanyAuthorityRuntimeEnvelopeCandidate(missingResponse)).toBe(true);
+    expect(isCompanyAuthorityRuntimeEnvelopeCandidate(unknownSchema)).toBe(true);
+    expect(isCompanyAuthorityRuntimeEnvelopeCandidate(ordinarySlackEvent)).toBe(false);
+
+    expect(diagnoseCompanyAuthorityRuntimeEnvelope(mismatched)).toMatchObject({
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      stage: "company_authority_runtime_envelope",
+      reason: "correlation_mismatch",
+      correlation_id: valid.correlation_id,
+    });
+    expect(diagnoseCompanyAuthorityRuntimeEnvelope(missingResponse)).toMatchObject({
+      code: "AUTHORITY_ENVELOPE_INVALID",
+      stage: "company_authority_runtime_envelope",
+      reason: "missing_response",
+      correlation_id: valid.correlation_id,
+    });
+    expect(diagnoseCompanyAuthorityRuntimeEnvelope(unknownSchema)).toMatchObject({
+      code: "AUTHORITY_ENVELOPE_INVALID",
+      stage: "company_authority_runtime_envelope",
+      reason: "unknown_schema",
+      correlation_id: valid.correlation_id,
+    });
   });
 
   it("executes an auto effect once across an identical redelivery", async () => {

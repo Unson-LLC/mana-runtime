@@ -99,6 +99,13 @@ export interface CompanyAuthorityRuntimeEnvelope<T> {
   readonly payload: T;
 }
 
+export interface CompanyAuthorityRuntimeEnvelopeDiagnostic {
+  readonly code: "AUTHORITY_ENVELOPE_INVALID" | "AUTHORITY_SCOPE_MISMATCH";
+  readonly stage: "company_authority_runtime_envelope";
+  readonly reason: "unknown_schema" | "missing_response" | "correlation_mismatch" | "invalid_shape";
+  readonly correlation_id: string;
+}
+
 export interface CompanyAuthorityQueueMessageLike<T> {
   readonly body: CompanyAuthorityRuntimeEnvelope<T>;
   ack(): void;
@@ -125,6 +132,66 @@ export interface CompanyAuthorityRuntimeDependencies {
 export type CompanyAuthorityRuntimeResolver<T = unknown> = (
   input: CompanyAuthorityRuntimeResolutionInput<T>,
 ) => CompanyAuthorityRuntimeDependencies | Promise<CompanyAuthorityRuntimeDependencies>;
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+/**
+ * Identifies only the namespaced Company Authority protocol marker. Keeping
+ * this separate from the strict type guard lets Queue reject malformed
+ * envelopes without classifying ordinary Slack or legacy payloads as this
+ * protocol.
+ */
+export function isCompanyAuthorityRuntimeEnvelopeCandidate(value: unknown): boolean {
+  const envelope = record(value);
+  return !!envelope
+    && ("company_authority_request" in envelope || "company_authority_response" in envelope);
+}
+
+export function diagnoseCompanyAuthorityRuntimeEnvelope(
+  value: unknown,
+): CompanyAuthorityRuntimeEnvelopeDiagnostic {
+  const envelope = record(value);
+  const correlationId = envelope && typeof envelope.correlation_id === "string"
+    && envelope.correlation_id.length > 0
+    ? envelope.correlation_id
+    : "unknown";
+  const request = record(envelope?.company_authority_request);
+  if (envelope && typeof envelope.correlation_id === "string"
+    && request && typeof request.correlation_id === "string"
+    && envelope.correlation_id !== request.correlation_id) {
+    return {
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      stage: "company_authority_runtime_envelope",
+      reason: "correlation_mismatch",
+      correlation_id: correlationId,
+    };
+  }
+  if (envelope?.schema_version !== "1.0") {
+    return {
+      code: "AUTHORITY_ENVELOPE_INVALID",
+      stage: "company_authority_runtime_envelope",
+      reason: "unknown_schema",
+      correlation_id: correlationId,
+    };
+  }
+  if (!record(envelope?.company_authority_response)) {
+    return {
+      code: "AUTHORITY_ENVELOPE_INVALID",
+      stage: "company_authority_runtime_envelope",
+      reason: "missing_response",
+      correlation_id: correlationId,
+    };
+  }
+  return {
+    code: "AUTHORITY_ENVELOPE_INVALID",
+    stage: "company_authority_runtime_envelope",
+    reason: "invalid_shape",
+    correlation_id: correlationId,
+  };
+}
 
 export function isCompanyAuthorityRuntimeEnvelope<T = unknown>(
   value: unknown,

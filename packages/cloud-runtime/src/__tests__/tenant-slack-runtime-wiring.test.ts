@@ -47,7 +47,16 @@ describe("tenant Slack runtime wiring", () => {
   it("connects company-authority envelopes to the verified Queue consumer without legacy fallback", () => {
     const queueStart = source.indexOf("async queue(");
     const queue = source.slice(queueStart);
+    const candidateAt = queue.indexOf("isCompanyAuthorityRuntimeEnvelopeCandidate(message.body)");
+    const strictAt = queue.indexOf("isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)");
+    const legacyAt = queue.indexOf("if (ackMalformedTenantQueueMessage", candidateAt);
 
+    expect(candidateAt).toBeGreaterThan(-1);
+    expect(strictAt).toBeGreaterThan(candidateAt);
+    expect(legacyAt).toBeGreaterThan(strictAt);
+    expect(queue.slice(candidateAt, legacyAt)).toContain("diagnoseCompanyAuthorityRuntimeEnvelope(message.body)");
+    expect(queue.slice(candidateAt, legacyAt)).toContain('code: diagnostic.code');
+    expect(queue.slice(candidateAt, legacyAt)).toContain("message.retry();");
     expect(queue).toContain("isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)");
     expect(queue).toContain("parseCompanyAuthorityRuntimeConfiguration(env)");
     expect(queue).toContain("consumeCompanyAuthorityQueueMessage({");
