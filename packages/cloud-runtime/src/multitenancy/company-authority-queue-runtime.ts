@@ -7,6 +7,25 @@ import type {
 import type { ExpectedTenantScope, TenantContextEnvelope } from "./contracts.js";
 import { deny } from "./errors.js";
 import { matchesCompanyAuthoritySlackPayload } from "./company-authority-payload-binding.js";
+import {
+  processCompanyAuthorityExternalEffect,
+  type ExternalEffectOutboxRecord,
+  type ExternalEffectOutboxStore,
+  type ExternalEffectProviderResult,
+} from "./company-authority-external-effect-outbox.js";
+
+export interface CompanyAuthorityExternalEffectProviderRoute<T> {
+  create_outbox(context: AcceptedCompanyAuthorityContext): ExternalEffectOutboxStore;
+  provider_send(input: {
+    provider_key: string;
+    payload: T;
+  }): Promise<ExternalEffectProviderResult>;
+}
+
+export type CompanyAuthorityCapabilityProviderRegistry<T> = Readonly<Record<
+  string,
+  CompanyAuthorityExternalEffectProviderRoute<T> | undefined
+>>;
 
 function scopeMismatch(phase: string): never {
   return deny("queue_consumer", "AUTHORITY_SCOPE_MISMATCH", { phase });
@@ -100,4 +119,46 @@ export async function unavailableCompanyAuthorityQueueRoute(
     "UPSTREAM_UNAVAILABLE",
     { phase: `company_authority_${decision}_route_not_connected` },
   );
+}
+
+/**
+ * Dispatches only an already-accepted automatic external effect to an explicit
+ * provider route. Registry absence is retryable and never falls back to a
+ * guessed transport or to another capability.
+ */
+export async function processCompanyAuthorityAutoQueueRoute<T>(input: {
+  context: AcceptedCompanyAuthorityContext;
+  request: ObservedExecutionRequestV1;
+  payload: T;
+  registry: CompanyAuthorityCapabilityProviderRegistry<T>;
+}): Promise<ExternalEffectOutboxRecord> {
+  if (input.context.authority.decision !== "auto") {
+    scopeMismatch("company_authority_non_auto_provider_route_forbidden");
+  }
+  if (input.request.requested_action.desired_effect !== "external_side_effect") {
+    scopeMismatch("company_authority_provider_effect_mismatch");
+  }
+  const capabilityId = input.request.requested_action.capability_id;
+  if (input.context.authority.capability_id !== capabilityId) {
+    scopeMismatch("company_authority_provider_capability_mismatch");
+  }
+  const allowedEffects = input.context.authority.allowed_effects;
+  if (!Array.isArray(allowedEffects) || !allowedEffects.includes("external_side_effect")) {
+    scopeMismatch("company_authority_provider_effect_not_allowed");
+  }
+  const route = Object.prototype.hasOwnProperty.call(input.registry, capabilityId)
+    ? input.registry[capabilityId]
+    : undefined;
+  if (!route) {
+    return deny("queue_consumer", "UPSTREAM_UNAVAILABLE", {
+      phase: "company_authority_auto_provider_route_not_connected",
+      capability_id: capabilityId,
+    });
+  }
+  return processCompanyAuthorityExternalEffect({
+    context: input.context,
+    payload: input.payload,
+    outbox: route.create_outbox(input.context),
+    provider_send: route.provider_send,
+  });
 }

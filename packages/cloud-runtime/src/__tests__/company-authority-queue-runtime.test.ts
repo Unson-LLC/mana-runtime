@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  processCompanyAuthorityAutoQueueRoute,
   resolveCompanyAuthoritySlackQueueScope,
   unavailableCompanyAuthorityQueueRoute,
 } from "../multitenancy/company-authority-queue-runtime.js";
+import { ExternalEffectOutboxMemoryStore } from "../multitenancy/company-authority-external-effect-outbox.js";
 import { companyAuthoritySlackResourceRef } from "../multitenancy/company-authority-payload-binding.js";
 import type {
   AcceptedCompanyAuthorityContext,
@@ -12,6 +14,7 @@ import type { TenantContextEnvelope } from "../multitenancy/contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 
 const tenantContext = {
+  idempotency_key: "idem-auto-route-a",
   tenant: { tenant_id: "tenant-a" },
   workspace_connection: {
     connection_id: "connection-a",
@@ -38,8 +41,21 @@ const tenantContext = {
 
 const context = {
   tenant_context: tenantContext,
-  authority: { decision: "auto" },
+  authority: {
+    decision: "auto",
+    capability_id: "company_read",
+    allowed_effects: ["read"],
+  },
 } as unknown as AcceptedCompanyAuthorityContext;
+
+const externalEffectContext = {
+  ...context,
+  authority: {
+    decision: "auto",
+    capability_id: "company_external_effect",
+    allowed_effects: ["external_side_effect"],
+  },
+} as AcceptedCompanyAuthorityContext;
 
 const payload = {
   tenantId: "tenant-a",
@@ -152,12 +168,6 @@ describe("company authority Queue production seam", () => {
   });
 
   it("keeps every not-yet-connected decision route retryable without executing an effect", async () => {
-    await expect(unavailableCompanyAuthorityQueueRoute("auto"))
-      .rejects.toEqual(expect.objectContaining({
-        boundary: "queue_consumer",
-        code: "UPSTREAM_UNAVAILABLE",
-        details: { phase: "company_authority_auto_route_not_connected" },
-      }));
     await expect(unavailableCompanyAuthorityQueueRoute("approval"))
       .rejects.toEqual(expect.objectContaining({
         details: { phase: "company_authority_approval_route_not_connected" },
@@ -166,5 +176,188 @@ describe("company authority Queue production seam", () => {
       .rejects.toEqual(expect.objectContaining({
         details: { phase: "company_authority_human_action_route_not_connected" },
       }));
+  });
+
+  it("routes an accepted auto external effect through an explicitly registered outbox provider", async () => {
+    const outbox = new ExternalEffectOutboxMemoryStore();
+    const createOutbox = vi.fn(() => outbox);
+    const providerSend = vi.fn(async () => ({
+      applied: true as const,
+      response_observed: true as const,
+      result_ref: "provider:auto-route-a",
+    }));
+    const externalRequest: ObservedExecutionRequestV1 = {
+      ...request,
+      requested_action: {
+        ...request.requested_action,
+        capability_id: "company_external_effect",
+        desired_effect: "external_side_effect",
+      },
+    };
+
+    await expect(processCompanyAuthorityAutoQueueRoute({
+      context: externalEffectContext,
+      request: externalRequest,
+      payload,
+      registry: {
+        company_external_effect: {
+          create_outbox: createOutbox,
+          provider_send: providerSend,
+        },
+      },
+    })).resolves.toMatchObject({ state: "succeeded", result_ref: "provider:auto-route-a" });
+    expect(createOutbox).toHaveBeenCalledOnce();
+    expect(createOutbox).toHaveBeenCalledWith(externalEffectContext);
+    expect(providerSend).toHaveBeenCalledOnce();
+  });
+
+  it.each(["unregistered_external_effect", "__proto__"])(
+    "fails retryably for unregistered auto capability %s before any provider effect",
+    async (capabilityId) => {
+    await expect(processCompanyAuthorityAutoQueueRoute({
+      context: {
+        ...externalEffectContext,
+        authority: { ...externalEffectContext.authority, capability_id: capabilityId },
+      } as AcceptedCompanyAuthorityContext,
+      request: {
+        ...request,
+        requested_action: {
+          ...request.requested_action,
+          capability_id: capabilityId,
+          desired_effect: "external_side_effect",
+        },
+      },
+      payload,
+      registry: {},
+    })).rejects.toEqual(expect.objectContaining({
+      boundary: "queue_consumer",
+      code: "UPSTREAM_UNAVAILABLE",
+      details: {
+        phase: "company_authority_auto_provider_route_not_connected",
+        capability_id: capabilityId,
+      },
+    }));
+    },
+  );
+
+  it.each(["approval", "human_action"] as const)(
+    "never sends a %s decision through the auto provider route",
+    async (decision) => {
+      const createOutbox = vi.fn(() => new ExternalEffectOutboxMemoryStore());
+      const providerSend = vi.fn();
+      await expect(processCompanyAuthorityAutoQueueRoute({
+        context: {
+          ...externalEffectContext,
+          authority: { ...externalEffectContext.authority, decision },
+        } as AcceptedCompanyAuthorityContext,
+        request: {
+          ...request,
+          requested_action: {
+            ...request.requested_action,
+            capability_id: "company_external_effect",
+            desired_effect: "external_side_effect",
+          },
+        },
+        payload,
+        registry: {
+          company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },
+        },
+      })).rejects.toEqual(expect.objectContaining({
+        code: "AUTHORITY_SCOPE_MISMATCH",
+        details: { phase: "company_authority_non_auto_provider_route_forbidden" },
+      }));
+      expect(createOutbox).not.toHaveBeenCalled();
+      expect(providerSend).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["read", "write"] as const)(
+    "rejects a registered capability whose desired effect is %s",
+    async (desiredEffect) => {
+      const createOutbox = vi.fn(() => new ExternalEffectOutboxMemoryStore());
+      const providerSend = vi.fn();
+      await expect(processCompanyAuthorityAutoQueueRoute({
+        context: externalEffectContext,
+        request: {
+          ...request,
+          requested_action: {
+            ...request.requested_action,
+            capability_id: "company_external_effect",
+            desired_effect: desiredEffect,
+          },
+        },
+        payload,
+        registry: {
+          company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },
+        },
+      })).rejects.toEqual(expect.objectContaining({
+        code: "AUTHORITY_SCOPE_MISMATCH",
+        details: { phase: "company_authority_provider_effect_mismatch" },
+      }));
+      expect(createOutbox).not.toHaveBeenCalled();
+      expect(providerSend).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects an accepted authority capability that differs from the provider request", async () => {
+    const createOutbox = vi.fn(() => new ExternalEffectOutboxMemoryStore());
+    const providerSend = vi.fn();
+    await expect(processCompanyAuthorityAutoQueueRoute({
+      context: {
+        ...externalEffectContext,
+        authority: {
+          ...externalEffectContext.authority,
+          capability_id: "different_external_effect",
+        },
+      } as AcceptedCompanyAuthorityContext,
+      request: {
+        ...request,
+        requested_action: {
+          ...request.requested_action,
+          capability_id: "company_external_effect",
+          desired_effect: "external_side_effect",
+        },
+      },
+      payload,
+      registry: {
+        company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },
+      },
+    })).rejects.toEqual(expect.objectContaining({
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      details: { phase: "company_authority_provider_capability_mismatch" },
+    }));
+    expect(createOutbox).not.toHaveBeenCalled();
+    expect(providerSend).not.toHaveBeenCalled();
+  });
+
+  it("rejects an accepted authority that does not allow the external side effect", async () => {
+    const createOutbox = vi.fn(() => new ExternalEffectOutboxMemoryStore());
+    const providerSend = vi.fn();
+    await expect(processCompanyAuthorityAutoQueueRoute({
+      context: {
+        ...externalEffectContext,
+        authority: {
+          ...externalEffectContext.authority,
+          allowed_effects: ["read"],
+        },
+      } as AcceptedCompanyAuthorityContext,
+      request: {
+        ...request,
+        requested_action: {
+          ...request.requested_action,
+          capability_id: "company_external_effect",
+          desired_effect: "external_side_effect",
+        },
+      },
+      payload,
+      registry: {
+        company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },
+      },
+    })).rejects.toEqual(expect.objectContaining({
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      details: { phase: "company_authority_provider_effect_not_allowed" },
+    }));
+    expect(createOutbox).not.toHaveBeenCalled();
+    expect(providerSend).not.toHaveBeenCalled();
   });
 });

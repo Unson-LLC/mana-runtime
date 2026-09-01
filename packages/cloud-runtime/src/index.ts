@@ -31,8 +31,10 @@ import {
 } from "./multitenancy/company-authority-runtime-adapter.js";
 import { parseCompanyAuthorityRuntimeConfiguration } from "./multitenancy/company-authority-runtime-config.js";
 import {
+  processCompanyAuthorityAutoQueueRoute,
   resolveCompanyAuthoritySlackQueueScope,
   unavailableCompanyAuthorityQueueRoute,
+  type CompanyAuthorityCapabilityProviderRegistry,
 } from "./multitenancy/company-authority-queue-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
@@ -361,6 +363,11 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
 }
 
 interface WorkspaceEnv {}
+
+// Production remains fail closed until a credential-backed provider adapter
+// with reconciliation evidence is registered explicitly per capability.
+const companyAuthorityProviderRoutes = {} as const satisfies
+  CompanyAuthorityCapabilityProviderRegistry<SlackQueueEvent>;
 
 export class TenantRuntimeState extends DurableObject<Env> {
   readonly #handler = new TenantRuntimeStateHandler(
@@ -2681,7 +2688,12 @@ export default {
               desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
             });
           },
-          process_auto: () => unavailableCompanyAuthorityQueueRoute("auto"),
+          process_auto: (context, payload) => processCompanyAuthorityAutoQueueRoute({
+            context,
+            request: companyAuthorityEnvelope.company_authority_request,
+            payload,
+            registry: companyAuthorityProviderRoutes,
+          }),
           route_approval: () => unavailableCompanyAuthorityQueueRoute("approval"),
           route_human_action: () => unavailableCompanyAuthorityQueueRoute("human_action"),
           execution_hash: tenantPayloadHash,
