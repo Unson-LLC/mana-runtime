@@ -176,10 +176,10 @@ export async function processCompanyAuthorityHumanHandoff<T>(input: {
   const approver = requiredString(authority.approver_person_id);
   const responsible = requiredString(authority.responsible_person_id);
   const target = decision === "approval"
-    ? approver && authority.responsible_person_id === null
+    ? approver
       ? { role: "approver" as const, person_id: approver }
       : invalidHandoff("company_authority_approval_target")
-    : responsible && authority.approver_person_id === null
+    : responsible
       ? { role: "responsible" as const, person_id: responsible }
       : invalidHandoff("company_authority_human_action_target");
   const record: CompanyAuthorityHumanHandoffRecord = {

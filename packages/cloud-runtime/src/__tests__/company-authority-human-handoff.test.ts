@@ -186,10 +186,10 @@ describe("company authority human handoff", () => {
 
   it.each([
     ["approval", null, null],
-    ["approval", "person-umeda", "person-other"],
+    ["approval", null, "person-other"],
     ["human_action", null, null],
-    ["human_action", "person-other", "person-umeda"],
-  ] as const)("rejects %s with missing or conflicting signed targets", async (
+    ["human_action", "person-other", null],
+  ] as const)("rejects %s with missing signed target", async (
     decision,
     approverPersonId,
     responsiblePersonId,
@@ -211,6 +211,33 @@ describe("company authority human handoff", () => {
       now: () => "2026-09-02T00:01:00.000Z",
     })).rejects.toMatchObject({ code: "AUTHORITY_SCOPE_MISMATCH" });
     expect(await store.read("tenant-a", "handoff-a")).toBeNull();
+  });
+
+  it.each([
+    ["approval", "person-umeda", "person-responsible", { role: "approver", person_id: "person-umeda" }],
+    ["human_action", "person-approver", "person-umeda", { role: "responsible", person_id: "person-umeda" }],
+  ] as const)("accepts %s when both signed targets are present", async (
+    decision,
+    approverPersonId,
+    responsiblePersonId,
+    target,
+  ) => {
+    const accepted = structuredClone(context(decision));
+    Object.assign(accepted.authority, {
+      approver_person_id: approverPersonId,
+      responsible_person_id: responsiblePersonId,
+    });
+    const desiredEffect = decision === "approval" ? "external_side_effect" : "write";
+    const { record } = await processCompanyAuthorityHumanHandoff({
+      context: accepted,
+      request: request(desiredEffect),
+      payload: { event_id: "event-a" },
+      execution_hash: `sha256:${decision}:dual-target`,
+      store: new CompanyAuthorityHumanHandoffMemoryStore(),
+      now: () => "2026-09-02T00:01:00.000Z",
+    });
+
+    expect(record.target).toEqual(target);
   });
 
   it("persists through the tenant-bound durable client and rejects cross-scope reads", async () => {
