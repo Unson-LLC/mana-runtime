@@ -38,4 +38,4 @@ related_stories:
 
 ## 最小の検証可能な変更
 
-通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。加えて、Slack配送payloadのJCS正規化と、信頼済みStop監査行をモデルが本文へ転記しない場合の決定論的な補完を、境界テスト付きで行う。Queueの再試行方針と議事録経路は変更しない。
+通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。加えて、Slack配送payloadのJCS正規化、信頼済みStop監査行をモデルが本文へ転記しない場合の決定論的な補完、tenant / workspace / channel / thread scopeを必須にしたredacted episode readbackを境界テスト付きで行う。空のStop監査は補完せずfail closedする。Queueの再試行方針と議事録経路は変更しない。
