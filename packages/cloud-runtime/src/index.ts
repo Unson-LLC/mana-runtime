@@ -33,9 +33,12 @@ import { parseCompanyAuthorityRuntimeConfiguration } from "./multitenancy/compan
 import {
   processCompanyAuthorityAutoQueueRoute,
   resolveCompanyAuthoritySlackQueueScope,
-  unavailableCompanyAuthorityQueueRoute,
   type CompanyAuthorityCapabilityProviderRegistry,
 } from "./multitenancy/company-authority-queue-runtime.js";
+import {
+  companyAuthorityHumanHandoffIdentity,
+  processCompanyAuthorityHumanHandoff,
+} from "./multitenancy/company-authority-human-handoff.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
   currentMeetingMinutesActionTs,
@@ -169,6 +172,7 @@ import {
   parseWorkspaceConnectionHints,
 } from "./multitenancy/http-clients.js";
 import {
+  createDurableCompanyAuthorityHumanHandoffClient,
   createDurableTenantAccountingClient,
   createDurableTenantStateClient,
   TenantRuntimeStateHandler,
@@ -2656,12 +2660,12 @@ export default {
           retry: (options) => message.retry(options),
         }, {
           acceptance: runtimeConfig.acceptance,
-          resolve_runtime: async ({ context, request }) => {
+          resolve_runtime: async ({ context, request, payload }) => {
             const tenantContext = context.tenant_context as unknown as TenantContextEnvelope;
             const expectedScope = await resolveCompanyAuthoritySlackQueueScope({
               context,
               request,
-              payload: companyAuthorityEnvelope.payload,
+              payload,
               expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
               desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
             });
@@ -2688,14 +2692,34 @@ export default {
               desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
             });
           },
-          process_auto: (context, payload) => processCompanyAuthorityAutoQueueRoute({
+          process_auto: (context, payload, snapshot) => processCompanyAuthorityAutoQueueRoute({
             context,
-            request: companyAuthorityEnvelope.company_authority_request,
+            request: snapshot.request,
             payload,
             registry: companyAuthorityProviderRoutes,
           }),
-          route_approval: () => unavailableCompanyAuthorityQueueRoute("approval"),
-          route_human_action: () => unavailableCompanyAuthorityQueueRoute("human_action"),
+          route_approval: (context, payload, snapshot) => {
+            const scope = companyAuthorityHumanHandoffIdentity(context);
+            return processCompanyAuthorityHumanHandoff({
+              context,
+              request: snapshot.request,
+              payload,
+              execution_hash: snapshot.execution_hash,
+              store: createDurableCompanyAuthorityHumanHandoffClient(env.TENANT_RUNTIME_STATE, scope),
+              now: () => new Date().toISOString(),
+            });
+          },
+          route_human_action: (context, payload, snapshot) => {
+            const scope = companyAuthorityHumanHandoffIdentity(context);
+            return processCompanyAuthorityHumanHandoff({
+              context,
+              request: snapshot.request,
+              payload,
+              execution_hash: snapshot.execution_hash,
+              store: createDurableCompanyAuthorityHumanHandoffClient(env.TENANT_RUNTIME_STATE, scope),
+              now: () => new Date().toISOString(),
+            });
+          },
           execution_hash: tenantPayloadHash,
           retention_until: tenantRetentionUntil,
           now: () => new Date().toISOString(),

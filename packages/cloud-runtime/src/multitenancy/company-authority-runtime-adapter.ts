@@ -105,9 +105,15 @@ export interface CompanyAuthorityQueueMessageLike<T> {
   retry(options?: { delaySeconds?: number }): void;
 }
 
-export interface CompanyAuthorityRuntimeResolutionInput {
+export interface CompanyAuthorityQueueDecisionSnapshot {
+  readonly request: ObservedExecutionRequestV1;
+  readonly execution_hash: string;
+}
+
+export interface CompanyAuthorityRuntimeResolutionInput<T = unknown> {
   readonly context: AcceptedCompanyAuthorityContext;
   readonly request: ObservedExecutionRequestV1;
+  readonly payload: T;
 }
 
 export interface CompanyAuthorityRuntimeDependencies {
@@ -116,8 +122,8 @@ export interface CompanyAuthorityRuntimeDependencies {
   readonly ownership: IdempotencyStore;
 }
 
-export type CompanyAuthorityRuntimeResolver = (
-  input: CompanyAuthorityRuntimeResolutionInput,
+export type CompanyAuthorityRuntimeResolver<T = unknown> = (
+  input: CompanyAuthorityRuntimeResolutionInput<T>,
 ) => CompanyAuthorityRuntimeDependencies | Promise<CompanyAuthorityRuntimeDependencies>;
 
 export function isCompanyAuthorityRuntimeEnvelope<T = unknown>(
@@ -468,19 +474,31 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
  * nested TenantContext idempotency claim to route exactly one unchanged
  * decision. A non-auto decision is never sent to the protected auto callback.
  */
-export async function consumeCompanyAuthorityQueueMessage<T, R>(
+export async function consumeCompanyAuthorityQueueMessage<T>(
   message: CompanyAuthorityQueueMessageLike<T>,
   options: {
     acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
-    resolve_runtime: CompanyAuthorityRuntimeResolver;
+    resolve_runtime: CompanyAuthorityRuntimeResolver<T>;
     validate_payload_binding(
       context: AcceptedCompanyAuthorityContext,
       request: ObservedExecutionRequestV1,
       payload: T,
     ): void | Promise<void>;
-    process_auto(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
-    route_approval(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
-    route_human_action(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
+    process_auto(
+      context: AcceptedCompanyAuthorityContext,
+      payload: T,
+      snapshot: CompanyAuthorityQueueDecisionSnapshot,
+    ): Promise<unknown>;
+    route_approval(
+      context: AcceptedCompanyAuthorityContext,
+      payload: T,
+      snapshot: CompanyAuthorityQueueDecisionSnapshot,
+    ): Promise<unknown>;
+    route_human_action(
+      context: AcceptedCompanyAuthorityContext,
+      payload: T,
+      snapshot: CompanyAuthorityQueueDecisionSnapshot,
+    ): Promise<unknown>;
     execution_hash(envelope: CompanyAuthorityRuntimeEnvelope<T>): string | Promise<string>;
     retention_until(now: string): string;
     now(): string;
@@ -492,6 +510,7 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
   let accepted: AcceptedCompanyAuthorityRuntimeEnvelope<T> & {
     decision: AcceptedCompanyAuthorityContext["authority"]["decision"];
     runtime: CompanyAuthorityRuntimeDependencies;
+    execution_hash: string;
   };
   try {
     const now = options.now();
@@ -500,6 +519,14 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
       envelope: message.body,
       acceptance: { ...options.acceptance, now },
     });
+    const acceptedRuntimeEnvelope: CompanyAuthorityRuntimeEnvelope<T> = {
+      schema_version: "1.0",
+      correlation_id: acceptedEnvelope.request.correlation_id,
+      company_authority_request: structuredClone(acceptedEnvelope.request),
+      company_authority_response: structuredClone(acceptedEnvelope.response),
+      payload: structuredClone(acceptedEnvelope.payload),
+    };
+    const executionHash = await options.execution_hash(acceptedRuntimeEnvelope);
     const payload = structuredClone(acceptedEnvelope.payload);
     try {
       await options.validate_payload_binding(
@@ -518,6 +545,7 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
       runtime = await options.resolve_runtime({
         context: structuredClone(acceptedEnvelope.context),
         request: structuredClone(acceptedEnvelope.request),
+        payload: structuredClone(payload),
       });
       await runtime.tenant_verifier.validate({
         boundary: "queue_consumer",
@@ -536,6 +564,7 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
       payload,
       decision: acceptedEnvelope.context.authority.decision,
       runtime,
+      execution_hash: executionHash,
     };
   } catch (error) {
     const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
@@ -571,7 +600,7 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
     // Bind the idempotency claim to the accepted outer decision as well as the
     // nested context and payload. A redelivery cannot replace approval with
     // auto while retaining the nested idempotency key.
-    payload_hash: () => options.execution_hash(message.body),
+    payload_hash: () => accepted.execution_hash,
     retention_until: options.retention_until,
     ...(options.heartbeat_interval_ms !== undefined
       ? { heartbeat_interval_ms: options.heartbeat_interval_ms }
@@ -579,13 +608,17 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
     log: options.log,
     log_error: options.log_error,
     process: async (payload) => {
+      const snapshot: CompanyAuthorityQueueDecisionSnapshot = {
+        request: structuredClone(accepted.request),
+        execution_hash: accepted.execution_hash,
+      };
       if (accepted.decision === "approval") {
-        return options.route_approval(accepted.context, payload);
+        return options.route_approval(accepted.context, payload, snapshot);
       }
       if (accepted.decision === "human_action") {
-        return options.route_human_action(accepted.context, payload);
+        return options.route_human_action(accepted.context, payload, snapshot);
       }
-      return options.process_auto(accepted.context, payload);
+      return options.process_auto(accepted.context, payload, snapshot);
     },
   });
 }

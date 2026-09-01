@@ -4,6 +4,7 @@ import {
   consumeCompanyAuthorityQueueMessage,
   isCompanyAuthorityRuntimeEnvelope,
   type AcceptedCompanyAuthorityContext,
+  type CompanyAuthorityQueueDecisionSnapshot,
   type CompanyAuthorityRuntimeEnvelope,
   type ObservedExecutionRequestV1,
 } from "../multitenancy/company-authority-runtime-adapter.js";
@@ -11,6 +12,10 @@ import {
   ExternalEffectOutboxMemoryStore,
   processCompanyAuthorityExternalEffect,
 } from "../multitenancy/company-authority-external-effect-outbox.js";
+import {
+  CompanyAuthorityHumanHandoffMemoryStore,
+  processCompanyAuthorityHumanHandoff,
+} from "../multitenancy/company-authority-human-handoff.js";
 import type { ExpectedTenantScope, TenantContextEnvelope } from "../multitenancy/contracts.js";
 import { IdempotencyMemoryStore } from "../multitenancy/idempotency.js";
 import { jcsCanonicalize } from "../multitenancy/jcs.js";
@@ -49,7 +54,7 @@ const tenantPublicKey = await crypto.subtle.importKey(
 function fixture(id: string): Fixture {
   const selected = fixtures.positive.find((candidate) => candidate.id === id);
   if (!selected) throw new Error(`missing fixture: ${id}`);
-  return selected;
+  return structuredClone(selected);
 }
 
 function envelope(selected: Fixture): CompanyAuthorityRuntimeEnvelope<{ event_id: string }> {
@@ -116,9 +121,21 @@ function message(body: CompanyAuthorityRuntimeEnvelope<{ event_id: string }>) {
 }
 
 function options(selected: Fixture, callbacks: {
-  process_auto(context: AcceptedCompanyAuthorityContext, payload: { event_id: string }): Promise<unknown>;
-  route_approval(context: AcceptedCompanyAuthorityContext, payload: { event_id: string }): Promise<unknown>;
-  route_human_action(context: AcceptedCompanyAuthorityContext, payload: { event_id: string }): Promise<unknown>;
+  process_auto(
+    context: AcceptedCompanyAuthorityContext,
+    payload: { event_id: string },
+    snapshot: CompanyAuthorityQueueDecisionSnapshot,
+  ): Promise<unknown>;
+  route_approval(
+    context: AcceptedCompanyAuthorityContext,
+    payload: { event_id: string },
+    snapshot: CompanyAuthorityQueueDecisionSnapshot,
+  ): Promise<unknown>;
+  route_human_action(
+    context: AcceptedCompanyAuthorityContext,
+    payload: { event_id: string },
+    snapshot: CompanyAuthorityQueueDecisionSnapshot,
+  ): Promise<unknown>;
 }, ownership = new IdempotencyMemoryStore()) {
   const runtime = {
     tenant_verifier: verifier(selected),
@@ -206,9 +223,45 @@ describe("company authority Queue consumer", () => {
       request: expect.objectContaining({
         correlation_id: selected.request.correlation_id,
       }),
+      payload: { event_id: selected.request.delivery?.event_id ?? "" },
     });
     expect(returnedOwnership.read(selected.context.tenant_context.idempotency_key))
       .toEqual(expect.objectContaining({ state: "succeeded" }));
+  });
+
+  it("passes an immutable accepted request and one execution hash to the decision callback", async () => {
+    const selected = fixture("POS-APPROVAL-EXTERNAL-SIDE-EFFECT");
+    const queued = message(envelope(selected));
+    const acceptedResourceRef = selected.request.requested_action.resource_ref;
+    const routeApproval = vi.fn(async (
+      _context: AcceptedCompanyAuthorityContext,
+      _payload: { event_id: string },
+      _snapshot: CompanyAuthorityQueueDecisionSnapshot,
+    ) => "approval");
+    const runtimeOptions = options(selected, {
+      process_auto: vi.fn(async () => "auto"),
+      route_approval: routeApproval,
+      route_human_action: vi.fn(async () => "human_action"),
+    });
+    const originalExecutionHash = runtimeOptions.execution_hash;
+    runtimeOptions.execution_hash = vi.fn(async (acceptedEnvelope) => {
+      const hash = await originalExecutionHash(acceptedEnvelope);
+      queued.body.company_authority_request.requested_action.resource_ref = "company://mutated/after-acceptance";
+      return hash;
+    });
+
+    await consumeCompanyAuthorityQueueMessage(queued, runtimeOptions);
+
+    expect(routeApproval).toHaveBeenCalledTimes(1);
+    expect(routeApproval.mock.calls[0]?.[2]).toEqual({
+      request: expect.objectContaining({
+        requested_action: expect.objectContaining({ resource_ref: acceptedResourceRef }),
+      }),
+      execution_hash: expect.stringMatching(/^sha256:/),
+    });
+    expect(runtimeOptions.execution_hash).toHaveBeenCalledTimes(1);
+    expect(queued.ack).toHaveBeenCalledTimes(1);
+    expect(queued.retry).not.toHaveBeenCalled();
   });
 
   it("does not resolve runtime dependencies for invalid or tampered envelopes", async () => {
@@ -303,6 +356,58 @@ describe("company authority Queue consumer", () => {
     expect(callbacks.route_human_action).toHaveBeenCalledTimes(decision === "human_action" ? 1 : 0);
     expect(queued.ack).toHaveBeenCalledTimes(1);
     expect(queued.retry).not.toHaveBeenCalled();
+  });
+
+  it("converges to one pending handoff when the response is lost after durable approval persistence", async () => {
+    const selected = fixture("POS-APPROVAL-EXTERNAL-SIDE-EFFECT");
+    const handoffs = new CompanyAuthorityHumanHandoffMemoryStore();
+    const ownership = new IdempotencyMemoryStore();
+    let loseResponse = true;
+    const routeApproval = vi.fn(async (
+      context: AcceptedCompanyAuthorityContext,
+      payload: { event_id: string },
+      snapshot: CompanyAuthorityQueueDecisionSnapshot,
+    ) => {
+      const result = await processCompanyAuthorityHumanHandoff({
+        context,
+        request: snapshot.request,
+        payload,
+        execution_hash: snapshot.execution_hash,
+        store: handoffs,
+        now: () => selected.evaluation_time,
+      });
+      if (loseResponse) {
+        loseResponse = false;
+        throw new TenantBoundaryError("queue_consumer", "UPSTREAM_UNAVAILABLE");
+      }
+      return result;
+    });
+    const callbacks = {
+      process_auto: vi.fn(async () => "auto"),
+      route_approval: routeApproval,
+      route_human_action: vi.fn(async () => "human_action"),
+    };
+    const first = message(envelope(selected));
+    const redelivery = message(envelope(selected));
+
+    await consumeCompanyAuthorityQueueMessage(first, options(selected, callbacks, ownership));
+    await consumeCompanyAuthorityQueueMessage(redelivery, options(selected, callbacks, ownership));
+
+    const tenantContext = selected.context.tenant_context;
+    await expect(handoffs.read(
+      tenantContext.tenant.tenant_id,
+      tenantContext.idempotency_key,
+    )).resolves.toMatchObject({
+      decision: "approval",
+      state: "pending_approval",
+      target: { role: "approver" },
+    });
+    expect(routeApproval).toHaveBeenCalledTimes(2);
+    expect(callbacks.process_auto).not.toHaveBeenCalled();
+    expect(first.retry).toHaveBeenCalledTimes(1);
+    expect(first.ack).not.toHaveBeenCalled();
+    expect(redelivery.ack).toHaveBeenCalledTimes(1);
+    expect(redelivery.retry).not.toHaveBeenCalled();
   });
 
   it("terminally acknowledges deny and tampered payloads with zero effects", async () => {

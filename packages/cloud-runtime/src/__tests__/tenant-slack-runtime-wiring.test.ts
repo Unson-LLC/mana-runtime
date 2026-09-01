@@ -55,10 +55,13 @@ describe("tenant Slack runtime wiring", () => {
     expect(queue).toContain("createDurableTenantStateClient(env.TENANT_RUNTIME_STATE");
     expect(queue).toContain("companyAuthorityProviderRoutes");
     expect(queue).toContain("processCompanyAuthorityAutoQueueRoute({");
-    expect(queue).toContain("request: companyAuthorityEnvelope.company_authority_request");
+    expect(queue).toContain("request: snapshot.request");
     expect(queue).toContain("registry: companyAuthorityProviderRoutes");
-    expect(queue).toContain('unavailableCompanyAuthorityQueueRoute("approval")');
-    expect(queue).toContain('unavailableCompanyAuthorityQueueRoute("human_action")');
+    expect(queue).toContain("processCompanyAuthorityHumanHandoff({");
+    expect(queue).toContain("createDurableCompanyAuthorityHumanHandoffClient(");
+    expect(queue).toContain("execution_hash: snapshot.execution_hash");
+    expect(queue).not.toContain('unavailableCompanyAuthorityQueueRoute("approval")');
+    expect(queue).not.toContain('unavailableCompanyAuthorityQueueRoute("human_action")');
     expect(queue).toContain('stage: "company_authority_runtime_configuration"');
     expect(queue).toContain('stage: "company_authority_runtime_disabled"');
   });
