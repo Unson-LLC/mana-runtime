@@ -19,7 +19,7 @@ related_stories:
 
 - 本番のfresh E2E `mana-cap-e2e-20260901-1788265044398` では `/status` と `/cron` は応答したが、通常質問、タスク、開発依頼は応答しなかった。
 - 通常返信のClaude commandが `hooks` の空な議事録用settingsを指定していた。
-- そのため `UserPromptSubmit` と `Stop` が発火せず、runtimeは `reply_judgment_hook_failed` としてfail closedした。
+- 通常返信用settingsへ切り替えた後も、Judgment Hostが返したStop修復要求をcontainer wrapperが破棄して固定文へ置換したため、runtimeは `reply_judgment_hook_failed` としてfail closedした。
 
 ## 受け入れ基準
 
@@ -38,4 +38,4 @@ related_stories:
 
 ## 最小の検証可能な変更
 
-通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。加えて、Slack配送payloadのJCS正規化、信頼済みStop監査行をモデルが本文へ転記しない場合の決定論的な補完、tenant / workspace / channel / thread scopeを必須にしたredacted episode readbackを境界テスト付きで行う。空のStop監査は補完せずfail closedする。Queueの再試行方針と議事録経路は変更しない。
+通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。加えて、Slack配送payloadのJCS正規化、Stop修復要求の透過、Host receiptの回答digest検証、tenant / workspace / channel / thread scopeを必須にしたredacted episode readbackを境界テスト付きで行う。未完了または空のStop監査は補完せずfail closedする。Queueの再試行方針と議事録経路は変更しない。
