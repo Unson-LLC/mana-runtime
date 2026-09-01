@@ -205,8 +205,7 @@ async function resolveAcceptedCompanyAuthority(input: {
   try {
     resolution = await input.client.resolve(request);
   } catch (error) {
-    const code = canonicalCode(error);
-    fail(code ?? "AUTHORITY_UNAVAILABLE", {
+    fail("AUTHORITY_UNAVAILABLE", {
       phase: "company_authority_transport",
       error_name: error instanceof Error ? error.name : "UnknownError",
     });

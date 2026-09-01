@@ -38,12 +38,16 @@ A0の`acceptCompanyAuthorityResponse`はfixture conformance testからだけ呼�
 ### 4.2 CompanyAuthorityClient port
 
 ```ts
+type CompanyAuthorityResolution =
+  | { state: "resolved"; response: CompanyAuthorityResolutionResponseV1 }
+  | { state: "no_data" | "unknown" | "partial" | "not_collected" };
+
 interface CompanyAuthorityClient {
-  resolve(request: ObservedExecutionRequestV1): Promise<CompanyAuthorityResolutionResponseV1>;
+  resolve(request: ObservedExecutionRequestV1): Promise<CompanyAuthorityResolution>;
 }
 ```
 
-最初はfixture transportとunavailable transportを注入して検証する。HTTP path、service binding、authentication、retry policyはBrainbase側のlive endpoint契約が確定するまで未定義とする。portの存在はendpointの存在証明ではない。
+`resolved.response`だけをA0 wire responseとして受理する。`no_data | unknown | partial | not_collected`はconsumer retrieval stateであり、responseを捏造せず`AUTHORITY_UNAVAILABLE`へfail-closedする。最初はfixture transportとunavailable transportを注入して検証する。HTTP path、service binding、authentication、retry policyはBrainbase側のlive endpoint契約が確定するまで未定義とする。portの存在はendpointの存在証明ではない。transportがthrowした任意の内部codeは公開せず、adapter境界で`AUTHORITY_UNAVAILABLE`へ正規化する。producer canonical codeを維持するのは、transport成功後に受け取ったA0 responseを検証した結果だけである。
 
 ### 4.3 Response acceptance
 

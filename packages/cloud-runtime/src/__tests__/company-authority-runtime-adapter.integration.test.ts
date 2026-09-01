@@ -25,14 +25,14 @@ describe("company authority runtime adapter foundation after explicit opt-in", (
     correlation_id: "cor_01J00000000000000000000000",
   };
 
-  it("foundation boundary fails closed after explicit opt-in when authority is unavailable", async () => {
+  it("normalizes an internal transport code and fails closed after explicit opt-in", async () => {
     const businessEffect = vi.fn();
     const legacyFallback = vi.fn(async (): Promise<never> => {
       throw new Error("legacy fallback must not run");
     });
     const client: CompanyAuthorityClient = {
       async resolve() {
-        throw new Error("connection refused");
+        throw Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
       },
     };
 
@@ -53,6 +53,7 @@ describe("company authority runtime adapter foundation after explicit opt-in", (
     })).rejects.toEqual(expect.objectContaining({
       boundary: "worker_ingress",
       code: "AUTHORITY_UNAVAILABLE",
+      details: expect.objectContaining({ phase: "company_authority_transport" }),
     }));
 
     expect(businessEffect).not.toHaveBeenCalled();

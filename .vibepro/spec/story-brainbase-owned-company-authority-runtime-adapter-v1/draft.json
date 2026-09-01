@@ -160,7 +160,7 @@
     {
       "id": "C-002",
       "type": "contract",
-      "statement": "CompanyAuthorityClientをtransport portとして注入する。fixtureとunavailableを同じproduction adapter境界へ入力できるようにするが、Brainbase live endpoint、service binding、authentication、retry policyはproducer契約が確定するまでnot_definedとする",
+      "statement": "CompanyAuthorityClientをtransport portとして注入し、resolved時は{state: resolved, response: CompanyAuthorityResolutionResponseV1}、未解決時は{state: no_data | unknown | partial | not_collected}を返す。resolved.responseだけをA0 wire responseとして受理し、未解決stateはAUTHORITY_UNAVAILABLEへfail-closedする。transport throwの任意codeもAUTHORITY_UNAVAILABLEへ正規化する。fixtureとunavailableを同じproduction adapter境界へ入力できるようにするが、Brainbase live endpoint、service binding、authentication、retry policyはproducer契約が確定するまでnot_definedとする",
       "origin": {
         "story_refs": [
           {
