@@ -1,6 +1,7 @@
 export * from "./accounting.js";
 export * from "./canonical-consumer.js";
 export * from "./company-authority-external-effect-outbox.js";
+export * from "./company-authority-runtime-config.js";
 export * from "./company-authority-runtime-adapter.js";
 export * from "./contracts.js";
 export * from "./credentials.js";

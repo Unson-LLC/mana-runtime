@@ -8,7 +8,7 @@ A0でsource lockしたBrainbase会社権限契約を、MANAの実runtimeへ安�
 
 現行`createTenantRuntimeHttpClients`は旧`TenantContextIssueRequest`を`/api/v1/runtime/tenant-context:resolve`へ送り、runtime側でtenant、connection、expected revision、workspace／app、operation、project、authorizationを組み立てる。これはtenant safetyには使われているが、公開`ObservedExecutionRequestV1`とは非互換である。
 
-A0の`acceptCompanyAuthorityResponse`はfixture conformance testからだけ呼ばれ、production call site、live endpoint、production trust storeはない。したがってadapterは、未定義のendpointを埋め込まず、transport portと検証を分離する。
+A0の`acceptCompanyAuthorityResponse`はfixture conformance testからだけ呼ばれ、production call siteとlive endpointはない。runtime環境変数からHTTPS endpoint、expected deployment ID、公開Ed25519 JWK、operationごとのdesired effect、既存audience、単一tenant verification keyをfail-closedで解釈するローカル設定境界は追加したが、本番値は設定していない。したがってadapterは、未定義のtransport・認証方式を埋め込まず、設定解釈、transport port、検証を分離する。
 
 ## 3. 設計原則
 
@@ -49,7 +49,7 @@ interface CompanyAuthorityClient {
 }
 ```
 
-`resolved.response`だけをA0 wire responseとして受理する。`no_data | unknown | partial | not_collected`はconsumer retrieval stateであり、responseを捏造せず`AUTHORITY_UNAVAILABLE`へfail-closedする。最初はfixture transportとunavailable transportを注入して検証する。HTTP path、service binding、authentication、retry policyはBrainbase側のlive endpoint契約が確定するまで未定義とする。portの存在はendpointの存在証明ではない。transportがthrowした任意の内部codeは公開せず、adapter境界で`AUTHORITY_UNAVAILABLE`へ正規化する。producer canonical codeを維持するのは、transport成功後に受け取ったA0 responseを検証した結果だけである。
+`resolved.response`だけをA0 wire responseとして受理する。`no_data | unknown | partial | not_collected`はconsumer retrieval stateであり、responseを捏造せず`AUTHORITY_UNAVAILABLE`へfail-closedする。最初はfixture transportとunavailable transportを注入して検証する。ローカル設定解釈は、会社権限固有の設定がすべてない場合だけ`disabled`とし、一部欠落、非HTTPS URL、credential・query・fragment付きURL、秘密鍵を含むJWK、曖昧なtenant JWKS、未知effectを`CONFIGURATION_INVALID`で拒否する。有効時も設定値から受理optionsとopt-in operationを導出するだけで、HTTP clientやQueueを生成しない。HTTP path、service binding、authentication、retry policyはBrainbase側のlive endpoint契約が確定するまで未定義とする。設定parserやportの存在は本番endpoint・trust値の存在証明ではない。transportがthrowした任意の内部codeは公開せず、adapter境界で`AUTHORITY_UNAVAILABLE`へ正規化する。producer canonical codeを維持するのは、transport成功後に受け取ったA0 responseを検証した結果だけである。
 
 ### 4.3 Response acceptance
 
@@ -111,7 +111,7 @@ decisionを上位へ昇格したり、approver／responsible personをMANA側で
 1. A0 locked fixtureをproduction adapter port経由で受理する。
 2. unavailable transportのWorker REDを追加し、effect 0／fallback 0を固定する。
 3. Slack mapperと明示desired-effect mappingを追加する。
-4. outer contextをQueue以降の6 surfaceへ伝播し、Workerのpositive routingを含む各境界のnegative testを追加する。Queueは、envelopeをlegacy fallbackとしてACKしないfail-closed入口guardと、outer／nested受理、payload binding、受理済みcontextからのruntime依存解決、decision不変、成功完了後のredelivery重複抑止を担う純粋consumer helperまでをローカル実装済みとする。resolverは未検証payloadを受け取らず、無効なenvelopeやpayloadでは呼ばれない。外部作用はQueue delivery claimと別のtenant-bound durable-state outboxへprovider call前に`pending`を保存し、原子的なclaimを得た1処理だけがproviderを呼ぶ。成功を`succeeded`、恒久拒否を`failed_terminal`、応答喪失またはtransport例外を`unknown_requires_reconcile`として保持するローカル契約を実装した。同じeffect IDとpayloadはproviderを再送せず、異なるpayloadは`IDEMPOTENCY_CONFLICT`で停止する。unknownはdeterministic provider keyによるreadbackだけで成功へ遷移し、照合不能時はunknownのままにする。Durable Object RPC、production provider binding、reconciler、production trust、trusted runtime設定からtenant scope／ownership／outboxを構築する本番resolverは未定義のため、実`worker.queue`からhelperへの正の接続と本番exactly-onceは`not_collected`を維持する。
+4. outer contextをQueue以降の6 surfaceへ伝播し、Workerのpositive routingを含む各境界のnegative testを追加する。Queueは、envelopeをlegacy fallbackとしてACKしないfail-closed入口guardと、outer／nested受理、payload binding、受理済みcontextからのruntime依存解決、decision不変、成功完了後のredelivery重複抑止を担う純粋consumer helperまでをローカル実装済みとする。resolverは未検証payloadを受け取らず、無効なenvelopeやpayloadでは呼ばれない。外部作用はQueue delivery claimと別のtenant-bound durable-state outboxへprovider call前に`pending`を保存し、原子的なclaimを得た1処理だけがproviderを呼ぶ。成功を`succeeded`、恒久拒否を`failed_terminal`、応答喪失またはtransport例外を`unknown_requires_reconcile`として保持するローカル契約を実装した。同じeffect IDとpayloadはproviderを再送せず、異なるpayloadは`IDEMPOTENCY_CONFLICT`で停止する。unknownはdeterministic provider keyによるreadbackだけで成功へ遷移し、照合不能時はunknownのままにする。runtime環境変数をfail-closedで解釈し、公開鍵と明示operation mappingだけから受理optionsを導出するローカル設定境界も追加した。Durable Object RPC、production provider binding、reconciler、本番trust値、HTTP client／認証、実設定からtenant scope／ownership／outboxを構築する本番resolverは未定義または未設定のため、実`worker.queue`からhelperへの正の接続と本番exactly-onceは`not_collected`を維持する。
 5. Brainbase live endpoint契約後にtransport bindingを追加する。
 6. `handleTenantSlackRequest`へ明示的なruntime routing selectorを追加し、現行regression testで選択時のno-fallbackとmarker単独非選択を固定する。nested TenantContextの`company_authority_v1` markerだけでopt-in判定しない。（同一runのpre-fix REDは一時観測。ローカル実装・negative test完了。本番設定は0件）
 7. dual-readは比較だけに使い、company-authority opt-in operationの認可結果をlegacyへ委ねない。
