@@ -5,6 +5,8 @@ import {
   resolveClaudeRuntimeConfig,
   runtimeClaudePromptPath,
 } from "../claude-runtime-config.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 describe("Cloudflare Claude runtime config", () => {
   it("resolves the exact deployment policy", () => {
@@ -95,7 +97,7 @@ describe("Cloudflare Claude runtime config", () => {
       .toThrow("runtime_claude_structured_output_invalid");
   });
 
-  it("keeps Judgment Hook events without requiring a model-initiated Brainbase tool call", () => {
+  it("mana-reply-judgment-hook-503:ac:1 ac:2 uses reply-specific Judgment Hook settings", () => {
     const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" });
     const command = buildRuntimeClaudeCommand("meeting-minutes", config, {
       structuredOutput: "meeting-minutes",
@@ -108,7 +110,32 @@ describe("Cloudflare Claude runtime config", () => {
     expect(command).toContain("--strict-mcp-config");
     const reply = buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true });
     expect(reply).toContain("--output-format stream-json --verbose --include-hook-events");
-    expect(reply).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
+    expect(reply).toContain("--settings /opt/mana/reply-claude-settings.json");
+
+    const settingsPath = fileURLToPath(new URL("../../container/reply-claude-settings.json", import.meta.url));
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      hooks: Record<string, Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>>;
+    };
+    expect(Object.keys(settings.hooks)).toEqual(["UserPromptSubmit", "PostToolUse", "Stop"]);
+    expect(settings.hooks.PostToolUse?.[0]?.matcher).toBe("mcp__brainbase__.*");
+    for (const eventName of ["UserPromptSubmit", "PostToolUse", "Stop"] as const) {
+      expect(settings.hooks[eventName]?.[0]?.hooks).toEqual([
+        {
+          type: "command",
+          command: "node /opt/mana/brainbase-judgment-hook.mjs",
+          timeout: 45,
+        },
+      ]);
+    }
+  });
+
+  it("mana-reply-judgment-hook-503:ac:3 keeps meeting-minutes settings isolated", () => {
+    const config = resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "sonnet" });
+    const meetingMinutes = buildRuntimeClaudeCommand("meeting-minutes", config);
+    expect(meetingMinutes).toContain("--settings /opt/mana/meeting-minutes-claude-settings.json");
+    expect(meetingMinutes).not.toContain("reply-claude-settings.json");
+    const settingsPath = fileURLToPath(new URL("../../container/meeting-minutes-claude-settings.json", import.meta.url));
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ hooks: {} });
   });
 
   it("starts then resumes the same validated Claude session", () => {

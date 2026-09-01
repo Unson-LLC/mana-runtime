@@ -377,7 +377,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
       "node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions" +
-        " --settings /opt/mana/meeting-minutes-claude-settings.json" +
+        " --settings /opt/mana/reply-claude-settings.json" +
         " --output-format stream-json --verbose --include-hook-events" +
         ' "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
       {

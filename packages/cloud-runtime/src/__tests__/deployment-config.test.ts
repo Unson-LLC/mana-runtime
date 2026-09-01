@@ -315,6 +315,13 @@ describe("会社別Cloudflare deployment", () => {
     );
   });
 
+  it("mana-reply-judgment-hook-503:ac:4 packages reply Judgment settings", () => {
+    const dockerfile = readFileSync(fileURLToPath(new URL("../../Dockerfile", import.meta.url)), "utf8");
+    expect(dockerfile).toContain(
+      "COPY --chmod=0444 container/reply-claude-settings.json /opt/mana/reply-claude-settings.json",
+    );
+  });
+
   it("開発ランナーはコンテナ内で実在するNode実行ファイルを継承する", () => {
     const runnerPath = fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url));
     const runner = readFileSync(runnerPath, "utf8");

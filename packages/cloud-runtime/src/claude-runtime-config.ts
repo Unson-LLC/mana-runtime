@@ -26,6 +26,7 @@ const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.free
 const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
 const MEETING_MINUTES_MCP_CONFIG_PATH = "/tmp/mana-meeting-minutes-mcp.json";
 const MEETING_MINUTES_SETTINGS_PATH = "/opt/mana/meeting-minutes-claude-settings.json";
+const REPLY_SETTINGS_PATH = "/opt/mana/reply-claude-settings.json";
 const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, string>> = Object.freeze({
   "meeting-minutes": JSON.stringify({
     type: "object",
@@ -133,7 +134,7 @@ export function buildRuntimeClaudeCommand(
     ? `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --setting-sources '' --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg}`
       + ` --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config < ${promptPath}`
     : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}`
-      + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${MEETING_MINUTES_SETTINGS_PATH}` : ""}`
+      + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${REPLY_SETTINGS_PATH}` : ""}`
       + `${structuredOutputArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
