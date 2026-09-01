@@ -271,6 +271,12 @@ function auditLinesInReply(reply: string): string[] {
     .filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(BRAINBASE_AUDIT_PREFIX));
 }
 
+function completedBrainbaseAuditLines(lines: string[]): string[] {
+  return lines.filter((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX)
+    && !line.startsWith("📚 Brainbase未参照:")
+    && !line.startsWith("📚 Brainbase監査未完了:"));
+}
+
 export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   const events = parseEvents(stdout);
   const hooks: Array<{ index: number; output: Record<string, unknown>; receipt: EmbeddedHookReceipt }> = [];
@@ -335,15 +341,33 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // A successful Stop is the Host's completed-episode receipt. UserPromptSubmit
   // only carries model context, while PostToolUse emits incremental journal
   // lines; neither is the canonical final audit block in the real CLI stream.
-  const expectedAuditLines = auditLines(successfulStop.output);
-  if (!expectedAuditLines.some((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX))
+  let expectedAuditLines = auditLines(successfulStop.output);
+  const judgmentAuditLines = expectedAuditLines.filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX));
+  if (judgmentAuditLines.length !== 1
       || !expectedAuditLines.some((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX))) {
     throw new Error("reply_judgment_audit_lines_missing");
   }
-  const postToolAuditLines = postToolHooks.flatMap((hook) => auditLines(hook.output));
-  const completedToolAuditLines = expectedAuditLines.filter((line) =>
-    line.startsWith(BRAINBASE_AUDIT_PREFIX) && !line.startsWith("📚 Brainbase未参照:"));
-  if (JSON.stringify(postToolAuditLines) !== JSON.stringify(completedToolAuditLines)) {
+  if (calls.length > 0) {
+    // PostToolUse can carry either the latest audit line or a cumulative Host
+    // journal. The last completed Brainbase line is the receipt for that call.
+    // Bind one such receipt to every observed tool call; do not compare prose
+    // byte-for-byte with Stop because the Host may summarize it at completion.
+    const incrementalToolAuditLines = postToolHooks.map((hook) =>
+      completedBrainbaseAuditLines(auditLines(hook.output)).at(-1));
+    if (incrementalToolAuditLines.some((line) => !line)) {
+      throw new Error("reply_judgment_tool_audit_mismatch");
+    }
+    const completedStopAuditLines = completedBrainbaseAuditLines(expectedAuditLines);
+    if (completedStopAuditLines.length === 0
+        && expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
+      // A blank Stop response is converted by the trusted forwarder to an
+      // explicit incomplete marker. The already-bound PostToolUse receipts are
+      // stronger evidence, so deterministically complete the final audit block.
+      expectedAuditLines = [judgmentAuditLines[0]!, ...incrementalToolAuditLines as string[]];
+    } else if (completedStopAuditLines.length !== calls.length) {
+      throw new Error("reply_judgment_tool_audit_mismatch");
+    }
+  } else if (completedBrainbaseAuditLines(expectedAuditLines).length > 0) {
     throw new Error("reply_judgment_tool_audit_mismatch");
   }
   let actualAuditLines = auditLinesInReply(final.reply);

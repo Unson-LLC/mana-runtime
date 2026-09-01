@@ -198,6 +198,54 @@ describe("Slack reply Judgment lifecycle", () => {
     expect(result.auditLines).toEqual([judgmentLine, zeroCallLine]);
   });
 
+  it("binds cumulative PostToolUse receipts without requiring Stop prose identity", () => {
+    const lines = stream({ toolCount: 2, replyLines: ["回答本文"] }).split("\n");
+    const firstPostToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
+    const secondPostToolIndex = lines.findIndex((line, index) =>
+      index > firstPostToolIndex && line.includes('"hook_event":"PostToolUse"'));
+    const secondHook = JSON.parse(lines[secondPostToolIndex]!);
+    const secondOutput = JSON.parse(secondHook.stdout);
+    secondOutput.systemMessage = secondOutput.systemMessage.replace(
+      secondBrainbaseLine,
+      `${brainbaseLine}\n${secondBrainbaseLine}`,
+    );
+    secondHook.stdout = JSON.stringify(secondOutput);
+    lines[secondPostToolIndex] = JSON.stringify(secondHook);
+
+    const result = parseReplyJudgmentStream(lines.join("\n"));
+    expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
+  });
+
+  it("uses bound PostToolUse receipts when Stop reports no completed audit", () => {
+    const lines = stream({ withTool: true, replyLines: ["回答本文"] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage = stopOutput.systemMessage
+      .replace(brainbaseLine, "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）");
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+
+    const result = parseReplyJudgmentStream(lines.join("\n"));
+    expect(result.auditLines).toEqual([judgmentLine, brainbaseLine]);
+    expect(result.reply).toBe(`${judgmentLine}\n${brainbaseLine}\n回答本文`);
+  });
+
+  it("rejects a PostToolUse event without a completed Brainbase receipt", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const postToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
+    const postToolHook = JSON.parse(lines[postToolIndex]!);
+    const postToolOutput = JSON.parse(postToolHook.stdout);
+    postToolOutput.systemMessage = postToolOutput.systemMessage.replace(
+      brainbaseLine,
+      "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）",
+    );
+    postToolHook.stdout = JSON.stringify(postToolOutput);
+    lines[postToolIndex] = JSON.stringify(postToolHook);
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch");
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:7 stores a redacted durable episode receipt through Slack completion", async () => {
     const fs = new MemoryFs();
     const event = {
