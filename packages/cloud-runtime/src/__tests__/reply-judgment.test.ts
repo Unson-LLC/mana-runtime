@@ -192,6 +192,12 @@ describe("Slack reply Judgment lifecycle", () => {
       .toThrow("reply_judgment_event_order_invalid");
   });
 
+  it("prepends trusted Stop audit lines when the model returns body only", () => {
+    const result = parseReplyJudgmentStream(stream({ replyLines: ["受信しました"] }));
+    expect(result.reply).toBe(`${judgmentLine}\n${zeroCallLine}\n受信しました`);
+    expect(result.auditLines).toEqual([judgmentLine, zeroCallLine]);
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:7 stores a redacted durable episode receipt through Slack completion", async () => {
     const fs = new MemoryFs();
     const event = {

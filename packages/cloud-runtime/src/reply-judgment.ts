@@ -346,7 +346,14 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (JSON.stringify(postToolAuditLines) !== JSON.stringify(completedToolAuditLines)) {
     throw new Error("reply_judgment_tool_audit_mismatch");
   }
-  const actualAuditLines = auditLinesInReply(final.reply);
+  let actualAuditLines = auditLinesInReply(final.reply);
+  if (actualAuditLines.length === 0) {
+    // Stop output is trusted Host data. Prepend it deterministically when the
+    // model follows a user's "reply only with ..." instruction and omits the
+    // audit block; model compliance must not turn a valid reply into silence.
+    final.reply = [...expectedAuditLines, final.reply].join("\n");
+    actualAuditLines = expectedAuditLines;
+  }
   if (JSON.stringify(actualAuditLines) !== JSON.stringify(expectedAuditLines)) {
     throw new Error("reply_judgment_audit_lines_mismatch");
   }

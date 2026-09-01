@@ -89,11 +89,15 @@ function validatedOutput(envelope, payload) {
     };
   }
   if (payload.hook_event_name === "Stop") {
+    const stopSystemMessage = existingSystemMessage || [
+      "🧠 判断参照: Host監査結果なし → 本文返信を継続（監査未完了） ⚠️",
+      "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）",
+    ].join("\n");
     return {
       // Stop carries the canonical final audit block. Keep it so Claude can
       // place the audit lines at the beginning of the final response, while the
       // receipt remains available to the stream validator.
-      systemMessage: [existingSystemMessage, receiptMarker]
+      systemMessage: [stopSystemMessage, receiptMarker]
         .filter(Boolean).join("\n"),
     };
   }
