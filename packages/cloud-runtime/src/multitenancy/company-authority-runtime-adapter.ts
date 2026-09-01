@@ -420,7 +420,7 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
     context: AcceptedCompanyAuthorityContext,
     request: ObservedExecutionRequestV1,
     payload: T,
-  ): void;
+  ): void | Promise<void>;
   execute_auto(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
 }): Promise<{
   context: AcceptedCompanyAuthorityContext;
@@ -446,7 +446,7 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
   const context = structuredClone(accepted.context);
   const payload = structuredClone(accepted.payload);
   try {
-    input.validate_payload_binding(context, accepted.request, payload);
+    await input.validate_payload_binding(context, accepted.request, payload);
   } catch (error) {
     if (error instanceof TenantBoundaryError || canonicalCode(error)) {
       mapContractFailureAtBoundary(error, input.boundary);
@@ -477,7 +477,7 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
       context: AcceptedCompanyAuthorityContext,
       request: ObservedExecutionRequestV1,
       payload: T,
-    ): void;
+    ): void | Promise<void>;
     process_auto(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
     route_approval(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
     route_human_action(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
@@ -502,7 +502,7 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
     });
     const payload = structuredClone(acceptedEnvelope.payload);
     try {
-      options.validate_payload_binding(
+      await options.validate_payload_binding(
         structuredClone(acceptedEnvelope.context),
         structuredClone(acceptedEnvelope.request),
         payload,

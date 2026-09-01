@@ -1,0 +1,170 @@
+import { describe, expect, it } from "vitest";
+import {
+  resolveCompanyAuthoritySlackQueueScope,
+  unavailableCompanyAuthorityQueueRoute,
+} from "../multitenancy/company-authority-queue-runtime.js";
+import { companyAuthoritySlackResourceRef } from "../multitenancy/company-authority-payload-binding.js";
+import type {
+  AcceptedCompanyAuthorityContext,
+  ObservedExecutionRequestV1,
+} from "../multitenancy/company-authority-runtime-adapter.js";
+import type { TenantContextEnvelope } from "../multitenancy/contracts.js";
+import type { SlackQueueEvent } from "../types.js";
+
+const tenantContext = {
+  tenant: { tenant_id: "tenant-a" },
+  workspace_connection: {
+    connection_id: "connection-a",
+    connection_revision: "1",
+    workspace_id: "workspace-a",
+    app_id: "app-a",
+  },
+  slack: {
+    event_id: "event-a",
+    channel_id: "channel-a",
+    thread_ts: "thread-a",
+    requester_id: "person-a",
+  },
+  actor: {
+    principal_id: "principal-a",
+    authenticated_subject_id: "person-a",
+  },
+  authorization: {
+    project_ids: ["project-a"],
+    capability_ids: ["company_authority_v1"],
+  },
+  placement: { deployment_id: "deployment-a", profile: "shared_cloud" },
+} as unknown as TenantContextEnvelope;
+
+const context = {
+  tenant_context: tenantContext,
+  authority: { decision: "auto" },
+} as unknown as AcceptedCompanyAuthorityContext;
+
+const payload = {
+  tenantId: "tenant-a",
+  workspaceId: "workspace-a",
+  eventId: "event-a",
+  channelId: "channel-a",
+  threadTs: "thread-a",
+  messageTs: "thread-a",
+  userId: "person-a",
+  eventType: "message",
+  text: "hello",
+  receivedAt: "2026-09-02T00:00:00.000Z",
+} satisfies SlackQueueEvent;
+
+const request: ObservedExecutionRequestV1 = {
+  provider_identity: {
+    provider: "slack",
+    authenticated_subject_id: "person-a",
+    workspace_id: "workspace-a",
+    app_id: "app-a",
+  },
+  requested_action: {
+    capability_id: "company_read",
+    resource_ref: await companyAuthoritySlackResourceRef("project-a", payload),
+    project_hint: "project-a",
+    desired_effect: "read",
+  },
+  delivery: {
+    channel_id: "channel-a",
+    thread_ts: "thread-a",
+    event_id: "event-a",
+  },
+  correlation_id: "correlation-a",
+};
+
+describe("company authority Queue production seam", () => {
+  it("derives the nested tenant scope only when request, context, payload, and configured effect agree", async () => {
+    await expect(resolveCompanyAuthoritySlackQueueScope({
+      context,
+      request,
+      payload,
+      expected_audience: "mana-runtime",
+      desired_effect_by_capability: { company_read: "read" },
+    })).resolves.toEqual({
+      audience: "mana-runtime",
+      workspace_id: "workspace-a",
+      app_id: "app-a",
+      channel_id: "channel-a",
+      thread_ts: "thread-a",
+      actor_principal_id: "principal-a",
+      project_id: "project-a",
+      project_ids: ["project-a"],
+      capability_id: "company_authority_v1",
+      deployment_id: "deployment-a",
+    });
+  });
+
+  it.each([
+    ["unconfigured capability", { desired_effect_by_capability: {} }],
+    ["effect mismatch", { desired_effect_by_capability: { company_read: "write" as const } }],
+    ["payload event mismatch", { payload: { ...payload, eventId: "event-other" } }],
+    ["request actor mismatch", {
+      request: {
+        ...request,
+        provider_identity: { ...request.provider_identity, authenticated_subject_id: "person-other" },
+      },
+    }],
+    ["multiple nested projects", {
+      context: {
+        ...context,
+        tenant_context: {
+          ...tenantContext,
+          authorization: { ...tenantContext.authorization, project_ids: ["project-a", "project-b"] },
+        },
+      } as AcceptedCompanyAuthorityContext,
+    }],
+  ])("fails closed for %s", async (_label, override) => {
+    await expect(resolveCompanyAuthoritySlackQueueScope({
+      context,
+      request,
+      payload,
+      expected_audience: "mana-runtime",
+      desired_effect_by_capability: { company_read: "read" },
+      ...override,
+    })).rejects.toEqual(expect.objectContaining({
+      boundary: "queue_consumer",
+      code: "AUTHORITY_SCOPE_MISMATCH",
+    }));
+  });
+
+  it.each([
+    ["message timestamp", { messageTs: "changed" }],
+    ["event type", { eventType: "reaction_added" }],
+    ["text", { text: "changed" }],
+    ["files", { files: [{ id: "file-a", name: "changed.txt" }] }],
+    ["thread context", { threadContext: "changed" }],
+    ["attachment context", { attachmentContext: "changed" }],
+  ])("rejects post-acceptance %s substitution", async (_label, change) => {
+    await expect(resolveCompanyAuthoritySlackQueueScope({
+      context,
+      request,
+      payload: { ...payload, ...change },
+      expected_audience: "mana-runtime",
+      desired_effect_by_capability: { company_read: "read" },
+    })).rejects.toEqual(expect.objectContaining({
+      boundary: "queue_consumer",
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      details: { phase: "company_authority_payload_binding" },
+    }));
+  });
+
+  it("keeps every not-yet-connected decision route retryable without executing an effect", async () => {
+    await expect(unavailableCompanyAuthorityQueueRoute("auto"))
+      .rejects.toEqual(expect.objectContaining({
+        boundary: "queue_consumer",
+        code: "UPSTREAM_UNAVAILABLE",
+        details: { phase: "company_authority_auto_route_not_connected" },
+      }));
+    await expect(unavailableCompanyAuthorityQueueRoute("approval"))
+      .rejects.toEqual(expect.objectContaining({
+        details: { phase: "company_authority_approval_route_not_connected" },
+      }));
+    await expect(unavailableCompanyAuthorityQueueRoute("human_action"))
+      .rejects.toEqual(expect.objectContaining({
+        details: { phase: "company_authority_human_action_route_not_connected" },
+      }));
+  });
+});

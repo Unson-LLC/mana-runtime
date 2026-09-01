@@ -25,9 +25,15 @@ import {
 import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
 import {
+  consumeCompanyAuthorityQueueMessage,
   isCompanyAuthorityRuntimeEnvelope,
   type CompanyAuthorityRuntimeEnvelope,
 } from "./multitenancy/company-authority-runtime-adapter.js";
+import { parseCompanyAuthorityRuntimeConfiguration } from "./multitenancy/company-authority-runtime-config.js";
+import {
+  resolveCompanyAuthoritySlackQueueScope,
+  unavailableCompanyAuthorityQueueRoute,
+} from "./multitenancy/company-authority-queue-runtime.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
   currentMeetingMinutesActionTs,
@@ -2611,14 +2617,78 @@ export default {
         }
         continue;
       }
-      if (isCompanyAuthorityRuntimeEnvelope(message.body)) {
-        console.error(JSON.stringify({
-          event: "company_authority_queue_failed",
-          code: "UPSTREAM_UNAVAILABLE",
-          correlation_id: message.body.correlation_id,
-          stage: "company_authority_runtime_configuration",
-        }));
-        message.retry();
+      if (isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)) {
+        const companyAuthorityEnvelope = message.body;
+        let runtimeConfig: ReturnType<typeof parseCompanyAuthorityRuntimeConfiguration>;
+        try {
+          runtimeConfig = parseCompanyAuthorityRuntimeConfiguration(env);
+        } catch (error) {
+          console.error(JSON.stringify({
+            event: "company_authority_queue_failed",
+            code: error instanceof TenantBoundaryError ? error.code : "CONFIGURATION_INVALID",
+            correlation_id: companyAuthorityEnvelope.correlation_id,
+            stage: "company_authority_runtime_configuration",
+          }));
+          message.retry();
+          continue;
+        }
+        if (runtimeConfig.state === "disabled") {
+          console.error(JSON.stringify({
+            event: "company_authority_queue_failed",
+            code: "UPSTREAM_UNAVAILABLE",
+            correlation_id: companyAuthorityEnvelope.correlation_id,
+            stage: "company_authority_runtime_disabled",
+          }));
+          message.retry();
+          continue;
+        }
+        await consumeCompanyAuthorityQueueMessage({
+          body: companyAuthorityEnvelope,
+          ack: () => message.ack(),
+          retry: (options) => message.retry(options),
+        }, {
+          acceptance: runtimeConfig.acceptance,
+          resolve_runtime: async ({ context, request }) => {
+            const tenantContext = context.tenant_context as unknown as TenantContextEnvelope;
+            const expectedScope = await resolveCompanyAuthoritySlackQueueScope({
+              context,
+              request,
+              payload: companyAuthorityEnvelope.payload,
+              expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
+            });
+            const clients = tenantRuntimeClients(env, tenantContext);
+            return {
+              tenant_verifier: new TenantRuntimeBoundaryVerifier({
+                read_authoritative_snapshot: (connectionId) =>
+                  clients.authority.read_workspace_connection(connectionId),
+                resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+              }),
+              expected_tenant_scope: expectedScope,
+              ownership: createDurableTenantStateClient(
+                env.TENANT_RUNTIME_STATE,
+                tenantContext.tenant.tenant_id,
+              ),
+            };
+          },
+          validate_payload_binding: async (context, request, payload) => {
+            await resolveCompanyAuthoritySlackQueueScope({
+              context,
+              request,
+              payload,
+              expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
+            });
+          },
+          process_auto: () => unavailableCompanyAuthorityQueueRoute("auto"),
+          route_approval: () => unavailableCompanyAuthorityQueueRoute("approval"),
+          route_human_action: () => unavailableCompanyAuthorityQueueRoute("human_action"),
+          execution_hash: tenantPayloadHash,
+          retention_until: tenantRetentionUntil,
+          now: () => new Date().toISOString(),
+          log: (entry) => console.log(JSON.stringify(entry)),
+          log_error: (entry) => console.error(JSON.stringify(entry)),
+        });
         continue;
       }
       if (ackMalformedTenantQueueMessage(message,

@@ -8,6 +8,7 @@ import { readSlackRequestBody, slackRequestBodyErrorResponse } from "./slack-req
 import {
   TenantBoundaryError,
   assertSecretArtifactFree,
+  companyAuthoritySlackResourceRef,
   resolveCompanyAuthorityRuntimeEnvelope,
   resolveSlackWorkerIngress,
   type CompanyAuthorityAcceptanceOptions,
@@ -415,7 +416,10 @@ export async function handleTenantSlackRequest(
           app_id: options.expected_app_id,
           ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
           capability_id: requiredAuthorization.capability_id,
-          resource_ref: `project:${requiredAuthorization.project_id}`,
+          resource_ref: await companyAuthoritySlackResourceRef(
+            requiredAuthorization.project_id,
+            event,
+          ),
           project_hint: requiredAuthorization.project_id,
           channel_id: channelId,
           thread_ts: threadTs,

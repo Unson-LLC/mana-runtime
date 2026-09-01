@@ -6,7 +6,10 @@ import {
   normalizeSlackEvent,
   verifySlackRequest,
 } from "../slack.js";
-import { TenantBoundaryError } from "../multitenancy/index.js";
+import {
+  TenantBoundaryError,
+  companyAuthoritySlackResourceRef,
+} from "../multitenancy/index.js";
 import { interceptMeetingMinutesIntakePause } from "../meeting-minutes-intake-entrypoints.js";
 
 const signingSecret = "test-signing-secret";
@@ -434,6 +437,19 @@ describe("handleTenantSlackRequest diagnostics", () => {
       retryable: true,
     });
     expect(companyAuthorityResolve).toHaveBeenCalledOnce();
+    const observedRequest = companyAuthorityResolve.mock.calls[0]?.[0];
+    await expect(companyAuthoritySlackResourceRef("back-office", {
+      tenantId: "unson",
+      workspaceId: "T_UNSON",
+      eventId: "EvCompanyAuthority",
+      channelId: "C_ROUTER",
+      threadTs: "1786420000.000400",
+      messageTs: "1786420000.000400",
+      userId: "U123",
+      eventType: "message",
+      text: "create task",
+      receivedAt: new Date(nowSeconds * 1_000).toISOString(),
+    })).resolves.toBe(observedRequest?.requested_action.resource_ref);
     expect(legacyAuthority.resolve_workspace_connection).not.toHaveBeenCalled();
     expect(legacyAuthority.read_workspace_connection).not.toHaveBeenCalled();
     expect(legacyAuthority.issue_tenant_context).not.toHaveBeenCalled();
