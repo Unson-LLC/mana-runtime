@@ -231,6 +231,20 @@ describe("Slack reply Judgment lifecycle", () => {
     expect(result.reply).toBe(`${judgmentLine}\n${brainbaseLine}\n回答本文`);
   });
 
+  it("fails closed when an empty Stop response has no bound PostToolUse receipt", () => {
+    const lines = stream({ replyLines: ["回答本文"] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage = stopOutput.systemMessage
+      .replace(zeroCallLine, "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）");
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_audit_lines_missing");
+  });
+
   it("rejects a PostToolUse event without a completed Brainbase receipt", () => {
     const lines = stream({ withTool: true }).split("\n");
     const postToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));

@@ -369,6 +369,11 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
   } else if (completedBrainbaseAuditLines(expectedAuditLines).length > 0) {
     throw new Error("reply_judgment_tool_audit_mismatch");
+  } else if (expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
+    // With no observed Brainbase tool call there is no trusted incremental
+    // receipt that can complete an empty Stop response. Never promote the
+    // forwarder's diagnostic fallback into a completed Judgment episode.
+    throw new Error("reply_judgment_audit_lines_missing");
   }
   let actualAuditLines = auditLinesInReply(final.reply);
   if (actualAuditLines.length === 0) {
