@@ -116,6 +116,11 @@ function options(selected: Fixture, callbacks: {
   route_approval(context: AcceptedCompanyAuthorityContext, payload: { event_id: string }): Promise<unknown>;
   route_human_action(context: AcceptedCompanyAuthorityContext, payload: { event_id: string }): Promise<unknown>;
 }, ownership = new IdempotencyMemoryStore()) {
+  const runtime = {
+    tenant_verifier: verifier(selected),
+    expected_tenant_scope: expectedScope(selected),
+    ownership,
+  };
   return {
     acceptance: {
       expected_audience: contract.signature.audience,
@@ -124,15 +129,13 @@ function options(selected: Fixture, callbacks: {
       tenant_context_public_jwk: key.public_jwk,
       tenant_context_key_id: key.key_id,
     },
-    tenant_verifier: verifier(selected),
-    expected_tenant_scope: expectedScope(selected),
+    resolve_runtime: vi.fn(async () => runtime),
     validate_payload_binding: (_context: unknown, request: ObservedExecutionRequestV1, payload: { event_id: string }) => {
       if (payload.event_id !== request.delivery?.event_id) {
         throw new TenantBoundaryError("queue_consumer", "PAYLOAD_SCOPE_MISMATCH");
       }
     },
     ...callbacks,
-    ownership,
     execution_hash: sha256,
     retention_until: (now: string) => new Date(Date.parse(now) + 31 * 24 * 60 * 60 * 1_000).toISOString(),
     now: () => selected.evaluation_time,
@@ -176,6 +179,105 @@ describe("company authority Queue consumer", () => {
     expect(redelivery.ack).toHaveBeenCalledTimes(1);
     expect(first.retry).not.toHaveBeenCalled();
     expect(redelivery.retry).not.toHaveBeenCalled();
+  });
+
+  it("resolves runtime dependencies only after accepting the context, request, and payload", async () => {
+    const selected = fixture("POS-QUEUE-REDELIVERY-IDEMPOTENT");
+    const callbacks = {
+      process_auto: vi.fn(async () => "auto"),
+      route_approval: vi.fn(async () => "approval"),
+      route_human_action: vi.fn(async () => "human_action"),
+    };
+    const returnedOwnership = new IdempotencyMemoryStore();
+    const runtimeOptions = options(selected, callbacks, returnedOwnership);
+    const queued = message(envelope(selected));
+
+    await consumeCompanyAuthorityQueueMessage(queued, runtimeOptions);
+
+    expect(runtimeOptions.resolve_runtime).toHaveBeenCalledTimes(1);
+    expect(runtimeOptions.resolve_runtime).toHaveBeenCalledWith({
+      context: expect.objectContaining({
+        authority: expect.objectContaining({ decision: "auto" }),
+      }),
+      request: expect.objectContaining({
+        correlation_id: selected.request.correlation_id,
+      }),
+    });
+    expect(returnedOwnership.read(selected.context.tenant_context.idempotency_key))
+      .toEqual(expect.objectContaining({ state: "succeeded" }));
+  });
+
+  it("does not resolve runtime dependencies for invalid or tampered envelopes", async () => {
+    const selected = fixture("POS-QUEUE-REDELIVERY-IDEMPOTENT");
+    const callbacks = {
+      process_auto: vi.fn(async () => "auto"),
+      route_approval: vi.fn(async () => "approval"),
+      route_human_action: vi.fn(async () => "human_action"),
+    };
+    const invalidOptions = options(selected, callbacks);
+    const invalid = {
+      ...envelope(selected),
+      correlation_id: "corr-invalid",
+    };
+    const tamperedOptions = options(selected, callbacks);
+    const originalResponse = structuredClone(envelope(selected).company_authority_response) as {
+      context: Record<string, unknown>;
+      [key: string]: unknown;
+    };
+    const tampered = {
+      ...envelope(selected),
+      company_authority_response: {
+        ...originalResponse,
+        context: {
+          ...originalResponse.context,
+          scope: {
+            ...(originalResponse.context.scope as Record<string, unknown>),
+            project_ids: ["project-other"],
+          },
+        },
+      },
+    };
+    const nestedTamperedOptions = options(selected, callbacks);
+    const nestedTampered = structuredClone(envelope(selected)) as any;
+    nestedTampered.company_authority_response.context.tenant_context.integrity.signature = "invalid";
+
+    await consumeCompanyAuthorityQueueMessage(message(invalid), invalidOptions);
+    await consumeCompanyAuthorityQueueMessage(message(tampered), tamperedOptions);
+    await consumeCompanyAuthorityQueueMessage(message(nestedTampered), nestedTamperedOptions);
+
+    const payloadTamperedOptions = options(selected, callbacks);
+    const payloadTampered = envelope(selected);
+    payloadTampered.payload.event_id = "event-other";
+    await consumeCompanyAuthorityQueueMessage(message(payloadTampered), payloadTamperedOptions);
+
+    expect(invalidOptions.resolve_runtime).not.toHaveBeenCalled();
+    expect(tamperedOptions.resolve_runtime).not.toHaveBeenCalled();
+    expect(nestedTamperedOptions.resolve_runtime).not.toHaveBeenCalled();
+    expect(payloadTamperedOptions.resolve_runtime).not.toHaveBeenCalled();
+  });
+
+  it("maps resolver canonical failures before choosing Queue ACK or retry", async () => {
+    const selected = fixture("POS-QUEUE-REDELIVERY-IDEMPOTENT");
+    const callbacks = {
+      process_auto: vi.fn(async () => "auto"),
+      route_approval: vi.fn(async () => "approval"),
+      route_human_action: vi.fn(async () => "human_action"),
+    };
+    const terminalOptions = options(selected, callbacks);
+    terminalOptions.resolve_runtime.mockRejectedValueOnce({ code: "AUTHORITY_SCOPE_MISMATCH" });
+    const terminal = message(envelope(selected));
+    const retryableOptions = options(selected, callbacks);
+    retryableOptions.resolve_runtime.mockRejectedValueOnce(new Error("temporary"));
+    const retryable = message(envelope(selected));
+
+    await consumeCompanyAuthorityQueueMessage(terminal, terminalOptions);
+    await consumeCompanyAuthorityQueueMessage(retryable, retryableOptions);
+
+    expect(terminal.ack).toHaveBeenCalledTimes(1);
+    expect(terminal.retry).not.toHaveBeenCalled();
+    expect(retryable.retry).toHaveBeenCalledTimes(1);
+    expect(retryable.ack).not.toHaveBeenCalled();
+    expect(callbacks.process_auto).not.toHaveBeenCalled();
   });
 
   it.each([

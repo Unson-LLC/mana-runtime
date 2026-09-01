@@ -105,6 +105,21 @@ export interface CompanyAuthorityQueueMessageLike<T> {
   retry(options?: { delaySeconds?: number }): void;
 }
 
+export interface CompanyAuthorityRuntimeResolutionInput {
+  readonly context: AcceptedCompanyAuthorityContext;
+  readonly request: ObservedExecutionRequestV1;
+}
+
+export interface CompanyAuthorityRuntimeDependencies {
+  readonly tenant_verifier: TenantRuntimeBoundaryVerifier;
+  readonly expected_tenant_scope: ExpectedTenantScope;
+  readonly ownership: IdempotencyStore;
+}
+
+export type CompanyAuthorityRuntimeResolver = (
+  input: CompanyAuthorityRuntimeResolutionInput,
+) => CompanyAuthorityRuntimeDependencies | Promise<CompanyAuthorityRuntimeDependencies>;
+
 export function isCompanyAuthorityRuntimeEnvelope<T = unknown>(
   value: unknown,
 ): value is CompanyAuthorityRuntimeEnvelope<T> {
@@ -286,6 +301,81 @@ async function resolveAcceptedCompanyAuthority(input: {
   };
 }
 
+interface AcceptedCompanyAuthorityRuntimeEnvelope<T> {
+  readonly request: ObservedExecutionRequestV1;
+  readonly response: unknown;
+  readonly context: AcceptedCompanyAuthorityContext;
+  readonly payload: T;
+}
+
+/**
+ * Accepts the signed runtime envelope without consulting tenant runtime
+ * ownership. Runtime dependencies are resolved only after this function
+ * returns, so an invalid or tampered envelope cannot select a tenant store or
+ * verifier.
+ */
+async function acceptCompanyAuthorityRuntimeEnvelope<T>(input: {
+  boundary: BoundaryName;
+  envelope: CompanyAuthorityRuntimeEnvelope<T>;
+  acceptance: CompanyAuthorityAcceptanceOptions;
+}): Promise<AcceptedCompanyAuthorityRuntimeEnvelope<T>> {
+  const envelope = input.envelope as unknown;
+  if (!envelope || typeof envelope !== "object"
+    || !("schema_version" in envelope)
+    || !("correlation_id" in envelope)
+    || !("company_authority_request" in envelope)
+    || !("company_authority_response" in envelope)
+    || !("payload" in envelope)
+    || typeof envelope.correlation_id !== "string"
+    || !envelope.company_authority_request
+    || typeof envelope.company_authority_request !== "object") {
+    failAtBoundary(input.boundary, "AUTHORITY_ENVELOPE_INVALID");
+  }
+  const runtimeEnvelope = envelope as CompanyAuthorityRuntimeEnvelope<T>;
+  if (runtimeEnvelope.schema_version !== "1.0") {
+    failAtBoundary(input.boundary, "AUTHORITY_ENVELOPE_INVALID");
+  }
+  if (runtimeEnvelope.correlation_id !== runtimeEnvelope.company_authority_request.correlation_id) {
+    failAtBoundary(input.boundary, "AUTHORITY_SCOPE_MISMATCH", {
+      phase: "runtime_envelope_correlation",
+    });
+  }
+  try {
+    validateObservedExecutionRequest(runtimeEnvelope.company_authority_request);
+  } catch (error) {
+    mapContractFailureAtBoundary(error, input.boundary);
+  }
+  let accepted: {
+    context: AcceptedCompanyAuthorityContext | null;
+    error: { code?: unknown } | null;
+  };
+  try {
+    accepted = acceptCompanyAuthorityResponse(runtimeEnvelope.company_authority_response, {
+      expectedAudience: input.acceptance.expected_audience,
+      expectedDeploymentId: input.acceptance.expected_deployment_id,
+      now: input.acceptance.now,
+      publicJwk: input.acceptance.public_jwk,
+      tenantContextPublicJwk: input.acceptance.tenant_context_public_jwk,
+      tenantContextKeyId: input.acceptance.tenant_context_key_id,
+      request: runtimeEnvelope.company_authority_request,
+    });
+  } catch (error) {
+    mapContractFailureAtBoundary(error, input.boundary);
+  }
+  if (!accepted.context) {
+    const code = accepted.error && typeof accepted.error.code === "string"
+      ? accepted.error.code
+      : "AUTHORITY_UNAVAILABLE";
+    failAtBoundary(input.boundary, code, { phase: "company_authority_response" });
+  }
+  return {
+    request: structuredClone(runtimeEnvelope.company_authority_request),
+    response: structuredClone(runtimeEnvelope.company_authority_response),
+    context: structuredClone(accepted.context),
+    payload: structuredClone(runtimeEnvelope.payload),
+  };
+}
+
 export async function resolveCompanyAuthorityWorkerIngress(input: {
   observation: AuthenticatedSlackObservation;
   desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
@@ -338,55 +428,11 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
   payload: T;
   result?: R;
 }> {
-  const envelope = input.envelope as unknown;
-  if (!envelope || typeof envelope !== "object"
-    || !("schema_version" in envelope)
-    || !("correlation_id" in envelope)
-    || !("company_authority_request" in envelope)
-    || !("company_authority_response" in envelope)
-    || !("payload" in envelope)
-    || typeof envelope.correlation_id !== "string"
-    || !envelope.company_authority_request
-    || typeof envelope.company_authority_request !== "object") {
-    failAtBoundary(input.boundary, "AUTHORITY_ENVELOPE_INVALID");
-  }
-  const runtimeEnvelope = envelope as CompanyAuthorityRuntimeEnvelope<T>;
-  if (runtimeEnvelope.schema_version !== "1.0") {
-    failAtBoundary(input.boundary, "AUTHORITY_ENVELOPE_INVALID");
-  }
-  if (runtimeEnvelope.correlation_id !== runtimeEnvelope.company_authority_request.correlation_id) {
-    failAtBoundary(input.boundary, "AUTHORITY_SCOPE_MISMATCH", {
-      phase: "runtime_envelope_correlation",
-    });
-  }
-  try {
-    validateObservedExecutionRequest(runtimeEnvelope.company_authority_request);
-  } catch (error) {
-    mapContractFailureAtBoundary(error, input.boundary);
-  }
-  let accepted: {
-    context: AcceptedCompanyAuthorityContext | null;
-    error: { code?: unknown } | null;
-  };
-  try {
-    accepted = acceptCompanyAuthorityResponse(runtimeEnvelope.company_authority_response, {
-      expectedAudience: input.acceptance.expected_audience,
-      expectedDeploymentId: input.acceptance.expected_deployment_id,
-      now: input.acceptance.now,
-      publicJwk: input.acceptance.public_jwk,
-      tenantContextPublicJwk: input.acceptance.tenant_context_public_jwk,
-      tenantContextKeyId: input.acceptance.tenant_context_key_id,
-      request: runtimeEnvelope.company_authority_request,
-    });
-  } catch (error) {
-    mapContractFailureAtBoundary(error, input.boundary);
-  }
-  if (!accepted.context) {
-    const code = accepted.error && typeof accepted.error.code === "string"
-      ? accepted.error.code
-      : "AUTHORITY_UNAVAILABLE";
-    failAtBoundary(input.boundary, code, { phase: "company_authority_response" });
-  }
+  const accepted = await acceptCompanyAuthorityRuntimeEnvelope({
+    boundary: input.boundary,
+    envelope: input.envelope,
+    acceptance: input.acceptance,
+  });
   try {
     await input.tenant_verifier.validate({
       boundary: input.boundary,
@@ -398,9 +444,9 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
     mapContractFailureAtBoundary(error, input.boundary);
   }
   const context = structuredClone(accepted.context);
-  const payload = structuredClone(runtimeEnvelope.payload);
+  const payload = structuredClone(accepted.payload);
   try {
-    input.validate_payload_binding(context, runtimeEnvelope.company_authority_request, payload);
+    input.validate_payload_binding(context, accepted.request, payload);
   } catch (error) {
     if (error instanceof TenantBoundaryError || canonicalCode(error)) {
       mapContractFailureAtBoundary(error, input.boundary);
@@ -426,8 +472,7 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
   message: CompanyAuthorityQueueMessageLike<T>,
   options: {
     acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
-    tenant_verifier: TenantRuntimeBoundaryVerifier;
-    expected_tenant_scope: ExpectedTenantScope;
+    resolve_runtime: CompanyAuthorityRuntimeResolver;
     validate_payload_binding(
       context: AcceptedCompanyAuthorityContext,
       request: ObservedExecutionRequestV1,
@@ -436,7 +481,6 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
     process_auto(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
     route_approval(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
     route_human_action(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
-    ownership: IdempotencyStore;
     execution_hash(envelope: CompanyAuthorityRuntimeEnvelope<T>): string | Promise<string>;
     retention_until(now: string): string;
     now(): string;
@@ -445,18 +489,54 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
     log_error?(entry: Record<string, string>): void;
   },
 ): Promise<void> {
-  let accepted: Awaited<ReturnType<typeof executeCompanyAuthorityRuntimeBoundary<T, void>>>;
+  let accepted: AcceptedCompanyAuthorityRuntimeEnvelope<T> & {
+    decision: AcceptedCompanyAuthorityContext["authority"]["decision"];
+    runtime: CompanyAuthorityRuntimeDependencies;
+  };
   try {
     const now = options.now();
-    accepted = await executeCompanyAuthorityRuntimeBoundary({
+    const acceptedEnvelope = await acceptCompanyAuthorityRuntimeEnvelope({
       boundary: "queue_consumer",
       envelope: message.body,
       acceptance: { ...options.acceptance, now },
-      tenant_verifier: options.tenant_verifier,
-      expected_tenant_scope: options.expected_tenant_scope,
-      validate_payload_binding: options.validate_payload_binding,
-      execute_auto: async () => undefined,
     });
+    const payload = structuredClone(acceptedEnvelope.payload);
+    try {
+      options.validate_payload_binding(
+        structuredClone(acceptedEnvelope.context),
+        structuredClone(acceptedEnvelope.request),
+        payload,
+      );
+    } catch (error) {
+      if (error instanceof TenantBoundaryError || canonicalCode(error)) {
+        mapContractFailureAtBoundary(error, "queue_consumer");
+      }
+      failAtBoundary("queue_consumer", "PAYLOAD_SCOPE_MISMATCH");
+    }
+    let runtime: CompanyAuthorityRuntimeDependencies;
+    try {
+      runtime = await options.resolve_runtime({
+        context: structuredClone(acceptedEnvelope.context),
+        request: structuredClone(acceptedEnvelope.request),
+      });
+      await runtime.tenant_verifier.validate({
+        boundary: "queue_consumer",
+        tenant_context: acceptedEnvelope.context.tenant_context as unknown as TenantContextEnvelope,
+        expected_scope: runtime.expected_tenant_scope,
+        now,
+      });
+    } catch (error) {
+      if (error instanceof TenantBoundaryError || canonicalCode(error)) {
+        mapContractFailureAtBoundary(error, "queue_consumer");
+      }
+      throw error;
+    }
+    accepted = {
+      ...acceptedEnvelope,
+      payload,
+      decision: acceptedEnvelope.context.authority.decision,
+      runtime,
+    };
   } catch (error) {
     const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
     options.log_error?.({
@@ -484,10 +564,10 @@ export async function consumeCompanyAuthorityQueueMessage<T, R>(
     ack: () => message.ack(),
     retry: (retryOptions) => message.retry(retryOptions),
   }, {
-    verifier: options.tenant_verifier,
-    expected_scope: () => options.expected_tenant_scope,
+    verifier: accepted.runtime.tenant_verifier,
+    expected_scope: () => accepted.runtime.expected_tenant_scope,
     now: options.now,
-    ownership: options.ownership,
+    ownership: accepted.runtime.ownership,
     // Bind the idempotency claim to the accepted outer decision as well as the
     // nested context and payload. A redelivery cannot replace approval with
     // auto while retaining the nested idempotency key.
