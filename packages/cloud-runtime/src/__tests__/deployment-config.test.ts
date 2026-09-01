@@ -731,6 +731,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/deploy-gate"');
     expect(worker).toContain("/admin\\/reply-judgment\\/episodes");
     expect(worker).toContain("readReplyJudgmentEpisode(workspace.fs");
+    expect(worker).toContain('url.searchParams.get("tenant_id")');
     expect(worker).toContain('error: "reply_judgment_scope_mismatch"');
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/intake"');
     expect(worker).toContain("/admin\\/meeting-minutes\\/runs");

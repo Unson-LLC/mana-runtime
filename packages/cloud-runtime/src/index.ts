@@ -1840,15 +1840,16 @@ export default {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
+      const tenantId = url.searchParams.get("tenant_id");
       const workspaceId = url.searchParams.get("workspace_id");
       const channelId = url.searchParams.get("channel_id");
       const threadTs = url.searchParams.get("thread_ts");
-      if (!workspaceId || !/^[A-Z0-9]{3,32}$/.test(workspaceId)
+      if (!tenantId || !/^[A-Za-z0-9_-]{3,128}$/.test(tenantId)
+        || !workspaceId || !/^[A-Z0-9]{3,32}$/.test(workspaceId)
         || !channelId || !/^[A-Z0-9]{3,32}$/.test(channelId)
         || !threadTs || !/^\d{1,20}(?:\.\d{1,12})?$/.test(threadTs)) {
         return Response.json({ error: "reply_judgment_scope_invalid" }, { status: 400 });
       }
-      const tenantId = requiredRuntimeBinding(env.TENANT_ID);
       const id = env.TECHKNIGHT_WORKSPACE.idFromName(runtimeWorkspaceName({
         tenantId, workspaceId, channelId, threadTs,
       }));
