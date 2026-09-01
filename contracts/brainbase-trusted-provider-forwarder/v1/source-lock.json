@@ -84,13 +84,6 @@
     "consumer_fallback_allowed": false
   },
   "merge_allowed": true,
-  "deploy_allowed": true,
-  "deployment_authorization": {
-    "reviewer_identity": "user:ksato",
-    "reviewer_provenance": "codex:user-authorized-production-deploy",
-    "reviewed_commit_sha": "9098c6ea57fe22db332ccb77d9edceedbf01926b",
-    "target": "unson-business-mana-runtime",
-    "authorized_at": "2026-09-01T16:38:00.000Z",
-    "expires_at": "2026-09-01T18:38:00.000Z"
-  }
+  "deploy_allowed": false,
+  "deployment_authorization": null
 }
