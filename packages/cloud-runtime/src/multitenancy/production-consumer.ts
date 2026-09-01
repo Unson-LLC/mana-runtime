@@ -320,6 +320,12 @@ async function payloadHash(value: unknown): Promise<string> {
   return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function jsonTransportValue(value: unknown): unknown {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) throw new TypeError("Slack delivery payload is not JSON serializable");
+  return JSON.parse(serialized) as unknown;
+}
+
 export async function postTenantSlackReply(input: {
   tenant_context: TenantContextEnvelope;
   expected_scope: ExpectedTenantScope;
@@ -343,7 +349,10 @@ export async function postTenantSlackReply(input: {
     now: input.now,
     resolve_verification_key: input.resolve_verification_key,
     ownership: input.ownership,
-    payload_hash: await payloadHash({ event: input.event, text: input.text }),
+    // Hash the same JSON value that can cross the Slack transport boundary.
+    // Runtime-created optional properties may be `undefined`; JSON omits them,
+    // while the stricter JCS implementation correctly rejects them.
+    payload_hash: await payloadHash(jsonTransportValue({ event: input.event, text: input.text })),
     delivery_operation_id: deliveryOperationId,
     retention_until: input.retention_until,
     read_authoritative_snapshot: input.read_authoritative_snapshot,
