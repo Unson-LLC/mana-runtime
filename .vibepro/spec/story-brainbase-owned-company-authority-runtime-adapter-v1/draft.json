@@ -54,7 +54,11 @@
         "brainbase_proxy",
         "slack_delivery"
       ],
-      "verified_surfaces": []
+      "verified_surfaces": [
+        "worker",
+        "queue",
+        "durable_object"
+      ]
     },
     "resources": [
       {
@@ -114,14 +118,76 @@
       ]
     },
     "verification": {
-      "scanner_coverage": "graphify collected; runtime coverage not_collected",
+      "scanner_coverage": "graphify collected; worker, queue, and durable_object are locally verified; production coverage and container, mcp, brainbase_proxy, slack_delivery are not_collected",
       "evidence_state": "not_collected",
       "evidence": {
-        "propagation_surfaces": [],
-        "negative_scenarios": [],
+        "propagation_surfaces": [
+          "worker",
+          "queue",
+          "durable_object"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "cross_tenant_candidate",
+          "no_data"
+        ],
         "evidence_refs": [
-          ".vibepro/diagnostics/2026-09-01T171941Z/evidence.json"
-        ]
+          ".vibepro/diagnostics/2026-09-01T171941Z/evidence.json",
+          "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+          "packages/cloud-runtime/src/__tests__/company-authority-queue.integration.test.ts",
+          "packages/cloud-runtime/src/__tests__/company-authority-external-effect-outbox.test.ts",
+          "packages/cloud-runtime/src/__tests__/company-authority-human-handoff.test.ts",
+          "packages/cloud-runtime/src/__tests__/slack.test.ts"
+        ],
+        "graph": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated",
+            "customer_managed"
+          ],
+          "tenant_entities": [
+            {
+              "name": "CanonicalExecutionContextV1",
+              "tenant_scope": "tenant_id/connection_id/correlation_id",
+              "tenant_key_source": "Brainbase signed CanonicalExecutionContextV1",
+              "trust_zone": "brainbase_to_mana_control_plane",
+              "data_owner": "Brainbase"
+            },
+            {
+              "name": "TenantRuntimeState",
+              "tenant_scope": "tenant_id/idempotency_key",
+              "tenant_key_source": "verified nested TenantContextEnvelope",
+              "trust_zone": "mana_runtime_state",
+              "data_owner": "Brainbase"
+            }
+          ],
+          "boundary_edges": [
+            {
+              "name": "SlackIngress->CompanyAuthorityAdapter",
+              "tenant_scope": "workspace placement to signed tenant_id/connection_id",
+              "tenant_key_source": "Brainbase Company Authority response",
+              "sharing_mode": "tenant_partitioned",
+              "credential_scope": "opaque_ref_only",
+              "connection_mode": "protocol_v1",
+              "deployment_mode": "managed_shared"
+            },
+            {
+              "name": "CompanyAuthorityAdapter->RuntimeBoundary",
+              "tenant_scope": "tenant_id/connection_id/correlation_id/operation_id",
+              "tenant_key_source": "accepted outer context and verified nested TenantContextEnvelope",
+              "sharing_mode": "tenant_partitioned",
+              "credential_scope": "opaque_ref_only",
+              "connection_mode": "protocol_v1",
+              "deployment_mode": "managed_dedicated"
+            }
+          ]
+        }
       }
     }
   },
@@ -165,7 +231,7 @@
     {
       "id": "C-002",
       "type": "contract",
-      "statement": "CompanyAuthorityClientをtransport portとして注入し、resolved時は{state: resolved, response: CompanyAuthorityResolutionResponseV1}、未解決時は{state: no_data | unknown | partial | not_collected}を返す。resolved.responseだけをA0 wire responseとして受理し、未解決stateはAUTHORITY_UNAVAILABLEへfail-closedする。transport throwの任意codeもAUTHORITY_UNAVAILABLEへ正規化する。fixtureとunavailableを同じproduction adapter境界へ入力できるようにするが、Brainbase live endpoint、service binding、authentication、retry policyはproducer契約が確定するまでnot_definedとする",
+      "statement": "CompanyAuthorityClientをtransport portとして注入し、resolved時は{state: resolved, response: unknown}、未解決時は{state: no_data | unknown | partial | not_collected}を返す。schema由来のTypeScript型が未生成のtransport値を型付けせず、resolved.responseをA0 source lockのacceptCompanyAuthorityResponseでruntime validationした値だけ受理する。未解決stateはAUTHORITY_UNAVAILABLEへfail-closedする。transport throwの任意codeもAUTHORITY_UNAVAILABLEへ正規化する。fixtureとunavailableを同じproduction adapter境界へ入力できるようにするが、Brainbase live endpoint、service binding、authentication、retry policyはproducer契約が確定するまでnot_definedとする",
       "origin": {
         "story_refs": [
           {
@@ -263,7 +329,7 @@
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "受理したCanonicalExecutionContextV1をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへ変更せず伝播し、各境界で外側company authorityと内側TenantContextEnvelopeを再検証する",
+      "statement": "受理したCanonicalExecutionContextV1をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへ変更せず伝播し、各境界で外側company authorityと内側TenantContextEnvelopeを再検証する。現sliceではWorker、Queue、Durable Objectだけがローカル実装・検証済みで、Container、MCP、Brainbase proxy、Slack deliveryへのCompany Authority context接続と7 surfaceの本番同一run証拠はnot_collectedである",
       "origin": {
         "story_refs": [
           {

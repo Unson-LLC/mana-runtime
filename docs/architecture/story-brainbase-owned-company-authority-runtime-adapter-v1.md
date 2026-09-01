@@ -41,7 +41,7 @@ Company Authority v1のrequestは単一`resource_ref`／`project_hint`だけを�
 
 ```ts
 type CompanyAuthorityResolution =
-  | { state: "resolved"; response: CompanyAuthorityResolutionResponseV1 }
+  | { state: "resolved"; response: unknown }
   | { state: "no_data" | "unknown" | "partial" | "not_collected" };
 
 interface CompanyAuthorityClient {
@@ -49,7 +49,7 @@ interface CompanyAuthorityClient {
 }
 ```
 
-`resolved.response`だけをA0 wire responseとして受理する。`no_data | unknown | partial | not_collected`はconsumer retrieval stateであり、responseを捏造せず`AUTHORITY_UNAVAILABLE`へfail-closedする。最初はfixture transportとunavailable transportを注入して検証する。ローカル設定解釈は、会社権限固有の設定がすべてない場合だけ`disabled`とし、一部欠落、非HTTPS URL、credential・query・fragment付きURL、秘密鍵を含むJWK、曖昧なtenant JWKS、未知effectを`CONFIGURATION_INVALID`で拒否する。有効時も設定値から受理optionsとopt-in operationを導出するだけで、HTTP clientやQueueを生成しない。HTTP path、service binding、authentication、retry policyはBrainbase側のlive endpoint契約が確定するまで未定義とする。設定parserやportの存在は本番endpoint・trust値の存在証明ではない。transportがthrowした任意の内部codeは公開せず、adapter境界で`AUTHORITY_UNAVAILABLE`へ正規化する。producer canonical codeを維持するのは、transport成功後に受け取ったA0 responseを検証した結果だけである。
+`resolved.response`はtransport境界では`unknown`として受け、A0 source lockの`acceptCompanyAuthorityResponse`によるruntime validationを通過した値だけを採用する。schemaから導出したTypeScript型がまだ存在しないため、未検証値へ`CompanyAuthorityResolutionResponseV1`型を付けて安全性を装わない。`no_data | unknown | partial | not_collected`はconsumer retrieval stateであり、responseを捏造せず`AUTHORITY_UNAVAILABLE`へfail-closedする。最初はfixture transportとunavailable transportを注入して検証する。ローカル設定解釈は、会社権限固有の設定がすべてない場合だけ`disabled`とし、一部欠落、非HTTPS URL、credential・query・fragment付きURL、秘密鍵を含むJWK、曖昧なtenant JWKS、未知effectを`CONFIGURATION_INVALID`で拒否する。有効時も設定値から受理optionsとopt-in operationを導出するだけで、HTTP clientやQueueを生成しない。HTTP path、service binding、authentication、retry policyはBrainbase側のlive endpoint契約が確定するまで未定義とする。設定parserやportの存在は本番endpoint・trust値の存在証明ではない。transportがthrowした任意の内部codeは公開せず、adapter境界で`AUTHORITY_UNAVAILABLE`へ正規化する。producer canonical codeを維持するのは、transport成功後に受け取ったA0 responseを検証した結果だけである。
 
 ### 4.3 Response acceptance
 
@@ -82,6 +82,18 @@ signed Slack ingress
 ```
 
 各境界は外側contextを再検証し、内側の既存`validateTenantBoundary`／`TenantRuntimeBoundaryVerifier`も実行する。outer contextからtenant IDなどを再生成せず、署名済みnested contextと一致することを確認する。
+
+現時点のsurface別証拠は次のとおり。本表はローカル実装証拠と本番実証を分け、未接続を合格へ丸めない。
+
+| surface | 状態 | source／test証拠 | 本番証拠 |
+|---|---|---|---|
+| Worker | ローカル実装・検証済み | `executeCompanyAuthorityWorkerIngress`; `company-authority-runtime-adapter.integration.test.ts` | `not_collected` |
+| Queue | ローカル実装・検証済み | `consumeCompanyAuthorityQueueMessage`; `company-authority-queue.integration.test.ts`; `tenant-slack-runtime-wiring.test.ts` | `not_collected` |
+| Durable Object | ローカル実装・検証済み | `createDurableExternalEffectOutboxClient`; `createDurableCompanyAuthorityHumanHandoffClient`; 各専用test | `not_collected` |
+| Container | Company Authority context未接続 | 既存tenant boundaryのみ。Company Authority専用source／testなし | `not_collected` |
+| MCP | Company Authority context未接続 | 既存tenant boundaryのみ。Company Authority専用source／testなし | `not_collected` |
+| Brainbase proxy | Company Authority context未接続 | 既存tenant boundaryのみ。Company Authority専用source／testなし | `not_collected` |
+| Slack delivery | Company Authority context未接続 | ingress selector／Queue送信までのみローカル検証 | `not_collected` |
 
 ## 5. Failure semantics
 
