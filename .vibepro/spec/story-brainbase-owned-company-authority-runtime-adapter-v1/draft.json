@@ -23,7 +23,8 @@
     "requested_operation": "ObservedExecutionRequestV1.requested_action.capability_id and CanonicalExecutionContextV1.authority.capability_id identify the business operation and must match under the producer contract",
     "protocol_marker": "TenantContextEnvelope.authorization.capability_ids contains company_authority_v1 only as a protocol capability marker, not as the requested business operation",
     "production_opt_in_selector": "not_implemented",
-    "pre_binding_behavior": "no production operation is treated as opted in until an explicit routing selector and its pre-fix failing test are implemented; once opted in, authority failure rejects the operation and never falls back to legacy authorization"
+    "foundation_boundary": "executeCompanyAuthorityWorkerIngress is tested by direct invocation as the boundary a future routing selector calls only after an operation is explicitly opted in; the helper does not implement or infer that selector",
+    "pre_binding_behavior": "no production operation is treated as opted in until an explicit routing selector and its pre-fix failing test are implemented; company_authority_v1 alone never selects this path; once opted in, authority failure rejects the operation and never falls back to legacy authorization"
   },
   "multi_tenancy": {
     "schema_version": "0.1.0",
@@ -75,7 +76,7 @@
       ],
       "residency": "not_collected",
       "migration": "not_performed",
-      "rollback": "reject company_authority_v1 operations; do not fall back to legacy authorization"
+      "rollback": "reject operations explicitly opted in by the runtime routing selector; do not fall back to legacy authorization, and do not use the company_authority_v1 protocol marker as the selector"
     },
     "failure_semantics": {
       "unknown_tenant": "deny",
@@ -321,7 +322,7 @@
     {
       "id": "S-001",
       "type": "scenario",
-      "statement": "company_authority_v1必須のWorker ingressでCompanyAuthorityClientがunavailableを返すと、AUTHORITY_UNAVAILABLEを返し、business callback 0、legacy fallback 0を観測する。これはlive endpointやsecretなしで最初にREDにする",
+      "statement": "将来の明示的runtime routing selectorがoperationをopt-in済みと判定した後に呼ぶ共通Worker基盤境界を直接検証する。CompanyAuthorityClientがunavailableを返すとAUTHORITY_UNAVAILABLE、business callback 0、legacy fallback 0を観測する。company_authority_v1 marker単独ではこの境界を選択せず、production selector未実装の現時点では本番operationへ接続しない",
       "origin": {
         "story_refs": [
           {
@@ -344,7 +345,7 @@
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
-            "case": "fails closed before business or legacy effects when authority is unavailable"
+            "case": "foundation boundary fails closed after explicit opt-in when authority is unavailable"
           }
         ]
       },

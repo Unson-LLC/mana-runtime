@@ -385,6 +385,12 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
   };
 }
 
+/**
+ * Foundation boundary invoked only after a runtime routing selector explicitly
+ * opts an operation into Company Authority. This helper does not implement or
+ * infer that selector; in particular, the company_authority_v1 protocol marker
+ * must never select this path by itself.
+ */
 export async function executeCompanyAuthorityWorkerIngress<T>(input: {
   observation: AuthenticatedSlackObservation;
   desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;

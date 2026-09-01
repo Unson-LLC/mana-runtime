@@ -7,7 +7,7 @@ import {
   type CompanyAuthorityClient,
 } from "../multitenancy/company-authority-runtime-adapter.js";
 
-describe("company authority runtime adapter", () => {
+describe("company authority runtime adapter foundation after explicit opt-in", () => {
   const observation = {
     provider: "slack" as const,
     authentication: {
@@ -25,7 +25,7 @@ describe("company authority runtime adapter", () => {
     correlation_id: "cor_01J00000000000000000000000",
   };
 
-  it("fails closed before business or legacy effects when authority is unavailable", async () => {
+  it("foundation boundary fails closed after explicit opt-in when authority is unavailable", async () => {
     const businessEffect = vi.fn();
     const legacyFallback = vi.fn(async (): Promise<never> => {
       throw new Error("legacy fallback must not run");

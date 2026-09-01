@@ -39,7 +39,7 @@ A0は、Brainbase producerのexact source lock、`ObservedExecutionRequestV1`、
 - [ ] AC-007: `auto / approval / human_action / deny`を変更しない。`deny`は全business effect前に拒否し、`approval`と`human_action`を`auto`として実行しない。
 - [ ] AC-008: 明示的なruntime routing selectorでCompany Authorityへopt-inしたoperationは、Brainbase unavailable、schema rejection、dual-read不一致、stale context時に旧`authorization.data_scopes`へfallbackしない。`company_authority_v1`はnested TenantContextのprotocol markerであり、operation selectorとして流用しない。production selectorはT0-AUTH-003で未実装のため、現時点でproduction opt-in済みoperationは0件とする。
 - [ ] AC-009: 現行v1はSlack providerだけを受理する。service、Codex、Claude CodeをSlackへ偽装せず、provider固有契約ができるまで`not_implemented`で拒否する。
-- [ ] AC-010: 最初のRED testは、authority endpoint取得不能時のWorker ingressで`AUTHORITY_UNAVAILABLE`、business callback 0、legacy fallback 0を観測する。live endpointやsecretを必要としない。
+- [ ] AC-010: 最初のRED testは、将来の明示的runtime routing selectorがoperationをopt-in済みと判定した後に呼ぶ共通Worker基盤境界を直接実行し、authority endpoint取得不能時に`AUTHORITY_UNAVAILABLE`、business callback 0、legacy fallback 0を観測する。`company_authority_v1` marker単独ではこの境界を選択せず、production selector未実装の現時点では本番operationへ接続しない。live endpointやsecretを必要としない。
 - [ ] AC-011: duplicate／redeliveryでは、model、Brainbase write、external side effect、Slack deliveryを各1回以下にし、OperationReceipt、UsageEvent、authority receipt、readbackを同一correlation IDへ結ぶ。
 - [ ] AC-012: 本番完了判定には、2 tenant × 2 person、7 runtime surface、read／write／approval／deny、negative effect 0、exactly-once、same-correlation、鍵rotation／revocation、exact deploy readbackの同一run証拠を要求する。
 
