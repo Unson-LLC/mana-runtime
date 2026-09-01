@@ -15,6 +15,8 @@ export interface ExternalEffectOutboxRecord {
   readonly provider_key: string;
   readonly payload_hash: string;
   readonly state: ExternalEffectState;
+  readonly claim_token?: string;
+  readonly claim_expires_at?: number;
   readonly result_ref?: string;
   readonly failure_code?: string;
 }
@@ -34,6 +36,8 @@ export interface ExternalEffectOutboxStore {
 
 export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStore {
   readonly #records = new Map<string, ExternalEffectOutboxRecord>();
+
+  constructor(private readonly now: () => number = Date.now) {}
 
   #key(tenantId: string, effectId: string): string {
     return JSON.stringify([tenantId, effectId]);
@@ -58,6 +62,10 @@ export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStor
     const existing = this.#records.get(key);
     if (!existing) throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
     assertSameEffect(existing, record);
+    if (existing.state === "in_flight" && record.state !== "in_flight"
+      && existing.claim_token !== record.claim_token) {
+      throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_CLAIM_CONFLICT");
+    }
     assertValidTransition(existing, record);
     this.#records.set(key, structuredClone(record));
   }
@@ -70,10 +78,14 @@ export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStor
     const existing = this.#records.get(key);
     if (!existing) throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
     assertSameEffect(existing, record);
-    if (existing.state !== "pending") {
+    const reclaimable = existing.state === "in_flight"
+      && typeof existing.claim_expires_at === "number"
+      && existing.claim_expires_at <= this.now();
+    if (existing.state !== "pending" && !reclaimable) {
       return { record: structuredClone(existing), claimed: false };
     }
-    assertValidTransition(existing, record);
+    assertValidClaim(record);
+    if (existing.state === "pending") assertValidTransition(existing, record);
     this.#records.set(key, structuredClone(record));
     return { record: structuredClone(record), claimed: true };
   }
@@ -81,6 +93,14 @@ export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStor
   async read(tenantId: string, effectId: string): Promise<ExternalEffectOutboxRecord | null> {
     const record = this.#records.get(this.#key(tenantId, effectId));
     return record ? structuredClone(record) : null;
+  }
+}
+
+export function assertValidClaim(record: ExternalEffectOutboxRecord): void {
+  if (record.state !== "in_flight"
+    || typeof record.claim_token !== "string" || record.claim_token.length === 0
+    || typeof record.claim_expires_at !== "number" || !Number.isFinite(record.claim_expires_at)) {
+    throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_CLAIM_INVALID");
   }
 }
 
@@ -176,6 +196,9 @@ export async function processCompanyAuthorityExternalEffect<T>(input: {
     readonly provider_key: string;
     readonly payload: T;
   }): Promise<ExternalEffectProviderResult>;
+  readonly claim_lease_ms?: number;
+  readonly now?: () => number;
+  readonly create_claim_token?: () => string;
 }): Promise<ExternalEffectOutboxRecord> {
   const { effect_id, tenant_id } = effectIdentity(input.context);
   const payload_hash = await sha256(input.payload);
@@ -188,9 +211,37 @@ export async function processCompanyAuthorityExternalEffect<T>(input: {
     state: "pending",
   };
   await input.outbox.begin(pending);
-  const inFlight: ExternalEffectOutboxRecord = { ...pending, state: "in_flight" };
-  const claimed = await input.outbox.claim(inFlight);
-  if (!claimed.claimed) return claimed.record;
+  const now = input.now ?? Date.now;
+  const claimLeaseMs = input.claim_lease_ms ?? 60_000;
+  if (!Number.isFinite(claimLeaseMs) || claimLeaseMs <= 0) {
+    throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_CLAIM_INVALID");
+  }
+  const inFlight: ExternalEffectOutboxRecord = {
+    ...pending,
+    state: "in_flight",
+    claim_token: (input.create_claim_token ?? (() => crypto.randomUUID()))(),
+    claim_expires_at: now() + claimLeaseMs,
+  };
+  let claimed: Awaited<ReturnType<ExternalEffectOutboxStore["claim"]>>;
+  try {
+    claimed = await input.outbox.claim(inFlight);
+  } catch (claimError) {
+    const observed = await input.outbox.read(tenant_id, effect_id).catch(() => null);
+    if (observed?.state === "in_flight" && observed.claim_token === inFlight.claim_token) {
+      claimed = { record: observed, claimed: true };
+    } else {
+      throw claimError;
+    }
+  }
+  if (!claimed.claimed) {
+    if (claimed.record.state === "in_flight") {
+      throw new TenantBoundaryError("external_effect", "UPSTREAM_UNAVAILABLE", undefined, {
+        effect_id,
+        reason: "external_effect_claim_active",
+      });
+    }
+    return claimed.record;
+  }
 
   let result: ExternalEffectProviderResult;
   try {

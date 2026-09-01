@@ -365,6 +365,7 @@ interface WorkspaceEnv {}
 export class TenantRuntimeState extends DurableObject<Env> {
   readonly #handler = new TenantRuntimeStateHandler(
     this.ctx.storage as unknown as TenantStateStorage,
+    this.ctx.id.name,
   );
   readonly #boundaryContext = new TenantBoundaryContextHandler(
     this.ctx.storage,
