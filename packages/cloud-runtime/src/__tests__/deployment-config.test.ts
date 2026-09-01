@@ -729,6 +729,9 @@ describe("会社別Cloudflare deployment", () => {
     expect(packageJson.scripts["deploy:unson-business"]).toContain("node scripts/deploy-unson-business.mjs");
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/deploy-gate"');
+    expect(worker).toContain("/admin\\/reply-judgment\\/episodes");
+    expect(worker).toContain("readReplyJudgmentEpisode(workspace.fs");
+    expect(worker).toContain('error: "reply_judgment_scope_mismatch"');
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/intake"');
     expect(worker).toContain("/admin\\/meeting-minutes\\/runs");
     expect(worker).toContain("isIntakePaused()");

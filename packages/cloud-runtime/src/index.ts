@@ -63,6 +63,7 @@ import { classifyMeetingMinutesDestinationInSandbox,
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient, TaskApiError } from "@openryoko/task-runtime-core";
 import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { readReplyJudgmentEpisode } from "./reply-judgment.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
   processMeetingTaskEvent,
@@ -1831,6 +1832,37 @@ export default {
       return Response.json(await meetingMinutesDeploymentGate(
         env, requiredRuntimeBinding(env.TENANT_ID),
       ).status());
+    }
+    const replyJudgmentMatch = url.pathname.match(
+      /^\/admin\/reply-judgment\/episodes\/([A-Za-z0-9_-]{1,128})$/,
+    );
+    if (request.method === "GET" && replyJudgmentMatch) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const workspaceId = url.searchParams.get("workspace_id");
+      const channelId = url.searchParams.get("channel_id");
+      const threadTs = url.searchParams.get("thread_ts");
+      if (!workspaceId || !/^[A-Z0-9]{3,32}$/.test(workspaceId)
+        || !channelId || !/^[A-Z0-9]{3,32}$/.test(channelId)
+        || !threadTs || !/^\d{1,20}(?:\.\d{1,12})?$/.test(threadTs)) {
+        return Response.json({ error: "reply_judgment_scope_invalid" }, { status: 400 });
+      }
+      const tenantId = requiredRuntimeBinding(env.TENANT_ID);
+      const id = env.TECHKNIGHT_WORKSPACE.idFromName(runtimeWorkspaceName({
+        tenantId, workspaceId, channelId, threadTs,
+      }));
+      const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+      const episode = await withDisposableResource(
+        () => getWorkspace(handle),
+        (workspace) => readReplyJudgmentEpisode(workspace.fs, replyJudgmentMatch[1]!),
+      );
+      if (!episode) return Response.json({ error: "reply_judgment_episode_not_found" }, { status: 404 });
+      if (episode.tenantId !== tenantId || episode.workspaceId !== workspaceId
+        || episode.channelId !== channelId || episode.threadTs !== threadTs) {
+        return Response.json({ error: "reply_judgment_scope_mismatch" }, { status: 403 });
+      }
+      return Response.json(episode);
     }
     if (request.method === "POST" && url.pathname === "/admin/tenant-credential/bootstrap-slack") {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {

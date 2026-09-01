@@ -78,7 +78,10 @@ async function readText(fs: WorkspaceFs, path: string): Promise<string> {
   return typeof value === "string" ? value : new Response(value).text();
 }
 
-async function readEpisode(fs: WorkspaceFs, eventId: string): Promise<ReplyJudgmentEpisode | undefined> {
+export async function readReplyJudgmentEpisode(
+  fs: WorkspaceFs,
+  eventId: string,
+): Promise<ReplyJudgmentEpisode | undefined> {
   const path = episodePath(eventId);
   await fs.mkdir("/judgment-episodes", { recursive: true });
   if (!(await fs.ls("/judgment-episodes")).includes(path)) return undefined;
@@ -97,7 +100,7 @@ export async function isReplyJudgmentCompleted(
   fs: WorkspaceFs,
   eventId: string,
 ): Promise<boolean> {
-  const episode = await readEpisode(fs, eventId);
+  const episode = await readReplyJudgmentEpisode(fs, eventId);
   return episode?.attempts.some((attempt) => attempt.status === "completed") ?? false;
 }
 
@@ -106,7 +109,7 @@ export async function startReplyJudgmentAttempt(
   event: SlackQueueEvent,
   startedAt: string,
 ): Promise<string> {
-  const current = await readEpisode(fs, event.eventId);
+  const current = await readReplyJudgmentEpisode(fs, event.eventId);
   const episode: ReplyJudgmentEpisode = current ?? {
     schemaVersion: "reply_judgment_episode.v1",
     eventId: event.eventId,
@@ -130,7 +133,7 @@ async function updateAttempt(
   attemptId: string,
   update: (attempt: ReplyJudgmentAttempt) => void,
 ): Promise<void> {
-  const episode = await readEpisode(fs, eventId);
+  const episode = await readReplyJudgmentEpisode(fs, eventId);
   const attempt = episode?.attempts.find((candidate) => candidate.attemptId === attemptId);
   if (!episode || !attempt) throw new Error("reply_judgment_attempt_missing");
   update(attempt);

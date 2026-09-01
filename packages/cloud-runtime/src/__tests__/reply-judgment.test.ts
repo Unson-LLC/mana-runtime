@@ -4,6 +4,7 @@ import {
   failReplyJudgmentAttempt,
   isReplyJudgmentCompleted,
   parseReplyJudgmentStream,
+  readReplyJudgmentEpisode,
   startReplyJudgmentAttempt,
 } from "../reply-judgment.js";
 import type { SlackQueueEvent } from "../types.js";
@@ -279,6 +280,10 @@ describe("Slack reply Judgment lifecycle", () => {
     expect(await isReplyJudgmentCompleted(fs, event.eventId)).toBe(false);
     await completeReplyJudgmentAttempt(fs, event.eventId, attemptId, "1.3", "2026-08-17T00:00:03.000Z");
     expect(await isReplyJudgmentCompleted(fs, event.eventId)).toBe(true);
+    expect(await readReplyJudgmentEpisode(fs, event.eventId)).toMatchObject({
+      eventId: "Ev1",
+      attempts: [{ status: "completed", responseTs: "1.3" }],
+    });
     const persisted = fs.files.get("/judgment-episodes/Ev1.json")!;
     expect(JSON.parse(persisted)).toMatchObject({
       eventId: "Ev1",
