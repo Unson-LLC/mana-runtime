@@ -8,7 +8,7 @@ A0でsource lockしたBrainbase会社権限契約を、MANAの実runtimeへ安�
 
 現行`createTenantRuntimeHttpClients`は旧`TenantContextIssueRequest`を`/api/v1/runtime/tenant-context:resolve`へ送り、runtime側でtenant、connection、expected revision、workspace／app、operation、project、authorizationを組み立てる。これはtenant safetyには使われているが、公開`ObservedExecutionRequestV1`とは非互換である。
 
-A0の`acceptCompanyAuthorityResponse`はfixture conformance testからだけ呼ばれ、production call siteとlive endpointはない。runtime環境変数からHTTPS endpoint、expected deployment ID、公開Ed25519 JWK、operationごとのdesired effect、既存audience、単一tenant verification keyをfail-closedで解釈するローカル設定境界は追加したが、本番値は設定していない。したがってadapterは、未定義のtransport・認証方式を埋め込まず、設定解釈、transport port、検証を分離する。
+A0の`acceptCompanyAuthorityResponse`はfixtureとローカルQueue consumerから呼ばれるが、live endpointはない。runtime環境変数からHTTPS endpoint、expected deployment ID、公開Ed25519 JWK、operationごとのdesired effect、既存audience、単一tenant verification keyをfail-closedで解釈するローカル設定境界は追加したが、本番値は設定していない。したがってadapterは、未定義のtransport・認証方式を埋め込まず、設定解釈、transport port、検証を分離する。
 
 ## 3. 設計原則
 
@@ -111,7 +111,7 @@ decisionを上位へ昇格したり、approver／responsible personをMANA側で
 1. A0 locked fixtureをproduction adapter port経由で受理する。
 2. unavailable transportのWorker REDを追加し、effect 0／fallback 0を固定する。
 3. Slack mapperと明示desired-effect mappingを追加する。
-4. outer contextをQueue以降の6 surfaceへ伝播し、Workerのpositive routingを含む各境界のnegative testを追加する。Queueは、envelopeをlegacy fallbackとしてACKしないfail-closed入口guard、outer／nested受理、payload binding、受理済みcontextからのruntime依存解決、decision不変、redelivery重複抑止を担うconsumerを実`worker.queue`分岐へ接続済みとする。tenant verifierとownership storeは署名受理とpayload照合より前に選択しない。Slack ingressはJCS正規化した全`SlackQueueEvent`のSHA-256を署名対象の`requested_action.resource_ref`へ含め、Queueで完全一致を再検証する。これによりevent IDだけを維持した本文・時刻・種別・files・thread／attachment context差替えも作用前に拒否する。外部作用はQueue delivery claimと別のtenant-bound durable-state outboxへprovider call前に`pending`を保存し、原子的なclaimを得た1処理だけがproviderを呼ぶ。成功を`succeeded`、恒久拒否を`failed_terminal`、応答喪失またはtransport例外を`unknown_requires_reconcile`として保持するローカル契約を実装した。同じeffect IDとpayloadはproviderを再送せず、異なるpayloadは`IDEMPOTENCY_CONFLICT`で停止する。unknownはdeterministic provider keyによるreadbackだけで成功へ遷移し、照合不能時はunknownのままにする。runtime環境変数をfail-closedで解釈し、公開鍵と明示operation mappingだけから受理optionsを導出する。disabled・partial設定はclaim前にretryし、有効設定でも3 decisionの実routeは未接続のため`UPSTREAM_UNAVAILABLE`でretryする。production設定値、live HTTP client／認証、Durable Object RPC、production provider binding、reconciler、本番trust値、本番外部readbackは未定義・未設定または`not_collected`であり、production Queue成功と本番exactly-onceは`not_collected`を維持する。
+4. outer contextをQueue以降の6 surfaceへ伝播し、Workerのpositive routingを含む各境界のnegative testを追加する。Queueは、envelopeをlegacy fallbackとしてACKしないfail-closed入口guard、outer／nested受理、payload binding、受理済みimmutable snapshotからのruntime依存解決、decision不変、redelivery重複抑止を担うconsumerを実`worker.queue`分岐へ接続済みとする。tenant verifierとownership storeは署名受理とpayload照合より前に選択しない。Slack ingressはJCS正規化した全`SlackQueueEvent`のSHA-256を署名対象の`requested_action.resource_ref`へ含め、Queueで完全一致を再検証する。これによりevent IDだけを維持した本文・時刻・種別・files・thread／attachment context差替えも作用前に拒否する。`auto`はexact capabilityの明示provider registryへだけ接続し、受理済みauthorityのcapabilityとallowed effectを実行直前に再照合する。production registryは空である。外部作用はtenant-bound durable-state outboxへprovider call前に`pending`を保存し、原子的なclaimを得た1処理だけがproviderを呼ぶ。成功、恒久拒否、`unknown_requires_reconcile`を分離し、期限切れ`in_flight`を自動再取得せず、元のclaim tokenなしに状態遷移できない。`approval / human_action`は、受理済みrequest/context/payload、確定済みexecution hash、署名済みapproverまたはresponsibleをtenant-bound Durable Objectへ`pending_approval / pending_human_action`として原子的に保存する。同一再配送は同じpending recordを再利用してACKし、対象差替え、cross-scope、同じidempotency keyでの内容競合は拒否する。通知、判断、完了、protected effectはこのsliceでは実行しない。runtime環境変数をfail-closedで解釈し、公開鍵と明示operation mappingだけから受理optionsを導出する。disabled・partial設定はclaim前にretryする。production設定値、live HTTP client／認証、production auto provider／reconciler、本番trust値、通知・承認完了、本番外部readbackは未定義・未設定または`not_collected`であり、production Queue成功と本番exactly-onceは`not_collected`を維持する。
 5. Brainbase live endpoint契約後にtransport bindingを追加する。
 6. `handleTenantSlackRequest`へ明示的なruntime routing selectorを追加し、現行regression testで選択時のno-fallbackとmarker単独非選択を固定する。nested TenantContextの`company_authority_v1` markerだけでopt-in判定しない。（同一runのpre-fix REDは一時観測。ローカル実装・negative test完了。本番設定は0件）
 7. dual-readは比較だけに使い、company-authority opt-in operationの認可結果をlegacyへ委ねない。
@@ -119,7 +119,7 @@ decisionを上位へ昇格したり、approver／responsible personをMANA側で
 
 rollbackはcompany-authority opt-in operationを拒否する。旧権限へ戻して業務を続行しない。
 
-選択されたoperationのpositive fixtureを実HTTP handlerから専用送信口まで通す証拠と、`approval`／`human_action`のQueue以降の効果0はまだ`not_collected`である。foundation単体testやnegative routing testから推定しない。
+選択されたoperationのpositive fixtureを実HTTP handlerから専用送信口まで通す証拠はまだ`not_collected`である。`approval`／`human_action`についてローカルQueueからpending永続化までの効果0は検証済みだが、production Queue、通知、owner-visibleな判断、完了、downstream effect、readbackは`not_collected`であり、局所テストから本番成功を推定しない。
 
 ## 8. 初期テスト戦略
 

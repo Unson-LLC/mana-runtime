@@ -8,9 +8,10 @@
   "implementation_state": {
     "status": "in_progress",
     "adapter_foundation": "implemented",
-    "runtime_surface_binding": "worker ingress selector and worker.queue fail-closed consumer binding implemented; signed canonical Slack payload digest is revalidated before tenant runtime selection; decision routes and Queue through Slack delivery not_collected",
-    "external_effect_outbox": "local contract implemented with tenant-bound durable-state storage and atomic pending claim; Durable Object RPC/provider binding and production reconciliation evidence not_collected",
-    "runtime_trust_configuration": "local fail-closed environment parser and post-acceptance worker.queue resolver binding implemented; no production values, HTTP client, authentication, or connected decision route",
+    "runtime_surface_binding": "worker ingress selector and worker.queue fail-closed consumer binding implemented; signed canonical Slack payload digest is revalidated before tenant runtime selection; accepted request/context/payload are passed as an immutable snapshot; container, mcp, brainbase proxy and slack delivery evidence not_collected",
+    "external_effect_outbox": "local contract implemented with tenant-bound durable-state storage, atomic claim, no blind expired in_flight reclaim and original-token fencing; production provider binding and reconciliation evidence not_collected",
+    "human_handoff": "approval and human_action persist exact signed target plus accepted immutable snapshot and execution hash as one tenant-bound pending record; identical redelivery is idempotent; notification, decision, completion, protected effect and production readback not_collected",
+    "runtime_trust_configuration": "local fail-closed environment parser and post-acceptance worker.queue resolver binding implemented; production auto provider registry is empty and there are no production values, HTTP client or authentication",
     "endpoint_binding": "URL parsing contract implemented locally; live path, transport, and authentication not_defined",
     "production_trust_store": "public-key input validation implemented locally; production key distribution, values, rotation, revocation, and readback not_implemented",
     "runtime_evidence": "not_collected",
@@ -28,7 +29,7 @@
     "foundation_boundary": "handleTenantSlackRequest invokes resolveCompanyAuthorityRuntimeEnvelope only for an explicitly opted-in business capability and uses a distinct Company Authority envelope sender; the direct executeCompanyAuthorityWorkerIngress foundation remains independently fixture-tested",
     "pre_binding_behavior": "a same-run transient pre-fix actual-handler RED observed the selected operation flowing to the legacy path; no durable RED artifact was retained. The current regression test proves that an unavailable CompanyAuthorityClient yields AUTHORITY_UNAVAILABLE with Company Authority sender 0 and legacy authority calls 0. A selector containing only company_authority_v1 does not select task.write. No production client or sender is configured, so production opt-in operations remain 0",
     "scope_binding": "Company Authority v1 carries one resource_ref/project_hint. An opted-in Slack placement with more than one projectCode fails before retrieval with AUTHORITY_SCOPE_MISMATCH instead of collapsing to its first project. Slack ingress appends a JCS SHA-256 digest of the complete SlackQueueEvent to the signed resource_ref and worker.queue recomputes it before tenant runtime selection, preventing same-event payload substitution. RuntimePlacement.placementId is a local route identifier and is not the signed deployment ID; trusted expected_deployment_id is checked by the A0 consumer against the signed context",
-    "positive_handler_decision_evidence": "not_collected; positive fixture propagation from the HTTP handler and approval/human_action downstream effect-zero are not inferred from foundation or negative routing tests"
+    "positive_handler_decision_evidence": "positive fixture propagation from the HTTP handler is not_collected; approval/human_action Queue-to-pending effect-zero is locally verified, while production Queue, notification, owner-visible decision, completion, downstream effect and readback remain not_collected"
   },
   "multi_tenancy": {
     "schema_version": "0.1.0",
@@ -298,7 +299,7 @@
     {
       "id": "INV-003",
       "type": "invariant",
-      "statement": "Brainbaseのauto、approval、human_action、denyを変更しない。deny、approval、human_actionではprotected business effectを実行せず、approverまたはresponsible personをMANA側で差し替えない",
+      "statement": "Brainbaseのauto、approval、human_action、denyを変更しない。denyでは全作用を停止し、approvalとhuman_actionは受理済みimmutable snapshotと署名済みapproverまたはresponsible personをtenant-bound pending recordへ保存するだけでprotected business effectを実行しない",
       "origin": {
         "story_refs": [
           {
@@ -312,10 +313,28 @@
             "section": "Decision handling"
           }
         ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/company-authority-human-handoff.ts",
+            "anchor": "persistCompanyAuthorityHumanHandoff"
+          },
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/tenant-runtime-state.ts",
+            "anchor": "createDurableCompanyAuthorityHumanHandoffStore"
+          }
+        ],
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
             "case": "accepts positive decisions unchanged and rejects deny or nested-signature tampering without effects"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/company-authority-human-handoff.test.ts",
+            "case": "persists approval only for the signed approver without marking notification or completion"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/company-authority-queue.integration.test.ts",
+            "case": "converges to one pending handoff when the response is lost after durable approval persistence"
           }
         ]
       },
