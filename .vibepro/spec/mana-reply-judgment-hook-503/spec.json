@@ -168,11 +168,11 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC1"
+            "ac_id": "AC-1"
           },
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC2"
+            "ac_id": "AC-2"
           }
         ],
         "architecture_refs": [
@@ -223,7 +223,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC3"
+            "ac_id": "AC-3"
           }
         ],
         "architecture_refs": [
@@ -267,7 +267,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC4"
+            "ac_id": "AC-4"
           }
         ],
         "architecture_refs": [
@@ -308,7 +308,7 @@
         "story_refs": [
           {
             "kind": "acceptance_criteria",
-            "ac_id": "AC5"
+            "ac_id": "AC-5"
           }
         ],
         "architecture_refs": [
@@ -325,16 +325,16 @@
         ],
         "test_refs": [
           {
-            "file": "docs/operations/mana-reply-judgment-hook-503-evidence.md",
-            "case": "mana-reply-judgment-hook-503:ac:5 fresh Slack lifecycle"
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "story-slack-mention-brainbase-judgment:ac:7 stores a redacted durable episode receipt through Slack completion"
           }
         ]
       },
       "verifiable_by": {
         "test_pattern": [
           {
-            "file_glob": "docs/operations/mana-reply-judgment-hook-503-evidence.md",
-            "must_cover": "mana-reply-judgment-hook-503:ac:5 fresh Slack lifecycle"
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "stores a redacted durable episode receipt through Slack completion"
           }
         ]
       },
