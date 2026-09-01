@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { MeetingMinutesDestination, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
-import { meetingMinutesSelectionDestination } from "../meeting-minutes-selection-scope.js";
+import {
+  meetingMinutesSelectionDestination,
+  resolveMeetingMinutesDestinationProjectScope,
+} from "../meeting-minutes-selection-scope.js";
 import { TenantBoundaryError } from "../multitenancy/errors.js";
 
 const selection: MeetingMinutesSelection = {
@@ -31,5 +34,29 @@ describe("meetingMinutesSelectionDestination", () => {
       expect(error).toBeInstanceOf(TenantBoundaryError);
       expect((error as TenantBoundaryError).code).toBe("PROJECT_SCOPE_MISMATCH");
     }
+  });
+
+  it("accepts the configured authority project id", () => {
+    expect(resolveMeetingMinutesDestinationProjectScope({
+      project_ids: ["prj_techknight"], data_scopes: [],
+    }, council, "prj_techknight", "queue_consumer")).toEqual({
+      project_id: "prj_techknight", project_ids: ["prj_techknight"],
+    });
+  });
+
+  it("accepts a canonical signed id attested to the destination project code", () => {
+    expect(resolveMeetingMinutesDestinationProjectScope({
+      project_ids: ["prj_canonical"],
+      data_scopes: ["company_authority:resource:project:techknight@7"],
+    }, council, "prj_techknight", "queue_consumer")).toEqual({
+      project_id: "prj_canonical", project_ids: ["prj_canonical"],
+    });
+  });
+
+  it("rejects a source project attestation for a different destination", () => {
+    expect(() => resolveMeetingMinutesDestinationProjectScope({
+      project_ids: ["prj_unson"],
+      data_scopes: ["company_authority:resource:project:unson@7"],
+    }, council, "prj_techknight", "queue_consumer")).toThrowError(TenantBoundaryError);
   });
 });
