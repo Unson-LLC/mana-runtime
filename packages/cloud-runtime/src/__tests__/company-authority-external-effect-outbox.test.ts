@@ -419,7 +419,7 @@ describe("company authority external effect outbox", () => {
     }
   });
 
-  it("retries a lost worker claim until lease expiry, then reclaims it", async () => {
+  it("never resends a lost worker claim after lease expiry without provider reconciliation", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-02T00:00:00.000Z"));
     try {
@@ -437,7 +437,7 @@ describe("company authority external effect outbox", () => {
       const providerSend = vi.fn(async () => ({
         applied: true as const,
         response_observed: true as const,
-        result_ref: "provider:reclaimed",
+        result_ref: "provider:must-not-be-called",
       }));
 
       await expect(processCompanyAuthorityExternalEffect({
@@ -454,15 +454,17 @@ describe("company authority external effect outbox", () => {
       await expect(processCompanyAuthorityExternalEffect({
         context: context(), payload: { value: 1 }, outbox: durable,
         provider_send: providerSend, claim_lease_ms: 1_000,
-      })).resolves.toMatchObject({ state: "succeeded", result_ref: "provider:reclaimed" });
-      expect(providerSend).toHaveBeenCalledTimes(1);
+      })).rejects.toMatchObject({ code: "UPSTREAM_UNAVAILABLE" });
+      expect(providerSend).not.toHaveBeenCalled();
+      await expect(durable.read(scope.tenant_id, scope.effect_id)).resolves.toMatchObject({
+        state: "in_flight",
+      });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("fences a stale worker after a durable claim is reclaimed", async () => {
-    let now = 1_000;
+  it("requires the original claim token for every in-flight and reconcile-state write", async () => {
     const storage = new MemoryStorage();
     const pending: ExternalEffectOutboxRecord = {
       tenant_id: "ten_company_authority",
@@ -471,26 +473,33 @@ describe("company authority external effect outbox", () => {
       payload_hash: "sha256:payload",
       state: "pending",
     };
-    const store = createDurableExternalEffectOutboxStore(storage, pending, () => now);
+    const store = createDurableExternalEffectOutboxStore(storage, pending);
     const firstClaim = {
       ...pending,
       state: "in_flight" as const,
       claim_token: "claim-old",
       claim_expires_at: 2_000,
     };
-    const reclaimed = {
-      ...firstClaim,
-      claim_token: "claim-new",
-      claim_expires_at: 3_001,
-    };
     await store.begin(pending);
     await expect(store.claim(firstClaim)).resolves.toMatchObject({ claimed: true });
-    now = 2_001;
-    await expect(store.claim(reclaimed)).resolves.toMatchObject({ claimed: true });
 
-    await expect(store.write({ ...firstClaim, state: "succeeded", result_ref: "provider:stale" }))
+    await expect(store.write({ ...firstClaim, claim_token: "claim-other" }))
       .rejects.toMatchObject({ code: "EXTERNAL_EFFECT_CLAIM_CONFLICT" });
-    await expect(store.write({ ...reclaimed, state: "succeeded", result_ref: "provider:current" }))
+    await expect(store.write({
+      ...firstClaim,
+      claim_token: "claim-other",
+      state: "unknown_requires_reconcile",
+    })).rejects.toMatchObject({ code: "EXTERNAL_EFFECT_CLAIM_CONFLICT" });
+
+    const unknown = { ...firstClaim, state: "unknown_requires_reconcile" as const };
+    await expect(store.write(unknown)).resolves.toBeUndefined();
+    await expect(store.write({
+      ...unknown,
+      claim_token: "claim-other",
+      state: "succeeded",
+      result_ref: "provider:forged",
+    })).rejects.toMatchObject({ code: "EXTERNAL_EFFECT_CLAIM_CONFLICT" });
+    await expect(store.write({ ...unknown, state: "succeeded", result_ref: "provider:reconciled" }))
       .resolves.toBeUndefined();
   });
 });

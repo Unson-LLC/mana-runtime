@@ -22,6 +22,7 @@ import { deny, TenantBoundaryError } from "./errors.js";
 import { tenantPartitionKey } from "./isolation.js";
 import type { TenantContextEnvelope } from "./contracts.js";
 import {
+  assertClaimTokenOwner,
   assertSameEffect,
   assertValidClaim,
   assertValidTransition,
@@ -70,7 +71,6 @@ class DurableExternalEffectOutboxStore implements ExternalEffectOutboxStore {
   constructor(
     private readonly storage: TenantStateStorage,
     private readonly scope: { tenant_id: string; effect_id: string },
-    private readonly now: () => number = Date.now,
   ) {}
 
   #assertScope(record: Pick<ExternalEffectOutboxRecord, "tenant_id" | "effect_id">): void {
@@ -103,10 +103,7 @@ class DurableExternalEffectOutboxStore implements ExternalEffectOutboxStore {
       const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
       if (!existing) deny("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
       assertSameEffect(existing, record);
-      if (existing.state === "in_flight" && record.state !== "in_flight"
-        && existing.claim_token !== record.claim_token) {
-        deny("external_effect", "EXTERNAL_EFFECT_CLAIM_CONFLICT");
-      }
+      assertClaimTokenOwner(existing, record);
       assertValidTransition(existing, record);
       await transaction.put(key, clone(record));
     });
@@ -122,14 +119,11 @@ class DurableExternalEffectOutboxStore implements ExternalEffectOutboxStore {
       const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
       if (!existing) deny("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
       assertSameEffect(existing, record);
-      const reclaimable = existing.state === "in_flight"
-        && typeof existing.claim_expires_at === "number"
-        && existing.claim_expires_at <= this.now();
-      if (existing.state !== "pending" && !reclaimable) {
+      if (existing.state !== "pending") {
         return { record: clone(existing), claimed: false };
       }
       assertValidClaim(record);
-      if (existing.state === "pending") assertValidTransition(existing, record);
+      assertValidTransition(existing, record);
       await transaction.put(key, clone(record));
       return { record: clone(record), claimed: true };
     });
@@ -463,9 +457,8 @@ export function createDurableTenantAccountingStore(storage: TenantStateStorage):
 export function createDurableExternalEffectOutboxStore(
   storage: TenantStateStorage,
   scope: { tenant_id: string; effect_id: string },
-  now: () => number = Date.now,
 ): ExternalEffectOutboxStore {
-  return new DurableExternalEffectOutboxStore(storage, scope, now);
+  return new DurableExternalEffectOutboxStore(storage, scope);
 }
 
 interface DurableObjectStubLike {
@@ -557,6 +550,9 @@ export function createDurableExternalEffectOutboxClient(
   namespace: TenantRuntimeStateNamespace,
   scope: { tenant_id: string; effect_id: string },
 ): ExternalEffectOutboxStore {
+  // This namespace is a trusted internal capability, not a public authorization
+  // boundary. Keep it unavailable to application-controlled callers; record
+  // transitions still enforce scope and claim-token ownership for stale writers.
   const stub = namespace.get(namespace.idFromName(externalEffectObjectName(scope)));
   return {
     begin: async (record) => {

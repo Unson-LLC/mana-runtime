@@ -16,6 +16,7 @@ export interface ExternalEffectOutboxRecord {
   readonly payload_hash: string;
   readonly state: ExternalEffectState;
   readonly claim_token?: string;
+  /** Observation deadline only; expiry never authorizes an automatic provider resend. */
   readonly claim_expires_at?: number;
   readonly result_ref?: string;
   readonly failure_code?: string;
@@ -36,8 +37,6 @@ export interface ExternalEffectOutboxStore {
 
 export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStore {
   readonly #records = new Map<string, ExternalEffectOutboxRecord>();
-
-  constructor(private readonly now: () => number = Date.now) {}
 
   #key(tenantId: string, effectId: string): string {
     return JSON.stringify([tenantId, effectId]);
@@ -62,10 +61,7 @@ export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStor
     const existing = this.#records.get(key);
     if (!existing) throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
     assertSameEffect(existing, record);
-    if (existing.state === "in_flight" && record.state !== "in_flight"
-      && existing.claim_token !== record.claim_token) {
-      throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_CLAIM_CONFLICT");
-    }
+    assertClaimTokenOwner(existing, record);
     assertValidTransition(existing, record);
     this.#records.set(key, structuredClone(record));
   }
@@ -78,14 +74,11 @@ export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStor
     const existing = this.#records.get(key);
     if (!existing) throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
     assertSameEffect(existing, record);
-    const reclaimable = existing.state === "in_flight"
-      && typeof existing.claim_expires_at === "number"
-      && existing.claim_expires_at <= this.now();
-    if (existing.state !== "pending" && !reclaimable) {
+    if (existing.state !== "pending") {
       return { record: structuredClone(existing), claimed: false };
     }
     assertValidClaim(record);
-    if (existing.state === "pending") assertValidTransition(existing, record);
+    assertValidTransition(existing, record);
     this.#records.set(key, structuredClone(record));
     return { record: structuredClone(record), claimed: true };
   }
@@ -93,6 +86,16 @@ export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStor
   async read(tenantId: string, effectId: string): Promise<ExternalEffectOutboxRecord | null> {
     const record = this.#records.get(this.#key(tenantId, effectId));
     return record ? structuredClone(record) : null;
+  }
+}
+
+export function assertClaimTokenOwner(
+  existing: ExternalEffectOutboxRecord,
+  candidate: ExternalEffectOutboxRecord,
+): void {
+  if ((existing.state === "in_flight" || existing.state === "unknown_requires_reconcile")
+    && existing.claim_token !== candidate.claim_token) {
+    throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_CLAIM_CONFLICT");
   }
 }
 
@@ -186,7 +189,8 @@ function effectIdentity(context: AcceptedCompanyAuthorityContext): { effect_id: 
 /**
  * Persists an external effect before calling its provider. Once a provider call
  * starts, an exception or an unobserved response is ambiguous and must be
- * reconciled by provider_key; it is never converted into a blind Queue retry.
+ * reconciled by provider_key; it is never converted into a blind Queue retry,
+ * even after the claim observation deadline has elapsed.
  */
 export async function processCompanyAuthorityExternalEffect<T>(input: {
   readonly context: AcceptedCompanyAuthorityContext;
