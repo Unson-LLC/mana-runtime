@@ -8,6 +8,7 @@ const BRAINBASE_WARNING_PREFIX = "⚠️ Brainbase";
 const CONTINUATION_AUDIT_PREFIX = "🔁 ";
 const STOP_REPAIR_AUDIT_PREFIX = "🛠️ ";
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const VERIFIED_ANSWER_PREFIX = "__MANA_VERIFIED_ANSWER_V1__:";
 
 interface StreamEvent extends Record<string, unknown> {
   type?: string;
@@ -294,6 +295,22 @@ function completedBrainbaseAuditLines(lines: string[]): string[] {
     && !line.startsWith("📚 Brainbase監査未完了:"));
 }
 
+function verifiedAnswer(output: Record<string, unknown>): string | undefined {
+  if (typeof output.systemMessage !== "string") return undefined;
+  const markers = output.systemMessage.split(/\r?\n/)
+    .filter((line) => line.startsWith(VERIFIED_ANSWER_PREFIX));
+  if (markers.length !== 1) return undefined;
+  try {
+    const parsed = JSON.parse(markers[0]!.slice(VERIFIED_ANSWER_PREFIX.length)) as Record<string, unknown>;
+    return typeof parsed.answer === "string" && parsed.answer.trim()
+      && typeof parsed.answer_digest === "string" && /^[a-f0-9]{64}$/.test(parsed.answer_digest)
+      ? parsed.answer.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   const events = parseEvents(stdout);
   const hooks: Array<{ index: number; output: Record<string, unknown>; receipt: EmbeddedHookReceipt }> = [];
@@ -320,7 +337,6 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
   });
 
-  if (!final) throw new Error("reply_judgment_result_missing");
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
   const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse");
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
@@ -331,6 +347,18 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     throw new Error("reply_judgment_route_receipt_missing");
   }
   const successfulStop = stopHooks.at(-1)!;
+  const hostVerifiedAnswer = verifiedAnswer(successfulStop.output);
+  if (!final && hostVerifiedAnswer) {
+    final = {
+      index: successfulStop.index + 0.5,
+      reply: hostVerifiedAnswer,
+      sessionId: successfulStop.receipt.session_id,
+    };
+  }
+  if (!final) throw new Error("reply_judgment_result_missing");
+  if (hostVerifiedAnswer && final.reply.trim() !== hostVerifiedAnswer) {
+    throw new Error("reply_judgment_verified_answer_mismatch");
+  }
   if (promptHooks[0]!.index >= final.index || successfulStop.index >= final.index) {
     throw new Error("reply_judgment_event_order_invalid");
   }

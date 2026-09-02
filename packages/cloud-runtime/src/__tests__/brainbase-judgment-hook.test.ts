@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const script = fileURLToPath(new URL("../../container/brainbase-judgment-hook.mjs", import.meta.url));
 const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const verifiedAnswerPrefix = "__MANA_VERIFIED_ANSWER_V1__:";
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { while (cleanup.length) await cleanup.pop()?.(); });
 
@@ -328,6 +329,11 @@ describe("Brainbase judgment Hook forwarder", () => {
       host_receipt_id: "receipt-Stop",
     });
     expect(receipt.turn_id).toBeTruthy();
+    expect(lines[3]).toContain(verifiedAnswerPrefix);
+    expect(JSON.parse(lines[3].slice(verifiedAnswerPrefix.length))).toEqual({
+      answer: verifiedAnswer,
+      answer_digest: createHash("sha256").update(verifiedAnswer).digest("hex"),
+    });
   });
 
   it("story-meeting-minutes-brainbase-judgment:ac:3 fails closed when the Brainbase Hook endpoint is unavailable", async () => {

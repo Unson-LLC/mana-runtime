@@ -30,6 +30,7 @@ const brainbaseLine = "📚 Brainbase参照先: 「質問」→ 採用: workspac
 const zeroCallLine = "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓";
 const secondBrainbaseLine = "📚 Brainbase参照先: 「追加質問」→ 採用: graph ✓";
 const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const verifiedAnswerPrefix = "__MANA_VERIFIED_ANSWER_V1__:";
 
 function hook(event: "UserPromptSubmit" | "PostToolUse" | "Stop", systemMessage: string, turn = "turn-1") {
   return {
@@ -197,6 +198,42 @@ describe("Slack reply Judgment lifecycle", () => {
     const result = parseReplyJudgmentStream(stream({ replyLines: ["受信しました"] }));
     expect(result.reply).toBe(`${judgmentLine}\n${zeroCallLine}\n受信しました`);
     expect(result.auditLines).toEqual([judgmentLine, zeroCallLine]);
+  });
+
+  it("recovers the Host-verified answer when Claude --print omits its result event", () => {
+    const answer = `${judgmentLine}\n${zeroCallLine}\n回答本文`;
+    const lines = stream({ replyLines: [answer] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('\"hook_event\":\"Stop\"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage += `\n${verifiedAnswerPrefix}${JSON.stringify({
+      answer,
+      answer_digest: "a".repeat(64),
+    })}`;
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+    const withoutResult = lines.filter((line) => JSON.parse(line).type !== "result").join("\n");
+
+    expect(parseReplyJudgmentStream(withoutResult)).toMatchObject({
+      reply: answer,
+      stop: "completed",
+    });
+  });
+
+  it("rejects disagreement between Claude result and the Host-verified answer", () => {
+    const lines = stream({ replyLines: ["別の回答"] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('\"hook_event\":\"Stop\"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage += `\n${verifiedAnswerPrefix}${JSON.stringify({
+      answer: `${judgmentLine}\n${zeroCallLine}\nHostが検証した回答`,
+      answer_digest: "b".repeat(64),
+    })}`;
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_verified_answer_mismatch");
   });
 
   it("binds cumulative PostToolUse receipts without requiring Stop prose identity", () => {

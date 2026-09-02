@@ -10,6 +10,7 @@ const turnDir = process.env.BRAINBASE_JUDGMENT_TURN_DIR || "/tmp/mana-judgment-t
 const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_JUDGMENT_REQUEST_CHARS = 4_000;
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const VERIFIED_ANSWER_PREFIX = "__MANA_VERIFIED_ANSWER_V1__:";
 const JUDGMENT_AUDIT_PREFIXES = ["🧠 判断参照:", "⚠️ 判断参照:"];
 const BRAINBASE_AUDIT_PREFIXES = ["📚 Brainbase", "⚠️ Brainbase"];
 const AUDIT_PREFIXES = [...JUDGMENT_AUDIT_PREFIXES, ...BRAINBASE_AUDIT_PREFIXES, "🔁 ", "🛠️ "];
@@ -198,6 +199,18 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
         throw new Error("judgment_hook_final_audit_missing");
       }
       stopSystemMessage = verifiedAuditLines.join("\n");
+      const verifiedAnswerMarker = `${VERIFIED_ANSWER_PREFIX}${JSON.stringify({
+        answer: verifiedAnswer,
+        answer_digest: documentedOutput.answer_digest,
+      })}`;
+      return {
+        // Claude Code --print can finish successfully after a Stop hook without
+        // emitting its usual result event. Preserve the exact Host-verified
+        // answer in the supported systemMessage field so the Worker can recover
+        // it without trusting an unverified model fragment.
+        systemMessage: [stopSystemMessage, receiptMarker, verifiedAnswerMarker]
+          .filter(Boolean).join("\n"),
+      };
     }
     if (!stopSystemMessage) throw new Error("judgment_hook_stop_output_invalid");
     return {
