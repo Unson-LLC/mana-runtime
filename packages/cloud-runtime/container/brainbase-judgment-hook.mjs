@@ -148,6 +148,13 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
         // only the second Host acceptance is exposed to the stream validator.
         const repairedPayload = {
           ...payload,
+          // Claude may invoke this wrapper with stop_hook_active=true after its
+          // own Stop retry. The wrapper's authenticated, one-shot repair is a
+          // distinct Host validation attempt; carrying that flag forward makes
+          // the Host reject it as an already-exhausted repair before evaluating
+          // the corrected answer. validatedOutput still disables recursion and
+          // fails closed if this attempt remains blocked.
+          stop_hook_active: false,
           last_assistant_message: repairedStopAnswer(
             payload.last_assistant_message,
             requiredAuditLines,
