@@ -148,13 +148,10 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
         // only the second Host acceptance is exposed to the stream validator.
         const repairedPayload = {
           ...payload,
-          // Claude may invoke this wrapper with stop_hook_active=true after its
-          // own Stop retry. The wrapper's authenticated, one-shot repair is a
-          // distinct Host validation attempt; carrying that flag forward makes
-          // the Host reject it as an already-exhausted repair before evaluating
-          // the corrected answer. validatedOutput still disables recursion and
-          // fails closed if this attempt remains blocked.
-          stop_hook_active: false,
+          // This is the wrapper-owned second Host attempt. Mark it active so a
+          // remaining block is rejected as exhausted instead of starting a
+          // second repair cycle. validatedOutput also disables local recursion.
+          stop_hook_active: true,
           last_assistant_message: repairedStopAnswer(
             payload.last_assistant_message,
             requiredAuditLines,
@@ -256,7 +253,14 @@ try {
     payload.prompt = trustedRequest;
   }
   payload.turn_id = await resolveTurnId(payload);
-  const output = await validatedOutput(await fetchHookEnvelope(payload), payload);
+  // This forwarder owns the bounded Stop repair cycle. Claude's
+  // stop_hook_active flag describes Claude's own Hook retry state, not the
+  // authenticated Host attempt made here. Always open Host validation as the
+  // first attempt; validatedOutput marks only its one synthetic retry active.
+  const hostPayload = payload.hook_event_name === "Stop"
+    ? { ...payload, stop_hook_active: false }
+    : payload;
+  const output = await validatedOutput(await fetchHookEnvelope(hostPayload), hostPayload);
   process.stdout.write(JSON.stringify(output));
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
