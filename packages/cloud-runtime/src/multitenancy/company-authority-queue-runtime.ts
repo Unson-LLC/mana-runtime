@@ -2,6 +2,7 @@ import type { SlackQueueEvent } from "../types.js";
 import type {
   AcceptedCompanyAuthorityContext,
   CompanyAuthorityDesiredEffect,
+  CompanyAuthorityRuntimeEnvelope,
   ObservedExecutionRequestV1,
 } from "./company-authority-runtime-adapter.js";
 import type { ExpectedTenantScope, TenantContextEnvelope } from "./contracts.js";
@@ -18,6 +19,9 @@ export interface CompanyAuthorityExternalEffectProviderRoute<T> {
   create_outbox(context: AcceptedCompanyAuthorityContext): ExternalEffectOutboxStore;
   provider_send(input: {
     provider_key: string;
+    context: AcceptedCompanyAuthorityContext;
+    request: ObservedExecutionRequestV1;
+    envelope: CompanyAuthorityRuntimeEnvelope<T>;
     payload: T;
   }): Promise<ExternalEffectProviderResult>;
 }
@@ -129,6 +133,7 @@ export async function unavailableCompanyAuthorityQueueRoute(
 export async function processCompanyAuthorityAutoQueueRoute<T>(input: {
   context: AcceptedCompanyAuthorityContext;
   request: ObservedExecutionRequestV1;
+  envelope: CompanyAuthorityRuntimeEnvelope<T>;
   payload: T;
   registry: CompanyAuthorityCapabilityProviderRegistry<T>;
 }): Promise<ExternalEffectOutboxRecord> {
@@ -159,6 +164,14 @@ export async function processCompanyAuthorityAutoQueueRoute<T>(input: {
     context: input.context,
     payload: input.payload,
     outbox: route.create_outbox(input.context),
-    provider_send: route.provider_send,
+    // Keep the generic outbox contract narrow; only this route closure carries
+    // the accepted Company Authority context and immutable request envelope.
+    provider_send: ({ provider_key, payload }) => route.provider_send({
+      provider_key,
+      context: structuredClone(input.context),
+      request: structuredClone(input.request),
+      envelope: structuredClone(input.envelope),
+      payload,
+    }),
   });
 }

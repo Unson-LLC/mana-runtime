@@ -8,6 +8,7 @@ import { ExternalEffectOutboxMemoryStore } from "../multitenancy/company-authori
 import { companyAuthoritySlackResourceRef } from "../multitenancy/company-authority-payload-binding.js";
 import type {
   AcceptedCompanyAuthorityContext,
+  CompanyAuthorityRuntimeEnvelope,
   ObservedExecutionRequestV1,
 } from "../multitenancy/company-authority-runtime-adapter.js";
 import type { TenantContextEnvelope } from "../multitenancy/contracts.js";
@@ -89,6 +90,14 @@ const request: ObservedExecutionRequestV1 = {
     event_id: "event-a",
   },
   correlation_id: "correlation-a",
+};
+
+const runtimeEnvelope: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent> = {
+  schema_version: "1.0",
+  correlation_id: request.correlation_id,
+  company_authority_request: request,
+  company_authority_response: { context },
+  payload,
 };
 
 describe("company authority Queue production seam", () => {
@@ -194,11 +203,19 @@ describe("company authority Queue production seam", () => {
         desired_effect: "external_side_effect",
       },
     };
+    const externalEnvelope: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent> = {
+      schema_version: "1.0",
+      correlation_id: externalRequest.correlation_id,
+      company_authority_request: externalRequest,
+      company_authority_response: { context: externalEffectContext },
+      payload,
+    };
 
     await expect(processCompanyAuthorityAutoQueueRoute({
       context: externalEffectContext,
       request: externalRequest,
       payload,
+      envelope: externalEnvelope,
       registry: {
         company_external_effect: {
           create_outbox: createOutbox,
@@ -209,6 +226,67 @@ describe("company authority Queue production seam", () => {
     expect(createOutbox).toHaveBeenCalledOnce();
     expect(createOutbox).toHaveBeenCalledWith(externalEffectContext);
     expect(providerSend).toHaveBeenCalledOnce();
+    expect(providerSend).toHaveBeenCalledWith({
+      provider_key: expect.stringMatching(/^sha256:/),
+      context: externalEffectContext,
+      request: externalRequest,
+      envelope: externalEnvelope,
+      payload,
+    });
+  });
+
+  it("isolates the accepted snapshot from provider mutation", async () => {
+    const outbox = new ExternalEffectOutboxMemoryStore();
+    const externalRequest: ObservedExecutionRequestV1 = {
+      ...request,
+      requested_action: {
+        ...request.requested_action,
+        capability_id: "company_external_effect",
+        desired_effect: "external_side_effect",
+      },
+    };
+    const externalEnvelope: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent> = {
+      schema_version: "1.0",
+      correlation_id: externalRequest.correlation_id,
+      company_authority_request: externalRequest,
+      company_authority_response: { context: externalEffectContext },
+      payload,
+    };
+    const contextBefore = structuredClone(externalEffectContext);
+    const requestBefore = structuredClone(externalRequest);
+    const envelopeBefore = structuredClone(externalEnvelope);
+    const providerSend = vi.fn(async (input: {
+      context: AcceptedCompanyAuthorityContext;
+      request: ObservedExecutionRequestV1;
+      envelope: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>;
+      payload: SlackQueueEvent;
+    }) => {
+      (input.context.tenant_context as unknown as TenantContextEnvelope).slack.channel_id = "provider-mutated";
+      if (!input.request.delivery) throw new Error("test_delivery_missing");
+      input.request.delivery.channel_id = "provider-mutated";
+      input.envelope.payload.text = "provider-mutated";
+      return {
+        applied: true as const,
+        response_observed: true as const,
+        result_ref: "provider:auto-route-isolated",
+      };
+    });
+    await expect(processCompanyAuthorityAutoQueueRoute({
+      context: externalEffectContext,
+      request: externalRequest,
+      envelope: externalEnvelope,
+      payload,
+      registry: {
+        company_external_effect: {
+          create_outbox: () => outbox,
+          provider_send: providerSend,
+        },
+      },
+    })).resolves.toMatchObject({ state: "succeeded" });
+
+    expect(externalEffectContext).toEqual(contextBefore);
+    expect(externalRequest).toEqual(requestBefore);
+    expect(externalEnvelope).toEqual(envelopeBefore);
   });
 
   it.each(["unregistered_external_effect", "__proto__"])(
@@ -227,6 +305,7 @@ describe("company authority Queue production seam", () => {
           desired_effect: "external_side_effect",
         },
       },
+      envelope: runtimeEnvelope,
       payload,
       registry: {},
     })).rejects.toEqual(expect.objectContaining({
@@ -258,6 +337,7 @@ describe("company authority Queue production seam", () => {
             desired_effect: "external_side_effect",
           },
         },
+        envelope: runtimeEnvelope,
         payload,
         registry: {
           company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },
@@ -286,6 +366,7 @@ describe("company authority Queue production seam", () => {
             desired_effect: desiredEffect,
           },
         },
+        envelope: runtimeEnvelope,
         payload,
         registry: {
           company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },
@@ -318,6 +399,7 @@ describe("company authority Queue production seam", () => {
           desired_effect: "external_side_effect",
         },
       },
+      envelope: runtimeEnvelope,
       payload,
       registry: {
         company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },
@@ -349,6 +431,7 @@ describe("company authority Queue production seam", () => {
           desired_effect: "external_side_effect",
         },
       },
+      envelope: runtimeEnvelope,
       payload,
       registry: {
         company_external_effect: { create_outbox: createOutbox, provider_send: providerSend },

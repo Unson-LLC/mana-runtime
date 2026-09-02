@@ -75,6 +75,7 @@ export class TechKnightSandbox extends BaseSandbox<SandboxRuntimeEnv> {
 async function authorizeTenantRuntimeProxy(
   request: Request,
   env: SandboxRuntimeEnv,
+  boundaries: readonly ("mcp_gateway" | "brainbase_proxy" | "slack_delivery")[],
   handler: (request: Request, credentialFetch: typeof fetch, proxyEnv: SandboxRuntimeEnv,
     resolved: AuthorizedTenantBoundaryContext) => Promise<Response> | Response,
 ): Promise<Response> {
@@ -82,7 +83,7 @@ async function authorizeTenantRuntimeProxy(
   const resolved = await resolveDurableTenantBoundaryContext(
     env.TENANT_RUNTIME_STATE,
     request,
-    ["mcp_gateway", "brainbase_proxy"],
+    boundaries,
     now,
   );
   if (resolved instanceof Response) return resolved;
@@ -106,6 +107,19 @@ async function authorizeTenantRuntimeProxy(
   return handler(new Request(request, { headers }), credentialFetch, proxyEnv, resolved);
 }
 
+async function runtimeGatewayBoundaries(
+  request: Request,
+): Promise<readonly ("mcp_gateway" | "brainbase_proxy" | "slack_delivery")[]> {
+  try {
+    const body = await request.clone().json() as { tool?: unknown };
+    return body.tool === "send_message"
+      ? ["mcp_gateway", "brainbase_proxy", "slack_delivery"]
+      : ["mcp_gateway", "brainbase_proxy"];
+  } catch {
+    return ["mcp_gateway", "brainbase_proxy"];
+  }
+}
+
 TechKnightSandbox.outboundByHost = {
   "api.anthropic.com": async (request: Request, env: SandboxRuntimeEnv) => {
     return authorizeRuntimeAnthropicOutbound(request, env);
@@ -117,30 +131,31 @@ TechKnightSandbox.outboundByHost = {
     return proxyDevelopmentCallback(request, env);
   },
   [TASK_SEARCH_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
-    request, env, (authorized, credentialFetch, proxyEnv) =>
+    request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv) =>
       createTaskSearchProxyHandler(credentialFetch)(authorized, proxyEnv),
   ),
   [TASK_WRITE_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
-    request, env, (authorized, credentialFetch, proxyEnv) =>
+    request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv) =>
       createTaskWriteProxyHandler(credentialFetch)(authorized, proxyEnv),
   ),
   [NOCODB_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
-    request, env, (authorized, credentialFetch, proxyEnv) =>
+    request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv) =>
       handleNocodbProxyRequest(authorized, proxyEnv, credentialFetch),
   ),
   [BRAINBASE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) =>
     new URL(request.url).pathname === "/host/judgment/hook"
       ? authorizeRuntimeBrainbaseOutbound(request, env)
       : authorizeTenantRuntimeProxy(
-        request, env, (authorized, credentialFetch, proxyEnv) =>
+        request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv) =>
           handleBrainbaseMcpProxyRequest(authorized, proxyEnv, credentialFetch),
       ),
   [GOOGLE_DRIVE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
-    request, env, (authorized, credentialFetch, proxyEnv) =>
+    request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv) =>
       handleGoogleDriveMcpProxyRequest(authorized, proxyEnv, credentialFetch),
   ),
-  [RUNTIME_GATEWAY_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
-    request, env, (authorized, credentialFetch, proxyEnv, resolved) =>
+  [RUNTIME_GATEWAY_PROXY_HOST]: async (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
+    request, env, await runtimeGatewayBoundaries(request),
+    (authorized, credentialFetch, proxyEnv, resolved) =>
       createRuntimeGatewayProxyHandler(credentialFetch, {
         deliverSlackMessage: (input) => deliverTenantGatewaySlackMessage(
           input,

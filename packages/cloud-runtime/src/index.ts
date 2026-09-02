@@ -2614,6 +2614,7 @@ export default {
       verifier: TenantRuntimeBoundaryVerifier;
       now: string;
       release?: "on_completion" | "on_expiration";
+      company_authority_envelope?: CompanyAuthorityRuntimeEnvelope<unknown>;
       execute(tenantBoundaryHandle: string): Promise<T>;
     }): Promise<T> => executeTenantBoundary({
       boundary: "container_launch",
@@ -2626,6 +2627,9 @@ export default {
         const handle = await registry.register({
           tenant_context: input.tenant_context,
           expected_scope: input.expected_scope,
+          ...(input.company_authority_envelope !== undefined
+            ? { company_authority_envelope: input.company_authority_envelope }
+            : {}),
           now: input.now,
         });
         try {
@@ -2741,6 +2745,7 @@ export default {
           process_auto: (context, payload, snapshot) => processCompanyAuthorityAutoQueueRoute({
             context,
             request: snapshot.request,
+            envelope: snapshot.envelope,
             payload,
             registry: companyAuthorityProviderRoutes,
           }),

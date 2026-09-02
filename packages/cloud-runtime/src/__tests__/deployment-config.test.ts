@@ -471,12 +471,18 @@ describe("会社別Cloudflare deployment", () => {
     expect(tenantProviderOutbound).toContain("createTenantCredentialFetch({");
     expect(sandboxRuntime).toContain("createRuntimeGatewayProxyHandler(credentialFetch, {");
     expect(sandboxRuntime).toContain("deliverTenantGatewaySlackMessage");
+    const runtimeGatewayStart = sandboxRuntime.indexOf("[RUNTIME_GATEWAY_PROXY_HOST]:");
+    expect(runtimeGatewayStart).toBeGreaterThan(-1);
+    expect(sandboxRuntime).toContain('body.tool === "send_message"');
+    expect(sandboxRuntime).toContain(
+      '["mcp_gateway", "brainbase_proxy", "slack_delivery"]',
+    );
     expect(runner).toContain('"x-mana-tenant-boundary-handle"');
     expect(runner).toContain('status: "timed_out"');
     expect(sandboxRuntime).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
     expect(sandboxRuntime).toContain('"mcp_gateway"');
     expect(sandboxRuntime).toContain('"brainbase_proxy"');
-    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: (request, env: SandboxRuntimeEnv)");
+    expect(sandboxRuntime).toContain("[RUNTIME_GATEWAY_PROXY_HOST]: async (request, env: SandboxRuntimeEnv)");
     expect(sandboxRuntime).not.toContain('"bb.unson.jp"');
   });
 
