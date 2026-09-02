@@ -197,6 +197,35 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
     const hasBrainbaseAudit = verifiedAuditLines.some((line) =>
       BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
       && !line.startsWith("📚 Brainbase監査未完了:"));
+    const remoteAuditLines = auditLinesFromText(existingSystemMessage);
+    const remoteHasJudgmentAudit = remoteAuditLines.some((line) =>
+      JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+    const remoteHasBrainbaseAudit = remoteAuditLines.some((line) =>
+      BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
+      && !line.startsWith("📚 Brainbase監査未完了:"));
+    if (allowStopRepair && !documentedOutput.decision
+        && (!hasJudgmentAudit || !hasBrainbaseAudit)
+        && remoteHasJudgmentAudit && remoteHasBrainbaseAudit) {
+      // Some production Host adapters return a completed audit block as a
+      // non-blocking systemMessage while Claude's submitted answer still lacks
+      // that block. Resubmit the repaired answer once so the answer exposed to
+      // Slack is itself Host-accepted rather than locally synthesized.
+      const repairedPayload = {
+        ...payload,
+        stop_hook_active: true,
+        last_assistant_message: repairedStopAnswer(verifiedAnswer, remoteAuditLines),
+      };
+      const repairedEnvelope = await fetchHookEnvelope(repairedPayload);
+      const repairedOutput = await validatedOutput(
+        repairedEnvelope,
+        repairedPayload,
+        { allowStopRepair: false },
+      );
+      if (repairedOutput.decision === "block") {
+        throw new Error("judgment_hook_stop_repair_incomplete");
+      }
+      return repairedOutput;
+    }
     // A non-blocking, identity-bound response proves that this exact
     // last_assistant_message passed Host validation. The final receipt remains
     // in the Host journal and need not be duplicated by the HTTP adapter.

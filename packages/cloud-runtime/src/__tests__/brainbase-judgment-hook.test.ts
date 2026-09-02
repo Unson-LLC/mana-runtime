@@ -444,6 +444,63 @@ describe("Brainbase judgment Hook forwarder", () => {
     });
   });
 
+  it("resubmits a non-blocking Host audit repair before exposing the verified answer", async () => {
+    const judgmentLine = "🧠 判断参照: 「確認して」を参照 → 質問として回答 ✓";
+    const brainbaseLine = "📚 Brainbase検索: Graphで「mana」を検索 → 結果を取得 ✓";
+    const forwarded: Array<Record<string, unknown>> = [];
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      forwarded.push(payload);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1", accepted: true, hook_event_name: payload.hook_event_name,
+        session_id: payload.session_id, turn_id: payload.turn_id,
+        ...(payload.hook_event_name === "UserPromptSubmit" ? {
+          receipt_id: "receipt-nonblocking-repair",
+          route_resolution_sha256: "7".repeat(64),
+        } : {}),
+        output: payload.hook_event_name === "UserPromptSubmit" ? {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit", additionalContext: "Judgment route resolved",
+          },
+        } : {
+          systemMessage: forwarded.filter((entry) => entry.hook_event_name === "Stop").length === 1
+            ? `${judgmentLine}\n${brainbaseLine}`
+            : "Host accepted the repaired judgment episode",
+        },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const env = {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    };
+    await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-nonblocking-repair" }, env);
+    const result = await runHook({
+      hook_event_name: "Stop", session_id: "session-nonblocking-repair",
+      last_assistant_message: "回答本文",
+    }, env);
+
+    expect(result.code).toBe(0);
+    expect(forwarded.filter((entry) => entry.hook_event_name === "Stop")).toHaveLength(2);
+    expect(forwarded.at(-1)?.stop_hook_active).toBe(true);
+    expect(forwarded.at(-1)?.last_assistant_message)
+      .toBe(`${judgmentLine}\n${brainbaseLine}\n回答本文`);
+    const output = JSON.parse(result.stdout);
+    const marker = output.systemMessage.split("\n")
+      .find((line: string) => line.startsWith(verifiedAnswerPrefix));
+    expect(marker).toBeTruthy();
+    expect(JSON.parse(marker.slice(verifiedAnswerPrefix.length)).answer)
+      .toBe(`${judgmentLine}\n${brainbaseLine}\n回答本文`);
+  });
+
   it("story-meeting-minutes-brainbase-judgment:ac:3 fails closed when the Brainbase Hook endpoint is unavailable", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
     cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
