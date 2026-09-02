@@ -1,0 +1,348 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "mana-reply-judgment-hook-503",
+  "generated_by": {
+    "caller": "unknown",
+    "stage": "implementation"
+  },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenant_id",
+      "resolved_from": [
+        "validated runtime placement"
+      ],
+      "resolution_point": "Slack ingress before reply generation",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "reply Claude command",
+        "Judgment hook settings file"
+      ],
+      "verified_surfaces": [
+        "reply Claude command",
+        "Judgment hook settings file"
+      ]
+    },
+    "resources": [
+      {
+        "name": "reply Judgment settings",
+        "sharing": "shared",
+        "tenant_key": "tenant_id",
+        "trust_zone": "tenant runtime container",
+        "residue_policy": "settings contain no tenant data or secret",
+        "data_owner": "mana-runtime",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "credentials remain injected per validated placement"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenant_id",
+      "scope": "validated runtime placement only",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "mana-runtime"
+      ],
+      "residency": "no tenant data is stored in the shared settings file",
+      "migration": "all enabled reply placements consume the same image contract",
+      "rollback": "restore the previous image while retaining episode failure evidence"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_shared",
+      "managed_dedicated"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "no_data",
+      "cross_tenant_candidate"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "validated runtime placement",
+        "Slack workspace"
+      ],
+      "boundary_edges": [
+        "validated placement to tenant runtime container",
+        "tenant runtime container to Slack thread"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected",
+      "evidence": {
+        "propagation_surfaces": [
+          "reply Claude command",
+          "Judgment hook settings file"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "no_data",
+          "cross_tenant_candidate"
+        ],
+        "scanner_results": {
+          "tenant_boundary": "inconclusive",
+          "tenant_key_propagation": "inconclusive",
+          "cross_tenant_authorization": "inconclusive",
+          "state_partitioning": "inconclusive",
+          "sandbox_isolation": "inconclusive",
+          "connection_routing": "inconclusive",
+          "secret_scope": "inconclusive",
+          "canonical_data_owner": "inconclusive",
+          "deployment_topology": "inconclusive",
+          "cross_tenant_negative_evidence": "inconclusive"
+        },
+        "graph": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "shared"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated"
+          ],
+          "tenant_entities": [
+            {
+              "tenant_scope": "validated runtime placement",
+              "tenant_key_source": "TENANT_ID",
+              "trust_zone": "tenant runtime container",
+              "data_owner": "mana-runtime"
+            }
+          ],
+          "boundary_edges": [
+            {
+              "tenant_scope": "validated placement to Slack thread",
+              "tenant_key_source": "TENANT_ID and placement",
+              "sharing_mode": "shared",
+              "credential_scope": "validated runtime placement only",
+              "connection_mode": "Slack API",
+              "deployment_mode": "managed_shared"
+            }
+          ]
+        },
+        "spec": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "shared"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated"
+          ]
+        },
+        "implementation": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "shared"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated"
+          ]
+        }
+      }
+    }
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "通常replyがJudgment Hook eventを要求するときはUserPromptSubmit、Brainbase MCP PostToolUse、Stopを持つreply専用settingsを使う",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "データフロー"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/claude-runtime-config.ts"
+          },
+          {
+            "file": "packages/cloud-runtime/src/reply-pipeline.ts",
+            "anchor": "generateClaudeReply"
+          },
+          {
+            "file": "packages/cloud-runtime/container/reply-claude-settings.json"
+          },
+          {
+            "file": "packages/cloud-runtime/src/autonomy-agent.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
+            "case": "mana-reply-judgment-hook-503:ac:1 ac:2 uses reply-specific Judgment Hook settings"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
+            "must_cover": "uses reply-specific Judgment Hook settings"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-09-01T13:45:00.000Z",
+      "last_revised_at": "2026-09-01T14:03:15.966Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "meeting-minutesは議事録専用settingsを使い続け、reply専用settingsへ混線しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "既存経路との互換性"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/claude-runtime-config.ts"
+          },
+          {
+            "file": "packages/cloud-runtime/container/meeting-minutes-claude-settings.json"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
+            "case": "mana-reply-judgment-hook-503:ac:3 keeps meeting-minutes settings isolated"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
+            "must_cover": "keeps meeting-minutes settings isolated"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-09-01T13:45:00.000Z",
+      "last_revised_at": "2026-09-01T14:03:15.966Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "container imageはreply専用settingsを読み取り専用で同梱する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "配備と検証"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/Dockerfile"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/deployment-config.test.ts",
+            "case": "mana-reply-judgment-hook-503:ac:4 packages reply Judgment settings"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/deployment-config.test.ts",
+            "must_cover": "packages reply Judgment settings"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-09-01T13:45:00.000Z",
+      "last_revised_at": "2026-09-01T14:03:15.966Z"
+    },
+    {
+      "id": "S-001",
+      "type": "scenario",
+      "statement": "本番配備後のfresh Slack mentionで同一threadの回答、UserPromptSubmitとStopを含む完了lifecycle、episode receipt、response_tsを同一eventへ結合してreadbackする。配備前または取得不能時はnot_collectedと記録する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
+            "section": "配備と検証"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/reply-pipeline.ts",
+            "anchor": "processReplyEvent"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "story-slack-mention-brainbase-judgment:ac:7 stores a redacted durable episode receipt through Slack completion"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "stores a redacted durable episode receipt through Slack completion"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-09-01T13:55:00.000Z",
+      "last_revised_at": "2026-09-01T14:03:15.966Z"
+    }
+  ],
+  "generated_at": "2026-09-01T13:42:23.198Z",
+  "previous_spec_id": "2026-09-01T13:42:23.198Z"
+}

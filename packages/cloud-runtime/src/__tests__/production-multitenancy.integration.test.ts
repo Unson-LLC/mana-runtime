@@ -235,7 +235,7 @@ describe("production multitenancy integration", () => {
             resolve_verification_key: async () => publicKey,
             now: NOW,
             retention_until: RETENTION_UNTIL,
-            event: { text: "私のタスクを完了にして" },
+            event: { text: "私のタスクを完了にして", optionalThreadContext: undefined },
             text: "完了しました",
             post,
           }),

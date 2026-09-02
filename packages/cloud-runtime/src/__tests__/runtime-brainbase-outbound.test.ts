@@ -24,7 +24,7 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
       expect(headers.get("authorization")).toBe("Bearer runtime-brainbase-token");
       expect(headers.get("x-mana-tenant-boundary-handle")).toBeNull();
       expect(headers.get("cookie")).toBeNull();
-      expect(headers.get("x-brainbase-project-code")).toBe("mana-runtime");
+      expect(headers.get("x-brainbase-project-code")).toBe("mana");
       return Response.json({ jsonrpc: "2.0", result: {} });
     }) as unknown as typeof fetch;
 
@@ -42,6 +42,7 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
         TENANT_RUNTIME_STATE: {} as TenantBoundaryContextNamespace,
         BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp",
         BRAINBASE_MCP_TOKEN: "runtime-brainbase-token",
+        BRAINBASE_JUDGMENT_PROJECT_CODE: "mana",
       },
       providerFetch,
     );

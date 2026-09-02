@@ -10,6 +10,9 @@ const turnDir = process.env.BRAINBASE_JUDGMENT_TURN_DIR || "/tmp/mana-judgment-t
 const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_JUDGMENT_REQUEST_CHARS = 4_000;
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const JUDGMENT_AUDIT_PREFIXES = ["🧠 判断参照:", "⚠️ 判断参照:"];
+const BRAINBASE_AUDIT_PREFIXES = ["📚 Brainbase", "⚠️ Brainbase"];
+const AUDIT_PREFIXES = [...JUDGMENT_AUDIT_PREFIXES, ...BRAINBASE_AUDIT_PREFIXES, "🔁 ", "🛠️ "];
 
 // Meeting-minutes generation is a non-interactive, schema-constrained batch
 // operation. Its audit boundary is the Worker-issued context receipt, so an
@@ -30,7 +33,47 @@ async function readStdin() {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function validatedOutput(envelope, payload) {
+function auditLinesFromText(value) {
+  if (typeof value !== "string") return [];
+  return value.split(/\r?\n/).filter((line) =>
+    AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+}
+
+function repairedStopAnswer(answer, auditLines) {
+  const bodyLines = typeof answer === "string" ? answer.split(/\r?\n/) : [];
+  const bodyWithoutAudit = bodyLines.filter((line) =>
+    !AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+  while (bodyWithoutAudit[0] === "") bodyWithoutAudit.shift();
+  return [...auditLines, ...bodyWithoutAudit].join("\n");
+}
+
+async function fetchHookEnvelope(payload) {
+  const response = await fetch(hookUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
+        "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
+      } : {}),
+    },
+    body: JSON.stringify(payload),
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    let upstreamCode = "";
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === "object" && typeof parsed.error === "string"
+          && /^[a-z0-9_]{1,80}$/.test(parsed.error)) upstreamCode = `_${parsed.error}`;
+    } catch { /* Preserve the status-only fail-closed reason for non-JSON responses. */ }
+    throw new Error(`judgment_hook_http_${response.status}${upstreamCode}`);
+  }
+  return JSON.parse(body);
+}
+
+async function validatedOutput(envelope, payload, { allowStopRepair = true } = {}) {
   if (!envelope || typeof envelope !== "object" || envelope.schema_version !== "1"
       || envelope.accepted !== true || envelope.hook_event_name !== payload.hook_event_name
       || envelope.session_id !== payload.session_id || envelope.turn_id !== payload.turn_id
@@ -71,24 +114,95 @@ function validatedOutput(envelope, payload) {
   // replace structured_output with audit prose. PostToolUse is the one lifecycle
   // event whose non-empty audit message is part of the validated contract.
   const receiptMarker = `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
-  const existingSystemMessage = payload.hook_event_name === "PostToolUse"
-    && typeof documentedOutput.systemMessage === "string"
+  const existingSystemMessage = typeof documentedOutput.systemMessage === "string"
     ? documentedOutput.systemMessage.trim()
     : "";
   if (payload.hook_event_name === "UserPromptSubmit") {
+    const canonicalContext = documentedOutput.hookSpecificOutput.additionalContext.trim();
     return {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        // The upstream context is written for an interactive assistant turn and
-        // can replace the schema-constrained meeting-minutes response. The
-        // signed route receipt is the only context the runtime needs here.
-        additionalContext: receiptMarker,
+        // This Hook is used only by interactive reply turns. Preserve the Host's
+        // canonical routing context and append the machine receipt used by the
+        // runtime validator; replacing the context makes the final audit block
+        // impossible to produce.
+        additionalContext: [canonicalContext, receiptMarker].join("\n"),
       },
       systemMessage: receiptMarker,
     };
   }
   if (payload.hook_event_name === "Stop") {
-    return { systemMessage: receiptMarker };
+    if (documentedOutput.decision === "block"
+        && typeof documentedOutput.reason === "string"
+        && documentedOutput.reason.trim()) {
+      const requiredAuditLines = auditLinesFromText(documentedOutput.reason);
+      const hasJudgmentAudit = requiredAuditLines.some((line) =>
+        JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      const hasBrainbaseAudit = requiredAuditLines.some((line) =>
+        BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      if (allowStopRepair && hasJudgmentAudit && hasBrainbaseAudit) {
+        // Claude Code's non-interactive --print mode can return immediately after
+        // a blocking Stop hook instead of sampling a second assistant message.
+        // The authenticated Host reason contains the exact bounded audit repair.
+        // Apply it once, then submit the repaired answer to the same Host turn;
+        // only the second Host acceptance is exposed to the stream validator.
+        const repairedPayload = {
+          ...payload,
+          last_assistant_message: repairedStopAnswer(
+            payload.last_assistant_message,
+            requiredAuditLines,
+          ),
+        };
+        const repairedEnvelope = await fetchHookEnvelope(repairedPayload);
+        const repairedOutput = await validatedOutput(
+          repairedEnvelope,
+          repairedPayload,
+          { allowStopRepair: false },
+        );
+        if (repairedOutput.decision === "block") {
+          throw new Error("judgment_hook_stop_repair_incomplete");
+        }
+        return repairedOutput;
+      }
+      return {
+        decision: "block",
+        reason: documentedOutput.reason.trim(),
+        systemMessage: receiptMarker,
+      };
+    }
+    let stopSystemMessage = existingSystemMessage;
+    if (documentedOutput.schema_version === "brainbase-judgment-final-v1"
+        && documentedOutput.completion_status === "complete") {
+      // A completed Host receipt binds answer_digest to last_assistant_message
+      // and proves the exact audit prefix. Recover those already-verified lines
+      // for the runtime stream instead of replacing them with an incomplete
+      // fallback that would make every successful repair fail closed.
+      const verifiedAnswer = typeof payload.last_assistant_message === "string"
+        ? payload.last_assistant_message : "";
+      if (typeof documentedOutput.answer_digest !== "string"
+          || documentedOutput.answer_digest !== createHash("sha256").update(verifiedAnswer).digest("hex")) {
+        throw new Error("judgment_hook_final_answer_digest_mismatch");
+      }
+      const verifiedAuditLines = verifiedAnswer.split(/\r?\n/).filter((line) =>
+        JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
+        || BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      const hasJudgmentAudit = verifiedAuditLines.some((line) =>
+        JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      const hasBrainbaseAudit = verifiedAuditLines.some((line) =>
+        BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      if (!hasJudgmentAudit || !hasBrainbaseAudit) {
+        throw new Error("judgment_hook_final_audit_missing");
+      }
+      stopSystemMessage = verifiedAuditLines.join("\n");
+    }
+    if (!stopSystemMessage) throw new Error("judgment_hook_stop_output_invalid");
+    return {
+      // Stop carries the canonical final audit block. Keep it so Claude can
+      // place the audit lines at the beginning of the final response, while the
+      // receipt remains available to the stream validator.
+      systemMessage: [stopSystemMessage, receiptMarker]
+        .filter(Boolean).join("\n"),
+    };
   }
   return {
     ...documentedOutput,
@@ -135,29 +249,7 @@ try {
     payload.prompt = trustedRequest;
   }
   payload.turn_id = await resolveTurnId(payload);
-  const response = await fetch(hookUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
-        "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
-      } : {}),
-    },
-    body: JSON.stringify(payload),
-    redirect: "error",
-    signal: AbortSignal.timeout(30_000),
-  });
-  const body = await response.text();
-  if (!response.ok) {
-    let upstreamCode = "";
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed && typeof parsed === "object" && typeof parsed.error === "string"
-          && /^[a-z0-9_]{1,80}$/.test(parsed.error)) upstreamCode = `_${parsed.error}`;
-    } catch { /* Preserve the status-only fail-closed reason for non-JSON responses. */ }
-    throw new Error(`judgment_hook_http_${response.status}${upstreamCode}`);
-  }
-  const output = validatedOutput(JSON.parse(body), payload);
+  const output = await validatedOutput(await fetchHookEnvelope(payload), payload);
   process.stdout.write(JSON.stringify(output));
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

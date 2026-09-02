@@ -7,6 +7,8 @@ import {
 import {
   buildRuntimeClaudeCommand,
   runtimeClaudePromptPath,
+  runtimeReplySettingsContent,
+  runtimeReplySettingsPath,
   runtimeTaskSearchMcpConfigPath,
   type ClaudeRuntimeConfig,
 } from "./claude-runtime-config.js";
@@ -37,6 +39,7 @@ import {
   freshTenantContainerId,
 } from "./multitenancy/container-lifecycle.js";
 import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
+import { TenantBoundaryError } from "./multitenancy/errors.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
@@ -77,6 +80,7 @@ export interface ReplyPipelineOptions {
   requesterIdentity?: RequesterIdentity;
   requesterProfile?: SlackUserProfile;
   graphContext?: string;
+  brainbaseProjectCode?: string;
   capabilities?: { mcp: readonly string[]; gatewayTools: readonly string[] };
   trace?: TurnRuntimeTrace;
   respondPolicy?: RuntimeRespondPolicy;
@@ -102,6 +106,23 @@ export class ReplyPipelineError extends Error {
     super(code);
     this.name = "ReplyPipelineError";
   }
+}
+
+function safeFailureCode(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.length > 0
+    ? value.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 80)
+    : fallback;
+}
+
+function logSlackPostFailure(code: string, details: { status?: number; slackError?: unknown } = {}): void {
+  console.error(JSON.stringify({
+    event: "mana_slack_reply_failed",
+    code: safeFailureCode(code, "unknown"),
+    ...(details.status === undefined ? {} : { status: details.status }),
+    ...(details.slackError === undefined ? {} : {
+      slack_error: safeFailureCode(details.slackError, "unknown"),
+    }),
+  }));
 }
 
 export function isReplyEligible(
@@ -141,6 +162,10 @@ function isReplyBoundaryEligible(
 
 function normalizePromptText(text: string): string {
   return text
+    // Messages sent through the Slack MCP connector include this attribution
+    // in the event body. It describes the transport, not the user's requested
+    // effect, so it must not make a read-only request look like an external send.
+    .replace(/\s*\*使用して送信されました\*\s*(?:<@[^>]{1,128}>)?\s*$/u, " ")
     .replace(/<@[^>]{1,128}>/g, " ")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
     .replace(/\s+/g, " ")
@@ -155,6 +180,7 @@ function buildPrompt(
   requesterIdentity?: RequesterIdentity,
   requesterProfile?: SlackUserProfile,
   graphContext?: string,
+  brainbaseProjectCode?: string,
   runtimeContext?: ReplyPipelineOptions["runtimeContext"],
   taskChannelDiscoveryEnabled = false,
 ): string {
@@ -206,6 +232,10 @@ function buildPrompt(
       "上記はSlack APIで確認した発話者情報です。表示名だけで別人を推測しないでください。",
     ] : []),
     ...(graphContext ? ["", "Brainbase Graph正本文脈:", graphContext] : []),
+    ...(brainbaseProjectCode ? [
+      `Brainbaseの検索・参照を依頼された場合は、回答前にbrainbase_knowledge_resolveをproject_code=${brainbaseProjectCode}で呼び、返された参照先に従って必要なBrainbase検索toolを実行してください。`,
+      "Brainbaseの検索結果が空でも、不在とは断定せず、取得できた検索状態だけを回答してください。",
+    ] : []),
     ...(taskWriteEnabled ? [
       "タスクの作成・更新・状態変更を明示的に依頼された場合だけ、create_task、update_task、transition_taskを使ってください。",
       "更新・状態変更の前にはsearch_tasksで対象を特定し、返されたidとversionをexpected_versionに使ってください。対象が一意でない場合は実行せず質問してください。",
@@ -249,7 +279,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "brainbaseProjectCode" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
 ): Promise<ReplyJudgmentResult> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
@@ -280,6 +310,7 @@ export async function generateClaudeReply(
       requesterIdentity,
       options.requesterProfile,
       options.graphContext,
+      options.brainbaseProjectCode,
       options.runtimeContext,
       options.capabilities?.gatewayTools.includes("list_authorized_task_channels") === true,
     );
@@ -310,6 +341,7 @@ export async function generateClaudeReply(
     const prepareSandbox = async (target: typeof sandbox) => {
       await target.writeFile(promptPath, promptContent);
       await target.writeFile(runtimeTaskSearchMcpConfigPath(), mcpConfigContent);
+      await target.writeFile(runtimeReplySettingsPath(), runtimeReplySettingsContent());
     };
     await prepareSandbox(sandbox);
     const execOptions = {
@@ -358,6 +390,11 @@ export async function generateClaudeReply(
       const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
         ? error.message
         : "reply_judgment_stream_invalid";
+      emitTurnLog("error", "mana_claude_failed", event, trace, {
+        outcome: "error",
+        reasonCode: code,
+        durationMs: Date.now() - startedAt,
+      });
       throw new ReplyPipelineError(code);
     }
     const reply = normalizeReply(judgment.reply);
@@ -402,15 +439,22 @@ export async function postSlackReply(
       }),
       signal: AbortSignal.timeout(15_000),
     });
-  } catch {
+  } catch (error) {
+    logSlackPostFailure("slack_api_unavailable", {
+      slackError: error instanceof Error ? error.message : undefined,
+    });
     throw new ReplyPipelineError("slack_api_unavailable");
   }
-  if (!response.ok) throw new ReplyPipelineError("slack_api_unavailable");
+  if (!response.ok) {
+    logSlackPostFailure("slack_api_unavailable", { status: response.status });
+    throw new ReplyPipelineError("slack_api_unavailable");
+  }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
+    logSlackPostFailure("slack_api_invalid_response", { status: response.status });
     throw new ReplyPipelineError("slack_api_invalid_response");
   }
   if (
@@ -419,6 +463,12 @@ export async function postSlackReply(
     (payload as { ok?: unknown }).ok !== true ||
     typeof (payload as { ts?: unknown }).ts !== "string"
   ) {
+    logSlackPostFailure("slack_post_failed", {
+      status: response.status,
+      slackError: typeof (payload as { error?: unknown }).error === "string"
+        ? (payload as { error: string }).error
+        : undefined,
+    });
     throw new ReplyPipelineError("slack_post_failed");
   }
   return (payload as { ts: string }).ts;
@@ -651,8 +701,10 @@ export async function processReplyEvent(
       hydratedEvent,
       options.now?.() ?? new Date().toISOString(),
     );
+    let failureStage = "reply_generation";
     try {
       const judgment = await generateClaudeReply(hydratedEvent, { ...options, requesterIdentity });
+      failureStage = "judgment_persistence";
       await auditReplyJudgmentAttempt(
         fs,
         event.eventId,
@@ -660,19 +712,34 @@ export async function processReplyEvent(
         judgment,
         options.now?.() ?? new Date().toISOString(),
       );
+      failureStage = "slack_delivery";
       const responseTs = options.postReply
         ? await options.postReply(hydratedEvent, judgment.reply)
         : await postSlackReply(hydratedEvent, judgment.reply, options);
       emitTurnLog("log", "mana_slack_reply_posted", event, {
         ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
       }, { outcome: "success", responseTs });
+      failureStage = "completion_persistence";
       const completedAt = options.now?.() ?? new Date().toISOString();
       await completeReplyJudgmentAttempt(fs, event.eventId, attemptId, responseTs, completedAt);
       await persistReplyCompletion(fs, { eventId: event.eventId, responseTs, completedAt });
       await markWorkspaceEngaged(fs, completedAt);
       return { outcome: "replied", responseTs };
     } catch (error) {
-      const failureCode = error instanceof ReplyPipelineError ? error.code : "reply_judgment_attempt_failed";
+      const failureCode = error instanceof ReplyPipelineError || error instanceof TenantBoundaryError
+        ? error.code
+        : "reply_judgment_attempt_failed";
+      emitTurnLog("error", "mana_reply_failed", event, {
+        ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
+      }, {
+        outcome: "error",
+        reasonCode: failureCode,
+        failureStage,
+        ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+        ...(failureCode === "reply_judgment_attempt_failed" && error instanceof Error
+          ? { errorSummary: safeExecutionErrorSummary(error.message) }
+          : {}),
+      });
       await failReplyJudgmentAttempt(
         fs,
         event.eventId,

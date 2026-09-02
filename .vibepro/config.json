@@ -391,8 +391,20 @@
         "started_at": null,
         "due_at": null,
         "contract_type": null
+      },
+      {
+        "story_id": "mana-reply-judgment-hook-503",
+        "title": "Slack通常返信のJudgment Hook lifecycleを復旧する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "contract_type": null
       }
     ],
-    "current_story_id": "meeting-minutes-honest-selection-status"
+    "current_story_id": "mana-reply-judgment-hook-503"
   }
 }

@@ -5,6 +5,7 @@ export const BRAINBASE_JUDGMENT_HOOK_PROXY_PATH = "/host/judgment/hook";
 export interface BrainbaseMcpProxyEnv {
   BRAINBASE_MCP_BASE_URL?: string;
   BRAINBASE_MCP_TOKEN?: string;
+  BRAINBASE_JUDGMENT_PROJECT_CODE?: string;
 }
 
 export async function handleBrainbaseMcpProxyRequest(request: Request, env: BrainbaseMcpProxyEnv, fetchImpl?: typeof fetch): Promise<Response> {
@@ -23,7 +24,11 @@ export async function handleBrainbaseMcpProxyRequest(request: Request, env: Brai
   }
   if (env.BRAINBASE_MCP_TOKEN) headers.set("authorization", `Bearer ${env.BRAINBASE_MCP_TOKEN}`);
   if (url.pathname === BRAINBASE_JUDGMENT_HOOK_PROXY_PATH) {
-    headers.set("x-brainbase-project-code", "mana-runtime");
+    const projectCode = env.BRAINBASE_JUDGMENT_PROJECT_CODE?.trim();
+    if (!projectCode) {
+      return Response.json({ error: { code: "BRAINBASE_PROXY_NOT_CONFIGURED", retryable: true } }, { status: 503 });
+    }
+    headers.set("x-brainbase-project-code", projectCode);
   }
   try {
     const response = await (fetchImpl ?? fetch)(`${env.BRAINBASE_MCP_BASE_URL.replace(/\/$/, "")}${url.pathname}`, {

@@ -7,6 +7,7 @@ import {
   withSlackThreadStatus,
   type ReplyPipelineOptions,
 } from "../reply-pipeline.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 import type { SlackQueueEvent } from "../types.js";
 import { resolveClaudeRuntimeConfig } from "../claude-runtime-config.js";
 
@@ -365,7 +366,7 @@ describe("TechKnight Slack reply pipeline", () => {
       responseTs: "1786455000.000001",
     });
 
-    expect(sandbox.writeFile).toHaveBeenCalledTimes(2);
+    expect(sandbox.writeFile).toHaveBeenCalledTimes(3);
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("メンションしてみる");
     expect(prompt).toContain("契約更新について");
@@ -377,7 +378,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
       "node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions" +
-        " --settings /opt/mana/meeting-minutes-claude-settings.json" +
+        " --settings /tmp/mana-reply-claude-settings.json" +
         " --output-format stream-json --verbose --include-hook-events" +
         ' "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
       {
@@ -437,6 +438,36 @@ describe("TechKnight Slack reply pipeline", () => {
     });
     expect(body.client_msg_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("does not classify Slack MCP transport attribution as a requested external send", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness();
+
+    await processReplyEvent(fs, event({
+      text: "<@U_BOT> Brainbaseで検索してください *使用して送信されました* <@U_CHATGPT>",
+    }), options);
+
+    expect(sandbox.exec).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        env: expect.objectContaining({ MANA_JUDGMENT_REQUEST: "Brainbaseで検索してください" }),
+      }),
+    );
+  });
+
+  it("resolves the canonical Brainbase source before a requested search", async () => {
+    const { options, sandbox } = harness({ brainbaseProjectCode: "mana" });
+
+    await generateClaudeReply(
+      event({ text: "<@U_BOT> Brainbaseでmana-runtimeを検索して" }),
+      options,
+    );
+
+    const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
+      String(path).endsWith("mana-slack-prompt.txt"))?.[1] ?? "");
+    expect(prompt).toContain("brainbase_knowledge_resolveをproject_code=manaで呼び");
+    expect(prompt).toContain("検索結果が空でも、不在とは断定せず");
   });
 
   it("fails closed when reply normalization truncates a required audit line", async () => {
@@ -558,13 +589,15 @@ describe("TechKnight Slack reply pipeline", () => {
     const { options, sandbox } = harness({ taskSearchEnabled: true });
     await processReplyEvent(fs, event({ text: "<@U_BOT> 契約更新タスクの状態と担当者は？" }), options);
 
-    expect(sandbox.writeFile).toHaveBeenCalledTimes(2);
+    expect(sandbox.writeFile).toHaveBeenCalledTimes(3);
     const writes = Object.fromEntries(sandbox.writeFile.mock.calls.map(([path, content]) => [path, content]));
     const prompt = String(writes["/tmp/mana-slack-prompt.txt"]);
     const mcpConfig = String(writes["/tmp/mana-task-search-mcp.json"]);
+    const replySettings = JSON.parse(String(writes["/tmp/mana-reply-claude-settings.json"]));
     expect(prompt).toContain("search_tasks");
     expect(prompt).toContain("has_more");
     expect(prompt).toContain("API障害");
+    expect(replySettings.hooks.PostToolUse[0].matcher).toBe("^mcp__brainbase__.*$");
     expect(mcpConfig).toBe(JSON.stringify({
       mcpServers: {
         brainbase: {
@@ -931,6 +964,7 @@ describe("TechKnight Slack reply pipeline", () => {
 
   it("leaves the event retryable when Slack rejects the post", async () => {
     const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { options } = harness({
       fetch: vi.fn().mockImplementation(() => Promise.resolve(new Response(
         JSON.stringify({ ok: false, error: "missing_scope" }),
@@ -942,6 +976,56 @@ describe("TechKnight Slack reply pipeline", () => {
       expect.objectContaining<Partial<ReplyPipelineError>>({ code: "slack_post_failed" }),
     );
     expect([...fs.files.keys()].some((path) => path.startsWith("/replies/"))).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(JSON.stringify({
+      event: "mana_slack_reply_failed",
+      code: "slack_post_failed",
+      status: 200,
+      slack_error: "missing_scope",
+    }));
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failed",
+      outcome: "error",
+      reasonCode: "slack_post_failed",
+    }));
+    errorSpy.mockRestore();
+  });
+
+  it("preserves tenant-boundary delivery failures in the turn diagnostic", async () => {
+    const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { options } = harness({
+      postReply: vi.fn().mockRejectedValue(
+        new TenantBoundaryError("slack_delivery", "REPLY_OWNERSHIP_CONFLICT"),
+      ),
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toEqual(
+      expect.objectContaining({ code: "REPLY_OWNERSHIP_CONFLICT" }),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failed",
+      outcome: "error",
+      reasonCode: "REPLY_OWNERSHIP_CONFLICT",
+      boundary: "slack_delivery",
+    }));
+    errorSpy.mockRestore();
+  });
+
+  it("records the safe stage and summary for an unexpected delivery failure", async () => {
+    const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { options } = harness({
+      postReply: vi.fn().mockRejectedValue(new Error("delivery adapter unavailable")),
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toThrow("delivery adapter unavailable");
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failed",
+      reasonCode: "reply_judgment_attempt_failed",
+      failureStage: "slack_delivery",
+      errorSummary: "delivery adapter unavailable",
+    }));
+    errorSpy.mockRestore();
   });
 
   it("keeps replying when Slack rejects the processing status", async () => {

@@ -2,7 +2,11 @@ import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
 const JUDGMENT_AUDIT_PREFIX = "🧠 判断参照:";
+const JUDGMENT_WARNING_PREFIX = "⚠️ 判断参照:";
 const BRAINBASE_AUDIT_PREFIX = "📚 Brainbase";
+const BRAINBASE_WARNING_PREFIX = "⚠️ Brainbase";
+const CONTINUATION_AUDIT_PREFIX = "🔁 ";
+const STOP_REPAIR_AUDIT_PREFIX = "🛠️ ";
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
 interface StreamEvent extends Record<string, unknown> {
@@ -78,7 +82,10 @@ async function readText(fs: WorkspaceFs, path: string): Promise<string> {
   return typeof value === "string" ? value : new Response(value).text();
 }
 
-async function readEpisode(fs: WorkspaceFs, eventId: string): Promise<ReplyJudgmentEpisode | undefined> {
+export async function readReplyJudgmentEpisode(
+  fs: WorkspaceFs,
+  eventId: string,
+): Promise<ReplyJudgmentEpisode | undefined> {
   const path = episodePath(eventId);
   await fs.mkdir("/judgment-episodes", { recursive: true });
   if (!(await fs.ls("/judgment-episodes")).includes(path)) return undefined;
@@ -97,7 +104,7 @@ export async function isReplyJudgmentCompleted(
   fs: WorkspaceFs,
   eventId: string,
 ): Promise<boolean> {
-  const episode = await readEpisode(fs, eventId);
+  const episode = await readReplyJudgmentEpisode(fs, eventId);
   return episode?.attempts.some((attempt) => attempt.status === "completed") ?? false;
 }
 
@@ -106,7 +113,7 @@ export async function startReplyJudgmentAttempt(
   event: SlackQueueEvent,
   startedAt: string,
 ): Promise<string> {
-  const current = await readEpisode(fs, event.eventId);
+  const current = await readReplyJudgmentEpisode(fs, event.eventId);
   const episode: ReplyJudgmentEpisode = current ?? {
     schemaVersion: "reply_judgment_episode.v1",
     eventId: event.eventId,
@@ -116,7 +123,8 @@ export async function startReplyJudgmentAttempt(
     threadTs: event.threadTs,
     attempts: [],
   };
-  if (episode.workspaceId !== event.workspaceId || episode.channelId !== event.channelId
+  if (episode.tenantId !== event.tenantId || episode.workspaceId !== event.workspaceId
+      || episode.channelId !== event.channelId
       || episode.threadTs !== event.threadTs) throw new Error("reply_judgment_episode_identity_mismatch");
   const attemptId = crypto.randomUUID();
   episode.attempts.push({ attemptId, status: "started", startedAt });
@@ -130,7 +138,7 @@ async function updateAttempt(
   attemptId: string,
   update: (attempt: ReplyJudgmentAttempt) => void,
 ): Promise<void> {
-  const episode = await readEpisode(fs, eventId);
+  const episode = await readReplyJudgmentEpisode(fs, eventId);
   const attempt = episode?.attempts.find((candidate) => candidate.attemptId === attemptId);
   if (!episode || !attempt) throw new Error("reply_judgment_attempt_missing");
   update(attempt);
@@ -263,12 +271,27 @@ function hookReceipt(event: StreamEvent): { output: Record<string, unknown>; rec
 function auditLines(output: Record<string, unknown>): string[] {
   if (typeof output.systemMessage !== "string") return [];
   return output.systemMessage.split(/\r?\n/)
-    .filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(BRAINBASE_AUDIT_PREFIX));
+    .filter(isAuditLine);
 }
 
 function auditLinesInReply(reply: string): string[] {
   return reply.split(/\r?\n/)
-    .filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(BRAINBASE_AUDIT_PREFIX));
+    .filter(isAuditLine);
+}
+
+function isAuditLine(line: string): boolean {
+  return line.startsWith(JUDGMENT_AUDIT_PREFIX)
+    || line.startsWith(JUDGMENT_WARNING_PREFIX)
+    || line.startsWith(BRAINBASE_AUDIT_PREFIX)
+    || line.startsWith(BRAINBASE_WARNING_PREFIX)
+    || line.startsWith(CONTINUATION_AUDIT_PREFIX)
+    || line.startsWith(STOP_REPAIR_AUDIT_PREFIX);
+}
+
+function completedBrainbaseAuditLines(lines: string[]): string[] {
+  return lines.filter((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX)
+    && !line.startsWith("📚 Brainbase未参照:")
+    && !line.startsWith("📚 Brainbase監査未完了:"));
 }
 
 export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
@@ -335,18 +358,44 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // A successful Stop is the Host's completed-episode receipt. UserPromptSubmit
   // only carries model context, while PostToolUse emits incremental journal
   // lines; neither is the canonical final audit block in the real CLI stream.
-  const expectedAuditLines = auditLines(successfulStop.output);
-  if (!expectedAuditLines.some((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX))
+  let expectedAuditLines = auditLines(successfulStop.output);
+  const judgmentAuditLines = expectedAuditLines.filter((line) =>
+    line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(JUDGMENT_WARNING_PREFIX));
+  if (judgmentAuditLines.length !== 1
       || !expectedAuditLines.some((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX))) {
     throw new Error("reply_judgment_audit_lines_missing");
   }
-  const postToolAuditLines = postToolHooks.flatMap((hook) => auditLines(hook.output));
-  const completedToolAuditLines = expectedAuditLines.filter((line) =>
-    line.startsWith(BRAINBASE_AUDIT_PREFIX) && !line.startsWith("📚 Brainbase未参照:"));
-  if (JSON.stringify(postToolAuditLines) !== JSON.stringify(completedToolAuditLines)) {
+  if (expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
+    // Stop is the canonical completed-episode receipt. Incremental PostToolUse
+    // receipts prove individual calls, but cannot upgrade an explicitly
+    // incomplete final audit into a completed Judgment episode.
+    throw new Error("reply_judgment_audit_lines_missing");
+  }
+  if (calls.length > 0) {
+    // PostToolUse can carry either the latest audit line or a cumulative Host
+    // journal. The last completed Brainbase line is the receipt for that call.
+    // Bind one such receipt to every observed tool call; do not compare prose
+    // byte-for-byte with Stop because the Host may summarize it at completion.
+    const incrementalToolAuditLines = postToolHooks.map((hook) =>
+      completedBrainbaseAuditLines(auditLines(hook.output)).at(-1));
+    if (incrementalToolAuditLines.some((line) => !line)) {
+      throw new Error("reply_judgment_tool_audit_mismatch");
+    }
+    const completedStopAuditLines = completedBrainbaseAuditLines(expectedAuditLines);
+    if (completedStopAuditLines.length !== calls.length) {
+      throw new Error("reply_judgment_tool_audit_mismatch");
+    }
+  } else if (completedBrainbaseAuditLines(expectedAuditLines).length > 0) {
     throw new Error("reply_judgment_tool_audit_mismatch");
   }
-  const actualAuditLines = auditLinesInReply(final.reply);
+  let actualAuditLines = auditLinesInReply(final.reply);
+  if (actualAuditLines.length === 0) {
+    // Stop output is trusted Host data. Prepend it deterministically when the
+    // model follows a user's "reply only with ..." instruction and omits the
+    // audit block; model compliance must not turn a valid reply into silence.
+    final.reply = [...expectedAuditLines, final.reply].join("\n");
+    actualAuditLines = expectedAuditLines;
+  }
   if (JSON.stringify(actualAuditLines) !== JSON.stringify(expectedAuditLines)) {
     throw new Error("reply_judgment_audit_lines_mismatch");
   }

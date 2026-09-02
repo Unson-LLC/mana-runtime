@@ -4,6 +4,7 @@ import {
   failReplyJudgmentAttempt,
   isReplyJudgmentCompleted,
   parseReplyJudgmentStream,
+  readReplyJudgmentEpisode,
   startReplyJudgmentAttempt,
 } from "../reply-judgment.js";
 import type { SlackQueueEvent } from "../types.js";
@@ -192,6 +193,73 @@ describe("Slack reply Judgment lifecycle", () => {
       .toThrow("reply_judgment_event_order_invalid");
   });
 
+  it("prepends trusted Stop audit lines when the model returns body only", () => {
+    const result = parseReplyJudgmentStream(stream({ replyLines: ["受信しました"] }));
+    expect(result.reply).toBe(`${judgmentLine}\n${zeroCallLine}\n受信しました`);
+    expect(result.auditLines).toEqual([judgmentLine, zeroCallLine]);
+  });
+
+  it("binds cumulative PostToolUse receipts without requiring Stop prose identity", () => {
+    const lines = stream({ toolCount: 2, replyLines: ["回答本文"] }).split("\n");
+    const firstPostToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
+    const secondPostToolIndex = lines.findIndex((line, index) =>
+      index > firstPostToolIndex && line.includes('"hook_event":"PostToolUse"'));
+    const secondHook = JSON.parse(lines[secondPostToolIndex]!);
+    const secondOutput = JSON.parse(secondHook.stdout);
+    secondOutput.systemMessage = secondOutput.systemMessage.replace(
+      secondBrainbaseLine,
+      `${brainbaseLine}\n${secondBrainbaseLine}`,
+    );
+    secondHook.stdout = JSON.stringify(secondOutput);
+    lines[secondPostToolIndex] = JSON.stringify(secondHook);
+
+    const result = parseReplyJudgmentStream(lines.join("\n"));
+    expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
+  });
+
+  it("fails closed when Stop reports an incomplete audit despite a bound PostToolUse receipt", () => {
+    const lines = stream({ withTool: true, replyLines: ["回答本文"] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage = stopOutput.systemMessage
+      .replace(brainbaseLine, "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）");
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_audit_lines_missing");
+  });
+
+  it("fails closed when an empty Stop response has no bound PostToolUse receipt", () => {
+    const lines = stream({ replyLines: ["回答本文"] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage = stopOutput.systemMessage
+      .replace(zeroCallLine, "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）");
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_audit_lines_missing");
+  });
+
+  it("rejects a PostToolUse event without a completed Brainbase receipt", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const postToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
+    const postToolHook = JSON.parse(lines[postToolIndex]!);
+    const postToolOutput = JSON.parse(postToolHook.stdout);
+    postToolOutput.systemMessage = postToolOutput.systemMessage.replace(
+      brainbaseLine,
+      "📚 Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）",
+    );
+    postToolHook.stdout = JSON.stringify(postToolOutput);
+    lines[postToolIndex] = JSON.stringify(postToolHook);
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch");
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:7 stores a redacted durable episode receipt through Slack completion", async () => {
     const fs = new MemoryFs();
     const event = {
@@ -211,6 +279,10 @@ describe("Slack reply Judgment lifecycle", () => {
     expect(await isReplyJudgmentCompleted(fs, event.eventId)).toBe(false);
     await completeReplyJudgmentAttempt(fs, event.eventId, attemptId, "1.3", "2026-08-17T00:00:03.000Z");
     expect(await isReplyJudgmentCompleted(fs, event.eventId)).toBe(true);
+    expect(await readReplyJudgmentEpisode(fs, event.eventId)).toMatchObject({
+      eventId: "Ev1",
+      attempts: [{ status: "completed", responseTs: "1.3" }],
+    });
     const persisted = fs.files.get("/judgment-episodes/Ev1.json")!;
     expect(JSON.parse(persisted)).toMatchObject({
       eventId: "Ev1",
@@ -243,5 +315,27 @@ describe("Slack reply Judgment lifecycle", () => {
       { attemptId: first, status: "failed", failureCode: "reply_judgment_hook_failed" },
       { attemptId: second, status: "started" },
     ]);
+  });
+
+  it("rejects reuse of an event id across tenant boundaries", async () => {
+    const fs = new MemoryFs();
+    const event = {
+      tenantId: "tenant-a",
+      eventId: "EvTenantBoundary",
+      workspaceId: "T1",
+      channelId: "C1",
+      threadTs: "1.1",
+      messageTs: "1.2",
+      eventType: "app_mention",
+      text: "tenant boundary",
+      receivedAt: "2026-08-17T00:00:00.000Z",
+    } satisfies SlackQueueEvent;
+    await startReplyJudgmentAttempt(fs, event, "2026-08-17T00:00:01.000Z");
+
+    await expect(startReplyJudgmentAttempt(
+      fs,
+      { ...event, tenantId: "tenant-b" },
+      "2026-08-17T00:00:02.000Z",
+    )).rejects.toThrow("reply_judgment_episode_identity_mismatch");
   });
 });

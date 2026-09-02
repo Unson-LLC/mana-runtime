@@ -315,6 +315,13 @@ describe("会社別Cloudflare deployment", () => {
     );
   });
 
+  it("mana-reply-judgment-hook-503:ac:4 packages reply Judgment settings", () => {
+    const dockerfile = readFileSync(fileURLToPath(new URL("../../Dockerfile", import.meta.url)), "utf8");
+    expect(dockerfile).toContain(
+      "COPY --chmod=0444 container/reply-claude-settings.json /opt/mana/reply-claude-settings.json",
+    );
+  });
+
   it("開発ランナーはコンテナ内で実在するNode実行ファイルを継承する", () => {
     const runnerPath = fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url));
     const runner = readFileSync(runnerPath, "utf8");
@@ -725,6 +732,15 @@ describe("会社別Cloudflare deployment", () => {
     expect(packageJson.scripts["deploy:unson-business"]).toContain("node scripts/deploy-unson-business.mjs");
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/deploy-gate"');
+    expect(worker).toContain("/admin\\/reply-judgment\\/episodes");
+    expect(worker).toContain("readReplyJudgmentEpisode(workspace.fs");
+    expect(worker).toContain('url.searchParams.get("tenant_id")');
+    expect(worker).toContain('env.TENANT_RUNTIME_STATE, request, ["brainbase_proxy"]');
+    expect(worker).toContain("tenantId !== tenantContext.tenant.tenant_id");
+    expect(worker).toContain("workspaceId !== tenantContext.workspace_connection.workspace_id");
+    expect(worker).toContain("channelId !== tenantContext.slack.channel_id");
+    expect(worker).toContain("threadTs !== tenantContext.slack.thread_ts");
+    expect(worker).toContain('error: "reply_judgment_scope_mismatch"');
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/intake"');
     expect(worker).toContain("/admin\\/meeting-minutes\\/runs");
     expect(worker).toContain("isIntakePaused()");
