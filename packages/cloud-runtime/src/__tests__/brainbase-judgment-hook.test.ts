@@ -268,8 +268,8 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(output.systemMessage).toContain(receiptPrefix);
     expect(forwarded.filter((entry) => entry.hook_event_name === "Stop")).toHaveLength(2);
     expect(forwarded.filter((entry) => entry.hook_event_name === "Stop")[0]?.stop_hook_active)
-      .toBe(true);
-    expect(forwarded.at(-1)?.stop_hook_active).toBe(false);
+      .toBe(false);
+    expect(forwarded.at(-1)?.stop_hook_active).toBe(true);
     expect(forwarded.at(-1)?.last_assistant_message)
       .toBe(`${judgmentLine}\n${brainbaseLine}\n${repairLine}\n本文`);
   });
