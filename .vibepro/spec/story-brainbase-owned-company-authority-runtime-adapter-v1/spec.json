@@ -122,7 +122,10 @@
       ]
     },
     "verification": {
-      "scanner_coverage": "graphify collected; all seven local propagation surfaces are behaviorally verified through an injected selected-operation route, Container durable registration and trusted boundary revalidation; credential-backed production provider coverage, actual MCP, Brainbase proxy and Slack service calls, and live evidence are not_collected",
+      "scanner_coverage": "verified",
+      "scanner_scope": "local_static_and_behavioral",
+      "production_evidence": "not_collected",
+      "coverage_note": "Graphify and the referenced local source, configuration, and behavior tests cover all ten scanner categories and seven propagation surfaces. Credential-backed production provider coverage, actual MCP, Brainbase proxy and Slack service calls, deployed topology, and live evidence remain not_collected.",
       "evidence_state": "local_runtime_boundaries_verified_production_not_collected",
       "evidence": {
         "propagation_surfaces": [
@@ -142,16 +145,101 @@
           "no_data"
         ],
         "scanner_results": {
-          "tenant_boundary": "inconclusive",
-          "tenant_key_propagation": "inconclusive",
-          "cross_tenant_authorization": "inconclusive",
-          "state_partitioning": "inconclusive",
-          "sandbox_isolation": "inconclusive",
-          "connection_routing": "inconclusive",
-          "secret_scope": "inconclusive",
-          "canonical_data_owner": "inconclusive",
-          "deployment_topology": "inconclusive",
-          "cross_tenant_negative_evidence": "inconclusive"
+          "tenant_boundary": "pass",
+          "tenant_key_propagation": "pass",
+          "cross_tenant_authorization": "pass",
+          "state_partitioning": "pass",
+          "sandbox_isolation": "pass",
+          "connection_routing": "pass",
+          "secret_scope": "pass",
+          "canonical_data_owner": "pass",
+          "deployment_topology": "pass",
+          "cross_tenant_negative_evidence": "pass"
+        },
+        "scanner_evidence": {
+          "tenant_boundary": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+              "packages/cloud-runtime/src/__tests__/durable-tenant-boundary.integration.test.ts"
+            ]
+          },
+          "tenant_key_propagation": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "packages/cloud-runtime/src/__tests__/company-authority-queue.integration.test.ts",
+              "packages/cloud-runtime/src/__tests__/company-authority-queue-runtime.test.ts"
+            ]
+          },
+          "cross_tenant_authorization": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+              "packages/cloud-runtime/src/__tests__/company-authority-queue-runtime.test.ts"
+            ]
+          },
+          "state_partitioning": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "packages/cloud-runtime/src/__tests__/company-authority-external-effect-outbox.test.ts",
+              "packages/cloud-runtime/src/__tests__/durable-tenant-boundary.integration.test.ts"
+            ]
+          },
+          "sandbox_isolation": {
+            "scope": "local_static_and_behavioral",
+            "claim": "fresh sandbox selection, terminal destruction, no reuse, secret-free receipts, and cross-tenant fail-closed behavior verified locally; real process or Container isolation remains not_collected",
+            "refs": [
+              "packages/cloud-runtime/src/multitenancy/isolation.ts",
+              "packages/cloud-runtime/src/__tests__/sandbox-provider-credential.integration.test.ts"
+            ]
+          },
+          "connection_routing": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "packages/cloud-runtime/src/multitenancy/company-authority-selected-container-operation.ts",
+              "packages/cloud-runtime/src/__tests__/company-authority-queue-runtime.test.ts"
+            ]
+          },
+          "secret_scope": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "packages/cloud-runtime/src/multitenancy/credentials.ts",
+              "packages/cloud-runtime/src/multitenancy/secret-guard.ts",
+              "packages/cloud-runtime/src/__tests__/tenant-credential-fetch.integration.test.ts",
+              "packages/cloud-runtime/src/__tests__/sandbox-provider-credential.integration.test.ts",
+              "packages/cloud-runtime/src/__tests__/deployment-profile-builds.test.ts"
+            ]
+          },
+          "canonical_data_owner": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "contracts/mana-brainbase-company-authority/v1/producer.contract.json",
+              "contracts/mana-brainbase-company-authority/v1/source-lock.json",
+              "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts"
+            ]
+          },
+          "deployment_topology": {
+            "scope": "local_static_and_behavioral",
+            "claim": "repository topology, configuration, alias mapping, and build contract verified; deployed topology and readback not_collected",
+            "refs": [
+              "packages/cloud-runtime/src/multitenancy/company-authority-runtime-config.ts",
+              "packages/cloud-runtime/src/__tests__/company-authority-runtime-config.test.ts",
+              "packages/cloud-runtime/src/__tests__/deployment-profile-builds.test.ts",
+              "packages/cloud-runtime/wrangler.jsonc",
+              "packages/cloud-runtime/wrangler.unson-business.jsonc",
+              "packages/cloud-runtime/wrangler.dedicated-cloud.jsonc",
+              "packages/cloud-runtime/wrangler.customer-managed-oss.jsonc",
+              "packages/cloud-runtime/deployments/customer-managed-oss/manifest.json"
+            ]
+          },
+          "cross_tenant_negative_evidence": {
+            "scope": "local_static_and_behavioral",
+            "refs": [
+              "packages/cloud-runtime/src/__tests__/slack.test.ts",
+              "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+              "packages/cloud-runtime/src/__tests__/company-authority-queue-runtime.test.ts"
+            ]
+          }
         },
         "evidence_refs": [
           ".vibepro/diagnostics/2026-09-01T171941Z/evidence.json",

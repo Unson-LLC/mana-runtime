@@ -97,6 +97,22 @@ test("T0 local implementation state does not promote production evidence", async
       runtimeArtifact.multi_tenancy.verification.evidence_state,
       "local_runtime_boundaries_verified_production_not_collected",
     );
+    assert.equal(runtimeArtifact.multi_tenancy.verification.scanner_coverage, "verified");
+    assert.equal(
+      runtimeArtifact.multi_tenancy.verification.scanner_scope,
+      "local_static_and_behavioral",
+    );
+    assert.equal(runtimeArtifact.multi_tenancy.verification.production_evidence, "not_collected");
+    const scannerResults = runtimeArtifact.multi_tenancy.verification.evidence.scanner_results;
+    const scannerEvidence = runtimeArtifact.multi_tenancy.verification.evidence.scanner_evidence;
+    assert.equal(Object.keys(scannerResults).length, 10);
+    assert.deepEqual(Object.keys(scannerEvidence).sort(), Object.keys(scannerResults).sort());
+    for (const [scanner, status] of Object.entries(scannerResults)) {
+      assert.equal(status, "pass", `${scanner} must preserve its local evidence-backed status`);
+      assert.equal(scannerEvidence[scanner].scope, "local_static_and_behavioral");
+      assert.ok(scannerEvidence[scanner].refs.length > 0, `${scanner} must cite local evidence`);
+    }
+    assert.match(scannerEvidence.sandbox_isolation.claim, /real process or Container isolation remains not_collected/);
     assert.ok(runtimeArtifact.clauses.some(({ id }) => id === "INV-004"));
   }
 
