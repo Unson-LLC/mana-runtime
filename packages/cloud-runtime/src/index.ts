@@ -27,6 +27,7 @@ import { deriveCorrelationId } from "./multitenancy/ids.js";
 import {
   consumeCompanyAuthorityQueueMessage,
   diagnoseCompanyAuthorityRuntimeEnvelope,
+  executeCompanyAuthorityRuntimeBoundary,
   isCompanyAuthorityRuntimeEnvelopeCandidate,
   isCompanyAuthorityRuntimeEnvelope,
   type CompanyAuthorityRuntimeEnvelope,
@@ -388,6 +389,37 @@ export class TenantRuntimeState extends DurableObject<Env> {
         read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(this.env, keyId),
       });
+      if (input.company_authority_envelope !== undefined) {
+        if (!isCompanyAuthorityRuntimeEnvelope(input.company_authority_envelope)) {
+          throw new TenantBoundaryError(input.boundary, "AUTHORITY_ENVELOPE_INVALID");
+        }
+        const runtimeConfig = parseCompanyAuthorityRuntimeConfiguration(this.env);
+        if (runtimeConfig.state !== "enabled") {
+          throw new TenantBoundaryError(input.boundary, "AUTHORITY_UNAVAILABLE");
+        }
+        await executeCompanyAuthorityRuntimeBoundary<SlackQueueEvent, void>({
+          boundary: input.boundary,
+          // The outer envelope guard validates the protocol carrier. The
+          // Slack payload shape and binding are validated below before any
+          // boundary effect can run.
+          envelope: input.company_authority_envelope as CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>,
+          acceptance: { ...runtimeConfig.acceptance, now: input.now },
+          tenant_verifier: verifier,
+          expected_tenant_scope: input.expected_scope,
+          validate_payload_binding: async (context, request, payload) => {
+            await resolveCompanyAuthoritySlackQueueScope({
+              context,
+              request,
+              payload,
+              expected_audience: requiredRuntimeBinding(this.env.MANA_REQUIRED_AUDIENCE),
+              desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
+            });
+          },
+          require_auto: true,
+          execute_auto: async () => undefined,
+        });
+        return;
+      }
       await executeTenantBoundary({ ...input, verifier, execute: async () => undefined });
     },
   );

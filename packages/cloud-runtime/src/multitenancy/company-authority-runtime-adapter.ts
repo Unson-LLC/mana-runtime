@@ -112,9 +112,10 @@ export interface CompanyAuthorityQueueMessageLike<T> {
   retry(options?: { delaySeconds?: number }): void;
 }
 
-export interface CompanyAuthorityQueueDecisionSnapshot {
+export interface CompanyAuthorityQueueDecisionSnapshot<T = unknown> {
   readonly request: ObservedExecutionRequestV1;
   readonly execution_hash: string;
+  readonly envelope: CompanyAuthorityRuntimeEnvelope<T>;
 }
 
 export interface CompanyAuthorityRuntimeResolutionInput<T = unknown> {
@@ -375,6 +376,7 @@ async function resolveAcceptedCompanyAuthority(input: {
 }
 
 interface AcceptedCompanyAuthorityRuntimeEnvelope<T> {
+  readonly envelope: CompanyAuthorityRuntimeEnvelope<T>;
   readonly request: ObservedExecutionRequestV1;
   readonly response: unknown;
   readonly context: AcceptedCompanyAuthorityContext;
@@ -441,11 +443,19 @@ async function acceptCompanyAuthorityRuntimeEnvelope<T>(input: {
       : "AUTHORITY_UNAVAILABLE";
     failAtBoundary(input.boundary, code, { phase: "company_authority_response" });
   }
-  return {
-    request: structuredClone(runtimeEnvelope.company_authority_request),
-    response: structuredClone(runtimeEnvelope.company_authority_response),
-    context: structuredClone(accepted.context),
+  const acceptedRuntimeEnvelope: CompanyAuthorityRuntimeEnvelope<T> = {
+    schema_version: "1.0",
+    correlation_id: runtimeEnvelope.correlation_id,
+    company_authority_request: structuredClone(runtimeEnvelope.company_authority_request),
+    company_authority_response: structuredClone(runtimeEnvelope.company_authority_response),
     payload: structuredClone(runtimeEnvelope.payload),
+  };
+  return {
+    envelope: acceptedRuntimeEnvelope,
+    request: structuredClone(acceptedRuntimeEnvelope.company_authority_request),
+    response: structuredClone(acceptedRuntimeEnvelope.company_authority_response),
+    context: structuredClone(accepted.context),
+    payload: structuredClone(acceptedRuntimeEnvelope.payload),
   };
 }
 
@@ -494,6 +504,8 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
     request: ObservedExecutionRequestV1,
     payload: T,
   ): void | Promise<void>;
+  /** Reject non-auto decisions at runtime-effect boundaries such as Container and provider delivery. */
+  require_auto?: boolean;
   execute_auto(context: AcceptedCompanyAuthorityContext, payload: T): Promise<R>;
 }): Promise<{
   context: AcceptedCompanyAuthorityContext;
@@ -527,7 +539,15 @@ export async function executeCompanyAuthorityRuntimeBoundary<T, R>(input: {
     failAtBoundary(input.boundary, "PAYLOAD_SCOPE_MISMATCH");
   }
   const decision = context.authority.decision;
-  if (decision !== "auto") return { context, decision, payload };
+  if (decision !== "auto") {
+    if (input.require_auto) {
+      failAtBoundary(input.boundary, "AUTHORITY_SCOPE_MISMATCH", {
+        phase: "company_authority_non_auto_runtime_boundary_forbidden",
+        decision,
+      });
+    }
+    return { context, decision, payload };
+  }
   return {
     context,
     decision,
@@ -554,17 +574,17 @@ export async function consumeCompanyAuthorityQueueMessage<T>(
     process_auto(
       context: AcceptedCompanyAuthorityContext,
       payload: T,
-      snapshot: CompanyAuthorityQueueDecisionSnapshot,
+      snapshot: CompanyAuthorityQueueDecisionSnapshot<T>,
     ): Promise<unknown>;
     route_approval(
       context: AcceptedCompanyAuthorityContext,
       payload: T,
-      snapshot: CompanyAuthorityQueueDecisionSnapshot,
+      snapshot: CompanyAuthorityQueueDecisionSnapshot<T>,
     ): Promise<unknown>;
     route_human_action(
       context: AcceptedCompanyAuthorityContext,
       payload: T,
-      snapshot: CompanyAuthorityQueueDecisionSnapshot,
+      snapshot: CompanyAuthorityQueueDecisionSnapshot<T>,
     ): Promise<unknown>;
     execution_hash(envelope: CompanyAuthorityRuntimeEnvelope<T>): string | Promise<string>;
     retention_until(now: string): string;
@@ -586,13 +606,9 @@ export async function consumeCompanyAuthorityQueueMessage<T>(
       envelope: message.body,
       acceptance: { ...options.acceptance, now },
     });
-    const acceptedRuntimeEnvelope: CompanyAuthorityRuntimeEnvelope<T> = {
-      schema_version: "1.0",
-      correlation_id: acceptedEnvelope.request.correlation_id,
-      company_authority_request: structuredClone(acceptedEnvelope.request),
-      company_authority_response: structuredClone(acceptedEnvelope.response),
-      payload: structuredClone(acceptedEnvelope.payload),
-    };
+    // Hash an isolated clone so a callback cannot mutate the accepted
+    // envelope that will be preserved in the decision snapshot.
+    const acceptedRuntimeEnvelope = structuredClone(acceptedEnvelope.envelope);
     const executionHash = await options.execution_hash(acceptedRuntimeEnvelope);
     const payload = structuredClone(acceptedEnvelope.payload);
     try {
@@ -675,9 +691,10 @@ export async function consumeCompanyAuthorityQueueMessage<T>(
     log: options.log,
     log_error: options.log_error,
     process: async (payload) => {
-      const snapshot: CompanyAuthorityQueueDecisionSnapshot = {
+      const snapshot: CompanyAuthorityQueueDecisionSnapshot<T> = {
         request: structuredClone(accepted.request),
         execution_hash: accepted.execution_hash,
+        envelope: structuredClone(accepted.envelope),
       };
       if (accepted.decision === "approval") {
         return options.route_approval(accepted.context, payload, snapshot);

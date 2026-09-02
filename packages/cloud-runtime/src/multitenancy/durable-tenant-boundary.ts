@@ -30,6 +30,12 @@ export interface TenantBoundaryContextStorage {
 export interface AuthorizedTenantBoundaryContext {
   tenant_context: TenantContextEnvelope;
   expected_scope: ExpectedTenantScope;
+  /**
+   * An optional accepted outer decision carried alongside the nested tenant
+   * context. Keep this opaque here so the durable boundary does not depend on
+   * the Company Authority adapter or persist its trust configuration.
+   */
+  company_authority_envelope?: unknown;
 }
 
 interface BoundaryContext extends AuthorizedTenantBoundaryContext {
@@ -41,6 +47,7 @@ interface BoundaryValidationInput {
   tenant_context: TenantContextEnvelope;
   expected_scope: ExpectedTenantScope;
   now: string;
+  company_authority_envelope?: unknown;
 }
 
 export type TenantBoundaryContextValidator = (input: BoundaryValidationInput) => Promise<void>;
@@ -64,6 +71,7 @@ export function createDurableTenantBoundaryRegistry(namespace: TenantBoundaryCon
     async register(input: {
       tenant_context: TenantContextEnvelope;
       expected_scope: ExpectedTenantScope;
+      company_authority_envelope?: unknown;
       now: string;
     }): Promise<string> {
       const handle = newHandle();
@@ -73,6 +81,9 @@ export function createDurableTenantBoundaryRegistry(namespace: TenantBoundaryCon
         body: JSON.stringify({
           tenant_context: input.tenant_context,
           expected_scope: input.expected_scope,
+          ...(input.company_authority_envelope !== undefined
+            ? { company_authority_envelope: input.company_authority_envelope }
+            : {}),
           expires_at: input.tenant_context.expires_at,
           now: input.now,
         }),
@@ -92,7 +103,7 @@ export function createDurableTenantBoundaryRegistry(namespace: TenantBoundaryCon
 export async function authorizeDurableTenantBoundaryRequest(
   namespace: TenantBoundaryContextNamespace,
   request: Request,
-  boundary: "mcp_gateway" | "brainbase_proxy",
+  boundary: "mcp_gateway" | "brainbase_proxy" | "slack_delivery",
   now: string,
 ): Promise<Response | undefined> {
   const handle = request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER) ?? "";
@@ -114,7 +125,7 @@ export async function authorizeDurableTenantBoundaryRequest(
 export async function resolveDurableTenantBoundaryContext(
   namespace: TenantBoundaryContextNamespace,
   request: Request,
-  boundaries: readonly ("mcp_gateway" | "brainbase_proxy")[],
+  boundaries: readonly ("mcp_gateway" | "brainbase_proxy" | "slack_delivery")[],
   now: string,
 ): Promise<AuthorizedTenantBoundaryContext | Response> {
   const handle = request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER) ?? "";
@@ -136,6 +147,9 @@ export async function resolveDurableTenantBoundaryContext(
     return {
       tenant_context: structuredClone(resolved.tenant_context),
       expected_scope: structuredClone(resolved.expected_scope),
+      ...(resolved.company_authority_envelope !== undefined
+        ? { company_authority_envelope: structuredClone(resolved.company_authority_envelope) }
+        : {}),
     };
   } catch {
     return Response.json({ boundary: boundaries[0], error: "WORKSPACE_CONNECTION_UNAVAILABLE" }, { status: 503 });
@@ -173,7 +187,19 @@ export class TenantBoundaryContextHandler {
           tenant_context: input.tenant_context,
           expected_scope: input.expected_scope,
           expires_at: input.expires_at,
+          ...(input.company_authority_envelope !== undefined
+            ? { company_authority_envelope: structuredClone(input.company_authority_envelope) }
+            : {}),
         };
+        if (context.company_authority_envelope !== undefined) {
+          await this.validate({
+            boundary: "container_launch",
+            tenant_context: context.tenant_context,
+            expected_scope: context.expected_scope,
+            now: input.now,
+            company_authority_envelope: structuredClone(context.company_authority_envelope),
+          });
+        }
         await this.storage.put(CONTEXT_KEY, context);
         await this.storage.setAlarm?.(Date.parse(input.expires_at));
         return new Response(null, { status: 204 });
@@ -184,30 +210,38 @@ export class TenantBoundaryContextHandler {
           ? [input.boundary]
           : input.boundaries;
         if (!Array.isArray(boundaries) || boundaries.length === 0
-          || boundaries.some((boundary) => boundary !== "mcp_gateway" && boundary !== "brainbase_proxy")
+          || boundaries.some((boundary) => boundary !== "mcp_gateway"
+            && boundary !== "brainbase_proxy"
+            && boundary !== "slack_delivery")
           || new Set(boundaries).size !== boundaries.length
           || typeof input.now !== "string" || !Number.isFinite(Date.parse(input.now))) {
           throw new TenantBoundaryError("mcp_gateway", "SCHEMA_INVALID");
         }
         const context = await this.storage.get<BoundaryContext>(CONTEXT_KEY);
-        const primaryBoundary = boundaries[0] as "mcp_gateway" | "brainbase_proxy";
+        const primaryBoundary = boundaries[0] as "mcp_gateway" | "brainbase_proxy" | "slack_delivery";
         if (!context) throw new TenantBoundaryError(primaryBoundary, "TENANT_CONTEXT_MISSING");
         if (Date.parse(input.now) > Date.parse(context.expires_at)) {
           await this.storage.delete(CONTEXT_KEY);
           throw new TenantBoundaryError(primaryBoundary, "TENANT_CONTEXT_EXPIRED");
         }
-        for (const boundary of boundaries as ("mcp_gateway" | "brainbase_proxy")[]) {
+        for (const boundary of boundaries as ("mcp_gateway" | "brainbase_proxy" | "slack_delivery")[]) {
           await this.validate({
             boundary,
             tenant_context: context.tenant_context,
             expected_scope: context.expected_scope,
             now: input.now,
+            ...(context.company_authority_envelope !== undefined
+              ? { company_authority_envelope: structuredClone(context.company_authority_envelope) }
+              : {}),
           });
         }
         return url.pathname === "/resolve"
           ? Response.json({
             tenant_context: context.tenant_context,
             expected_scope: context.expected_scope,
+            ...(context.company_authority_envelope !== undefined
+              ? { company_authority_envelope: context.company_authority_envelope }
+              : {}),
           })
           : new Response(null, { status: 204 });
       }

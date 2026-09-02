@@ -295,6 +295,14 @@ describe("company authority Queue consumer", () => {
         requested_action: expect.objectContaining({ resource_ref: acceptedResourceRef }),
       }),
       execution_hash: expect.stringMatching(/^sha256:/),
+      envelope: expect.objectContaining({
+        schema_version: "1.0",
+        correlation_id: selected.request.correlation_id,
+        company_authority_request: expect.objectContaining({
+          requested_action: expect.objectContaining({ resource_ref: acceptedResourceRef }),
+        }),
+        payload: { event_id: selected.request.delivery?.event_id ?? "" },
+      }),
     });
     expect(runtimeOptions.execution_hash).toHaveBeenCalledTimes(1);
     expect(queued.ack).toHaveBeenCalledTimes(1);

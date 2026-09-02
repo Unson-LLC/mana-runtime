@@ -113,6 +113,74 @@ describe("company authority runtime envelope", () => {
     });
     expect(effect).toHaveBeenCalledTimes(1);
 
+    const approvalFixture = fixtures.positive.find(
+      ({ context }) => context?.authority?.decision === "approval",
+    )!;
+    const approvalResolved = await resolveCompanyAuthorityRuntimeEnvelope({
+      observation: {
+        provider: "slack",
+        authentication: { status: "verified", scheme: "slack_signature_v0" },
+        authenticated_subject_id: approvalFixture.request.provider_identity.authenticated_subject_id,
+        workspace_id: approvalFixture.request.provider_identity.workspace_id,
+        app_id: approvalFixture.request.provider_identity.app_id,
+        enterprise_id: approvalFixture.request.provider_identity.enterprise_id,
+        capability_id: approvalFixture.request.requested_action.capability_id,
+        resource_ref: approvalFixture.request.requested_action.resource_ref,
+        project_hint: approvalFixture.request.requested_action.project_hint,
+        channel_id: approvalFixture.request.delivery.channel_id,
+        thread_ts: approvalFixture.request.delivery.thread_ts,
+        event_id: approvalFixture.request.delivery.event_id,
+        correlation_id: approvalFixture.request.correlation_id,
+      },
+      desired_effect_by_capability: {
+        [approvalFixture.request.requested_action.capability_id]:
+          approvalFixture.request.requested_action.desired_effect,
+      },
+      client: { resolve: async () => ({
+        state: "resolved",
+        response: {
+          schema_version: "1.0",
+          contract_id: "mana-brainbase-company-authority/v1",
+          correlation_id: approvalFixture.request.correlation_id,
+          context: approvalFixture.context,
+          error: null,
+        },
+      }) },
+      acceptance: {
+        ...acceptance,
+        expected_deployment_id: approvalFixture.context.tenant_context.placement.deployment_id,
+        now: approvalFixture.evaluation_time,
+      },
+      payload: { event_id: approvalFixture.request.delivery.event_id },
+    });
+    const nonAutoEffect = vi.fn();
+    await expect(executeCompanyAuthorityRuntimeBoundary({
+      boundary: "container_launch",
+      envelope: approvalResolved.envelope,
+      acceptance: {
+        ...acceptance,
+        expected_deployment_id: approvalFixture.context.tenant_context.placement.deployment_id,
+        now: approvalFixture.evaluation_time,
+      },
+      tenant_verifier: tenantVerifier,
+      expected_tenant_scope: {
+        ...expectedTenantScope,
+        project_id: approvalFixture.context.tenant_context.authorization.project_ids[0],
+        project_ids: approvalFixture.context.tenant_context.authorization.project_ids,
+      },
+      validate_payload_binding: () => undefined,
+      require_auto: true,
+      execute_auto: nonAutoEffect,
+    })).rejects.toEqual(expect.objectContaining({
+      boundary: "container_launch",
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      details: expect.objectContaining({
+        phase: "company_authority_non_auto_runtime_boundary_forbidden",
+        decision: "approval",
+      }),
+    }));
+    expect(nonAutoEffect).not.toHaveBeenCalled();
+
     const tampered = structuredClone(resolved.envelope) as any;
     tampered.company_authority_response.context.scope.project_ids = ["project-other"];
     const rejectedEffect = vi.fn();
