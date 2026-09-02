@@ -40,6 +40,12 @@ function auditLinesFromText(value) {
     AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
 }
 
+function isInternalJudgmentStateTool(payload) {
+  const toolName = payload.tool_name ?? payload.toolName;
+  return toolName === "brainbase_judgment_state_record"
+    || toolName === "mcp__brainbase__brainbase_judgment_state_record";
+}
+
 function repairedStopAnswer(answer, auditLines) {
   const bodyLines = typeof answer === "string" ? answer.split(/\r?\n/) : [];
   const bodyWithoutAudit = bodyLines.filter((line) =>
@@ -82,6 +88,7 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
     throw new Error("judgment_hook_response_invalid");
   }
   if (payload.hook_event_name === "PostToolUse"
+      && !isInternalJudgmentStateTool(payload)
       && (typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
     throw new Error("judgment_hook_audit_not_recorded");
   }
