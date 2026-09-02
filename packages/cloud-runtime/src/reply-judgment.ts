@@ -357,7 +357,12 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   }
   if (!final) throw new Error("reply_judgment_result_missing");
   if (hostVerifiedAnswer && final.reply.trim() !== hostVerifiedAnswer) {
-    throw new Error("reply_judgment_verified_answer_mismatch");
+    // A bounded Stop repair can complete after Claude Code has already emitted
+    // the pre-repair result event. The authenticated Stop marker is the exact
+    // answer accepted by the Host, so it is canonical over that stale model
+    // result. Keep the original result index for lifecycle ordering while
+    // exposing only the Host-accepted answer to Slack.
+    final.reply = hostVerifiedAnswer;
   }
   if (promptHooks[0]!.index >= final.index || successfulStop.index >= final.index) {
     throw new Error("reply_judgment_event_order_invalid");
