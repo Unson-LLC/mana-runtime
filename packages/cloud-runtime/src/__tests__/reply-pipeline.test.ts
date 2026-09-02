@@ -382,7 +382,7 @@ describe("TechKnight Slack reply pipeline", () => {
         " --output-format stream-json --verbose --include-hook-events" +
         ' "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
       {
-        timeout: 120_000,
+        timeout: 240_000,
         env: {
           IS_SANDBOX: "1",
           MANA_TENANT_BOUNDARY_HANDLE: TENANT_BOUNDARY_A,

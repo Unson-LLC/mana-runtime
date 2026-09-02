@@ -46,6 +46,10 @@ const MAX_OUTPUT_CHARS = 12_000;
 const SLACK_STATUS_REFRESH_MS = 90_000;
 const SLACK_STATUS_TIMEOUT_MS = 5_000;
 const SLACK_REACTION_TIMEOUT_MS = 5_000;
+// A complete judgment turn may need a second Stop-hook pass after Brainbase
+// repairs missing audit lines. Keep the reply runner below the five-minute
+// tenant-boundary lease while allowing that authenticated repair to finish.
+const REPLY_SANDBOX_TIMEOUT_MS = 240_000;
 
 interface ExecResult {
   success: boolean;
@@ -345,7 +349,7 @@ export async function generateClaudeReply(
     };
     await prepareSandbox(sandbox);
     const execOptions = {
-      timeout: 120_000,
+      timeout: REPLY_SANDBOX_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
         // Resolver routing must be based on the authenticated Slack request,
