@@ -257,6 +257,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     const result = await runHook({
       hook_event_name: "Stop",
       session_id: "session-block",
+      stop_hook_active: true,
       last_assistant_message: "本文",
     }, env);
     expect(result.code).toBe(0);
@@ -266,6 +267,9 @@ describe("Brainbase judgment Hook forwarder", () => {
       .toEqual([judgmentLine, brainbaseLine, repairLine]);
     expect(output.systemMessage).toContain(receiptPrefix);
     expect(forwarded.filter((entry) => entry.hook_event_name === "Stop")).toHaveLength(2);
+    expect(forwarded.filter((entry) => entry.hook_event_name === "Stop")[0]?.stop_hook_active)
+      .toBe(true);
+    expect(forwarded.at(-1)?.stop_hook_active).toBe(false);
     expect(forwarded.at(-1)?.last_assistant_message)
       .toBe(`${judgmentLine}\n${brainbaseLine}\n${repairLine}\n本文`);
   });
