@@ -26,7 +26,21 @@ const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.free
 const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
 const MEETING_MINUTES_MCP_CONFIG_PATH = "/tmp/mana-meeting-minutes-mcp.json";
 const MEETING_MINUTES_SETTINGS_PATH = "/opt/mana/meeting-minutes-claude-settings.json";
-const REPLY_SETTINGS_PATH = "/opt/mana/reply-claude-settings.json";
+const REPLY_SETTINGS_PATH = "/tmp/mana-reply-claude-settings.json";
+const REPLY_SETTINGS = Object.freeze({
+  hooks: {
+    UserPromptSubmit: [{
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
+    PostToolUse: [{
+      matcher: "^mcp__brainbase__.*$",
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
+    Stop: [{
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
+  },
+});
 const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, string>> = Object.freeze({
   "meeting-minutes": JSON.stringify({
     type: "object",
@@ -91,6 +105,14 @@ export function runtimeTaskSearchMcpConfigPath(): string {
 
 export function runtimeMeetingMinutesMcpConfigPath(): string {
   return MEETING_MINUTES_MCP_CONFIG_PATH;
+}
+
+export function runtimeReplySettingsPath(): string {
+  return REPLY_SETTINGS_PATH;
+}
+
+export function runtimeReplySettingsContent(): string {
+  return JSON.stringify(REPLY_SETTINGS);
 }
 
 export function buildRuntimeClaudeCommand(

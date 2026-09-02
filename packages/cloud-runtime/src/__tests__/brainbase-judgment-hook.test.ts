@@ -207,11 +207,16 @@ describe("Brainbase judgment Hook forwarder", () => {
     },
   );
 
-  it("preserves a Host Stop block so Claude can repair the audited answer", async () => {
+  it("completes one Host Stop repair when non-interactive Claude returns after the block", async () => {
+    const judgmentLine = "🧠 判断参照: 「確認して」を参照 → 運用依頼として対応 ✓";
+    const brainbaseLine = "📚 Brainbase検索: Graphで「mana」を検索 → 結果を取得 ✓";
+    const repairLine = "🛠️ Stop修復: 最終回答を1回差し戻し → 修復完了 ✓";
+    const forwarded: Array<Record<string, unknown>> = [];
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk as Buffer);
       const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      forwarded.push(payload);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         schema_version: "1", accepted: true, hook_event_name: payload.hook_event_name,
@@ -223,9 +228,18 @@ describe("Brainbase judgment Hook forwarder", () => {
           hookSpecificOutput: {
             hookEventName: "UserPromptSubmit", additionalContext: "Judgment route resolved",
           },
-        } : {
+        } : forwarded.filter((entry) => entry.hook_event_name === "Stop").length === 1 ? {
           decision: "block",
-          reason: "最終回答の先頭に監査行を追加してください。",
+          reason: [
+            "Brainbase judgment episodeを完了する前に最終回答の先頭に次の監査行をそのまま、この順番で各1回だけ表示する:",
+            judgmentLine,
+            brainbaseLine,
+            repairLine,
+            "その後、最初に差し戻された回答の監査行以外の本文を、削除・要約・置換せずそのまま残す",
+            "監査行の後に、元の回答本文をそのまま続けてください。",
+          ].join("\n"),
+        } : {
+          systemMessage: [judgmentLine, brainbaseLine, repairLine].join("\n"),
         },
       }));
     });
@@ -240,13 +254,20 @@ describe("Brainbase judgment Hook forwarder", () => {
       BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
     };
     await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-block" }, env);
-    const result = await runHook({ hook_event_name: "Stop", session_id: "session-block" }, env);
+    const result = await runHook({
+      hook_event_name: "Stop",
+      session_id: "session-block",
+      last_assistant_message: "本文",
+    }, env);
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      decision: "block",
-      reason: "最終回答の先頭に監査行を追加してください。",
-      systemMessage: expect.stringContaining(receiptPrefix),
-    });
+    const output = JSON.parse(result.stdout);
+    expect(output).not.toHaveProperty("decision");
+    expect(output.systemMessage.split("\n").slice(0, 3))
+      .toEqual([judgmentLine, brainbaseLine, repairLine]);
+    expect(output.systemMessage).toContain(receiptPrefix);
+    expect(forwarded.filter((entry) => entry.hook_event_name === "Stop")).toHaveLength(2);
+    expect(forwarded.at(-1)?.last_assistant_message)
+      .toBe(`${judgmentLine}\n${brainbaseLine}\n${repairLine}\n本文`);
   });
 
   it("emits Host-verified audit lines after a completed Stop repair", async () => {

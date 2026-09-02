@@ -7,6 +7,8 @@ import {
 import {
   buildRuntimeClaudeCommand,
   runtimeClaudePromptPath,
+  runtimeReplySettingsContent,
+  runtimeReplySettingsPath,
   runtimeTaskSearchMcpConfigPath,
   type ClaudeRuntimeConfig,
 } from "./claude-runtime-config.js";
@@ -78,6 +80,7 @@ export interface ReplyPipelineOptions {
   requesterIdentity?: RequesterIdentity;
   requesterProfile?: SlackUserProfile;
   graphContext?: string;
+  brainbaseProjectCode?: string;
   capabilities?: { mcp: readonly string[]; gatewayTools: readonly string[] };
   trace?: TurnRuntimeTrace;
   respondPolicy?: RuntimeRespondPolicy;
@@ -159,6 +162,10 @@ function isReplyBoundaryEligible(
 
 function normalizePromptText(text: string): string {
   return text
+    // Messages sent through the Slack MCP connector include this attribution
+    // in the event body. It describes the transport, not the user's requested
+    // effect, so it must not make a read-only request look like an external send.
+    .replace(/\s*\*使用して送信されました\*\s*(?:<@[^>]{1,128}>)?\s*$/u, " ")
     .replace(/<@[^>]{1,128}>/g, " ")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
     .replace(/\s+/g, " ")
@@ -173,6 +180,7 @@ function buildPrompt(
   requesterIdentity?: RequesterIdentity,
   requesterProfile?: SlackUserProfile,
   graphContext?: string,
+  brainbaseProjectCode?: string,
   runtimeContext?: ReplyPipelineOptions["runtimeContext"],
   taskChannelDiscoveryEnabled = false,
 ): string {
@@ -224,6 +232,10 @@ function buildPrompt(
       "上記はSlack APIで確認した発話者情報です。表示名だけで別人を推測しないでください。",
     ] : []),
     ...(graphContext ? ["", "Brainbase Graph正本文脈:", graphContext] : []),
+    ...(brainbaseProjectCode ? [
+      `Brainbaseの検索・参照を依頼された場合は、回答前にbrainbase_knowledge_resolveをproject_code=${brainbaseProjectCode}で呼び、返された参照先に従って必要なBrainbase検索toolを実行してください。`,
+      "Brainbaseの検索結果が空でも、不在とは断定せず、取得できた検索状態だけを回答してください。",
+    ] : []),
     ...(taskWriteEnabled ? [
       "タスクの作成・更新・状態変更を明示的に依頼された場合だけ、create_task、update_task、transition_taskを使ってください。",
       "更新・状態変更の前にはsearch_tasksで対象を特定し、返されたidとversionをexpected_versionに使ってください。対象が一意でない場合は実行せず質問してください。",
@@ -267,7 +279,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "brainbaseProjectCode" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
 ): Promise<ReplyJudgmentResult> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
@@ -298,6 +310,7 @@ export async function generateClaudeReply(
       requesterIdentity,
       options.requesterProfile,
       options.graphContext,
+      options.brainbaseProjectCode,
       options.runtimeContext,
       options.capabilities?.gatewayTools.includes("list_authorized_task_channels") === true,
     );
@@ -328,6 +341,7 @@ export async function generateClaudeReply(
     const prepareSandbox = async (target: typeof sandbox) => {
       await target.writeFile(promptPath, promptContent);
       await target.writeFile(runtimeTaskSearchMcpConfigPath(), mcpConfigContent);
+      await target.writeFile(runtimeReplySettingsPath(), runtimeReplySettingsContent());
     };
     await prepareSandbox(sandbox);
     const execOptions = {

@@ -366,7 +366,7 @@ describe("TechKnight Slack reply pipeline", () => {
       responseTs: "1786455000.000001",
     });
 
-    expect(sandbox.writeFile).toHaveBeenCalledTimes(2);
+    expect(sandbox.writeFile).toHaveBeenCalledTimes(3);
     const prompt = sandbox.writeFile.mock.calls[0][1] as string;
     expect(prompt).toContain("メンションしてみる");
     expect(prompt).toContain("契約更新について");
@@ -378,7 +378,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
       "node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions" +
-        " --settings /opt/mana/reply-claude-settings.json" +
+        " --settings /tmp/mana-reply-claude-settings.json" +
         " --output-format stream-json --verbose --include-hook-events" +
         ' "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
       {
@@ -438,6 +438,36 @@ describe("TechKnight Slack reply pipeline", () => {
     });
     expect(body.client_msg_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("does not classify Slack MCP transport attribution as a requested external send", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness();
+
+    await processReplyEvent(fs, event({
+      text: "<@U_BOT> Brainbaseで検索してください *使用して送信されました* <@U_CHATGPT>",
+    }), options);
+
+    expect(sandbox.exec).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        env: expect.objectContaining({ MANA_JUDGMENT_REQUEST: "Brainbaseで検索してください" }),
+      }),
+    );
+  });
+
+  it("resolves the canonical Brainbase source before a requested search", async () => {
+    const { options, sandbox } = harness({ brainbaseProjectCode: "mana" });
+
+    await generateClaudeReply(
+      event({ text: "<@U_BOT> Brainbaseでmana-runtimeを検索して" }),
+      options,
+    );
+
+    const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
+      String(path).endsWith("mana-slack-prompt.txt"))?.[1] ?? "");
+    expect(prompt).toContain("brainbase_knowledge_resolveをproject_code=manaで呼び");
+    expect(prompt).toContain("検索結果が空でも、不在とは断定せず");
   });
 
   it("fails closed when reply normalization truncates a required audit line", async () => {
@@ -559,13 +589,15 @@ describe("TechKnight Slack reply pipeline", () => {
     const { options, sandbox } = harness({ taskSearchEnabled: true });
     await processReplyEvent(fs, event({ text: "<@U_BOT> 契約更新タスクの状態と担当者は？" }), options);
 
-    expect(sandbox.writeFile).toHaveBeenCalledTimes(2);
+    expect(sandbox.writeFile).toHaveBeenCalledTimes(3);
     const writes = Object.fromEntries(sandbox.writeFile.mock.calls.map(([path, content]) => [path, content]));
     const prompt = String(writes["/tmp/mana-slack-prompt.txt"]);
     const mcpConfig = String(writes["/tmp/mana-task-search-mcp.json"]);
+    const replySettings = JSON.parse(String(writes["/tmp/mana-reply-claude-settings.json"]));
     expect(prompt).toContain("search_tasks");
     expect(prompt).toContain("has_more");
     expect(prompt).toContain("API障害");
+    expect(replySettings.hooks.PostToolUse[0].matcher).toBe("^mcp__brainbase__.*$");
     expect(mcpConfig).toBe(JSON.stringify({
       mcpServers: {
         brainbase: {

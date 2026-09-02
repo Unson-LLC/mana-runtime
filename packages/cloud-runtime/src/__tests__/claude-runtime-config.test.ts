@@ -110,7 +110,7 @@ describe("Cloudflare Claude runtime config", () => {
     expect(command).toContain("--strict-mcp-config");
     const reply = buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true });
     expect(reply).toContain("--output-format stream-json --verbose --include-hook-events");
-    expect(reply).toContain("--settings /opt/mana/reply-claude-settings.json");
+    expect(reply).toContain("--settings /tmp/mana-reply-claude-settings.json");
 
     const settingsPath = fileURLToPath(new URL("../../container/reply-claude-settings.json", import.meta.url));
     const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {

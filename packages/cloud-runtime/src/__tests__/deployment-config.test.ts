@@ -545,6 +545,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)["biz-meeting-router"]).toEqual([
       "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
     ]);
+    expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)["mana-dev-biz"]).toBeUndefined();
     expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
       techknight: "prj_01M1DDJ9V6EER4676YPXBSHBZX",

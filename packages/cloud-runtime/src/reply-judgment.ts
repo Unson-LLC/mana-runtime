@@ -2,7 +2,11 @@ import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
 const JUDGMENT_AUDIT_PREFIX = "🧠 判断参照:";
+const JUDGMENT_WARNING_PREFIX = "⚠️ 判断参照:";
 const BRAINBASE_AUDIT_PREFIX = "📚 Brainbase";
+const BRAINBASE_WARNING_PREFIX = "⚠️ Brainbase";
+const CONTINUATION_AUDIT_PREFIX = "🔁 ";
+const STOP_REPAIR_AUDIT_PREFIX = "🛠️ ";
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 
 interface StreamEvent extends Record<string, unknown> {
@@ -267,12 +271,21 @@ function hookReceipt(event: StreamEvent): { output: Record<string, unknown>; rec
 function auditLines(output: Record<string, unknown>): string[] {
   if (typeof output.systemMessage !== "string") return [];
   return output.systemMessage.split(/\r?\n/)
-    .filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(BRAINBASE_AUDIT_PREFIX));
+    .filter(isAuditLine);
 }
 
 function auditLinesInReply(reply: string): string[] {
   return reply.split(/\r?\n/)
-    .filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(BRAINBASE_AUDIT_PREFIX));
+    .filter(isAuditLine);
+}
+
+function isAuditLine(line: string): boolean {
+  return line.startsWith(JUDGMENT_AUDIT_PREFIX)
+    || line.startsWith(JUDGMENT_WARNING_PREFIX)
+    || line.startsWith(BRAINBASE_AUDIT_PREFIX)
+    || line.startsWith(BRAINBASE_WARNING_PREFIX)
+    || line.startsWith(CONTINUATION_AUDIT_PREFIX)
+    || line.startsWith(STOP_REPAIR_AUDIT_PREFIX);
 }
 
 function completedBrainbaseAuditLines(lines: string[]): string[] {
@@ -346,7 +359,8 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // only carries model context, while PostToolUse emits incremental journal
   // lines; neither is the canonical final audit block in the real CLI stream.
   let expectedAuditLines = auditLines(successfulStop.output);
-  const judgmentAuditLines = expectedAuditLines.filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX));
+  const judgmentAuditLines = expectedAuditLines.filter((line) =>
+    line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(JUDGMENT_WARNING_PREFIX));
   if (judgmentAuditLines.length !== 1
       || !expectedAuditLines.some((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX))) {
     throw new Error("reply_judgment_audit_lines_missing");

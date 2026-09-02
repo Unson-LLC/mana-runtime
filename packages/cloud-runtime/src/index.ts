@@ -3385,6 +3385,7 @@ export default {
                     requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
                     requesterProfile,
                     graphContext: graphContext.content,
+                    brainbaseProjectCode: placement.projectCodes[0],
                     runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
                       escalationEmployee: placement.agent?.escalationEmployee } : undefined,
                     capabilities: placement.capabilities,
