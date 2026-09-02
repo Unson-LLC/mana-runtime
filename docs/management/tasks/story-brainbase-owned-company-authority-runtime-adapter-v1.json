@@ -15,7 +15,7 @@
         "docs/management/tasks/story-brainbase-owned-company-authority-runtime-adapter-v1.json"
       ],
       "acceptance_criteria": [
-        "Story、Architecture、8つのSpec clause、4つのTaskが同じstory_idへ結び付いている",
+        "Story、Architecture、9つのSpec clause、4つのTaskが同じstory_idへ結び付いている",
         "Brainbase live endpoint、production trust store、runtime evidence、production evidenceを未確定または未収集のまま明示する",
         "最初のREDと、本番完了に必要な同一run証跡をローカル実装の完了条件から分離する"
       ],

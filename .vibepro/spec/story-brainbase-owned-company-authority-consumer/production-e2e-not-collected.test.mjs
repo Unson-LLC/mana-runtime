@@ -41,7 +41,7 @@ test("T0 local implementation state does not promote production evidence", async
   );
   assert.equal(
     plan.runtime_adapter_transition.implementation_claim,
-    "local_adapter_queue_and_selected_container_boundaries_only",
+    "local_worker_queue_durable_object_container_mcp_brainbase_proxy_and_slack_delivery_boundaries_verified_production_not_collected",
   );
   assert.equal(plan.runtime_adapter_transition.evidence_status, "not_collected");
   assert.equal(plan.status, "not_collected");
