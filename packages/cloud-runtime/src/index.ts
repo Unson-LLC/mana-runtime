@@ -45,6 +45,10 @@ import {
   type TenantInteractionTarget,
 } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
+import {
+  meetingMinutesSelectionDestination,
+  resolveMeetingMinutesDestinationProjectScope,
+} from "./meeting-minutes-selection-scope.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
 import { handleMeetingMinutesTaskAction, type MeetingMinutesSourceIdentity } from "./meeting-minutes-task-actions.js";
@@ -57,6 +61,7 @@ import {
 import { createTaskWriteProxyHandler } from "./task-write-proxy.js";
 import { peekTaskWriteApproval } from "./task-write-approval.js";
 import { MeetingMinutesSlackClient } from "./meeting-minutes-slack.js";
+import { resolveCrossWorkspaceMeetingMinutesSlackToken } from "./meeting-minutes-slack-routing.js";
 import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.js";
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
@@ -767,7 +772,7 @@ interface MeetingMinutesTenantEffectGuard {
   slack<T>(effectId: string, event: unknown, execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T>;
   preflightDestinationSlack(destinations: readonly MeetingMinutesDestination[]): MeetingMinutesDestinationSlackBindings;
   destinationSlack<T>(effectId: string, destination: MeetingMinutesDestination, threadTs: string | undefined,
-    event: unknown, execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T>;
+    event: unknown, execute: (credentialFetch: typeof fetch, destinationToken?: string) => Promise<T>): Promise<T>;
 }
 
 function createMeetingMinutesTenantEffectGuard(input: {
@@ -855,7 +860,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
       return runSlack(effectId, event, input.tenant_context, input.expected_scope, input.verifier, execute);
     },
     async destinationSlack<T>(effectId: string, destination: MeetingMinutesDestination, threadTs: string | undefined,
-      event: unknown, execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T> {
+      event: unknown, execute: (credentialFetch: typeof fetch, destinationToken?: string) => Promise<T>): Promise<T> {
       const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding({
         organizationId: destination.organization.id,
         destination,
@@ -871,6 +876,16 @@ function createMeetingMinutesTenantEffectGuard(input: {
       const appId = destinationSlackBinding.app_id;
       const destinationThreadTs = requiredRuntimeBinding(threadTs ?? input.tenant_context.slack.thread_ts);
       const requesterId = requiredRuntimeBinding(input.tenant_context.slack.requester_id);
+      const destinationToken = resolveCrossWorkspaceMeetingMinutesSlackToken(
+        input.env,
+        destination.organization.id,
+        input.tenant_context.workspace_connection.workspace_id,
+        destinationSlackBinding,
+      );
+      if (destinationToken) {
+        return runSlack(effectId, event, input.tenant_context, input.expected_scope, input.verifier,
+          (credentialFetch) => execute(credentialFetch, destinationToken));
+      }
       const tenantContext = await resolveDerivedSlackTenantContext(input.env, input.tenant_context, {
         app_id: appId,
         workspace_id: workspaceId,
@@ -918,10 +933,13 @@ function meetingMinutesClients(
     if (!destination || ambiguous) deny("slack_delivery", "DELIVERY_SCOPE_MISMATCH");
     return destination;
   };
-  const destinationSlack = (destination: MeetingMinutesDestination, credentialFetch: typeof fetch) => {
+  const destinationSlack = (destination: MeetingMinutesDestination, credentialFetch: typeof fetch,
+    destinationToken?: string) => {
     if (!destinations.some((candidate) => candidate.id === destination.id
       && candidate.slackChannelId === destination.slackChannelId)) deny("slack_delivery", "DELIVERY_SCOPE_MISMATCH");
-    return new MeetingMinutesSlackClient(undefined, credentialFetch);
+    return destinationToken
+      ? new MeetingMinutesSlackClient(destinationToken)
+      : new MeetingMinutesSlackClient(undefined, credentialFetch);
   };
   const taskClient = (credentialFetch: typeof fetch) => new TaskApiClient({
     baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
@@ -1003,12 +1021,14 @@ function meetingMinutesClients(
       postParent: (channelId: string, fileName: string, summary: string, clientMsgId: string) =>
         effects.destinationSlack(`destination-parent:${clientMsgId}`, destinationForChannel(channelId), undefined,
           { kind: "destination_parent", channelId, clientMsgId },
-          (credentialFetch) => destinationSlack(destinationForChannel(channelId), credentialFetch).postParent(
+          (credentialFetch, destinationToken) => destinationSlack(
+            destinationForChannel(channelId), credentialFetch, destinationToken).postParent(
             channelId, fileName, summary, clientMsgId)),
       postTaskCard: (run: MeetingMinutesRun) => effects.destinationSlack(`task-card:${run.runId}`,
         run.destination!, run.slack?.parentTs,
         { kind: "task_card", runId: run.runId, channelId: run.destination!.slackChannelId },
-        (credentialFetch) => destinationSlack(run.destination!, credentialFetch).postTaskCard(run)),
+        (credentialFetch, destinationToken) => destinationSlack(
+          run.destination!, credentialFetch, destinationToken).postTaskCard(run)),
       repairTaskBoard: (targetId: string) =>
         effects.boundary("durable_object", () => enqueueMeetingMinutesTaskBoardRepair(
           env,
@@ -1020,7 +1040,8 @@ function meetingMinutesClients(
         index: number, total: number, clientMsgId: string) =>
         effects.destinationSlack(`destination-thread:${clientMsgId}:${index}`, destinationForChannel(channelId), threadTs,
           { kind: "destination_thread", channelId, threadTs, clientMsgId, index, total },
-          (credentialFetch) => destinationSlack(destinationForChannel(channelId), credentialFetch).postThreadChunk(
+          (credentialFetch, destinationToken) => destinationSlack(
+            destinationForChannel(channelId), credentialFetch, destinationToken).postThreadChunk(
             channelId, threadTs, fileName, text, index, total, clientMsgId)),
     },
     redo: {
@@ -1043,7 +1064,8 @@ function meetingMinutesClients(
         parentTs: string, fileName: string) =>
         effects.destinationSlack(`retract:${parentTs}`, destination, parentTs,
           { kind: "minutes_retract", channelId: destination.slackChannelId, parentTs },
-          (credentialFetch) => destinationSlack(destination, credentialFetch).retractSharedMinutes(
+          (credentialFetch, destinationToken) => destinationSlack(
+            destination, credentialFetch, destinationToken).retractSharedMinutes(
             destination.slackChannelId, parentTs, fileName)),
       showDestinationSelection: (run: MeetingMinutesRun,
         destinations: Parameters<MeetingMinutesSlackClient["showDestinationSelection"]>[1]) =>
@@ -1426,7 +1448,7 @@ function expectedTenantMeetingMinutesSelectionScope(
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = expectedProjectScopeForEvent(env, {
+  const selectionEvent = {
     tenantId: envelope.tenant.tenant_id,
     eventId: meetingMinutesSelectionEventId(selection),
     workspaceId: selection.workspaceId,
@@ -1437,7 +1459,24 @@ function expectedTenantMeetingMinutesSelectionScope(
     eventType: "message",
     text: "",
     receivedAt: selection.actionTs,
-  }, envelope);
+  };
+  const destination = meetingMinutesSelectionDestination(
+    selection,
+    meetingMinutesRuntimeConfig(env).destinations,
+  );
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+  const placementProjectScope = destinationAuthorization
+    ? resolveMeetingMinutesDestinationProjectScope(
+      envelope.authorization,
+      destination,
+      destinationAuthorization.required_authorization.project_id,
+      "queue_consumer",
+    )
+    : resolveCanonicalProjectScope(
+      envelope.authorization,
+      placementProjectScopeForEvent(env, selectionEvent).project_ids,
+      "queue_consumer",
+    );
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: selection.workspaceId,
