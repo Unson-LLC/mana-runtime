@@ -141,6 +141,18 @@
           "cross_tenant_candidate",
           "no_data"
         ],
+        "scanner_results": {
+          "tenant_boundary": "inconclusive",
+          "tenant_key_propagation": "inconclusive",
+          "cross_tenant_authorization": "inconclusive",
+          "state_partitioning": "inconclusive",
+          "sandbox_isolation": "inconclusive",
+          "connection_routing": "inconclusive",
+          "secret_scope": "inconclusive",
+          "canonical_data_owner": "inconclusive",
+          "deployment_topology": "inconclusive",
+          "cross_tenant_negative_evidence": "inconclusive"
+        },
         "evidence_refs": [
           ".vibepro/diagnostics/2026-09-01T171941Z/evidence.json",
           "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
@@ -197,6 +209,28 @@
               "connection_mode": "protocol_v1",
               "deployment_mode": "managed_dedicated"
             }
+          ]
+        },
+        "spec": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated",
+            "customer_managed"
+          ]
+        },
+        "implementation": {
+          "tenant_key": "tenant_id",
+          "sharing_modes": [
+            "tenant_partitioned"
+          ],
+          "deployment_modes": [
+            "managed_shared",
+            "managed_dedicated",
+            "customer_managed"
           ]
         }
       }
