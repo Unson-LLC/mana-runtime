@@ -8,7 +8,7 @@
   "implementation_state": {
     "status": "in_progress",
     "adapter_foundation": "implemented",
-    "runtime_surface_binding": "worker ingress selector and worker.queue fail-closed consumer binding implemented; signed canonical Slack payload digest is revalidated before tenant runtime selection; accepted request/context/payload are passed as an immutable snapshot; a shared opaque-handle carrier preserves the accepted outer envelope and trusted local boundary validation rechecks outer, nested and payload bindings at container_launch, mcp_gateway, brainbase_proxy and slack_delivery; actual Company Authority-selected production routes and live evidence remain not_collected",
+    "runtime_surface_binding": "worker ingress selector and worker.queue fail-closed consumer binding implemented; signed canonical Slack payload digest is revalidated before tenant runtime selection; accepted request/context/payload are passed as an immutable snapshot; an injected selected-operation route rebinds the accepted scope, launches the local Container operation and registers the opaque handle in the tenant-bound Durable registry; trusted local boundary validation rechecks outer, nested and payload bindings at container_launch, mcp_gateway, brainbase_proxy and exact send_message slack_delivery; credential-backed production providers, actual external service calls and live evidence remain not_collected",
     "external_effect_outbox": "local contract implemented with tenant-bound durable-state storage, atomic claim, no blind expired in_flight reclaim and original-token fencing; production provider binding and reconciliation evidence not_collected",
     "human_handoff": "approval and human_action persist exact signed target plus accepted immutable snapshot and execution hash as one tenant-bound pending record; identical redelivery is idempotent; notification, decision, completion, protected effect and production readback not_collected",
     "runtime_trust_configuration": "local fail-closed environment parser and post-acceptance worker.queue resolver binding implemented; production auto provider registry is empty and there are no production values, HTTP client or authentication",
@@ -57,7 +57,11 @@
       "verified_surfaces": [
         "worker",
         "queue",
-        "durable_object"
+        "durable_object",
+        "container",
+        "mcp",
+        "brainbase_proxy",
+        "slack_delivery"
       ]
     },
     "resources": [
@@ -118,13 +122,17 @@
       ]
     },
     "verification": {
-      "scanner_coverage": "graphify collected; worker, queue, durable_object and the shared opaque-handle boundary primitive are locally verified; actual production coverage and Company Authority-selected container, mcp, brainbase_proxy, slack_delivery routes are not_collected",
+      "scanner_coverage": "graphify collected; all seven local propagation surfaces are behaviorally verified through an injected selected-operation route, Container durable registration and trusted boundary revalidation; credential-backed production provider coverage, actual MCP, Brainbase proxy and Slack service calls, and live evidence are not_collected",
       "evidence_state": "not_collected",
       "evidence": {
         "propagation_surfaces": [
           "worker",
           "queue",
-          "durable_object"
+          "durable_object",
+          "container",
+          "mcp",
+          "brainbase_proxy",
+          "slack_delivery"
         ],
         "negative_scenarios": [
           "unknown_tenant",
@@ -139,7 +147,10 @@
           "packages/cloud-runtime/src/__tests__/company-authority-queue.integration.test.ts",
           "packages/cloud-runtime/src/__tests__/company-authority-external-effect-outbox.test.ts",
           "packages/cloud-runtime/src/__tests__/company-authority-human-handoff.test.ts",
-          "packages/cloud-runtime/src/__tests__/slack.test.ts"
+          "packages/cloud-runtime/src/__tests__/slack.test.ts",
+          "packages/cloud-runtime/src/__tests__/company-authority-queue-runtime.test.ts",
+          "packages/cloud-runtime/src/__tests__/durable-tenant-boundary.integration.test.ts",
+          "packages/cloud-runtime/src/__tests__/sandbox-runtime-boundaries.test.ts"
         ],
         "graph": {
           "tenant_key": "tenant_id",
@@ -329,7 +340,7 @@
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "受理したCanonicalExecutionContextV1をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへ変更せず伝播し、各境界で外側company authorityと内側TenantContextEnvelopeを再検証する。現sliceではWorker、Queue、Durable Objectと、opaque handle内のouter envelopeをcontainer_launch、mcp_gateway、brainbase_proxy、slack_deliveryで再検証する共通primitiveがローカル実装・検証済みである。ただし4 surfaceの実Company Authority operation接続、production provider route、7 surfaceの本番同一run証拠はnot_collectedである",
+      "statement": "受理したCanonicalExecutionContextV1をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへ変更せず伝播し、各境界で外側company authorityと内側TenantContextEnvelopeを再検証する。現sliceでは注入型selected operation routeが受理済みsnapshotをContainerのtenant-bound Durable registryへ渡し、opaque handle内のouter envelopeをcontainer_launch、mcp_gateway、brainbase_proxy、exact send_messageのslack_deliveryで再検証するところまでローカル実装・検証済みである。ただしcredential-backed production provider route、実外部サービス呼び出し、7 surfaceの本番同一run証拠はnot_collectedである",
       "origin": {
         "story_refs": [
           {
