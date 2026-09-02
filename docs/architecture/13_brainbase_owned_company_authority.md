@@ -315,8 +315,8 @@ A0は移行契約だけを固定し、runtime adapter自体は実装しない。
 
 AC-012の将来E2Eは、`.vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json`を正本test planとする。各caseは入口、予定するoperator-visible surface、locked producer fixture由来のcanonical拒否code、非成功表示、`business_effect=false`、side effect 0、同一correlation IDのReceipt/readback、未確認状態とnext actionを一組で観測する。契約にcodeがなければ捏造せず`expected_code_status=not_defined`としてT0へ戻し、成功・coverage対象外にする。Queue negative caseはrejected-first-deliveryに限定し、original effect 0、redelivery delta 0、aggregate effect 0と同一拒否codeを確認する。accepted-first-deliveryのexactly-onceは別計画であり、このnegative E2E証拠へ含めない。
 
-A0時点ではproduction E2E、runtime trust store、key rotation／revocation、T0接続が未完了である。計画上の画面、Slack応答、CLI、log、Receiptを実装済みsurfaceとして扱わず、取得できない観測は`not_collected`のまま残す。
+A0時点ではproduction E2E、runtime trust store、key rotation／revocation、T0接続が未完了だった。現在のT0では7つのruntime境界をローカル接続・再検証済みだが、production endpoint／trust binding、実外部作用、live readbackは未完了である。計画上の画面、Slack応答、CLI、log、Receiptをproduction実証済みsurfaceとして扱わず、取得できない観測は`not_collected`のまま残す。
 
-AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証も`not_collected`である。A0で確認したfixture consumerと`assertCanonicalAuthorityRetrieval` helperはfail-closed契約の証拠に限定し、runtime integration証拠にはしない。
+AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証は、T0のローカル実装・検証まで収集済みである。A0で確認したfixture consumerと`assertCanonicalAuthorityRetrieval` helperだけをruntime integration証拠にはせず、production接続とlive readbackは`not_collected`のまま分離する。
 
-同様に、AC-010のduplicate delivery／effect exactly-once／Receipt・correlation・idempotency identity結合と、AC-011のOperationReceipt・UsageEvent・external readback・authority receiptのcorrelation結合は、T0 runtime adapterの実行証拠が得られるまで`not_collected`とする。fixture/mockのfield存在や形式検証をruntime実行証拠へ読み替えない。
+同様に、AC-010のduplicate delivery／effect exactly-once／Receipt・correlation・idempotency identity結合はT0でローカルoutbox契約まで検証済みだが、production provider実行と外部readbackは`not_collected`とする。AC-011のOperationReceipt・UsageEvent・external readback・authority receiptのproduction correlation結合も`not_collected`である。fixture/mockやローカル形式検証をproduction実行証拠へ読み替えない。

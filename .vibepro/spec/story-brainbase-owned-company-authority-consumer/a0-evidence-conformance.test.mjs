@@ -174,7 +174,7 @@ test("production E2E plan is bound to the locked producer and remains not_collec
         "human_action remains pending until the Brainbase-specified person completes it",
         "deny executes no model, credential, Graph, Task, or external effect",
       ],
-      exit_condition: "collect decision-specific runtime state and zero-effect evidence after the T0 adapter exists",
+      exit_condition: "collect decision-specific state and zero-effect evidence from the production-bound T0 runtime",
       fixture_acceptance_is_runtime_execution_proof: false,
     },
     "AC-004": {
@@ -189,7 +189,7 @@ test("production E2E plan is bound to the locked producer and remains not_collec
         "Brainbase proxy",
         "Slack delivery",
       ],
-      exit_condition: "wire the fixture-validated consumer into every listed runtime boundary and collect deterministic rejection and no-effect evidence",
+      exit_condition: "collect deterministic rejection and no-effect evidence from every listed production-bound runtime surface",
       fixture_mock_is_runtime_integration_proof: false,
       assertCanonicalAuthorityRetrieval_is_runtime_integration_proof: false,
     },
@@ -200,7 +200,7 @@ test("production E2E plan is bound to the locked producer and remains not_collec
         "duplicate delivery executes model, Brainbase write, external side effect, and Slack delivery exactly once",
         "both deliveries preserve the same Receipt, correlation ID, and idempotency identity",
       ],
-      exit_condition: "collect deterministic runtime effect counters and identity-linked receipt readback after the T0 adapter exists",
+      exit_condition: "collect production-bound runtime effect counters and identity-linked receipt readback",
       fixture_mock_is_production_proof: false,
     },
     "AC-011": {
@@ -217,10 +217,10 @@ test("production E2E plan is bound to the locked producer and remains not_collec
 
   const transition = plan.runtime_adapter_transition;
   assert.equal(transition.owner, "T0");
-  assert.equal(transition.implementation_status, "not_implemented");
+  assert.equal(transition.implementation_status, "local_implementation_present_production_not_verified");
   assert.equal(transition.evidence_status, "not_collected");
-  assert.equal(transition.implementation_claim, "none");
-  assert.equal(transition.endpoint_binding, "not_defined");
+  assert.equal(transition.implementation_claim, "local_adapter_queue_and_selected_container_boundaries_only");
+  assert.equal(transition.endpoint_binding, "local_config_parser_present_production_values_not_defined");
   assert.deepEqual(transition.eligible_providers, requestSchema["x-supported-providers"]);
   assert.deepEqual(transition.unsupported_providers, { service: "not_implemented" });
   assert.deepEqual(
@@ -242,7 +242,18 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   assert.equal(transition.legacy_fallback_after_v1_opt_in, "forbidden");
   assert.match(transition.dual_read_disagreement, /AUTHORITY_UNAVAILABLE/);
   assert.match(transition.rollback, /reject the business operation/);
-  assert.ok(transition.future_tests.length >= 6);
+  assert.deepEqual(transition.future_tests, [
+    "credential-backed production endpoint accepts only public-contract fields and rejects forbidden legacy fields",
+    "production provider route uses the configured trusted endpoint and public Ed25519 verification material",
+    "unknown capability and unsupported provider remain rejected under production configuration",
+    "schema rejection, authority unavailability, or dual-read disagreement never retries legacy authorization in live runtime",
+    "2 tenant x 2 person negative cases preserve business effect 0 and correlated receipts/readback",
+    "duplicate delivery preserves one effect identity with production provider reconciliation and readback",
+  ]);
+  assert.equal(
+    transition.exit_condition,
+    "bind the credential-backed production endpoint and trust/provider configuration, run live compatibility and no-fallback tests, and collect same-run receipts and external readback",
+  );
 
   const clauseById = new Map(spec.clauses.map((clause) => [clause.id, clause]));
   assert.deepEqual(

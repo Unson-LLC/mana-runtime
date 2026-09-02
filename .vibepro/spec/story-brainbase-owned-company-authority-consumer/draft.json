@@ -213,7 +213,7 @@
     {
       "id": "BND-006",
       "type": "contract",
-      "statement": "AC-005のauto／approval／human_action／denyを各runtime surfaceで実行し、protected effectを制御する証拠はT0 runtime adapter後までnot_collectedとする。A0のfixture acceptanceをruntime decision execution証拠へ昇格させない",
+      "statement": "AC-005のauto／approval／human_action／denyはT0でローカルroutingと作用ゼロ境界を実装・検証済みだが、production providerでのdecision実行と外部effect readbackはnot_collectedとする。A0のfixture acceptanceやT0ローカル検証をproduction decision execution証拠へ昇格させない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-005" }],
         "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "authority decisionの動作" }],
@@ -227,7 +227,7 @@
     {
       "id": "BND-005",
       "type": "contract",
-      "statement": "旧Slack requestからObservedExecutionRequestV1へのmapping、service除外、endpoint未定義、切替順、v1 opt-in後のlegacy fallback禁止をA0の計画契約として固定する。adapter実装と互換性実行証拠はT0 ownerのnot_implemented／not_collectedである",
+      "statement": "旧Slack requestからObservedExecutionRequestV1へのmapping、service除外、切替順、v1 opt-in後のlegacy fallback禁止をA0の計画契約として固定する。T0のlocal adapter、Queue、selected Container境界は実装・ローカル検証済みだが、production endpoint／trust binding、互換性実行証拠、live readbackはnot_collectedである",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-001" }, { "kind": "acceptance_criteria", "ac_id": "AC-002" }, { "kind": "acceptance_criteria", "ac_id": "AC-007" }],
         "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "runtime adapter transition contract" }],
@@ -241,7 +241,7 @@
     {
       "id": "BND-004",
       "type": "contract",
-      "statement": "AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証はT0 runtime adapterの実行証拠が得られるまでnot_collectedとし、fixture consumerやassertCanonicalAuthorityRetrieval helperをruntime integration証拠へ昇格させない",
+      "statement": "AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証はT0でローカル実装・検証済みだが、production endpoint／trust binding、実外部作用、live readbackはnot_collectedとする。fixture consumerやassertCanonicalAuthorityRetrieval helperだけをruntime integration証拠へ昇格させず、T0ローカル証拠もproduction proofへ昇格させない",
       "origin": {
         "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-004" }],
         "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "実行フローとA0境界" }],

@@ -14,7 +14,7 @@
     "runtime_trust_configuration": "local fail-closed environment parser and post-acceptance worker.queue resolver binding implemented; production auto provider registry is empty and there are no production values, HTTP client or authentication",
     "endpoint_binding": "URL parsing contract implemented locally; live path, transport, and authentication not_defined",
     "production_trust_store": "public-key input validation implemented locally; production key distribution, values, rotation, revocation, and readback not_implemented",
-    "runtime_evidence": "not_collected",
+    "runtime_evidence": "local_runtime_boundaries_verified_production_not_collected",
     "production_evidence": "not_collected"
   },
   "source_lock": {
@@ -95,7 +95,7 @@
       "unknown_tenant": "deny",
       "ambiguous_tenant": "deny",
       "unavailable_connection": "unavailable",
-      "no_data": "empty",
+      "no_data": "deny_as_authority_unavailable",
       "cross_tenant_candidate": "deny_and_audit"
     },
     "deployment_modes": [
@@ -123,7 +123,7 @@
     },
     "verification": {
       "scanner_coverage": "graphify collected; all seven local propagation surfaces are behaviorally verified through an injected selected-operation route, Container durable registration and trusted boundary revalidation; credential-backed production provider coverage, actual MCP, Brainbase proxy and Slack service calls, and live evidence are not_collected",
-      "evidence_state": "not_collected",
+      "evidence_state": "local_runtime_boundaries_verified_production_not_collected",
       "evidence": {
         "propagation_surfaces": [
           "worker",
