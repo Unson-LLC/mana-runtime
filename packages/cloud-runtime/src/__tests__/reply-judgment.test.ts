@@ -220,20 +220,23 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
-  it("rejects disagreement between Claude result and the Host-verified answer", () => {
+  it("uses the Host-verified Stop repair over Claude's stale result event", () => {
     const lines = stream({ replyLines: ["別の回答"] }).split("\n");
     const stopIndex = lines.findIndex((line) => line.includes('\"hook_event\":\"Stop\"'));
     const stopHook = JSON.parse(lines[stopIndex]!);
     const stopOutput = JSON.parse(stopHook.stdout);
+    const hostAcceptedAnswer = `${judgmentLine}\n${zeroCallLine}\nHostが検証した回答`;
     stopOutput.systemMessage += `\n${verifiedAnswerPrefix}${JSON.stringify({
-      answer: `${judgmentLine}\n${zeroCallLine}\nHostが検証した回答`,
+      answer: hostAcceptedAnswer,
       answer_digest: "b".repeat(64),
     })}`;
     stopHook.stdout = JSON.stringify(stopOutput);
     lines[stopIndex] = JSON.stringify(stopHook);
 
-    expect(() => parseReplyJudgmentStream(lines.join("\n")))
-      .toThrow("reply_judgment_verified_answer_mismatch");
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      reply: hostAcceptedAnswer,
+      stop: "completed",
+    });
   });
 
   it("binds cumulative PostToolUse receipts without requiring Stop prose identity", () => {
