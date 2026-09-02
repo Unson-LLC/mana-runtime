@@ -204,11 +204,12 @@ import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
 import { createBrainbaseTrustedProviderForwarderFromEnv } from "./multitenancy/trusted-provider-forwarder.js";
 import {
-  createDurableTenantBoundaryRegistry,
   resolveDurableTenantBoundaryContext,
   TENANT_BOUNDARY_HANDLE_HEADER,
   TenantBoundaryContextHandler,
 } from "./multitenancy/durable-tenant-boundary.js";
+import { executeTenantContainerOperation as executeTenantContainerOperationWithRegistry }
+  from "./multitenancy/tenant-container-operation.js";
 import {
   claimDevelopmentJobOwner,
   developmentTenantContextHash,
@@ -2616,28 +2617,9 @@ export default {
       release?: "on_completion" | "on_expiration";
       company_authority_envelope?: CompanyAuthorityRuntimeEnvelope<unknown>;
       execute(tenantBoundaryHandle: string): Promise<T>;
-    }): Promise<T> => executeTenantBoundary({
-      boundary: "container_launch",
-      tenant_context: input.tenant_context,
-      expected_scope: input.expected_scope,
-      verifier: input.verifier,
-      now: input.now,
-      execute: async () => {
-        const registry = createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE);
-        const handle = await registry.register({
-          tenant_context: input.tenant_context,
-          expected_scope: input.expected_scope,
-          ...(input.company_authority_envelope !== undefined
-            ? { company_authority_envelope: input.company_authority_envelope }
-            : {}),
-          now: input.now,
-        });
-        try {
-          return await input.execute(handle);
-        } finally {
-          if (input.release !== "on_expiration") await registry.dispose(handle);
-        }
-      },
+    }): Promise<T> => executeTenantContainerOperationWithRegistry({
+      ...input,
+      namespace: env.TENANT_RUNTIME_STATE,
     });
     for (const message of batch.messages) {
       if (isContractLedgerEvent(message.body)) {

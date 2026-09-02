@@ -473,10 +473,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(sandboxRuntime).toContain("deliverTenantGatewaySlackMessage");
     const runtimeGatewayStart = sandboxRuntime.indexOf("[RUNTIME_GATEWAY_PROXY_HOST]:");
     expect(runtimeGatewayStart).toBeGreaterThan(-1);
-    expect(sandboxRuntime).toContain('body.tool === "send_message"');
-    expect(sandboxRuntime).toContain(
-      '["mcp_gateway", "brainbase_proxy", "slack_delivery"]',
-    );
+    expect(sandboxRuntime).toContain("runtimeGatewayBoundaries(request)");
     expect(runner).toContain('"x-mana-tenant-boundary-handle"');
     expect(runner).toContain('status: "timed_out"');
     expect(sandboxRuntime).not.toContain("handleRuntimeGatewayProxyRequest(authorized, env)");
@@ -700,7 +697,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(ingestion).not.toContain("withTenantCredentialLease({");
     expect(worker).toContain("processMeetingMinutesSelectionWithStatus(");
     expect(worker).not.toContain("credentialLeaseHandle");
-    expect(worker).toContain("createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE)");
+    expect(worker).toContain("executeTenantContainerOperationWithRegistry({");
+    expect(worker).toContain("namespace: env.TENANT_RUNTIME_STATE");
     expect(worker).toContain("tenantRuntimeClients(this.env, input.tenant_context)");
     expect(worker).not.toContain("const clients = tenantRuntimeClients(this.env);");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");

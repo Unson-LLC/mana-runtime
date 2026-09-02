@@ -25,6 +25,7 @@ import { deliverTenantGatewaySlackMessage } from "./multitenancy/tenant-gateway-
 import { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
 import { authorizeRuntimeAnthropicOutbound, type RuntimeAnthropicOutboundEnv } from "./runtime-anthropic-outbound.js";
 import { authorizeRuntimeBrainbaseOutbound } from "./runtime-brainbase-outbound.js";
+import { runtimeGatewayBoundaries } from "./multitenancy/runtime-gateway-boundaries.js";
 
 export { ContainerProxy } from "@cloudflare/sandbox";
 export { proxyDevelopmentCallback } from "./multitenancy/development-callback-proxy.js";
@@ -105,19 +106,6 @@ async function authorizeTenantRuntimeProxy(
     GOOGLE_DRIVE_MCP_TOKEN: undefined,
   };
   return handler(new Request(request, { headers }), credentialFetch, proxyEnv, resolved);
-}
-
-async function runtimeGatewayBoundaries(
-  request: Request,
-): Promise<readonly ("mcp_gateway" | "brainbase_proxy" | "slack_delivery")[]> {
-  try {
-    const body = await request.clone().json() as { tool?: unknown };
-    return body.tool === "send_message"
-      ? ["mcp_gateway", "brainbase_proxy", "slack_delivery"]
-      : ["mcp_gateway", "brainbase_proxy"];
-  } catch {
-    return ["mcp_gateway", "brainbase_proxy"];
-  }
 }
 
 TechKnightSandbox.outboundByHost = {

@@ -67,7 +67,7 @@ describe("tenant Slack runtime wiring", () => {
     expect(queue).toContain("request: snapshot.request");
     expect(queue).toContain("envelope: snapshot.envelope");
     expect(queue).toContain("registry: companyAuthorityProviderRoutes");
-    expect(queue).toContain("company_authority_envelope: input.company_authority_envelope");
+    expect(queue).toContain("executeTenantContainerOperationWithRegistry({");
     expect(queue).toContain("processCompanyAuthorityHumanHandoff({");
     expect(queue).toContain("createDurableCompanyAuthorityHumanHandoffClient(");
     expect(queue).toContain("execution_hash: snapshot.execution_hash");

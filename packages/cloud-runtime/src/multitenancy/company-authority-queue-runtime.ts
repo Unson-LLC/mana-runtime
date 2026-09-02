@@ -137,17 +137,21 @@ export async function processCompanyAuthorityAutoQueueRoute<T>(input: {
   payload: T;
   registry: CompanyAuthorityCapabilityProviderRegistry<T>;
 }): Promise<ExternalEffectOutboxRecord> {
-  if (input.context.authority.decision !== "auto") {
+  const acceptedContext = structuredClone(input.context);
+  const acceptedRequest = structuredClone(input.request);
+  const acceptedEnvelope = structuredClone(input.envelope);
+  const acceptedPayload = structuredClone(input.payload);
+  if (acceptedContext.authority.decision !== "auto") {
     scopeMismatch("company_authority_non_auto_provider_route_forbidden");
   }
-  if (input.request.requested_action.desired_effect !== "external_side_effect") {
+  if (acceptedRequest.requested_action.desired_effect !== "external_side_effect") {
     scopeMismatch("company_authority_provider_effect_mismatch");
   }
-  const capabilityId = input.request.requested_action.capability_id;
-  if (input.context.authority.capability_id !== capabilityId) {
+  const capabilityId = acceptedRequest.requested_action.capability_id;
+  if (acceptedContext.authority.capability_id !== capabilityId) {
     scopeMismatch("company_authority_provider_capability_mismatch");
   }
-  const allowedEffects = input.context.authority.allowed_effects;
+  const allowedEffects = acceptedContext.authority.allowed_effects;
   if (!Array.isArray(allowedEffects) || !allowedEffects.includes("external_side_effect")) {
     scopeMismatch("company_authority_provider_effect_not_allowed");
   }
@@ -160,18 +164,19 @@ export async function processCompanyAuthorityAutoQueueRoute<T>(input: {
       capability_id: capabilityId,
     });
   }
+  const outbox = route.create_outbox(structuredClone(acceptedContext));
   return processCompanyAuthorityExternalEffect({
-    context: input.context,
-    payload: input.payload,
-    outbox: route.create_outbox(input.context),
+    context: acceptedContext,
+    payload: acceptedPayload,
+    outbox,
     // Keep the generic outbox contract narrow; only this route closure carries
     // the accepted Company Authority context and immutable request envelope.
     provider_send: ({ provider_key, payload }) => route.provider_send({
       provider_key,
-      context: structuredClone(input.context),
-      request: structuredClone(input.request),
-      envelope: structuredClone(input.envelope),
-      payload,
+      context: structuredClone(acceptedContext),
+      request: structuredClone(acceptedRequest),
+      envelope: structuredClone(acceptedEnvelope),
+      payload: structuredClone(payload),
     }),
   });
 }
