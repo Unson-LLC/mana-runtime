@@ -542,10 +542,12 @@ describe("会社別Cloudflare deployment", () => {
       placementId: string; projectCodes: string[];
     }>).find((placement) => placement.placementId === "biz-meeting-router");
     expect(routerPlacement?.projectCodes).toEqual(["unson"]);
-    // Slack ingress must issue its tenant context with the canonical Graph
-    // project code. Authority record IDs are reserved for destination
-    // selection and are not valid source placement project IDs.
-    expect(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON).toBeUndefined();
+    // Slack ingress starts from the stable project alias, while the signed
+    // tenant context returns the canonical authority project ID. Queue scope
+    // validation must compare against that same canonical ID.
+    expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
+      "biz-meeting-router": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
+    });
     expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
       techknight: "prj_01M1DDJ9V6EER4676YPXBSHBZX",
