@@ -14,6 +14,12 @@ test("T0 local implementation state does not promote production evidence", async
       "utf8",
     ),
   );
+  const runtimeSpec = JSON.parse(
+    await readFile(
+      new URL("../story-brainbase-owned-company-authority-runtime-adapter-v1/spec.json", import.meta.url),
+      "utf8",
+    ),
+  );
   const consumerStory = await readFile(
     new URL(
       "../../../docs/management/stories/active/story-brainbase-owned-company-authority-consumer.md",
@@ -77,16 +83,22 @@ test("T0 local implementation state does not promote production evidence", async
   assert.match(consumerStory, /T0では7 surfaceのローカル接続と再検証を実装・検証済み/);
   assert.doesNotMatch(consumerStory, /T0 runtime adapter未実装/);
 
-  assert.equal(
-    runtimeDraft.implementation_state.runtime_evidence,
-    "local_runtime_boundaries_verified_production_not_collected",
-  );
-  assert.equal(runtimeDraft.implementation_state.production_evidence, "not_collected");
-  assert.equal(runtimeDraft.multi_tenancy.failure_semantics.no_data, "deny_as_authority_unavailable");
-  assert.equal(
-    runtimeDraft.multi_tenancy.verification.evidence_state,
-    "local_runtime_boundaries_verified_production_not_collected",
-  );
+  for (const runtimeArtifact of [runtimeDraft, runtimeSpec]) {
+    assert.equal(
+      runtimeArtifact.implementation_state.runtime_evidence,
+      "local_runtime_boundaries_verified_production_not_collected",
+    );
+    assert.equal(runtimeArtifact.implementation_state.production_evidence, "not_collected");
+    assert.equal(
+      runtimeArtifact.multi_tenancy.failure_semantics.no_data,
+      "deny_as_authority_unavailable",
+    );
+    assert.equal(
+      runtimeArtifact.multi_tenancy.verification.evidence_state,
+      "local_runtime_boundaries_verified_production_not_collected",
+    );
+    assert.ok(runtimeArtifact.clauses.some(({ id }) => id === "INV-004"));
+  }
 
   const cases = new Map(plan.cases.map((item) => [item.id, item]));
   assert.equal(cases.get("legacy-runtime").implementation_status, "case_not_implemented_local_runtime_adapter_present");
