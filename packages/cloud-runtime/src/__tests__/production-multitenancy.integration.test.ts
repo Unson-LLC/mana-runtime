@@ -504,6 +504,30 @@ describe("production multitenancy integration", () => {
     }));
   });
 
+  it("retries an upstream failure when the canonical error marks it retryable", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A, connection_id: CONNECTION_A, workspace_id: "T-A", channel_id: "C-A",
+      actor_principal_id: "person-a", project_id: "project-a", deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-PROD-RETRYABLE", operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FBQ",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FBR",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshot({ tenant_id: TENANT_A, connection_id: CONNECTION_A,
+        workspace_id: "T-A", deployment_id: DEPLOYMENT_A }),
+      resolve_verification_key: async () => publicKey,
+    });
+    const message = queueMessage(value);
+    await consumeTenantQueueMessage(message, {
+      verifier, expected_scope: () => expectedScopeA, now: () => NOW,
+      process: async () => { throw new TenantBoundaryError("worker_ingress", "COMPANY_IDENTITY_UNRESOLVED",
+        "COMPANY_IDENTITY_UNRESOLVED", { retryable: true, status: 503 }); },
+      ownership: new IdempotencyMemoryStore(), payload_hash: () => `sha256:${"f".repeat(64)}`,
+      retention_until: () => RETENTION_UNTIL,
+    });
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(message.ack).not.toHaveBeenCalled();
+  });
+
   it("logs allowlisted operational failure reasons without exposing arbitrary error messages", async () => {
     const { value, publicKey } = await signedEnvelope({
       tenant_id: TENANT_A,

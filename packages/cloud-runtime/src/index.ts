@@ -45,6 +45,7 @@ import {
   type TenantInteractionTarget,
 } from "./slack-interactions.js";
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
+import { meetingMinutesSelectionDestination } from "./meeting-minutes-selection-scope.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
 import { meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
 import { handleMeetingMinutesTaskAction, type MeetingMinutesSourceIdentity } from "./meeting-minutes-task-actions.js";
@@ -1425,7 +1426,7 @@ function expectedTenantMeetingMinutesSelectionScope(
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = expectedProjectScopeForEvent(env, {
+  const selectionEvent = {
     tenantId: envelope.tenant.tenant_id,
     eventId: meetingMinutesSelectionEventId(selection),
     workspaceId: selection.workspaceId,
@@ -1436,7 +1437,19 @@ function expectedTenantMeetingMinutesSelectionScope(
     eventType: "message",
     text: "",
     receivedAt: selection.actionTs,
-  }, envelope);
+  };
+  const destination = meetingMinutesSelectionDestination(
+    selection,
+    meetingMinutesRuntimeConfig(env).destinations,
+  );
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+  const trustedProjectIds = destinationAuthorization?.trusted_project_ids
+    ?? placementProjectScopeForEvent(env, selectionEvent).project_ids;
+  const placementProjectScope = resolveCanonicalProjectScope(
+    envelope.authorization,
+    trustedProjectIds,
+    "queue_consumer",
+  );
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: selection.workspaceId,

@@ -462,9 +462,11 @@ export async function consumeTenantQueueMessage<T, R>(
       ...(failureReason ? { failure_reason: failureReason } : {}),
       ...safeGenerationFailureDiagnostics(error),
     });
+    const retryable = RETRYABLE_BOUNDARY_CODES.has(code)
+      || (error instanceof TenantBoundaryError && error.details?.retryable === true);
     if (idempotencyClaimed) {
       try {
-        if (RETRYABLE_BOUNDARY_CODES.has(code)) {
+        if (retryable) {
           await releaseIdempotency(options.ownership, tenantContext.idempotency_key,
             tenantContext.tenant.tenant_id, idempotencyPartitionKey, idempotencyClaimToken);
         } else {
@@ -490,6 +492,6 @@ export async function consumeTenantQueueMessage<T, R>(
         throw claimError;
       }
     }
-    if (RETRYABLE_BOUNDARY_CODES.has(code)) message.retry(); else message.ack();
+    if (retryable) message.retry(); else message.ack();
   }
 }
