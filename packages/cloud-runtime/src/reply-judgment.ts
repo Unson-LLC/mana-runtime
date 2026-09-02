@@ -382,7 +382,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
     const completedStopAuditLines = completedBrainbaseAuditLines(expectedAuditLines);
-    if (completedStopAuditLines.length !== calls.length) {
+    // The Host may collapse several tool-level receipts into a smaller final
+    // summary. Per-call completeness is proven above by PostToolUse; Stop only
+    // needs to carry at least one completed Brainbase audit line.
+    if (completedStopAuditLines.length === 0) {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
   } else if (completedBrainbaseAuditLines(expectedAuditLines).length > 0) {

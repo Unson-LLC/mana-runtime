@@ -217,6 +217,20 @@ describe("Slack reply Judgment lifecycle", () => {
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
   });
 
+  it("accepts a completed Stop summary when every tool call has its own PostToolUse receipt", () => {
+    const lines = stream({ toolCount: 2, replyLines: ["回答本文"] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage = stopOutput.systemMessage.replace(`\n${secondBrainbaseLine}`, "");
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+
+    const result = parseReplyJudgmentStream(lines.join("\n"));
+    expect(result.auditLines).toEqual([judgmentLine, brainbaseLine]);
+    expect(result.toolJournal).toHaveLength(2);
+  });
+
   it("fails closed when Stop reports an incomplete audit despite a bound PostToolUse receipt", () => {
     const lines = stream({ withTool: true, replyLines: ["回答本文"] }).split("\n");
     const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
