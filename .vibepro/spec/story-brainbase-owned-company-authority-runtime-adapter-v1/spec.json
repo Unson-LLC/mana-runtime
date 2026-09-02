@@ -281,7 +281,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "C-002",
@@ -319,7 +319,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "INV-001",
@@ -351,9 +351,17 @@
           }
         ]
       },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "must_contain": "accepts positive decisions unchanged and rejects deny or nested-signature tampering without effects"
+          }
+        ]
+      },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "INV-002",
@@ -397,9 +405,17 @@
           }
         ]
       },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+            "must_contain": "normalizes an internal transport code and fails closed after explicit opt-in"
+          }
+        ]
+      },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "C-003",
@@ -449,7 +465,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "INV-003",
@@ -493,9 +509,17 @@
           }
         ]
       },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/company-authority-human-handoff.test.ts",
+            "must_contain": "persists approval only for the signed approver without marking notification or completion"
+          }
+        ]
+      },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "INV-004",
@@ -527,9 +551,17 @@
           }
         ]
       },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
+            "must_contain": "rejects observations without verified Slack provenance"
+          }
+        ]
+      },
       "confidence": 1,
       "first_seen_at": "2026-09-02T02:51:07.101Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "S-001",
@@ -573,13 +605,13 @@
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/company-authority-runtime-adapter.integration.test.ts",
-            "case": "foundation boundary fails closed after explicit opt-in when authority is unavailable"
+            "case": "normalizes an internal transport code and fails closed after explicit opt-in"
           }
         ]
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     },
     {
       "id": "C-004",
@@ -611,7 +643,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:51:07.101Z"
+      "last_revised_at": "2026-09-02T02:56:43.794Z"
     }
   ],
   "open_questions": [
