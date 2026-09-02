@@ -187,19 +187,19 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
       ? payload.last_assistant_message : "";
     const explicitFinalReceipt = documentedOutput.schema_version === "brainbase-judgment-final-v1"
       && documentedOutput.completion_status === "complete";
-    const verifiedAuditLines = auditLinesFromText(
-      explicitFinalReceipt ? verifiedAnswer : existingSystemMessage,
-    );
+    // The Host validates last_assistant_message itself. Its systemMessage is a
+    // display surface and may contain either the completed audit block or only
+    // a completion notice, depending on the HTTP adapter. Bind audit lines to
+    // the exact submitted answer for every non-blocking Stop acceptance.
+    const verifiedAuditLines = auditLinesFromText(verifiedAnswer);
     const hasJudgmentAudit = verifiedAuditLines.some((line) =>
       JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
     const hasBrainbaseAudit = verifiedAuditLines.some((line) =>
       BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
       && !line.startsWith("📚 Brainbase監査未完了:"));
-    // The production Brainbase HTTP adapter returns the canonical completed
-    // Stop audit surface while retaining the final receipt in the Host journal.
-    // A non-blocking, identity-bound response containing both required audit
-    // namespaces therefore proves that this exact last_assistant_message passed
-    // Host validation, even though the transport does not duplicate the final.
+    // A non-blocking, identity-bound response proves that this exact
+    // last_assistant_message passed Host validation. The final receipt remains
+    // in the Host journal and need not be duplicated by the HTTP adapter.
     const canonicalRemoteCompletion = !documentedOutput.decision
       && hasJudgmentAudit && hasBrainbaseAudit;
     if (explicitFinalReceipt || canonicalRemoteCompletion) {
