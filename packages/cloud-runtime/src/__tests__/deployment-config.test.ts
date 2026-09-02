@@ -215,7 +215,7 @@ describe("会社別Cloudflare deployment", () => {
       expect.objectContaining({
         workspace_id: "T0882T8N9UH",
         app_id: "A0BPM2J33SN",
-        deployment_id: "dep_01M0JK4PXCSV1P2V6Q4FJRBY7B",
+        deployment_id: "dep_01M0HMA2282QK43N9FR9690EQS",
         contract_revision: "3",
       }),
     ]);
