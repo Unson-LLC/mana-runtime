@@ -420,6 +420,61 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(result.stderr).toContain("judgment_hook_audit_not_recorded");
   });
 
+  it.each([
+    "brainbase_judgment_state_record",
+    "mcp__brainbase__brainbase_judgment_state_record",
+  ])("accepts an empty Host output for the internal state tool %s", async (toolName) => {
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1", accepted: true,
+        hook_event_name: payload.hook_event_name, session_id: payload.session_id,
+        turn_id: payload.turn_id,
+        ...(payload.hook_event_name === "UserPromptSubmit" ? {
+          receipt_id: "receipt-state-tool",
+          route_resolution_sha256: "f".repeat(64),
+        } : {}),
+        output: payload.hook_event_name === "UserPromptSubmit"
+          ? {
+              hookSpecificOutput: {
+                hookEventName: "UserPromptSubmit",
+                additionalContext: "Judgment route resolved",
+              },
+            }
+          : {},
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const env = {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    };
+
+    expect((await runHook({
+      hook_event_name: "UserPromptSubmit",
+      session_id: `session-${toolName}`,
+    }, env)).code).toBe(0);
+    const result = await runHook({
+      hook_event_name: "PostToolUse",
+      session_id: `session-${toolName}`,
+      tool_name: toolName,
+    }, env);
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    const output = JSON.parse(result.stdout);
+    expect(output.systemMessage).toContain(receiptPrefix);
+    expect(output.systemMessage).not.toContain("Brainbase tool use recorded");
+  });
+
   it("fails closed when UserPromptSubmit lacks a Host route receipt", async () => {
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
