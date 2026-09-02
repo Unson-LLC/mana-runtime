@@ -535,9 +535,10 @@ describe("会社別Cloudflare deployment", () => {
       placementId: string; projectCodes: string[];
     }>).find((placement) => placement.placementId === "biz-meeting-router");
     expect(routerPlacement?.projectCodes).toEqual(["unson"]);
-    expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)["biz-meeting-router"]).toEqual([
-      "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
-    ]);
+    // Slack ingress must issue its tenant context with the canonical Graph
+    // project code. Authority record IDs are reserved for destination
+    // selection and are not valid source placement project IDs.
+    expect(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON).toBeUndefined();
     expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
       techknight: "prj_01M1DDJ9V6EER4676YPXBSHBZX",
