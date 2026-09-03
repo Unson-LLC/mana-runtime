@@ -196,6 +196,41 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
+  it("does not count Judgment control-plane calls as Brainbase source reads", () => {
+    const lines = stream().split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
+        }] },
+      }),
+      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1")),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
+        }] },
+      }),
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "state-record", name: "mcp__brainbase__brainbase_judgment_state_record", input: {},
+        }] },
+      }),
+      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1")),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "state-record", content: "{}",
+        }] },
+      }),
+    );
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      stop: "completed",
+      toolJournal: [],
+      auditLines: [judgmentLine, zeroCallLine],
+    });
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity", () => {
     const result = parseReplyJudgmentStream(stream({ toolCount: 2 }));
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
