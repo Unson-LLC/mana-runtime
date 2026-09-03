@@ -112,8 +112,10 @@ describe("Cloudflare Claude runtime config", () => {
     expect(reply).toContain("--output-format stream-json --verbose --include-hook-events");
     expect(reply).toContain("--settings /tmp/mana-reply-claude-settings.json");
     expect(reply).toContain("--append-system-prompt");
-    expect(reply).toContain("first assistant action MUST be a call to mcp__brainbase__brainbase_resolve_turn");
+    expect(reply).toContain("first assistant action MUST be exactly one call to mcp__brainbase__brainbase_resolve_turn");
     expect(reply).toContain("Hook-provided turn_ref unchanged");
+    expect(reply).toContain("After it succeeds, never call resolve_turn again");
+    expect(reply).toContain("when knowledge.resolve is required, call mcp__brainbase__brainbase_knowledge_resolve");
     expect(reply).not.toContain("Read turn_input from the UserPromptSubmit Hook context");
 
     const settingsPath = fileURLToPath(new URL("../../container/reply-claude-settings.json", import.meta.url));

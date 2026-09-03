@@ -156,7 +156,7 @@ export function buildRuntimeClaudeCommand(
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : options.includeJudgmentHookEvents ? " --output-format stream-json --verbose --include-hook-events" : "";
   const judgmentBootstrapArg = purpose === "reply" && options.includeJudgmentHookEvents
-    ? " --append-system-prompt 'Your first assistant action MUST be a call to mcp__brainbase__brainbase_resolve_turn. Pass the Hook-provided turn_ref unchanged and add only your semantic model_interpretation; do not read, rebuild, inline, or pass turn_input. Do not emit text or call any other tool before that call succeeds. If a Hook blocks an action because resolve_turn is missing, call mcp__brainbase__brainbase_resolve_turn immediately instead of answering.'"
+    ? " --append-system-prompt 'Your first assistant action MUST be exactly one call to mcp__brainbase__brainbase_resolve_turn. Pass the Hook-provided turn_ref unchanged and add only your semantic model_interpretation; do not read, rebuild, inline, or pass turn_input. Do not emit text or call any other tool before that call succeeds. After it succeeds, never call resolve_turn again in this turn. Execute every capability marked required in the returned TurnContract before answering; when knowledge.resolve is required, call mcp__brainbase__brainbase_knowledge_resolve with the required project and knowledge intent. If Stop blocks the answer, execute the missing capabilities named by Stop instead of repeating resolve_turn.'"
     : "";
   const claude = "node /opt/mana/tenant-claude-runner.mjs --";
   const base = purpose === "meeting-minutes"
