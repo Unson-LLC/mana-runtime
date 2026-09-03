@@ -130,6 +130,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(allowed).toEqual({ code: 0, stdout: "", stderr: "" });
     const recorded = await runHook({
       hook_event_name: "PostToolUse", session_id: "session-first-tool",
+      tool_use_id: "resolve-turn-tool-use",
       tool_name: "mcp__brainbase__brainbase_resolve_turn",
     }, env);
     expect(recorded.code).toBe(0);
@@ -190,6 +191,10 @@ describe("Brainbase judgment Hook forwarder", () => {
       const result = await runHook({
         hook_event_name,
         session_id: "session-1",
+        ...(hook_event_name === "PostToolUse" ? {
+          tool_use_id: "tool-use-1",
+          tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+        } : {}),
         ...(hook_event_name === "Stop" ? {
           last_assistant_message: "🧠 判断参照: 「依頼」を参照 → 対応 ✓\n📚 Brainbase検索: search「依頼」→ 該当なし",
         } : {}),
@@ -217,6 +222,11 @@ describe("Brainbase judgment Hook forwarder", () => {
       expect(embeddedReceipt.turn_id).toBeTruthy();
       if (hook_event_name === "UserPromptSubmit") {
         expect(embeddedReceipt.route_resolution_sha256).toBe("a".repeat(64));
+      } else if (hook_event_name === "PostToolUse") {
+        expect(embeddedReceipt).toMatchObject({
+          tool_use_id: "tool-use-1",
+          tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+        });
       }
     }
     expect(new Set(payloads.map((payload) => payload.turn_id)).size).toBe(1);
@@ -750,9 +760,62 @@ describe("Brainbase judgment Hook forwarder", () => {
     };
     const submitted = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-5" }, env);
     expect(submitted.code).toBe(0);
-    const result = await runHook({ hook_event_name: "PostToolUse", session_id: "session-5" }, env);
+    const result = await runHook({
+      hook_event_name: "PostToolUse",
+      session_id: "session-5",
+      tool_use_id: "tool-use-5",
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+    }, env);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain("judgment_hook_audit_not_recorded");
+  });
+
+  it("fails closed when PostToolUse lacks the exact Claude tool identity", async () => {
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1",
+        accepted: true,
+        hook_event_name: payload.hook_event_name,
+        session_id: payload.session_id,
+        turn_id: payload.turn_id,
+        receipt_id: "receipt-tool-identity",
+        ...(payload.hook_event_name === "UserPromptSubmit" ? {
+          route_resolution_sha256: "d".repeat(64),
+        } : {}),
+        output: payload.hook_event_name === "UserPromptSubmit" ? {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext: "Judgment route resolved",
+          },
+        } : { systemMessage: "📚 Brainbase参照先: 呼び出し成功 ✓" },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const env = {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    };
+    expect((await runHook({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "session-tool-identity",
+    }, env)).code).toBe(0);
+
+    const result = await runHook({
+      hook_event_name: "PostToolUse",
+      session_id: "session-tool-identity",
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+    }, env);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("judgment_hook_tool_identity_missing");
   });
 
   it.each([
@@ -800,6 +863,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     const result = await runHook({
       hook_event_name: "PostToolUse",
       session_id: `session-${toolName}`,
+      tool_use_id: `tool-use-${toolName}`,
       tool_name: toolName,
     }, env);
 

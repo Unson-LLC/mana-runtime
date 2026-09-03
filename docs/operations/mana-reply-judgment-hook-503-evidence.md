@@ -2,7 +2,13 @@
 
 ## mana-reply-judgment-hook-503:ac:5 fresh Slack lifecycle
 
-現状: `passed`
+現行HEADの状態: `not_collected`
+
+この文書に残る2026-09-02の結果は、実装commit `9098c6ea57fe22db332ccb77d9edceedbf01926b` に対する履歴証跡である。後続の2026-09-03 fresh E2Eではquota revision 4の適用とBrainbase取得までは成功したが、`reply_judgment_tool_audit_mismatch` によりSlack投稿前にfail closedした。その後のPostToolUse identity binding修正を含む現行HEADについて、本番配備後のfresh Slack mention、完了episode receipt、`response_ts`、同一thread表示の一連のreadbackはまだ収集していない。
+
+したがって、以下の旧結果を現行HEADのAC5合格証拠には使用しない。現行HEADを配備後、同一fresh eventで一連のreadbackが揃った場合だけ `passed` へ更新する。
+
+## 2026-09-02の履歴証拠（現行HEADには未適用）
 
 2026-09-02、雲孫事業運営workspaceの `#0240-mana-dev` で修正版配備後にfresh Slack mentionを投入し、同じthreadへの回答とJudgment監査行をSlack APIとruntime logの両方でreadbackした。
 
