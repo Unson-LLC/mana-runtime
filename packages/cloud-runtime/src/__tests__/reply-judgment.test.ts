@@ -203,7 +203,10 @@ describe("Slack reply Judgment lifecycle", () => {
           type: "tool_use", id: "google-tool", name: "mcp__google_drive__search", input: {},
         }] },
       }),
-      JSON.stringify(hook("PostToolUse", "", "turn-1")),
+      JSON.stringify(hook("PostToolUse", "", "turn-1", {
+        tool_use_id: "google-tool",
+        tool_name: "mcp__google_drive__search",
+      })),
       JSON.stringify({
         type: "user", session_id: "session-1", message: { content: [{
           type: "tool_result", tool_use_id: "google-tool", content: "{}",
@@ -226,7 +229,10 @@ describe("Slack reply Judgment lifecycle", () => {
           type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
         }] },
       }),
-      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1")),
+      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1", {
+        tool_use_id: "resolve-turn",
+        tool_name: "mcp__brainbase__brainbase_resolve_turn",
+      })),
       JSON.stringify({
         type: "user", session_id: "session-1", message: { content: [{
           type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
@@ -237,7 +243,10 @@ describe("Slack reply Judgment lifecycle", () => {
           type: "tool_use", id: "state-record", name: "mcp__brainbase__brainbase_judgment_state_record", input: {},
         }] },
       }),
-      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1")),
+      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1", {
+        tool_use_id: "state-record",
+        tool_name: "mcp__brainbase__brainbase_judgment_state_record",
+      })),
       JSON.stringify({
         type: "user", session_id: "session-1", message: { content: [{
           type: "tool_result", tool_use_id: "state-record", content: "{}",
@@ -374,6 +383,49 @@ describe("Slack reply Judgment lifecycle", () => {
         outcome: "success",
       }],
     });
+  });
+
+  it("fails closed when a replayed identity-bound PostToolUse receipt is missing its audit", () => {
+    const bound = bindPostToolReceipt(
+      stream({ withTool: true }),
+      "tool-1",
+      "mcp__brainbase__brainbase_knowledge_resolve",
+    );
+    const lines = bound.split("\n");
+    const postToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
+    const incompleteEvent = JSON.parse(lines[postToolIndex]!);
+    const incompleteOutput = JSON.parse(incompleteEvent.stdout);
+    incompleteOutput.systemMessage = incompleteOutput.systemMessage
+      .split("\n")
+      .filter((line: string) => line.startsWith(receiptPrefix))
+      .join("\n");
+    incompleteEvent.stdout = JSON.stringify(incompleteOutput);
+    lines.splice(postToolIndex + 1, 0, JSON.stringify(incompleteEvent));
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch");
+  });
+
+  it("fails closed when a relevant PostToolUse receipt lacks tool identity", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const postToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
+    const incompleteEvent = JSON.parse(lines[postToolIndex]!);
+    const incompleteOutput = JSON.parse(incompleteEvent.stdout);
+    incompleteOutput.systemMessage = incompleteOutput.systemMessage
+      .split("\n")
+      .map((line: string) => {
+        if (!line.startsWith(receiptPrefix)) return line;
+        const receipt = JSON.parse(line.slice(receiptPrefix.length));
+        delete receipt.tool_use_id;
+        delete receipt.tool_name;
+        return `${receiptPrefix}${JSON.stringify(receipt)}`;
+      })
+      .join("\n");
+    incompleteEvent.stdout = JSON.stringify(incompleteOutput);
+    lines[postToolIndex] = JSON.stringify(incompleteEvent);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch");
   });
 
   it("rejects a replayed PostToolUse receipt whose bound tool identity changes", () => {

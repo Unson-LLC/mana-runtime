@@ -357,8 +357,31 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   });
 
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
-  const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse"
-    && toolBrainbaseAuditLines(auditLines(hook.output)).length > 0);
+  const postToolHookCandidates = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse");
+  const hasToolUseId = (hook: typeof postToolHookCandidates[number]): boolean =>
+    typeof hook.receipt.tool_use_id === "string" && Boolean(hook.receipt.tool_use_id.trim());
+  const hasToolName = (hook: typeof postToolHookCandidates[number]): boolean =>
+    typeof hook.receipt.tool_name === "string" && Boolean(hook.receipt.tool_name.trim());
+  if (postToolHookCandidates.some((hook) => !hasToolUseId(hook) || !hasToolName(hook))) {
+    throw new Error("reply_judgment_tool_audit_mismatch");
+  }
+  const matchesEvidenceCall = (hook: typeof postToolHookCandidates[number]): boolean =>
+    hasToolUseId(hook) && calls.some((call) => call.id === hook.receipt.tool_use_id);
+  const isEvidenceToolReceipt = (hook: typeof postToolHookCandidates[number]): boolean => {
+    const toolName = hook.receipt.tool_name;
+    return matchesEvidenceCall(hook)
+      || (typeof toolName === "string"
+        && toolName.startsWith("mcp__brainbase__")
+        && isBrainbaseEvidenceTool(toolName));
+  };
+  const identityBoundHooks = postToolHookCandidates.filter((hook) =>
+    isEvidenceToolReceipt(hook) && hasToolUseId(hook) && hasToolName(hook));
+  if (identityBoundHooks.some((hook) => toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
+    throw new Error("reply_judgment_tool_audit_mismatch");
+  }
+  const postToolHooks = postToolHookCandidates.filter((hook) =>
+    identityBoundHooks.includes(hook)
+      || toolBrainbaseAuditLines(auditLines(hook.output)).length > 0);
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
   // call. Claude can recover by calling resolve_turn first and then retrying.
@@ -398,9 +421,6 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     throw new Error("reply_judgment_identity_mismatch");
   }
   let boundPostToolHooks: typeof postToolHooks;
-  const identityBoundHooks = postToolHooks.filter((hook) =>
-    typeof hook.receipt.tool_use_id === "string" && hook.receipt.tool_use_id.trim()
-      && typeof hook.receipt.tool_name === "string" && hook.receipt.tool_name.trim());
   if (identityBoundHooks.length > 0) {
     if (identityBoundHooks.length !== postToolHooks.length) {
       throw new Error("reply_judgment_tool_audit_mismatch");
@@ -430,7 +450,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
   } else {
-    if (postToolHooks.length !== executedCalls.length) {
+    if (postToolHooks.length > 0 || executedCalls.length > 0) {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
     boundPostToolHooks = postToolHooks;

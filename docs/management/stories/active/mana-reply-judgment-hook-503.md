@@ -29,7 +29,7 @@ related_stories:
 - [x] AC3: `meeting-minutes` purposeは従来の議事録専用settingsを使い続け、通常返信用settingsへ混線しない。
 - [x] AC4: container imageは通常返信専用settingsを `/opt/mana` へ読み取り専用で同梱する。
 - [ ] AC5: 対象の単体テストと既存の関連テストが通り、本番配備後のfresh Slack mentionで同一threadの回答と完了したJudgment lifecycleを確認する。
-- [ ] AC6: 各Brainbase PostToolUse受領票を`tool_use_id`と`tool_name`で実呼び出しへ結合し、同一受領票の再掲は1件として扱い、異なる内容・欠落・未完了監査はfail closedする。
+- [x] AC6: 全PostToolUse受領票に`tool_use_id`と`tool_name`を必須とし、各Brainbase受領票を実呼び出しへ結合する。同一受領票の再掲だけを1件として扱い、異なる内容・識別子欠落・監査欠落・未完了監査はfail closedする。
 
 ## 非対象
 

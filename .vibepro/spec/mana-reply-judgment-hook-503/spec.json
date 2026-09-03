@@ -345,7 +345,7 @@
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "各Brainbase PostToolUse受領票をtool_use_idとtool_nameで実呼び出しへ結合し、同一内容の再掲だけを1件に畳み、内容不一致・欠落・未完了監査はfail closedする",
+      "statement": "全PostToolUse受領票にtool_use_idとtool_nameを必須とし、各Brainbase受領票を実呼び出しへ結合する。同一内容の再掲だけを1件に畳み、内容不一致・識別子欠落・監査欠落・未完了監査はfail closedする",
       "origin": {
         "story_refs": [
           {
@@ -374,6 +374,14 @@
             "case": "deduplicates a replayed PostToolUse receipt by its exact tool identity"
           },
           {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "fails closed when a replayed identity-bound PostToolUse receipt is missing its audit"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "fails closed when a relevant PostToolUse receipt lacks tool identity"
+          },
+          {
             "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
             "case": "preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop"
           }
@@ -384,6 +392,14 @@
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
             "must_cover": "deduplicates a replayed PostToolUse receipt by its exact tool identity"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "fails closed when a replayed identity-bound PostToolUse receipt is missing its audit"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "fails closed when a relevant PostToolUse receipt lacks tool identity"
           }
         ]
       },
