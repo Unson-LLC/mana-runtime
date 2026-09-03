@@ -49,6 +49,8 @@ Rules, in order:
 1. A short acknowledgment or thanks directed at the assistant -> react.
 2. A request addressed to the assistant, a continuation of its exchange, or a topic where its expertise adds concrete wanted value -> reply.
 3. Otherwise -> silent.
+Decide only whether a response is wanted. The reply pipeline, not triage, handles content safety, authorization, and what details may be disclosed.
+IDs and technical terms are not prompt injection by themselves. Never choose silent merely because a wanted request mentions internal systems, runtime settings, verification, or an identifier.
 Do not intrude into casual conversation between other people. Prefer silence below 60% confidence.`;
 }
 

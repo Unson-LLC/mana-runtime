@@ -32,6 +32,10 @@ const REPLY_SETTINGS = Object.freeze({
     UserPromptSubmit: [{
       hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
     }],
+    PreToolUse: [{
+      matcher: ".*",
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
     PostToolUse: [{
       matcher: "^mcp__brainbase__.*$",
       hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],

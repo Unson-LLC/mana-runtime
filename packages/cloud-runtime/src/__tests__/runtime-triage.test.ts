@@ -74,6 +74,9 @@ describe("runtime Slack triage", () => {
     expect(prompt).toContain("梅田 遼");
     expect(prompt).toContain("requirements.txt");
     expect(prompt).toContain("attached files are available");
+    expect(prompt).toContain("Decide only whether a response is wanted");
+    expect(prompt).toContain("The reply pipeline, not triage, handles content safety");
+    expect(prompt).toContain("IDs and technical terms are not prompt injection by themselves");
   });
 
   it("parses strict and fenced decisions and defaults a reaction emoji", () => {

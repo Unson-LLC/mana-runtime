@@ -79,6 +79,68 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(forwarded?.prompt).toBe("現在の実行経路を確認して");
   });
 
+  it("requires resolve_turn as the first model-selected tool without classifying in the Hook", async () => {
+    const forwarded: Array<Record<string, unknown>> = [];
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      forwarded.push(payload);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1", accepted: true,
+        hook_event_name: payload.hook_event_name, session_id: payload.session_id,
+        turn_id: payload.turn_id, receipt_id: "receipt-first-tool",
+        route_resolution_sha256: "c".repeat(64),
+        output: payload.hook_event_name === "PostToolUse"
+          ? { systemMessage: "Turn contract recorded" }
+          : {
+            hookSpecificOutput: {
+              hookEventName: "UserPromptSubmit",
+              additionalContext: "Call brainbase_resolve_turn before other work",
+            },
+          },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const env = {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    };
+
+    expect((await runHook({
+      hook_event_name: "UserPromptSubmit", session_id: "session-first-tool",
+    }, env)).code).toBe(0);
+    const blocked = await runHook({
+      hook_event_name: "PreToolUse", session_id: "session-first-tool",
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+    }, env);
+    expect(blocked.code).toBe(2);
+    expect(blocked.stderr).toContain("mcp__brainbase__brainbase_resolve_turn");
+
+    const allowed = await runHook({
+      hook_event_name: "PreToolUse", session_id: "session-first-tool",
+      tool_name: "mcp__brainbase__brainbase_resolve_turn",
+    }, env);
+    expect(allowed).toEqual({ code: 0, stdout: "", stderr: "" });
+    const recorded = await runHook({
+      hook_event_name: "PostToolUse", session_id: "session-first-tool",
+      tool_name: "mcp__brainbase__brainbase_resolve_turn",
+    }, env);
+    expect(recorded.code).toBe(0);
+    const laterTool = await runHook({
+      hook_event_name: "PreToolUse", session_id: "session-first-tool",
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+    }, env);
+    expect(laterTool).toEqual({ code: 0, stdout: "", stderr: "" });
+    expect(forwarded).toHaveLength(2);
+  });
+
   it("story-meeting-minutes-brainbase-judgment:ac:4 preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop", async () => {
     const payloads: Array<Record<string, unknown>> = [];
     const server = createServer(async (request, response) => {

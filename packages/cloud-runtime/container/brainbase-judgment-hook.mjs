@@ -46,6 +46,12 @@ function isInternalJudgmentStateTool(payload) {
     || toolName === "mcp__brainbase__brainbase_judgment_state_record";
 }
 
+function isResolveTurnTool(payload) {
+  const toolName = payload.tool_name ?? payload.toolName;
+  return toolName === "brainbase_resolve_turn"
+    || toolName === "mcp__brainbase__brainbase_resolve_turn";
+}
+
 function repairedStopAnswer(answer, auditLines) {
   const bodyLines = typeof answer === "string" ? answer.split(/\r?\n/) : [];
   const bodyWithoutAudit = bodyLines.filter((line) =>
@@ -310,7 +316,11 @@ async function resolveTurnId(payload) {
   const path = statePath(payload);
   if (payload.hook_event_name === "UserPromptSubmit") {
     const turnId = randomUUID();
-    await persistTurnState(path, { turn_id: turnId, stop_repair_requested: false });
+    await persistTurnState(path, {
+      turn_id: turnId,
+      resolve_turn_completed: false,
+      stop_repair_requested: false,
+    });
     return turnId;
   }
   const { stored } = await readTurnState(payload);
@@ -329,6 +339,21 @@ async function markStopRepairRequested(payload) {
   await persistTurnState(path, { ...stored, stop_repair_requested: true });
 }
 
+async function requireResolveTurnFirst(payload) {
+  const { path, stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  if (stored.resolve_turn_completed === true || isResolveTurnTool(payload)) return;
+  throw new Error(
+    "judgment_resolve_turn_required_first: mcp__brainbase__brainbase_resolve_turnを最初に実行してください",
+  );
+}
+
+async function markResolveTurnCompleted(payload) {
+  const { path, stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  await persistTurnState(path, { ...stored, resolve_turn_completed: true });
+}
+
 try {
   const payload = await readStdin();
   const trustedRequest = process.env.MANA_JUDGMENT_REQUEST;
@@ -339,6 +364,10 @@ try {
     payload.prompt = trustedRequest;
   }
   payload.turn_id = await resolveTurnId(payload);
+  if (payload.hook_event_name === "PreToolUse") {
+    await requireResolveTurnFirst(payload);
+    process.exit(0);
+  }
   // The wrapper owns Stop attempt identity. Claude's non-interactive runtime
   // may set stop_hook_active=true even on the first externally invoked Stop,
   // which would make the Host reject the repair before Claude can perform it.
@@ -348,6 +377,11 @@ try {
     ? { ...payload, stop_hook_active: await stopRepairActive(payload) }
     : payload;
   const output = await validatedOutput(await fetchHookEnvelope(hostPayload), hostPayload);
+  if (payload.hook_event_name === "PostToolUse" && isResolveTurnTool(payload)) {
+    // PostToolUse is emitted only after the MCP call completed. The Host has
+    // now recorded the model-owned classification, so later tools may proceed.
+    await markResolveTurnCompleted(payload);
+  }
   if (payload.hook_event_name === "Stop" && output.decision === "block") {
     await markStopRepairRequested(payload);
   }
