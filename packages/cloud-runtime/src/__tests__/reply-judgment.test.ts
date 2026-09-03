@@ -29,6 +29,7 @@ const judgmentLine = "🧠 判断参照: 「質問」を参照 → 質問とし�
 const brainbaseLine = "📚 Brainbase参照先: 「質問」→ 採用: workspace_home ✓";
 const zeroCallLine = "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓";
 const secondBrainbaseLine = "📚 Brainbase参照先: 「追加質問」→ 採用: graph ✓";
+const failedOptionalBrainbaseLine = "⚠️ Brainbase呼出: brainbase_bootstrap_config「入力なし」→ 失敗または結果不明";
 const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const verifiedAnswerPrefix = "__MANA_VERIFIED_ANSWER_V1__:";
 
@@ -348,6 +349,32 @@ describe("Slack reply Judgment lifecycle", () => {
     const result = parseReplyJudgmentStream(lines.join("\n"));
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine]);
     expect(result.toolJournal).toHaveLength(2);
+  });
+
+  it("accepts a Host-completed answer after an audited optional Brainbase call fails", () => {
+    const lines = stream({ withTool: true, replyLines: ["回答本文"] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "optional-tool", name: "mcp__brainbase__brainbase_bootstrap_config", input: {},
+        }] },
+      }),
+      JSON.stringify(hook("PostToolUse", failedOptionalBrainbaseLine, "turn-1")),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "optional-tool", is_error: true, content: "{}",
+        }] },
+      }),
+    );
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      stop: "completed",
+      toolJournal: [
+        { toolUseId: "tool-1", outcome: "success" },
+        { toolUseId: "optional-tool", outcome: "error" },
+      ],
+    });
   });
 
   it("fails closed when Stop reports an incomplete audit despite a bound PostToolUse receipt", () => {
