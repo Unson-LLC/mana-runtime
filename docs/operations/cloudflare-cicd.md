@@ -41,6 +41,8 @@ Cloudflareトークンは`mana-runtime-github-actions-production`というAccoun
 6. `production` Environmentの承認者が、対象コミットと認可期限を確認して承認する。
 7. 実行結果にあるコミット、配備結果、配備後ヘルスチェックを確認する。
 
+Workerコードだけを変更し、既知正常なContainerイメージを維持する復旧配備では、`Container更新を省略`を明示的に有効化できる。既定値は無効であり、通常配備では従来どおりWorkerとContainerを更新する。Dockerfile、Container内コード、依存関係を変更した配備では使用しない。
+
 ## 権限境界
 
 - 梅田さんにはPR作成、Actions閲覧・実行、および必要に応じた`production`承認権限を付ける。
