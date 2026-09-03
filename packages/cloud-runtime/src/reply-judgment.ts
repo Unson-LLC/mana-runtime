@@ -341,7 +341,9 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   });
 
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
-  const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse");
+  const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse"
+    && auditLines(hook.output).some((line) =>
+      line.startsWith(BRAINBASE_AUDIT_PREFIX) || line.startsWith(BRAINBASE_WARNING_PREFIX)));
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
   // call. Claude can recover by calling resolve_turn first and then retrying.
