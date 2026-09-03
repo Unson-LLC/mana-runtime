@@ -288,25 +288,45 @@ function statePath(payload) {
   return join(turnDir, `${createHash("sha256").update(identity).digest("hex")}.json`);
 }
 
-async function persistTurn(path, turnId) {
+async function persistTurnState(path, state) {
   await mkdir(turnDir, { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify({ turn_id: turnId }), { mode: 0o600 });
+  await writeFile(temporary, JSON.stringify(state), { mode: 0o600 });
   await rename(temporary, path);
+}
+
+async function readTurnState(payload) {
+  const path = statePath(payload);
+  try {
+    const stored = JSON.parse(await readFile(path, "utf8"));
+    if (typeof stored.turn_id === "string" && stored.turn_id) {
+      return { path, stored };
+    }
+  } catch { /* fail closed below */ }
+  throw new Error("judgment_turn_identity_missing");
 }
 
 async function resolveTurnId(payload) {
   const path = statePath(payload);
   if (payload.hook_event_name === "UserPromptSubmit") {
     const turnId = randomUUID();
-    await persistTurn(path, turnId);
+    await persistTurnState(path, { turn_id: turnId, stop_repair_requested: false });
     return turnId;
   }
-  try {
-    const stored = JSON.parse(await readFile(path, "utf8"));
-    if (typeof stored.turn_id === "string" && stored.turn_id) return stored.turn_id;
-  } catch { /* fail closed below */ }
-  throw new Error("judgment_turn_identity_missing");
+  const { stored } = await readTurnState(payload);
+  return stored.turn_id;
+}
+
+async function stopRepairActive(payload) {
+  const { stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  return stored.stop_repair_requested === true;
+}
+
+async function markStopRepairRequested(payload) {
+  const { path, stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  await persistTurnState(path, { ...stored, stop_repair_requested: true });
 }
 
 try {
@@ -319,16 +339,18 @@ try {
     payload.prompt = trustedRequest;
   }
   payload.turn_id = await resolveTurnId(payload);
-  // Preserve Claude's repeated-Stop state across the Host boundary. The Host
-  // uses this flag to distinguish the first repairable Stop from the active
-  // retry that must converge or fail closed. Resetting it here makes every
-  // repeated Stop look like a fresh first attempt and creates an unbounded
-  // model-action repair loop. validatedOutput still marks its own one
-  // synthetic retry active below.
+  // The wrapper owns Stop attempt identity. Claude's non-interactive runtime
+  // may set stop_hook_active=true even on the first externally invoked Stop,
+  // which would make the Host reject the repair before Claude can perform it.
+  // Persist a repairable Host block, then mark only the next external Stop as
+  // active. validatedOutput still marks its own bounded synthetic retry below.
   const hostPayload = payload.hook_event_name === "Stop"
-    ? { ...payload, stop_hook_active: payload.stop_hook_active === true }
+    ? { ...payload, stop_hook_active: await stopRepairActive(payload) }
     : payload;
   const output = await validatedOutput(await fetchHookEnvelope(hostPayload), hostPayload);
+  if (payload.hook_event_name === "Stop" && output.decision === "block") {
+    await markStopRepairRequested(payload);
+  }
   process.stdout.write(JSON.stringify(output));
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

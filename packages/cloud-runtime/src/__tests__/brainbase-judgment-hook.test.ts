@@ -326,7 +326,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(output.reason).toContain("mcp__brainbase__brainbase_resolve_turnを実行");
   });
 
-  it("preserves Claude's active Stop repair state when forwarding a repeated Stop", async () => {
+  it("owns the Stop repair state instead of trusting Claude's initial active flag", async () => {
     const forwarded: Array<Record<string, unknown>> = [];
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
@@ -344,9 +344,11 @@ describe("Brainbase judgment Hook forwarder", () => {
           hookSpecificOutput: {
             hookEventName: "UserPromptSubmit", additionalContext: "Judgment route resolved",
           },
-        } : {
+        } : forwarded.filter((entry) => entry.hook_event_name === "Stop").length === 1 ? {
           decision: "block",
-          reason: "judgment_stop_repair_exhausted",
+          reason: "mcp__brainbase__brainbase_resolve_turnを実行する",
+        } : {
+          systemMessage: "🧠 判断参照: 修復済み ✓\n📚 Brainbase未参照: 検索不要 ✓",
         },
       }));
     });
@@ -361,15 +363,24 @@ describe("Brainbase judgment Hook forwarder", () => {
       BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
     };
     await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-active-stop" }, env);
-    const result = await runHook({
+    const first = await runHook({
       hook_event_name: "Stop",
       session_id: "session-active-stop",
       stop_hook_active: true,
-      last_assistant_message: "修復後の回答",
+      last_assistant_message: "最初の回答",
+    }, env);
+    const second = await runHook({
+      hook_event_name: "Stop",
+      session_id: "session-active-stop",
+      stop_hook_active: true,
+      last_assistant_message: "🧠 判断参照: 修復済み ✓\n📚 Brainbase未参照: 検索不要 ✓\n修復後の回答",
     }, env);
 
-    expect(result.code).toBe(0);
-    expect(forwarded.at(-1)?.stop_hook_active).toBe(true);
+    expect(first.code).toBe(0);
+    expect(JSON.parse(first.stdout).decision).toBe("block");
+    expect(second.code).toBe(0);
+    const stops = forwarded.filter((entry) => entry.hook_event_name === "Stop");
+    expect(stops.map((entry) => entry.stop_hook_active)).toEqual([false, true]);
   });
 
   it("emits Host-verified audit lines after a completed Stop repair", async () => {
