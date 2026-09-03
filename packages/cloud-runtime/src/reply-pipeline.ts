@@ -385,7 +385,34 @@ export async function generateClaudeReply(
       }),
       execOptions,
     );
-    let result = await runClaude(false);
+    let resumedSession = false;
+    let result;
+    try {
+      result = await runClaude(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/^HTTP error! status: 500$/.test(message)) throw error;
+      // A blocking Stop hook can close the Sandbox RPC with HTTP 500 after
+      // Claude has already persisted the named session. Continue that exact
+      // session once; never replay the user turn in a fresh conversation.
+      resumedSession = true;
+      emitTurnLog("warn", "mana_claude_session_resumed", event, trace, {
+        outcome: "retry", reasonCode: "sandbox_stop_boundary_http_500",
+        durationMs: Date.now() - startedAt,
+      });
+      try {
+        result = await runClaude(true);
+      } catch (retryError) {
+        emitTurnLog("error", "mana_claude_failed", event, trace, {
+          outcome: "error", reasonCode: "claude_execution_failed",
+          errorSummary: safeExecutionErrorSummary(
+            retryError instanceof Error ? retryError.message : String(retryError),
+          ),
+          durationMs: Date.now() - startedAt,
+        });
+        throw new ReplyPipelineError("claude_execution_failed");
+      }
+    }
     if (!result.success) {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
         outcome: "error",
@@ -403,12 +430,13 @@ export async function generateClaudeReply(
       const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
         ? error.message
         : "reply_judgment_stream_invalid";
-      if (code === "reply_judgment_result_missing") {
+      if (code === "reply_judgment_result_missing" && !resumedSession) {
         // Claude Code --print may stop cleanly after a blocking Stop hook and
         // omit the terminal result event. Resume the same conversation once so
         // Claude can perform the Host-requested tool call and submit a new,
         // fully audited answer. The resumed stream must independently satisfy
         // the complete judgment contract below.
+        resumedSession = true;
         result = await runClaude(true);
         if (!result.success) {
           emitTurnLog("error", "mana_claude_failed", event, trace, {
