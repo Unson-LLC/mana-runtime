@@ -89,6 +89,53 @@ function auditedReplyStream(
   ].map((entry) => JSON.stringify(entry)).join("\n");
 }
 
+function auditedReplyStreamWithOutOfOrderPostTool(secretCanary: string): string {
+  const toolUseId = "tool-1";
+  const toolName = "mcp__brainbase__brainbase_knowledge_resolve";
+  const evidenceAuditLine = "📚 Brainbase参照先: 「質問」→ 採用: workspace_home ✓";
+  const hookReceipt = (hookEventName: "UserPromptSubmit" | "PostToolUse" | "Stop") => ({
+    type: "system",
+    subtype: "hook_response",
+    hook_event: hookEventName,
+    exit_code: 0,
+    outcome: "success",
+    session_id: "session-1",
+    stdout: JSON.stringify({
+      systemMessage: [
+        ...(hookEventName === "PostToolUse" ? [evidenceAuditLine] : []),
+        ...(hookEventName === "Stop" ? [judgmentLine, evidenceAuditLine] : []),
+        `${receiptPrefix}${JSON.stringify({
+          schema_version: "mana_judgment_hook_receipt.v1",
+          hook_event_name: hookEventName,
+          session_id: "session-1",
+          turn_id: "turn-1",
+          host_receipt_id: "receipt-route-1",
+          route_resolution_sha256: "a".repeat(64),
+          ...(hookEventName === "PostToolUse" ? {
+            tool_use_id: toolUseId,
+            tool_name: toolName,
+          } : {}),
+        })}`,
+      ].join("\n"),
+    }),
+  });
+  return [
+    { type: "system", subtype: "init", session_id: "session-1" },
+    hookReceipt("UserPromptSubmit"),
+    hookReceipt("PostToolUse"),
+    { type: "assistant", session_id: "session-1", message: { content: [{
+      type: "tool_use", id: toolUseId, name: toolName, input: { query: secretCanary },
+    }] } },
+    { type: "user", session_id: "session-1", message: { content: [{
+      type: "tool_result", tool_use_id: toolUseId, content: secretCanary,
+    }] } },
+    hookReceipt("Stop"),
+    { type: "result", session_id: "session-1", result: [
+      judgmentLine, evidenceAuditLine, "回答本文",
+    ].join("\n") },
+  ].map((entry) => JSON.stringify(entry)).join("\n");
+}
+
 function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
   const sandbox = {
     writeFile: vi.fn().mockResolvedValue(undefined),
@@ -998,6 +1045,39 @@ describe("TechKnight Slack reply pipeline", () => {
       errorSummary: "failed with [redacted]",
     }));
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("sk-ant-secret-value");
+    errorSpy.mockRestore();
+  });
+
+  it("persists a safe audit mismatch subcode across both failure logs without leaking stream data", async () => {
+    const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const secretCanary = "raw-stream-secret-must-not-leak";
+    const diagnosticCode = "reply_judgment_tool_audit_mismatch_posttool_event_order_invalid";
+    const { options, sandbox } = harness();
+    sandbox.exec.mockResolvedValueOnce({
+      success: true,
+      stdout: auditedReplyStreamWithOutOfOrderPostTool(secretCanary),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(processReplyEvent(fs, event(), options)).rejects.toEqual(
+      expect.objectContaining<Partial<ReplyPipelineError>>({ code: diagnosticCode }),
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_claude_failed",
+      reasonCode: diagnosticCode,
+    }));
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failed",
+      reasonCode: diagnosticCode,
+      failureStage: "reply_generation",
+    }));
+    const episode = JSON.parse(fs.files.get("/judgment-episodes/EvReply123.json")!);
+    expect(episode.attempts).toMatchObject([{ status: "failed", failureCode: diagnosticCode }]);
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(secretCanary);
+    expect(JSON.stringify(episode)).not.toContain(secretCanary);
     errorSpy.mockRestore();
   });
 

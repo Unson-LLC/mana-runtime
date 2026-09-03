@@ -292,10 +292,13 @@ describe("Slack reply Judgment lifecycle", () => {
   });
 
   it("mana-reply-judgment-hook-503:ac:6 fails closed when a control-plane receipt identity is invalid or missing", () => {
-    for (const [receiptId, receiptName, includeReceipt] of [
-      ["different-resolve-turn", "mcp__brainbase__brainbase_resolve_turn", true],
-      ["resolve-turn", "mcp__brainbase__brainbase_resolve_turn", false],
-      ["resolve-turn", "mcp__brainbase__brainbase_judgment_state_record", true],
+    for (const [receiptId, receiptName, includeReceipt, expectedCode] of [
+      ["different-resolve-turn", "mcp__brainbase__brainbase_resolve_turn", true,
+        "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing"],
+      ["resolve-turn", "mcp__brainbase__brainbase_resolve_turn", false,
+        "reply_judgment_tool_audit_mismatch_posttool_receipt_missing"],
+      ["resolve-turn", "mcp__brainbase__brainbase_judgment_state_record", true,
+        "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing"],
     ] as const) {
       const lines = stream().split("\n");
       const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
@@ -318,7 +321,7 @@ describe("Slack reply Judgment lifecycle", () => {
       lines.splice(stopIndex, 0, ...controlEvents);
 
       expect(() => parseReplyJudgmentStream(lines.join("\n")))
-        .toThrow("reply_judgment_tool_audit_mismatch");
+        .toThrow(expectedCode);
     }
   });
 
@@ -347,7 +350,7 @@ describe("Slack reply Judgment lifecycle", () => {
     );
 
     expect(() => parseReplyJudgmentStream(lines.join("\n")))
-      .toThrow("reply_judgment_tool_audit_mismatch");
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_receipt_conflict");
   });
 
   it("story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity", () => {
@@ -381,7 +384,8 @@ describe("Slack reply Judgment lifecycle", () => {
     const missingAudit = stream({ toolCount: 2 }).split("\n")
       .filter((line) => !line.includes('"hook_event":"PostToolUse"') || !line.includes(secondBrainbaseLine))
       .join("\n");
-    expect(() => parseReplyJudgmentStream(missingAudit)).toThrow("reply_judgment_tool_audit_mismatch");
+    expect(() => parseReplyJudgmentStream(missingAudit))
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing");
 
     const stopBeforeSecondTool = stream({ toolCount: 2 }).split("\n");
     const stopIndex = stopBeforeSecondTool.findIndex((line) => line.includes('"hook_event":"Stop"'));
@@ -492,7 +496,7 @@ describe("Slack reply Judgment lifecycle", () => {
     lines.splice(postToolIndex + 1, 0, JSON.stringify(incompleteEvent));
 
     expect(() => parseReplyJudgmentStream(lines.join("\n")))
-      .toThrow("reply_judgment_tool_audit_mismatch");
+      .toThrow("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
   });
 
   it("mana-reply-judgment-hook-503:ac:6 fails closed when a relevant PostToolUse receipt lacks tool identity", () => {
@@ -514,7 +518,7 @@ describe("Slack reply Judgment lifecycle", () => {
     lines[postToolIndex] = JSON.stringify(incompleteEvent);
 
     expect(() => parseReplyJudgmentStream(lines.join("\n")))
-      .toThrow("reply_judgment_tool_audit_mismatch");
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_identity_missing");
   });
 
   it("rejects a replayed PostToolUse receipt whose bound tool identity changes", () => {
@@ -535,7 +539,7 @@ describe("Slack reply Judgment lifecycle", () => {
     lines.splice(postToolIndex + 1, 0, JSON.stringify(conflictingEvent));
 
     expect(() => parseReplyJudgmentStream(lines.join("\n")))
-      .toThrow("reply_judgment_tool_audit_mismatch");
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_receipt_conflict");
   });
 
   it("accepts a completed Stop summary when every tool call has its own PostToolUse receipt", () => {
@@ -621,7 +625,53 @@ describe("Slack reply Judgment lifecycle", () => {
     postToolHook.stdout = JSON.stringify(postToolOutput);
     lines[postToolIndex] = JSON.stringify(postToolHook);
     expect(() => parseReplyJudgmentStream(lines.join("\n")))
-      .toThrow("reply_judgment_tool_audit_mismatch");
+      .toThrow("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
+  });
+
+  it("classifies a duplicated executed tool identity without exposing stream contents", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const toolIndex = lines.findIndex((line) => line.includes('"type":"tool_use"'));
+    lines.splice(toolIndex + 1, 0, lines[toolIndex]!);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_receipt_count_mismatch");
+  });
+
+  it("classifies a PostToolUse receipt emitted before its tool call", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const toolIndex = lines.findIndex((line) => line.includes('"type":"tool_use"'));
+    const postToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
+    const [postTool] = lines.splice(postToolIndex, 1);
+    lines.splice(toolIndex, 0, postTool!);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_event_order_invalid");
+  });
+
+  it("classifies a completed evidence audit without an executed evidence call", () => {
+    const inconsistent = stream().replaceAll(zeroCallLine, brainbaseLine);
+
+    expect(() => parseReplyJudgmentStream(inconsistent))
+      .toThrow("reply_judgment_tool_audit_mismatch_unexpected_stop_evidence_audit");
+  });
+
+  it("classifies a missing completed Stop audit for an executed evidence call", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    for (const index of lines.keys()) {
+      const event = JSON.parse(lines[index]!);
+      if (event.hook_event !== "Stop" && event.type !== "result") continue;
+      if (event.hook_event === "Stop") {
+        const output = JSON.parse(event.stdout);
+        output.systemMessage = output.systemMessage.replace(brainbaseLine, zeroCallLine);
+        event.stdout = JSON.stringify(output);
+      } else {
+        event.result = event.result.replace(brainbaseLine, zeroCallLine);
+      }
+      lines[index] = JSON.stringify(event);
+    }
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_stop_evidence_audit_missing");
   });
 
   it("story-slack-mention-brainbase-judgment:ac:7 stores a redacted durable episode receipt through Slack completion", async () => {

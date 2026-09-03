@@ -402,7 +402,7 @@
         "period": null,
         "started_at": null,
         "due_at": null,
-        "contract_type": null
+        "contract_type": "bug_fix"
       }
     ],
     "current_story_id": "mana-reply-judgment-hook-503"
