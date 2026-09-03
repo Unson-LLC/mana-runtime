@@ -4,7 +4,7 @@ import {
   type DurableObjectStorageLike,
   type WorkspaceHandle,
 } from "@cloudflare/computer";
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject } from "./multitenancy/cloudflare-worker-runtime.js";
 
 import { handleTenantSlackRequest } from "./slack.js";
 import { bootstrapUnsonSlackCredential } from "./tenant-credential-bootstrap.js";
@@ -32,7 +32,10 @@ import {
   isCompanyAuthorityRuntimeEnvelope,
   type CompanyAuthorityRuntimeEnvelope,
 } from "./multitenancy/company-authority-runtime-adapter.js";
-import { parseCompanyAuthorityRuntimeConfiguration } from "./multitenancy/company-authority-runtime-config.js";
+import {
+  companyAuthorityIngressConfiguration,
+  parseCompanyAuthorityRuntimeConfiguration,
+} from "./multitenancy/company-authority-runtime-config.js";
 import {
   processCompanyAuthorityAutoQueueRoute,
   resolveCompanyAuthoritySlackQueueScope,
@@ -359,6 +362,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
+    | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
   TASK_BOARD_REPAIRS: Queue<TenantQueueBody<TaskBoardRepairEvent> | TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
@@ -2597,6 +2601,9 @@ export default {
       const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
         .split(",").map((value) => value.trim()).filter(Boolean);
       const placements = canonicalRuntimePlacements(env);
+      const companyAuthorityIngress = companyAuthorityIngressConfiguration(
+        parseCompanyAuthorityRuntimeConfiguration(env),
+      );
       return handleTenantSlackRequest(request, {
         signing_secret: env.SLACK_SIGNING_SECRET,
         expected_app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
@@ -2612,6 +2619,12 @@ export default {
         },
         authority: clients.authority,
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        ...(companyAuthorityIngress ? {
+          company_authority: {
+            ...companyAuthorityIngress,
+            send: (event) => env.TECHKNIGHT_EVENTS.send(event),
+          },
+        } : {}),
         send: (event) => env.TECHKNIGHT_EVENTS.send(event),
       });
     } catch (error) {
@@ -3659,5 +3672,6 @@ export default {
   | TenantQueueBody<MeetingMinutesRedo>
   | TenantQueueBody<MeetingMinutesRecovery>
   | TenantQueueBody<TaskBoardRepairEvent>
+  | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
   | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
   | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>;

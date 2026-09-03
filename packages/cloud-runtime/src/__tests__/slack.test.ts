@@ -10,6 +10,7 @@ import {
   TenantBoundaryError,
   companyAuthoritySlackResourceRef,
 } from "../multitenancy/index.js";
+import { companyAuthorityIngressConfiguration } from "../multitenancy/company-authority-runtime-config.js";
 import { interceptMeetingMinutesIntakePause } from "../meeting-minutes-intake-entrypoints.js";
 
 const signingSecret = "test-signing-secret";
@@ -384,6 +385,60 @@ describe("handleSlackRequest", () => {
 });
 
 describe("handleTenantSlackRequest diagnostics", () => {
+  it("fails closed before legacy or Queue effects when configured ingress lacks a live Company Authority transport", async () => {
+    const body = JSON.stringify({
+      type: "event_callback", api_app_id: "A_UNSON", team_id: "T_UNSON", event_id: "EvConfiguredIngress",
+      event: { type: "message", channel: "C_ROUTER", ts: "1786420000.000450",
+        user: "U123", text: "create task" },
+    });
+    const request = new Request("https://example.com/slack/events", { method: "POST", headers: {
+      "content-type": "application/json", "x-slack-request-timestamp": String(nowSeconds),
+      "x-slack-signature": signature(nowSeconds, body),
+    }, body });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const legacyAuthority = {
+      resolve_workspace_connection: vi.fn(), read_workspace_connection: vi.fn(), issue_tenant_context: vi.fn(),
+    };
+    const companyAuthoritySend = vi.fn();
+    const send = vi.fn();
+    const ingress = companyAuthorityIngressConfiguration({
+      state: "enabled",
+      base_url: "https://authority.example.com",
+      opted_in_capability_ids: ["task.write"],
+      desired_effect_by_capability: { "task.write": "write" },
+      acceptance: {
+        expected_audience: "mana-runtime", expected_deployment_id: "worker-test", public_jwk: {},
+      },
+    });
+
+    const response = await handleTenantSlackRequest(request, {
+      signing_secret: signingSecret, expected_app_id: "A_UNSON", now_ms: nowSeconds * 1_000,
+      required_scopes: ["task:write"],
+      required_authorization: { audience: "mana-runtime", capability_id: "task.write" },
+      placement_config: { tenantId: "unson", workspaceId: "T_UNSON", placements: [{
+        placementId: "tasks", channelId: "C_ROUTER", projectCodes: ["back-office"],
+        taskWriteEnabled: true,
+      }] },
+      authority: legacyAuthority,
+      resolve_verification_key: async () => undefined,
+      company_authority: { ...ingress!, send: companyAuthoritySend },
+      send,
+    });
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "AUTHORITY_UNAVAILABLE",
+      stage: "tenant_context_resolution",
+      retryable: true,
+    });
+    expect(legacyAuthority.resolve_workspace_connection).not.toHaveBeenCalled();
+    expect(legacyAuthority.read_workspace_connection).not.toHaveBeenCalled();
+    expect(legacyAuthority.issue_tenant_context).not.toHaveBeenCalled();
+    expect(companyAuthoritySend).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
   it("fails closed through Company Authority for an explicitly selected capability", async () => {
     const body = JSON.stringify({
       type: "event_callback", api_app_id: "A_UNSON", team_id: "T_UNSON", event_id: "EvCompanyAuthority",

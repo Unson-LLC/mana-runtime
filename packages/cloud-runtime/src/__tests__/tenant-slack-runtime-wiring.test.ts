@@ -9,10 +9,24 @@ describe("tenant Slack runtime wiring", () => {
     const eventStart = source.indexOf('url.pathname !== "/slack/events"', commandStart);
     const queueStart = source.indexOf("async queue(", eventStart);
     const ingress = source.slice(commandStart, queueStart);
+    const parseAt = ingress.indexOf("parseCompanyAuthorityRuntimeConfiguration(env)");
+    const configureAt = ingress.indexOf("companyAuthorityIngressConfiguration(");
+    const handlerAt = ingress.indexOf("handleTenantSlackRequest(request");
+    const envStart = source.indexOf("interface Env");
+    const eventQueueStart = source.indexOf("TECHKNIGHT_EVENTS:", envStart);
+    const nextBindingStart = source.indexOf("TASK_BOARD_REPAIRS:", eventQueueStart);
+    const eventQueueBinding = source.slice(eventQueueStart, nextBindingStart);
 
     expect(commandStart).toBeGreaterThan(-1);
     expect(ingress).toContain("resolveSlackWorkerIngress({");
     expect(ingress).toContain("handleTenantSlackRequest(request");
+    expect(parseAt).toBeGreaterThan(-1);
+    expect(configureAt).toBeGreaterThan(-1);
+    expect(parseAt).toBeGreaterThan(configureAt);
+    expect(handlerAt).toBeGreaterThan(configureAt);
+    expect(ingress).toContain("company_authority:");
+    expect(ingress).toContain("env.TECHKNIGHT_EVENTS.send(event)");
+    expect(eventQueueBinding).toContain("| CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>");
     expect(ingress).toContain('schema_version: "1.0"');
     expect(ingress).not.toContain("tenantId: env.TENANT_ID");
     expect(ingress).not.toContain("handleSlackRequest(request");

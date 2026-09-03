@@ -1,5 +1,6 @@
 import type {
   CompanyAuthorityAcceptanceOptions,
+  CompanyAuthorityClient,
   CompanyAuthorityDesiredEffect,
 } from "./company-authority-runtime-adapter.js";
 import { deny } from "./errors.js";
@@ -22,6 +23,13 @@ export type CompanyAuthorityRuntimeConfiguration =
     readonly desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
     readonly acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
   };
+
+export interface CompanyAuthorityIngressConfiguration {
+  readonly opted_in_capability_ids: readonly string[];
+  readonly desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
+  readonly client: CompanyAuthorityClient;
+  readonly acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
+}
 
 const COMPANY_AUTHORITY_BINDINGS = [
   "BRAINBASE_COMPANY_AUTHORITY_BASE_URL",
@@ -189,5 +197,25 @@ export function parseCompanyAuthorityRuntimeConfiguration(
       tenant_context_public_jwk: tenantKey.key,
       tenant_context_key_id: tenantKey.key_id,
     },
+  };
+}
+
+/**
+ * Selects configured Company Authority operations at the real HTTP ingress
+ * without inventing the still-undefined live transport or authentication.
+ * Until that contract exists, an opted-in operation fails closed before either
+ * Company Authority or legacy Queue effects can run.
+ */
+export function companyAuthorityIngressConfiguration(
+  configuration: CompanyAuthorityRuntimeConfiguration,
+): CompanyAuthorityIngressConfiguration | undefined {
+  if (configuration.state === "disabled") return undefined;
+  return {
+    opted_in_capability_ids: [...configuration.opted_in_capability_ids],
+    desired_effect_by_capability: { ...configuration.desired_effect_by_capability },
+    client: {
+      resolve: async () => ({ state: "not_collected" }),
+    },
+    acceptance: structuredClone(configuration.acceptance),
   };
 }

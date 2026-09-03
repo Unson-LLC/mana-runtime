@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  companyAuthorityIngressConfiguration,
   parseCompanyAuthorityRuntimeConfiguration,
   type CompanyAuthorityRuntimeConfigEnv,
 } from "../multitenancy/company-authority-runtime-config.js";
@@ -34,6 +35,32 @@ function expectInvalid(env: CompanyAuthorityRuntimeConfigEnv): void {
 }
 
 describe("company authority runtime configuration", () => {
+  it("keeps HTTP ingress on the legacy route when Company Authority is disabled", () => {
+    expect(companyAuthorityIngressConfiguration({ state: "disabled" })).toBeUndefined();
+  });
+
+  it("opts configured capabilities into a fail-closed HTTP ingress before live transport exists", async () => {
+    const configuration = companyAuthorityIngressConfiguration(
+      parseCompanyAuthorityRuntimeConfiguration(validEnv()),
+    );
+
+    expect(configuration).toMatchObject({
+      opted_in_capability_ids: ["slack.post", "task.read", "task.write"],
+      desired_effect_by_capability: {
+        "slack.post": "external_side_effect",
+        "task.read": "read",
+        "task.write": "write",
+      },
+      acceptance: {
+        expected_audience: "mana-runtime",
+        expected_deployment_id: "dep_trusted",
+      },
+    });
+    await expect(configuration?.client.resolve({} as never)).resolves.toEqual({
+      state: "not_collected",
+    });
+  });
+
   it("is explicitly disabled when every company authority setting is absent", () => {
     expect(parseCompanyAuthorityRuntimeConfiguration({
       MANA_REQUIRED_AUDIENCE: "existing-runtime-audience",
