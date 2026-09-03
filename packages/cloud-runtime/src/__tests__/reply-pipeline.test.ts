@@ -167,6 +167,26 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
+  it("resumes the same Claude session once when a blocking Stop hook suppresses the result event", async () => {
+    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    const incomplete = auditedReplyStream().split("\n").slice(0, -1).join("\n");
+    sandbox.exec
+      .mockResolvedValueOnce({ success: true, stdout: incomplete, stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({ success: true, stdout: auditedReplyStream(), stderr: "", exitCode: 0 });
+
+    await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
+      reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
+    });
+
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    const firstCommand = String(sandbox.exec.mock.calls[0]?.[0]);
+    const secondCommand = String(sandbox.exec.mock.calls[1]?.[0]);
+    const sessionId = firstCommand.match(/--session-id ([0-9a-f-]{36})/)?.[1];
+    expect(sessionId).toBeTruthy();
+    expect(secondCommand).toContain(`--resume ${sessionId}`);
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when a tenant Container cannot be destroyed", async () => {
     const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     sandbox.destroy.mockRejectedValueOnce(new Error("runtime destroy detail"));
@@ -377,10 +397,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("TechKnight");
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
-      "node /opt/mana/tenant-claude-runner.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions" +
-        " --settings /tmp/mana-reply-claude-settings.json" +
-        " --output-format stream-json --verbose --include-hook-events" +
-        ' "$(cat /tmp/mana-slack-prompt.txt)" --mcp-config /tmp/mana-task-search-mcp.json --strict-mcp-config',
+      expect.stringMatching(/^node \/opt\/mana\/tenant-claude-runner\.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions --session-id [0-9a-f-]{36} --settings \/tmp\/mana-reply-claude-settings\.json --output-format stream-json --verbose --include-hook-events "\$\(cat \/tmp\/mana-slack-prompt\.txt\)" --mcp-config \/tmp\/mana-task-search-mcp\.json --strict-mcp-config$/),
       {
         timeout: 240_000,
         env: {

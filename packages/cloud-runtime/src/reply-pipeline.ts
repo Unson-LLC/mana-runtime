@@ -373,15 +373,19 @@ export async function generateClaudeReply(
         } : {}),
       },
     };
-    const result = await sandbox.exec(
+    const claudeSessionId = crypto.randomUUID();
+    const runClaude = (resumeSession: boolean) => sandbox.exec(
       buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
         mcpEnabled: true,
         includeJudgmentHookEvents: true,
+        sessionId: claudeSessionId,
+        ...(resumeSession ? { resumeSession: true } : {}),
       }),
       execOptions,
     );
+    let result = await runClaude(false);
     if (!result.success) {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
         outcome: "error",
@@ -399,12 +403,42 @@ export async function generateClaudeReply(
       const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
         ? error.message
         : "reply_judgment_stream_invalid";
+      if (code === "reply_judgment_result_missing") {
+        // Claude Code --print may stop cleanly after a blocking Stop hook and
+        // omit the terminal result event. Resume the same conversation once so
+        // Claude can perform the Host-requested tool call and submit a new,
+        // fully audited answer. The resumed stream must independently satisfy
+        // the complete judgment contract below.
+        result = await runClaude(true);
+        if (!result.success) {
+          emitTurnLog("error", "mana_claude_failed", event, trace, {
+            outcome: "error", reasonCode: "claude_execution_failed",
+            exitCode: result.exitCode,
+            errorSummary: safeExecutionErrorSummary(result.stderr || result.stdout),
+            durationMs: Date.now() - startedAt,
+          });
+          throw new ReplyPipelineError("claude_execution_failed");
+        }
+        try {
+          judgment = parseReplyJudgmentStream(result.stdout);
+        } catch (retryError) {
+          const retryCode = retryError instanceof Error
+            && /^reply_judgment_[a-z0-9_]+$/.test(retryError.message)
+            ? retryError.message
+            : "reply_judgment_stream_invalid";
+          emitTurnLog("error", "mana_claude_failed", event, trace, {
+            outcome: "error", reasonCode: retryCode, durationMs: Date.now() - startedAt,
+          });
+          throw new ReplyPipelineError(retryCode);
+        }
+      } else {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
         outcome: "error",
         reasonCode: code,
         durationMs: Date.now() - startedAt,
       });
       throw new ReplyPipelineError(code);
+      }
     }
     const reply = normalizeReply(judgment.reply);
     if (!reply) throw new ReplyPipelineError("claude_empty_response");
