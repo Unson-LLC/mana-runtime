@@ -503,7 +503,8 @@ describe("TechKnight Slack reply pipeline", () => {
     const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
       String(path).endsWith("mana-slack-prompt.txt"))?.[1] ?? "");
     expect(prompt).toContain("brainbase_resolve_turnを正確に1回だけ呼んでください");
-    expect(prompt).toContain("Hookが指定したturn_refをそのまま渡し");
+    expect(prompt).toContain("Hookが指定したturn_inputオブジェクト全体を変更せずturn_inputへコピーし");
+    expect(prompt).not.toContain("turn_ref");
     expect(prompt).toContain("成功後は同じturnでbrainbase_resolve_turnを再実行しないでください");
     expect(prompt).toContain("knowledge.resolveがrequiredなら");
     expect(prompt).toContain("brainbase_knowledge_resolveを実行してください");
