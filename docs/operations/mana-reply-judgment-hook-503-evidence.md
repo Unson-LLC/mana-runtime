@@ -1,5 +1,35 @@
 # mana-reply-judgment-hook-503 本番証拠
 
+## 2026-09-04 監査不一致の診断証拠
+
+### 再現と発生箇所
+
+- 本番Worker `f5047245-ca0d-475d-97e9-5129c7ebfeeb` へ固定検証ID `e2e-20260904-worker-only-lifecycle-a7f3` のSlackメンションを1回だけ投入した。
+- 初回trace `Ev0BUTUT4E5Q` はBrainbase制御呼び出しとHook HTTP 200の後、`reply_judgment_tool_audit_mismatch`で停止した。自動再試行trace `Ev0BUVT0FC73`も完了せず、Slack返信、`response_ts`、completed episodeは読戻せなかった。
+- 発生箇所は `packages/cloud-runtime/src/reply-judgment.ts` の `parseReplyJudgmentStream` に限定した。同関数には実ストリームから到達可能で性質の異なる9個の監査不一致分岐があり、従来はすべて同じエラーコードへ圧縮されていた。
+
+### 関係分析と前提確認
+
+- データフロー、制御フロー、非同期フロー、モジュール境界、変更履歴を確認した。
+- 未宣言変数、parser stateのretry間漏洩、await順序、初期化タイミング、settings生成、PostToolUse matcher、`--include-hook-events`、packaged assetsの意味的不一致は根因として棄却した。
+- 既存の合成fixtureはproduction streamの複数block、replay、interleave、Stop repairを過少近似しており、保存済み証拠から実ストリームのunderlying mismatchを一意に確定することはできない。
+- 実装、テスト、GitHub、Cloudflare readbackに必要な前提は確認済み。秘密値、tenant boundary handle、raw Claude JSONLは成果物へ保存しない。
+
+### 確認済みの根本原因と修正
+
+- 確認済みの根本原因は、到達可能な9種類の監査不一致が単一の `reply_judgment_tool_audit_mismatch` に圧縮され、安全な本番証拠から発火条件を特定できないこと。
+- 各分岐へ固定語彙の非機密サブコードを割り当て、既存のfail-closed動作と `reply_judgment_tool_audit_mismatch` 接頭辞を維持した。代表サブコードが `mana_claude_failed`、`mana_reply_failed`、永続episodeの `failureCode` へ同値で伝播し、raw streamを残さないこともpipelineテストで固定した。
+- raw stream、tool引数、回答本文、receipt ID、tenant情報はreason codeへ含めない。
+- underlying mismatchとSlack無応答そのものの根本原因はまだ `unknown`。この変更の本番配備後、fresh E2Eで安全なサブコードを読戻して次の根本修正を決める。
+
+### 配備前検証
+
+- 監査分岐と返信pipelineの対象テスト: 2 files、88 tests 合格。
+- cloud-runtime全テスト: 122 files、1238 tests 合格。
+- cloud-runtime TypeScript型検査: 合格。
+- JSON構文検査と `git diff --check`: 合格。
+- 本番の同一Slack経路による再検証は未実施。配備後に新しい検証IDで1回だけ送信し、サブコードまたは正常返信をreadbackする。
+
 ## mana-reply-judgment-hook-503:ac:5 fresh Slack lifecycle
 
 現行HEADの状態: `not_collected`

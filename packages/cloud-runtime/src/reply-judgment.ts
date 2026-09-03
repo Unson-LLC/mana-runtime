@@ -362,7 +362,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   const hasToolName = (hook: typeof postToolHookCandidates[number]): boolean =>
     typeof hook.receipt.tool_name === "string" && Boolean(hook.receipt.tool_name.trim());
   if (postToolHookCandidates.some((hook) => !hasToolUseId(hook) || !hasToolName(hook))) {
-    throw new Error("reply_judgment_tool_audit_mismatch");
+    throw new Error("reply_judgment_tool_audit_mismatch_posttool_identity_missing");
   }
   const matchesBrainbaseCall = (hook: typeof postToolHookCandidates[number]): boolean =>
     hasToolUseId(hook) && calls.some((call) => call.id === hook.receipt.tool_use_id);
@@ -375,7 +375,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     isBrainbaseToolReceipt(hook) && hasToolUseId(hook) && hasToolName(hook));
   if (brainbaseIdentityBoundHooks.some((hook) => isBrainbaseEvidenceTool(hook.receipt.tool_name!)
       && toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
-    throw new Error("reply_judgment_tool_audit_mismatch");
+    throw new Error("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
   }
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
@@ -425,7 +425,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
         if (existing.receipt.tool_name !== hook.receipt.tool_name
             || existing.receipt.host_receipt_id !== hook.receipt.host_receipt_id
             || JSON.stringify(auditLines(existing.output)) !== JSON.stringify(auditLines(hook.output))) {
-          throw new Error("reply_judgment_tool_audit_mismatch");
+          throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_conflict");
         }
         continue;
       }
@@ -434,16 +434,16 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     boundPostToolHooks = executedCalls.map((call) => {
       const hook = hooksByToolUseId.get(call.id);
       if (!hook || hook.receipt.tool_name !== call.name) {
-        throw new Error("reply_judgment_tool_audit_mismatch");
+        throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing");
       }
       return hook;
     });
     if (hooksByToolUseId.size !== executedCalls.length) {
-      throw new Error("reply_judgment_tool_audit_mismatch");
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_count_mismatch");
     }
   } else {
     if (executedCalls.length > 0) {
-      throw new Error("reply_judgment_tool_audit_mismatch");
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_missing");
     }
     boundPostToolHooks = brainbaseIdentityBoundHooks;
   }
@@ -452,7 +452,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     const result = results.get(call.id);
     const audit = boundPostToolHooks[sequence];
     if (!result || result.index <= call.index || !audit || audit.index <= call.index) {
-      throw new Error("reply_judgment_tool_audit_mismatch");
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_event_order_invalid");
     }
     if (promptHooks[0]!.index >= call.index || result.index >= successfulStop.index
         || audit.index >= successfulStop.index) {
@@ -463,12 +463,6 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // an evidence call. Authenticate every Brainbase receipt first, then omit
   // lifecycle-only calls from the source-read journal by tool identity.
   const evidenceCalls = executedCalls.filter((call) => isBrainbaseEvidenceTool(call.name));
-  const hooksByToolUseId = new Map(boundPostToolHooks.map((hook) => [hook.receipt.tool_use_id!, hook]));
-  const boundEvidenceHooks = evidenceCalls.map((call) => {
-    const audit = hooksByToolUseId.get(call.id);
-    if (!audit) throw new Error("reply_judgment_tool_audit_mismatch");
-    return audit;
-  });
   const toolJournal = evidenceCalls.map((call, sequence) => {
     const result = results.get(call.id)!;
     return { sequence: sequence + 1, toolUseId: call.id, toolName: call.name, outcome: result.outcome };
@@ -496,23 +490,17 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   }
   if (evidenceCalls.length > 0) {
     // PostToolUse can carry either the latest audit line or a cumulative Host
-    // journal. The last completed Brainbase line is the receipt for that call.
-    // Bind one such receipt to every observed tool call; do not compare prose
-    // byte-for-byte with Stop because the Host may summarize it at completion.
-    const incrementalToolAuditLines = boundEvidenceHooks.map((hook) =>
-      toolBrainbaseAuditLines(auditLines(hook.output)).at(-1));
-    if (incrementalToolAuditLines.some((line) => !line)) {
-      throw new Error("reply_judgment_tool_audit_mismatch");
-    }
+    // journal. Evidence receipts without a completed audit line were rejected
+    // before identity binding; Stop may summarize the completed receipts.
     const completedStopAuditLines = completedBrainbaseAuditLines(expectedAuditLines);
     // The Host may collapse several tool-level receipts into a smaller final
     // summary. Per-call completeness is proven above by PostToolUse; Stop only
     // needs to carry at least one completed Brainbase audit line.
     if (completedStopAuditLines.length === 0) {
-      throw new Error("reply_judgment_tool_audit_mismatch");
+      throw new Error("reply_judgment_tool_audit_mismatch_stop_evidence_audit_missing");
     }
   } else if (completedBrainbaseAuditLines(expectedAuditLines).length > 0) {
-    throw new Error("reply_judgment_tool_audit_mismatch");
+    throw new Error("reply_judgment_tool_audit_mismatch_unexpected_stop_evidence_audit");
   }
   let actualAuditLines = auditLinesInReply(final.reply);
   if (actualAuditLines.length === 0) {

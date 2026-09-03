@@ -426,6 +426,84 @@
       "confidence": 0.95,
       "first_seen_at": "2026-09-03T09:20:00.000Z",
       "last_revised_at": "2026-09-03T09:27:00.000Z"
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "監査不一致はfail closedを維持し、固定語彙の非機密サブコードで拒否分岐を分類する。reason codeへraw stream、tool引数、回答本文、tenant境界値、tool_use_id、Host receiptを含めない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-7"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/mana-reply-judgment-hook-503.md",
+            "section": "決定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/reply-judgment.ts",
+            "anchor": "parseReplyJudgmentStream"
+          },
+          {
+            "file": "packages/cloud-runtime/src/reply-pipeline.ts",
+            "anchor": "generateClaudeReply"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "classifies a duplicated executed tool identity without exposing stream contents"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "classifies a PostToolUse receipt emitted before its tool call"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "classifies a completed evidence audit without an executed evidence call"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "classifies a missing completed Stop audit for an executed evidence call"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-pipeline.test.ts",
+            "case": "persists a safe audit mismatch subcode across both failure logs without leaking stream data"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "classifies a duplicated executed tool identity without exposing stream contents"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "classifies a PostToolUse receipt emitted before its tool call"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "classifies a completed evidence audit without an executed evidence call"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "classifies a missing completed Stop audit for an executed evidence call"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-pipeline.test.ts",
+            "must_cover": "persists a safe audit mismatch subcode across both failure logs without leaking stream data"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-09-04T02:45:00.000Z",
+      "last_revised_at": "2026-09-04T02:45:00.000Z"
     }
   ],
   "generated_at": "2026-09-01T13:42:23.198Z",
