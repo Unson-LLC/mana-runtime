@@ -10,6 +10,29 @@ import {
 const configPath = fileURLToPath(new URL("../wrangler.unson-business.jsonc", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
+function wranglerDeployArgs() {
+  const skipContainerRollout = process.env.MANA_SKIP_CONTAINER_ROLLOUT;
+  if (skipContainerRollout !== undefined
+    && skipContainerRollout !== "true"
+    && skipContainerRollout !== "false") {
+    throw new Error("tenant_runtime_container_rollout_option_invalid");
+  }
+
+  const args = ["exec", "wrangler", "deploy", "--config", configPath];
+  if (skipContainerRollout === "true") {
+    args.push("--containers-rollout", "none");
+  }
+  return args;
+}
+
+let deployArgs;
+try {
+  deployArgs = wranglerDeployArgs();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "tenant_runtime_container_rollout_option_invalid");
+  process.exit(9);
+}
+
 function candidateCheckoutHead() {
   return execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: repositoryRoot,
@@ -91,7 +114,7 @@ try {
 }
 
 const deployExit = await new Promise((resolve) => {
-  const child = spawn("pnpm", ["exec", "wrangler", "deploy", "--config", configPath], {
+  const child = spawn("pnpm", deployArgs, {
     stdio: "inherit", shell: false,
   });
   child.on("error", () => resolve(1));

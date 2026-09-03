@@ -27,6 +27,39 @@ describe("unson business deploy wrapper", () => {
     expect(workflow).toContain("pnpm install --no-frozen-lockfile --lockfile=false");
   });
 
+  it("keeps Container rollout enabled by default and allows an explicit Worker-only recovery", async () => {
+    const workflow = await readFile(
+      fileURLToPath(new URL("../../../../.github/workflows/deploy-unson-business.yml", import.meta.url)),
+      "utf8",
+    );
+    const script = await readFile(
+      fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workflow).toContain("skip_container_rollout:");
+    expect(workflow).toContain("default: false");
+    expect(workflow).toContain("MANA_SKIP_CONTAINER_ROLLOUT: ${{ inputs.skip_container_rollout }}");
+    expect(script).toContain('skipContainerRollout !== "true"');
+    expect(script).toContain('skipContainerRollout !== "false"');
+    expect(script).toContain('args.push("--containers-rollout", "none")');
+  });
+
+  it("fails closed before preflight when the Container rollout option is invalid", () => {
+    const script = fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, [script], {
+      encoding: "utf8",
+      env: {
+        PATH: "/path-that-does-not-contain-pnpm",
+        MANA_SKIP_CONTAINER_ROLLOUT: "unexpected",
+      },
+    });
+
+    expect(result.status).toBe(9);
+    expect(result.stderr).toContain("tenant_runtime_container_rollout_option_invalid");
+    expect(result.stderr).not.toContain("ENOENT");
+  });
+
   it("stops before deployment when Brainbase project preflight fails", () => {
     const script = fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url));
     const result = spawnSync(process.execPath, [script], {

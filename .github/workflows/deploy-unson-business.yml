@@ -7,6 +7,11 @@ on:
         description: 配備理由（監査用）
         required: true
         type: string
+      skip_container_rollout:
+        description: Workerのみを配備し、既知正常なContainerを維持する
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -71,6 +76,7 @@ jobs:
           UNSON_BUSINESS_WORKER_URL: https://unson-business-mana-runtime.unson.workers.dev
           SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
           MANA_DEPLOY_CANDIDATE_COMMIT: ${{ github.sha }}
+          MANA_SKIP_CONTAINER_ROLLOUT: ${{ inputs.skip_container_rollout }}
 
       - name: 配備証跡を記録
         shell: bash
