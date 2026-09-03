@@ -295,6 +295,14 @@ function completedBrainbaseAuditLines(lines: string[]): string[] {
     && !line.startsWith("📚 Brainbase監査未完了:"));
 }
 
+function isBrainbaseEvidenceTool(name: string): boolean {
+  // These tools manage the Judgment lifecycle itself. They prove that the
+  // turn was classified/state-recorded, but they are not a Brainbase source
+  // read and therefore must not be paired with a knowledge-reference audit.
+  return name !== "mcp__brainbase__brainbase_resolve_turn"
+    && name !== "mcp__brainbase__brainbase_judgment_state_record";
+}
+
 function verifiedAnswer(output: Record<string, unknown>): string | undefined {
   if (typeof output.systemMessage !== "string") return undefined;
   const markers = output.systemMessage.split(/\r?\n/)
@@ -328,7 +336,8 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
     for (const item of contentItems(event)) {
       if (item.type === "tool_use" && typeof item.id === "string" && typeof item.name === "string"
-          && item.name.startsWith("mcp__brainbase__")) calls.push({ index, id: item.id, name: item.name });
+          && item.name.startsWith("mcp__brainbase__")
+          && isBrainbaseEvidenceTool(item.name)) calls.push({ index, id: item.id, name: item.name });
       if (item.type === "tool_result" && typeof item.tool_use_id === "string") {
         results.set(item.tool_use_id, { index, outcome: item.is_error === true ? "error" : "success" });
       }
@@ -342,8 +351,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
 
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
   const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse"
-    && auditLines(hook.output).some((line) =>
-      line.startsWith(BRAINBASE_AUDIT_PREFIX) || line.startsWith(BRAINBASE_WARNING_PREFIX)));
+    && completedBrainbaseAuditLines(auditLines(hook.output)).length > 0);
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
   // call. Claude can recover by calling resolve_turn first and then retrying.

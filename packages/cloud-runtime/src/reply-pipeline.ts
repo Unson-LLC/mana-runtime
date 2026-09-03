@@ -200,6 +200,7 @@ function buildPrompt(
   return [
     ...(brainbaseProjectCode ? [
       "最優先: UserPromptSubmit Hookの追加文脈を読み、Hookが指定したturn_inputオブジェクト全体を変更せずturn_inputへコピーし、あなた自身の意味分類だけをmodel_interpretationに追加してbrainbase_resolve_turnを正確に1回だけ呼んでください。turn_inputを参照値・要約・再構築した値へ置き換えてはいけません。このtool callが成功するまで、他のtool呼び出し・調査・回答作成を始めてはいけません。成功後は同じturnでbrainbase_resolve_turnを再実行しないでください。",
+      "分類は単語一致ではなく依頼の意味で行ってください。正しい回答がBrainbase管理の事実、正本の選択、プロジェクト知識、または現在の実行時設定の所在に依存する場合はknowledgeを必ず含め、必要ならengineeringやoperationsと併記してください。general単独はBrainbase管理の事実を必要としない場合だけです。",
       "brainbase_resolve_turnが返したTurnContractを、その後の検索・操作・最終回答の契約として扱い、requiredになったcapabilityを回答前にすべて実行してください。knowledge.resolveがrequiredなら、指定されたprojectとknowledge intentでbrainbase_knowledge_resolveを実行してください。Stopで差し戻された場合は、resolve_turnを繰り返さず、Stopが示したmissing capabilityを実行してください。",
       "",
     ] : []),

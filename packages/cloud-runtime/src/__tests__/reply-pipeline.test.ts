@@ -507,6 +507,8 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("Hookが指定したturn_inputオブジェクト全体を変更せずturn_inputへコピーし");
     expect(prompt).not.toContain("turn_ref");
     expect(prompt).toContain("成功後は同じturnでbrainbase_resolve_turnを再実行しないでください");
+    expect(prompt).toContain("分類は単語一致ではなく依頼の意味で行ってください");
+    expect(prompt).toContain("現在の実行時設定の所在");
     expect(prompt).toContain("knowledge.resolveがrequiredなら");
     expect(prompt).toContain("brainbase_knowledge_resolveを実行してください");
     expect(prompt).not.toContain("turn_inputを一切変更せず");

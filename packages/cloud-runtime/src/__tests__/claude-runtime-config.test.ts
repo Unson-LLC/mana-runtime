@@ -113,6 +113,8 @@ describe("Cloudflare Claude runtime config", () => {
     expect(reply).toContain("--settings /tmp/mana-reply-claude-settings.json");
     expect(reply).toContain("--append-system-prompt");
     expect(reply).toContain("first assistant action MUST be exactly one call to mcp__brainbase__brainbase_resolve_turn");
+    expect(reply).toContain("Classify by meaning, not keywords");
+    expect(reply).toContain("current location of runtime configuration");
     expect(reply).toContain("Hook-provided turn_input object unchanged into turn_input");
     expect(reply).toContain('"intent":"answer|investigate|diagnose|design|implement|review|operate"');
     expect(reply).toContain('"domains":["general|knowledge|personal_judgment|engineering|organization|operations"]');
