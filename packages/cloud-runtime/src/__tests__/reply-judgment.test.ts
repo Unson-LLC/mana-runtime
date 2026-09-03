@@ -173,6 +173,29 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
+  it("ignores PostToolUse receipts for non-Brainbase tools", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "google-tool", name: "mcp__google_drive__search", input: {},
+        }] },
+      }),
+      JSON.stringify(hook("PostToolUse", "", "turn-1")),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "google-tool", content: "{}",
+        }] },
+      }),
+    );
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      stop: "completed",
+      toolJournal: [{ toolUseId: "tool-1", outcome: "success" }],
+    });
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity", () => {
     const result = parseReplyJudgmentStream(stream({ toolCount: 2 }));
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
