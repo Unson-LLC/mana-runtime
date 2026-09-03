@@ -319,7 +319,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   let final: { index: number; reply: string; sessionId: string } | undefined;
 
   events.forEach((event, index) => {
-    if (event.type === "system" && event.subtype === "hook_response") {
+    if (event.type === "system" && event.subtype === "hook_response"
+        && (event.hook_event === "UserPromptSubmit"
+          || event.hook_event === "PostToolUse"
+          || event.hook_event === "Stop")) {
       const parsed = hookReceipt(event);
       hooks.push({ index, ...parsed });
     }
@@ -340,6 +343,11 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
   const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse");
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
+  // A rejected PreToolUse attempt is a guard decision, not an executed MCP
+  // call. Claude can recover by calling resolve_turn first and then retrying.
+  // Only calls that produced a tool_result crossed the execution boundary;
+  // every such call must still have an authenticated PostToolUse receipt.
+  const executedCalls = calls.filter((call) => results.has(call.id));
   if (promptHooks.length !== 1 || stopHooks.length < 1) throw new Error("reply_judgment_lifecycle_incomplete");
   if (typeof promptHooks[0]!.receipt.host_receipt_id !== "string"
       || !promptHooks[0]!.receipt.host_receipt_id.trim()
@@ -372,9 +380,9 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (allReceipts.some((receipt) => receipt.session_id !== final!.sessionId || receipt.turn_id !== turnId)) {
     throw new Error("reply_judgment_identity_mismatch");
   }
-  if (postToolHooks.length !== calls.length) throw new Error("reply_judgment_tool_audit_mismatch");
+  if (postToolHooks.length !== executedCalls.length) throw new Error("reply_judgment_tool_audit_mismatch");
 
-  const toolJournal = calls.map((call, sequence) => {
+  const toolJournal = executedCalls.map((call, sequence) => {
     const result = results.get(call.id);
     const audit = postToolHooks[sequence];
     if (!result || result.index <= call.index || !audit || audit.index <= call.index) {
@@ -404,7 +412,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     // incomplete final audit into a completed Judgment episode.
     throw new Error("reply_judgment_audit_lines_missing");
   }
-  if (calls.length > 0) {
+  if (executedCalls.length > 0) {
     // PostToolUse can carry either the latest audit line or a cumulative Host
     // journal. The last completed Brainbase line is the receipt for that call.
     // Bind one such receipt to every observed tool call; do not compare prose

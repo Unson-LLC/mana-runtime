@@ -152,6 +152,27 @@ describe("Slack reply Judgment lifecycle", () => {
       .toThrow("reply_judgment_hook_failed_judgment_hook_http_401");
   });
 
+  it("ignores a PreToolUse rejection when the model recovers into a fully audited lifecycle", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const promptIndex = lines.findIndex((line) => line.includes('"hook_event":"UserPromptSubmit"'));
+    lines.splice(promptIndex + 1, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "blocked-tool", name: "mcp__brainbase__brainbase_knowledge_resolve", input: {},
+        }] },
+      }),
+      JSON.stringify({
+        type: "system", subtype: "hook_response", hook_event: "PreToolUse",
+        exit_code: 2, outcome: "error", stderr: "judgment_resolve_turn_required_first",
+      }),
+    );
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      stop: "completed",
+      toolJournal: [{ toolUseId: "tool-1", outcome: "success" }],
+    });
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity", () => {
     const result = parseReplyJudgmentStream(stream({ toolCount: 2 }));
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
