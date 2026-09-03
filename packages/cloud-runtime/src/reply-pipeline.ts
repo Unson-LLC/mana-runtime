@@ -401,16 +401,12 @@ export async function generateClaudeReply(
         durationMs: Date.now() - startedAt,
       });
       try {
-        // Cloudflare can stop the container at the same boundary that closes
-        // the exec RPC. A small session-directory probe starts that same
-        // sandbox again and proves the persisted Claude state exists before
-        // we issue --resume. Without this, --resume races the stopped
-        // container and deterministically fails with "container is not running".
-        const restartProbe = await sandbox.exec(
-          "test -d /root/.claude/projects",
-          { timeout: 30_000 },
-        );
-        if (!restartProbe.success) throw new Error("claude_session_state_unavailable");
+        // A Stop-hook HTTP 500 can leave the Sandbox DO alive while its
+        // container is stopped. writeFile goes through the SDK's container
+        // fetch path, which starts a stopped container; exec alone does not.
+        // Re-project the same runtime inputs before resuming the persisted
+        // Claude session.
+        await prepareSandbox(sandbox);
         result = await runClaude(true);
       } catch (retryError) {
         emitTurnLog("error", "mana_claude_failed", event, trace, {

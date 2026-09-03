@@ -191,20 +191,18 @@ describe("TechKnight Slack reply pipeline", () => {
     const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     sandbox.exec
       .mockRejectedValueOnce(new Error("HTTP error! status: 500"))
-      .mockResolvedValueOnce({ success: true, stdout: "", stderr: "", exitCode: 0 })
       .mockResolvedValueOnce({ success: true, stdout: auditedReplyStream(), stderr: "", exitCode: 0 });
 
     await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
       reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
     });
 
-    expect(sandbox.exec).toHaveBeenCalledTimes(3);
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    expect(sandbox.writeFile).toHaveBeenCalledTimes(6);
     const firstCommand = String(sandbox.exec.mock.calls[0]?.[0]);
-    const restartCommand = String(sandbox.exec.mock.calls[1]?.[0]);
-    const secondCommand = String(sandbox.exec.mock.calls[2]?.[0]);
+    const secondCommand = String(sandbox.exec.mock.calls[1]?.[0]);
     const sessionId = firstCommand.match(/--session-id ([0-9a-f-]{36})/)?.[1];
     expect(sessionId).toBeTruthy();
-    expect(restartCommand).toContain(`test -d /root/.claude/projects`);
     expect(secondCommand).toContain(`--resume ${sessionId}`);
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
