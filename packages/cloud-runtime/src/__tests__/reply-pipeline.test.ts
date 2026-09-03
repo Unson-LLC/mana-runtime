@@ -188,23 +188,41 @@ describe("TechKnight Slack reply pipeline", () => {
   });
 
   it("resumes the same Claude session once when the blocking Stop boundary surfaces as Sandbox HTTP 500", async () => {
-    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
-    sandbox.exec
-      .mockRejectedValueOnce(new Error("HTTP error! status: 500"))
-      .mockResolvedValueOnce({ success: true, stdout: auditedReplyStream(), stderr: "", exitCode: 0 });
+    const { options, sandbox: disconnectedSandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    const reconnectedSandbox = {
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      exec: vi.fn().mockResolvedValue({
+        success: true,
+        stdout: auditedReplyStream(),
+        stderr: "",
+        exitCode: 0,
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    disconnectedSandbox.exec.mockRejectedValueOnce(new Error("HTTP error! status: 500"));
+    vi.mocked(options.createSandbox)
+      .mockReturnValueOnce(disconnectedSandbox)
+      .mockReturnValueOnce(reconnectedSandbox);
 
     await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
       reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
     });
 
-    expect(sandbox.exec).toHaveBeenCalledTimes(2);
-    expect(sandbox.writeFile).toHaveBeenCalledTimes(6);
-    const firstCommand = String(sandbox.exec.mock.calls[0]?.[0]);
-    const secondCommand = String(sandbox.exec.mock.calls[1]?.[0]);
+    expect(options.createSandbox).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(options.createSandbox).mock.calls[0]?.[0]).toBe(
+      vi.mocked(options.createSandbox).mock.calls[1]?.[0],
+    );
+    expect(disconnectedSandbox.exec).toHaveBeenCalledOnce();
+    expect(reconnectedSandbox.exec).toHaveBeenCalledOnce();
+    expect(disconnectedSandbox.writeFile).toHaveBeenCalledTimes(3);
+    expect(reconnectedSandbox.writeFile).toHaveBeenCalledTimes(3);
+    const firstCommand = String(disconnectedSandbox.exec.mock.calls[0]?.[0]);
+    const secondCommand = String(reconnectedSandbox.exec.mock.calls[0]?.[0]);
     const sessionId = firstCommand.match(/--session-id ([0-9a-f-]{36})/)?.[1];
     expect(sessionId).toBeTruthy();
     expect(secondCommand).toContain(`--resume ${sessionId}`);
-    expect(sandbox.destroy).toHaveBeenCalledOnce();
+    expect(disconnectedSandbox.destroy).not.toHaveBeenCalled();
+    expect(reconnectedSandbox.destroy).toHaveBeenCalledOnce();
   });
 
   it("fails closed when a tenant Container cannot be destroyed", async () => {

@@ -310,7 +310,8 @@ export async function generateClaudeReply(
   const requesterIdentity = options.requesterIdentity ?? (identityOutcome.outcome === "resolved"
     ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
     : undefined);
-  const sandbox = options.createSandbox(freshTenantContainerId("techknight-reply"));
+  const sandboxId = freshTenantContainerId("techknight-reply");
+  let sandbox = options.createSandbox(sandboxId);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
     const promptContent = buildPrompt(
@@ -402,11 +403,11 @@ export async function generateClaudeReply(
         durationMs: Date.now() - startedAt,
       });
       try {
-        // A Stop-hook HTTP 500 can leave the Sandbox DO alive while its
-        // container is stopped. writeFile goes through the SDK's container
-        // fetch path, which starts a stopped container; exec alone does not.
-        // Re-project the same runtime inputs before resuming the persisted
-        // Claude session.
+        // A Stop-hook HTTP 500 invalidates the SDK RPC control connection even
+        // though the named Claude session remains in the same Container. Get a
+        // new stub for the same sandbox ID, then re-project the runtime inputs
+        // before resuming that exact session.
+        sandbox = options.createSandbox(sandboxId);
         await prepareSandbox(sandbox);
         result = await runClaude(true);
       } catch (retryError) {
