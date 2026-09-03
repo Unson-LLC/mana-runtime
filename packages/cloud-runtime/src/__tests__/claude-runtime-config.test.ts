@@ -163,6 +163,10 @@ describe("Cloudflare Claude runtime config", () => {
       resumeSession: true,
       includeJudgmentHookEvents: true,
     })).toContain("A CLI invocation using --resume creates a new Hook turn");
+    expect(buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true }))
+      .toContain("use the complete original user request as the knowledge intent");
+    expect(buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true }))
+      .toContain("Do not substitute brainbase_admin_read or brainbase_bootstrap_config");
     expect(() => buildRuntimeClaudeCommand("reply", config, { sessionId: "$(unsafe)" }))
       .toThrow("runtime_claude_session_id_invalid");
   });
