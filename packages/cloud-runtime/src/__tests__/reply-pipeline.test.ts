@@ -416,7 +416,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).not.toContain("TechKnight");
     expect(prompt).not.toContain("八雲まな");
     expect(sandbox.exec).toHaveBeenCalledWith(
-      expect.stringMatching(/^node \/opt\/mana\/tenant-claude-runner\.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions --session-id [0-9a-f-]{36} --settings \/tmp\/mana-reply-claude-settings\.json --output-format stream-json --verbose --include-hook-events "\$\(cat \/tmp\/mana-slack-prompt\.txt\)" --mcp-config \/tmp\/mana-task-search-mcp\.json --strict-mcp-config$/),
+      expect.stringMatching(/^node \/opt\/mana\/tenant-claude-runner\.mjs -- --print --model opus --effort xhigh --permission-mode bypassPermissions --session-id [0-9a-f-]{36} --append-system-prompt .* --settings \/tmp\/mana-reply-claude-settings\.json --output-format stream-json --verbose --include-hook-events "\$\(cat \/tmp\/mana-slack-prompt\.txt\)" --mcp-config \/tmp\/mana-task-search-mcp\.json --strict-mcp-config$/),
       {
         timeout: 240_000,
         env: {

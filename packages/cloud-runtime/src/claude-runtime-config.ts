@@ -155,11 +155,14 @@ export function buildRuntimeClaudeCommand(
       ? ` --output-format stream-json --verbose --include-hook-events --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : options.includeJudgmentHookEvents ? " --output-format stream-json --verbose --include-hook-events" : "";
+  const judgmentBootstrapArg = purpose === "reply" && options.includeJudgmentHookEvents
+    ? " --append-system-prompt 'Your first assistant action MUST be a call to mcp__brainbase__brainbase_resolve_turn. Read turn_input from the UserPromptSubmit Hook context, copy it unchanged, and add your semantic model_interpretation. Do not emit text or call any other tool before that call succeeds. If a Hook blocks an action because resolve_turn is missing, call mcp__brainbase__brainbase_resolve_turn immediately instead of answering.'"
+    : "";
   const claude = "node /opt/mana/tenant-claude-runner.mjs --";
   const base = purpose === "meeting-minutes"
     ? `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --setting-sources '' --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg}`
       + ` --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config < ${promptPath}`
-    : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}`
+    : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}${judgmentBootstrapArg}`
       + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${REPLY_SETTINGS_PATH}` : ""}`
       + `${structuredOutputArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)

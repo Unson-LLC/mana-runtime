@@ -111,6 +111,8 @@ describe("Cloudflare Claude runtime config", () => {
     const reply = buildRuntimeClaudeCommand("reply", config, { includeJudgmentHookEvents: true });
     expect(reply).toContain("--output-format stream-json --verbose --include-hook-events");
     expect(reply).toContain("--settings /tmp/mana-reply-claude-settings.json");
+    expect(reply).toContain("--append-system-prompt");
+    expect(reply).toContain("first assistant action MUST be a call to mcp__brainbase__brainbase_resolve_turn");
 
     const settingsPath = fileURLToPath(new URL("../../container/reply-claude-settings.json", import.meta.url));
     const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
