@@ -156,7 +156,7 @@ export function buildRuntimeClaudeCommand(
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : options.includeJudgmentHookEvents ? " --output-format stream-json --verbose --include-hook-events" : "";
   const judgmentBootstrapArg = purpose === "reply" && options.includeJudgmentHookEvents
-    ? " --append-system-prompt 'Your first assistant action MUST be a call to mcp__brainbase__brainbase_resolve_turn. Read turn_input from the UserPromptSubmit Hook context, copy it unchanged, and add your semantic model_interpretation. Do not emit text or call any other tool before that call succeeds. If a Hook blocks an action because resolve_turn is missing, call mcp__brainbase__brainbase_resolve_turn immediately instead of answering.'"
+    ? " --append-system-prompt 'Your first assistant action MUST be a call to mcp__brainbase__brainbase_resolve_turn. Pass the Hook-provided turn_ref unchanged and add only your semantic model_interpretation; do not read, rebuild, inline, or pass turn_input. Do not emit text or call any other tool before that call succeeds. If a Hook blocks an action because resolve_turn is missing, call mcp__brainbase__brainbase_resolve_turn immediately instead of answering.'"
     : "";
   const claude = "node /opt/mana/tenant-claude-runner.mjs --";
   const base = purpose === "meeting-minutes"
