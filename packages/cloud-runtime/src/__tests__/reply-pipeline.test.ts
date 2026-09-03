@@ -466,6 +466,9 @@ describe("TechKnight Slack reply pipeline", () => {
 
     const prompt = String(sandbox.writeFile.mock.calls.find(([path]) =>
       String(path).endsWith("mana-slack-prompt.txt"))?.[1] ?? "");
+    expect(prompt).toContain("brainbase_resolve_turnを正確に1回呼んでください");
+    expect(prompt.indexOf("brainbase_resolve_turnを正確に1回呼んでください"))
+      .toBeLessThan(prompt.indexOf("brainbase_knowledge_resolveをproject_code=manaで呼び"));
     expect(prompt).toContain("brainbase_knowledge_resolveをproject_code=manaで呼び");
     expect(prompt).toContain("検索結果が空でも、不在とは断定せず");
   });

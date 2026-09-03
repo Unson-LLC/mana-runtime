@@ -54,6 +54,12 @@ function repairedStopAnswer(answer, auditLines) {
   return [...auditLines, ...bodyWithoutAudit].join("\n");
 }
 
+function stopRepairRequiresModelAction(reason) {
+  if (typeof reason !== "string") return false;
+  return /(?:mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+|brainbase_[a-z0-9_]+).{0,120}(?:実行|呼び出|tool call|call)/is.test(reason)
+    || /(?:実行|呼び出|tool call|call).{0,120}(?:mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+|brainbase_[a-z0-9_]+)/is.test(reason);
+}
+
 async function fetchHookEnvelope(payload) {
   const response = await fetch(hookUrl, {
     method: "POST",
@@ -148,7 +154,8 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
         JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
       const hasBrainbaseAudit = requiredAuditLines.some((line) =>
         BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
-      if (allowStopRepair && hasJudgmentAudit && hasBrainbaseAudit) {
+      if (allowStopRepair && hasJudgmentAudit && hasBrainbaseAudit
+          && !stopRepairRequiresModelAction(documentedOutput.reason)) {
         // Claude Code's non-interactive --print mode can return immediately after
         // a blocking Stop hook instead of sampling a second assistant message.
         // The authenticated Host reason contains the exact bounded audit repair.

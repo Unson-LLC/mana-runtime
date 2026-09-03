@@ -198,6 +198,11 @@ function buildPrompt(
     .trim()
     .slice(0, 100_000);
   return [
+    ...(brainbaseProjectCode ? [
+      "最優先: UserPromptSubmit Hookの追加文脈を読み、そこで指定されたturn_inputを一切変更せず、あなた自身の意味分類をmodel_interpretationにしてbrainbase_resolve_turnを正確に1回呼んでください。このtool callが成功するまで、他のtool呼び出し・調査・回答作成を始めてはいけません。",
+      "brainbase_resolve_turnが返したTurnContractを、その後の検索・操作・最終回答の契約として扱ってください。",
+      "",
+    ] : []),
     runtimeContext ? `あなたは${runtimeContext.persona}です。` : "あなたはこの会社専用のSlackアシスタントです。",
     "日本語で簡潔かつ具体的に回答してください。",
     "不明な事実を作らず、確認が必要なら短く質問してください。",
