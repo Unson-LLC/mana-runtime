@@ -2042,6 +2042,7 @@ export default {
       return Response.json({ runId: run.runId, status: run.status,
         destinationId: run.destination?.id, diagnostics: run.diagnostics,
         taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
+          pendingPresent: Boolean(run.taskRegistration?.pending),
           failure: run.taskRegistration?.failure,
           failedCandidateTitle: run.taskRegistration?.failure
             ? run.generated?.tasks?.[run.taskRegistration.failure.index]?.title : undefined },
