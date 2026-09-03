@@ -261,6 +261,95 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
+  it("mana-reply-judgment-hook-503:ac:6 ignores cumulative audit lines on control-plane receipts", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
+        }] },
+      }),
+      JSON.stringify(hook("PostToolUse", brainbaseLine, "turn-1", {
+        tool_use_id: "resolve-turn",
+        tool_name: "mcp__brainbase__brainbase_resolve_turn",
+      })),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
+        }] },
+      }),
+    );
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      stop: "completed",
+      toolJournal: [{
+        toolUseId: "tool-1",
+        toolName: "mcp__brainbase__brainbase_knowledge_resolve",
+        outcome: "success",
+      }],
+    });
+  });
+
+  it("mana-reply-judgment-hook-503:ac:6 fails closed when a control-plane receipt identity is invalid or missing", () => {
+    for (const [receiptId, receiptName, includeReceipt] of [
+      ["different-resolve-turn", "mcp__brainbase__brainbase_resolve_turn", true],
+      ["resolve-turn", "mcp__brainbase__brainbase_resolve_turn", false],
+      ["resolve-turn", "mcp__brainbase__brainbase_judgment_state_record", true],
+    ] as const) {
+      const lines = stream().split("\n");
+      const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+      const controlEvents = [
+        JSON.stringify({
+          type: "assistant", session_id: "session-1", message: { content: [{
+            type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
+          }] },
+        }),
+        ...(includeReceipt ? [JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1", {
+          tool_use_id: receiptId,
+          tool_name: receiptName,
+        }))] : []),
+        JSON.stringify({
+          type: "user", session_id: "session-1", message: { content: [{
+            type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
+          }] },
+        }),
+      ];
+      lines.splice(stopIndex, 0, ...controlEvents);
+
+      expect(() => parseReplyJudgmentStream(lines.join("\n")))
+        .toThrow("reply_judgment_tool_audit_mismatch");
+    }
+  });
+
+  it("mana-reply-judgment-hook-503:ac:6 rejects conflicting replayed control-plane receipts", () => {
+    const lines = stream().split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
+        }] },
+      }),
+      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1", {
+        tool_use_id: "resolve-turn",
+        tool_name: "mcp__brainbase__brainbase_resolve_turn",
+      })),
+      JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1", {
+        tool_use_id: "resolve-turn",
+        tool_name: "mcp__brainbase__brainbase_judgment_state_record",
+      })),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
+        }] },
+      }),
+    );
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch");
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity", () => {
     const result = parseReplyJudgmentStream(stream({ toolCount: 2 }));
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);

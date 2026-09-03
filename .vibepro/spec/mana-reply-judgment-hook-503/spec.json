@@ -345,7 +345,7 @@
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "全PostToolUse受領票にtool_use_idとtool_nameを必須とし、各Brainbase受領票を実呼び出しへ結合する。同一内容の再掲だけを1件に畳み、内容不一致・識別子欠落・監査欠落・未完了監査はfail closedする",
+      "statement": "全PostToolUse受領票にtool_use_idとtool_nameを必須とし、制御用を含む全Brainbase呼び出しを実行結果と受領票へidentity結合した後、参照・取得受領票だけを証跡journalへ数える。Judgment制御用受領票は累積監査行を含んでも参照実績へ数えない。同一内容の再掲だけを1件に畳み、内容不一致・識別子欠落・受領票欠落・監査欠落・未完了監査はfail closedする",
       "origin": {
         "story_refs": [
           {
@@ -380,6 +380,18 @@
           {
             "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
             "case": "mana-reply-judgment-hook-503:ac:6 fails closed when a relevant PostToolUse receipt lacks tool identity"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "mana-reply-judgment-hook-503:ac:6 ignores cumulative audit lines on control-plane receipts"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "mana-reply-judgment-hook-503:ac:6 fails closed when a control-plane receipt identity is invalid or missing"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "mana-reply-judgment-hook-503:ac:6 rejects conflicting replayed control-plane receipts"
           }
         ]
       },
@@ -396,6 +408,18 @@
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
             "must_cover": "mana-reply-judgment-hook-503:ac:6 fails closed when a relevant PostToolUse receipt lacks tool identity"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "mana-reply-judgment-hook-503:ac:6 ignores cumulative audit lines on control-plane receipts"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "mana-reply-judgment-hook-503:ac:6 fails closed when a control-plane receipt"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "mana-reply-judgment-hook-503:ac:6 rejects conflicting replayed control-plane receipts"
           }
         ]
       },
