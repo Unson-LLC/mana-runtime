@@ -315,6 +315,13 @@ describe("会社別Cloudflare deployment", () => {
     );
   });
 
+  it("mana-reply-judgment-hook-503:ac:4 packages reply Judgment settings", () => {
+    const dockerfile = readFileSync(fileURLToPath(new URL("../../Dockerfile", import.meta.url)), "utf8");
+    expect(dockerfile).toContain(
+      "COPY --chmod=0444 container/reply-claude-settings.json /opt/mana/reply-claude-settings.json",
+    );
+  });
+
   it("開発ランナーはコンテナ内で実在するNode実行ファイルを継承する", () => {
     const runnerPath = fileURLToPath(new URL("../../container/cloudflare-development-runner.mjs", import.meta.url));
     const runner = readFileSync(runnerPath, "utf8");
@@ -538,12 +545,16 @@ describe("会社別Cloudflare deployment", () => {
       placementId: string; projectCodes: string[];
     }>).find((placement) => placement.placementId === "biz-meeting-router");
     expect(routerPlacement?.projectCodes).toEqual(["unson"]);
-    expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)["biz-meeting-router"]).toEqual([
-      "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
-    ]);
+    // Slack ingress starts from the stable project alias, while the signed
+    // tenant context returns the canonical authority project ID. Queue scope
+    // validation must compare against that same canonical ID.
+    expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
+      "biz-meeting-router": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
+    });
     expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
       techknight: "prj_01M1DDJ9V6EER4676YPXBSHBZX",
+      ncom: "prj_01KGHVCMA6R6A9MEMGKHRXQ5J0",
     });
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD,U07B19N048G");
@@ -727,12 +738,22 @@ describe("会社別Cloudflare deployment", () => {
     expect(packageJson.scripts["deploy:unson-business"]).toContain("node scripts/deploy-unson-business.mjs");
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/deploy-gate"');
+    expect(worker).toContain("/admin\\/reply-judgment\\/episodes");
+    expect(worker).toContain("readReplyJudgmentEpisode(workspace.fs");
+    expect(worker).toContain('url.searchParams.get("tenant_id")');
+    expect(worker).toContain('env.TENANT_RUNTIME_STATE, request, ["brainbase_proxy"]');
+    expect(worker).toContain("tenantId !== tenantContext.tenant.tenant_id");
+    expect(worker).toContain("workspaceId !== tenantContext.workspace_connection.workspace_id");
+    expect(worker).toContain("channelId !== tenantContext.slack.channel_id");
+    expect(worker).toContain("threadTs !== tenantContext.slack.thread_ts");
+    expect(worker).toContain('error: "reply_judgment_scope_mismatch"');
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/intake"');
     expect(worker).toContain("/admin\\/meeting-minutes\\/runs");
     expect(worker).toContain("isIntakePaused()");
     expect(worker).toContain("isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN)");
     expect(worker).toContain("env, requiredRuntimeBinding(env.TENANT_ID),\n      ).status()");
     expect(worker).toContain("registeredCount: run.taskRegistration?.registered.length ?? 0");
+    expect(worker).toContain("pendingPresent: Boolean(run.taskRegistration?.pending)");
     expect(worker).toContain("failure: run.taskRegistration?.failure");
     expect(worker).toContain("failedCandidateTitle: run.taskRegistration?.failure");
     expect(worker).toContain('runAdminMatch[2] === "/adopt-tasks"');

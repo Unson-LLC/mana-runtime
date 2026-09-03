@@ -234,6 +234,8 @@ export interface MeetingMinutesRun {
     /** Exact durable request saved before createTask. Retried byte-for-byte with the same idempotency key. */
     pending?: { index: number; idempotencyKey: string; input: import("@openryoko/task-runtime-core").CreateTaskInput };
     failure?: { index: number; stage?: "task_registration" | "task_board" | "task_card"; message: string;
+      /** Safe execution point used to distinguish failures without exposing upstream payloads. */
+      failurePoint?: "assignee_resolution" | "task_create" | "task_scope_update";
       /** Stable Task API classification retained so Slack can distinguish configuration errors from retryable failures. */
       code?: string; status?: number; failedAt: string } };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };

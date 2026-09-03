@@ -2,8 +2,13 @@ import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
 const JUDGMENT_AUDIT_PREFIX = "🧠 判断参照:";
+const JUDGMENT_WARNING_PREFIX = "⚠️ 判断参照:";
 const BRAINBASE_AUDIT_PREFIX = "📚 Brainbase";
+const BRAINBASE_WARNING_PREFIX = "⚠️ Brainbase";
+const CONTINUATION_AUDIT_PREFIX = "🔁 ";
+const STOP_REPAIR_AUDIT_PREFIX = "🛠️ ";
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const VERIFIED_ANSWER_PREFIX = "__MANA_VERIFIED_ANSWER_V1__:";
 
 interface StreamEvent extends Record<string, unknown> {
   type?: string;
@@ -25,6 +30,8 @@ interface EmbeddedHookReceipt {
   turn_id: string;
   host_receipt_id?: string;
   route_resolution_sha256?: string;
+  tool_use_id?: string;
+  tool_name?: string;
 }
 
 export interface ReplyJudgmentResult {
@@ -78,7 +85,10 @@ async function readText(fs: WorkspaceFs, path: string): Promise<string> {
   return typeof value === "string" ? value : new Response(value).text();
 }
 
-async function readEpisode(fs: WorkspaceFs, eventId: string): Promise<ReplyJudgmentEpisode | undefined> {
+export async function readReplyJudgmentEpisode(
+  fs: WorkspaceFs,
+  eventId: string,
+): Promise<ReplyJudgmentEpisode | undefined> {
   const path = episodePath(eventId);
   await fs.mkdir("/judgment-episodes", { recursive: true });
   if (!(await fs.ls("/judgment-episodes")).includes(path)) return undefined;
@@ -97,7 +107,7 @@ export async function isReplyJudgmentCompleted(
   fs: WorkspaceFs,
   eventId: string,
 ): Promise<boolean> {
-  const episode = await readEpisode(fs, eventId);
+  const episode = await readReplyJudgmentEpisode(fs, eventId);
   return episode?.attempts.some((attempt) => attempt.status === "completed") ?? false;
 }
 
@@ -106,7 +116,7 @@ export async function startReplyJudgmentAttempt(
   event: SlackQueueEvent,
   startedAt: string,
 ): Promise<string> {
-  const current = await readEpisode(fs, event.eventId);
+  const current = await readReplyJudgmentEpisode(fs, event.eventId);
   const episode: ReplyJudgmentEpisode = current ?? {
     schemaVersion: "reply_judgment_episode.v1",
     eventId: event.eventId,
@@ -116,7 +126,8 @@ export async function startReplyJudgmentAttempt(
     threadTs: event.threadTs,
     attempts: [],
   };
-  if (episode.workspaceId !== event.workspaceId || episode.channelId !== event.channelId
+  if (episode.tenantId !== event.tenantId || episode.workspaceId !== event.workspaceId
+      || episode.channelId !== event.channelId
       || episode.threadTs !== event.threadTs) throw new Error("reply_judgment_episode_identity_mismatch");
   const attemptId = crypto.randomUUID();
   episode.attempts.push({ attemptId, status: "started", startedAt });
@@ -130,7 +141,7 @@ async function updateAttempt(
   attemptId: string,
   update: (attempt: ReplyJudgmentAttempt) => void,
 ): Promise<void> {
-  const episode = await readEpisode(fs, eventId);
+  const episode = await readReplyJudgmentEpisode(fs, eventId);
   const attempt = episode?.attempts.find((candidate) => candidate.attemptId === attemptId);
   if (!episode || !attempt) throw new Error("reply_judgment_attempt_missing");
   update(attempt);
@@ -263,12 +274,56 @@ function hookReceipt(event: StreamEvent): { output: Record<string, unknown>; rec
 function auditLines(output: Record<string, unknown>): string[] {
   if (typeof output.systemMessage !== "string") return [];
   return output.systemMessage.split(/\r?\n/)
-    .filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(BRAINBASE_AUDIT_PREFIX));
+    .filter(isAuditLine);
 }
 
 function auditLinesInReply(reply: string): string[] {
   return reply.split(/\r?\n/)
-    .filter((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(BRAINBASE_AUDIT_PREFIX));
+    .filter(isAuditLine);
+}
+
+function isAuditLine(line: string): boolean {
+  return line.startsWith(JUDGMENT_AUDIT_PREFIX)
+    || line.startsWith(JUDGMENT_WARNING_PREFIX)
+    || line.startsWith(BRAINBASE_AUDIT_PREFIX)
+    || line.startsWith(BRAINBASE_WARNING_PREFIX)
+    || line.startsWith(CONTINUATION_AUDIT_PREFIX)
+    || line.startsWith(STOP_REPAIR_AUDIT_PREFIX);
+}
+
+function completedBrainbaseAuditLines(lines: string[]): string[] {
+  return lines.filter((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX)
+    && !line.startsWith("📚 Brainbase未参照:")
+    && !line.startsWith("📚 Brainbase監査未完了:"));
+}
+
+function toolBrainbaseAuditLines(lines: string[]): string[] {
+  return lines.filter((line) => completedBrainbaseAuditLines([line]).length > 0
+    || line.startsWith(`${BRAINBASE_WARNING_PREFIX}呼出:`));
+}
+
+function isBrainbaseEvidenceTool(name: string): boolean {
+  // These tools manage the Judgment lifecycle itself. They prove that the
+  // turn was classified/state-recorded, but they are not a Brainbase source
+  // read and therefore must not be paired with a knowledge-reference audit.
+  return name !== "mcp__brainbase__brainbase_resolve_turn"
+    && name !== "mcp__brainbase__brainbase_judgment_state_record";
+}
+
+function verifiedAnswer(output: Record<string, unknown>): string | undefined {
+  if (typeof output.systemMessage !== "string") return undefined;
+  const markers = output.systemMessage.split(/\r?\n/)
+    .filter((line) => line.startsWith(VERIFIED_ANSWER_PREFIX));
+  if (markers.length !== 1) return undefined;
+  try {
+    const parsed = JSON.parse(markers[0]!.slice(VERIFIED_ANSWER_PREFIX.length)) as Record<string, unknown>;
+    return typeof parsed.answer === "string" && parsed.answer.trim()
+      && typeof parsed.answer_digest === "string" && /^[a-f0-9]{64}$/.test(parsed.answer_digest)
+      ? parsed.answer.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
@@ -279,7 +334,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   let final: { index: number; reply: string; sessionId: string } | undefined;
 
   events.forEach((event, index) => {
-    if (event.type === "system" && event.subtype === "hook_response") {
+    if (event.type === "system" && event.subtype === "hook_response"
+        && (event.hook_event === "UserPromptSubmit"
+          || event.hook_event === "PostToolUse"
+          || event.hook_event === "Stop")) {
       const parsed = hookReceipt(event);
       hooks.push({ index, ...parsed });
     }
@@ -297,10 +355,34 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
   });
 
-  if (!final) throw new Error("reply_judgment_result_missing");
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
-  const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse");
+  const postToolHookCandidates = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse");
+  const hasToolUseId = (hook: typeof postToolHookCandidates[number]): boolean =>
+    typeof hook.receipt.tool_use_id === "string" && Boolean(hook.receipt.tool_use_id.trim());
+  const hasToolName = (hook: typeof postToolHookCandidates[number]): boolean =>
+    typeof hook.receipt.tool_name === "string" && Boolean(hook.receipt.tool_name.trim());
+  if (postToolHookCandidates.some((hook) => !hasToolUseId(hook) || !hasToolName(hook))) {
+    throw new Error("reply_judgment_tool_audit_mismatch_posttool_identity_missing");
+  }
+  const matchesBrainbaseCall = (hook: typeof postToolHookCandidates[number]): boolean =>
+    hasToolUseId(hook) && calls.some((call) => call.id === hook.receipt.tool_use_id);
+  const isBrainbaseToolReceipt = (hook: typeof postToolHookCandidates[number]): boolean => {
+    const toolName = hook.receipt.tool_name;
+    return matchesBrainbaseCall(hook)
+      || (typeof toolName === "string" && toolName.startsWith("mcp__brainbase__"));
+  };
+  const brainbaseIdentityBoundHooks = postToolHookCandidates.filter((hook) =>
+    isBrainbaseToolReceipt(hook) && hasToolUseId(hook) && hasToolName(hook));
+  if (brainbaseIdentityBoundHooks.some((hook) => isBrainbaseEvidenceTool(hook.receipt.tool_name!)
+      && toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
+    throw new Error("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
+  }
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
+  // A rejected PreToolUse attempt is a guard decision, not an executed MCP
+  // call. Claude can recover by calling resolve_turn first and then retrying.
+  // Only calls that produced a tool_result crossed the execution boundary;
+  // every such call must still have an authenticated PostToolUse receipt.
+  const executedCalls = calls.filter((call) => results.has(call.id));
   if (promptHooks.length !== 1 || stopHooks.length < 1) throw new Error("reply_judgment_lifecycle_incomplete");
   if (typeof promptHooks[0]!.receipt.host_receipt_id !== "string"
       || !promptHooks[0]!.receipt.host_receipt_id.trim()
@@ -308,6 +390,23 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     throw new Error("reply_judgment_route_receipt_missing");
   }
   const successfulStop = stopHooks.at(-1)!;
+  const hostVerifiedAnswer = verifiedAnswer(successfulStop.output);
+  if (!final && hostVerifiedAnswer) {
+    final = {
+      index: successfulStop.index + 0.5,
+      reply: hostVerifiedAnswer,
+      sessionId: successfulStop.receipt.session_id,
+    };
+  }
+  if (!final) throw new Error("reply_judgment_result_missing");
+  if (hostVerifiedAnswer && final.reply.trim() !== hostVerifiedAnswer) {
+    // A bounded Stop repair can complete after Claude Code has already emitted
+    // the pre-repair result event. The authenticated Stop marker is the exact
+    // answer accepted by the Host, so it is canonical over that stale model
+    // result. Keep the original result index for lifecycle ordering while
+    // exposing only the Host-accepted answer to Slack.
+    final.reply = hostVerifiedAnswer;
+  }
   if (promptHooks[0]!.index >= final.index || successfulStop.index >= final.index) {
     throw new Error("reply_judgment_event_order_invalid");
   }
@@ -316,37 +415,101 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (allReceipts.some((receipt) => receipt.session_id !== final!.sessionId || receipt.turn_id !== turnId)) {
     throw new Error("reply_judgment_identity_mismatch");
   }
-  if (postToolHooks.length !== calls.length) throw new Error("reply_judgment_tool_audit_mismatch");
+  let boundPostToolHooks: typeof brainbaseIdentityBoundHooks;
+  if (brainbaseIdentityBoundHooks.length > 0) {
+    const hooksByToolUseId = new Map<string, typeof brainbaseIdentityBoundHooks[number]>();
+    for (const hook of brainbaseIdentityBoundHooks) {
+      const toolUseId = hook.receipt.tool_use_id!;
+      const existing = hooksByToolUseId.get(toolUseId);
+      if (existing) {
+        if (existing.receipt.tool_name !== hook.receipt.tool_name
+            || existing.receipt.host_receipt_id !== hook.receipt.host_receipt_id
+            || JSON.stringify(auditLines(existing.output)) !== JSON.stringify(auditLines(hook.output))) {
+          throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_conflict");
+        }
+        continue;
+      }
+      hooksByToolUseId.set(toolUseId, hook);
+    }
+    boundPostToolHooks = executedCalls.map((call) => {
+      const hook = hooksByToolUseId.get(call.id);
+      if (!hook || hook.receipt.tool_name !== call.name) {
+        throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing");
+      }
+      return hook;
+    });
+    if (hooksByToolUseId.size !== executedCalls.length) {
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_count_mismatch");
+    }
+  } else {
+    if (executedCalls.length > 0) {
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_missing");
+    }
+    boundPostToolHooks = brainbaseIdentityBoundHooks;
+  }
 
-  const toolJournal = calls.map((call, sequence) => {
+  executedCalls.forEach((call, sequence) => {
     const result = results.get(call.id);
-    const audit = postToolHooks[sequence];
+    const audit = boundPostToolHooks[sequence];
     if (!result || result.index <= call.index || !audit || audit.index <= call.index) {
-      throw new Error("reply_judgment_tool_audit_mismatch");
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_event_order_invalid");
     }
     if (promptHooks[0]!.index >= call.index || result.index >= successfulStop.index
         || audit.index >= successfulStop.index) {
       throw new Error("reply_judgment_event_order_invalid");
     }
+  });
+  // Control-plane receipts can carry the Host's cumulative audit text after
+  // an evidence call. Authenticate every Brainbase receipt first, then omit
+  // lifecycle-only calls from the source-read journal by tool identity.
+  const evidenceCalls = executedCalls.filter((call) => isBrainbaseEvidenceTool(call.name));
+  const toolJournal = evidenceCalls.map((call, sequence) => {
+    const result = results.get(call.id)!;
     return { sequence: sequence + 1, toolUseId: call.id, toolName: call.name, outcome: result.outcome };
   });
-  if (toolJournal.some((entry) => entry.outcome === "error")) throw new Error("reply_judgment_tool_failed");
+  // A failed optional call is still an authenticated, audited execution. The
+  // Host-owned Stop contract decides whether that failure leaves a mandatory
+  // capability unsatisfied. Rejecting every failed tool here would override a
+  // completed Host decision and turn a valid answer into Slack silence.
 
   // A successful Stop is the Host's completed-episode receipt. UserPromptSubmit
   // only carries model context, while PostToolUse emits incremental journal
   // lines; neither is the canonical final audit block in the real CLI stream.
-  const expectedAuditLines = auditLines(successfulStop.output);
-  if (!expectedAuditLines.some((line) => line.startsWith(JUDGMENT_AUDIT_PREFIX))
+  let expectedAuditLines = auditLines(successfulStop.output);
+  const judgmentAuditLines = expectedAuditLines.filter((line) =>
+    line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(JUDGMENT_WARNING_PREFIX));
+  if (judgmentAuditLines.length !== 1
       || !expectedAuditLines.some((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX))) {
     throw new Error("reply_judgment_audit_lines_missing");
   }
-  const postToolAuditLines = postToolHooks.flatMap((hook) => auditLines(hook.output));
-  const completedToolAuditLines = expectedAuditLines.filter((line) =>
-    line.startsWith(BRAINBASE_AUDIT_PREFIX) && !line.startsWith("📚 Brainbase未参照:"));
-  if (JSON.stringify(postToolAuditLines) !== JSON.stringify(completedToolAuditLines)) {
-    throw new Error("reply_judgment_tool_audit_mismatch");
+  if (expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
+    // Stop is the canonical completed-episode receipt. Incremental PostToolUse
+    // receipts prove individual calls, but cannot upgrade an explicitly
+    // incomplete final audit into a completed Judgment episode.
+    throw new Error("reply_judgment_audit_lines_missing");
   }
-  const actualAuditLines = auditLinesInReply(final.reply);
+  if (evidenceCalls.length > 0) {
+    // PostToolUse can carry either the latest audit line or a cumulative Host
+    // journal. Evidence receipts without a completed audit line were rejected
+    // before identity binding; Stop may summarize the completed receipts.
+    const completedStopAuditLines = completedBrainbaseAuditLines(expectedAuditLines);
+    // The Host may collapse several tool-level receipts into a smaller final
+    // summary. Per-call completeness is proven above by PostToolUse; Stop only
+    // needs to carry at least one completed Brainbase audit line.
+    if (completedStopAuditLines.length === 0) {
+      throw new Error("reply_judgment_tool_audit_mismatch_stop_evidence_audit_missing");
+    }
+  } else if (completedBrainbaseAuditLines(expectedAuditLines).length > 0) {
+    throw new Error("reply_judgment_tool_audit_mismatch_unexpected_stop_evidence_audit");
+  }
+  let actualAuditLines = auditLinesInReply(final.reply);
+  if (actualAuditLines.length === 0) {
+    // Stop output is trusted Host data. Prepend it deterministically when the
+    // model follows a user's "reply only with ..." instruction and omits the
+    // audit block; model compliance must not turn a valid reply into silence.
+    final.reply = [...expectedAuditLines, final.reply].join("\n");
+    actualAuditLines = expectedAuditLines;
+  }
   if (JSON.stringify(actualAuditLines) !== JSON.stringify(expectedAuditLines)) {
     throw new Error("reply_judgment_audit_lines_mismatch");
   }

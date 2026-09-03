@@ -7,6 +7,8 @@ import {
 import {
   buildRuntimeClaudeCommand,
   runtimeClaudePromptPath,
+  runtimeReplySettingsContent,
+  runtimeReplySettingsPath,
   runtimeTaskSearchMcpConfigPath,
   type ClaudeRuntimeConfig,
 } from "./claude-runtime-config.js";
@@ -37,12 +39,17 @@ import {
   freshTenantContainerId,
 } from "./multitenancy/container-lifecycle.js";
 import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
+import { TenantBoundaryError } from "./multitenancy/errors.js";
 
 const MAX_INPUT_CHARS = 4_000;
 const MAX_OUTPUT_CHARS = 12_000;
 const SLACK_STATUS_REFRESH_MS = 90_000;
 const SLACK_STATUS_TIMEOUT_MS = 5_000;
 const SLACK_REACTION_TIMEOUT_MS = 5_000;
+// A complete judgment turn may need a second Stop-hook pass after Brainbase
+// repairs missing audit lines. Keep the reply runner below the five-minute
+// tenant-boundary lease while allowing that authenticated repair to finish.
+const REPLY_SANDBOX_TIMEOUT_MS = 240_000;
 
 interface ExecResult {
   success: boolean;
@@ -77,6 +84,7 @@ export interface ReplyPipelineOptions {
   requesterIdentity?: RequesterIdentity;
   requesterProfile?: SlackUserProfile;
   graphContext?: string;
+  brainbaseProjectCode?: string;
   capabilities?: { mcp: readonly string[]; gatewayTools: readonly string[] };
   trace?: TurnRuntimeTrace;
   respondPolicy?: RuntimeRespondPolicy;
@@ -102,6 +110,23 @@ export class ReplyPipelineError extends Error {
     super(code);
     this.name = "ReplyPipelineError";
   }
+}
+
+function safeFailureCode(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.length > 0
+    ? value.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 80)
+    : fallback;
+}
+
+function logSlackPostFailure(code: string, details: { status?: number; slackError?: unknown } = {}): void {
+  console.error(JSON.stringify({
+    event: "mana_slack_reply_failed",
+    code: safeFailureCode(code, "unknown"),
+    ...(details.status === undefined ? {} : { status: details.status }),
+    ...(details.slackError === undefined ? {} : {
+      slack_error: safeFailureCode(details.slackError, "unknown"),
+    }),
+  }));
 }
 
 export function isReplyEligible(
@@ -141,6 +166,10 @@ function isReplyBoundaryEligible(
 
 function normalizePromptText(text: string): string {
   return text
+    // Messages sent through the Slack MCP connector include this attribution
+    // in the event body. It describes the transport, not the user's requested
+    // effect, so it must not make a read-only request look like an external send.
+    .replace(/\s*\*使用して送信されました\*\s*(?:<@[^>]{1,128}>)?\s*$/u, " ")
     .replace(/<@[^>]{1,128}>/g, " ")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
     .replace(/\s+/g, " ")
@@ -155,6 +184,7 @@ function buildPrompt(
   requesterIdentity?: RequesterIdentity,
   requesterProfile?: SlackUserProfile,
   graphContext?: string,
+  brainbaseProjectCode?: string,
   runtimeContext?: ReplyPipelineOptions["runtimeContext"],
   taskChannelDiscoveryEnabled = false,
 ): string {
@@ -168,6 +198,12 @@ function buildPrompt(
     .trim()
     .slice(0, 100_000);
   return [
+    ...(brainbaseProjectCode ? [
+      "最優先: UserPromptSubmit Hookの追加文脈を読み、Hookが指定したturn_inputオブジェクト全体を変更せずturn_inputへコピーし、あなた自身の意味分類だけをmodel_interpretationに追加してbrainbase_resolve_turnを正確に1回だけ呼んでください。turn_inputを参照値・要約・再構築した値へ置き換えてはいけません。このtool callが成功するまで、他のtool呼び出し・調査・回答作成を始めてはいけません。成功後は同じturnでbrainbase_resolve_turnを再実行しないでください。",
+      "分類は単語一致ではなく依頼の意味で行ってください。正しい回答がBrainbase管理の事実、正本の選択、プロジェクト知識、または現在の実行時設定の所在に依存する場合はknowledgeを必ず含め、必要ならengineeringやoperationsと併記してください。general単独はBrainbase管理の事実を必要としない場合だけです。",
+      "brainbase_resolve_turnが返したTurnContractを、その後の検索・操作・最終回答の契約として扱い、requiredになったcapabilityを回答前にすべて実行してください。knowledge.resolveがrequiredなら、指定されたprojectとknowledge intentでbrainbase_knowledge_resolveを実行してください。Stopで差し戻された場合は、resolve_turnを繰り返さず、Stopが示したmissing capabilityを実行してください。",
+      "",
+    ] : []),
     runtimeContext ? `あなたは${runtimeContext.persona}です。` : "あなたはこの会社専用のSlackアシスタントです。",
     "日本語で簡潔かつ具体的に回答してください。",
     "不明な事実を作らず、確認が必要なら短く質問してください。",
@@ -206,6 +242,10 @@ function buildPrompt(
       "上記はSlack APIで確認した発話者情報です。表示名だけで別人を推測しないでください。",
     ] : []),
     ...(graphContext ? ["", "Brainbase Graph正本文脈:", graphContext] : []),
+    ...(brainbaseProjectCode ? [
+      `Brainbaseの検索・参照を依頼された場合は、回答前にbrainbase_knowledge_resolveをproject_code=${brainbaseProjectCode}で呼び、返された参照先に従って必要なBrainbase検索toolを実行してください。`,
+      "Brainbaseの検索結果が空でも、不在とは断定せず、取得できた検索状態だけを回答してください。",
+    ] : []),
     ...(taskWriteEnabled ? [
       "タスクの作成・更新・状態変更を明示的に依頼された場合だけ、create_task、update_task、transition_taskを使ってください。",
       "更新・状態変更の前にはsearch_tasksで対象を特定し、返されたidとversionをexpected_versionに使ってください。対象が一意でない場合は実行せず質問してください。",
@@ -249,7 +289,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "brainbaseProjectCode" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
 ): Promise<ReplyJudgmentResult> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
@@ -270,7 +310,8 @@ export async function generateClaudeReply(
   const requesterIdentity = options.requesterIdentity ?? (identityOutcome.outcome === "resolved"
     ? { slackUserId: event.userId ?? "", personId: identityOutcome.identity.personId }
     : undefined);
-  const sandbox = options.createSandbox(freshTenantContainerId("techknight-reply"));
+  const sandboxId = freshTenantContainerId("techknight-reply");
+  let sandbox = options.createSandbox(sandboxId);
   try {
     const promptPath = runtimeClaudePromptPath("reply");
     const promptContent = buildPrompt(
@@ -280,6 +321,7 @@ export async function generateClaudeReply(
       requesterIdentity,
       options.requesterProfile,
       options.graphContext,
+      options.brainbaseProjectCode,
       options.runtimeContext,
       options.capabilities?.gatewayTools.includes("list_authorized_task_channels") === true,
     );
@@ -310,10 +352,11 @@ export async function generateClaudeReply(
     const prepareSandbox = async (target: typeof sandbox) => {
       await target.writeFile(promptPath, promptContent);
       await target.writeFile(runtimeTaskSearchMcpConfigPath(), mcpConfigContent);
+      await target.writeFile(runtimeReplySettingsPath(), runtimeReplySettingsContent());
     };
     await prepareSandbox(sandbox);
     const execOptions = {
-      timeout: 120_000,
+      timeout: REPLY_SANDBOX_TIMEOUT_MS,
       env: {
         IS_SANDBOX: "1",
         // Resolver routing must be based on the authenticated Slack request,
@@ -332,15 +375,52 @@ export async function generateClaudeReply(
         } : {}),
       },
     };
-    const result = await sandbox.exec(
+    const claudeSessionId = crypto.randomUUID();
+    const runClaude = (resumeSession: boolean) => sandbox.exec(
       buildRuntimeClaudeCommand("reply", options.claudeRuntime, {
         taskSearchEnabled: options.taskSearchEnabled,
         taskWriteEnabled: options.taskWriteEnabled,
         mcpEnabled: true,
         includeJudgmentHookEvents: true,
+        sessionId: claudeSessionId,
+        ...(resumeSession ? { resumeSession: true } : {}),
       }),
       execOptions,
     );
+    let resumedSession = false;
+    let result;
+    try {
+      result = await runClaude(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/^HTTP error! status: 500$/.test(message)) throw error;
+      // A blocking Stop hook can close the Sandbox RPC with HTTP 500 after
+      // Claude has already persisted the named session. Continue that exact
+      // session once; never replay the user turn in a fresh conversation.
+      resumedSession = true;
+      emitTurnLog("warn", "mana_claude_session_resumed", event, trace, {
+        outcome: "retry", reasonCode: "sandbox_stop_boundary_http_500",
+        durationMs: Date.now() - startedAt,
+      });
+      try {
+        // A Stop-hook HTTP 500 invalidates the SDK RPC control connection even
+        // though the named Claude session remains in the same Container. Get a
+        // new stub for the same sandbox ID, then re-project the runtime inputs
+        // before resuming that exact session.
+        sandbox = options.createSandbox(sandboxId);
+        await prepareSandbox(sandbox);
+        result = await runClaude(true);
+      } catch (retryError) {
+        emitTurnLog("error", "mana_claude_failed", event, trace, {
+          outcome: "error", reasonCode: "claude_execution_failed",
+          errorSummary: safeExecutionErrorSummary(
+            retryError instanceof Error ? retryError.message : String(retryError),
+          ),
+          durationMs: Date.now() - startedAt,
+        });
+        throw new ReplyPipelineError("claude_execution_failed");
+      }
+    }
     if (!result.success) {
       emitTurnLog("error", "mana_claude_failed", event, trace, {
         outcome: "error",
@@ -358,7 +438,43 @@ export async function generateClaudeReply(
       const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
         ? error.message
         : "reply_judgment_stream_invalid";
+      if (code === "reply_judgment_result_missing" && !resumedSession) {
+        // Claude Code --print may stop cleanly after a blocking Stop hook and
+        // omit the terminal result event. Resume the same conversation once so
+        // Claude can perform the Host-requested tool call and submit a new,
+        // fully audited answer. The resumed stream must independently satisfy
+        // the complete judgment contract below.
+        resumedSession = true;
+        result = await runClaude(true);
+        if (!result.success) {
+          emitTurnLog("error", "mana_claude_failed", event, trace, {
+            outcome: "error", reasonCode: "claude_execution_failed",
+            exitCode: result.exitCode,
+            errorSummary: safeExecutionErrorSummary(result.stderr || result.stdout),
+            durationMs: Date.now() - startedAt,
+          });
+          throw new ReplyPipelineError("claude_execution_failed");
+        }
+        try {
+          judgment = parseReplyJudgmentStream(result.stdout);
+        } catch (retryError) {
+          const retryCode = retryError instanceof Error
+            && /^reply_judgment_[a-z0-9_]+$/.test(retryError.message)
+            ? retryError.message
+            : "reply_judgment_stream_invalid";
+          emitTurnLog("error", "mana_claude_failed", event, trace, {
+            outcome: "error", reasonCode: retryCode, durationMs: Date.now() - startedAt,
+          });
+          throw new ReplyPipelineError(retryCode);
+        }
+      } else {
+      emitTurnLog("error", "mana_claude_failed", event, trace, {
+        outcome: "error",
+        reasonCode: code,
+        durationMs: Date.now() - startedAt,
+      });
       throw new ReplyPipelineError(code);
+      }
     }
     const reply = normalizeReply(judgment.reply);
     if (!reply) throw new ReplyPipelineError("claude_empty_response");
@@ -402,15 +518,22 @@ export async function postSlackReply(
       }),
       signal: AbortSignal.timeout(15_000),
     });
-  } catch {
+  } catch (error) {
+    logSlackPostFailure("slack_api_unavailable", {
+      slackError: error instanceof Error ? error.message : undefined,
+    });
     throw new ReplyPipelineError("slack_api_unavailable");
   }
-  if (!response.ok) throw new ReplyPipelineError("slack_api_unavailable");
+  if (!response.ok) {
+    logSlackPostFailure("slack_api_unavailable", { status: response.status });
+    throw new ReplyPipelineError("slack_api_unavailable");
+  }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
+    logSlackPostFailure("slack_api_invalid_response", { status: response.status });
     throw new ReplyPipelineError("slack_api_invalid_response");
   }
   if (
@@ -419,6 +542,12 @@ export async function postSlackReply(
     (payload as { ok?: unknown }).ok !== true ||
     typeof (payload as { ts?: unknown }).ts !== "string"
   ) {
+    logSlackPostFailure("slack_post_failed", {
+      status: response.status,
+      slackError: typeof (payload as { error?: unknown }).error === "string"
+        ? (payload as { error: string }).error
+        : undefined,
+    });
     throw new ReplyPipelineError("slack_post_failed");
   }
   return (payload as { ts: string }).ts;
@@ -651,8 +780,10 @@ export async function processReplyEvent(
       hydratedEvent,
       options.now?.() ?? new Date().toISOString(),
     );
+    let failureStage = "reply_generation";
     try {
       const judgment = await generateClaudeReply(hydratedEvent, { ...options, requesterIdentity });
+      failureStage = "judgment_persistence";
       await auditReplyJudgmentAttempt(
         fs,
         event.eventId,
@@ -660,19 +791,34 @@ export async function processReplyEvent(
         judgment,
         options.now?.() ?? new Date().toISOString(),
       );
+      failureStage = "slack_delivery";
       const responseTs = options.postReply
         ? await options.postReply(hydratedEvent, judgment.reply)
         : await postSlackReply(hydratedEvent, judgment.reply, options);
       emitTurnLog("log", "mana_slack_reply_posted", event, {
         ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
       }, { outcome: "success", responseTs });
+      failureStage = "completion_persistence";
       const completedAt = options.now?.() ?? new Date().toISOString();
       await completeReplyJudgmentAttempt(fs, event.eventId, attemptId, responseTs, completedAt);
       await persistReplyCompletion(fs, { eventId: event.eventId, responseTs, completedAt });
       await markWorkspaceEngaged(fs, completedAt);
       return { outcome: "replied", responseTs };
     } catch (error) {
-      const failureCode = error instanceof ReplyPipelineError ? error.code : "reply_judgment_attempt_failed";
+      const failureCode = error instanceof ReplyPipelineError || error instanceof TenantBoundaryError
+        ? error.code
+        : "reply_judgment_attempt_failed";
+      emitTurnLog("error", "mana_reply_failed", event, {
+        ...options.trace, model: options.claudeRuntime.model, effort: options.claudeRuntime.effort,
+      }, {
+        outcome: "error",
+        reasonCode: failureCode,
+        failureStage,
+        ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+        ...(failureCode === "reply_judgment_attempt_failed" && error instanceof Error
+          ? { errorSummary: safeExecutionErrorSummary(error.message) }
+          : {}),
+      });
       await failReplyJudgmentAttempt(
         fs,
         event.eventId,

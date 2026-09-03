@@ -86,6 +86,7 @@ import { classifyMeetingMinutesDestinationInSandbox,
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient, TaskApiError } from "@openryoko/task-runtime-core";
 import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { readReplyJudgmentEpisode } from "./reply-judgment.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
   processMeetingTaskEvent,
@@ -1932,6 +1933,49 @@ export default {
         env, requiredRuntimeBinding(env.TENANT_ID),
       ).status());
     }
+    const replyJudgmentMatch = url.pathname.match(
+      /^\/admin\/reply-judgment\/episodes\/([A-Za-z0-9_-]{1,128})$/,
+    );
+    if (request.method === "GET" && replyJudgmentMatch) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const adminBoundary = await resolveDurableTenantBoundaryContext(
+        env.TENANT_RUNTIME_STATE, request, ["brainbase_proxy"], new Date().toISOString(),
+      );
+      if (adminBoundary instanceof Response) return adminBoundary;
+      const tenantId = url.searchParams.get("tenant_id");
+      const workspaceId = url.searchParams.get("workspace_id");
+      const channelId = url.searchParams.get("channel_id");
+      const threadTs = url.searchParams.get("thread_ts");
+      if (!tenantId || !/^[A-Za-z0-9_-]{3,128}$/.test(tenantId)
+        || !workspaceId || !/^[A-Z0-9]{3,32}$/.test(workspaceId)
+        || !channelId || !/^[A-Z0-9]{3,32}$/.test(channelId)
+        || !threadTs || !/^\d{1,20}(?:\.\d{1,12})?$/.test(threadTs)) {
+        return Response.json({ error: "reply_judgment_scope_invalid" }, { status: 400 });
+      }
+      const tenantContext = adminBoundary.tenant_context;
+      if (tenantId !== tenantContext.tenant.tenant_id
+        || workspaceId !== tenantContext.workspace_connection.workspace_id
+        || channelId !== tenantContext.slack.channel_id
+        || threadTs !== tenantContext.slack.thread_ts) {
+        return Response.json({ error: "reply_judgment_scope_mismatch" }, { status: 403 });
+      }
+      const id = env.TECHKNIGHT_WORKSPACE.idFromName(runtimeWorkspaceName({
+        tenantId, workspaceId, channelId, threadTs,
+      }));
+      const handle = env.TECHKNIGHT_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+      const episode = await withDisposableResource(
+        () => getWorkspace(handle),
+        (workspace) => readReplyJudgmentEpisode(workspace.fs, replyJudgmentMatch[1]!),
+      );
+      if (!episode) return Response.json({ error: "reply_judgment_episode_not_found" }, { status: 404 });
+      if (episode.tenantId !== tenantId || episode.workspaceId !== workspaceId
+        || episode.channelId !== channelId || episode.threadTs !== threadTs) {
+        return Response.json({ error: "reply_judgment_scope_mismatch" }, { status: 403 });
+      }
+      return Response.json(episode);
+    }
     if (request.method === "POST" && url.pathname === "/admin/tenant-credential/bootstrap-slack") {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -2059,6 +2103,7 @@ export default {
       return Response.json({ runId: run.runId, status: run.status,
         destinationId: run.destination?.id, diagnostics: run.diagnostics,
         taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
+          pendingPresent: Boolean(run.taskRegistration?.pending),
           failure: run.taskRegistration?.failure,
           failedCandidateTitle: run.taskRegistration?.failure
             ? run.generated?.tasks?.[run.taskRegistration.failure.index]?.title : undefined },
@@ -3539,6 +3584,7 @@ export default {
                     requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
                     requesterProfile,
                     graphContext: graphContext.content,
+                    brainbaseProjectCode: placement.projectCodes[0],
                     runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
                       escalationEmployee: placement.agent?.escalationEmployee } : undefined,
                     capabilities: placement.capabilities,

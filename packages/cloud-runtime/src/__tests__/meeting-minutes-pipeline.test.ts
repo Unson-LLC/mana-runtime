@@ -472,7 +472,9 @@ describe("meeting minutes pipeline", () => {
       ] }), createTask, resolveAssignee: vi.fn().mockResolvedValue({ status: "unavailable" }),
     }));
     expect(run).toMatchObject({ status: "completed",
-      taskRegistration: { failure: { index: 0, message: "meeting_minutes_assignee_unavailable" } } });
+      taskRegistration: { failure: { index: 0, failurePoint: "assignee_resolution",
+        message: "meeting_minutes_assignee_unavailable" } } });
+    expect(run.taskRegistration).not.toHaveProperty("pending");
     expect(createTask).not.toHaveBeenCalled();
   });
 
@@ -509,7 +511,8 @@ describe("meeting minutes pipeline", () => {
     expect(options.postThreadChunk).toHaveBeenCalledTimes(1);
     expect(first).toMatchObject({ status: "completed",
       slack: { parentTs: "10.1", postedChunkIndexes: [0] },
-      taskRegistration: { failure: { index: 1, message: "meeting_minutes_task_registration_failed" } } });
+      taskRegistration: { failure: { index: 1, failurePoint: "task_create",
+        message: "meeting_minutes_task_registration_failed" } } });
     expect(first.diagnostics).toMatchObject({ stage: "task_registration", code: "TASK_REGISTRATION_FAILED",
       checkpoint: { hasGitHub: true, hasSlackParent: true, postedChunkCount: 1 } });
     expect(JSON.stringify(first)).not.toContain("Bearer secret");
@@ -616,7 +619,7 @@ describe("meeting minutes pipeline", () => {
     expect(findExistingTask).not.toHaveBeenCalled();
     expect(run.taskRegistration?.registered).toEqual([]);
     expect(run.taskRegistration?.failure).toMatchObject({ index: 0, stage: "task_registration", status: 409,
-      code: "idempotency_conflict" });
+      code: "idempotency_conflict", failurePoint: "task_create" });
     expect(run.taskRegistration?.pending).toEqual(expect.objectContaining({ index: 0 }));
     expect(run.diagnostics).toMatchObject({ code: "TASK_IDEMPOTENCY_CONFLICT", retryable: false });
   });

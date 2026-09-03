@@ -6,7 +6,7 @@ describe("Brainbase judgment Hook proxy", () => {
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBe("Bearer secret-token");
-      expect(headers.get("x-brainbase-project-code")).toBe("mana-runtime");
+      expect(headers.get("x-brainbase-project-code")).toBe("mana");
       expect(headers.get("cookie")).toBeNull();
       expect(headers.get("x-forwarded-for")).toBeNull();
       expect(headers.get("x-hostile-input")).toBeNull();
@@ -18,7 +18,7 @@ describe("Brainbase judgment Hook proxy", () => {
         headers: { cookie: "secret=1", "x-forwarded-for": "127.0.0.1", "x-hostile-input": "1" },
         body: "{}",
       }),
-      { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token" }, fetchImpl,
+      { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token", BRAINBASE_JUDGMENT_PROJECT_CODE: "mana" }, fetchImpl,
     );
     expect(response.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledWith("https://bb.unson.jp/runtime-mcp/host/judgment/hook", expect.objectContaining({ method: "POST", redirect: "manual" }));
@@ -28,7 +28,7 @@ describe("Brainbase judgment Hook proxy", () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 302, headers: { location: "https://evil.example" } })) as unknown as typeof fetch;
     const response = await handleBrainbaseMcpProxyRequest(
       new Request("https://brainbase-mcp.internal/host/judgment/hook", { method: "POST", body: "{}" }),
-      { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token" }, fetchImpl,
+      { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token", BRAINBASE_JUDGMENT_PROJECT_CODE: "mana" }, fetchImpl,
     );
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: { code: "BRAINBASE_UPSTREAM_REDIRECT_REJECTED", retryable: false } });
@@ -38,7 +38,7 @@ describe("Brainbase judgment Hook proxy", () => {
     const fetchImpl = vi.fn(async () => { throw new Error("network detail must not leak"); }) as unknown as typeof fetch;
     const response = await handleBrainbaseMcpProxyRequest(
       new Request("https://brainbase-mcp.internal/host/judgment/hook", { method: "POST", body: "{}" }),
-      { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token" }, fetchImpl,
+      { BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp", BRAINBASE_MCP_TOKEN: "secret-token", BRAINBASE_JUDGMENT_PROJECT_CODE: "mana" }, fetchImpl,
     );
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: { code: "BRAINBASE_UPSTREAM_UNAVAILABLE", retryable: true } });

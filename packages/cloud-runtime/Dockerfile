@@ -11,6 +11,7 @@ COPY --chmod=0555 container/nocodb-mcp-server.mjs /opt/mana/nocodb-mcp-server.mj
 COPY --chmod=0555 container/gateway-mcp-server.mjs /opt/mana/gateway-mcp-server.mjs
 COPY --chmod=0555 container/brainbase-judgment-hook.mjs /opt/mana/brainbase-judgment-hook.mjs
 COPY --chmod=0444 container/meeting-minutes-claude-settings.json /opt/mana/meeting-minutes-claude-settings.json
+COPY --chmod=0444 container/reply-claude-settings.json /opt/mana/reply-claude-settings.json
 COPY --chmod=0555 container/cloudflare-development-runner.mjs /opt/mana/cloudflare-development-runner.mjs
 COPY --chmod=0555 container/openryoko-development-runner.mjs /opt/mana/openryoko-development-runner.mjs
 COPY --chmod=0555 container/tenant-claude-runner.mjs /opt/mana/tenant-claude-runner.mjs

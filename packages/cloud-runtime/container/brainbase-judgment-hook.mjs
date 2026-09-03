@@ -10,6 +10,10 @@ const turnDir = process.env.BRAINBASE_JUDGMENT_TURN_DIR || "/tmp/mana-judgment-t
 const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_JUDGMENT_REQUEST_CHARS = 4_000;
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
+const VERIFIED_ANSWER_PREFIX = "__MANA_VERIFIED_ANSWER_V1__:";
+const JUDGMENT_AUDIT_PREFIXES = ["🧠 判断参照:", "⚠️ 判断参照:"];
+const BRAINBASE_AUDIT_PREFIXES = ["📚 Brainbase", "⚠️ Brainbase"];
+const AUDIT_PREFIXES = [...JUDGMENT_AUDIT_PREFIXES, ...BRAINBASE_AUDIT_PREFIXES, "🔁 ", "🛠️ "];
 
 // Meeting-minutes generation is a non-interactive, schema-constrained batch
 // operation. Its audit boundary is the Worker-issued context receipt, so an
@@ -30,7 +34,65 @@ async function readStdin() {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function validatedOutput(envelope, payload) {
+function auditLinesFromText(value) {
+  if (typeof value !== "string") return [];
+  return value.split(/\r?\n/).filter((line) =>
+    AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+}
+
+function isInternalJudgmentStateTool(payload) {
+  const toolName = payload.tool_name ?? payload.toolName;
+  return toolName === "brainbase_judgment_state_record"
+    || toolName === "mcp__brainbase__brainbase_judgment_state_record";
+}
+
+function isResolveTurnTool(payload) {
+  const toolName = payload.tool_name ?? payload.toolName;
+  return toolName === "brainbase_resolve_turn"
+    || toolName === "mcp__brainbase__brainbase_resolve_turn";
+}
+
+function repairedStopAnswer(answer, auditLines) {
+  const bodyLines = typeof answer === "string" ? answer.split(/\r?\n/) : [];
+  const bodyWithoutAudit = bodyLines.filter((line) =>
+    !AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+  while (bodyWithoutAudit[0] === "") bodyWithoutAudit.shift();
+  return [...auditLines, ...bodyWithoutAudit].join("\n");
+}
+
+function stopRepairRequiresModelAction(reason) {
+  if (typeof reason !== "string") return false;
+  return /(?:mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+|brainbase_[a-z0-9_]+).{0,120}(?:実行|呼び出|tool call|call)/is.test(reason)
+    || /(?:実行|呼び出|tool call|call).{0,120}(?:mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+|brainbase_[a-z0-9_]+)/is.test(reason);
+}
+
+async function fetchHookEnvelope(payload) {
+  const response = await fetch(hookUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
+        "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
+      } : {}),
+    },
+    body: JSON.stringify(payload),
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    let upstreamCode = "";
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === "object" && typeof parsed.error === "string"
+          && /^[a-z0-9_]{1,80}$/.test(parsed.error)) upstreamCode = `_${parsed.error}`;
+    } catch { /* Preserve the status-only fail-closed reason for non-JSON responses. */ }
+    throw new Error(`judgment_hook_http_${response.status}${upstreamCode}`);
+  }
+  return JSON.parse(body);
+}
+
+async function validatedOutput(envelope, payload, { allowStopRepair = true } = {}) {
   if (!envelope || typeof envelope !== "object" || envelope.schema_version !== "1"
       || envelope.accepted !== true || envelope.hook_event_name !== payload.hook_event_name
       || envelope.session_id !== payload.session_id || envelope.turn_id !== payload.turn_id
@@ -38,6 +100,12 @@ function validatedOutput(envelope, payload) {
     throw new Error("judgment_hook_response_invalid");
   }
   if (payload.hook_event_name === "PostToolUse"
+      && (typeof payload.tool_use_id !== "string" || !payload.tool_use_id.trim()
+        || typeof payload.tool_name !== "string" || !payload.tool_name.trim())) {
+    throw new Error("judgment_hook_tool_identity_missing");
+  }
+  if (payload.hook_event_name === "PostToolUse"
+      && !isInternalJudgmentStateTool(payload)
       && (typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
     throw new Error("judgment_hook_audit_not_recorded");
   }
@@ -65,30 +133,161 @@ function validatedOutput(envelope, payload) {
     ...(typeof envelope.receipt_id === "string" && envelope.receipt_id.trim()
       ? { host_receipt_id: envelope.receipt_id } : {}),
     ...(routeResolutionSha256 ? { route_resolution_sha256: routeResolutionSha256 } : {}),
+    ...(payload.hook_event_name === "PostToolUse" ? {
+      tool_use_id: payload.tool_use_id,
+      tool_name: payload.tool_name,
+    } : {}),
   };
   // UserPromptSubmit and Stop systemMessages are interactive response-rewrite
   // instructions. Passing either back into a schema-constrained runtime turn can
   // replace structured_output with audit prose. PostToolUse is the one lifecycle
   // event whose non-empty audit message is part of the validated contract.
   const receiptMarker = `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
-  const existingSystemMessage = payload.hook_event_name === "PostToolUse"
-    && typeof documentedOutput.systemMessage === "string"
+  const existingSystemMessage = typeof documentedOutput.systemMessage === "string"
     ? documentedOutput.systemMessage.trim()
     : "";
   if (payload.hook_event_name === "UserPromptSubmit") {
+    const canonicalContext = documentedOutput.hookSpecificOutput.additionalContext.trim();
     return {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        // The upstream context is written for an interactive assistant turn and
-        // can replace the schema-constrained meeting-minutes response. The
-        // signed route receipt is the only context the runtime needs here.
-        additionalContext: receiptMarker,
+        // This Hook is used only by interactive reply turns. Preserve the Host's
+        // canonical routing context and append the machine receipt used by the
+        // runtime validator; replacing the context makes the final audit block
+        // impossible to produce.
+        additionalContext: [canonicalContext, receiptMarker].join("\n"),
       },
       systemMessage: receiptMarker,
     };
   }
   if (payload.hook_event_name === "Stop") {
-    return { systemMessage: receiptMarker };
+    if (documentedOutput.decision === "block"
+        && typeof documentedOutput.reason === "string"
+        && documentedOutput.reason.trim()) {
+      const requiredAuditLines = auditLinesFromText(documentedOutput.reason);
+      const hasJudgmentAudit = requiredAuditLines.some((line) =>
+        JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      const hasBrainbaseAudit = requiredAuditLines.some((line) =>
+        BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+      if (allowStopRepair && hasJudgmentAudit && hasBrainbaseAudit
+          && !stopRepairRequiresModelAction(documentedOutput.reason)) {
+        // Claude Code's non-interactive --print mode can return immediately after
+        // a blocking Stop hook instead of sampling a second assistant message.
+        // The authenticated Host reason contains the exact bounded audit repair.
+        // Apply it once, then submit the repaired answer to the same Host turn;
+        // only the second Host acceptance is exposed to the stream validator.
+        const repairedPayload = {
+          ...payload,
+          // This is the wrapper-owned second Host attempt. Mark it active so a
+          // remaining block is rejected as exhausted instead of starting a
+          // second repair cycle. validatedOutput also disables local recursion.
+          stop_hook_active: true,
+          last_assistant_message: repairedStopAnswer(
+            payload.last_assistant_message,
+            requiredAuditLines,
+          ),
+        };
+        const repairedEnvelope = await fetchHookEnvelope(repairedPayload);
+        const repairedOutput = await validatedOutput(
+          repairedEnvelope,
+          repairedPayload,
+          { allowStopRepair: false },
+        );
+        if (repairedOutput.decision === "block") {
+          throw new Error("judgment_hook_stop_repair_incomplete");
+        }
+        return repairedOutput;
+      }
+      return {
+        decision: "block",
+        reason: documentedOutput.reason.trim(),
+        systemMessage: receiptMarker,
+      };
+    }
+    let stopSystemMessage = existingSystemMessage;
+    const verifiedAnswer = typeof payload.last_assistant_message === "string"
+      ? payload.last_assistant_message : "";
+    const explicitFinalReceipt = documentedOutput.schema_version === "brainbase-judgment-final-v1"
+      && documentedOutput.completion_status === "complete";
+    // The Host validates last_assistant_message itself. Its systemMessage is a
+    // display surface and may contain either the completed audit block or only
+    // a completion notice, depending on the HTTP adapter. Bind audit lines to
+    // the exact submitted answer for every non-blocking Stop acceptance.
+    const verifiedAuditLines = auditLinesFromText(verifiedAnswer);
+    const hasJudgmentAudit = verifiedAuditLines.some((line) =>
+      JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+    const hasBrainbaseAudit = verifiedAuditLines.some((line) =>
+      BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
+      && !line.startsWith("📚 Brainbase監査未完了:"));
+    const remoteAuditLines = auditLinesFromText(existingSystemMessage);
+    const remoteHasJudgmentAudit = remoteAuditLines.some((line) =>
+      JUDGMENT_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix)));
+    const remoteHasBrainbaseAudit = remoteAuditLines.some((line) =>
+      BRAINBASE_AUDIT_PREFIXES.some((prefix) => line.startsWith(prefix))
+      && !line.startsWith("📚 Brainbase監査未完了:"));
+    if (allowStopRepair && !documentedOutput.decision
+        && (!hasJudgmentAudit || !hasBrainbaseAudit)
+        && remoteHasJudgmentAudit && remoteHasBrainbaseAudit) {
+      // Some production Host adapters return a completed audit block as a
+      // non-blocking systemMessage while Claude's submitted answer still lacks
+      // that block. Resubmit the repaired answer once so the answer exposed to
+      // Slack is itself Host-accepted rather than locally synthesized.
+      const repairedPayload = {
+        ...payload,
+        stop_hook_active: true,
+        last_assistant_message: repairedStopAnswer(verifiedAnswer, remoteAuditLines),
+      };
+      const repairedEnvelope = await fetchHookEnvelope(repairedPayload);
+      const repairedOutput = await validatedOutput(
+        repairedEnvelope,
+        repairedPayload,
+        { allowStopRepair: false },
+      );
+      if (repairedOutput.decision === "block") {
+        throw new Error("judgment_hook_stop_repair_incomplete");
+      }
+      return repairedOutput;
+    }
+    // A non-blocking, identity-bound response proves that this exact
+    // last_assistant_message passed Host validation. The final receipt remains
+    // in the Host journal and need not be duplicated by the HTTP adapter.
+    const canonicalRemoteCompletion = !documentedOutput.decision
+      && hasJudgmentAudit && hasBrainbaseAudit;
+    if (explicitFinalReceipt || canonicalRemoteCompletion) {
+      // A completed Host receipt binds answer_digest to last_assistant_message
+      // and proves the exact audit prefix. Recover those already-verified lines
+      // for the runtime stream instead of replacing them with an incomplete
+      // fallback that would make every successful repair fail closed.
+      const verifiedAnswerDigest = createHash("sha256").update(verifiedAnswer).digest("hex");
+      if (explicitFinalReceipt && (typeof documentedOutput.answer_digest !== "string"
+          || documentedOutput.answer_digest !== verifiedAnswerDigest)) {
+        throw new Error("judgment_hook_final_answer_digest_mismatch");
+      }
+      if (!hasJudgmentAudit || !hasBrainbaseAudit) {
+        throw new Error("judgment_hook_final_audit_missing");
+      }
+      stopSystemMessage = verifiedAuditLines.join("\n");
+      const verifiedAnswerMarker = `${VERIFIED_ANSWER_PREFIX}${JSON.stringify({
+        answer: verifiedAnswer,
+        answer_digest: verifiedAnswerDigest,
+      })}`;
+      return {
+        // Claude Code --print can finish successfully after a Stop hook without
+        // emitting its usual result event. Preserve the exact Host-verified
+        // answer in the supported systemMessage field so the Worker can recover
+        // it without trusting an unverified model fragment.
+        systemMessage: [stopSystemMessage, receiptMarker, verifiedAnswerMarker]
+          .filter(Boolean).join("\n"),
+      };
+    }
+    if (!stopSystemMessage) throw new Error("judgment_hook_stop_output_invalid");
+    return {
+      // Stop carries the canonical final audit block. Keep it so Claude can
+      // place the audit lines at the beginning of the final response, while the
+      // receipt remains available to the stream validator.
+      systemMessage: [stopSystemMessage, receiptMarker]
+        .filter(Boolean).join("\n"),
+    };
   }
   return {
     ...documentedOutput,
@@ -104,25 +303,64 @@ function statePath(payload) {
   return join(turnDir, `${createHash("sha256").update(identity).digest("hex")}.json`);
 }
 
-async function persistTurn(path, turnId) {
+async function persistTurnState(path, state) {
   await mkdir(turnDir, { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify({ turn_id: turnId }), { mode: 0o600 });
+  await writeFile(temporary, JSON.stringify(state), { mode: 0o600 });
   await rename(temporary, path);
+}
+
+async function readTurnState(payload) {
+  const path = statePath(payload);
+  try {
+    const stored = JSON.parse(await readFile(path, "utf8"));
+    if (typeof stored.turn_id === "string" && stored.turn_id) {
+      return { path, stored };
+    }
+  } catch { /* fail closed below */ }
+  throw new Error("judgment_turn_identity_missing");
 }
 
 async function resolveTurnId(payload) {
   const path = statePath(payload);
   if (payload.hook_event_name === "UserPromptSubmit") {
     const turnId = randomUUID();
-    await persistTurn(path, turnId);
+    await persistTurnState(path, {
+      turn_id: turnId,
+      resolve_turn_completed: false,
+      stop_repair_requested: false,
+    });
     return turnId;
   }
-  try {
-    const stored = JSON.parse(await readFile(path, "utf8"));
-    if (typeof stored.turn_id === "string" && stored.turn_id) return stored.turn_id;
-  } catch { /* fail closed below */ }
-  throw new Error("judgment_turn_identity_missing");
+  const { stored } = await readTurnState(payload);
+  return stored.turn_id;
+}
+
+async function stopRepairActive(payload) {
+  const { stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  return stored.stop_repair_requested === true;
+}
+
+async function markStopRepairRequested(payload) {
+  const { path, stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  await persistTurnState(path, { ...stored, stop_repair_requested: true });
+}
+
+async function requireResolveTurnFirst(payload) {
+  const { path, stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  if (stored.resolve_turn_completed === true || isResolveTurnTool(payload)) return;
+  throw new Error(
+    "judgment_resolve_turn_required_first: mcp__brainbase__brainbase_resolve_turnを最初に実行してください",
+  );
+}
+
+async function markResolveTurnCompleted(payload) {
+  const { path, stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  await persistTurnState(path, { ...stored, resolve_turn_completed: true });
 }
 
 try {
@@ -135,29 +373,27 @@ try {
     payload.prompt = trustedRequest;
   }
   payload.turn_id = await resolveTurnId(payload);
-  const response = await fetch(hookUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(process.env.MANA_TENANT_BOUNDARY_HANDLE ? {
-        "x-mana-tenant-boundary-handle": process.env.MANA_TENANT_BOUNDARY_HANDLE,
-      } : {}),
-    },
-    body: JSON.stringify(payload),
-    redirect: "error",
-    signal: AbortSignal.timeout(30_000),
-  });
-  const body = await response.text();
-  if (!response.ok) {
-    let upstreamCode = "";
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed && typeof parsed === "object" && typeof parsed.error === "string"
-          && /^[a-z0-9_]{1,80}$/.test(parsed.error)) upstreamCode = `_${parsed.error}`;
-    } catch { /* Preserve the status-only fail-closed reason for non-JSON responses. */ }
-    throw new Error(`judgment_hook_http_${response.status}${upstreamCode}`);
+  if (payload.hook_event_name === "PreToolUse") {
+    await requireResolveTurnFirst(payload);
+    process.exit(0);
   }
-  const output = validatedOutput(JSON.parse(body), payload);
+  // The wrapper owns Stop attempt identity. Claude's non-interactive runtime
+  // may set stop_hook_active=true even on the first externally invoked Stop,
+  // which would make the Host reject the repair before Claude can perform it.
+  // Persist a repairable Host block, then mark only the next external Stop as
+  // active. validatedOutput still marks its own bounded synthetic retry below.
+  const hostPayload = payload.hook_event_name === "Stop"
+    ? { ...payload, stop_hook_active: await stopRepairActive(payload) }
+    : payload;
+  const output = await validatedOutput(await fetchHookEnvelope(hostPayload), hostPayload);
+  if (payload.hook_event_name === "PostToolUse" && isResolveTurnTool(payload)) {
+    // PostToolUse is emitted only after the MCP call completed. The Host has
+    // now recorded the model-owned classification, so later tools may proceed.
+    await markResolveTurnCompleted(payload);
+  }
+  if (payload.hook_event_name === "Stop" && output.decision === "block") {
+    await markStopRepairRequested(payload);
+  }
   process.stdout.write(JSON.stringify(output));
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

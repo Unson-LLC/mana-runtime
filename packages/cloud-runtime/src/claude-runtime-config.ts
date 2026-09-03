@@ -26,6 +26,25 @@ const PROMPT_PATHS: Readonly<Record<RuntimeClaudePurpose, string>> = Object.free
 const TASK_SEARCH_MCP_CONFIG_PATH = "/tmp/mana-task-search-mcp.json";
 const MEETING_MINUTES_MCP_CONFIG_PATH = "/tmp/mana-meeting-minutes-mcp.json";
 const MEETING_MINUTES_SETTINGS_PATH = "/opt/mana/meeting-minutes-claude-settings.json";
+const REPLY_SETTINGS_PATH = "/tmp/mana-reply-claude-settings.json";
+const REPLY_SETTINGS = Object.freeze({
+  hooks: {
+    UserPromptSubmit: [{
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
+    PreToolUse: [{
+      matcher: ".*",
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
+    PostToolUse: [{
+      matcher: "^mcp__brainbase__.*$",
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
+    Stop: [{
+      hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
+    }],
+  },
+});
 const STRUCTURED_OUTPUT_SCHEMAS: Readonly<Record<RuntimeClaudeStructuredOutput, string>> = Object.freeze({
   "meeting-minutes": JSON.stringify({
     type: "object",
@@ -92,6 +111,14 @@ export function runtimeMeetingMinutesMcpConfigPath(): string {
   return MEETING_MINUTES_MCP_CONFIG_PATH;
 }
 
+export function runtimeReplySettingsPath(): string {
+  return REPLY_SETTINGS_PATH;
+}
+
+export function runtimeReplySettingsContent(): string {
+  return JSON.stringify(REPLY_SETTINGS);
+}
+
 export function buildRuntimeClaudeCommand(
   purpose: RuntimeClaudePurpose,
   config: ClaudeRuntimeConfig,
@@ -128,12 +155,15 @@ export function buildRuntimeClaudeCommand(
       ? ` --output-format stream-json --verbose --include-hook-events --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
       : ` --output-format json --json-schema '${STRUCTURED_OUTPUT_SCHEMAS[options.structuredOutput]}'`
     : options.includeJudgmentHookEvents ? " --output-format stream-json --verbose --include-hook-events" : "";
+  const judgmentBootstrapArg = purpose === "reply" && options.includeJudgmentHookEvents
+    ? " --append-system-prompt 'Your first assistant action MUST be exactly one call to mcp__brainbase__brainbase_resolve_turn. A CLI invocation using --resume creates a new Hook turn: call resolve_turn once with the newly Hook-provided turn_input even when the resumed conversation already contains a successful resolve_turn from an earlier turn. Copy the complete Hook-provided turn_input object unchanged into turn_input and add model_interpretation with exactly this shape and only one listed value per scalar: {\"intent\":\"answer|investigate|diagnose|design|implement|review|operate\",\"domains\":[\"general|knowledge|personal_judgment|engineering|organization|operations\"],\"action_kind\":\"none|read|write|external\",\"risk\":\"low|medium|high|critical\",\"confidence\":\"confirmed|inferred|unknown\",\"signals\":[\"zero or more of: cumulative_effect|complexity_growth|threshold_proposal|parallel_exploration|authority_boundary|problem_frame_uncertain|external_outcome\"]}. Classify by meaning, not keywords. Include knowledge whenever a correct answer depends on Brainbase-managed facts, source-of-truth selection, project knowledge, or the current location of runtime configuration; combine it with engineering or operations when both apply. domains must be non-empty; use general only by itself and only when no Brainbase-managed fact is needed. signals may be empty. Never replace turn_input with a reference, summary, or reconstruction. Do not emit text or call any other tool before that call succeeds. After it succeeds, never call resolve_turn again in this Hook turn. Execute every capability marked required in the returned TurnContract before answering; when knowledge.resolve is required, call mcp__brainbase__brainbase_knowledge_resolve with the required project and use the complete original user request as the knowledge intent, never a generic word such as lookup. If resolution is unconfirmed, retry knowledge_resolve with a more specific restatement of that same request. Do not substitute brainbase_admin_read or brainbase_bootstrap_config for knowledge source selection or runtime configuration location. If Stop blocks the answer, execute the missing capabilities named by Stop instead of repeating resolve_turn.'"
+    : "";
   const claude = "node /opt/mana/tenant-claude-runner.mjs --";
   const base = purpose === "meeting-minutes"
     ? `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions --setting-sources '' --settings ${MEETING_MINUTES_SETTINGS_PATH}${structuredOutputArg}`
       + ` --mcp-config ${MEETING_MINUTES_MCP_CONFIG_PATH} --strict-mcp-config < ${promptPath}`
-    : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}`
-      + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${MEETING_MINUTES_SETTINGS_PATH}` : ""}`
+    : `${claude} --print --model ${config.model}${effortArg} --permission-mode bypassPermissions${sessionArg}${judgmentBootstrapArg}`
+      + `${purpose === "reply" && options.includeJudgmentHookEvents ? ` --settings ${REPLY_SETTINGS_PATH}` : ""}`
       + `${structuredOutputArg} "$(cat ${promptPath})"`;
   return purpose === "reply" && (options.taskSearchEnabled || options.taskWriteEnabled || options.mcpEnabled)
     ? `${base} --mcp-config ${TASK_SEARCH_MCP_CONFIG_PATH} --strict-mcp-config`
