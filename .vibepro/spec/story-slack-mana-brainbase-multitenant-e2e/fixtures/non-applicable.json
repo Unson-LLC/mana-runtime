@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture_id": "FX-NA-001",
+  "fixture_kind": "non_applicable",
+  "canonical_manifest": "contracts/mana-brainbase-tenant-context/v1/fixtures/manifest.json",
+  "canonical_fixture": "contracts/mana-brainbase-tenant-context/v1/fixtures/non-applicable/customer-managed-oss.json",
+  "canonical_fixtures": [
+    "contracts/mana-brainbase-tenant-context/v1/fixtures/non-applicable/customer-managed-oss.json"
+  ],
+  "fixture_set_sha256": "9f544ab944407db760e4dec79c455bea2fdc9076766ecfd4c7058417cfe7c833",
+  "case_count": 1,
+  "execution_evidence": {
+    "status": "not_collected",
+    "note": "Reference applicability pass only. Compatible OSS integration evidence remains not_collected."
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-slack-mana-brainbase-multitenant-e2e",
+  "assessor": "VibePro assessMultiTenantArchitecture",
+  "contract_source": "Issue #466 / merged PR #467",
+  "validator_source_commit": "21e394cc1ebbaad694c00d5ccb33b65deacf5b07",
+  "mode": "final",
+  "applicable": true,
+  "activation_reasons": [
+    "explicit_applicability"
+  ],
+  "status": "invalid",
+  "coverage": {
+    "status": "inconclusive",
+    "scanners": {}
+  },
+  "draft_spec_validation": {
+    "ok": true,
+    "error_count": 0,
+    "warning_count": 0,
+    "clause_count": 12
+  },
+  "cross_lane_contract_review": {
+    "sources": [
+      "Unson-LLC/brainbase-unson#1229@2c996d955609434e1ac205fe46a38f2920b815fd",
+      "Unson-LLC/mana-runtime#236@b6c3fb5e46fe86e1cd77e02a5494151974a5a9e5",
+      "Unson-LLC/mana-runtime#237@ba1942e15935e00d1c603f57284439384bc95cac"
+    ],
+    "fixed_decision_count": 9,
+    "blocking_open_decision_count": 0,
+    "contract_consistency_gate": "PASS",
+    "implementation_start_gate": "BLOCKED",
+    "implementation_conformance_evidence": "reference_kit_pass_only"
+  },
+  "structural_contract_error_count": 0,
+  "unverified_surface_count": 9,
+  "review_finding_count": 2,
+  "findings": [
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.slack_ingress" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.brainbase_resolution" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.queue_message" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.durable_runtime_state" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.container_or_sandbox" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.tool_invocation" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.brainbase_api" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.usage_receipt" },
+    { "severity": "error", "code": "tenant_propagation_unverified", "path": "propagation.verified_surfaces.slack_delivery" },
+    { "severity": "review", "code": "scanner_coverage_unknown", "path": "verification.scanner_coverage" },
+    { "severity": "review", "code": "evidence_missing", "path": "verification.evidence" }
+  ],
+  "interpretation": "The final cross-lane contract and canonical reference kit satisfy Issue #466 structural requirements and have no blocking contract decision. The implementation start gate remains BLOCKED until the Brainbase producer and mana-runtime consumer run the shared fixture manifest through their real adapters. Multi-tenant status remains invalid and coverage inconclusive because no real-path Graph, scanner, Slack, Receipt, or production evidence has been collected."
+}
