@@ -371,19 +371,15 @@
         "test_refs": [
           {
             "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "case": "deduplicates a replayed PostToolUse receipt by its exact tool identity"
+            "case": "mana-reply-judgment-hook-503:ac:6 deduplicates a replayed PostToolUse receipt by its exact tool identity"
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "case": "fails closed when a replayed identity-bound PostToolUse receipt is missing its audit"
+            "case": "mana-reply-judgment-hook-503:ac:6 fails closed when a replayed identity-bound PostToolUse receipt is missing its audit"
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "case": "fails closed when a relevant PostToolUse receipt lacks tool identity"
-          },
-          {
-            "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
-            "case": "preserves one turn identity across UserPromptSubmit, PostToolUse, and Stop"
+            "case": "mana-reply-judgment-hook-503:ac:6 fails closed when a relevant PostToolUse receipt lacks tool identity"
           }
         ]
       },
@@ -391,15 +387,15 @@
         "test_pattern": [
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "must_cover": "deduplicates a replayed PostToolUse receipt by its exact tool identity"
+            "must_cover": "mana-reply-judgment-hook-503:ac:6 deduplicates a replayed PostToolUse receipt by its exact tool identity"
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "must_cover": "fails closed when a replayed identity-bound PostToolUse receipt is missing its audit"
+            "must_cover": "mana-reply-judgment-hook-503:ac:6 fails closed when a replayed identity-bound PostToolUse receipt is missing its audit"
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "must_cover": "fails closed when a relevant PostToolUse receipt lacks tool identity"
+            "must_cover": "mana-reply-judgment-hook-503:ac:6 fails closed when a relevant PostToolUse receipt lacks tool identity"
           }
         ]
       },

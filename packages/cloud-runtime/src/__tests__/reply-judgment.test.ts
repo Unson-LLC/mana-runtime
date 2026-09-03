@@ -366,7 +366,7 @@ describe("Slack reply Judgment lifecycle", () => {
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);
   });
 
-  it("deduplicates a replayed PostToolUse receipt by its exact tool identity", () => {
+  it("mana-reply-judgment-hook-503:ac:6 deduplicates a replayed PostToolUse receipt by its exact tool identity", () => {
     const bound = bindPostToolReceipt(
       stream({ withTool: true }),
       "tool-1",
@@ -385,7 +385,7 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
-  it("fails closed when a replayed identity-bound PostToolUse receipt is missing its audit", () => {
+  it("mana-reply-judgment-hook-503:ac:6 fails closed when a replayed identity-bound PostToolUse receipt is missing its audit", () => {
     const bound = bindPostToolReceipt(
       stream({ withTool: true }),
       "tool-1",
@@ -406,7 +406,7 @@ describe("Slack reply Judgment lifecycle", () => {
       .toThrow("reply_judgment_tool_audit_mismatch");
   });
 
-  it("fails closed when a relevant PostToolUse receipt lacks tool identity", () => {
+  it("mana-reply-judgment-hook-503:ac:6 fails closed when a relevant PostToolUse receipt lacks tool identity", () => {
     const lines = stream({ withTool: true }).split("\n");
     const postToolIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"'));
     const incompleteEvent = JSON.parse(lines[postToolIndex]!);
