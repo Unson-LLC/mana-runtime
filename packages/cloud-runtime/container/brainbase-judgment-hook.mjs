@@ -100,6 +100,11 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
     throw new Error("judgment_hook_response_invalid");
   }
   if (payload.hook_event_name === "PostToolUse"
+      && (typeof payload.tool_use_id !== "string" || !payload.tool_use_id.trim()
+        || typeof payload.tool_name !== "string" || !payload.tool_name.trim())) {
+    throw new Error("judgment_hook_tool_identity_missing");
+  }
+  if (payload.hook_event_name === "PostToolUse"
       && !isInternalJudgmentStateTool(payload)
       && (typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
     throw new Error("judgment_hook_audit_not_recorded");
@@ -128,6 +133,10 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
     ...(typeof envelope.receipt_id === "string" && envelope.receipt_id.trim()
       ? { host_receipt_id: envelope.receipt_id } : {}),
     ...(routeResolutionSha256 ? { route_resolution_sha256: routeResolutionSha256 } : {}),
+    ...(payload.hook_event_name === "PostToolUse" ? {
+      tool_use_id: payload.tool_use_id,
+      tool_name: payload.tool_name,
+    } : {}),
   };
   // UserPromptSubmit and Stop systemMessages are interactive response-rewrite
   // instructions. Passing either back into a schema-constrained runtime turn can
