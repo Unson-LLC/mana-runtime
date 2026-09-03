@@ -113,6 +113,8 @@ describe("Cloudflare Claude runtime config", () => {
     expect(reply).toContain("--settings /tmp/mana-reply-claude-settings.json");
     expect(reply).toContain("--append-system-prompt");
     expect(reply).toContain("first assistant action MUST be a call to mcp__brainbase__brainbase_resolve_turn");
+    expect(reply).toContain("Hook-provided turn_ref unchanged");
+    expect(reply).not.toContain("Read turn_input from the UserPromptSubmit Hook context");
 
     const settingsPath = fileURLToPath(new URL("../../container/reply-claude-settings.json", import.meta.url));
     const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {

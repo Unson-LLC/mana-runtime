@@ -199,7 +199,7 @@ function buildPrompt(
     .slice(0, 100_000);
   return [
     ...(brainbaseProjectCode ? [
-      "最優先: UserPromptSubmit Hookの追加文脈を読み、そこで指定されたturn_inputを一切変更せず、あなた自身の意味分類をmodel_interpretationにしてbrainbase_resolve_turnを正確に1回呼んでください。このtool callが成功するまで、他のtool呼び出し・調査・回答作成を始めてはいけません。",
+      "最優先: UserPromptSubmit Hookの追加文脈を読み、Hookが指定したturn_refをそのまま渡し、あなた自身の意味分類だけをmodel_interpretationにしてbrainbase_resolve_turnを正確に1回呼んでください。turn_inputは読まず、再構築せず、渡さないでください。このtool callが成功するまで、他のtool呼び出し・調査・回答作成を始めてはいけません。",
       "brainbase_resolve_turnが返したTurnContractを、その後の検索・操作・最終回答の契約として扱ってください。",
       "",
     ] : []),
