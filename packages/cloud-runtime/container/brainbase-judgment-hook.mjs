@@ -319,12 +319,14 @@ try {
     payload.prompt = trustedRequest;
   }
   payload.turn_id = await resolveTurnId(payload);
-  // This forwarder owns the bounded Stop repair cycle. Claude's
-  // stop_hook_active flag describes Claude's own Hook retry state, not the
-  // authenticated Host attempt made here. Always open Host validation as the
-  // first attempt; validatedOutput marks only its one synthetic retry active.
+  // Preserve Claude's repeated-Stop state across the Host boundary. The Host
+  // uses this flag to distinguish the first repairable Stop from the active
+  // retry that must converge or fail closed. Resetting it here makes every
+  // repeated Stop look like a fresh first attempt and creates an unbounded
+  // model-action repair loop. validatedOutput still marks its own one
+  // synthetic retry active below.
   const hostPayload = payload.hook_event_name === "Stop"
-    ? { ...payload, stop_hook_active: false }
+    ? { ...payload, stop_hook_active: payload.stop_hook_active === true }
     : payload;
   const output = await validatedOutput(await fetchHookEnvelope(hostPayload), hostPayload);
   process.stdout.write(JSON.stringify(output));
