@@ -187,6 +187,25 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
+  it("resumes the same Claude session once when the blocking Stop boundary surfaces as Sandbox HTTP 500", async () => {
+    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    sandbox.exec
+      .mockRejectedValueOnce(new Error("HTTP error! status: 500"))
+      .mockResolvedValueOnce({ success: true, stdout: auditedReplyStream(), stderr: "", exitCode: 0 });
+
+    await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
+      reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
+    });
+
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    const firstCommand = String(sandbox.exec.mock.calls[0]?.[0]);
+    const secondCommand = String(sandbox.exec.mock.calls[1]?.[0]);
+    const sessionId = firstCommand.match(/--session-id ([0-9a-f-]{36})/)?.[1];
+    expect(sessionId).toBeTruthy();
+    expect(secondCommand).toContain(`--resume ${sessionId}`);
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when a tenant Container cannot be destroyed", async () => {
     const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     sandbox.destroy.mockRejectedValueOnce(new Error("runtime destroy detail"));
