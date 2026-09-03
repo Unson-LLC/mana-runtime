@@ -295,6 +295,11 @@ function completedBrainbaseAuditLines(lines: string[]): string[] {
     && !line.startsWith("📚 Brainbase監査未完了:"));
 }
 
+function toolBrainbaseAuditLines(lines: string[]): string[] {
+  return lines.filter((line) => completedBrainbaseAuditLines([line]).length > 0
+    || line.startsWith(`${BRAINBASE_WARNING_PREFIX}呼出:`));
+}
+
 function isBrainbaseEvidenceTool(name: string): boolean {
   // These tools manage the Judgment lifecycle itself. They prove that the
   // turn was classified/state-recorded, but they are not a Brainbase source
@@ -351,7 +356,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
 
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
   const postToolHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse"
-    && completedBrainbaseAuditLines(auditLines(hook.output)).length > 0);
+    && toolBrainbaseAuditLines(auditLines(hook.output)).length > 0);
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
   // call. Claude can recover by calling resolve_turn first and then retrying.
@@ -404,7 +409,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
     return { sequence: sequence + 1, toolUseId: call.id, toolName: call.name, outcome: result.outcome };
   });
-  if (toolJournal.some((entry) => entry.outcome === "error")) throw new Error("reply_judgment_tool_failed");
+  // A failed optional call is still an authenticated, audited execution. The
+  // Host-owned Stop contract decides whether that failure leaves a mandatory
+  // capability unsatisfied. Rejecting every failed tool here would override a
+  // completed Host decision and turn a valid answer into Slack silence.
 
   // A successful Stop is the Host's completed-episode receipt. UserPromptSubmit
   // only carries model context, while PostToolUse emits incremental journal
@@ -428,7 +436,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     // Bind one such receipt to every observed tool call; do not compare prose
     // byte-for-byte with Stop because the Host may summarize it at completion.
     const incrementalToolAuditLines = postToolHooks.map((hook) =>
-      completedBrainbaseAuditLines(auditLines(hook.output)).at(-1));
+      toolBrainbaseAuditLines(auditLines(hook.output)).at(-1));
     if (incrementalToolAuditLines.some((line) => !line)) {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
