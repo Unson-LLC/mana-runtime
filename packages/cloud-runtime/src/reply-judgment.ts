@@ -343,8 +343,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
     for (const item of contentItems(event)) {
       if (item.type === "tool_use" && typeof item.id === "string" && typeof item.name === "string"
-          && item.name.startsWith("mcp__brainbase__")
-          && isBrainbaseEvidenceTool(item.name)) calls.push({ index, id: item.id, name: item.name });
+          && item.name.startsWith("mcp__brainbase__")) calls.push({ index, id: item.id, name: item.name });
       if (item.type === "tool_result" && typeof item.tool_use_id === "string") {
         results.set(item.tool_use_id, { index, outcome: item.is_error === true ? "error" : "success" });
       }
@@ -365,24 +364,19 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (postToolHookCandidates.some((hook) => !hasToolUseId(hook) || !hasToolName(hook))) {
     throw new Error("reply_judgment_tool_audit_mismatch");
   }
-  const matchesEvidenceCall = (hook: typeof postToolHookCandidates[number]): boolean =>
+  const matchesBrainbaseCall = (hook: typeof postToolHookCandidates[number]): boolean =>
     hasToolUseId(hook) && calls.some((call) => call.id === hook.receipt.tool_use_id);
-  const isEvidenceToolReceipt = (hook: typeof postToolHookCandidates[number]): boolean => {
+  const isBrainbaseToolReceipt = (hook: typeof postToolHookCandidates[number]): boolean => {
     const toolName = hook.receipt.tool_name;
-    return matchesEvidenceCall(hook)
-      || (typeof toolName === "string"
-        && toolName.startsWith("mcp__brainbase__")
-        && isBrainbaseEvidenceTool(toolName));
+    return matchesBrainbaseCall(hook)
+      || (typeof toolName === "string" && toolName.startsWith("mcp__brainbase__"));
   };
-  const identityBoundHooks = postToolHookCandidates.filter((hook) =>
-    isEvidenceToolReceipt(hook) && hasToolUseId(hook) && hasToolName(hook));
-  if (identityBoundHooks.some((hook) => toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
+  const brainbaseIdentityBoundHooks = postToolHookCandidates.filter((hook) =>
+    isBrainbaseToolReceipt(hook) && hasToolUseId(hook) && hasToolName(hook));
+  if (brainbaseIdentityBoundHooks.some((hook) => isBrainbaseEvidenceTool(hook.receipt.tool_name!)
+      && toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
     throw new Error("reply_judgment_tool_audit_mismatch");
   }
-  // Control-plane receipts can carry the Host's cumulative audit text after
-  // an evidence call. Bind the evidence journal by tool identity, never by
-  // audit-line content, or resolve_turn/state_record are counted as reads.
-  const postToolHooks = identityBoundHooks;
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
   // call. Claude can recover by calling resolve_turn first and then retrying.
@@ -421,13 +415,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (allReceipts.some((receipt) => receipt.session_id !== final!.sessionId || receipt.turn_id !== turnId)) {
     throw new Error("reply_judgment_identity_mismatch");
   }
-  let boundPostToolHooks: typeof postToolHooks;
-  if (identityBoundHooks.length > 0) {
-    if (identityBoundHooks.length !== postToolHooks.length) {
-      throw new Error("reply_judgment_tool_audit_mismatch");
-    }
-    const hooksByToolUseId = new Map<string, typeof postToolHooks[number]>();
-    for (const hook of identityBoundHooks) {
+  let boundPostToolHooks: typeof brainbaseIdentityBoundHooks;
+  if (brainbaseIdentityBoundHooks.length > 0) {
+    const hooksByToolUseId = new Map<string, typeof brainbaseIdentityBoundHooks[number]>();
+    for (const hook of brainbaseIdentityBoundHooks) {
       const toolUseId = hook.receipt.tool_use_id!;
       const existing = hooksByToolUseId.get(toolUseId);
       if (existing) {
@@ -451,13 +442,13 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
   } else {
-    if (postToolHooks.length > 0 || executedCalls.length > 0) {
+    if (executedCalls.length > 0) {
       throw new Error("reply_judgment_tool_audit_mismatch");
     }
-    boundPostToolHooks = postToolHooks;
+    boundPostToolHooks = brainbaseIdentityBoundHooks;
   }
 
-  const toolJournal = executedCalls.map((call, sequence) => {
+  executedCalls.forEach((call, sequence) => {
     const result = results.get(call.id);
     const audit = boundPostToolHooks[sequence];
     if (!result || result.index <= call.index || !audit || audit.index <= call.index) {
@@ -467,6 +458,19 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
         || audit.index >= successfulStop.index) {
       throw new Error("reply_judgment_event_order_invalid");
     }
+  });
+  // Control-plane receipts can carry the Host's cumulative audit text after
+  // an evidence call. Authenticate every Brainbase receipt first, then omit
+  // lifecycle-only calls from the source-read journal by tool identity.
+  const evidenceCalls = executedCalls.filter((call) => isBrainbaseEvidenceTool(call.name));
+  const hooksByToolUseId = new Map(boundPostToolHooks.map((hook) => [hook.receipt.tool_use_id!, hook]));
+  const boundEvidenceHooks = evidenceCalls.map((call) => {
+    const audit = hooksByToolUseId.get(call.id);
+    if (!audit) throw new Error("reply_judgment_tool_audit_mismatch");
+    return audit;
+  });
+  const toolJournal = evidenceCalls.map((call, sequence) => {
+    const result = results.get(call.id)!;
     return { sequence: sequence + 1, toolUseId: call.id, toolName: call.name, outcome: result.outcome };
   });
   // A failed optional call is still an authenticated, audited execution. The
@@ -490,12 +494,12 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     // incomplete final audit into a completed Judgment episode.
     throw new Error("reply_judgment_audit_lines_missing");
   }
-  if (executedCalls.length > 0) {
+  if (evidenceCalls.length > 0) {
     // PostToolUse can carry either the latest audit line or a cumulative Host
     // journal. The last completed Brainbase line is the receipt for that call.
     // Bind one such receipt to every observed tool call; do not compare prose
     // byte-for-byte with Stop because the Host may summarize it at completion.
-    const incrementalToolAuditLines = boundPostToolHooks.map((hook) =>
+    const incrementalToolAuditLines = boundEvidenceHooks.map((hook) =>
       toolBrainbaseAuditLines(auditLines(hook.output)).at(-1));
     if (incrementalToolAuditLines.some((line) => !line)) {
       throw new Error("reply_judgment_tool_audit_mismatch");
