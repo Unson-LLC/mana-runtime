@@ -208,7 +208,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     },
   );
 
-  it("completes one Host Stop repair when non-interactive Claude returns after the block", async () => {
+  it("completes one Host audit-only repair on the initial Stop", async () => {
     const judgmentLine = "🧠 判断参照: 「確認して」を参照 → 運用依頼として対応 ✓";
     const brainbaseLine = "📚 Brainbase検索: Graphで「mana」を検索 → 結果を取得 ✓";
     const repairLine = "🛠️ Stop修復: 最終回答を1回差し戻し → 修復完了 ✓";
@@ -258,7 +258,6 @@ describe("Brainbase judgment Hook forwarder", () => {
     const result = await runHook({
       hook_event_name: "Stop",
       session_id: "session-block",
-      stop_hook_active: true,
       last_assistant_message: "本文",
     }, env);
     expect(result.code).toBe(0);
@@ -325,6 +324,52 @@ describe("Brainbase judgment Hook forwarder", () => {
     const output = JSON.parse(result.stdout);
     expect(output.decision).toBe("block");
     expect(output.reason).toContain("mcp__brainbase__brainbase_resolve_turnを実行");
+  });
+
+  it("preserves Claude's active Stop repair state when forwarding a repeated Stop", async () => {
+    const forwarded: Array<Record<string, unknown>> = [];
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      forwarded.push(payload);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1", accepted: true, hook_event_name: payload.hook_event_name,
+        session_id: payload.session_id, turn_id: payload.turn_id,
+        receipt_id: `receipt-${payload.hook_event_name}`,
+        ...(payload.hook_event_name === "UserPromptSubmit"
+          ? { route_resolution_sha256: "8".repeat(64) } : {}),
+        output: payload.hook_event_name === "UserPromptSubmit" ? {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit", additionalContext: "Judgment route resolved",
+          },
+        } : {
+          decision: "block",
+          reason: "judgment_stop_repair_exhausted",
+        },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const env = {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    };
+    await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-active-stop" }, env);
+    const result = await runHook({
+      hook_event_name: "Stop",
+      session_id: "session-active-stop",
+      stop_hook_active: true,
+      last_assistant_message: "修復後の回答",
+    }, env);
+
+    expect(result.code).toBe(0);
+    expect(forwarded.at(-1)?.stop_hook_active).toBe(true);
   });
 
   it("emits Host-verified audit lines after a completed Stop repair", async () => {
