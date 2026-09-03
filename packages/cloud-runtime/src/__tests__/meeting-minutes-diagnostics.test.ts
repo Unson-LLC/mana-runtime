@@ -75,7 +75,8 @@ describe("meeting minutes diagnostics", () => {
     const run = { version: 1, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
       sourceThreadTs: "1", sourceMessageTs: "1", file: { id: "F1", name: "m.txt" }, status: "completed",
       taskRegistration: { registered: [], failure: { index: 3, stage: "task_registration",
-        status: 403, code: "project_code_not_allowed", message: "Authorization: Bearer secret",
+        status: 403, code: "project_code_not_allowed", failurePoint: "task_create",
+        message: "Authorization: Bearer secret",
         failedAt: "2026-08-18T00:00:00.000Z" } },
       diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1", stage: "task_registration",
         code: "TASK_PROJECT_CODE_NOT_ALLOWED", retryable: false, failedAt: "2026-08-18T00:00:00.000Z" },
@@ -83,7 +84,8 @@ describe("meeting minutes diagnostics", () => {
 
     const entry = meetingMinutesFailureLog(run);
 
-    expect(entry).toMatchObject({ taskFailure: { index: 3, status: 403, code: "project_code_not_allowed" } });
+    expect(entry).toMatchObject({ taskFailure: { index: 3, status: 403, code: "project_code_not_allowed",
+      failurePoint: "task_create", pendingPresent: false } });
     expect(JSON.stringify(entry)).not.toContain("secret");
   });
 });

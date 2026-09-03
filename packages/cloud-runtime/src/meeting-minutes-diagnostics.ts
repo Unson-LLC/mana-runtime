@@ -90,7 +90,8 @@ export interface MeetingMinutesFailureLog {
   retryable: boolean;
   receipt?: unknown;
   checkpoint?: unknown;
-  taskFailure?: { index?: number; status?: number; code?: string };
+  taskFailure?: { index?: number; status?: number; code?: string;
+    failurePoint?: "assignee_resolution" | "task_create" | "task_scope_update"; pendingPresent: boolean };
 }
 
 export function meetingMinutesFailureLog(run: MeetingMinutesRun): MeetingMinutesFailureLog {
@@ -100,7 +101,8 @@ export function meetingMinutesFailureLog(run: MeetingMinutesRun): MeetingMinutes
     code: failure?.code ?? "UNCLASSIFIED_FAILURE", retryable: failure?.retryable ?? true,
     receipt: run.diagnostics?.receiptSnapshot,
     taskFailure: taskFailure ? { index: taskFailure.index, status: taskFailure.status,
-      code: taskFailure.code } : undefined,
+      code: taskFailure.code, failurePoint: taskFailure.failurePoint,
+      pendingPresent: Boolean(run.taskRegistration?.pending) } : undefined,
     checkpoint: run.diagnostics?.checkpoint ?? { hasGitHub: Boolean(run.github),
       hasSlackParent: Boolean(run.slack?.parentTs), postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 } };
 }

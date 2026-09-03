@@ -188,6 +188,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
   const taskProjectCodes = meetingMinutesTaskProjectCodes(run.destination!);
   run.taskRegistration ??= { registered: [] };
   let activeIndex = 0;
+  let failurePoint: NonNullable<NonNullable<MeetingMinutesRun["taskRegistration"]>["failure"]>["failurePoint"];
   try {
     for (let index = 0; index < tasks.length; index += 1) {
       activeIndex = index;
@@ -202,6 +203,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       }
       let assignee_person_id: string | undefined;
       if (candidate.assignee_name) {
+        failurePoint = "assignee_resolution";
         if (!options.resolveAssignee) throw new Error("meeting_minutes_assignee_resolver_unconfigured");
         const resolution = await options.resolveAssignee(candidate.assignee_name, taskProjectCodes[0]!);
         if (resolution.status === "unavailable") throw new Error("meeting_minutes_assignee_unavailable");
@@ -214,6 +216,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       const registeredScopes = run.taskRegistration.registered
         .map((item) => item.projectCodes?.join("\0"))
         .filter((scope): scope is string => typeof scope === "string");
+      failurePoint = "task_create";
       const legacyConflictScope = !run.taskRegistration.pending && run.taskRegistration.failure?.status === 409
         && registeredScopes.length > 0 && new Set(registeredScopes).size === 1
         ? registeredScopes[0]!.split("\0") : undefined;
@@ -239,6 +242,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       const recoveredProjectCodes = Array.isArray(task.project_codes) ? task.project_codes : pendingProjectCodes;
       if (recoveredProjectCodes.join("\0") !== taskProjectCodes.join("\0")) {
         if (!Number.isInteger(task.version) || !options.updateTask) throw new Error("meeting_minutes_task_invalid_response");
+        failurePoint = "task_scope_update";
         task = await options.updateTask(task.id.trim(), { expected_version: task.version!,
           project_codes: [...taskProjectCodes] },
         await taskScopeUpdateIdempotencyKey(run.runId, run.revision ?? 0, index));
@@ -259,6 +263,7 @@ async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
       : {};
     run.taskRegistration.failure = { index: activeIndex,
       stage: "task_registration",
+      ...(failurePoint ? { failurePoint } : {}),
       message: safeTaskFailureMessage(error, "meeting_minutes_task_registration_failed"),
       ...(taskApiClassification.code ? { code: taskApiClassification.code } : {}),
       ...(taskApiClassification.status ? { status: taskApiClassification.status } : {}),
@@ -276,6 +281,7 @@ async function deferTaskIntegration(fs: WorkspaceFs, run: MeetingMinutesRun,
   run.taskRegistration.failure = { index: run.taskRegistration.failure?.index ??
     Math.max(0, run.taskRegistration.registered.length - 1), stage,
     message: safeTaskFailureMessage(error, `meeting_minutes_${stage}_failed`),
+    ...(existingClassification?.failurePoint ? { failurePoint: existingClassification.failurePoint } : {}),
     ...(existingClassification?.code ? { code: existingClassification.code } : {}),
     ...(existingClassification?.status ? { status: existingClassification.status } : {}),
     failedAt: now(options) };
