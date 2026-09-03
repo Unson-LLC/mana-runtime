@@ -114,6 +114,9 @@ describe("Cloudflare Claude runtime config", () => {
     expect(reply).toContain("--append-system-prompt");
     expect(reply).toContain("first assistant action MUST be exactly one call to mcp__brainbase__brainbase_resolve_turn");
     expect(reply).toContain("Hook-provided turn_input object unchanged into turn_input");
+    expect(reply).toContain('"intent":"answer|investigate|diagnose|design|implement|review|operate"');
+    expect(reply).toContain('"domains":["general|knowledge|personal_judgment|engineering|organization|operations"]');
+    expect(reply).toContain('"signals":["zero or more of: cumulative_effect|complexity_growth|threshold_proposal|parallel_exploration|authority_boundary|problem_frame_uncertain|external_outcome"]');
     expect(reply).not.toContain("turn_ref");
     expect(reply).toContain("After it succeeds, never call resolve_turn again");
     expect(reply).toContain("when knowledge.resolve is required, call mcp__brainbase__brainbase_knowledge_resolve");
