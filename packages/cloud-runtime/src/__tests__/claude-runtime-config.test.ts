@@ -158,6 +158,11 @@ describe("Cloudflare Claude runtime config", () => {
       .toContain(`--session-id ${sessionId}`);
     expect(buildRuntimeClaudeCommand("reply", config, { sessionId, resumeSession: true }))
       .toContain(`--resume ${sessionId}`);
+    expect(buildRuntimeClaudeCommand("reply", config, {
+      sessionId,
+      resumeSession: true,
+      includeJudgmentHookEvents: true,
+    })).toContain("A CLI invocation using --resume creates a new Hook turn");
     expect(() => buildRuntimeClaudeCommand("reply", config, { sessionId: "$(unsafe)" }))
       .toThrow("runtime_claude_session_id_invalid");
   });
