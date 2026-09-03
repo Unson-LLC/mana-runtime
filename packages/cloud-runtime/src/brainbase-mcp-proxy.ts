@@ -8,12 +8,22 @@ export interface BrainbaseMcpProxyEnv {
   BRAINBASE_JUDGMENT_PROJECT_CODE?: string;
 }
 
+async function mcpToolName(request: Request): Promise<string | undefined> {
+  if (new URL(request.url).pathname !== BRAINBASE_MCP_PROXY_PATH) return undefined;
+  try {
+    const body = await request.clone().json() as { method?: unknown; params?: { name?: unknown } };
+    return body.method === "tools/call" && typeof body.params?.name === "string"
+      ? body.params.name.slice(0, 120) : undefined;
+  } catch { return undefined; }
+}
+
 export async function handleBrainbaseMcpProxyRequest(request: Request, env: BrainbaseMcpProxyEnv, fetchImpl?: typeof fetch): Promise<Response> {
   const url = new URL(request.url);
   const isAllowedPath = url.pathname === BRAINBASE_MCP_PROXY_PATH || url.pathname === BRAINBASE_JUDGMENT_HOOK_PROXY_PATH;
   if (url.hostname !== BRAINBASE_MCP_PROXY_HOST || !isAllowedPath || request.method !== "POST") {
     return Response.json({ error: { code: "BRAINBASE_OPERATION_FORBIDDEN", retryable: false } }, { status: 403 });
   }
+  const toolName = await mcpToolName(request);
   if (!env.BRAINBASE_MCP_BASE_URL || (!env.BRAINBASE_MCP_TOKEN && !fetchImpl)) {
     return Response.json({ error: { code: "BRAINBASE_PROXY_NOT_CONFIGURED", retryable: true } }, { status: 503 });
   }
@@ -36,6 +46,16 @@ export async function handleBrainbaseMcpProxyRequest(request: Request, env: Brai
     });
     if (response.status >= 300 && response.status < 400) {
       return Response.json({ error: { code: "BRAINBASE_UPSTREAM_REDIRECT_REJECTED", retryable: false } }, { status: 502 });
+    }
+    if (toolName) {
+      const diagnostic = await response.clone().text();
+      console.log(JSON.stringify({
+        event: "brainbase_mcp_tool_result",
+        toolName,
+        status: response.status,
+        isError: /"isError"\s*:\s*true/u.test(diagnostic),
+        errorCode: diagnostic.match(/\b(?:judgment|brainbase)_[a-z0-9_]{1,80}\b/u)?.[0] ?? null,
+      }));
     }
     return new Response(response.body, {
       status: response.status,
