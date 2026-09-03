@@ -261,6 +261,36 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
+  it("mana-reply-judgment-hook-503:ac:6 ignores cumulative audit lines on control-plane receipts", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
+        }] },
+      }),
+      JSON.stringify(hook("PostToolUse", brainbaseLine, "turn-1", {
+        tool_use_id: "resolve-turn",
+        tool_name: "mcp__brainbase__brainbase_resolve_turn",
+      })),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
+        }] },
+      }),
+    );
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      stop: "completed",
+      toolJournal: [{
+        toolUseId: "tool-1",
+        toolName: "mcp__brainbase__brainbase_knowledge_resolve",
+        outcome: "success",
+      }],
+    });
+  });
+
   it("story-slack-mention-brainbase-judgment:ac:3 ac:4 ac:6 preserves Host audit order and multiplicity", () => {
     const result = parseReplyJudgmentStream(stream({ toolCount: 2 }));
     expect(result.auditLines).toEqual([judgmentLine, brainbaseLine, secondBrainbaseLine]);

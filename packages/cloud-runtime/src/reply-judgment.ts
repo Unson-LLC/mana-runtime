@@ -379,9 +379,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (identityBoundHooks.some((hook) => toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
     throw new Error("reply_judgment_tool_audit_mismatch");
   }
-  const postToolHooks = postToolHookCandidates.filter((hook) =>
-    identityBoundHooks.includes(hook)
-      || toolBrainbaseAuditLines(auditLines(hook.output)).length > 0);
+  // Control-plane receipts can carry the Host's cumulative audit text after
+  // an evidence call. Bind the evidence journal by tool identity, never by
+  // audit-line content, or resolve_turn/state_record are counted as reads.
+  const postToolHooks = identityBoundHooks;
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
   // call. Claude can recover by calling resolve_turn first and then retrying.
