@@ -435,7 +435,9 @@ describe("meeting minutes pipeline", () => {
   it("resolves a named assignee to the canonical person id before task creation", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
-    const createTask = vi.fn().mockResolvedValue({ id: "task-42" });
+    const createTask = vi.fn()
+      .mockResolvedValueOnce({ id: "task-42" })
+      .mockResolvedValueOnce({ id: "task-43" });
     const resolveAssignee = vi.fn().mockResolvedValue({ status: "resolved", personId: "per_umeda" });
     await resumeMeetingMinutesRun(fs, selection, resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
@@ -462,20 +464,22 @@ describe("meeting minutes pipeline", () => {
     }), expect.any(String));
   });
 
-  it("completes the minutes and defers the task when the assignee graph is unavailable", async () => {
+  it("registers the task without guessing when the assignee graph is unavailable", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
-    const createTask = vi.fn();
+    const createTask = vi.fn().mockResolvedValue({ id: "task-42" });
     const run = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [
         { title: "請求書を送る", assignee_name: "梅田 遼" },
+        { title: "入金を確認する" },
       ] }), createTask, resolveAssignee: vi.fn().mockResolvedValue({ status: "unavailable" }),
     }));
-    expect(run).toMatchObject({ status: "completed",
-      taskRegistration: { failure: { index: 0, failurePoint: "assignee_resolution",
-        message: "meeting_minutes_assignee_unavailable" } } });
-    expect(run.taskRegistration).not.toHaveProperty("pending");
-    expect(createTask).not.toHaveBeenCalled();
+    expect(run.status).toBe("completed");
+    expect(run.taskRegistration).not.toHaveProperty("failure");
+    expect(createTask).toHaveBeenCalledTimes(2);
+    expect(createTask.mock.calls[0]?.[0]).not.toHaveProperty("assignee_name");
+    expect(createTask.mock.calls[0]?.[0]).not.toHaveProperty("assignee_person_id");
+    expect(createTask.mock.calls[1]?.[0]).toMatchObject({ title: "入金を確認する" });
   });
 
   it("accepts minutes with no explicit tasks without creating a task", async () => {
