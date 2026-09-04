@@ -1,8 +1,10 @@
 import { TaskApiClient, TaskApiError } from "@openryoko/task-runtime-core";
+import { deny } from "./multitenancy/errors.js";
 
 /** Keep redo on the same tenant-owned credential path as ordinary task writes. */
 export function createMeetingMinutesTaskDeleter(options: {
   baseUrl: string;
+  expectedProjectCodes?: readonly string[];
   boundary(name: "brainbase_proxy", execute: (credentialFetch: typeof fetch) => Promise<void>): Promise<void>;
 }): (taskId: string, idempotencyKey: string) => Promise<void> {
   return async (taskId, idempotencyKey) => {
@@ -10,6 +12,10 @@ export function createMeetingMinutesTaskDeleter(options: {
       const client = new TaskApiClient({ baseUrl: options.baseUrl, fetchImpl: credentialFetch });
       try {
         const task = await client.getTask(taskId);
+        if (options.expectedProjectCodes && (!task.project_codes?.length
+          || !task.project_codes.every((code) => options.expectedProjectCodes!.includes(code)))) {
+          deny("brainbase_proxy", "PROJECT_SCOPE_MISMATCH");
+        }
         await client.deleteTask(taskId, task.version, idempotencyKey);
       } catch (error) {
         if (error instanceof TaskApiError && error.status === 404) return;

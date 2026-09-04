@@ -19,6 +19,20 @@ const council: MeetingMinutesDestination = {
 };
 
 describe("meetingMinutesSelectionDestination", () => {
+  it.each(["techknight", "ncom"])("requires the %s destination scope for redo task deletion", (projectCode) => {
+    const destination = { ...council, contextProjectCode: projectCode };
+    expect(resolveMeetingMinutesDestinationProjectScope({
+      project_ids: ["prj_destination"],
+      data_scopes: [`company_authority:resource:project:${projectCode}@7`],
+    }, destination, `prj_${projectCode}`, "brainbase_proxy")).toEqual({
+      project_id: "prj_destination", project_ids: ["prj_destination"],
+    });
+    expect(() => resolveMeetingMinutesDestinationProjectScope({
+      project_ids: ["prj_unson"],
+      data_scopes: ["company_authority:resource:project:unson@7"],
+    }, destination, `prj_${projectCode}`, "brainbase_proxy")).toThrowError(TenantBoundaryError);
+  });
+
   it("resolves the selected destination instead of the source channel placement", () => {
     expect(meetingMinutesSelectionDestination(selection, [council])).toBe(council);
   });

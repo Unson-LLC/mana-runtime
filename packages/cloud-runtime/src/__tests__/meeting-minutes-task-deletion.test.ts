@@ -1,19 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMeetingMinutesTaskDeleter } from "../meeting-minutes-task-deletion.js";
 
-function setup(responses: Response[]) {
+function setup(responses: Response[], expectedProjectCodes?: readonly string[]) {
   const credentialFetch = vi.fn<typeof fetch>();
   for (const response of responses) credentialFetch.mockResolvedValueOnce(response);
   const boundary = vi.fn(async (_name: "brainbase_proxy", execute: (fetchImpl: typeof fetch) => Promise<void>) => {
     await execute(credentialFetch);
   });
-  const deleteTask = createMeetingMinutesTaskDeleter({ baseUrl: "https://brainbase.example", boundary });
+  const deleteTask = createMeetingMinutesTaskDeleter({ baseUrl: "https://brainbase.example", boundary, expectedProjectCodes });
   return { deleteTask, boundary, credentialFetch };
 }
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 describe("meeting-minutes redo task deletion", () => {
+  it.each([undefined, [], ["unson"], ["ncom", "unson"]])("rejects task project mismatch before DELETE: %j", async (project_codes) => {
+    const { deleteTask, credentialFetch } = setup([json({ id: "task-1", version: 1, project_codes })], ["ncom"]);
+    await expect(deleteTask("task-1", "redo-1")).rejects.toMatchObject({ code: "PROJECT_SCOPE_MISMATCH" });
+    expect(credentialFetch).toHaveBeenCalledOnce();
+  });
+
+  it.each(["ncom", "techknight-hotel-united-phase2-marketing"])("deletes only a task in destination %s", async (code) => {
+    const { deleteTask, credentialFetch } = setup([
+      json({ id: "task-1", version: 1, project_codes: [code] }), json({ task_id: "task-1" }),
+    ], [code]);
+    await deleteTask("task-1", "redo-1");
+    expect(credentialFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the boundary credential fetch for GET and DELETE, retaining version and idempotency", async () => {
     const { deleteTask, boundary, credentialFetch } = setup([
       json({ id: "task/1", version: 7 }), json({ task_id: "task/1" }),

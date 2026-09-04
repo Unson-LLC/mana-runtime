@@ -4,6 +4,27 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 
 describe("tenant Slack runtime wiring", () => {
+  it("re-authorizes redo task deletion for the persisted configured destination", () => {
+    const start = source.indexOf("async function processTenantMeetingMinutesRedo(");
+    expect(start).toBeGreaterThan(-1);
+    const redo = source.slice(start, source.indexOf("\nexport default", start + 1));
+    expect(redo).toContain("loadMeetingMinutesRun(workspace.fs, command.runId)");
+    expect(redo).toContain("candidate.id === run?.destination?.id");
+    expect(redo).toContain("destination.contextProjectCode !== run?.destination?.contextProjectCode");
+    expect(redo).toContain("resolveDerivedSlackTenantContext(env, tenantContext");
+    expect(redo).toContain("}, { destination })");
+    expect(redo).toContain("resolveMeetingMinutesDestinationProjectScope(");
+    expect(redo).toContain("tenant_context: taskContext");
+    expect(redo).toContain("expected_scope: taskScope");
+    expect(redo).toContain("boundary: taskEffects.boundary");
+    expect(redo).not.toContain("BRAINBASE_TASK_API_TOKEN");
+    const derivedStart = source.indexOf("async function resolveDerivedSlackTenantContext(");
+    const derived = source.slice(derivedStart, source.indexOf("async function ", derivedStart + 1));
+    expect(derived).toContain("destinationAuthorizationForSelection(env, options.destination)");
+    expect(derived).toContain("destinationAuthorization?.trusted_project_ids");
+    expect(derived).toContain('if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH")');
+  });
+
   it("resolves signed events and commands through the canonical tenant authority", () => {
     const commandStart = source.indexOf('url.pathname === "/slack/commands"');
     const eventStart = source.indexOf('url.pathname !== "/slack/events"', commandStart);

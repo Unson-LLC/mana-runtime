@@ -653,10 +653,14 @@ async function resolveDerivedSlackTenantContext(
   env: Env,
   sourceTenantContext: TenantContextEnvelope,
   identity: TenantInteractionIdentity,
-  options: { workspace_policy?: "same_workspace" | "same_tenant" } = {},
+  options: { workspace_policy?: "same_workspace" | "same_tenant";
+    destination?: MeetingMinutesDestination } = {},
 ): Promise<TenantContextEnvelope> {
   const clients = tenantRuntimeClients(env);
-  const sourceProjectIds = [...sourceTenantContext.authorization.project_ids];
+  const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination);
+  if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  const sourceProjectIds = [...(destinationAuthorization?.trusted_project_ids
+    ?? sourceTenantContext.authorization.project_ids)];
   if (sourceProjectIds.length === 0) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
   const resolved = await resolveSlackWorkerIngress({
     identity: { provider: "slack", ...identity },
@@ -1842,7 +1846,41 @@ async function processTenantMeetingMinutesRedo(input: {
     const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
       const clients = meetingMinutesClients(env, effects, tenantContext, tenantBoundaryHandle);
-      await processMeetingMinutesRedo(workspace.fs, command, config, clients.redo);
+      // The queue belongs to the source router, but task removal belongs to the
+      // persisted destination. Resolve its authorization afresh; never reuse the
+      // router's project scope or accept a project from a Slack button payload.
+      await processMeetingMinutesRedo(workspace.fs, command, config, {
+        ...clients.redo,
+        deleteTask: async (taskId, idempotencyKey) => {
+          const run = await loadMeetingMinutesRun(workspace.fs, command.runId);
+          const destination = config.destinations.find((candidate) => candidate.id === run?.destination?.id);
+          if (!destination || destination.contextProjectCode !== run?.destination?.contextProjectCode) {
+            deny("brainbase_proxy", "PROJECT_SCOPE_MISMATCH");
+          }
+          const taskContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
+            app_id: command.appId,
+            workspace_id: command.workspaceId,
+            event_id: await childInteractionEventId(meetingMinutesRedoEventId(command), `delete-task:${taskId}`),
+            channel_id: command.channelId,
+            thread_ts: command.threadTs,
+            requester_id: command.userId,
+          }, { destination });
+          const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+          if (!destinationAuthorization) deny("brainbase_proxy", "PROJECT_SCOPE_MISMATCH");
+          const taskScope: ExpectedTenantScope = {
+            ...expectedScope,
+            actor_principal_id: taskContext.actor.principal_id,
+            ...resolveMeetingMinutesDestinationProjectScope(taskContext.authorization, destination,
+              destinationAuthorization.required_authorization.project_id, "brainbase_proxy"),
+          };
+          const taskEffects = createMeetingMinutesTenantEffectGuard({ env,
+            tenant_context: taskContext, expected_scope: taskScope, verifier, now });
+          await createMeetingMinutesTaskDeleter({
+            expectedProjectCodes: destination.taskProjectCodes,
+            baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "", boundary: taskEffects.boundary,
+          })(taskId, idempotencyKey);
+        },
+      });
     });
   });
   return { outcome: "completed" };
