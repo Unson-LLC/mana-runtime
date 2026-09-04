@@ -89,7 +89,8 @@ import { classifyMeetingMinutesDestinationInSandbox,
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
-import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
+import { isReplyEligible, postSlackReply, ReplyPipelineError } from "./reply-pipeline.js";
+import { executeReplyRuntime } from "./reply-runtime-execution.js";
 import { readReplyJudgmentEpisode } from "./reply-judgment.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
@@ -99,7 +100,6 @@ import {
   parseRuntimePlacements,
   RuntimeBindingError,
   resolveRuntimePlacement,
-  runWithReplyTaskSearchBinding,
 } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
 import { persistEventOnce, persistReplyCompletion, readReplyCompletion } from "./workspace-store.js";
@@ -3588,101 +3588,110 @@ export default {
                         hydrateThreadContext,
                       });
                     },
-                    processReply: async () => runWithReplyTaskSearchBinding(event, {
-                    tenantId: runtimeTenantId,
-                    workspaceId: runtimeWorkspaceId,
-                    channelId: placement.channelId,
-                    projectCodes: placement.projectCodes.join(","),
-                    taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
-                    brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
-                    tenantCredentialFetchConfigured: true,
-                  }, async (taskSearch) => {
-                    const profileResolution = await resolveSlackUserProfile({ userId: event.userId ?? "",
-                      fetchImpl: tenantCredentialFetch,
-                    });
-                    // users.info is enrichment, not the authorization boundary. Some Slack
-                    // installations intentionally omit users:read. Canonical Graph identity
-                    // resolution below remains mandatory and fail-closed; a profile outage must
-                    // not prevent an otherwise authorized requester from using the runtime.
-                    let requesterProfile;
-                    try {
-                      requesterProfile = requesterProfileOrFallback(event.userId ?? "", profileResolution);
-                    } catch {
-                      throw new ReplyPipelineError("requester_profile_rejected");
-                    }
-                    const graphOptions = {
-                      baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
-                      fetch: tenantCredentialFetch,
-                    };
-                    const actorIdentityResolver = resolveActorIdentityResolverFromEnv(env);
-                    const mappedActor = await actorIdentityResolver?.(event);
-                    const requesterResolution = mappedActor
-                      ? { status: "resolved" as const, personId: mappedActor.personId }
-                      : await resolveGraphRequester(
-                          event.workspaceId, event.userId ?? "", placement.projectCodes[0], graphOptions,
+                    processReply: () => {
+                      const actorIdentityResolver = resolveActorIdentityResolverFromEnv(env);
+                      return executeReplyRuntime({
+                      fs: workspace.fs,
+                      event,
+                      taskSearch: {
+                        tenantId: runtimeTenantId,
+                        workspaceId: runtimeWorkspaceId,
+                        channelId: placement.channelId,
+                        projectCodes: placement.projectCodes.join(","),
+                        taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
+                        brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+                        tenantCredentialFetchConfigured: true,
+                      },
+                      prepareRequester: async () => {
+                        const profileResolution = await resolveSlackUserProfile({ userId: event.userId ?? "",
+                          fetchImpl: tenantCredentialFetch,
+                        });
+                        // users.info is enrichment, not the authorization boundary. Some Slack
+                        // installations intentionally omit users:read. Canonical Graph identity
+                        // resolution below remains mandatory and fail-closed; a profile outage must
+                        // not prevent an otherwise authorized requester from using the runtime.
+                        let requesterProfile;
+                        try {
+                          requesterProfile = requesterProfileOrFallback(event.userId ?? "", profileResolution);
+                        } catch {
+                          throw new ReplyPipelineError("requester_profile_rejected");
+                        }
+                        const graphOptions = {
+                          baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
+                          fetch: tenantCredentialFetch,
+                        };
+                        const mappedActor = await actorIdentityResolver?.(event);
+                        const requesterResolution = mappedActor
+                          ? { status: "resolved" as const, personId: mappedActor.personId }
+                          : await resolveGraphRequester(
+                              event.workspaceId, event.userId ?? "", placement.projectCodes[0], graphOptions,
+                            );
+                        if (requesterResolution.status !== "resolved") {
+                          throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
+                        }
+                        const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
+                          event, env, Date.now(), placement, requesterResolution.personId,
                         );
-                    if (requesterResolution.status !== "resolved") {
-                      throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
-                    }
-                    const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
-                      event, env, Date.now(), placement, requesterResolution.personId,
-                    );
-                    const graphContext = await hydrateGraphContext(event, placement.projectCodes[0], graphOptions);
-                    if (graphContext.status === "unavailable") {
-                      throw new ReplyPipelineError("graph_context_unavailable");
-                    }
-                    return processReplyEvent(workspace.fs, event, {
-                    expectedTenantId: runtimeTenantId,
-                    expectedWorkspaceId: runtimeWorkspaceId,
-                    allowedChannelId: placement.channelId,
-                    fetch: tenantCredentialFetch,
-                    oauthConfigured: true,
-                    tenantBoundaryHandle,
-                    claudeRuntime,
-                    taskSearchEnabled: taskSearch.taskSearchEnabled,
-                    taskWriteEnabled,
-                    taskWriteCapability,
-                    requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
-                    requesterProfile,
-                    graphContext: graphContext.content,
-                    brainbaseProjectCode: placement.projectCodes[0],
-                    runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
-                      escalationEmployee: placement.agent?.escalationEmployee } : undefined,
-                    capabilities: placement.capabilities,
-                    resolveActorIdentity: actorIdentityResolver,
-                    trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
-                    respondPolicy: placement.respondTo,
-                    isEngagedThread: workspaceSession.engaged === true,
-                    botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
-                    triage: async (triageEvent) => {
-                      const hydrated = await hydrateThreadContext(triageEvent);
-                      const recentThread = (hydrated.threadContext ?? "").split("\n").filter(Boolean).slice(-10)
-                        .map((text) => ({ speaker: "thread", text }));
-                      const decision = await runRuntimeTriage({
-                        botName: "まな",
-                        persona: placement.runtimeContext?.persona,
-                        speakerName: requesterProfile.displayName ?? requesterProfile.realName ?? requesterProfile.handle ?? "Slack user",
-                        channelType: triageEvent.channelType ?? "channel",
-                        messageText: triageEvent.text,
-                        attachmentNames: triageEvent.files?.map((file) => file.name),
-                        recentThread,
-                      }, {
-                        model: claudeRuntime.model,
-                        effort: claudeRuntime.effort,
+                        const graphContext = await hydrateGraphContext(event, placement.projectCodes[0], graphOptions);
+                        if (graphContext.status === "unavailable") {
+                          throw new ReplyPipelineError("graph_context_unavailable");
+                        }
+                        return {
+                          requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
+                          requesterProfile,
+                          graphContext: graphContext.content,
+                          taskWriteEnabled,
+                          taskWriteCapability,
+                        };
+                      },
+                      options: {
+                        expectedTenantId: runtimeTenantId,
+                        expectedWorkspaceId: runtimeWorkspaceId,
+                        allowedChannelId: placement.channelId,
+                        fetch: tenantCredentialFetch,
+                        oauthConfigured: true,
                         tenantBoundaryHandle,
-                        createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                        claudeRuntime,
+                        brainbaseProjectCode: placement.projectCodes[0],
+                        runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
+                          escalationEmployee: placement.agent?.escalationEmployee } : undefined,
+                        capabilities: placement.capabilities,
+                        resolveActorIdentity: actorIdentityResolver,
+                        trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
+                        respondPolicy: placement.respondTo,
+                        isEngagedThread: workspaceSession.engaged === true,
+                        botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
+                        createSandbox: (sandboxId: string) => createTechKnightSandbox(env, sandboxId),
+                        hydrateThreadContext,
+                        postReply: postTenantReply,
+                      },
+                      triage: async (triageEvent, requester) => {
+                        const hydrated = await hydrateThreadContext(triageEvent);
+                        const recentThread = (hydrated.threadContext ?? "").split("\n").filter(Boolean).slice(-10)
+                          .map((text) => ({ speaker: "thread", text }));
+                        const decision = await runRuntimeTriage({
+                          botName: "まな",
+                          persona: placement.runtimeContext?.persona,
+                          speakerName: requester.requesterProfile.displayName ?? requester.requesterProfile.realName
+                            ?? requester.requesterProfile.handle ?? "Slack user",
+                          channelType: triageEvent.channelType ?? "channel",
+                          messageText: triageEvent.text,
+                          attachmentNames: triageEvent.files?.map((file) => file.name),
+                          recentThread,
+                        }, {
+                          model: claudeRuntime.model,
+                          effort: claudeRuntime.effort,
+                          tenantBoundaryHandle,
+                          createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
+                        });
+                        emitTurnLog("log", "mana_triage_decided", triageEvent, trace, {
+                          outcome: decision.action,
+                          reasonCode: decision.reason,
+                        });
+                        return decision;
+                      },
                       });
-                      emitTurnLog("log", "mana_triage_decided", triageEvent, trace, {
-                        outcome: decision.action,
-                        reasonCode: decision.reason,
-                      });
-                      return decision;
                     },
-                    createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-                    hydrateThreadContext,
-                    postReply: postTenantReply,
-                    });
-                    }),
                   }),
                 });
               });
