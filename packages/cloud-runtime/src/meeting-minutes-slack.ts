@@ -57,12 +57,14 @@ export function destinationSelectedMessage(runId: string, fileName: string,
   ] };
 }
 
-export function redoConfirmationMessage(runId: string, fileName: string, revision = 0): SlackSelectionMessage {
+export function redoConfirmationMessage(runId: string, fileName: string, revision = 0,
+  sourceThreadTs?: string): SlackSelectionMessage {
+  const confirmationValue = { runId, fileName, revision, ...(sourceThreadTs ? { sourceThreadTs } : {}) };
   return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先をやり直しますか？`, blocks: [
     { type: "section", text: { type: "mrkdwn", text: `*保存先をやり直しますか？*\nGitHubの議事録・文字起こしと自動登録タスクを取り消します。旧共有投稿は「取り消し済み」にし、保存先選択へ戻します。` } },
     { type: "actions", elements: [
       { type: "button", style: "danger", text: { type: "plain_text", text: "取り消して選び直す" },
-        action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID, value: JSON.stringify({ runId, fileName, revision }) },
+        action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID, value: JSON.stringify(confirmationValue) },
     ] },
   ] };
 }
@@ -111,7 +113,7 @@ export function statusProjectionFailedMessage(runId: string, fileName: string): 
 }
 
 export function redoFailedMessage(runId: string, fileName: string,
-  failure?: MeetingMinutesRedoFailure, revision = 0): SlackSelectionMessage {
+  failure?: MeetingMinutesRedoFailure, revision = 0, sourceThreadTs?: string): SlackSelectionMessage {
   const stages = { redo_github_delete: "保存ファイルの取り消し", redo_task_delete: "タスクの取り消し",
     redo_slack_retract: "共有投稿の取り消し", redo_destination_selection: "保存先選択の再表示" };
   const stage = failure?.stage ?? (failure ? "redo_execution" : "redo_enqueue");
@@ -130,7 +132,7 @@ export function redoFailedMessage(runId: string, fileName: string,
       text: `:warning: *保存先のやり直しを完了できませんでした*\n${details}\n${guidance}` } },
     { type: "actions", elements: [{ type: "button", style: "danger",
       text: { type: "plain_text", text: "取り消しを再実行" }, action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
-      value: JSON.stringify({ runId, fileName, revision }) }] },
+      value: JSON.stringify({ runId, fileName, revision, ...(sourceThreadTs ? { sourceThreadTs } : {}) }) }] },
   ] };
 }
 
