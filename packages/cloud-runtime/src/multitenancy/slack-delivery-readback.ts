@@ -262,7 +262,7 @@ export async function readSlackDeliveryReadback(
   let cursor: string | undefined;
   let pageCount = 0;
   let matchingMessages = 0;
-  let sawObservedTimestamp = false;
+  let observedTimestampCount = 0;
   let sawMismatchedMessage = false;
 
   while (true) {
@@ -302,7 +302,7 @@ export async function readSlackDeliveryReadback(
 
     for (const message of page.messages) {
       if (optionalString(message, "ts") !== input.observed.ts) continue;
-      sawObservedTimestamp = true;
+      observedTimestampCount += 1;
       if (!messageMatches(message, input)) {
         sawMismatchedMessage = true;
         continue;
@@ -326,12 +326,15 @@ export async function readSlackDeliveryReadback(
     cursor = page.nextCursor;
   }
 
-  if (matchingMessages > 1) return unknownResult(input, "ambiguous");
+  const beforeDecision = readNow();
+  if (beforeDecision === undefined) return unknownResult(input, "invalid_input");
+  if (beforeDecision >= input.expiresAt) return unknownResult(input, "expired");
+  if (observedTimestampCount > 1 || matchingMessages > 1) return unknownResult(input, "ambiguous");
   if (matchingMessages === 1) {
     return {
       state: "confirmed",
       receipt: safeReceipt(input),
     };
   }
-  return unknownResult(input, sawObservedTimestamp && sawMismatchedMessage ? "message_mismatch" : "not_found");
+  return unknownResult(input, observedTimestampCount > 0 && sawMismatchedMessage ? "message_mismatch" : "not_found");
 }

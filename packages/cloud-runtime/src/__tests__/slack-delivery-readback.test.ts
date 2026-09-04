@@ -132,6 +132,20 @@ describe("Slack delivery readback", () => {
     expect(credentialFetch).toHaveBeenCalledTimes(2);
   });
 
+  it("does not confirm one matching message when the observed timestamp appears more than once", async () => {
+    const credentialFetch = vi.fn().mockResolvedValue(slackResponse({
+      ok: true,
+      messages: [
+        readbackMessage(),
+        readbackMessage({ bot_id: "B_OTHER" }),
+      ],
+    }));
+
+    const result = await readSlackDeliveryReadback(input(), credentialFetch);
+
+    expect(result).toMatchObject({ state: "unknown", reason: "ambiguous" });
+  });
+
   it("fails closed for expiry, rate limits, and an unfinished page cursor", async () => {
     const expiredFetch = vi.fn();
     await expect(readSlackDeliveryReadback(input({ expiresAt: NOW }), expiredFetch)).resolves.toEqual({
@@ -173,5 +187,22 @@ describe("Slack delivery readback", () => {
       reason: "transport_failure",
     });
     expect(transportFailureFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns unknown when the deadline expires after hashing and before confirmation", async () => {
+    let clockReads = 0;
+    const now = vi.fn(() => {
+      clockReads += 1;
+      return clockReads <= 3 ? NOW : NOW + 60_000;
+    });
+    const credentialFetch = vi.fn().mockResolvedValue(slackResponse({
+      ok: true,
+      messages: [readbackMessage()],
+    }));
+
+    const result = await readSlackDeliveryReadback(input({ now }), credentialFetch);
+
+    expect(result).toMatchObject({ state: "unknown", reason: "expired" });
+    expect(now).toHaveBeenCalledTimes(4);
   });
 });
