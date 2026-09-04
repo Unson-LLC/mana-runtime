@@ -146,6 +146,30 @@ describe("Slack delivery readback", () => {
     expect(result).toMatchObject({ state: "unknown", reason: "ambiguous" });
   });
 
+  it("does not confirm a target message when the Slack message type is missing", async () => {
+    const message = readbackMessage();
+    const { type: _type, ...messageWithoutType } = message;
+    const credentialFetch = vi.fn().mockResolvedValue(slackResponse({
+      ok: true,
+      messages: [messageWithoutType],
+    }));
+
+    const result = await readSlackDeliveryReadback(input(), credentialFetch);
+
+    expect(result).toMatchObject({ state: "unknown", reason: "message_mismatch" });
+  });
+
+  it("does not confirm a non-message Slack event with matching delivery fields", async () => {
+    const credentialFetch = vi.fn().mockResolvedValue(slackResponse({
+      ok: true,
+      messages: [readbackMessage({ type: "message_changed" })],
+    }));
+
+    const result = await readSlackDeliveryReadback(input(), credentialFetch);
+
+    expect(result).toMatchObject({ state: "unknown", reason: "message_mismatch" });
+  });
+
   it("fails closed for expiry, rate limits, and an unfinished page cursor", async () => {
     const expiredFetch = vi.fn();
     await expect(readSlackDeliveryReadback(input({ expiresAt: NOW }), expiredFetch)).resolves.toEqual({

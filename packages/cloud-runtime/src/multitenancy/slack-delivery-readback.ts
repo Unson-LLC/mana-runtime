@@ -180,6 +180,7 @@ function messageMatches(
   message: SlackHistoryMessage,
   input: SlackDeliveryReadbackInput,
 ): boolean {
+  if (optionalString(message, "type") !== "message") return false;
   if (optionalString(message, "ts") !== input.observed.ts) return false;
   const channel = optionalString(message, "channel");
   if (("channel" in message && channel !== input.observed.channel)) return false;
