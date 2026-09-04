@@ -59,6 +59,43 @@ describe("runtime event claim", () => {
       .toEqual({ disposition: "completed", responseTs: "new.1" });
   });
 
+  it("preserves an ambiguous claim after its lease expires", async () => {
+    const db = storage();
+    const owner = await claimRuntimeEvent(db, "Ev_unknown", 1_000, true);
+    expect(owner).toMatchObject({ disposition: "claimed" });
+    expect(db.values.get("runtime-event:Ev_unknown")).toMatchObject({
+      status: "processing",
+      preserveUntilReconciled: true,
+    });
+
+    const retry = await claimRuntimeEvent(db, "Ev_unknown", 15 * 60 * 1_000 + 1_001, true);
+    expect(retry.disposition).toBe("in_progress");
+    if (retry.disposition !== "in_progress") throw new Error("expected_preserved_claim");
+    expect(retry.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it("allows a preserved claim to complete after its lease expires", async () => {
+    const db = storage();
+    const owner = await claimRuntimeEvent(db, "Ev_unknown_complete", 1_000, true);
+    if (owner.disposition !== "claimed") throw new Error("expected_claim_owner");
+
+    await completeRuntimeEvent(db, "Ev_unknown_complete", owner.claimToken, "1700.2",
+      15 * 60 * 1_000 + 1_001);
+    expect(await claimRuntimeEvent(db, "Ev_unknown_complete", 99_999_999))
+      .toEqual({ disposition: "completed", responseTs: "1700.2" });
+  });
+
+  it("rejects releasing a claim preserved until reconciliation", async () => {
+    const db = storage();
+    const owner = await claimRuntimeEvent(db, "Ev_unknown_release", 1_000, true);
+    if (owner.disposition !== "claimed") throw new Error("expected_claim_owner");
+
+    await expect(releaseRuntimeEvent(db, "Ev_unknown_release", owner.claimToken))
+      .rejects.toThrow("runtime_event_claim_preserved");
+    expect(await claimRuntimeEvent(db, "Ev_unknown_release", 15 * 60 * 1_000 + 1_001))
+      .toMatchObject({ disposition: "in_progress" });
+  });
+
   it("rejects invalid event ids", async () => {
     await expect(claimRuntimeEvent(storage(), "../bad", 1_000)).rejects.toThrow("event_id_invalid");
   });

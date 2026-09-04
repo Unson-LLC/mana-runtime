@@ -498,7 +498,13 @@ export async function generateClaudeReply(
 export async function postSlackReply(
   event: SlackQueueEvent,
   text: string,
-  options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch">,
+  options: Pick<ReplyPipelineOptions, "slackBotToken" | "fetch"> & {
+    /**
+     * Non-secret provider correlation carried only for an explicitly selected
+     * external-effect route. Ordinary T0 replies omit this field.
+     */
+    provider_key?: string;
+  },
 ): Promise<string> {
   if (!options.slackBotToken && !options.fetch) throw new ReplyPipelineError("slack_bot_token_not_configured");
   const clientMsgId = await deterministicClientMessageId(event.eventId);
@@ -515,6 +521,12 @@ export async function postSlackReply(
         thread_ts: event.threadTs,
         text: escapeUntrustedSlackMrkdwn(text),
         client_msg_id: clientMsgId,
+        ...(options.provider_key ? {
+          metadata: {
+            event_type: "mana_external_effect",
+            event_payload: { provider_key: options.provider_key },
+          },
+        } : {}),
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -761,11 +773,13 @@ export async function processReplyEvent(
   if (await isReplyCompleted(fs, event.eventId)
     || await isReplyJudgmentCompleted(fs, event.eventId)) return { outcome: "already_completed" };
 
-  const requesterIdentity = options.taskSearchEnabled && requestsOwnTasks(event.text)
-    ? options.requesterIdentity ?? (options.requesterIdentityBindings
+  // An accepted canonical identity is part of the caller's authority context,
+  // not a task-search-only hint. Preserve it for ordinary replies too; only
+  // derive the legacy requester identity when the canonical value is absent.
+  const requesterIdentity = options.requesterIdentity
+    ?? (options.taskSearchEnabled && requestsOwnTasks(event.text) && options.requesterIdentityBindings
       ? resolveRequesterIdentity(event, options.requesterIdentityBindings)
-      : undefined)
-    : undefined;
+      : undefined);
 
   return withSlackThreadStatus(event, options, async () => {
     const hydratedEvent = options.hydrateThreadContext

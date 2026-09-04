@@ -46,6 +46,14 @@ export async function authorizeRuntimeBrainbaseOutbound(
       { status: 503 },
     );
   }
+  // The legacy Hook transport uses an ambient project/token. A validated A0
+  // envelope must not silently inherit that broader authority. Keep this
+  // unavailable until a server-verified project-bound Hook transport exists.
+  if (resolved.company_authority_envelope !== undefined) {
+    return Response.json({
+      error: { code: "COMPANY_AUTHORITY_HOOK_SCOPE_UNAVAILABLE", retryable: false },
+    }, { status: 503 });
+  }
 
   const headers = new Headers(request.headers);
   headers.delete(TENANT_BOUNDARY_HANDLE_HEADER);

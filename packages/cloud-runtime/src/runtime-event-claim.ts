@@ -15,6 +15,7 @@ interface EventClaim {
   status: "processing" | "completed";
   claimedAt: number;
   claimToken: string;
+  preserveUntilReconciled?: boolean;
   responseTs?: string;
   completedAt?: number;
 }
@@ -48,6 +49,7 @@ export async function claimRuntimeEvent(
   storage: TransactionalStorage,
   eventId: string,
   now = Date.now(),
+  preserveUntilReconciled = false,
 ): Promise<RuntimeEventClaimResult> {
   const storageKey = key(eventId);
   return storage.transaction(async (transaction) => {
@@ -55,11 +57,22 @@ export async function claimRuntimeEvent(
     if (current?.status === "completed") {
       return { disposition: "completed", ...(current.responseTs ? { responseTs: current.responseTs } : {}) };
     }
-    if (current?.status === "processing" && now - current.claimedAt < LEASE_MS) {
-      return { disposition: "in_progress", retryAfterMs: LEASE_MS - (now - current.claimedAt) };
+    if (current?.status === "processing") {
+      const elapsedMs = now - current.claimedAt;
+      if (current.preserveUntilReconciled || elapsedMs < LEASE_MS) {
+        return {
+          disposition: "in_progress",
+          retryAfterMs: current.preserveUntilReconciled ? LEASE_MS : LEASE_MS - elapsedMs,
+        };
+      }
     }
     const claimToken = crypto.randomUUID();
-    await transaction.put(storageKey, { status: "processing", claimedAt: now, claimToken } satisfies EventClaim);
+    await transaction.put(storageKey, {
+      status: "processing",
+      claimedAt: now,
+      claimToken,
+      ...(preserveUntilReconciled ? { preserveUntilReconciled: true } : {}),
+    } satisfies EventClaim);
     return { disposition: "claimed", claimToken };
   });
 }
@@ -101,6 +114,7 @@ export async function releaseRuntimeEvent(
     const current = await transaction.get<EventClaim>(storageKey);
     if (current?.status !== "processing") throw new Error("runtime_event_claim_missing");
     if (current.claimToken !== claimToken) throw new Error("runtime_event_claim_conflict");
+    if (current.preserveUntilReconciled) throw new Error("runtime_event_claim_preserved");
     await transaction.delete(storageKey);
   });
 }

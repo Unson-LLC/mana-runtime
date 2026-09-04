@@ -75,6 +75,14 @@ const EXPECTED_SCOPE: ExpectedTenantScope = {
   deployment_id: SNAPSHOT.deployment_id,
 };
 
+const COMPANY_AUTHORITY_ENVELOPE = {
+  schema_version: "1.0",
+  correlation_id: "corr-company-authority-sandbox-outbound",
+  company_authority_request: { correlation_id: "corr-company-authority-sandbox-outbound" },
+  company_authority_response: { context: { authority: { decision: "auto" } } },
+  payload: { event_id: "event-company-authority-sandbox-outbound" },
+};
+
 class MemoryStorage {
   readonly values = new Map<string, unknown>();
   alarmAt?: number;
@@ -596,6 +604,39 @@ describe("sandbox provider credential integration", () => {
     expect(leaseRequests).toHaveLength(leaseCountBeforeLegacyAttempt);
   });
 
+  it("rejects Company Authority GitHub outbound before credential or provider calls", async () => {
+    const { envelope, jwks } = await signedEnvelope();
+    const namespace = new TenantRuntimeNamespace();
+    const runtimeServiceFetch = vi.fn(async (_requestInfo: RequestInfo | URL, _init?: RequestInit) =>
+      new Response("unexpected runtime call", { status: 500 }));
+    const forward = vi.fn(async () => new Response("unexpected provider call", { status: 200 }));
+    const handle = await createDurableTenantBoundaryRegistry(namespace).register({
+      tenant_context: envelope,
+      expected_scope: EXPECTED_SCOPE,
+      company_authority_envelope: COMPANY_AUTHORITY_ENVELOPE,
+      now: new Date().toISOString(),
+    });
+    const response = await authorizeTenantProviderOutbound(
+      new Request("https://github.com/example/repo.git/info/refs", {
+        headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle },
+      }),
+      {
+        TENANT_RUNTIME_STATE: namespace,
+        MANA_DEPLOYMENT_PROFILE: "shared_cloud",
+        BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch: runtimeServiceFetch },
+        BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS: "5000",
+        BRAINBASE_TENANT_CONTEXT_JWKS_JSON: jwks,
+      },
+      { forward } as unknown as TrustedProviderForwarder,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN" });
+    expect(runtimeServiceFetch).not.toHaveBeenCalled();
+    expect(forward).not.toHaveBeenCalled();
+    expect(namespace.providerRequests).toHaveLength(0);
+  });
+
   it("replays the exact Gateway accounting outbox without posting Slack twice and rejects stale revision", async () => {
     const { envelope, jwks } = await signedEnvelope();
     const namespace = new TenantRuntimeNamespace();
@@ -878,5 +919,39 @@ describe("sandbox provider credential integration", () => {
     expect(crossTenant.status).toBe(403);
     expect(await crossTenant.json()).toEqual({ error: "development_callback_forbidden" });
     expect(downstream).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects Company Authority development callbacks before parsing or forwarding", async () => {
+    const { envelope } = await signedEnvelope();
+    const namespace = new TenantRuntimeNamespace();
+    const handle = await createDurableTenantBoundaryRegistry(namespace).register({
+      tenant_context: envelope,
+      expected_scope: EXPECTED_SCOPE,
+      company_authority_envelope: COMPANY_AUTHORITY_ENVELOPE,
+      now: new Date().toISOString(),
+    });
+    const downstream = vi.fn(async (_requestInfo: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({ ok: true, state: "completed" }));
+    const response = await proxyDevelopmentCallback(
+      new Request("https://development-callback.internal/callback", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [TENANT_BOUNDARY_HANDLE_HEADER]: handle,
+        },
+        body: "not-json",
+      }),
+      {
+        DEVELOPMENT_CALLBACK_BASE_URL: "https://runtime.example.test",
+        DEVELOPMENT_CALLBACK_TOKEN: "test-callback-token-placeholder",
+        TENANT_RUNTIME_STATE: namespace,
+      },
+      downstream as unknown as typeof fetch,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN" });
+    expect(downstream).not.toHaveBeenCalled();
+    expect([...namespace.storages.keys()].filter((key) => !key.startsWith("boundary:"))).toEqual([]);
   });
 });

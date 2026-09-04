@@ -121,6 +121,12 @@ export async function authorizeTenantProviderOutbound(
     new Date().toISOString(),
   );
   if (resolved instanceof Response) return new Response("credential_lease_rejected", { status: 503 });
+  // Company Authority operations are executed only through their selected
+  // provider route. The sandbox GitHub route is not that route, so reject it
+  // before constructing a credential client or invoking any provider effect.
+  if (resolved.company_authority_envelope !== undefined) {
+    return Response.json({ error: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN" }, { status: 403 });
+  }
   try {
     const credentialFetch = tenantCredentialFetchForResolvedContext(env, resolved, trustedForwarder);
     const headers = new Headers(request.headers);

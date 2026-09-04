@@ -1,15 +1,29 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-describe("reply-only requester configuration", () => {
-  it("initializes the legacy identity resolver only inside the reply callback", () => {
+describe("reply requester configuration", () => {
+  it("uses the legacy resolver only for T0 and keeps A0 on its canonical actor", () => {
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-    const ordinaryReply = source.slice(source.indexOf("const ordinaryEvent = tenantBody.payload;"));
-    const replyCallback = ordinaryReply.indexOf("processReply:");
-    const resolverInitialization = ordinaryReply.indexOf(
-      "const actorIdentityResolver = resolveActorIdentityResolverFromEnv(env);",
+    const a0Start = source.indexOf("export async function executeCompanyAuthorityReplyOperation(");
+    const sharedStart = source.indexOf("function executeSharedReplyRuntime(input: SharedReplyRuntimeInput)");
+    const t0Start = source.indexOf("const ordinaryEvent = tenantBody.payload;");
+    const t0End = source.indexOf("async scheduled(", t0Start);
+    expect(a0Start).toBeGreaterThanOrEqual(0);
+    expect(sharedStart).toBeGreaterThan(a0Start);
+    expect(t0Start).toBeGreaterThan(sharedStart);
+    expect(t0End).toBeGreaterThan(t0Start);
+
+    const a0 = source.slice(a0Start, sharedStart);
+    const shared = source.slice(sharedStart, t0Start);
+    const t0 = source.slice(t0Start, t0End);
+
+    expect(shared).toMatch(
+      /const actorIdentityResolver = canonicalPersonId === undefined\s*\n\s*\? resolveActorIdentityResolverFromEnv\(env\)\s*\n\s*: undefined;/,
     );
-    expect(replyCallback).toBeGreaterThanOrEqual(0);
-    expect(resolverInitialization).toBeGreaterThan(replyCallback);
+    expect(shared).toContain("resolveActorIdentity: actorIdentityResolver");
+    expect(a0).toContain("canonicalPersonId: operation.canonical_person_id as string");
+    expect(a0).not.toContain("resolveActorIdentityResolverFromEnv(");
+    expect(t0).toContain("processReply: () => executeSharedReplyRuntime({");
+    expect(t0).not.toContain("canonicalPersonId:");
   });
 });

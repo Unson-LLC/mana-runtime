@@ -161,6 +161,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
   usage_unit: string;
   now(): string;
   process(quotaDecision: QuotaDecision): Promise<R>;
+  process_failure_reply_state?: () => "not_attempted" | "unknown";
   replay_after_accounting?(): Promise<R>;
   accounting_effect_id?: string;
 }): Promise<R> {
@@ -242,6 +243,9 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       unit: input.usage_unit,
       outcome: "failed",
       failure_code: code,
+      ...(input.process_failure_reply_state
+        ? { reply_state: input.process_failure_reply_state() }
+        : {}),
       ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
       now: input.now(),
     });
@@ -337,6 +341,12 @@ export async function postTenantSlackReply(input: {
   event: unknown;
   text: string;
   effect_id?: string;
+  /**
+   * External-effect callers must preserve an ambiguous delivery claim until a
+   * provider-side reconciler observes the outcome. Ordinary T0 replies keep
+   * the historical release-on-error behavior by default.
+   */
+  release_on_failure?: boolean;
   post(): Promise<string>;
 }): Promise<string> {
   const deliveryOperationId = await createDeterministicSharedId(
@@ -373,8 +383,10 @@ export async function postTenantSlackReply(input: {
     });
     return responseTs;
   } catch (error) {
-    await releaseIdempotency(input.ownership, claim.claim.key,
-      input.tenant_context.tenant.tenant_id, claim.claim.partition_key, claim.claim.claim_token);
+    if (input.release_on_failure !== false) {
+      await releaseIdempotency(input.ownership, claim.claim.key,
+        input.tenant_context.tenant.tenant_id, claim.claim.partition_key, claim.claim.claim_token);
+    }
     throw error;
   }
 }

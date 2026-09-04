@@ -17,11 +17,33 @@ async function mcpToolName(request: Request): Promise<string | undefined> {
   } catch { return undefined; }
 }
 
-export async function handleBrainbaseMcpProxyRequest(request: Request, env: BrainbaseMcpProxyEnv, fetchImpl?: typeof fetch): Promise<Response> {
+export async function handleBrainbaseMcpProxyRequest(
+  request: Request,
+  env: BrainbaseMcpProxyEnv,
+  fetchImpl?: typeof fetch,
+  policy?: { allowedTools: readonly string[] },
+): Promise<Response> {
   const url = new URL(request.url);
   const isAllowedPath = url.pathname === BRAINBASE_MCP_PROXY_PATH || url.pathname === BRAINBASE_JUDGMENT_HOOK_PROXY_PATH;
   if (url.hostname !== BRAINBASE_MCP_PROXY_HOST || !isAllowedPath || request.method !== "POST") {
     return Response.json({ error: { code: "BRAINBASE_OPERATION_FORBIDDEN", retryable: false } }, { status: 403 });
+  }
+  // This policy is supplied by the verified durable boundary, never by model
+  // request headers. Tool discovery/annotations do not authorize tool calls.
+  if (policy && url.pathname === BRAINBASE_MCP_PROXY_PATH) {
+    let allowed = false;
+    try {
+      const body = await request.clone().json() as Record<string, unknown>;
+      if (body && !Array.isArray(body) && body.jsonrpc === "2.0") {
+        const params = body.params as { name?: unknown } | undefined;
+        allowed = ["initialize", "notifications/initialized", "ping", "tools/list"].includes(String(body.method))
+          || (body.method === "tools/call" && typeof params?.name === "string"
+            && policy.allowedTools.includes(params.name));
+      }
+    } catch { /* Malformed/batch requests cannot bypass the operation gate. */ }
+    if (!allowed) return Response.json({
+      error: { code: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN", retryable: false },
+    }, { status: 403 });
   }
   const toolName = await mcpToolName(request);
   if (!env.BRAINBASE_MCP_BASE_URL || (!env.BRAINBASE_MCP_TOKEN && !fetchImpl)) {
