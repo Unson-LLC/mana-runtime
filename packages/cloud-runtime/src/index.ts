@@ -155,6 +155,7 @@ import { actorIdHash, emitTurnLog, type TurnRuntimeTrace } from "./turn-observab
 import {
   claimRuntimeEvent,
   completeRuntimeEvent,
+  readRuntimeEventClaim,
   releaseRuntimeEvent,
   runtimeClaimSettlement,
   runtimeDeliveryId,
@@ -184,6 +185,7 @@ import {
 } from "./multitenancy/http-clients.js";
 import {
   createDurableCompanyAuthorityHumanHandoffClient,
+  createDurableExternalEffectReconciliationQueueClient,
   createDurableExternalEffectOutboxClient,
   createDurableTenantAccountingClient,
   createDurableTenantStateClient,
@@ -196,6 +198,7 @@ import {
   recordTenantRuntimeTerminalOperation,
 } from "./multitenancy/production-consumer.js";
 import {
+  settleTenantAccountingContinuation,
   writeTenantAccountingContinuation,
   type AccountingArtifact,
 } from "./multitenancy/accounting.js";
@@ -208,7 +211,15 @@ import {
   type TenantContextEnvelope,
 } from "./multitenancy/contracts.js";
 import type { AcceptedCompanyAuthorityContext } from "./multitenancy/company-authority-runtime-adapter.js";
-import type { ExternalEffectProviderResult } from "./multitenancy/company-authority-external-effect-outbox.js";
+import {
+  assertValidExternalEffectReconciliationJob,
+  reconcileCompanyAuthorityExternalEffectFromQueue,
+  type ExternalEffectProviderResult,
+  type ExternalEffectReconciliationJob,
+  type ExternalEffectReconciliationQueue,
+  type ExternalEffectReconciliationSettlementState,
+  type ExternalEffectRecoveryRecord,
+} from "./multitenancy/company-authority-external-effect-outbox.js";
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import { resolveCanonicalProjectScope } from "./multitenancy/project-scope.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
@@ -373,6 +384,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
     | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
+    | ExternalEffectReconciliationJob
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
   TASK_BOARD_REPAIRS: Queue<TenantQueueBody<TaskBoardRepairEvent> | TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
@@ -386,6 +398,25 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
 }
 
 interface WorkspaceEnv {}
+
+function companyAuthorityExternalEffectScope(
+  context: AcceptedCompanyAuthorityContext,
+): { tenant_id: string; effect_id: string } {
+  const tenantContext = context.tenant_context as {
+    idempotency_key?: unknown;
+    tenant?: { tenant_id?: unknown };
+  };
+  if (typeof tenantContext.idempotency_key !== "string"
+    || !tenantContext.idempotency_key.trim()
+    || typeof tenantContext.tenant?.tenant_id !== "string"
+    || !tenantContext.tenant.tenant_id.trim()) {
+    deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+  }
+  return {
+    tenant_id: tenantContext.tenant.tenant_id,
+    effect_id: tenantContext.idempotency_key,
+  };
+}
 
 function createCompanyAuthorityProviderRoutes(
   env: Env,
@@ -404,20 +435,27 @@ function createCompanyAuthorityProviderRoutes(
       expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
       desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
       create_outbox: (context: AcceptedCompanyAuthorityContext) => {
-        const tenantContext = context.tenant_context as {
-          idempotency_key?: unknown;
-          tenant?: { tenant_id?: unknown };
+        return createDurableExternalEffectOutboxClient(
+          env.TENANT_RUNTIME_STATE,
+          companyAuthorityExternalEffectScope(context),
+        );
+      },
+      create_reconciliation_queue: (context: AcceptedCompanyAuthorityContext): ExternalEffectReconciliationQueue => {
+        const durable = createDurableExternalEffectReconciliationQueueClient(
+          env.TENANT_RUNTIME_STATE,
+          companyAuthorityExternalEffectScope(context),
+        );
+        // Persist the recovery job before dispatching an internal direct queue
+        // message. The worker has no provider-send capability; if dispatch is
+        // unavailable the durable job remains available to a later scanner.
+        return {
+          ...durable,
+          enqueue: async (job) => {
+            const result = await durable.enqueue(job);
+            await env.TECHKNIGHT_EVENTS.send(result.job);
+            return result;
+          },
         };
-        if (typeof tenantContext.idempotency_key !== "string"
-          || !tenantContext.idempotency_key.trim()
-          || typeof tenantContext.tenant?.tenant_id !== "string"
-          || !tenantContext.tenant.tenant_id.trim()) {
-          deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
-        }
-        return createDurableExternalEffectOutboxClient(env.TENANT_RUNTIME_STATE, {
-          tenant_id: tenantContext.tenant.tenant_id,
-          effect_id: tenantContext.idempotency_key,
-        });
       },
       execute_container: (operation) => executeCompanyAuthorityReplyOperation(env, operation),
     }),
@@ -528,6 +566,10 @@ export class TechKnightWorkspace extends withWorkspace(
 
   async completeRuntimeEvent(eventId: string, claimToken: string, responseTs?: string): Promise<void> {
     await completeRuntimeEvent(this.ctx.storage, eventId, claimToken, responseTs);
+  }
+
+  async readRuntimeEventClaim(eventId: string) {
+    return readRuntimeEventClaim(this.ctx.storage, eventId);
   }
 
   async releaseRuntimeEvent(eventId: string, claimToken: string): Promise<void> {
@@ -1397,6 +1439,23 @@ function isTenantMeetingMinutesRecoveryBody(value: unknown): value is TenantQueu
   return body.schema_version === "1.0" && !!body.tenant_context && isMeetingMinutesRecovery(body.payload);
 }
 
+/**
+ * Reconciliation jobs are internal queue records, not tenant-context queue
+ * bodies. Keep malformed candidates on the reconciliation path so a bad job
+ * cannot fall through to the generic malformed-message ACK branch.
+ */
+function isExternalEffectReconciliationQueueCandidate(
+  value: unknown,
+): value is ExternalEffectReconciliationJob {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const body = value as Record<string, unknown>;
+  return !Object.prototype.hasOwnProperty.call(body, "tenant_context")
+    && (Object.prototype.hasOwnProperty.call(body, "recovery")
+      || Object.prototype.hasOwnProperty.call(body, "provider_key")
+      || (Object.prototype.hasOwnProperty.call(body, "effect_id")
+        && Object.prototype.hasOwnProperty.call(body, "payload_hash")));
+}
+
 function meetingMinutesSelectionEventId(selection: MeetingMinutesSelection): string {
   return `meeting_minutes_selection:${selection.runId}:${selection.actionTs}`;
 }
@@ -1730,7 +1789,8 @@ export async function executeCompanyAuthorityReplyOperation(
   operation: CompanyAuthorityReplyOperation,
 ): Promise<ExternalEffectProviderResult> {
   const { tenant_context: tenantContext, expected_scope: expectedScope,
-    company_authority_envelope: envelope, payload: event, provider_key: providerKey } = operation;
+    company_authority_envelope: envelope, payload: event, provider_key: providerKey,
+    capture_recovery: captureRecovery } = operation;
   const request = envelope.company_authority_request;
   if (request.requested_action.capability_id !== "runtime.execute"
     || request.requested_action.desired_effect !== "external_side_effect"
@@ -1813,79 +1873,325 @@ export async function executeCompanyAuthorityReplyOperation(
         projectCodes: [expectedScope.project_id], actorIdHash: await actorIdHash(event),
         workerVersion: env.CF_VERSION_METADATA?.id, model: claudeRuntime.model, effort: claudeRuntime.effort };
       let observedTs: string | undefined;
+      let deliveryBodyHash: string | undefined;
+      let authBotId: string | undefined;
       let deliveryAttempted = false;
       const result = await executeTenantRuntimeOperation({ tenant_context: tenantContext,
         expected_scope: expectedScope, verifier, quota: clients.quota, accounting: clients.accounting,
         ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
         usage_unit: "model_tokens", accounting_effect_id: providerKey, now,
-        process: () => executeTenantContainerOperationWithRegistry({ namespace: env.TENANT_RUNTIME_STATE,
-          tenant_context: tenantContext, expected_scope: expectedScope, verifier, now: now(),
-          company_authority_envelope: envelope,
-          execute: (tenantBoundaryHandle) => executeSharedReplyRuntime({ env, fs: workspace.fs, event,
-            placement, runtimeTenantId: tenantContext.tenant.tenant_id,
-            runtimeWorkspaceId: tenantContext.workspace_connection.workspace_id,
-            workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle, trace,
-            canonicalPersonId: operation.canonical_person_id as string,
-            canonicalProjectId: expectedScope.project_id,
-            postReply: async (replyEvent, text) => {
-              if (observedTs !== undefined) deny("slack_delivery", "REPLY_OWNERSHIP_CONFLICT");
-              // Hydration may add prompt context, but cannot redirect the
-              // signed request to another tenant, actor, message, or thread.
-              if (replyEvent.tenantId !== event.tenantId
-                || replyEvent.workspaceId !== event.workspaceId
-                || replyEvent.channelId !== event.channelId
-                || replyEvent.userId !== event.userId
-                || replyEvent.eventId !== event.eventId
-                || replyEvent.messageTs !== event.messageTs
-                || replyEvent.threadTs !== event.threadTs) {
-                deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
-              }
-              // Resolve the bot identity using the same tenant-bound credential
-              // that will send and read back the message, never a global token.
-              const authResponse = await credentialFetch("https://slack.com/api/auth.test");
-              const auth = await authResponse.json() as { ok?: unknown; team_id?: unknown; bot_id?: unknown };
-              if (!authResponse.ok || auth.ok !== true
-                || auth.team_id !== tenantContext.workspace_connection.workspace_id
-                || typeof auth.bot_id !== "string" || !auth.bot_id) {
-                deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
-              }
-              const deliveryNow = now();
-              const ts = await boundary("slack_delivery", () => postTenantSlackReply({
-                tenant_context: tenantContext, expected_scope: expectedScope,
-                ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, tenantContext.tenant.tenant_id),
-                read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey,
-                now: deliveryNow, retention_until: tenantRetentionUntil(deliveryNow),
-                event: replyEvent, text, effect_id: providerKey, release_on_failure: false,
-                post: () => {
-                  deliveryAttempted = true;
-                  return postSlackReply(replyEvent, text, { fetch: brokerFetch, provider_key: providerKey });
-                },
-              }));
-              observedTs = ts;
-              const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(escapeUntrustedSlackMrkdwn(text)));
-              const bodyHash = `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
-              const readback = await readSlackDeliveryReadback({ observed: { channel: replyEvent.channelId, ts },
-                expected: { workspaceId: tenantContext.workspace_connection.workspace_id,
-                  appId: tenantContext.workspace_connection.app_id, botId: auth.bot_id },
-                threadTs: replyEvent.threadTs, bodyHash, window: { oldest: ts, latest: ts },
-                expiresAt: Math.min(Date.now() + 30_000, Date.parse(tenantContext.expires_at)),
-              }, credentialFetch);
-              console.log(JSON.stringify({ event: "company_authority_slack_readback",
-                correlation_id: tenantContext.correlation_id, operation_id: tenantContext.operation_id,
-                provider_key: providerKey, state: readback.state, receipt: readback.receipt,
-                ...(readback.state === "unknown" ? { reason: readback.reason } : {}) }));
-              if (readback.state !== "confirmed") throw new Error(`SLACK_READBACK_${readback.reason}`);
-              return ts;
-            },
-          }),
-        }),
+        process: async () => {
+          const processed = await executeTenantContainerOperationWithRegistry({ namespace: env.TENANT_RUNTIME_STATE,
+            tenant_context: tenantContext, expected_scope: expectedScope, verifier, now: now(),
+            company_authority_envelope: envelope,
+            execute: (tenantBoundaryHandle) => executeSharedReplyRuntime({ env, fs: workspace.fs, event,
+              placement, runtimeTenantId: tenantContext.tenant.tenant_id,
+              runtimeWorkspaceId: tenantContext.workspace_connection.workspace_id,
+              workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle, trace,
+              canonicalPersonId: operation.canonical_person_id as string,
+              canonicalProjectId: expectedScope.project_id,
+              postReply: async (replyEvent, text) => {
+                if (observedTs !== undefined) deny("slack_delivery", "REPLY_OWNERSHIP_CONFLICT");
+                // Hydration may add prompt context, but cannot redirect the
+                // signed request to another tenant, actor, message, or thread.
+                if (replyEvent.tenantId !== event.tenantId
+                  || replyEvent.workspaceId !== event.workspaceId
+                  || replyEvent.channelId !== event.channelId
+                  || replyEvent.userId !== event.userId
+                  || replyEvent.eventId !== event.eventId
+                  || replyEvent.messageTs !== event.messageTs
+                  || replyEvent.threadTs !== event.threadTs) {
+                  deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
+                }
+                // Resolve the bot identity using the same tenant-bound credential
+                // that will send and read back the message, never a global token.
+                const authResponse = await credentialFetch("https://slack.com/api/auth.test");
+                const auth = await authResponse.json() as { ok?: unknown; team_id?: unknown; bot_id?: unknown };
+                if (!authResponse.ok || auth.ok !== true
+                  || auth.team_id !== tenantContext.workspace_connection.workspace_id
+                  || typeof auth.bot_id !== "string" || !auth.bot_id) {
+                  deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
+                }
+                authBotId = auth.bot_id;
+                const deliveryNow = now();
+                const ts = await boundary("slack_delivery", () => postTenantSlackReply({
+                  tenant_context: tenantContext, expected_scope: expectedScope,
+                  ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, tenantContext.tenant.tenant_id),
+                  read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey,
+                  now: deliveryNow, retention_until: tenantRetentionUntil(deliveryNow),
+                  event: replyEvent, text, effect_id: providerKey, release_on_failure: false,
+                  post: () => {
+                    deliveryAttempted = true;
+                    return postSlackReply(replyEvent, text, { fetch: brokerFetch, provider_key: providerKey });
+                  },
+                }));
+                observedTs = ts;
+                const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(escapeUntrustedSlackMrkdwn(text)));
+                const bodyHash = `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+                deliveryBodyHash = bodyHash;
+                const readback = await readSlackDeliveryReadback({ observed: { channel: replyEvent.channelId, ts },
+                  expected: { workspaceId: tenantContext.workspace_connection.workspace_id,
+                    appId: tenantContext.workspace_connection.app_id, botId: auth.bot_id },
+                  threadTs: replyEvent.threadTs, bodyHash, window: { oldest: ts, latest: ts },
+                  expiresAt: Math.min(Date.now() + 30_000, Date.parse(tenantContext.expires_at)),
+                }, credentialFetch);
+                console.log(JSON.stringify({ event: "company_authority_slack_readback",
+                  correlation_id: tenantContext.correlation_id, operation_id: tenantContext.operation_id,
+                  provider_key: providerKey, state: readback.state, receipt: readback.receipt,
+                  ...(readback.state === "unknown" ? { reason: readback.reason } : {}) }));
+                if (readback.state !== "confirmed") throw new Error(`SLACK_READBACK_${readback.reason}`);
+                return ts;
+              },
+            }),
+          });
+          // Complete the runtime claim inside the guarded operation. If the
+          // claim readback fails, defer_unknown_accounting persists recovery so
+          // reconciliation can retry the idempotent completion without posting.
+          if (observedTs !== undefined && processed.responseTs === observedTs) {
+            await stub.completeRuntimeEvent(runtimeDeliveryId(event), claim.claimToken, observedTs);
+            const completedClaim = await stub.readRuntimeEventClaim(runtimeDeliveryId(event));
+            if (!completedClaim || completedClaim.status !== "completed"
+              || completedClaim.responseTs !== observedTs) {
+              throw new TenantBoundaryError("slack_delivery", "UPSTREAM_UNAVAILABLE");
+            }
+          }
+          return processed;
+        },
         process_failure_reply_state: () => deliveryAttempted ? "unknown" : "not_attempted",
+        defer_unknown_accounting: captureRecovery === undefined ? undefined : async ({ artifact }) => {
+          await captureRecovery({
+            runtime_event_id: runtimeDeliveryId(event),
+            runtime_claim_token: claim.claimToken,
+            operation_id: tenantContext.operation_id,
+            correlation_id: tenantContext.correlation_id,
+            accounting_context: tenantContext,
+            accounting_artifact: artifact,
+            delivery_identity: {
+              provider: "slack",
+              workspace_id: tenantContext.workspace_connection.workspace_id,
+              app_id: tenantContext.workspace_connection.app_id,
+              channel_id: event.channelId,
+              thread_ts: event.threadTs,
+              event_id: event.eventId,
+              delivery_id: runtimeDeliveryId(event),
+              message_ts: event.messageTs,
+              workspace_name: workspaceName(event),
+              ...(observedTs === undefined ? {} : { response_ts: observedTs }),
+              ...(deliveryBodyHash === undefined ? {} : { body_hash: deliveryBodyHash }),
+              ...(authBotId === undefined ? {} : { bot_id: authBotId }),
+            },
+          });
+        },
       });
       if (!observedTs || result.responseTs !== observedTs) return { applied: true, response_observed: false };
-      await stub.completeRuntimeEvent(runtimeDeliveryId(event), claim.claimToken, observedTs);
       return { applied: true, response_observed: true, result_ref: `slack:${event.channelId}:${observedTs}` };
     });
   });
+}
+
+function expectedExternalEffectReconciliationScope(
+  env: Env,
+  job: ExternalEffectReconciliationJob,
+): ExpectedTenantScope {
+  const context = job.recovery.accounting_context;
+  const delivery = job.recovery.delivery_identity;
+  if (context.tenant.tenant_id !== job.tenant_id
+    || context.idempotency_key !== job.effect_id
+    || context.workspace_connection.workspace_id !== delivery.workspace_id
+    || context.workspace_connection.app_id !== delivery.app_id
+    || delivery.app_id !== requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID)
+    || context.slack.channel_id !== delivery.channel_id
+    || context.slack.thread_ts !== delivery.thread_ts
+    || context.slack.event_id !== delivery.event_id
+    || context.placement.profile !== tenantDeploymentProfile(env)
+    || context.authorization.project_ids.length !== 1
+    || typeof delivery.message_ts !== "string" || !delivery.message_ts
+    || typeof delivery.workspace_name !== "string" || !delivery.workspace_name
+    || typeof delivery.response_ts !== "string" || !delivery.response_ts
+    || typeof delivery.body_hash !== "string" || !delivery.body_hash
+    || typeof delivery.bot_id !== "string" || !delivery.bot_id) {
+    deny("external_effect", "CROSS_TENANT_CANDIDATE");
+  }
+  const projectScope = expectedProjectScopeForEvent(env, {
+    tenantId: context.tenant.tenant_id,
+    eventId: delivery.event_id,
+    workspaceId: delivery.workspace_id,
+    channelId: delivery.channel_id,
+    threadTs: delivery.thread_ts,
+    messageTs: delivery.message_ts,
+    userId: context.actor.authenticated_subject_id,
+    eventType: "message",
+    text: "",
+    receivedAt: context.issued_at,
+  }, context);
+  return {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    workspace_id: delivery.workspace_id,
+    app_id: delivery.app_id,
+    channel_id: delivery.channel_id,
+    thread_ts: delivery.thread_ts,
+    actor_principal_id: context.actor.principal_id,
+    ...projectScope,
+    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    deployment_id: context.placement.deployment_id,
+  };
+}
+
+/** Read back and settle one ambiguous A0 Slack effect without any provider-send capability. */
+export async function reconcileCompanyAuthorityReplyOperation(
+  env: Env,
+  queuedJob: ExternalEffectReconciliationJob,
+): Promise<"succeeded" | "retry"> {
+  assertValidExternalEffectReconciliationJob(queuedJob);
+  const scope = { tenant_id: queuedJob.tenant_id, effect_id: queuedJob.effect_id };
+  const outbox = createDurableExternalEffectOutboxClient(env.TENANT_RUNTIME_STATE, scope);
+  const reconciliationQueue = createDurableExternalEffectReconciliationQueueClient(
+    env.TENANT_RUNTIME_STATE,
+    scope,
+  );
+  const persistedJob = await reconciliationQueue.read(queuedJob.tenant_id, queuedJob.effect_id);
+  if (!persistedJob) {
+    throw new TenantBoundaryError("external_effect", "EXTERNAL_EFFECT_RECONCILIATION_MISSING");
+  }
+  assertValidExternalEffectReconciliationJob(persistedJob);
+  if (persistedJob.provider_key !== queuedJob.provider_key
+    || persistedJob.payload_hash !== queuedJob.payload_hash
+    || jcsCanonicalize(persistedJob.recovery) !== jcsCanonicalize(queuedJob.recovery)) {
+    throw new TenantBoundaryError("external_effect", "IDEMPOTENCY_CONFLICT");
+  }
+
+  let prepared: {
+    authorizationContext: TenantContextEnvelope;
+    expectedScope: ExpectedTenantScope;
+    clients: ReturnType<typeof tenantRuntimeClients>;
+    verifier: TenantRuntimeBoundaryVerifier;
+    credentialFetch: typeof fetch;
+  } | undefined;
+  const originalContext = persistedJob.recovery.accounting_context;
+  const result = await reconcileCompanyAuthorityExternalEffectFromQueue({
+    job: persistedJob,
+    outbox,
+    reconciliation_queue: reconciliationQueue,
+    verify_context: async (context) => {
+      if (jcsCanonicalize(context) !== jcsCanonicalize(originalContext)) {
+        deny("external_effect", "CROSS_TENANT_CANDIDATE");
+      }
+      const expectedScope = expectedExternalEffectReconciliationScope(env, persistedJob);
+      const authorityClients = tenantRuntimeClients(env);
+      const snapshot = await authorityClients.authority.read_workspace_connection(
+        context.workspace_connection.connection_id,
+      );
+      const authorizationContext = await authorityClients.authority.issue_tenant_context({
+        workspace_connection: snapshot,
+        tenant_revision: context.tenant.tenant_revision,
+        actor: context.actor,
+        authorization: context.authorization,
+        correlation_id: context.correlation_id,
+        operation_id: context.operation_id,
+        billing_principal_id: context.credential.billing_principal_id,
+        slack: {
+          event_id: context.slack.event_id,
+          channel_id: context.slack.channel_id,
+          thread_ts: context.slack.thread_ts ?? "",
+          requester_id: context.slack.requester_id ?? context.actor.authenticated_subject_id,
+          ...(context.slack.enterprise_id ? { enterprise_id: context.slack.enterprise_id } : {}),
+        },
+        required_authorization: {
+          audience: expectedScope.audience,
+          project_id: expectedScope.project_id,
+          capability_id: expectedScope.capability_id,
+        },
+        trusted_project_ids: expectedScope.project_ids ?? [expectedScope.project_id],
+      });
+      const clients = tenantRuntimeClients(env, authorizationContext);
+      const verifier = new TenantRuntimeBoundaryVerifier({
+        read_authoritative_snapshot: (connectionId) =>
+          clients.authority.read_workspace_connection(connectionId),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+      });
+      await verifier.validate({
+        boundary: "queue_consumer",
+        tenant_context: authorizationContext,
+        expected_scope: expectedScope,
+        now: new Date().toISOString(),
+      });
+      const credentialFetch = createTenantCredentialFetch({
+        envelope: authorizationContext,
+        expected_scope: expectedScope,
+        broker: clients.credential_broker,
+        trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+          env,
+          tenant_context: authorizationContext,
+        }),
+        read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+          authorizationContext.workspace_connection.connection_id,
+        ),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        now: () => new Date().toISOString(),
+      });
+      prepared = { authorizationContext, expectedScope, clients, verifier, credentialFetch };
+    },
+    provider_reconcile: async () => {
+      if (!prepared) throw new TenantBoundaryError("external_effect", "AUTHORITY_UNAVAILABLE");
+      const delivery = persistedJob.recovery.delivery_identity;
+      const readback = await readSlackDeliveryReadback({
+        observed: { channel: delivery.channel_id, ts: delivery.response_ts! },
+        expected: {
+          workspaceId: delivery.workspace_id,
+          appId: delivery.app_id,
+          botId: delivery.bot_id!,
+        },
+        threadTs: delivery.thread_ts,
+        bodyHash: delivery.body_hash!,
+        window: { oldest: delivery.response_ts!, latest: delivery.response_ts! },
+        expiresAt: Date.now() + 30_000,
+      }, prepared.credentialFetch);
+      return readback.state === "confirmed"
+        ? { state: "succeeded" as const, result_ref: `slack:${delivery.channel_id}:${delivery.response_ts}` }
+        : { state: "unknown" as const };
+    },
+    settle_confirmed: async ({ recovery, result_ref, mark_stage: markStage, settlement_state: stage }) => {
+      if (!prepared) throw new TenantBoundaryError("external_effect", "AUTHORITY_UNAVAILABLE");
+      if (stage !== "accounting_completed" && stage !== "runtime_claim_completed" && stage !== "settled") {
+        await settleTenantAccountingContinuation({
+          authorization_context: prepared.authorizationContext,
+          artifact_context: recovery.accounting_context,
+          expected_scope: prepared.expectedScope,
+          now: new Date().toISOString(),
+          verifier: prepared.verifier,
+          ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, recovery.accounting_context),
+          artifact: recovery.accounting_artifact,
+          write: (artifact) => prepared!.clients.accounting.write({
+            ...artifact,
+            tenant_context: prepared!.authorizationContext,
+          }),
+        });
+        await markStage?.("accounting_completed");
+      }
+      if (stage !== "runtime_claim_completed" && stage !== "settled") {
+        const delivery = recovery.delivery_identity;
+        const stub = env.TECHKNIGHT_WORKSPACE.get(
+          env.TECHKNIGHT_WORKSPACE.idFromName(delivery.workspace_name!),
+        );
+        await stub.completeRuntimeEvent(
+          recovery.runtime_event_id,
+          recovery.runtime_claim_token,
+          delivery.response_ts,
+        );
+        const completed = await stub.readRuntimeEventClaim(recovery.runtime_event_id);
+        if (!completed || completed.status !== "completed"
+          || completed.claimToken !== recovery.runtime_claim_token
+          || completed.responseTs !== delivery.response_ts) {
+          throw new TenantBoundaryError("external_effect", "UPSTREAM_UNAVAILABLE");
+        }
+        await markStage?.("runtime_claim_completed");
+      }
+      if (!result_ref.startsWith(`slack:${recovery.delivery_identity.channel_id}:`)) {
+        throw new TenantBoundaryError("external_effect", "IDEMPOTENCY_CONFLICT");
+      }
+    },
+  });
+  return result?.state === "succeeded" ? "succeeded" : "retry";
 }
 
 interface SharedReplyRuntimeInput {
@@ -3117,6 +3423,7 @@ export default {
     | TenantQueueBody<MeetingMinutesRecovery>
     | TenantQueueBody<TaskBoardRepairEvent>
     | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
+    | ExternalEffectReconciliationJob
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
     | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>, env: Env): Promise<void> {
     const executeTenantContainerOperation = <T>(input: {
@@ -3155,6 +3462,29 @@ export default {
         } catch (error) {
           console.error(JSON.stringify({ event: "contract_ledger_processing_failed", kind: message.body.kind,
             runId: message.body.runId, error: error instanceof Error ? error.message : "unexpected_error" }));
+          message.retry();
+        }
+        continue;
+      }
+      if (isExternalEffectReconciliationQueueCandidate(message.body)) {
+        try {
+          assertValidExternalEffectReconciliationJob(message.body);
+          const outcome = await reconcileCompanyAuthorityReplyOperation(env, message.body);
+          if (outcome === "succeeded") {
+            console.log(JSON.stringify({
+              event: "company_authority_external_effect_reconciled",
+              tenant_id: message.body.tenant_id,
+              effect_id: message.body.effect_id,
+            }));
+            message.ack();
+          } else {
+            message.retry();
+          }
+        } catch (error) {
+          console.error(JSON.stringify({
+            event: "company_authority_external_effect_reconciliation_failed",
+            code: error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE",
+          }));
           message.retry();
         }
         continue;

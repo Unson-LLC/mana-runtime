@@ -10,6 +10,8 @@ import { deny } from "./errors.js";
 import { matchesCompanyAuthoritySlackPayload } from "./company-authority-payload-binding.js";
 import {
   processCompanyAuthorityExternalEffect,
+  type ExternalEffectReconciliationQueue,
+  type ExternalEffectRecoveryRecord,
   type ExternalEffectOutboxRecord,
   type ExternalEffectOutboxStore,
   type ExternalEffectProviderResult,
@@ -17,12 +19,14 @@ import {
 
 export interface CompanyAuthorityExternalEffectProviderRoute<T> {
   create_outbox(context: AcceptedCompanyAuthorityContext): ExternalEffectOutboxStore;
+  create_reconciliation_queue?(context: AcceptedCompanyAuthorityContext): ExternalEffectReconciliationQueue;
   provider_send(input: {
     provider_key: string;
     context: AcceptedCompanyAuthorityContext;
     request: ObservedExecutionRequestV1;
     envelope: CompanyAuthorityRuntimeEnvelope<T>;
     payload: T;
+    capture_recovery?: (recovery: ExternalEffectRecoveryRecord) => Promise<void>;
   }): Promise<ExternalEffectProviderResult>;
 }
 
@@ -182,18 +186,21 @@ export async function processCompanyAuthorityAutoQueueRoute<T>(input: {
     });
   }
   const outbox = route.create_outbox(structuredClone(acceptedContext));
+  const reconciliationQueue = route.create_reconciliation_queue?.(structuredClone(acceptedContext));
   return processCompanyAuthorityExternalEffect({
     context: acceptedContext,
     payload: acceptedPayload,
     outbox,
+    ...(reconciliationQueue === undefined ? {} : { reconciliation_queue: reconciliationQueue }),
     // Keep the generic outbox contract narrow; only this route closure carries
     // the accepted Company Authority context and immutable request envelope.
-    provider_send: ({ provider_key, payload }) => route.provider_send({
+    provider_send: ({ provider_key, payload, capture_recovery }) => route.provider_send({
       provider_key,
       context: structuredClone(acceptedContext),
       request: structuredClone(acceptedRequest),
       envelope: structuredClone(acceptedEnvelope),
       payload: structuredClone(payload),
+      ...(capture_recovery === undefined ? {} : { capture_recovery }),
     }),
   });
 }

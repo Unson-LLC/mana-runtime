@@ -4,6 +4,7 @@ import {
   createUsageEvent,
   persistTenantAccounting,
   writeTenantAccounting,
+  type AccountingArtifact,
   type TenantAccountingLedgerStore,
 } from "./accounting.js";
 import type {
@@ -162,6 +163,11 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
   now(): string;
   process(quotaDecision: QuotaDecision): Promise<R>;
   process_failure_reply_state?: () => "not_attempted" | "unknown";
+  /** Freeze an ambiguous provider outcome locally without writing accounting yet. */
+  defer_unknown_accounting?: (input: {
+    artifact: AccountingArtifact;
+    quota_decision: QuotaDecision["decision"];
+  }) => Promise<void>;
   replay_after_accounting?(): Promise<R>;
   accounting_effect_id?: string;
 }): Promise<R> {
@@ -233,22 +239,50 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     result = await input.process(quotaDecision);
   } catch (error) {
     const code = errorCode(error);
-    await recordOperation({
-      tenant_context: input.tenant_context,
-      expected_scope: input.expected_scope,
-      verifier: input.verifier,
-      ledger: input.ledger,
-      accounting: input.accounting,
-      quota_decision: quotaDecision.decision,
-      unit: input.usage_unit,
-      outcome: "failed",
-      failure_code: code,
-      ...(input.process_failure_reply_state
-        ? { reply_state: input.process_failure_reply_state() }
-        : {}),
-      ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
-      now: input.now(),
-    });
+    const replyState = input.process_failure_reply_state?.();
+    if (replyState === "unknown" && input.defer_unknown_accounting) {
+      const accounting = await buildOperationAccounting({
+        tenant_context: input.tenant_context,
+        expected_scope: input.expected_scope,
+        ledger: input.ledger,
+        quota_decision: quotaDecision.decision,
+        unit: input.usage_unit,
+        outcome: "failed",
+        failure_code: code,
+        reply_state: replyState,
+        ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
+        now: input.now(),
+      });
+      const persisted = await persistTenantAccounting({
+        tenant_context: input.tenant_context,
+        expected_scope: input.expected_scope,
+        ledger: input.ledger,
+        usage_events: accounting.usage_events,
+        receipt: accounting.receipt,
+      });
+      if (persisted.disposition !== "claimed") {
+        deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+      }
+      await input.defer_unknown_accounting({
+        artifact: persisted.artifact,
+        quota_decision: quotaDecision.decision,
+      });
+    } else {
+      await recordOperation({
+        tenant_context: input.tenant_context,
+        expected_scope: input.expected_scope,
+        verifier: input.verifier,
+        ledger: input.ledger,
+        accounting: input.accounting,
+        quota_decision: quotaDecision.decision,
+        unit: input.usage_unit,
+        outcome: "failed",
+        failure_code: code,
+        ...(replyState === undefined ? {} : { reply_state: replyState }),
+        ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
+        now: input.now(),
+      });
+    }
     throw error;
   }
   if (result.accounting === "deferred" || result.accounting === "already_recorded") return result;

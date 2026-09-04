@@ -212,9 +212,137 @@ export interface AccountingLedgerClaim {
   batch_key: string;
   entity_keys: string[];
   outbox_key: string;
+  /** Immutable scope copied into the claim so completion cannot retarget a DO. */
+  tenant_id: string;
+  connection_id: string;
+  workspace_id: string;
+  channel_id: string;
+  thread_ts: string;
+  correlation_id: string;
+  usage_event_ids: string[];
+  receipt_id: string;
+  payload_hash: string;
+  partition_key: string;
 }
 
 export type AccountingLedgerResult = AccountingLedgerClaim | { disposition: "duplicate" };
+
+function accountingEntityKey(input: {
+  tenant_id: string;
+  connection_id: string;
+  workspace_id: string;
+  channel_id: string;
+  thread_ts: string;
+  resource_id: string;
+}): string {
+  return tenantPartitionKey({
+    tenant_id: input.tenant_id,
+    resource_type: "usage",
+    connection_id: input.connection_id,
+    workspace_id: input.workspace_id,
+    channel_id: input.channel_id,
+    thread_ts: input.thread_ts,
+    resource_id: input.resource_id,
+  });
+}
+
+/**
+ * Build the complete immutable identity carried by an accounting claim.
+ * Completion/release use this same derivation to reject forged keys before
+ * touching the tenant-partitioned store.
+ */
+export function createAccountingLedgerClaim(input: {
+  tenant_context: TenantContextEnvelope;
+  usage_event_ids: readonly string[];
+  receipt_id: string;
+  payload_hash: string;
+}): AccountingLedgerClaim {
+  if (input.usage_event_ids.length === 0
+    || !input.receipt_id
+    || !input.payload_hash) {
+    deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  }
+  const context = input.tenant_context;
+  const scope = {
+    tenant_id: context.tenant.tenant_id,
+    connection_id: context.workspace_connection.connection_id,
+    workspace_id: context.workspace_connection.workspace_id,
+    channel_id: context.slack.channel_id,
+    thread_ts: context.slack.thread_ts ?? "",
+  };
+  const usageEventIds = [...input.usage_event_ids];
+  const entityKeys = [...usageEventIds, input.receipt_id]
+    .map((resourceId) => accountingEntityKey({ ...scope, resource_id: resourceId }));
+  const outboxKey = entityKeys[entityKeys.length - 1];
+  if (!outboxKey) deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  return {
+    disposition: "claimed",
+    batch_key: JSON.stringify([entityKeys, input.payload_hash]),
+    entity_keys: entityKeys,
+    outbox_key: outboxKey,
+    ...scope,
+    correlation_id: context.correlation_id,
+    usage_event_ids: usageEventIds,
+    receipt_id: input.receipt_id,
+    payload_hash: input.payload_hash,
+    partition_key: outboxKey,
+  };
+}
+
+/** Validate all immutable key material before a claim mutates durable state. */
+export function assertValidAccountingLedgerClaim(claim: AccountingLedgerClaim): void {
+  if (!claim || claim.disposition !== "claimed"
+    || !Array.isArray(claim.entity_keys)
+    || !Array.isArray(claim.usage_event_ids)
+    || claim.usage_event_ids.length === 0
+    || claim.entity_keys.length !== claim.usage_event_ids.length + 1
+    || typeof claim.tenant_id !== "string"
+    || typeof claim.connection_id !== "string"
+    || typeof claim.workspace_id !== "string"
+    || typeof claim.channel_id !== "string"
+    || typeof claim.thread_ts !== "string"
+    || typeof claim.correlation_id !== "string"
+    || typeof claim.receipt_id !== "string"
+    || typeof claim.payload_hash !== "string"
+    || typeof claim.partition_key !== "string"
+    || typeof claim.batch_key !== "string"
+    || typeof claim.outbox_key !== "string") {
+    deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  }
+  let expected: AccountingLedgerClaim;
+  try {
+    expected = createAccountingLedgerClaim({
+      tenant_context: {
+        // Only the fields consumed by createAccountingLedgerClaim are needed
+        // for deterministic key derivation. The cast keeps this guard local
+        // and avoids making completion depend on a signed context payload.
+        tenant: { tenant_id: claim.tenant_id },
+        workspace_connection: {
+          connection_id: claim.connection_id,
+          workspace_id: claim.workspace_id,
+        },
+        slack: { channel_id: claim.channel_id, thread_ts: claim.thread_ts },
+        correlation_id: claim.correlation_id,
+      } as TenantContextEnvelope,
+      usage_event_ids: claim.usage_event_ids,
+      receipt_id: claim.receipt_id,
+      payload_hash: claim.payload_hash,
+    });
+  } catch (error) {
+    if (error instanceof TenantBoundaryError) {
+      deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+    }
+    deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  }
+  const sameKeys = claim.entity_keys.length === expected.entity_keys.length
+    && claim.entity_keys.every((key, index) => key === expected.entity_keys[index]);
+  if (!sameKeys
+    || claim.outbox_key !== expected.outbox_key
+    || claim.partition_key !== expected.partition_key
+    || claim.batch_key !== expected.batch_key) {
+    deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+  }
+}
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -278,18 +406,13 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
     artifact: AccountingArtifact;
     operation_result?: unknown;
   }): AccountingLedgerResult {
-    const resourceIds = [...input.usage_event_ids, input.receipt_id];
-    const entityKeys = resourceIds.map((resourceId) => tenantPartitionKey({
-      tenant_id: input.tenant_context.tenant.tenant_id,
-      resource_type: "usage",
-      connection_id: input.tenant_context.workspace_connection.connection_id,
-      workspace_id: input.tenant_context.workspace_connection.workspace_id,
-      channel_id: input.tenant_context.slack.channel_id,
-      thread_ts: input.tenant_context.slack.thread_ts ?? "",
-      resource_id: resourceId,
-    }));
-    const outboxKey = entityKeys[entityKeys.length - 1];
-    const batchKey = JSON.stringify([entityKeys, input.payload_hash]);
+    const claim = createAccountingLedgerClaim({
+      tenant_context: input.tenant_context,
+      usage_event_ids: input.usage_event_ids,
+      receipt_id: input.receipt_id,
+      payload_hash: input.payload_hash,
+    });
+    const { entity_keys: entityKeys, outbox_key: outboxKey, batch_key: batchKey } = claim;
     const existing = entityKeys.map((key) => this.#entities.get(key));
     if (existing.every((entry) => entry?.state === "written" && entry.batch_key === batchKey)) {
       return { disposition: "duplicate" };
@@ -297,7 +420,7 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
     if (existing.every((entry) => entry?.state === "claimed" && entry.batch_key === batchKey)) {
       const pending = outboxKey ? this.#outbox.get(outboxKey) : undefined;
       if (!pending || pending.batch_key !== batchKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
-      return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
+      return claim;
     }
     if (existing.some((entry) => entry !== undefined)) {
       deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
@@ -311,7 +434,7 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
         ? {}
         : { operation_result: structuredClone(input.operation_result) }),
     });
-    return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
+    return claim;
   }
 
   read_pending(input: {
@@ -349,6 +472,7 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
   }
 
   complete(claim: AccountingLedgerClaim): void {
+    assertValidAccountingLedgerClaim(claim);
     for (const key of claim.entity_keys) {
       const entry = this.#entities.get(key);
       if (!entry || entry.batch_key !== claim.batch_key || entry.state !== "claimed") {
@@ -360,6 +484,7 @@ export class TenantAccountingLedger implements TenantAccountingLedgerStore {
   }
 
   release(claim: AccountingLedgerClaim): void {
+    assertValidAccountingLedgerClaim(claim);
     for (const key of claim.entity_keys) {
       const entry = this.#entities.get(key);
       if (entry?.batch_key === claim.batch_key && entry.state === "claimed") this.#entities.delete(key);
@@ -527,6 +652,63 @@ export async function writeTenantAccountingContinuation(input: {
   }
   const result = await input.write(assertSecretArtifactFree(structuredClone(input.artifact)));
   if (!result?.result_ref) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+  return result;
+}
+
+/**
+ * Complete a previously frozen accounting artifact after an ambiguous provider
+ * outcome. The ledger claim is re-derived from the immutable artifact, the
+ * external write is made with a freshly verified context, and the local
+ * ledger is completed only after that write returns a result reference. A
+ * duplicate ledger claim is a durable local readback that the accounting
+ * stage already completed; it never causes a second provider call.
+ */
+export async function settleTenantAccountingContinuation(input: {
+  authorization_context: TenantContextEnvelope;
+  artifact_context: TenantContextEnvelope;
+  expected_scope: ExpectedTenantScope;
+  now: string;
+  verifier: TenantRuntimeBoundaryVerifier;
+  ledger: TenantAccountingLedgerStore;
+  artifact: AccountingArtifact;
+  write(payload: AccountingArtifact): Promise<{ result_ref: string }>;
+}): Promise<{ result_ref: string }> {
+  await input.verifier.validate({
+    boundary: "brainbase_proxy",
+    tenant_context: input.authorization_context,
+    expected_scope: input.expected_scope,
+    now: input.now,
+  });
+  const claim = await persistTenantAccounting({
+    tenant_context: input.artifact_context,
+    expected_scope: input.expected_scope,
+    ledger: input.ledger,
+    usage_events: input.artifact.usage_events,
+    receipt: input.artifact.receipt,
+  });
+  if (claim.disposition === "duplicate") {
+    const pending = await input.ledger.read_pending({
+      tenant_context: input.artifact_context,
+      receipt_id: input.artifact.receipt.receipt_id,
+    });
+    if (pending !== undefined) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
+    return { result_ref: `ledger:${input.artifact.receipt.receipt_id}` };
+  }
+  const result = await writeTenantAccountingContinuation({
+    authorization_context: input.authorization_context,
+    artifact_context: input.artifact_context,
+    expected_scope: input.expected_scope,
+    now: input.now,
+    verifier: input.verifier,
+    artifact: claim.artifact,
+    write: input.write,
+  });
+  await input.ledger.complete(claim.claim);
+  const pending = await input.ledger.read_pending({
+    tenant_context: input.artifact_context,
+    receipt_id: input.artifact.receipt.receipt_id,
+  });
+  if (pending !== undefined) deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
   return result;
 }
 

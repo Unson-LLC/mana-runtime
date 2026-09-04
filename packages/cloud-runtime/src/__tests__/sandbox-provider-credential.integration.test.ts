@@ -134,7 +134,7 @@ class TenantRuntimeNamespace {
               }) => undefined,
             );
           } else if (key.startsWith("state:") || key.startsWith("accounting:")) {
-            handler = new TenantRuntimeStateHandler(storage);
+            handler = new TenantRuntimeStateHandler(storage, key);
           } else if (key.startsWith("development-terminal:")) {
             handler = new DevelopmentTerminalOutboxHandler(storage, storage);
           } else {
