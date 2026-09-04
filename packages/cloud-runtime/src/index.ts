@@ -1121,8 +1121,11 @@ function meetingMinutesClients(
         effects.boundary("mcp_gateway", () => new CloudflareMeetingMinutesGitHubClient(
           env.GITHUB_TOKEN ?? "").delete(destination.github, paths)),
       deleteTask: async (taskId: string, idempotencyKey: string) => {
-        await effects.boundary("brainbase_proxy", async (credentialFetch) => {
-          const client = taskClient(credentialFetch);
+        await effects.boundary("brainbase_proxy", async () => {
+          const client = new TaskApiClient({
+            baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
+            token: env.BRAINBASE_TASK_API_TOKEN,
+          });
           try {
             const task = await client.getTask(taskId);
             await client.deleteTask(taskId, task.version, idempotencyKey);

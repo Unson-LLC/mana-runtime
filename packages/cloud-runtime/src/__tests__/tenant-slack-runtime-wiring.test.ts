@@ -124,6 +124,9 @@ describe("tenant Slack runtime wiring", () => {
     expect(clients).toContain('"https://tenant-runtime.internal"');
     expect(clients).toContain("tenantContext");
     expect(clients).toContain('effects.boundary("brainbase_proxy", () => new MeetingMinutesBrainbaseContextClient(');
-    expect(clients).not.toContain("BRAINBASE_TASK_API_TOKEN");
+    const redoStart = clients.indexOf("redo: {");
+    expect(redoStart).toBeGreaterThan(-1);
+    expect(clients.slice(0, redoStart)).not.toContain("BRAINBASE_TASK_API_TOKEN");
+    expect(clients.slice(redoStart)).toContain("BRAINBASE_TASK_API_TOKEN");
   });
 });
