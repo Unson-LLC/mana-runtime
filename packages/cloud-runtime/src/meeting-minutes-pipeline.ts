@@ -425,11 +425,12 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         }
       }
       await clearTaskIntegrationPending(fs, run, options);
-    } else if (run.destination && run.taskRegistration?.registered.length && options.repairTaskBoard) {
+    } else if (run.destination && options.repairTaskBoard) {
       // A completed run can outlive a stale Slack retry button or a downstream
       // task-board queue failure. Treat an explicit repeated selection as a
-      // reconciliation request even when the persisted failure was already
-      // cleared, so the board can be rebuilt without recreating tasks.
+      // reconciliation request even when the persisted failure and local task
+      // receipts were already cleared. The repair rebuilds from the destination
+      // project, so it does not need to recreate tasks from this run.
       await markTaskIntegrationPending(fs, run, "task_board", options);
       try {
         await options.repairTaskBoard(run.destination.taskBoardTargetId);

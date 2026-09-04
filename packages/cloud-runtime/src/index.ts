@@ -1015,7 +1015,7 @@ function meetingMinutesClients(
     slack: {
       updateRunStatus: (run: MeetingMinutesRun,
         outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
-        effects.slack(`source-status:${run.runId}:${outcome}`,
+        effects.slack(`source-status:${run.runId}:${outcome}:${run.updatedAt}`,
           { kind: "source_status", runId: run.runId, outcome },
           (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome)),
       fallbackStatus: (run: MeetingMinutesRun,

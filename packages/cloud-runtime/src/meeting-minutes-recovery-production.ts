@@ -93,7 +93,7 @@ export function composeMeetingMinutesRecoveryProduction<Env>(
       const sourceSlack = (credentialFetch: typeof fetch) =>
         new MeetingMinutesSlackClient(undefined, credentialFetch);
       return { slack: {
-        updateRunStatus: (run, outcome) => effects.slack(`source-status:${run.runId}:${outcome}`,
+        updateRunStatus: (run, outcome) => effects.slack(`source-status:${run.runId}:${outcome}:${run.updatedAt}`,
           { kind: "source_status", runId: run.runId, outcome },
           (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome)),
         fallbackStatus: (run, outcome) => effects.slack(`source-status-fallback:${run.runId}:${outcome}`,
