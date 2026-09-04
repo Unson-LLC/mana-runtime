@@ -782,6 +782,30 @@ describe("meeting minutes pipeline", () => {
     expect(reconciled.taskRegistration).not.toHaveProperty("failure");
   });
 
+  it("reconciles a reopened failed run with persisted output and empty task receipts", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const repairTaskBoard = vi.fn().mockResolvedValue(undefined);
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [] }),
+      repairTaskBoard,
+    });
+    const completed = await resumeMeetingMinutesRun(fs, selection, options);
+    const reopened = (await loadMeetingMinutesRun(fs, completed.runId))!;
+    reopened.status = "failed";
+    reopened.failure = { stage: "completed", message: "legacy_retry_required" };
+    reopened.taskRegistration = { registered: [] };
+    await saveMeetingMinutesRun(fs, reopened);
+    repairTaskBoard.mockClear();
+
+    const reconciled = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(repairTaskBoard).toHaveBeenCalledTimes(1);
+    expect(repairTaskBoard).toHaveBeenCalledWith("minutes-mana");
+    expect(reconciled.status).toBe("completed");
+    expect(reconciled.taskRegistration).not.toHaveProperty("failure");
+  });
+
   it("resumes only the task card stage after task card posting fails", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
