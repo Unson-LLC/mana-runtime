@@ -84,6 +84,7 @@ function context(decision: "approval" | "human_action"): AcceptedCompanyAuthorit
     schema_version: "1.0",
     tenant_context: {
       tenant: { tenant_id: "tenant-a" },
+      authorization: { project_ids: ["project-a"] },
       operation_id: "operation-a",
       idempotency_key: "handoff-a",
       correlation_id: "correlation-a",
@@ -128,6 +129,41 @@ async function persist(
 }
 
 describe("company authority human handoff", () => {
+  it("accepts a producer-resolved project code alias while persisting the signed canonical project", async () => {
+    const accepted = context("approval");
+    const aliasedRequest = request("external_side_effect");
+    aliasedRequest.requested_action.project_hint = "project-code-a";
+    const result = await processCompanyAuthorityHumanHandoff({
+      context: accepted,
+      request: aliasedRequest,
+      payload: { event_id: "event-a", text: "accepted snapshot" },
+      execution_hash: "sha256:approval:project-code-alias",
+      store: new CompanyAuthorityHumanHandoffMemoryStore(),
+      now: () => "2026-09-02T00:01:00.000Z",
+    });
+
+    expect(result.record.project_id).toBe("project-a");
+    expect(result.record.source.request.requested_action.project_hint).toBe("project-code-a");
+  });
+
+  it("rejects a handoff when signed outer and nested project bindings disagree", async () => {
+    const accepted = structuredClone(context("approval"));
+    const tenantContext = accepted.tenant_context as { authorization: { project_ids: string[] } };
+    tenantContext.authorization.project_ids = ["project-other"];
+
+    await expect(processCompanyAuthorityHumanHandoff({
+      context: accepted,
+      request: request("external_side_effect"),
+      payload: { event_id: "event-a", text: "accepted snapshot" },
+      execution_hash: "sha256:approval:project-mismatch",
+      store: new CompanyAuthorityHumanHandoffMemoryStore(),
+      now: () => "2026-09-02T00:01:00.000Z",
+    })).rejects.toMatchObject({
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      details: { phase: "company_authority_project_binding" },
+    });
+  });
+
   it("persists approval only for the signed approver without marking notification or completion", async () => {
     const { record } = await persist("approval");
 
