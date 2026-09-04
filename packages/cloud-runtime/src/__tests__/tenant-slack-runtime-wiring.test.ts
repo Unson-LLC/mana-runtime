@@ -127,6 +127,8 @@ describe("tenant Slack runtime wiring", () => {
     const redoStart = clients.indexOf("redo: {");
     expect(redoStart).toBeGreaterThan(-1);
     expect(clients.slice(0, redoStart)).not.toContain("BRAINBASE_TASK_API_TOKEN");
-    expect(clients.slice(redoStart)).toContain("BRAINBASE_TASK_API_TOKEN");
+    expect(clients.slice(redoStart)).not.toContain("BRAINBASE_TASK_API_TOKEN");
+    expect(clients.slice(redoStart)).toContain("deleteTask: createMeetingMinutesTaskDeleter({");
+    expect(clients.slice(redoStart)).toContain("boundary: effects.boundary");
   });
 });

@@ -87,7 +87,8 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
-import { TaskApiClient, TaskApiError } from "@openryoko/task-runtime-core";
+import { TaskApiClient } from "@openryoko/task-runtime-core";
+import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
 import { isReplyEligible, postSlackReply, processReplyEvent, ReplyPipelineError } from "./reply-pipeline.js";
 import { readReplyJudgmentEpisode } from "./reply-judgment.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
@@ -1120,21 +1121,10 @@ function meetingMinutesClients(
       deleteGitHub: (destination: MeetingMinutesDestination, paths: readonly string[]) =>
         effects.boundary("mcp_gateway", () => new CloudflareMeetingMinutesGitHubClient(
           env.GITHUB_TOKEN ?? "").delete(destination.github, paths)),
-      deleteTask: async (taskId: string, idempotencyKey: string) => {
-        await effects.boundary("brainbase_proxy", async () => {
-          const client = new TaskApiClient({
-            baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
-            token: env.BRAINBASE_TASK_API_TOKEN,
-          });
-          try {
-            const task = await client.getTask(taskId);
-            await client.deleteTask(taskId, task.version, idempotencyKey);
-          } catch (error) {
-            if (error instanceof TaskApiError && error.status === 404) return;
-            throw error;
-          }
-        });
-      },
+      deleteTask: createMeetingMinutesTaskDeleter({
+        baseUrl: env.BRAINBASE_TASK_API_BASE_URL ?? "",
+        boundary: effects.boundary,
+      }),
       retractSharedMinutes: (destination: MeetingMinutesDestination,
         parentTs: string, fileName: string) =>
         effects.destinationSlack(`retract:${parentTs}`, destination, parentTs,
