@@ -467,7 +467,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(workerRuntime).not.toContain("githubCredentialLeaseHandle");
     expect(workerRuntime).toContain("GITHUB_TOKEN?: string");
     expect(workerRuntime).toContain('env.GITHUB_TOKEN ?? ""');
-    expect(workerRuntime).toContain("token: env.BRAINBASE_TASK_API_TOKEN");
+    expect(workerRuntime).not.toContain("token: env.BRAINBASE_TASK_API_TOKEN");
+    expect(workerRuntime).toContain("createMeetingMinutesTaskDeleter({");
     expect(workerRuntime).not.toContain("undefined, credentialFetch).save(input)");
     expect(workerRuntime).not.toContain("undefined, credentialFetch).delete(destination.github, paths)");
     expect(workerRuntime).not.toContain("taskClient(credentialFetch).getTask(taskId)");
