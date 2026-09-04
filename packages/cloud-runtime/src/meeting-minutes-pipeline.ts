@@ -317,6 +317,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
   validateMeetingMinutesDestinations(options.destinations);
   const run = await loadMeetingMinutesRun(fs, selection.runId);
   if (!run) throw new Error("meeting_minutes_run_not_found");
+  const resumedPersistedOutput = Boolean(run.github && run.slack?.parentTs);
   if (run.workspaceId !== selection.workspaceId || run.sourceAppId !== selection.appId ||
     run.sourceChannelId !== selection.channelId || run.sourceThreadTs !== selection.threadTs) {
     throw new Error("meeting_minutes_selection_boundary_mismatch");
@@ -542,7 +543,7 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
         ...meetingMinutesFailureLog(run) }));
       return run;
     }
-    if (run.taskRegistration?.registered.length && options.repairTaskBoard) {
+    if ((run.taskRegistration?.registered.length || resumedPersistedOutput) && options.repairTaskBoard) {
       await markTaskIntegrationPending(fs, run, "task_board", options);
       try {
         await options.repairTaskBoard(run.destination.taskBoardTargetId);
