@@ -385,7 +385,7 @@ describe("handleSlackRequest", () => {
 });
 
 describe("handleTenantSlackRequest diagnostics", () => {
-  it("fails closed before legacy or Queue effects when configured ingress lacks a live Company Authority transport", async () => {
+  it("fails closed before legacy or Queue effects when Company Authority evidence is not collected", async () => {
     const body = JSON.stringify({
       type: "event_callback", api_app_id: "A_UNSON", team_id: "T_UNSON", event_id: "EvConfiguredIngress",
       event: { type: "message", channel: "C_ROUTER", ts: "1786420000.000450",
@@ -401,6 +401,7 @@ describe("handleTenantSlackRequest diagnostics", () => {
     };
     const companyAuthoritySend = vi.fn();
     const send = vi.fn();
+    const resolveCompanyAuthority = vi.fn(async () => ({ state: "not_collected" as const }));
     const ingress = companyAuthorityIngressConfiguration({
       state: "enabled",
       base_url: "https://authority.example.com",
@@ -409,7 +410,7 @@ describe("handleTenantSlackRequest diagnostics", () => {
       acceptance: {
         expected_audience: "mana-runtime", expected_deployment_id: "worker-test", public_jwk: {},
       },
-    });
+    }, { resolve: resolveCompanyAuthority });
 
     const response = await handleTenantSlackRequest(request, {
       signing_secret: signingSecret, expected_app_id: "A_UNSON", now_ms: nowSeconds * 1_000,
@@ -426,6 +427,7 @@ describe("handleTenantSlackRequest diagnostics", () => {
     });
 
     expect(response.status).toBe(503);
+    expect(resolveCompanyAuthority).toHaveBeenCalledOnce();
     await expect(response.json()).resolves.toMatchObject({
       error: "AUTHORITY_UNAVAILABLE",
       stage: "tenant_context_resolution",
