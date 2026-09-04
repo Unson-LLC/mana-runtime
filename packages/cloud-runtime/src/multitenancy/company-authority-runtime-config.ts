@@ -10,8 +10,15 @@ export interface CompanyAuthorityRuntimeConfigEnv {
   BRAINBASE_COMPANY_AUTHORITY_EXPECTED_DEPLOYMENT_ID?: string;
   BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON?: string;
   MANA_COMPANY_AUTHORITY_OPERATIONS_JSON?: string;
+  MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON?: string;
   MANA_REQUIRED_AUDIENCE?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
+}
+
+export interface CompanyAuthoritySlackRolloutTuple {
+  readonly workspace_id: string;
+  readonly channel_id: string;
+  readonly authenticated_subject_id: string;
 }
 
 export type CompanyAuthorityRuntimeConfiguration =
@@ -22,6 +29,7 @@ export type CompanyAuthorityRuntimeConfiguration =
     readonly opted_in_capability_ids: readonly string[];
     readonly desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
     readonly acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
+    readonly slack_rollout?: readonly CompanyAuthoritySlackRolloutTuple[];
   };
 
 export interface CompanyAuthorityIngressConfiguration {
@@ -29,6 +37,7 @@ export interface CompanyAuthorityIngressConfiguration {
   readonly desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
   readonly client: CompanyAuthorityClient;
   readonly acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
+  readonly slack_rollout?: readonly CompanyAuthoritySlackRolloutTuple[];
 }
 
 const COMPANY_AUTHORITY_BINDINGS = [
@@ -36,6 +45,7 @@ const COMPANY_AUTHORITY_BINDINGS = [
   "BRAINBASE_COMPANY_AUTHORITY_EXPECTED_DEPLOYMENT_ID",
   "BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON",
   "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON",
+  "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON",
 ] as const;
 
 type PublicEd25519Jwk = JsonWebKey & { readonly kid?: string };
@@ -147,6 +157,54 @@ function parseOperations(value: string): Readonly<Record<string, CompanyAuthorit
   ) as Record<string, CompanyAuthorityDesiredEffect>;
 }
 
+const COMPANY_AUTHORITY_SLACK_ROLLOUT_KEYS = [
+  "workspace_id",
+  "channel_id",
+  "authenticated_subject_id",
+] as const;
+
+function parseSlackRollout(value: string): readonly CompanyAuthoritySlackRolloutTuple[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    invalid({ binding: "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON" });
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    invalid({ binding: "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON" });
+  }
+
+  const seen = new Set<string>();
+  return parsed.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      invalid({ binding: "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON" });
+    }
+    const record = candidate as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (keys.length !== COMPANY_AUTHORITY_SLACK_ROLLOUT_KEYS.length
+      || keys.some((key) => !COMPANY_AUTHORITY_SLACK_ROLLOUT_KEYS.includes(key as typeof COMPANY_AUTHORITY_SLACK_ROLLOUT_KEYS[number]))) {
+      invalid({ binding: "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON" });
+    }
+    const values = COMPANY_AUTHORITY_SLACK_ROLLOUT_KEYS.map((key) => record[key]);
+    if (values.some((value) => typeof value !== "string"
+      || value.trim().length === 0
+      || /[*?]/.test(value))) {
+      invalid({ binding: "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON" });
+    }
+    const tuple: CompanyAuthoritySlackRolloutTuple = {
+      workspace_id: (values[0] as string).trim(),
+      channel_id: (values[1] as string).trim(),
+      authenticated_subject_id: (values[2] as string).trim(),
+    };
+    const duplicateKey = JSON.stringify(tuple);
+    if (seen.has(duplicateKey)) {
+      invalid({ binding: "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON" });
+    }
+    seen.add(duplicateKey);
+    return tuple;
+  });
+}
+
 function parseTenantVerificationKey(value: string): { key: JsonWebKey; key_id: string } {
   const parsed = parseObject(value, "BRAINBASE_TENANT_CONTEXT_JWKS_JSON");
   if (!Array.isArray(parsed.keys) || parsed.keys.length !== 1) {
@@ -184,6 +242,12 @@ export function parseCompanyAuthorityRuntimeConfiguration(
     env.BRAINBASE_TENANT_CONTEXT_JWKS_JSON,
     "BRAINBASE_TENANT_CONTEXT_JWKS_JSON",
   ));
+  const slackRollout = env.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON === undefined
+    ? undefined
+    : parseSlackRollout(requiredText(
+      env.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON,
+      "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON",
+    ));
 
   return {
     state: "enabled",
@@ -197,6 +261,7 @@ export function parseCompanyAuthorityRuntimeConfiguration(
       tenant_context_public_jwk: tenantKey.key,
       tenant_context_key_id: tenantKey.key_id,
     },
+    ...(slackRollout ? { slack_rollout: slackRollout } : {}),
   };
 }
 
@@ -217,5 +282,8 @@ export function companyAuthorityIngressConfiguration(
     desired_effect_by_capability: { ...configuration.desired_effect_by_capability },
     client,
     acceptance: structuredClone(configuration.acceptance),
+    ...(configuration.slack_rollout
+      ? { slack_rollout: configuration.slack_rollout.map((tuple) => ({ ...tuple })) }
+      : {}),
   };
 }
