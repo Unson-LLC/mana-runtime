@@ -95,7 +95,7 @@
       "unknown_tenant": "deny",
       "ambiguous_tenant": "deny",
       "unavailable_connection": "unavailable",
-      "no_data": "deny_as_authority_unavailable",
+      "no_data": "empty",
       "cross_tenant_candidate": "deny_and_audit"
     },
     "deployment_modes": [

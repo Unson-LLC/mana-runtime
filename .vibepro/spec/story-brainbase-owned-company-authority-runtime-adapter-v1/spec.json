@@ -8,10 +8,10 @@
   "implementation_state": {
     "status": "in_progress",
     "adapter_foundation": "implemented",
-    "runtime_surface_binding": "worker ingress selector and worker.queue fail-closed consumer binding implemented; signed canonical Slack payload digest is revalidated before tenant runtime selection; accepted request/context/payload are passed as an immutable snapshot; an injected selected-operation route rebinds the accepted scope, launches the local Container operation and registers the opaque handle in the tenant-bound Durable registry; trusted local boundary validation rechecks outer, nested and payload bindings at container_launch, mcp_gateway, brainbase_proxy and exact send_message slack_delivery; credential-backed production providers, actual external service calls and live evidence remain not_collected",
+    "runtime_surface_binding": "actual Slack HTTP ingress parses the runtime selector and opts configured capabilities into a fail-closed not_collected client before any legacy or Queue effect; worker.queue fail-closed consumer binding is implemented; signed canonical Slack payload digest is revalidated before tenant runtime selection; accepted request/context/payload are passed as an immutable snapshot; an injected selected-operation route rebinds the accepted scope, launches the local Container operation and registers the opaque handle in the tenant-bound Durable registry; trusted local boundary validation rechecks outer, nested and payload bindings at container_launch, mcp_gateway, brainbase_proxy and exact send_message slack_delivery; credential-backed production providers, actual external service calls and live evidence remain not_collected",
     "external_effect_outbox": "local contract implemented with tenant-bound durable-state storage, atomic claim, no blind expired in_flight reclaim and original-token fencing; production provider binding and reconciliation evidence not_collected",
     "human_handoff": "approval and human_action persist exact signed target plus accepted immutable snapshot and execution hash as one tenant-bound pending record; identical redelivery is idempotent; notification, decision, completion, protected effect and production readback not_collected",
-    "runtime_trust_configuration": "local fail-closed environment parser and post-acceptance worker.queue resolver binding implemented; production auto provider registry is empty and there are no production values, HTTP client or authentication",
+    "runtime_trust_configuration": "local fail-closed environment parser is connected to actual Slack HTTP ingress and the post-acceptance worker.queue resolver; enabled ingress configuration deliberately returns not_collected until the live transport and authentication contract exists; production auto provider registry is empty and production values and live evidence remain not_collected",
     "endpoint_binding": "URL parsing contract implemented locally; live path, transport, and authentication not_defined",
     "production_trust_store": "public-key input validation implemented locally; production key distribution, values, rotation, revocation, and readback not_implemented",
     "runtime_evidence": "local_runtime_boundaries_verified_production_not_collected",
@@ -25,9 +25,9 @@
   "routing_contract": {
     "requested_operation": "ObservedExecutionRequestV1.requested_action.capability_id and CanonicalExecutionContextV1.authority.capability_id identify the business operation and must match under the producer contract",
     "protocol_marker": "TenantContextEnvelope.authorization.capability_ids contains company_authority_v1 only as a protocol capability marker, not as the requested business operation",
-    "production_opt_in_selector": "implemented as explicit HandleTenantSlackRequestOptions.company_authority.opted_in_capability_ids routing seam; production configuration is absent and production opt-in operations remain 0",
+    "production_opt_in_selector": "actual Slack HTTP ingress derives HandleTenantSlackRequestOptions.company_authority.opted_in_capability_ids from fail-closed runtime configuration; enabled capabilities select Company Authority but return AUTHORITY_UNAVAILABLE through a not_collected client before Company Authority Queue, legacy Queue, or legacy authority effects; production values, live transport, and production execution evidence remain not_collected",
     "foundation_boundary": "handleTenantSlackRequest invokes resolveCompanyAuthorityRuntimeEnvelope only for an explicitly opted-in business capability and uses a distinct Company Authority envelope sender; the direct executeCompanyAuthorityWorkerIngress foundation remains independently fixture-tested",
-    "pre_binding_behavior": "a same-run transient pre-fix actual-handler RED observed the selected operation flowing to the legacy path; no durable RED artifact was retained. The current regression test proves that an unavailable CompanyAuthorityClient yields AUTHORITY_UNAVAILABLE with Company Authority sender 0 and legacy authority calls 0. A selector containing only company_authority_v1 does not select task.write. No production client or sender is configured, so production opt-in operations remain 0",
+    "pre_binding_behavior": "a same-run transient pre-fix actual-handler RED observed the selected operation flowing to the legacy path; no durable RED artifact was retained. Current regression tests prove that the configured ingress not_collected client yields AUTHORITY_UNAVAILABLE with Company Authority sender 0, legacy sender 0, and legacy authority calls 0. A selector containing only company_authority_v1 does not select task.write. Disabled configuration preserves the legacy route and partial configuration fails before handler effects. No live production client or authentication contract is configured and production execution evidence remains not_collected",
     "scope_binding": "Company Authority v1 carries one resource_ref/project_hint. An opted-in Slack placement with more than one projectCode fails before retrieval with AUTHORITY_SCOPE_MISMATCH instead of collapsing to its first project. Slack ingress appends a JCS SHA-256 digest of the complete SlackQueueEvent to the signed resource_ref and worker.queue recomputes it before tenant runtime selection, preventing same-event payload substitution. RuntimePlacement.placementId is a local route identifier and is not the signed deployment ID; trusted expected_deployment_id is checked by the A0 consumer against the signed context",
     "positive_handler_decision_evidence": "positive fixture propagation from the HTTP handler is not_collected; approval/human_action Queue-to-pending effect-zero is locally verified, while production Queue, notification, owner-visible decision, completion, downstream effect and readback remain not_collected"
   },
@@ -95,7 +95,7 @@
       "unknown_tenant": "deny",
       "ambiguous_tenant": "deny",
       "unavailable_connection": "unavailable",
-      "no_data": "deny_as_authority_unavailable",
+      "no_data": "empty",
       "cross_tenant_candidate": "deny_and_audit"
     },
     "deployment_modes": [
@@ -369,7 +369,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
       "id": "C-002",
@@ -407,7 +407,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
       "id": "INV-001",
@@ -449,7 +449,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
       "id": "INV-002",
@@ -503,7 +503,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
       "id": "C-003",
@@ -553,7 +553,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
       "id": "INV-003",
@@ -607,7 +607,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
       "id": "INV-004",
@@ -649,12 +649,12 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-02T02:51:07.101Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
-      "id": "S-001",
+      "id": "S-002",
       "type": "scenario",
-      "statement": "handleTenantSlackRequestの明示的runtime routing selectorがtask.writeをopt-in済みと判定するとCompanyAuthorityClientを1回呼び、unavailableではAUTHORITY_UNAVAILABLE、Company Authority sender 0、legacy authority 0を観測する。selectorにcompany_authority_v1 markerだけを指定してもtask.writeを選択せず旧経路を維持する。複数project placementは単一projectへ縮退せずretrieval前にAUTHORITY_SCOPE_MISMATCHで拒否する。本番client／sender設定は未実装のためproduction opt-in operationは0件である。同一runのpre-fix REDは一時観測でありdurable artifactではない",
+      "statement": "handleTenantSlackRequestの明示的runtime routing selectorがtask.writeをopt-in済みと判定するとCompanyAuthorityClientを1回呼び、unavailableではAUTHORITY_UNAVAILABLE、Company Authority sender 0、legacy authority 0を観測する。selectorにcompany_authority_v1 markerだけを指定してもtask.writeを選択せず旧経路を維持する。複数project placementは単一projectへ縮退せずretrieval前にAUTHORITY_SCOPE_MISMATCHで拒否する。実際の/slack/events入口にはfail-closedのnot_collected clientとQueue sender seamを配線済みだが、本番値、live transport、production opt-in実行件数、実行証拠はnot_collectedである。同一runのpre-fix REDは一時観測でありdurable artifactではない",
       "origin": {
         "story_refs": [
           {
@@ -698,8 +698,8 @@
         ]
       },
       "confidence": 1,
-      "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "first_seen_at": "2026-09-04T00:58:18.255Z",
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     },
     {
       "id": "C-004",
@@ -731,7 +731,7 @@
       },
       "confidence": 1,
       "first_seen_at": "2026-09-01T17:22:08.974Z",
-      "last_revised_at": "2026-09-02T02:56:43.794Z"
+      "last_revised_at": "2026-09-04T01:00:47.844Z"
     }
   ],
   "open_questions": [

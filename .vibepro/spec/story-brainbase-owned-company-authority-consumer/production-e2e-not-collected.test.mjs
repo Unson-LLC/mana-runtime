@@ -91,7 +91,7 @@ test("T0 local implementation state does not promote production evidence", async
     assert.equal(runtimeArtifact.implementation_state.production_evidence, "not_collected");
     assert.equal(
       runtimeArtifact.multi_tenancy.failure_semantics.no_data,
-      "deny_as_authority_unavailable",
+      "empty",
     );
     assert.equal(
       runtimeArtifact.multi_tenancy.verification.evidence_state,

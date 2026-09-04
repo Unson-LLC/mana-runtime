@@ -219,7 +219,10 @@ test("production E2E plan is bound to the locked producer and remains not_collec
   assert.equal(transition.owner, "T0");
   assert.equal(transition.implementation_status, "local_implementation_present_production_not_verified");
   assert.equal(transition.evidence_status, "not_collected");
-  assert.equal(transition.implementation_claim, "local_adapter_queue_and_selected_container_boundaries_only");
+  assert.equal(
+    transition.implementation_claim,
+    "local_worker_queue_durable_object_container_mcp_brainbase_proxy_and_slack_delivery_boundaries_verified_production_not_collected",
+  );
   assert.equal(transition.endpoint_binding, "local_config_parser_present_production_values_not_defined");
   assert.deepEqual(transition.eligible_providers, requestSchema["x-supported-providers"]);
   assert.deepEqual(transition.unsupported_providers, { service: "not_implemented" });
