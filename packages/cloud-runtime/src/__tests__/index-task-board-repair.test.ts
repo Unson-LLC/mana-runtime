@@ -26,7 +26,11 @@ describe("Worker task Canvas repair producers", () => {
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 
     expect(source).not.toMatch(/async function enqueueMeetingMinutesTaskBoardRepair\s*\(/);
-    expect(source.match(/enqueueMeetingMinutesTaskBoardRepair\(\s*env,\s*targetId,\s*"task_write",\s*\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
+    expect(source.match(/enqueueMeetingMinutesTaskBoardRepair\(\s*env,\s*targetId,\s*"task_write",/g))
+      .toHaveLength(2);
+    expect(source).toContain("(repair) => resolveDerivedSlackTenantContext(env, tenantContext");
+    expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
+    expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
       .toHaveLength(2);
   });
 
