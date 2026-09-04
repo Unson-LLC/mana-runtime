@@ -70,7 +70,19 @@ export interface TenantInteractionEffects {
     execute: (credentialFetch: typeof fetch) => Promise<void>): Promise<void>;
 }
 
-export type SlackInteractionMessage = SlackSelectionMessage;
+export type SlackInteractionMessage = Omit<SlackSelectionMessage, "replace_original"> & {
+  replace_original: boolean;
+  response_type?: "ephemeral" | "in_channel";
+};
+
+/**
+ * Redo responses acknowledge a button click rather than replace durable run
+ * status. Keep them ephemeral so a stale button cannot overwrite the current
+ * generation's message through response_url.
+ */
+function ephemeralRedoMessage(message: SlackSelectionMessage): SlackInteractionMessage {
+  return { ...message, replace_original: false, response_type: "ephemeral" };
+}
 
 export interface MeetingMinutesInteractionEnvironment extends MeetingMinutesEnvironment {
   SLACK_SIGNING_SECRET: string;
@@ -100,6 +112,10 @@ const sha256Pattern = /^[a-f0-9]{64}$/;
 
 function validOptionalText(value: unknown, maxLength: number): boolean {
   return value === undefined || (typeof value === "string" && value.trim().length > 0 && value.length <= maxLength);
+}
+
+function validOptionalMeetingMinutesRevision(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
 }
 
 function isMeetingMinutesInteractionAction(actionId: string | undefined): boolean {
@@ -168,6 +184,8 @@ function validMeetingMinutesInteractionValue(
     return !!organizationId && meetingMinutesDestinationIdPattern.test(organizationId) &&
       meetingMinutesDestinationIdPattern.test(qualifiedOrganizationId);
   }
+  if ((actionId === MEETING_MINUTES_REDO_ACTION_ID || actionId === MEETING_MINUTES_CONFIRM_REDO_ACTION_ID) &&
+    !validOptionalMeetingMinutesRevision(value?.revision)) return false;
   return true;
 }
 
@@ -419,7 +437,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const interactionRequesterId = string(user?.id);
   const interactionChannelId = string(channel?.id) ?? string(actionValue?.channelId) ?? string(viewMetadata?.channelId);
   const interactionThreadTs = string(sourceMessage?.thread_ts) ?? string(sourceContainer?.thread_ts)
-    ?? string(sourceMessage?.ts) ?? string(actionValue?.sourceThreadTs) ?? string(action?.action_ts)
+    ?? string(actionValue?.sourceThreadTs) ?? string(sourceMessage?.ts) ?? string(action?.action_ts)
     ?? `interaction:${interactionId.slice("slack-interaction-".length)}`;
   if (!options.resolveTenantEffects) return response("FALLBACK_FORBIDDEN", 503);
   const enterpriseId = string(object(payload?.enterprise)?.id);
@@ -507,6 +525,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const value = actionValue;
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
   const organizationId = string(value?.organizationId); const fileName = string(value?.fileName);
+  const revision = typeof value?.revision === "number" ? value.revision : 0;
   const sourceThreadTs = threadTsCandidates[0];
   let intakePaused = false;
   if (options.isIntakePaused) {
@@ -559,19 +578,19 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
     options.defer((async () => {
       try {
-        await guardedSlackEffect(tenantEffects, `redo-confirm:${runId}`,
-          target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId },
-          (credentialFetch) => options.updateOriginal!(
-            responseUrl, redoConfirmationMessage(runId, fileName), credentialFetch));
+        await guardedSlackEffect(tenantEffects, `redo-confirm:${runId}:${revision}`,
+          target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId, revision },
+          (credentialFetch) => options.updateOriginal!(responseUrl,
+            ephemeralRedoMessage(redoConfirmationMessage(runId, fileName, revision, sourceThreadTs)), credentialFetch));
       } catch {
         await attemptInteractionFailureProjection({
           effects: tenantEffects,
-          effectId: `redo-confirm-projection:${runId}`,
+          effectId: `redo-confirm-projection:${runId}:${revision}`,
           effectTarget: target(channelId, sourceThreadTs),
-          effect: { kind: "redo_confirmation_projection_fallback", runId },
+          effect: { kind: "redo_confirmation_projection_fallback", runId, revision },
           responseUrl,
           runId,
-          message: statusProjectionFailedMessage(runId, fileName),
+          message: ephemeralRedoMessage(statusProjectionFailedMessage(runId, fileName)),
           options,
           failureEvent: "meeting_minutes_redo_confirmation_failure_projection_failed",
         });
@@ -588,9 +607,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     options.defer((async () => {
       let processingProjectionFailed = false;
       try {
-        await guardedSlackEffect(tenantEffects, `redo-processing:${runId}`,
-          target(channelId, sourceThreadTs), { kind: "redo_processing", runId },
-          (credentialFetch) => options.updateOriginal!(responseUrl, redoProcessingMessage(fileName, runId), credentialFetch));
+        await guardedSlackEffect(tenantEffects, `redo-processing:${runId}:${revision}`,
+          target(channelId, sourceThreadTs), { kind: "redo_processing", runId, revision },
+          (credentialFetch) => options.updateOriginal!(responseUrl,
+            ephemeralRedoMessage(redoProcessingMessage(fileName, runId)), credentialFetch));
       } catch {
         processingProjectionFailed = true;
         console.error(JSON.stringify({ event: "meeting_minutes_redo_processing_projection_failed", runId,
@@ -598,7 +618,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           correlation_id: deriveCorrelationId(runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
       }
       try {
-        await options.send({ kind: "meeting_minutes_redo", runId,
+        await options.send({ kind: "meeting_minutes_redo", runId, revision,
           workspaceId: interactionWorkspaceId, appId,
           channelId, threadTs: sourceThreadTs, userId, actionTs });
       } catch (error) {
@@ -606,19 +626,19 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           stage: "redo_enqueue", code: "REDO_ENQUEUE_FAILED",
           correlation_id: deriveCorrelationId(runId, "redo_enqueue", "REDO_ENQUEUE_FAILED"), retryable: true }));
         try {
-          await guardedSlackEffect(tenantEffects, `redo-failed:${runId}`,
-            target(channelId, sourceThreadTs), { kind: "redo_failed", runId },
+          await guardedSlackEffect(tenantEffects, `redo-failed:${runId}:${revision}`,
+            target(channelId, sourceThreadTs), { kind: "redo_failed", runId, revision },
             (credentialFetch) => options.updateOriginal!(responseUrl,
-              redoFailedMessage(runId, fileName), credentialFetch));
+              ephemeralRedoMessage(redoFailedMessage(runId, fileName, undefined, revision, sourceThreadTs)), credentialFetch));
         } catch {
           await attemptInteractionFailureProjection({
             effects: tenantEffects,
-            effectId: `redo-failed-projection:${runId}`,
+            effectId: `redo-failed-projection:${runId}:${revision}`,
             effectTarget: target(channelId, sourceThreadTs),
-            effect: { kind: "redo_failure_projection_fallback", runId },
+            effect: { kind: "redo_failure_projection_fallback", runId, revision },
             responseUrl,
             runId,
-            message: statusProjectionFailedMessage(runId, fileName),
+            message: ephemeralRedoMessage(statusProjectionFailedMessage(runId, fileName)),
             options,
             failureEvent: "meeting_minutes_redo_enqueue_failure_projection_failed",
           });
@@ -628,12 +648,12 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       if (processingProjectionFailed) {
         await attemptInteractionFailureProjection({
           effects: tenantEffects,
-          effectId: `redo-processing-projection:${runId}`,
+          effectId: `redo-processing-projection:${runId}:${revision}`,
           effectTarget: target(channelId, sourceThreadTs),
-          effect: { kind: "redo_processing_projection_fallback", runId },
+          effect: { kind: "redo_processing_projection_fallback", runId, revision },
           responseUrl,
           runId,
-          message: statusProjectionFailedMessage(runId, fileName),
+          message: ephemeralRedoMessage(statusProjectionFailedMessage(runId, fileName)),
           options,
           failureEvent: "meeting_minutes_redo_processing_failure_projection_failed",
         });

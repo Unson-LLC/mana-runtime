@@ -1,7 +1,7 @@
 import { immediateStatusFailedMessage, interactionActionFailedMessage, interactionEnqueueFailedMessage,
   selectionConfirmationFailedMessage, statusProjectionFailedMessage, tenantInteractionFailedMessage,
   threadCoordinateMissingMessage, MeetingMinutesSlackClient, redoFailedMessage } from "../meeting-minutes-slack.js";
-import { meetingMinutesTaskActionFailure } from "../meeting-minutes-contracts.js";
+import { meetingMinutesTaskActionFailure, type MeetingMinutesRun } from "../meeting-minutes-contracts.js";
 import { deriveCorrelationId } from "../multitenancy/ids.js";
 
 describe("MeetingMinutesSlackClient", () => {
@@ -82,6 +82,18 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(calls[1]?.body)).toContain("receipt-1");
     expect(JSON.stringify(calls[1]?.body)).not.toContain("再実行");
     expect(JSON.stringify(calls[1]?.body)).toContain("保存先をやり直す");
+  });
+
+  it("binds the current run revision to the redo button", async () => {
+    let body: { blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }> } = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus({ ...routedRun(), revision: 1 }, "completed");
+    const redoButton = body.blocks?.flatMap((block) => block.elements ?? [])
+      .find((element) => element.action_id === "mana_meeting_minutes_redo");
+    expect(redoButton?.value).toBeDefined();
+    expect(JSON.parse(redoButton!.value!)).toMatchObject({ runId: "run-1", revision: 1 });
   });
 
   it("shows when unknown Brainbase references were removed in observe mode", async () => {
@@ -417,6 +429,41 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(bodies[1])).toContain("STATUS_PROJECTION_FAILED");
     expect(JSON.stringify(bodies[1])).toContain("処理ID: run-1");
     expect(JSON.stringify(bodies[1])).toContain("失敗段階: 状態表示");
+  });
+
+  it("reports the actual redo cleanup stage instead of claiming enqueue failed", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body))); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run: MeetingMinutesRun = { ...routedRun(), revision: 1 };
+    run.redo = { revision: 1, requestedAt: "2026-09-04T00:00:00Z", deletedTaskIds: [],
+      failure: { message: "raw upstream secret", failedAt: "2026-09-04T00:00:00Z",
+        stage: "redo_task_delete", code: "REDO_TASK_AUTHENTICATION_FAILED", retryable: false } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).showRedoFailure(run);
+    const serialized = JSON.stringify(bodies);
+    expect(serialized).toContain("失敗段階: タスクの取り消し");
+    expect(serialized).toContain("REDO_TASK_AUTHENTICATION_FAILED");
+    expect(serialized).not.toContain("REDO_ENQUEUE_FAILED");
+    expect(serialized).not.toContain("raw upstream secret");
+    const retryButton = ((bodies.at(-1)?.blocks as Array<{
+      elements?: Array<{ action_id?: string; value?: string }>;
+    }> | undefined) ?? [])
+      .flatMap((block) => block.elements ?? [])
+      .find((element) => element.action_id === "mana_meeting_minutes_confirm_redo");
+    expect(retryButton?.value).toBeDefined();
+    expect(JSON.parse(retryButton!.value!)).toMatchObject({ runId: "run-1", revision: 1 });
+  });
+
+  it("explains how to recover a pending task registration before retrying redo", () => {
+    const message = JSON.stringify(redoFailedMessage("run-1", "meeting.txt", {
+      message: "REDO_TASK_REGISTRATION_PENDING", failedAt: "2026-09-04T00:00:00Z",
+      stage: "redo_task_delete", code: "REDO_TASK_REGISTRATION_PENDING", retryable: false,
+    }));
+
+    expect(message).toContain("REDO_TASK_REGISTRATION_PENDING");
+    expect(message).toContain("タスク登録結果を確認・復旧してから");
+    expect(message).not.toContain("認証・権限の設定を修正してから");
   });
 
   it("explains how to recover when the destination Slack channel is unavailable", async () => {

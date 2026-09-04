@@ -2,7 +2,7 @@ import { isMeetingMinutesFile, meetingMinutesRunId, type AuditedGeneratedMeeting
   type MeetingMinutesContextMode, type MeetingMinutesContextReceipt,
   type MeetingMinutesDestination, type MeetingMinutesDiagnosticStage, type MeetingMinutesGenerationDiagnostics,
   type MeetingMinutesRun, type MeetingMinutesSelection,
-  type MeetingMinutesRedo, type MeetingMinutesTaskCandidate,
+  type MeetingMinutesRedo, type MeetingMinutesRedoStage, type MeetingMinutesTaskCandidate,
   meetingMinutesContextProjectCode, meetingMinutesTaskProjectCodes } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { assertGeneratedMeetingMinutesNotPlaceholder, splitMeetingMinutesForSlack,
@@ -13,7 +13,7 @@ import type { SlackQueueEvent } from "./types.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 import { assertMeetingMinutesContextUsable, bindGeneratedMeetingMinutesContext,
   reconcileMeetingMinutesTask } from "./meeting-minutes-brainbase-context.js";
-import { classifyMeetingMinutesFailure, meetingMinutesFailureLog,
+import { classifyMeetingMinutesFailure, classifyMeetingMinutesRedoFailure, meetingMinutesFailureLog,
   meetingMinutesReceiptSnapshot } from "./meeting-minutes-diagnostics.js";
 
 export interface StartMeetingMinutesOptions {
@@ -605,31 +605,49 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
     run.sourceChannelId !== command.channelId || run.sourceThreadTs !== command.threadTs) {
     throw new Error("meeting_minutes_redo_boundary_mismatch");
   }
+  const requestedRevision = command.revision ?? 0;
+  const persistedRevision = run.revision ?? 0;
+  if (requestedRevision !== persistedRevision) {
+    // An old button is terminal, not a transient queue failure. Never project
+    // its result onto the current generation's status message.
+    console.info(JSON.stringify({ event: "meeting_minutes_redo_superseded", runId: run.runId,
+      requestedRevision, currentRevision: persistedRevision }));
+    return run;
+  }
   if (run.status !== "completed" || !run.destination || !run.github || !run.slack?.processingTs) {
     throw new Error("meeting_minutes_redo_not_available");
   }
-  const redoRevision = run.revision ?? 0;
+  const redoRevision = persistedRevision;
   if (!run.redo || run.redo.revision !== redoRevision) {
     run.redo = { revision: redoRevision, requestedAt: now(options), deletedTaskIds: [] };
     run.updatedAt = now(options);
     await saveMeetingMinutesRun(fs, run);
   }
   const redoState = run.redo;
+  let redoStage: MeetingMinutesRedoStage = "redo_github_delete";
   try {
     delete redoState.failure;
+    if (run.taskRegistration?.pending) {
+      redoStage = "redo_task_delete";
+      throw new Error("meeting_minutes_redo_task_registration_pending");
+    }
     if (!redoState.githubDeletedAt) {
       await options.deleteGitHub(run.destination, [run.github.transcriptPath, run.github.minutesPath]);
       redoState.githubDeletedAt = now(options); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
+    redoStage = "redo_task_delete";
     for (const task of run.taskRegistration?.registered ?? []) {
+      if (task.status !== undefined && task.status !== "registered") continue;
       if (redoState.deletedTaskIds.includes(task.taskId)) continue;
       await options.deleteTask(task.taskId, `meeting-minutes-redo-${run.runId}-revision-${redoRevision}-${task.index}`);
       redoState.deletedTaskIds.push(task.taskId); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
+    redoStage = "redo_slack_retract";
     if (run.slack.parentTs && !redoState.sharedRetractedAt) {
       await options.retractSharedMinutes(run.destination, run.slack.parentTs, run.file.name);
       redoState.sharedRetractedAt = now(options); run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
     }
+    redoStage = "redo_destination_selection";
     const selectionTs = await options.showDestinationSelection(structuredClone(run), options.destinations);
     run.status = "awaiting_destination";
     run.revision = redoRevision + 1;
@@ -640,10 +658,11 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
     await saveMeetingMinutesRun(fs, run);
     return run;
   } catch (error) {
-    redoState.failure = { message: error instanceof Error ? error.message : "meeting_minutes_redo_failed",
-      failedAt: now(options) };
+    const diagnostic = classifyMeetingMinutesRedoFailure(redoStage, error);
+    redoState.failure = { ...diagnostic, message: diagnostic.code, failedAt: now(options) };
     run.updatedAt = now(options);
     await saveMeetingMinutesRun(fs, run);
+    console.error(JSON.stringify({ event: "meeting_minutes_redo_failed", ...meetingMinutesFailureLog(run) }));
     if (options.showRedoFailure) {
       try { await options.showRedoFailure(run); }
       catch {

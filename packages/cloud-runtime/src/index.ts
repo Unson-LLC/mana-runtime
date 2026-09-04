@@ -2116,6 +2116,10 @@ export default {
       }
       return Response.json({ runId: run.runId, status: run.status,
         destinationId: run.destination?.id, diagnostics: run.diagnostics,
+        redo: run.redo ? { revision: run.redo.revision, githubDeleted: Boolean(run.redo.githubDeletedAt),
+          deletedTaskCount: run.redo.deletedTaskIds.length, sharedRetracted: Boolean(run.redo.sharedRetractedAt),
+          failure: run.redo.failure ? { stage: run.redo.failure.stage, code: run.redo.failure.code,
+            retryable: run.redo.failure.retryable, failedAt: run.redo.failure.failedAt } : undefined } : undefined,
         taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
           pendingPresent: Boolean(run.taskRegistration?.pending),
           failure: run.taskRegistration?.failure,

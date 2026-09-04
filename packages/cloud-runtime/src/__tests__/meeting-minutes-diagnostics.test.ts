@@ -1,8 +1,23 @@
-import { classifyMeetingMinutesFailure, meetingMinutesFailureLog,
+import { classifyMeetingMinutesFailure, classifyMeetingMinutesRedoFailure, meetingMinutesFailureLog,
   meetingMinutesReceiptSnapshot } from "../meeting-minutes-diagnostics.js";
 import type { MeetingMinutesContextReceipt, MeetingMinutesRun } from "../meeting-minutes-contracts.js";
 
 describe("meeting minutes diagnostics", () => {
+  it.each([
+    ["redo_github_delete", new Error("github_delete_failed:403"), "REDO_GITHUB_FORBIDDEN", false],
+    ["redo_task_delete", Object.assign(new Error("secret upstream body"), { status: 401 }), "REDO_TASK_AUTHENTICATION_FAILED", false],
+    ["redo_task_delete", Object.assign(new Error("secret upstream body"), { status: 429 }), "REDO_TASK_RATE_LIMITED", true],
+    ["redo_slack_retract", new Error("secret upstream body"), "REDO_SLACK_FAILED", true],
+    ["redo_slack_retract", new Error("slack_api_failed:chat.update:invalid_auth"), "REDO_SLACK_AUTHENTICATION_FAILED", false],
+    ["redo_slack_retract", new Error("slack_api_failed:chat.update:not_in_channel"), "REDO_SLACK_FORBIDDEN", false],
+    ["redo_slack_retract", new Error("slack_api_failed:chat.update:ratelimited"), "REDO_SLACK_RATE_LIMITED", true],
+    ["redo_destination_selection", new Error("slack_api_failed:chat.postMessage:429"), "REDO_DESTINATION_SELECTION_RATE_LIMITED", true],
+    ["redo_destination_selection", new Error("slack_api_failed:chat.postMessage:missing_scope"), "REDO_DESTINATION_SELECTION_FORBIDDEN", false],
+    ["redo_destination_selection", new Error("slack_bot_token_not_configured"), "REDO_DESTINATION_SELECTION_AUTHENTICATION_FAILED", false],
+    ["redo_destination_selection", new Error("secret upstream body"), "REDO_DESTINATION_SELECTION_FAILED", true],
+  ] as const)("classifies redo failure at %s without upstream content", (stage, error, code, retryable) => {
+    expect(classifyMeetingMinutesRedoFailure(stage, error)).toEqual({ stage, code, retryable });
+  });
   it("bounds and sanitizes Receipt errors without persisting raw messages", () => {
     const receipt = { schema_version: "meeting_minutes_context_receipt.v1", receipt_id: "receipt-1",
       identity: { run_id: "run-1", project_code: "mana", transcript_sha256: "hash" }, status: "partial",

@@ -1,7 +1,7 @@
 import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE_ACTION_ID,
   MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID, MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
   MEETING_MINUTES_REDO_ACTION_ID, type MeetingMinutesDestination,
-  meetingMinutesTaskActionFailure, type MeetingMinutesRun,
+  meetingMinutesTaskActionFailure, type MeetingMinutesRun, type MeetingMinutesRedoFailure,
   type MeetingMinutesTaskActionFailure } from "./meeting-minutes-contracts.js";
 import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
 import type { UserFailure } from "./multitenancy/failure.js";
@@ -57,21 +57,23 @@ export function destinationSelectedMessage(runId: string, fileName: string,
   ] };
 }
 
-export function redoConfirmationMessage(runId: string, fileName: string): SlackSelectionMessage {
+export function redoConfirmationMessage(runId: string, fileName: string, revision = 0,
+  sourceThreadTs?: string): SlackSelectionMessage {
+  const confirmationValue = { runId, fileName, revision, ...(sourceThreadTs ? { sourceThreadTs } : {}) };
   return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先をやり直しますか？`, blocks: [
     { type: "section", text: { type: "mrkdwn", text: `*保存先をやり直しますか？*\nGitHubの議事録・文字起こしと自動登録タスクを取り消します。旧共有投稿は「取り消し済み」にし、保存先選択へ戻します。` } },
     { type: "actions", elements: [
       { type: "button", style: "danger", text: { type: "plain_text", text: "取り消して選び直す" },
-        action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID, value: JSON.stringify({ runId, fileName }) },
+        action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID, value: JSON.stringify(confirmationValue) },
     ] },
   ] };
 }
 
 export function redoProcessingMessage(fileName: string, runId?: string): SlackSelectionMessage {
   const processingDetails = runId ? `\n処理ID: ${runId}` : "";
-  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先をやり直しています。`, blocks: [
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更の要求を受け付けました。`, blocks: [
     { type: "section", text: { type: "mrkdwn",
-      text: `:hourglass_flowing_sand: *保存先をやり直しています…*${processingDetails}\n旧保存先の議事録とタスクを取り消したあと、保存先選択へ切り替えます。` } },
+      text: `*保存先変更の要求を受け付けました*${processingDetails}\n対象を確認し、旧保存先の議事録と今回作成したタスクを取り消したあと、保存先選択を表示します。古い操作の場合は現在の議事録・タスクを変更せず終了します。最新の状態は、このスレッドの最新の案内を確認してください。` } },
   ] };
 }
 
@@ -110,15 +112,27 @@ export function statusProjectionFailedMessage(runId: string, fileName: string): 
     "議事録処理の状態表示に失敗しました。", "処理IDを添えて運用担当者へ確認してください。");
 }
 
-export function redoFailedMessage(runId: string, fileName: string): SlackSelectionMessage {
-  const correlationId = deriveCorrelationId(runId, "redo_enqueue", "REDO_ENQUEUE_FAILED");
-  const details = `処理ID: ${runId}\n失敗段階: 処理受付\nエラーコード: REDO_ENQUEUE_FAILED\n問い合わせID: ${correlationId}`;
-  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更に失敗しました。エラーコード: REDO_ENQUEUE_FAILED（問い合わせID: ${correlationId}）`, blocks: [
+export function redoFailedMessage(runId: string, fileName: string,
+  failure?: MeetingMinutesRedoFailure, revision = 0, sourceThreadTs?: string): SlackSelectionMessage {
+  const stages = { redo_github_delete: "保存ファイルの取り消し", redo_task_delete: "タスクの取り消し",
+    redo_slack_retract: "共有投稿の取り消し", redo_destination_selection: "保存先選択の再表示" };
+  const stage = failure?.stage ?? (failure ? "redo_execution" : "redo_enqueue");
+  const stageLabel = failure?.stage ? stages[failure.stage] : failure ? "取り消し処理（工程未記録）" : "処理受付";
+  const code = failure?.code && /^(?:REDO_(GITHUB|TASK|SLACK|DESTINATION_SELECTION)_(FAILED|AUTHENTICATION_FAILED|FORBIDDEN|RATE_LIMITED)|REDO_TASK_REGISTRATION_PENDING)$/.test(failure.code)
+    ? failure.code : failure ? "REDO_EXECUTION_FAILED" : "REDO_ENQUEUE_FAILED";
+  const correlationId = deriveCorrelationId(runId, stage, code);
+  const guidance = failure?.code === "REDO_TASK_REGISTRATION_PENDING"
+    ? "タスク登録結果を確認・復旧してから、下のボタンで再実行してください。完了済みの取り消し工程は保持されています。"
+    : failure?.retryable === false
+    ? "認証・権限の設定を修正してから、下のボタンで再実行してください。完了済みの取り消し工程は保持されています。"
+    : "完了済みの取り消し工程は保持されています。下のボタンから続きを再実行できます。";
+  const details = `処理ID: ${runId}\n失敗段階: ${stageLabel}\nエラーコード: ${code}\n問い合わせID: ${correlationId}`;
+  return { replace_original: true, text: `${escapeUntrustedSlackMrkdwn(fileName)} の保存先変更に失敗しました。エラーコード: ${code}（問い合わせID: ${correlationId}）`, blocks: [
     { type: "section", text: { type: "mrkdwn",
-      text: `:warning: *保存先のやり直しを完了できませんでした*\n${details}\n完了済みの取り消し工程は保持されています。下のボタンから続きを再実行できます。` } },
+      text: `:warning: *保存先のやり直しを完了できませんでした*\n${details}\n${guidance}` } },
     { type: "actions", elements: [{ type: "button", style: "danger",
       text: { type: "plain_text", text: "取り消しを再実行" }, action_id: MEETING_MINUTES_CONFIRM_REDO_ACTION_ID,
-      value: JSON.stringify({ runId, fileName }) }] },
+      value: JSON.stringify({ runId, fileName, revision, ...(sourceThreadTs ? { sourceThreadTs } : {}) }) }] },
   ] };
 }
 
@@ -467,7 +481,7 @@ export class MeetingMinutesSlackClient {
       }
       elements.push({ type: "button", text: { type: "plain_text", text: "保存先をやり直す" },
         action_id: MEETING_MINUTES_REDO_ACTION_ID,
-        value: JSON.stringify({ runId: run.runId, fileName: run.file.name }) });
+        value: JSON.stringify({ runId: run.runId, fileName: run.file.name, revision: run.revision ?? 0 }) });
       blocks.push({ type: "actions", elements });
     } else if (!permanentBrainbaseFailure && (run.projectionFailure ?? run.diagnostics)?.retryable !== false) {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
@@ -595,7 +609,7 @@ export class MeetingMinutesSlackClient {
   }
   async showRedoFailure(run: MeetingMinutesRun): Promise<void> {
     if (!run.slack?.processingTs) throw new Error("meeting_minutes_status_coordinates_missing");
-    const message = redoFailedMessage(run.runId, run.file.name);
+    const message = redoFailedMessage(run.runId, run.file.name, run.redo?.failure, run.revision ?? 0);
     try {
       await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
         text: message.text, blocks: message.blocks });
