@@ -2,6 +2,48 @@ import { describe, expect, it, vi } from "vitest";
 import { handleBrainbaseMcpProxyRequest } from "../brainbase-mcp-proxy.js";
 
 describe("Brainbase judgment Hook proxy", () => {
+  it.each([
+    "{", "null", "[]",
+    JSON.stringify([{ jsonrpc: "2.0", method: "tools/call", params: { name: "brainbase_admin_write" } }]),
+    JSON.stringify({ jsonrpc: "2.0", method: "resources/read", params: { uri: "private://data" } }),
+  ])("rejects malformed, batch and alternate A0 operations", async (body) => {
+    const forward = vi.fn();
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.example.test" }, forward,
+      { allowedTools: ["brainbase_resolve_turn"] },
+    );
+    expect(response.status).toBe(403);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it.each(["initialize", "notifications/initialized", "ping", "tools/list", "tools/call"])("preserves required A0 MCP operation %s", async (method) => {
+    const forward = vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 1, result: {} }));
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method,
+        ...(method === "tools/call" ? { params: { name: "brainbase_resolve_turn", arguments: {} } } : {}),
+      }) }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.example.test" }, forward,
+      { allowedTools: ["brainbase_resolve_turn"] },
+    );
+    expect(response.status).toBe(200);
+    expect(forward).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["brainbase_admin_write", "brainbase_graph_query", "unknown_tool"])("denies A0 tool %s before forwarding", async (name) => {
+    const forward = vi.fn();
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: {} },
+      }) }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.example.test" }, forward,
+      { allowedTools: ["brainbase_resolve_turn", "brainbase_knowledge_resolve"] },
+    );
+    expect(response.status).toBe(403);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
   it("forwards only the Hook with a fixed project binding and strict headers", async () => {
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);

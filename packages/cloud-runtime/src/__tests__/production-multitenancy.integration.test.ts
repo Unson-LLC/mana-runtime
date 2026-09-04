@@ -289,6 +289,89 @@ describe("production multitenancy integration", () => {
     }));
   });
 
+  it("preserves an ambiguous reply state when processing fails after delivery was attempted", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      workspace_id: "T-A",
+      channel_id: "C-A",
+      actor_principal_id: "person-a",
+      project_id: "project-a",
+      deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-PROD-PROCESS-FAILURE-001",
+      operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FC4",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FC5",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+    const ledger = new TenantAccountingLedger();
+    const quota = { read_authoritative_decision: vi.fn(async () => allowedQuota(TENANT_A)) };
+    const accounting = { write: vi.fn(async () => ({ result_ref: "receipt-process-failure" })) };
+    const processFailureReplyState = vi.fn(() => "unknown" as const);
+
+    await expect(executeTenantRuntimeOperation({
+      tenant_context: value,
+      expected_scope: expectedScopeA,
+      verifier,
+      quota,
+      accounting,
+      ledger,
+      usage_unit: "model_tokens",
+      now: () => NOW,
+      process: async () => { throw new Error("provider_timeout"); },
+      process_failure_reply_state: processFailureReplyState,
+    })).rejects.toThrow("provider_timeout");
+
+    expect(processFailureReplyState).toHaveBeenCalledOnce();
+    expect(accounting.write).toHaveBeenCalledOnce();
+    expect(accounting.write).toHaveBeenCalledWith(expect.objectContaining({
+      receipt: expect.objectContaining({
+        outcome: "failed",
+        failure_code: "UPSTREAM_UNAVAILABLE",
+        reply: { state: "unknown", reply_count: 0, legacy_reply_count: 0 },
+      }),
+    }));
+  });
+
+  it("keeps an external-effect delivery claim when the provider outcome is ambiguous", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      workspace_id: "T-A",
+      channel_id: "C-A",
+      actor_principal_id: "person-a",
+      project_id: "project-a",
+      deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-PROD-AMBIGUOUS-001",
+      operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FC2",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FC3",
+    });
+    const ownership = new IdempotencyMemoryStore();
+    const failingPost = vi.fn(async () => { throw new Error("provider_timeout"); });
+    const input = {
+      tenant_context: value,
+      expected_scope: expectedScopeA,
+      ownership,
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+      now: NOW,
+      retention_until: RETENTION_UNTIL,
+      event: { text: "返信", optionalThreadContext: undefined },
+      text: "返信本文",
+      release_on_failure: false,
+      post: failingPost,
+    };
+
+    await expect(postTenantSlackReply(input)).rejects.toThrow("provider_timeout");
+    const secondPost = vi.fn(async () => "1723800001.000099");
+    await expect(postTenantSlackReply({ ...input, post: secondPost }))
+      .rejects.toMatchObject({ code: "REPLY_OWNERSHIP_CONFLICT" });
+    expect(failingPost).toHaveBeenCalledOnce();
+    expect(secondPost).not.toHaveBeenCalled();
+  });
+
   it("does not execute a blocked operation or consume quota again on the same idempotency retry", async () => {
     const { value, publicKey } = await signedEnvelope({
       tenant_id: TENANT_A,

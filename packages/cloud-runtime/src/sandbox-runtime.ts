@@ -88,6 +88,10 @@ async function authorizeTenantRuntimeProxy(
     now,
   );
   if (resolved instanceof Response) return resolved;
+  if (resolved.company_authority_envelope !== undefined
+    && new URL(request.url).hostname !== BRAINBASE_MCP_PROXY_HOST) {
+    return Response.json({ error: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN" }, { status: 403 });
+  }
   let credentialFetch: typeof fetch;
   try {
     credentialFetch = tenantCredentialFetchForResolvedContext(env, resolved);
@@ -134,8 +138,15 @@ TechKnightSandbox.outboundByHost = {
     new URL(request.url).pathname === "/host/judgment/hook"
       ? authorizeRuntimeBrainbaseOutbound(request, env)
       : authorizeTenantRuntimeProxy(
-        request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv) =>
-          handleBrainbaseMcpProxyRequest(authorized, proxyEnv, credentialFetch),
+        request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv, resolved) =>
+          handleBrainbaseMcpProxyRequest(
+            authorized,
+            proxyEnv,
+            credentialFetch,
+            resolved.company_authority_envelope !== undefined
+              ? { allowedTools: ["brainbase_resolve_turn", "brainbase_knowledge_resolve"] }
+              : undefined,
+          ),
       ),
   [GOOGLE_DRIVE_MCP_PROXY_HOST]: (request, env: SandboxRuntimeEnv) => authorizeTenantRuntimeProxy(
     request, env, ["mcp_gateway", "brainbase_proxy"], (authorized, credentialFetch, proxyEnv) =>

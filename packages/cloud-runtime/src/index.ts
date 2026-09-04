@@ -41,6 +41,7 @@ import {
   resolveCompanyAuthoritySlackQueueScope,
   type CompanyAuthorityCapabilityProviderRegistry,
 } from "./multitenancy/company-authority-queue-runtime.js";
+import { createCompanyAuthoritySelectedContainerProviderRoute } from "./multitenancy/company-authority-selected-container-operation.js";
 import {
   companyAuthorityHumanHandoffIdentity,
   processCompanyAuthorityHumanHandoff,
@@ -89,20 +90,22 @@ import { classifyMeetingMinutesDestinationInSandbox,
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
-import { isReplyEligible, postSlackReply, ReplyPipelineError } from "./reply-pipeline.js";
+import { isReplyEligible, postSlackReply, ReplyPipelineError, type ReplyProcessResult } from "./reply-pipeline.js";
 import { executeReplyRuntime } from "./reply-runtime-execution.js";
 import { readReplyJudgmentEpisode } from "./reply-judgment.js";
 import { resolveActorIdentityResolverFromEnv } from "./slack-actor-identity.js";
 import {
+  isMeetingTaskRequest,
   processMeetingTaskEvent,
 } from "./meeting-task-pipeline.js";
 import {
   parseRuntimePlacements,
   RuntimeBindingError,
   resolveRuntimePlacement,
+  type ResolvedRuntimePlacement,
 } from "./runtime-config.js";
 import { routeRuntimeEvent } from "./runtime-event-router.js";
-import { persistEventOnce, persistReplyCompletion, readReplyCompletion } from "./workspace-store.js";
+import { persistEventOnce, persistReplyCompletion, readReplyCompletion, type WorkspaceFs } from "./workspace-store.js";
 import { hydrateSlackQueueEventThreadContext } from "./slack-thread-context.js";
 import { withDisposableResource } from "./disposable-resource.js";
 import { resolveClaudeRuntimeConfig } from "./claude-runtime-config.js";
@@ -181,6 +184,7 @@ import {
 } from "./multitenancy/http-clients.js";
 import {
   createDurableCompanyAuthorityHumanHandoffClient,
+  createDurableExternalEffectOutboxClient,
   createDurableTenantAccountingClient,
   createDurableTenantStateClient,
   TenantRuntimeStateHandler,
@@ -203,10 +207,14 @@ import {
   type QuotaDecision,
   type TenantContextEnvelope,
 } from "./multitenancy/contracts.js";
+import type { AcceptedCompanyAuthorityContext } from "./multitenancy/company-authority-runtime-adapter.js";
+import type { ExternalEffectProviderResult } from "./multitenancy/company-authority-external-effect-outbox.js";
 import { deny, TenantBoundaryError } from "./multitenancy/errors.js";
 import { resolveCanonicalProjectScope } from "./multitenancy/project-scope.js";
 import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
+import { readSlackDeliveryReadback } from "./multitenancy/slack-delivery-readback.js";
+import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
 import { createBrainbaseTrustedProviderForwarderFromEnv } from "./multitenancy/trusted-provider-forwarder.js";
 import {
   resolveDurableTenantBoundaryContext,
@@ -336,6 +344,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   BRAINBASE_COMPANY_AUTHORITY_EXPECTED_DEPLOYMENT_ID?: string;
   BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON?: string;
   MANA_COMPANY_AUTHORITY_OPERATIONS_JSON?: string;
+  MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON?: string;
   BRAINBASE_TENANT_RUNTIME_ENABLED?: string;
   BRAINBASE_TENANT_RUNTIME_HOST?: string;
   BRAINBASE_TENANT_RUNTIME_PORT?: string;
@@ -378,10 +387,42 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
 
 interface WorkspaceEnv {}
 
-// Production remains fail closed until a credential-backed provider adapter
-// with reconciliation evidence is registered explicitly per capability.
-const companyAuthorityProviderRoutes = {} as const satisfies
-  CompanyAuthorityCapabilityProviderRegistry<SlackQueueEvent>;
+function createCompanyAuthorityProviderRoutes(
+  env: Env,
+  runtimeConfig: ReturnType<typeof parseCompanyAuthorityRuntimeConfiguration>,
+): CompanyAuthorityCapabilityProviderRegistry<SlackQueueEvent> {
+  // A0 is deliberately opt-in and capability-specific. Do not route a read or
+  // write operation to the external-effect executor, and do not infer a route
+  // for capabilities that have no explicit provider implementation.
+  if (runtimeConfig.state !== "enabled"
+    || env.MANA_REQUIRED_CAPABILITY_ID?.trim() !== "runtime.execute"
+    || runtimeConfig.desired_effect_by_capability["runtime.execute"] !== "external_side_effect") {
+    return {};
+  }
+  return {
+    "runtime.execute": createCompanyAuthoritySelectedContainerProviderRoute({
+      expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+      desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
+      create_outbox: (context: AcceptedCompanyAuthorityContext) => {
+        const tenantContext = context.tenant_context as {
+          idempotency_key?: unknown;
+          tenant?: { tenant_id?: unknown };
+        };
+        if (typeof tenantContext.idempotency_key !== "string"
+          || !tenantContext.idempotency_key.trim()
+          || typeof tenantContext.tenant?.tenant_id !== "string"
+          || !tenantContext.tenant.tenant_id.trim()) {
+          deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+        }
+        return createDurableExternalEffectOutboxClient(env.TENANT_RUNTIME_STATE, {
+          tenant_id: tenantContext.tenant.tenant_id,
+          effect_id: tenantContext.idempotency_key,
+        });
+      },
+      execute_container: (operation) => executeCompanyAuthorityReplyOperation(env, operation),
+    }),
+  };
+}
 
 export class TenantRuntimeState extends DurableObject<Env> {
   readonly #handler = new TenantRuntimeStateHandler(
@@ -481,8 +522,8 @@ export class TechKnightWorkspace extends withWorkspace(
     storage: self.workspaceStorage as unknown as DurableObjectStorageLike,
   }),
 ) {
-  async claimRuntimeEvent(eventId: string) {
-    return claimRuntimeEvent(this.ctx.storage, eventId);
+  async claimRuntimeEvent(eventId: string, preserveUntilReconciled = false) {
+    return claimRuntimeEvent(this.ctx.storage, eventId, Date.now(), preserveUntilReconciled);
   }
 
   async completeRuntimeEvent(eventId: string, claimToken: string, responseTs?: string): Promise<void> {
@@ -1679,6 +1720,369 @@ function tenantRetentionUntil(now: string): string {
   return new Date(observedAt + 30 * 24 * 60 * 60 * 1_000).toISOString();
 }
 
+type CompanyAuthorityReplyOperation = Parameters<
+  Parameters<typeof createCompanyAuthoritySelectedContainerProviderRoute>[0]["execute_container"]
+>[0];
+
+/** The first A0 provider is deliberately limited to one ordinary Slack reply. */
+export async function executeCompanyAuthorityReplyOperation(
+  env: Env,
+  operation: CompanyAuthorityReplyOperation,
+): Promise<ExternalEffectProviderResult> {
+  const { tenant_context: tenantContext, expected_scope: expectedScope,
+    company_authority_envelope: envelope, payload: event, provider_key: providerKey } = operation;
+  const request = envelope.company_authority_request;
+  if (request.requested_action.capability_id !== "runtime.execute"
+    || request.requested_action.desired_effect !== "external_side_effect"
+    || typeof operation.canonical_person_id !== "string" || !operation.canonical_person_id.trim()
+    || tenantContext.authorization.project_ids.length !== 1
+    || tenantContext.authorization.project_ids[0] !== expectedScope.project_id
+    || !providerKey || parseRuntimeControlCommand(event.text)) {
+    deny("container_launch", "AUTHORITY_SCOPE_MISMATCH");
+  }
+  const config = parseCompanyAuthorityRuntimeConfiguration(env);
+  if (config.state !== "enabled") deny("container_launch", "AUTHORITY_UNAVAILABLE");
+  const clients = tenantRuntimeClients(env, tenantContext);
+  const now = () => new Date().toISOString();
+  const readSnapshot = () => clients.authority.read_workspace_connection(
+    tenantContext.workspace_connection.connection_id);
+  const resolveKey = (keyId: string) => resolveTenantVerificationKey(env, keyId);
+  const verifier = new TenantRuntimeBoundaryVerifier({
+    read_authoritative_snapshot: () => readSnapshot(), resolve_verification_key: resolveKey,
+  });
+  const boundary = async <T>(name: BoundaryName, execute: () => Promise<T>): Promise<T> => {
+    const accepted = await executeCompanyAuthorityRuntimeBoundary({
+      boundary: name, envelope, acceptance: { ...config.acceptance, now: now() },
+      tenant_verifier: verifier, expected_tenant_scope: expectedScope, require_auto: true,
+      validate_payload_binding: async (context, observed, payload) => {
+        await resolveCompanyAuthoritySlackQueueScope({ context, request: observed, payload,
+          expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+          desired_effect_by_capability: config.desired_effect_by_capability });
+        if (context.actor.canonical_person_id !== operation.canonical_person_id
+          || jcsCanonicalize(context.tenant_context) !== jcsCanonicalize(tenantContext)
+          || jcsCanonicalize(payload) !== jcsCanonicalize(event)) {
+          deny(name, "AUTHORITY_SCOPE_MISMATCH");
+        }
+      },
+      execute_auto: execute,
+    });
+    return accepted.result as T;
+  };
+  return boundary("container_launch", async () => {
+    const placement = resolveRuntimePlacement(event, {
+      tenantId: tenantContext.tenant.tenant_id,
+      workspaceId: tenantContext.workspace_connection.workspace_id,
+      placements: canonicalRuntimePlacements(env),
+    });
+    if (placement.projectCodes.length !== 1 || placement.projectCodes[0] !== expectedScope.project_id) {
+      deny("container_launch", "AUTHORITY_SCOPE_MISMATCH");
+    }
+    const brokerFetch = createTenantCredentialFetch({ envelope: tenantContext,
+      expected_scope: expectedScope, broker: clients.credential_broker,
+      trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: tenantContext }),
+      read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey, now });
+    // The shared pipeline's cosmetic status/reaction requests are not part of
+    // this single-effect authority. Only postReply below can send Slack writes.
+    const credentialFetch: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      const target = new URL(req.url);
+      if (target.hostname === "slack.com" && req.method !== "GET") {
+        deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
+      }
+      return boundary("brainbase_proxy", () => brokerFetch(req));
+    };
+    const stub = env.TECHKNIGHT_WORKSPACE.get(env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event)));
+    return withDisposableResource(() => getWorkspace(stub as unknown as WorkspaceHandle), async (workspace) => {
+      const workspaceSession = await readWorkspaceSession(workspace.fs);
+      if (!isReplyEligible(event, { expectedTenantId: tenantContext.tenant.tenant_id,
+        expectedWorkspaceId: tenantContext.workspace_connection.workspace_id,
+        allowedChannelId: placement.channelId, respondPolicy: placement.respondTo,
+        isEngagedThread: workspaceSession.engaged === true,
+        botAttributedAppMentionUserIds: placement.audience?.allowedUserIds })) {
+        return { applied: false, response_observed: true, failure_code: "REPLY_NOT_ELIGIBLE" };
+      }
+      const claim = await stub.claimRuntimeEvent(runtimeDeliveryId(event), true);
+      // A prior/ambiguous execution is never turned into a second provider send.
+      if (claim.disposition !== "claimed") return { applied: true, response_observed: false };
+      await persistEventOnce(workspace.fs, event);
+      await reconcilePermissionRevision(workspace.fs, placement.permissionRevision ?? "legacy-v1", event.receivedAt);
+      const model = workspaceSession.modelOverride === "opus" || workspaceSession.modelOverride === "sonnet"
+        ? workspaceSession.modelOverride : placement.agent?.model;
+      const claudeRuntime = resolveClaudeRuntimeConfig(env, model);
+      const trace: TurnRuntimeTrace = { placementId: placement.placementId,
+        projectCodes: [expectedScope.project_id], actorIdHash: await actorIdHash(event),
+        workerVersion: env.CF_VERSION_METADATA?.id, model: claudeRuntime.model, effort: claudeRuntime.effort };
+      let observedTs: string | undefined;
+      let deliveryAttempted = false;
+      const result = await executeTenantRuntimeOperation({ tenant_context: tenantContext,
+        expected_scope: expectedScope, verifier, quota: clients.quota, accounting: clients.accounting,
+        ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
+        usage_unit: "model_tokens", accounting_effect_id: providerKey, now,
+        process: () => executeTenantContainerOperationWithRegistry({ namespace: env.TENANT_RUNTIME_STATE,
+          tenant_context: tenantContext, expected_scope: expectedScope, verifier, now: now(),
+          company_authority_envelope: envelope,
+          execute: (tenantBoundaryHandle) => executeSharedReplyRuntime({ env, fs: workspace.fs, event,
+            placement, runtimeTenantId: tenantContext.tenant.tenant_id,
+            runtimeWorkspaceId: tenantContext.workspace_connection.workspace_id,
+            workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle, trace,
+            canonicalPersonId: operation.canonical_person_id as string,
+            canonicalProjectId: expectedScope.project_id,
+            postReply: async (replyEvent, text) => {
+              if (observedTs !== undefined) deny("slack_delivery", "REPLY_OWNERSHIP_CONFLICT");
+              // Hydration may add prompt context, but cannot redirect the
+              // signed request to another tenant, actor, message, or thread.
+              if (replyEvent.tenantId !== event.tenantId
+                || replyEvent.workspaceId !== event.workspaceId
+                || replyEvent.channelId !== event.channelId
+                || replyEvent.userId !== event.userId
+                || replyEvent.eventId !== event.eventId
+                || replyEvent.messageTs !== event.messageTs
+                || replyEvent.threadTs !== event.threadTs) {
+                deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
+              }
+              // Resolve the bot identity using the same tenant-bound credential
+              // that will send and read back the message, never a global token.
+              const authResponse = await credentialFetch("https://slack.com/api/auth.test");
+              const auth = await authResponse.json() as { ok?: unknown; team_id?: unknown; bot_id?: unknown };
+              if (!authResponse.ok || auth.ok !== true
+                || auth.team_id !== tenantContext.workspace_connection.workspace_id
+                || typeof auth.bot_id !== "string" || !auth.bot_id) {
+                deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
+              }
+              const deliveryNow = now();
+              const ts = await boundary("slack_delivery", () => postTenantSlackReply({
+                tenant_context: tenantContext, expected_scope: expectedScope,
+                ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, tenantContext.tenant.tenant_id),
+                read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey,
+                now: deliveryNow, retention_until: tenantRetentionUntil(deliveryNow),
+                event: replyEvent, text, effect_id: providerKey, release_on_failure: false,
+                post: () => {
+                  deliveryAttempted = true;
+                  return postSlackReply(replyEvent, text, { fetch: brokerFetch, provider_key: providerKey });
+                },
+              }));
+              observedTs = ts;
+              const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(escapeUntrustedSlackMrkdwn(text)));
+              const bodyHash = `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+              const readback = await readSlackDeliveryReadback({ observed: { channel: replyEvent.channelId, ts },
+                expected: { workspaceId: tenantContext.workspace_connection.workspace_id,
+                  appId: tenantContext.workspace_connection.app_id, botId: auth.bot_id },
+                threadTs: replyEvent.threadTs, bodyHash, window: { oldest: ts, latest: ts },
+                expiresAt: Math.min(Date.now() + 30_000, Date.parse(tenantContext.expires_at)),
+              }, credentialFetch);
+              console.log(JSON.stringify({ event: "company_authority_slack_readback",
+                correlation_id: tenantContext.correlation_id, operation_id: tenantContext.operation_id,
+                provider_key: providerKey, state: readback.state, receipt: readback.receipt,
+                ...(readback.state === "unknown" ? { reason: readback.reason } : {}) }));
+              if (readback.state !== "confirmed") throw new Error(`SLACK_READBACK_${readback.reason}`);
+              return ts;
+            },
+          }),
+        }),
+        process_failure_reply_state: () => deliveryAttempted ? "unknown" : "not_attempted",
+      });
+      if (!observedTs || result.responseTs !== observedTs) return { applied: true, response_observed: false };
+      await stub.completeRuntimeEvent(runtimeDeliveryId(event), claim.claimToken, observedTs);
+      return { applied: true, response_observed: true, result_ref: `slack:${event.channelId}:${observedTs}` };
+    });
+  });
+}
+
+interface SharedReplyRuntimeInput {
+  env: Env;
+  fs: WorkspaceFs;
+  event: SlackQueueEvent;
+  placement: ResolvedRuntimePlacement;
+  runtimeTenantId: string;
+  runtimeWorkspaceId: string;
+  workspaceSession: Awaited<ReturnType<typeof readWorkspaceSession>>;
+  tenantCredentialFetch: typeof fetch;
+  claudeRuntime: ReturnType<typeof resolveClaudeRuntimeConfig>;
+  tenantBoundaryHandle: string;
+  trace: TurnRuntimeTrace;
+  postReply(event: SlackQueueEvent, text: string): Promise<string>;
+  /** Set only for an already accepted Company Authority actor. */
+  canonicalPersonId?: string;
+  /** Set only for an already accepted Company Authority project scope. */
+  canonicalProjectId?: string;
+}
+
+/**
+ * Shared ordinary reply executor for the legacy T0 queue and A0's selected
+ * runtime.execute provider. The caller owns queue/idempotency and container
+ * admission; this function owns the real reply pipeline and its existing task,
+ * graph, triage, sandbox, and Slack delivery dependencies.
+ */
+function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<ReplyProcessResult> {
+  const {
+    env,
+    fs,
+    event,
+    placement,
+    runtimeTenantId,
+    runtimeWorkspaceId,
+    workspaceSession,
+    tenantCredentialFetch,
+    claudeRuntime,
+    tenantBoundaryHandle,
+    trace,
+    postReply,
+  } = input;
+  const canonicalProjectId = input.canonicalProjectId ?? placement.projectCodes[0];
+  const canonicalPersonId = input.canonicalPersonId;
+  // A0's accepted actor is already canonical. Only the ordinary T0 caller
+  // constructs the legacy resolver; A0 must never regenerate identity here.
+  const actorIdentityResolver = canonicalPersonId === undefined
+    ? resolveActorIdentityResolverFromEnv(env)
+    : undefined;
+  return executeReplyRuntime({
+    fs,
+    event,
+    taskSearch: {
+      tenantId: runtimeTenantId,
+      workspaceId: runtimeWorkspaceId,
+      channelId: placement.channelId,
+      projectCodes: input.canonicalProjectId ?? placement.projectCodes.join(","),
+      taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
+      brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
+      tenantCredentialFetchConfigured: true,
+    },
+    prepareRequester: async () => {
+      const profileResolution = await resolveSlackUserProfile({
+        userId: event.userId ?? "",
+        fetchImpl: tenantCredentialFetch,
+      });
+      // users.info is enrichment, not the authorization boundary. Some Slack
+      // installations intentionally omit users:read. Canonical Graph identity
+      // resolution remains mandatory for ordinary T0 callers; A0 uses only its
+      // accepted canonical person id.
+      let requesterProfile;
+      try {
+        requesterProfile = requesterProfileOrFallback(event.userId ?? "", profileResolution);
+      } catch {
+        throw new ReplyPipelineError("requester_profile_rejected");
+      }
+      const graphOptions = {
+        baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
+        fetch: tenantCredentialFetch,
+      };
+      const mappedActor = await actorIdentityResolver?.(event);
+      const requesterResolution = canonicalPersonId !== undefined
+        ? { status: "resolved" as const, personId: canonicalPersonId }
+        : mappedActor
+          ? { status: "resolved" as const, personId: mappedActor.personId }
+          : await resolveGraphRequester(
+            event.workspaceId,
+            event.userId ?? "",
+            placement.projectCodes[0],
+            graphOptions,
+          );
+      if (requesterResolution.status !== "resolved") {
+        throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
+      }
+      const { taskWriteEnabled, taskWriteCapability } = canonicalPersonId !== undefined
+        ? { taskWriteEnabled: false, taskWriteCapability: undefined }
+        : await issueTaskWriteRequestContext(
+        event,
+        env,
+        Date.now(),
+        placement,
+        requesterResolution.personId,
+      );
+      const graphContext = await hydrateGraphContext(event, canonicalProjectId, graphOptions);
+      if (graphContext.status === "unavailable") {
+        throw new ReplyPipelineError("graph_context_unavailable");
+      }
+      return {
+        requesterIdentity: {
+          slackUserId: event.userId ?? "",
+          personId: requesterResolution.personId,
+        },
+        requesterProfile,
+        graphContext: graphContext.content,
+        taskWriteEnabled,
+        taskWriteCapability,
+      };
+    },
+    options: {
+      expectedTenantId: runtimeTenantId,
+      expectedWorkspaceId: runtimeWorkspaceId,
+      allowedChannelId: placement.channelId,
+      fetch: tenantCredentialFetch,
+      oauthConfigured: true,
+      tenantBoundaryHandle,
+      claudeRuntime,
+      brainbaseProjectCode: canonicalProjectId,
+      runtimeContext: placement.runtimeContext
+        ? { ...placement.runtimeContext, escalationEmployee: placement.agent?.escalationEmployee }
+        : undefined,
+      capabilities: canonicalPersonId !== undefined ? { mcp: [], gatewayTools: [] } : placement.capabilities,
+      resolveActorIdentity: actorIdentityResolver,
+      trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
+      respondPolicy: placement.respondTo,
+      isEngagedThread: workspaceSession.engaged === true,
+      botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
+      createSandbox: (sandboxId: string) => createTechKnightSandbox(env, sandboxId),
+      hydrateThreadContext: async (inputEvent: SlackQueueEvent) => {
+        const hydrated = await hydrateSlackQueueEventThreadContext(inputEvent, {
+          fetch: tenantCredentialFetch,
+          contextAfterTs: workspaceSession.contextAfterTs,
+        });
+        const withParticipants = {
+          ...hydrated,
+          threadContext: await appendSlackThreadParticipantProfiles(hydrated.threadContext, {
+            fetchImpl: tenantCredentialFetch,
+          }),
+        };
+        return hydrateSlackAttachments(withParticipants, { fetchImpl: tenantCredentialFetch });
+      },
+      postReply,
+    },
+    triage: async (triageEvent, requester) => {
+      const hydrated = await hydrateSlackQueueEventThreadContext(triageEvent, {
+        fetch: tenantCredentialFetch,
+        contextAfterTs: workspaceSession.contextAfterTs,
+      });
+      const withParticipants = {
+        ...hydrated,
+        threadContext: await appendSlackThreadParticipantProfiles(hydrated.threadContext, {
+          fetchImpl: tenantCredentialFetch,
+        }),
+      };
+      const hydratedWithAttachments = await hydrateSlackAttachments(withParticipants, {
+        fetchImpl: tenantCredentialFetch,
+      });
+      const recentThread = (hydratedWithAttachments.threadContext ?? "")
+        .split("\n")
+        .filter(Boolean)
+        .slice(-10)
+        .map((text) => ({ speaker: "thread", text }));
+      const decision = await runRuntimeTriage({
+        botName: "まな",
+        persona: placement.runtimeContext?.persona,
+        speakerName: requester.requesterProfile.displayName
+          ?? requester.requesterProfile.realName
+          ?? requester.requesterProfile.handle
+          ?? "Slack user",
+        channelType: triageEvent.channelType ?? "channel",
+        messageText: triageEvent.text,
+        attachmentNames: triageEvent.files?.map((file) => file.name),
+        recentThread,
+      }, {
+        model: claudeRuntime.model,
+        effort: claudeRuntime.effort,
+        tenantBoundaryHandle,
+        createSandbox: (sandboxId: string) => createTechKnightSandbox(env, sandboxId),
+      });
+      emitTurnLog("log", "mana_triage_decided", triageEvent, trace, {
+        outcome: decision.action,
+        reasonCode: decision.reason,
+      });
+      return decision;
+    },
+  });
+}
+
 async function processTenantMeetingMinutesSelection(input: {
   env: Env;
   config: ReturnType<typeof meetingMinutesRuntimeConfig>;
@@ -2792,6 +3196,7 @@ export default {
           message.retry();
           continue;
         }
+        const companyAuthorityProviderRoutes = createCompanyAuthorityProviderRoutes(env, runtimeConfig);
         await consumeCompanyAuthorityQueueMessage({
           body: companyAuthorityEnvelope,
           ack: () => message.ack(),
@@ -3588,110 +3993,20 @@ export default {
                         hydrateThreadContext,
                       });
                     },
-                    processReply: () => {
-                      const actorIdentityResolver = resolveActorIdentityResolverFromEnv(env);
-                      return executeReplyRuntime({
+                    processReply: () => executeSharedReplyRuntime({
+                      env,
                       fs: workspace.fs,
                       event,
-                      taskSearch: {
-                        tenantId: runtimeTenantId,
-                        workspaceId: runtimeWorkspaceId,
-                        channelId: placement.channelId,
-                        projectCodes: placement.projectCodes.join(","),
-                        taskSearchEnabled: env.RUNTIME_TASK_SEARCH_ENABLED,
-                        brainbaseApiBaseUrl: env.BRAINBASE_TASK_API_BASE_URL,
-                        tenantCredentialFetchConfigured: true,
-                      },
-                      prepareRequester: async () => {
-                        const profileResolution = await resolveSlackUserProfile({ userId: event.userId ?? "",
-                          fetchImpl: tenantCredentialFetch,
-                        });
-                        // users.info is enrichment, not the authorization boundary. Some Slack
-                        // installations intentionally omit users:read. Canonical Graph identity
-                        // resolution below remains mandatory and fail-closed; a profile outage must
-                        // not prevent an otherwise authorized requester from using the runtime.
-                        let requesterProfile;
-                        try {
-                          requesterProfile = requesterProfileOrFallback(event.userId ?? "", profileResolution);
-                        } catch {
-                          throw new ReplyPipelineError("requester_profile_rejected");
-                        }
-                        const graphOptions = {
-                          baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
-                          fetch: tenantCredentialFetch,
-                        };
-                        const mappedActor = await actorIdentityResolver?.(event);
-                        const requesterResolution = mappedActor
-                          ? { status: "resolved" as const, personId: mappedActor.personId }
-                          : await resolveGraphRequester(
-                              event.workspaceId, event.userId ?? "", placement.projectCodes[0], graphOptions,
-                            );
-                        if (requesterResolution.status !== "resolved") {
-                          throw new ReplyPipelineError(`requester_identity_${requesterResolution.status}`);
-                        }
-                        const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
-                          event, env, Date.now(), placement, requesterResolution.personId,
-                        );
-                        const graphContext = await hydrateGraphContext(event, placement.projectCodes[0], graphOptions);
-                        if (graphContext.status === "unavailable") {
-                          throw new ReplyPipelineError("graph_context_unavailable");
-                        }
-                        return {
-                          requesterIdentity: { slackUserId: event.userId ?? "", personId: requesterResolution.personId },
-                          requesterProfile,
-                          graphContext: graphContext.content,
-                          taskWriteEnabled,
-                          taskWriteCapability,
-                        };
-                      },
-                      options: {
-                        expectedTenantId: runtimeTenantId,
-                        expectedWorkspaceId: runtimeWorkspaceId,
-                        allowedChannelId: placement.channelId,
-                        fetch: tenantCredentialFetch,
-                        oauthConfigured: true,
-                        tenantBoundaryHandle,
-                        claudeRuntime,
-                        brainbaseProjectCode: placement.projectCodes[0],
-                        runtimeContext: placement.runtimeContext ? { ...placement.runtimeContext,
-                          escalationEmployee: placement.agent?.escalationEmployee } : undefined,
-                        capabilities: placement.capabilities,
-                        resolveActorIdentity: actorIdentityResolver,
-                        trace: { ...trace, model: claudeRuntime.model, effort: claudeRuntime.effort },
-                        respondPolicy: placement.respondTo,
-                        isEngagedThread: workspaceSession.engaged === true,
-                        botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
-                        createSandbox: (sandboxId: string) => createTechKnightSandbox(env, sandboxId),
-                        hydrateThreadContext,
-                        postReply: postTenantReply,
-                      },
-                      triage: async (triageEvent, requester) => {
-                        const hydrated = await hydrateThreadContext(triageEvent);
-                        const recentThread = (hydrated.threadContext ?? "").split("\n").filter(Boolean).slice(-10)
-                          .map((text) => ({ speaker: "thread", text }));
-                        const decision = await runRuntimeTriage({
-                          botName: "まな",
-                          persona: placement.runtimeContext?.persona,
-                          speakerName: requester.requesterProfile.displayName ?? requester.requesterProfile.realName
-                            ?? requester.requesterProfile.handle ?? "Slack user",
-                          channelType: triageEvent.channelType ?? "channel",
-                          messageText: triageEvent.text,
-                          attachmentNames: triageEvent.files?.map((file) => file.name),
-                          recentThread,
-                        }, {
-                          model: claudeRuntime.model,
-                          effort: claudeRuntime.effort,
-                          tenantBoundaryHandle,
-                          createSandbox: (sandboxId) => createTechKnightSandbox(env, sandboxId),
-                        });
-                        emitTurnLog("log", "mana_triage_decided", triageEvent, trace, {
-                          outcome: decision.action,
-                          reasonCode: decision.reason,
-                        });
-                        return decision;
-                      },
-                      });
-                    },
+                      placement,
+                      runtimeTenantId,
+                      runtimeWorkspaceId,
+                      workspaceSession,
+                      tenantCredentialFetch,
+                      claudeRuntime,
+                      tenantBoundaryHandle,
+                      trace,
+                      postReply: postTenantReply,
+                    }),
                   }),
                 });
               });

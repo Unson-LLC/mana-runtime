@@ -187,6 +187,25 @@ describe("TechKnight Slack reply pipeline", () => {
     ].join("\n"));
   });
 
+  it("carries an explicitly supplied external-effect provider key in Slack metadata", async () => {
+    const { options, fetchMock } = harness();
+
+    await postSlackReply(event(), "返信本文", {
+      ...options,
+      provider_key: "provider-key-01",
+    });
+
+    const [, request] = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("chat.postMessage")
+    ) as [string, RequestInit];
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      metadata: {
+        event_type: "mana_external_effect",
+        event_payload: { provider_key: "provider-key-01" },
+      },
+    });
+  });
+
   it("uses a fresh Container for a retry of the same tenant operation", async () => {
     const { options } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
 
@@ -796,6 +815,20 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(JSON.stringify(entries)).not.toContain("per_test_001");
     expect(JSON.stringify(entries)).not.toContain("テスト太郎");
     logSpy.mockRestore();
+  });
+
+  it("preserves an accepted requester identity for an ordinary reply", async () => {
+    const fs = new MemoryFs();
+    const { options, sandbox } = harness({
+      requesterIdentity: { slackUserId: "U_USER", personId: "per_accepted" },
+    });
+
+    await processReplyEvent(fs, event(), options);
+
+    const writes = Object.fromEntries(sandbox.writeFile.mock.calls.map(([path, content]) => [path, content]));
+    const prompt = String(writes["/tmp/mana-slack-prompt.txt"]);
+    expect(prompt).toContain('Brainbase person_id "per_accepted"です。');
+    expect(prompt).toContain("requester_slack_user_id: U_USER");
   });
 
   it("never lets a prompt-injection-shaped Slack display name become an instruction-bearing identity line", async () => {

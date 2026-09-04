@@ -227,6 +227,12 @@ export async function proxyDevelopmentCallback(
     new Date().toISOString(),
   );
   if (resolved instanceof Response) return resolved;
+  // A Company Authority callback must use the selected operation route. This
+  // sandbox callback proxy is not an approved A0 effect boundary, so reject
+  // before parsing, claiming ownership, or forwarding downstream.
+  if (resolved.company_authority_envelope !== undefined) {
+    return Response.json({ error: "COMPANY_AUTHORITY_OPERATION_FORBIDDEN" }, { status: 403 });
+  }
   const raw = await request.text();
   const payload = parseDevelopmentCallbackPayload(
     await Promise.resolve().then(() => JSON.parse(raw)).catch(() => undefined),

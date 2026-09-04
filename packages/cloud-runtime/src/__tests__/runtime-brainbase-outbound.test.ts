@@ -52,6 +52,24 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
     expect(providerFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("never falls back to a global Hook token/project for Company Authority", async () => {
+    boundaryMocks.resolve.mockResolvedValue({
+      tenant_context: { operation_id: "op-a0" }, company_authority_envelope: { accepted: true },
+    });
+    const providerFetch = vi.fn();
+    const response = await authorizeRuntimeBrainbaseOutbound(
+      new Request("https://brainbase-mcp.internal/host/judgment/hook", { method: "POST", body: "{}" }),
+      {
+        TENANT_RUNTIME_STATE: {} as TenantBoundaryContextNamespace,
+        BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp",
+        BRAINBASE_MCP_TOKEN: "global-token-must-not-be-used",
+        BRAINBASE_JUDGMENT_PROJECT_CODE: "other-project",
+      }, providerFetch,
+    );
+    expect(response.status).toBe(503);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
   it("fails closed before using the platform credential when the tenant boundary is rejected", async () => {
     boundaryMocks.resolve.mockResolvedValue(new Response("rejected", { status: 403 }));
     const providerFetch = vi.fn();

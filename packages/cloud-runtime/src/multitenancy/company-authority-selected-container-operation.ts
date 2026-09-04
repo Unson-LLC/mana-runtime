@@ -25,6 +25,7 @@ export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
     expected_scope: ExpectedTenantScope;
     company_authority_envelope: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>;
     payload: SlackQueueEvent;
+    canonical_person_id: unknown;
   }): Promise<ExternalEffectProviderResult>;
 }): CompanyAuthorityExternalEffectProviderRoute<SlackQueueEvent> {
   return {
@@ -49,6 +50,7 @@ export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
         expected_scope: expectedScope,
         company_authority_envelope: structuredClone(envelope),
         payload: structuredClone(payload),
+        canonical_person_id: context.actor?.canonical_person_id,
       });
     },
   };
