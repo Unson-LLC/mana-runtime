@@ -112,6 +112,22 @@ describe("tenant Slack runtime wiring", () => {
     expect(queue).toContain('stage: "company_authority_runtime_disabled"');
   });
 
+  it("routes ambiguous external effects through readback reconciliation before malformed ACK", () => {
+    const queueStart = source.indexOf("async queue(");
+    const queue = source.slice(queueStart);
+    const reconciliationAt = queue.indexOf("isExternalEffectReconciliationQueueCandidate(message.body)");
+    const malformedAckAt = queue.indexOf("if (ackMalformedTenantQueueMessage", reconciliationAt);
+
+    expect(reconciliationAt).toBeGreaterThan(-1);
+    expect(malformedAckAt).toBeGreaterThan(reconciliationAt);
+    expect(queue.slice(reconciliationAt, malformedAckAt)).toContain(
+      "reconcileCompanyAuthorityReplyOperation(env, message.body)",
+    );
+    expect(queue.slice(reconciliationAt, malformedAckAt)).toContain('outcome === "succeeded"');
+    expect(queue.slice(reconciliationAt, malformedAckAt)).toContain("message.retry();");
+    expect(queue.slice(reconciliationAt, malformedAckAt)).not.toContain("postSlackReply(");
+  });
+
   it("exposes installation lifecycle and single-use OAuth intent routes", () => {
     expect(source).toContain('url.pathname === "/internal/slack/installations/lifecycle"');
     expect(source).toContain('url.pathname === "/slack/installations/oauth/start"');

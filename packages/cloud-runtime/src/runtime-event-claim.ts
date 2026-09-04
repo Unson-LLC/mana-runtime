@@ -11,7 +11,7 @@ export interface TransactionalStorage {
   transaction<T>(callback: (transaction: Transaction) => Promise<T>): Promise<T>;
 }
 
-interface EventClaim {
+export interface RuntimeEventClaimSnapshot {
   status: "processing" | "completed";
   claimedAt: number;
   claimToken: string;
@@ -19,6 +19,8 @@ interface EventClaim {
   responseTs?: string;
   completedAt?: number;
 }
+
+type EventClaim = RuntimeEventClaimSnapshot;
 
 export type RuntimeEventClaimResult =
   | { disposition: "claimed"; claimToken: string }
@@ -92,6 +94,13 @@ export async function completeRuntimeEvent(
   const storageKey = key(eventId);
   await storage.transaction(async (transaction) => {
     const current = await transaction.get<EventClaim>(storageKey);
+    if (current?.status === "completed") {
+      if (current.claimToken !== claimToken
+        || (responseTs !== undefined && current.responseTs !== responseTs)) {
+        throw new Error("runtime_event_claim_conflict");
+      }
+      return;
+    }
     if (current?.status !== "processing") throw new Error("runtime_event_claim_missing");
     if (current.claimToken !== claimToken) throw new Error("runtime_event_claim_conflict");
     await transaction.put(storageKey, {
@@ -101,6 +110,17 @@ export async function completeRuntimeEvent(
       ...(responseTs ? { responseTs } : {}),
       completedAt: now,
     } satisfies EventClaim);
+  });
+}
+
+export async function readRuntimeEventClaim(
+  storage: TransactionalStorage,
+  eventId: string,
+): Promise<RuntimeEventClaimSnapshot | undefined> {
+  const storageKey = key(eventId);
+  return storage.transaction(async (transaction) => {
+    const current = await transaction.get<EventClaim>(storageKey);
+    return current ? structuredClone(current) : undefined;
   });
 }
 

@@ -1,8 +1,10 @@
-import type {
-  AccountingArtifact,
-  AccountingLedgerClaim,
-  AccountingLedgerResult,
-  TenantAccountingLedgerStore,
+import {
+  assertValidAccountingLedgerClaim,
+  createAccountingLedgerClaim,
+  type AccountingArtifact,
+  type AccountingLedgerClaim,
+  type AccountingLedgerResult,
+  type TenantAccountingLedgerStore,
 } from "./accounting.js";
 import type {
   IdempotencyClaim,
@@ -20,12 +22,17 @@ import {
 } from "./idempotency.js";
 import { deny, TenantBoundaryError } from "./errors.js";
 import { tenantPartitionKey } from "./isolation.js";
+import { jcsCanonicalize } from "./jcs.js";
 import type { TenantContextEnvelope } from "./contracts.js";
 import {
   assertClaimTokenOwner,
   assertSameEffect,
   assertValidClaim,
+  assertValidExternalEffectReconciliationJob,
+  assertValidReconciliationSettlementTransition,
   assertValidTransition,
+  type ExternalEffectReconciliationJob,
+  type ExternalEffectReconciliationQueue,
   type ExternalEffectOutboxRecord,
   type ExternalEffectOutboxStore,
 } from "./company-authority-external-effect-outbox.js";
@@ -55,6 +62,10 @@ function idempotencyStorageKey(partitionKey: string): string {
 
 function externalEffectStorageKey(tenantId: string, effectId: string): string {
   return `external-effect-outbox:${JSON.stringify([tenantId, effectId])}`;
+}
+
+function externalEffectReconciliationStorageKey(tenantId: string, effectId: string): string {
+  return `external-effect-reconciliation:${JSON.stringify([tenantId, effectId])}`;
 }
 
 const EXTERNAL_EFFECT_SCOPE_KEY = "external-effect-outbox:scope";
@@ -159,6 +170,74 @@ class DurableExternalEffectOutboxStore implements ExternalEffectOutboxStore {
       externalEffectStorageKey(tenantId, effectId),
     );
     return record ? clone(record) : null;
+  }
+}
+
+class DurableExternalEffectReconciliationQueue implements ExternalEffectReconciliationQueue {
+  constructor(
+    private readonly storage: TenantStateStorage,
+    private readonly scope: { tenant_id: string; effect_id: string },
+  ) {}
+
+  #assertScope(job: Pick<ExternalEffectReconciliationJob, "tenant_id" | "effect_id">): void {
+    if (job.tenant_id !== this.scope.tenant_id || job.effect_id !== this.scope.effect_id) {
+      deny("external_effect", "CROSS_TENANT_CANDIDATE");
+    }
+  }
+
+  async enqueue(job: ExternalEffectReconciliationJob): Promise<{
+    job: ExternalEffectReconciliationJob;
+    created: boolean;
+  }> {
+    this.#assertScope(job);
+    assertValidExternalEffectReconciliationJob(job);
+    return this.storage.transaction(async (transaction) => {
+      const key = externalEffectReconciliationStorageKey(job.tenant_id, job.effect_id);
+      const existing = await transaction.get<ExternalEffectReconciliationJob>(key);
+      if (existing) {
+        if (existing.schema_version !== job.schema_version
+          || existing.tenant_id !== job.tenant_id
+          || existing.effect_id !== job.effect_id
+          || existing.provider_key !== job.provider_key
+          || existing.payload_hash !== job.payload_hash
+          || jcsCanonicalize(existing.recovery) !== jcsCanonicalize(job.recovery)) {
+          deny("external_effect", "IDEMPOTENCY_CONFLICT");
+        }
+        return { job: clone(existing), created: false };
+      }
+      await transaction.put(key, clone(job));
+      return { job: clone(job), created: true };
+    });
+  }
+
+  async read(tenantId: string, effectId: string): Promise<ExternalEffectReconciliationJob | null> {
+    this.#assertScope({ tenant_id: tenantId, effect_id: effectId });
+    const job = await this.storage.get<ExternalEffectReconciliationJob>(
+      externalEffectReconciliationStorageKey(tenantId, effectId),
+    );
+    return job ? clone(job) : null;
+  }
+
+  async update(job: ExternalEffectReconciliationJob): Promise<ExternalEffectReconciliationJob> {
+    this.#assertScope(job);
+    assertValidExternalEffectReconciliationJob(job);
+    return this.storage.transaction(async (transaction) => {
+      const key = externalEffectReconciliationStorageKey(job.tenant_id, job.effect_id);
+      const existing = await transaction.get<ExternalEffectReconciliationJob>(key);
+      if (!existing) deny("external_effect", "EXTERNAL_EFFECT_RECONCILIATION_MISSING");
+      assertValidReconciliationSettlementTransition(existing, job);
+      if (existing.settlement && job.settlement
+        && existing.settlement.state === job.settlement.state) {
+        return clone(existing);
+      }
+      if (existing.settlement && job.settlement
+        && ["accounting_completed", "runtime_claim_completed", "settled"].indexOf(existing.settlement.state)
+          >= ["accounting_completed", "runtime_claim_completed", "settled"].indexOf(job.settlement.state)) {
+        return clone(existing);
+      }
+      await transaction.put(key, clone(job));
+      return clone(job);
+    });
   }
 }
 
@@ -365,17 +444,13 @@ class DurableTenantStateStore implements IdempotencyStore {
     artifact: AccountingArtifact;
     operation_result?: unknown;
   }): Promise<AccountingLedgerResult> {
-    const entityKeys = [...input.usage_event_ids, input.receipt_id].map((resourceId) => tenantPartitionKey({
-      tenant_id: input.tenant_context.tenant.tenant_id,
-      resource_type: "usage",
-      connection_id: input.tenant_context.workspace_connection.connection_id,
-      workspace_id: input.tenant_context.workspace_connection.workspace_id,
-      channel_id: input.tenant_context.slack.channel_id,
-      thread_ts: input.tenant_context.slack.thread_ts ?? "",
-      resource_id: resourceId,
-    }));
-    const outboxKey = entityKeys[entityKeys.length - 1];
-    const batchKey = JSON.stringify([entityKeys, input.payload_hash]);
+    const claim = createAccountingLedgerClaim({
+      tenant_context: input.tenant_context,
+      usage_event_ids: input.usage_event_ids,
+      receipt_id: input.receipt_id,
+      payload_hash: input.payload_hash,
+    });
+    const { entity_keys: entityKeys, outbox_key: outboxKey, batch_key: batchKey } = claim;
     return this.storage.transaction(async (transaction) => {
       const entries = await Promise.all(entityKeys.map((key) => transaction.get<{
         batch_key: string;
@@ -391,7 +466,7 @@ class DurableTenantStateStore implements IdempotencyStore {
           operation_result?: unknown;
         }>(`accounting-outbox:${outboxKey}`) : undefined;
         if (!pending || pending.batch_key !== batchKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
-        return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
+        return claim;
       }
       if (entries.some((entry) => entry !== undefined)) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
       if (!outboxKey) deny("brainbase_proxy", "IDEMPOTENCY_CONFLICT");
@@ -405,7 +480,7 @@ class DurableTenantStateStore implements IdempotencyStore {
           ? {}
           : { operation_result: clone(input.operation_result) }),
       });
-      return { disposition: "claimed", batch_key: batchKey, entity_keys: entityKeys, outbox_key: outboxKey };
+      return claim;
     });
   }
 
@@ -471,6 +546,7 @@ class DurableTenantStateStore implements IdempotencyStore {
   }
 
   async completeAccounting(claim: AccountingLedgerClaim): Promise<void> {
+    assertValidAccountingLedgerClaim(claim);
     await this.storage.transaction(async (transaction) => {
       for (const key of claim.entity_keys) {
         const entry = await transaction.get<{ batch_key: string; state: "claimed" | "written" }>(`accounting:${key}`);
@@ -486,6 +562,7 @@ class DurableTenantStateStore implements IdempotencyStore {
   }
 
   async releaseAccounting(claim: AccountingLedgerClaim): Promise<void> {
+    assertValidAccountingLedgerClaim(claim);
     await this.storage.transaction(async (transaction) => {
       for (const key of claim.entity_keys) {
         const storageKey = `accounting:${key}`;
@@ -523,6 +600,13 @@ export function createDurableExternalEffectOutboxStore(
   return new DurableExternalEffectOutboxStore(storage, scope);
 }
 
+export function createDurableExternalEffectReconciliationQueue(
+  storage: TenantStateStorage,
+  scope: { tenant_id: string; effect_id: string },
+): ExternalEffectReconciliationQueue {
+  return new DurableExternalEffectReconciliationQueue(storage, scope);
+}
+
 export function createDurableCompanyAuthorityHumanHandoffStore(
   storage: TenantStateStorage,
   scope: { tenant_id: string; handoff_id: string },
@@ -545,6 +629,36 @@ function externalEffectObjectName(scope: { tenant_id: string; effect_id: string 
 
 function humanHandoffObjectName(scope: { tenant_id: string; handoff_id: string }): string {
   return `company-authority-handoff:${JSON.stringify([scope.tenant_id, scope.handoff_id])}`;
+}
+
+function accountingObjectName(claim: AccountingLedgerClaim): string {
+  const partitionKey = tenantPartitionKey({
+    tenant_id: claim.tenant_id,
+    resource_type: "usage",
+    connection_id: claim.connection_id,
+    workspace_id: claim.workspace_id,
+    channel_id: claim.channel_id,
+    thread_ts: claim.thread_ts,
+    resource_id: claim.correlation_id,
+  });
+  return `accounting:${partitionKey}`;
+}
+
+function assertAccountingObjectScope(
+  objectName: string | undefined,
+  claim: AccountingLedgerClaim,
+): void {
+  assertValidAccountingLedgerClaim(claim);
+  try {
+    if (objectName !== accountingObjectName(claim)) {
+      deny("durable_object", "CROSS_TENANT_CANDIDATE");
+    }
+  } catch (error) {
+    if (error instanceof TenantBoundaryError) {
+      deny("durable_object", "CROSS_TENANT_CANDIDATE");
+    }
+    throw error;
+  }
 }
 
 function assertExternalEffectClientScope(
@@ -647,6 +761,32 @@ export function createDurableExternalEffectOutboxClient(
   };
 }
 
+export function createDurableExternalEffectReconciliationQueueClient(
+  namespace: TenantRuntimeStateNamespace,
+  scope: { tenant_id: string; effect_id: string },
+): ExternalEffectReconciliationQueue {
+  // Internal queue capability only. The worker still performs provider
+  // readback and settlement checks; this client cannot send to a provider.
+  const stub = namespace.get(namespace.idFromName(externalEffectObjectName(scope)));
+  return {
+    enqueue: async (job) => {
+      assertExternalEffectClientScope(scope, job);
+      return callState(stub, "external-effect/reconciliation/enqueue", job);
+    },
+    read: async (tenantId, effectId) => {
+      assertExternalEffectClientScope(scope, { tenant_id: tenantId, effect_id: effectId });
+      return callState(stub, "external-effect/reconciliation/read", {
+        tenant_id: tenantId,
+        effect_id: effectId,
+      });
+    },
+    update: async (job) => {
+      assertExternalEffectClientScope(scope, job);
+      return callState(stub, "external-effect/reconciliation/update", job);
+    },
+  };
+}
+
 export function createDurableCompanyAuthorityHumanHandoffClient(
   namespace: TenantRuntimeStateNamespace,
   scope: { tenant_id: string; handoff_id: string },
@@ -689,6 +829,17 @@ export function createDurableTenantAccountingClient(
     resource_id: tenantContext.correlation_id,
   });
   const stub = namespace.get(namespace.idFromName(`accounting:${statePartitionKey}`));
+  const assertClaimScope = (claim: AccountingLedgerClaim): void => {
+    assertValidAccountingLedgerClaim(claim);
+    if (claim.tenant_id !== tenantContext.tenant.tenant_id
+      || claim.connection_id !== tenantContext.workspace_connection.connection_id
+      || claim.workspace_id !== tenantContext.workspace_connection.workspace_id
+      || claim.channel_id !== tenantContext.slack.channel_id
+      || claim.thread_ts !== (tenantContext.slack.thread_ts ?? "")
+      || claim.correlation_id !== tenantContext.correlation_id) {
+      deny("durable_object", "CROSS_TENANT_CANDIDATE");
+    }
+  };
   return {
     reserve_timestamp: (input) => {
       if (input.tenant_context.tenant.tenant_id !== tenantId
@@ -726,8 +877,14 @@ export function createDurableTenantAccountingClient(
       }
       return callOptionalState(stub, "accounting/read-pending-result", input);
     },
-    complete: (claim) => callState(stub, "accounting/complete", claim),
-    release: (claim) => callState(stub, "accounting/release", claim),
+    complete: (claim) => {
+      assertClaimScope(claim);
+      return callState(stub, "accounting/complete", claim);
+    },
+    release: (claim) => {
+      assertClaimScope(claim);
+      return callState(stub, "accounting/release", claim);
+    },
   };
 }
 
@@ -785,70 +942,101 @@ export class TenantRuntimeStateHandler {
           input as unknown as Parameters<TenantAccountingLedgerStore["read_pending_result"]>[0],
         );
       } else if (url.pathname === "/accounting/complete") {
-        await this.#accounting.complete(input as unknown as AccountingLedgerClaim);
+        const claim = input as unknown as AccountingLedgerClaim;
+        assertAccountingObjectScope(this.objectName, claim);
+        await this.#accounting.complete(claim);
         result = null;
       } else if (url.pathname === "/accounting/release") {
-        await this.#accounting.release(input as unknown as AccountingLedgerClaim);
+        const claim = input as unknown as AccountingLedgerClaim;
+        assertAccountingObjectScope(this.objectName, claim);
+        await this.#accounting.release(claim);
         result = null;
       } else if (url.pathname.startsWith("/external-effect/")) {
-        const operations = new Set([
-          "/external-effect/begin",
-          "/external-effect/claim",
-          "/external-effect/write",
-          "/external-effect/read",
-        ]);
-        if (!operations.has(url.pathname)) {
-          return Response.json({ error: "not_found" }, { status: 404 });
-        }
-        const candidate = input as unknown as ExternalEffectOutboxRecord;
-        const scope = { tenant_id: candidate.tenant_id, effect_id: candidate.effect_id };
-        if (typeof scope.tenant_id !== "string" || scope.tenant_id.length === 0
-          || typeof scope.effect_id !== "string" || scope.effect_id.length === 0) {
-          deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
-        }
-        if (this.objectName !== externalEffectObjectName(scope)) {
-          deny("external_effect", "CROSS_TENANT_CANDIDATE");
-        }
-        if (url.pathname !== "/external-effect/read") {
-          const states = new Set(["pending", "in_flight", "succeeded", "failed_terminal", "unknown_requires_reconcile"]);
-          if (typeof candidate.provider_key !== "string" || candidate.provider_key.length === 0
-            || typeof candidate.payload_hash !== "string" || candidate.payload_hash.length === 0
-            || !states.has(candidate.state)) {
+        const isReconciliationEnqueue = url.pathname === "/external-effect/reconciliation/enqueue";
+        const isReconciliationRead = url.pathname === "/external-effect/reconciliation/read";
+        const isReconciliationUpdate = url.pathname === "/external-effect/reconciliation/update";
+        if (isReconciliationEnqueue || isReconciliationRead || isReconciliationUpdate) {
+          const candidate = input as unknown as ExternalEffectReconciliationJob;
+          const scope = { tenant_id: candidate.tenant_id, effect_id: candidate.effect_id };
+          if (typeof scope.tenant_id !== "string" || scope.tenant_id.length === 0
+            || typeof scope.effect_id !== "string" || scope.effect_id.length === 0) {
             deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
           }
-        }
-        if (url.pathname === "/external-effect/begin" && candidate.state !== "pending") {
-          deny("external_effect", "EXTERNAL_EFFECT_STATE_CONFLICT");
-        }
-        if (url.pathname === "/external-effect/claim") {
-          assertValidClaim(candidate);
-          if ((candidate.claim_expires_at ?? 0) <= Date.now()) {
-            deny("external_effect", "EXTERNAL_EFFECT_CLAIM_INVALID");
+          if (this.objectName !== externalEffectObjectName(scope)) {
+            deny("external_effect", "CROSS_TENANT_CANDIDATE");
           }
-        }
-        if (url.pathname === "/external-effect/write") {
-          if (candidate.state === "pending") deny("external_effect", "EXTERNAL_EFFECT_STATE_CONFLICT");
-          if (candidate.state === "in_flight") assertValidClaim(candidate);
-          if (candidate.state === "succeeded"
-            && (typeof candidate.result_ref !== "string" || candidate.result_ref.length === 0)) {
+          if (isReconciliationEnqueue || isReconciliationUpdate) {
+            assertValidExternalEffectReconciliationJob(candidate);
+          }
+          await bindExternalEffectScope(this.#storage, scope);
+          const queue = createDurableExternalEffectReconciliationQueue(this.#storage, scope);
+          if (isReconciliationEnqueue) {
+            result = await queue.enqueue(candidate);
+          } else if (isReconciliationUpdate) {
+            result = await queue.update!(candidate);
+          } else {
+            result = await queue.read(scope.tenant_id, scope.effect_id);
+          }
+        } else {
+          const operations = new Set([
+            "/external-effect/begin",
+            "/external-effect/claim",
+            "/external-effect/write",
+            "/external-effect/read",
+          ]);
+          if (!operations.has(url.pathname)) {
+            return Response.json({ error: "not_found" }, { status: 404 });
+          }
+          const candidate = input as unknown as ExternalEffectOutboxRecord;
+          const scope = { tenant_id: candidate.tenant_id, effect_id: candidate.effect_id };
+          if (typeof scope.tenant_id !== "string" || scope.tenant_id.length === 0
+            || typeof scope.effect_id !== "string" || scope.effect_id.length === 0) {
             deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
           }
-          if (candidate.state === "failed_terminal"
-            && (typeof candidate.failure_code !== "string" || candidate.failure_code.length === 0)) {
-            deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+          if (this.objectName !== externalEffectObjectName(scope)) {
+            deny("external_effect", "CROSS_TENANT_CANDIDATE");
           }
-        }
-        await bindExternalEffectScope(this.#storage, scope);
-        const outbox = createDurableExternalEffectOutboxStore(this.#storage, scope);
-        if (url.pathname === "/external-effect/begin") {
-          result = await outbox.begin(candidate);
-        } else if (url.pathname === "/external-effect/claim") {
-          result = await outbox.claim(candidate);
-        } else if (url.pathname === "/external-effect/write") {
-          await outbox.write(candidate);
-          result = null;
-        } else if (url.pathname === "/external-effect/read") {
-          result = await outbox.read(scope.tenant_id, scope.effect_id);
+          if (url.pathname !== "/external-effect/read") {
+            const states = new Set(["pending", "in_flight", "succeeded", "failed_terminal", "unknown_requires_reconcile"]);
+            if (typeof candidate.provider_key !== "string" || candidate.provider_key.length === 0
+              || typeof candidate.payload_hash !== "string" || candidate.payload_hash.length === 0
+              || !states.has(candidate.state)) {
+              deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+            }
+          }
+          if (url.pathname === "/external-effect/begin" && candidate.state !== "pending") {
+            deny("external_effect", "EXTERNAL_EFFECT_STATE_CONFLICT");
+          }
+          if (url.pathname === "/external-effect/claim") {
+            assertValidClaim(candidate);
+            if ((candidate.claim_expires_at ?? 0) <= Date.now()) {
+              deny("external_effect", "EXTERNAL_EFFECT_CLAIM_INVALID");
+            }
+          }
+          if (url.pathname === "/external-effect/write") {
+            if (candidate.state === "pending") deny("external_effect", "EXTERNAL_EFFECT_STATE_CONFLICT");
+            if (candidate.state === "in_flight") assertValidClaim(candidate);
+            if (candidate.state === "succeeded"
+              && (typeof candidate.result_ref !== "string" || candidate.result_ref.length === 0)) {
+              deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+            }
+            if (candidate.state === "failed_terminal"
+              && (typeof candidate.failure_code !== "string" || candidate.failure_code.length === 0)) {
+              deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+            }
+          }
+          await bindExternalEffectScope(this.#storage, scope);
+          const outbox = createDurableExternalEffectOutboxStore(this.#storage, scope);
+          if (url.pathname === "/external-effect/begin") {
+            result = await outbox.begin(candidate);
+          } else if (url.pathname === "/external-effect/claim") {
+            result = await outbox.claim(candidate);
+          } else if (url.pathname === "/external-effect/write") {
+            await outbox.write(candidate);
+            result = null;
+          } else if (url.pathname === "/external-effect/read") {
+            result = await outbox.read(scope.tenant_id, scope.effect_id);
+          }
         }
       } else if (url.pathname.startsWith("/company-authority-handoff/")) {
         const operations = new Set([

@@ -7,7 +7,9 @@ import type {
 } from "./company-authority-runtime-adapter.js";
 import type {
   ExternalEffectOutboxStore,
+  ExternalEffectRecoveryRecord,
   ExternalEffectProviderResult,
+  ExternalEffectReconciliationQueue,
 } from "./company-authority-external-effect-outbox.js";
 import {
   resolveCompanyAuthoritySlackQueueScope,
@@ -17,6 +19,7 @@ import type { ExpectedTenantScope, TenantContextEnvelope } from "./contracts.js"
 
 export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
   create_outbox(context: AcceptedCompanyAuthorityContext): ExternalEffectOutboxStore;
+  create_reconciliation_queue?(context: AcceptedCompanyAuthorityContext): ExternalEffectReconciliationQueue;
   expected_audience: string;
   desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
   execute_container(operation: {
@@ -26,16 +29,21 @@ export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
     company_authority_envelope: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>;
     payload: SlackQueueEvent;
     canonical_person_id: unknown;
+    capture_recovery?: (recovery: ExternalEffectRecoveryRecord) => Promise<void>;
   }): Promise<ExternalEffectProviderResult>;
 }): CompanyAuthorityExternalEffectProviderRoute<SlackQueueEvent> {
   return {
     create_outbox: input.create_outbox,
-    provider_send: async ({ provider_key, context, request, envelope, payload }: {
+    ...(input.create_reconciliation_queue === undefined ? {} : {
+      create_reconciliation_queue: input.create_reconciliation_queue,
+    }),
+    provider_send: async ({ provider_key, context, request, envelope, payload, capture_recovery }: {
       provider_key: string;
       context: AcceptedCompanyAuthorityContext;
       request: ObservedExecutionRequestV1;
       envelope: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>;
       payload: SlackQueueEvent;
+      capture_recovery?: (recovery: ExternalEffectRecoveryRecord) => Promise<void>;
     }) => {
       const expectedScope = await resolveCompanyAuthoritySlackQueueScope({
         context,
@@ -51,6 +59,7 @@ export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
         company_authority_envelope: structuredClone(envelope),
         payload: structuredClone(payload),
         canonical_person_id: context.actor?.canonical_person_id,
+        ...(capture_recovery === undefined ? {} : { capture_recovery }),
       });
     },
   };

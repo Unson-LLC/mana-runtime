@@ -24,6 +24,7 @@ const runtimeMocks = vi.hoisted(() => ({
   workspaceStub: {
     claimRuntimeEvent: vi.fn(),
     completeRuntimeEvent: vi.fn(),
+    readRuntimeEventClaim: vi.fn(),
   },
   workspaceFs: {
     mkdir: vi.fn(),
@@ -367,6 +368,11 @@ describe("Company Authority runtime.execute reply executor", () => {
       disposition: "claimed", claimToken: "claim-token-1",
     });
     runtimeMocks.workspaceStub.completeRuntimeEvent.mockResolvedValue(undefined);
+    runtimeMocks.workspaceStub.readRuntimeEventClaim.mockResolvedValue({
+      status: "completed",
+      claimToken: "claim-token-1",
+      responseTs,
+    });
     runtimeMocks.workspaceFs.readFile.mockResolvedValue(JSON.stringify({ generation: 1, engaged: true }));
     runtimeMocks.workspaceFs.ls.mockResolvedValue([]);
     runtimeMocks.readWorkspaceSession.mockResolvedValue({ generation: 1, engaged: true });
