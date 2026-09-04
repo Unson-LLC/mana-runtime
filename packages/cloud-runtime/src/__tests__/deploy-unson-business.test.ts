@@ -27,6 +27,16 @@ describe("unson business deploy wrapper", () => {
     expect(workflow).toContain("pnpm install --no-frozen-lockfile --lockfile=false");
   });
 
+  it("fails closed unless the direct Task API credential required by meeting-minutes redo is deployed", async () => {
+    const workflow = await readFile(
+      fileURLToPath(new URL("../../../../.github/workflows/deploy-unson-business.yml", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workflow).toContain('test -n "$BRAINBASE_TASK_API_TOKEN"');
+    expect(workflow.match(/BRAINBASE_TASK_API_TOKEN: \$\{\{ secrets\.BRAINBASE_TASK_API_TOKEN \}\}/g)).toHaveLength(2);
+  });
+
   it("keeps Container rollout enabled by default and allows an explicit Worker-only recovery", async () => {
     const workflow = await readFile(
       fileURLToPath(new URL("../../../../.github/workflows/deploy-unson-business.yml", import.meta.url)),
