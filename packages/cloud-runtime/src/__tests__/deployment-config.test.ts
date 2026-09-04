@@ -550,6 +550,7 @@ describe("会社別Cloudflare deployment", () => {
     // validation must compare against that same canonical ID.
     expect(JSON.parse(unson.vars.RUNTIME_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       "biz-meeting-router": ["prj_01KGCS8C1PSSXPHXPBX1D4CKDT"],
+      "minutes-ncom-catalyst": ["prj_01KGHVCMA6R6A9MEMGKHRXQ5J0"],
     });
     expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
