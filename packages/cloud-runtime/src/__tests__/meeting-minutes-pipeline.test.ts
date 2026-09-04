@@ -715,6 +715,28 @@ describe("meeting minutes pipeline", () => {
     expect(postTaskCard).toHaveBeenCalledTimes(1);
   });
 
+  it("repairs a legacy task-board failure even when local task receipts are empty", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const repairTaskBoard = vi.fn().mockResolvedValue(undefined);
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文", tasks: [] }),
+      repairTaskBoard,
+    });
+    const completed = await resumeMeetingMinutesRun(fs, selection, options);
+    const legacy = (await loadMeetingMinutesRun(fs, completed.runId))!;
+    legacy.taskRegistration = { registered: [], failure: { index: 0, stage: "task_board",
+      message: "meeting_minutes_task_board_failed", failedAt: "2026-08-31T00:00:00.000Z" } };
+    await saveMeetingMinutesRun(fs, legacy);
+    repairTaskBoard.mockClear();
+
+    const recovered = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(repairTaskBoard).toHaveBeenCalledTimes(1);
+    expect(repairTaskBoard).toHaveBeenCalledWith("minutes-mana");
+    expect(recovered.taskRegistration).not.toHaveProperty("failure");
+  });
+
   it("reconciles the board when a completed run is selected again after its failure was cleared", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

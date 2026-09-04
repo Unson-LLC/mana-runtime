@@ -401,7 +401,11 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
           ...meetingMinutesFailureLog(run) }));
         return run;
       }
-      if (run.taskRegistration.registered.length && options.repairTaskBoard) {
+      // A task-board repair rebuilds the board from the destination project,
+      // not from this run's local registration receipts. Older runs can carry
+      // a task_board failure with an empty registered array after a partial
+      // state migration, so honor that explicit retry stage independently.
+      if ((run.taskRegistration.registered.length || retryStage === "task_board") && options.repairTaskBoard) {
         await markTaskIntegrationPending(fs, run, "task_board", options);
         try {
           await options.repairTaskBoard(run.destination.taskBoardTargetId);
