@@ -220,7 +220,7 @@ describe("meeting-minutes recovery production wiring", () => {
     expect(queue.ack).toHaveBeenCalledOnce();
     expect(queue.retry).not.toHaveBeenCalled();
     expect(effectBoundaries).toEqual(["durable_object", "slack_delivery"]);
-    expect(effectIds).toEqual(["source-status:Ev1_F1:failed"]);
+    expect(effectIds).toEqual([`source-status:Ev1_F1:failed:${NOW}`]);
     expect(effectEvents).toEqual([
       { kind: "source_status", runId: "Ev1_F1", outcome: "failed" },
     ]);
