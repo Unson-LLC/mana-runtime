@@ -36,15 +36,22 @@ function scopeMismatch(phase: string): never {
 }
 
 function exactSingleProject(
+  context: AcceptedCompanyAuthorityContext,
   tenantContext: TenantContextEnvelope,
-  request: ObservedExecutionRequestV1,
 ): string {
-  const projectIds = tenantContext.authorization.project_ids;
-  const projectHint = request.requested_action.project_hint;
-  if (projectIds.length !== 1 || !projectHint || projectIds[0] !== projectHint) {
+  // Canonical project identity comes only from the signed outer/nested agreement.
+  const projectIds = tenantContext.authorization?.project_ids;
+  const outerProjectId = context.scope?.project_id;
+  if (!Array.isArray(projectIds)
+    || projectIds.length !== 1
+    || typeof projectIds[0] !== "string"
+    || projectIds[0].length === 0
+    || typeof outerProjectId !== "string"
+    || outerProjectId.length === 0
+    || projectIds[0] !== outerProjectId) {
     scopeMismatch("company_authority_project_binding");
   }
-  return projectHint;
+  return outerProjectId;
 }
 
 /**
@@ -93,10 +100,20 @@ export async function resolveCompanyAuthoritySlackQueueScope(input: {
   if (!tenantContext.authorization.capability_ids.includes("company_authority_v1")) {
     scopeMismatch("company_authority_protocol_binding");
   }
-  const projectId = exactSingleProject(tenantContext, input.request);
+  const projectId = exactSingleProject(input.context, tenantContext);
+  const projectHint = input.request.requested_action.project_hint;
+  const signedResourceRef = input.context.scope?.resource_ref;
+  // The producer may accept a project code alias; keep it observation-only and
+  // use it solely to verify the payload hash encoded in resource_ref.
+  if (!projectHint
+    || typeof signedResourceRef !== "string"
+    || signedResourceRef.length === 0
+    || input.request.requested_action.resource_ref !== signedResourceRef) {
+    scopeMismatch("company_authority_payload_binding");
+  }
   if (!await matchesCompanyAuthoritySlackPayload(
     input.request.requested_action.resource_ref,
-    projectId,
+    projectHint,
     input.payload,
   )) {
     scopeMismatch("company_authority_payload_binding");
