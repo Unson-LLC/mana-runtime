@@ -39,9 +39,11 @@ describe("company authority runtime configuration", () => {
     expect(companyAuthorityIngressConfiguration({ state: "disabled" })).toBeUndefined();
   });
 
-  it("opts configured capabilities into a fail-closed HTTP ingress before live transport exists", async () => {
+  it("uses the injected live client for configured capabilities", async () => {
+    const client = { resolve: async () => ({ state: "unknown" as const }) };
     const configuration = companyAuthorityIngressConfiguration(
       parseCompanyAuthorityRuntimeConfiguration(validEnv()),
+      client,
     );
 
     expect(configuration).toMatchObject({
@@ -56,9 +58,14 @@ describe("company authority runtime configuration", () => {
         expected_deployment_id: "dep_trusted",
       },
     });
-    await expect(configuration?.client.resolve({} as never)).resolves.toEqual({
-      state: "not_collected",
-    });
+    expect(configuration?.client).toBe(client);
+    await expect(configuration?.client.resolve({} as never)).resolves.toEqual({ state: "unknown" });
+  });
+
+  it("rejects enabled configuration without a live client", () => {
+    expect(() => companyAuthorityIngressConfiguration(
+      parseCompanyAuthorityRuntimeConfiguration(validEnv()),
+    )).toThrow(expect.objectContaining({ code: "CONFIGURATION_INVALID" }));
   });
 
   it("is explicitly disabled when every company authority setting is absent", () => {

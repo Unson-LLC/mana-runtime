@@ -2618,6 +2618,7 @@ export default {
       const placements = canonicalRuntimePlacements(env);
       const companyAuthorityIngress = companyAuthorityIngressConfiguration(
         parseCompanyAuthorityRuntimeConfiguration(env),
+        clients.company_authority,
       );
       return handleTenantSlackRequest(request, {
         signing_secret: env.SLACK_SIGNING_SECRET,

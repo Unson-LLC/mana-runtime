@@ -201,21 +201,21 @@ export function parseCompanyAuthorityRuntimeConfiguration(
 }
 
 /**
- * Selects configured Company Authority operations at the real HTTP ingress
- * without inventing the still-undefined live transport or authentication.
- * Until that contract exists, an opted-in operation fails closed before either
- * Company Authority or legacy Queue effects can run.
+ * Selects configured operations and uses the private transport supplied by the
+ * runtime. Missing transport is a configuration error, never a legacy fallback.
  */
 export function companyAuthorityIngressConfiguration(
   configuration: CompanyAuthorityRuntimeConfiguration,
+  client?: CompanyAuthorityClient,
 ): CompanyAuthorityIngressConfiguration | undefined {
   if (configuration.state === "disabled") return undefined;
+  if (!client || typeof client.resolve !== "function") {
+    invalid({ missing: "company_authority_client" });
+  }
   return {
     opted_in_capability_ids: [...configuration.opted_in_capability_ids],
     desired_effect_by_capability: { ...configuration.desired_effect_by_capability },
-    client: {
-      resolve: async () => ({ state: "not_collected" }),
-    },
+    client,
     acceptance: structuredClone(configuration.acceptance),
   };
 }

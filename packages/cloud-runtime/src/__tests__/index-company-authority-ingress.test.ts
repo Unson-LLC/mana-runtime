@@ -13,6 +13,7 @@ import { createIdempotencyKey } from "../multitenancy/idempotency.js";
 
 const runtimeMocks = vi.hoisted(() => ({
   createClients: vi.fn(),
+  companyAuthority: { resolve: vi.fn() },
   legacyAuthority: {
     resolve_workspace_connection: vi.fn(),
     read_workspace_connection: vi.fn(),
@@ -213,7 +214,11 @@ async function fetchWorker(request: Request, bindings: Record<string, unknown>):
 describe("default Worker Company Authority ingress", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    runtimeMocks.createClients.mockReturnValue({ authority: runtimeMocks.legacyAuthority });
+    runtimeMocks.companyAuthority.resolve.mockResolvedValue({ state: "not_collected" });
+    runtimeMocks.createClients.mockReturnValue({
+      authority: runtimeMocks.legacyAuthority,
+      company_authority: runtimeMocks.companyAuthority,
+    });
   });
 
   it("fails closed through Company Authority before either Queue or legacy authority", async () => {
@@ -235,6 +240,7 @@ describe("default Worker Company Authority ingress", () => {
     const response = await fetchWorker(signedEventRequest(), bindings);
 
     expect(response.status).toBe(503);
+    expect(runtimeMocks.companyAuthority.resolve).toHaveBeenCalledOnce();
     await expect(response.json()).resolves.toMatchObject({
       error: "AUTHORITY_UNAVAILABLE",
       stage: "tenant_context_resolution",
@@ -261,6 +267,40 @@ describe("default Worker Company Authority ingress", () => {
       schema_version: "1.0",
       payload: expect.objectContaining({ tenantId }),
     }));
+  });
+
+  it.each([200, 302, 503])("uses the private HTTP client and rejects an untrusted response (HTTP %s)", async (status) => {
+    const actual = await vi.importActual<typeof import("../multitenancy/http-clients.js")>(
+      "../multitenancy/http-clients.js",
+    );
+    runtimeMocks.createClients.mockImplementation(actual.createTenantRuntimeHttpClients);
+    const fetch = vi.fn(async () => Response.json({ untrusted: true }, { status }));
+    const bindings = env({
+      BRAINBASE_TENANT_RUNTIME_SERVICE: { fetch },
+      BRAINBASE_COMPANY_AUTHORITY_BASE_URL: "https://authority.example.com",
+      BRAINBASE_COMPANY_AUTHORITY_EXPECTED_DEPLOYMENT_ID: deploymentId,
+      BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON: JSON.stringify({
+        kty: "OKP", crv: "Ed25519", x: "a".repeat(43),
+      }),
+      BRAINBASE_TENANT_CONTEXT_JWKS_JSON: JSON.stringify({ keys: [{
+        kty: "OKP", crv: "Ed25519", x: "b".repeat(43), kid: "tenant-key-1",
+      }] }),
+      MANA_COMPANY_AUTHORITY_OPERATIONS_JSON: JSON.stringify({ "task.write": "write" }),
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await fetchWorker(signedEventRequest(), bindings);
+      expect(response.ok).toBe(false);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(fetch).toHaveBeenCalledWith(
+        "https://brainbase.internal/api/v1/runtime/company-authority:resolve",
+        expect.objectContaining({ method: "POST", redirect: "manual" }),
+      );
+      expect(bindings.TECHKNIGHT_EVENTS.send).not.toHaveBeenCalled();
+      expect(runtimeMocks.legacyAuthority.issue_tenant_context).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("rejects partial configuration before authority retrieval or Queue effects", async () => {
