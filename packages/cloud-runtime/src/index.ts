@@ -2439,16 +2439,21 @@ export default {
                 baseUrl: env.BRAINBASE_GRAPH_API_BASE_URL ?? env.BRAINBASE_TASK_API_BASE_URL,
                 fetch: tenantFetch,
               })),
-            repairTaskBoard: (targetId) => effects.durableObject(
-              `task-board-repair:${targetId}`,
-              sourceTarget(canonicalSource()),
-              () => enqueueMeetingMinutesTaskBoardRepair(
-                env,
-                targetId,
-                "task_write",
-                (repair) => resolveTaskBoardRepairTenantContext(env, repair),
-              ),
-            ),
+            repairTaskBoard: (targetId) => {
+              const source = canonicalSource();
+              const run = cachedRun;
+              if (!run) deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+              return effects.durableObject(
+                `task-board-repair:${targetId}:${run.runId}:${run.updatedAt}`,
+                sourceTarget(source),
+                () => enqueueMeetingMinutesTaskBoardRepair(
+                  env,
+                  targetId,
+                  "task_write",
+                  (repair) => resolveTaskBoardRepairTenantContext(env, repair),
+                ),
+              );
+            },
             defer: (work) => ctx.waitUntil(work),
           });
         }, async (command, destination) => {
