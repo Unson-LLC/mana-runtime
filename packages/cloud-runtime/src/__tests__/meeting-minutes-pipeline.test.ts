@@ -997,6 +997,40 @@ describe("meeting minutes pipeline", () => {
     expect(reopened).not.toHaveProperty("redo");
   });
 
+  it("resumes a redo after destination selection fails without repeating cleanup", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "確認する" }] }),
+    }));
+    const deleteGitHub = vi.fn(); const deleteTask = vi.fn(); const retractSharedMinutes = vi.fn();
+    const showDestinationSelection = vi.fn().mockRejectedValueOnce(new Error("source Slack unavailable"))
+      .mockResolvedValueOnce("3.1");
+    const showRedoFailure = vi.fn();
+    const options = { destinations: [destination], deleteGitHub, deleteTask, retractSharedMinutes,
+      showDestinationSelection, showRedoFailure };
+
+    await expect(redoMeetingMinutesRun(fs, redo, options)).rejects.toThrow("source Slack unavailable");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed", redo: {
+      revision: 0, githubDeletedAt: expect.any(String), deletedTaskIds: ["task-1"],
+      sharedRetractedAt: expect.any(String), failure: { message: "source Slack unavailable" },
+    } });
+    expect(showRedoFailure).toHaveBeenCalledOnce();
+
+    const reopened = await redoMeetingMinutesRun(fs, redo, options);
+
+    expect(deleteGitHub).toHaveBeenCalledOnce(); expect(deleteTask).toHaveBeenCalledOnce();
+    expect(retractSharedMinutes).toHaveBeenCalledOnce(); expect(showDestinationSelection).toHaveBeenCalledTimes(2);
+    expect(reopened).toMatchObject({ status: "awaiting_destination", revision: 1,
+      slack: { selectionTs: "3.1", postedChunkIndexes: [] } });
+    expect(reopened).not.toHaveProperty("redo");
+    expect(reopened).not.toHaveProperty("destination");
+    expect(reopened).not.toHaveProperty("generated");
+    expect(reopened).not.toHaveProperty("github");
+    expect(reopened).not.toHaveProperty("taskRegistration");
+  });
+
   it("uses fresh external idempotency keys after a redo", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
