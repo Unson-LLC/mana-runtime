@@ -19,6 +19,7 @@ import {
   type TenantContextIssueRequest,
   type TenantQueueBody,
 } from "./multitenancy/index.js";
+import type { CompanyAuthoritySlackRolloutTuple } from "./multitenancy/company-authority-runtime-config.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
 
 const SLACK_REPLAY_WINDOW_SECONDS = 300;
@@ -63,6 +64,7 @@ export interface HandleTenantSlackRequestOptions {
     desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
     client: CompanyAuthorityClient;
     acceptance: Omit<CompanyAuthorityAcceptanceOptions, "now">;
+    slack_rollout?: readonly CompanyAuthoritySlackRolloutTuple[];
     send(event: CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>): Promise<unknown>;
   };
   now_ms?: number;
@@ -78,6 +80,20 @@ function nonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function matchesCompanyAuthoritySlackRollout(
+  rollout: readonly CompanyAuthoritySlackRolloutTuple[] | undefined,
+  identity: {
+    workspace_id: string;
+    channel_id: string;
+    authenticated_subject_id: string;
+  },
+): boolean {
+  if (rollout === undefined) return true;
+  return rollout.some((candidate) => candidate.workspace_id === identity.workspace_id
+    && candidate.channel_id === identity.channel_id
+    && candidate.authenticated_subject_id === identity.authenticated_subject_id);
 }
 
 function normalizeSlackFiles(value: unknown): SlackFileReference[] | undefined {
@@ -389,7 +405,13 @@ export async function handleTenantSlackRequest(
     };
     failureStage = "tenant_context_resolution";
     const companyAuthority = options.company_authority;
-    if (companyAuthority?.opted_in_capability_ids.includes(requiredAuthorization.capability_id)) {
+    const companyAuthoritySelected = companyAuthority?.opted_in_capability_ids.includes(requiredAuthorization.capability_id)
+      && matchesCompanyAuthoritySlackRollout(companyAuthority.slack_rollout, {
+        workspace_id: workspaceId,
+        channel_id: channelId,
+        authenticated_subject_id: requesterId,
+      });
+    if (companyAuthority && companyAuthoritySelected) {
       if (placementProjectIds.length !== 1) {
         throw new TenantBoundaryError(
           "worker_ingress",

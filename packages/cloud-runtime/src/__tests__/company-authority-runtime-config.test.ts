@@ -174,4 +174,62 @@ describe("company authority runtime configuration", () => {
       base_url: "https://authority.example.com",
     });
   });
+
+  it("propagates an exact Slack rollout tuple without changing capability grants", () => {
+    const configuration = parseCompanyAuthorityRuntimeConfiguration({
+      ...validEnv(),
+      MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON: JSON.stringify([{
+        workspace_id: "T_UNSON",
+        channel_id: "C_ROUTER",
+        authenticated_subject_id: "U123",
+      }]),
+    });
+
+    expect(configuration).toMatchObject({
+      state: "enabled",
+      opted_in_capability_ids: ["slack.post", "task.read", "task.write"],
+      slack_rollout: [{
+        workspace_id: "T_UNSON",
+        channel_id: "C_ROUTER",
+        authenticated_subject_id: "U123",
+      }],
+    });
+    const ingress = companyAuthorityIngressConfiguration(configuration, { resolve: async () => ({ state: "unknown" as const }) });
+    expect(ingress?.slack_rollout).toEqual([{
+      workspace_id: "T_UNSON",
+      channel_id: "C_ROUTER",
+      authenticated_subject_id: "U123",
+    }]);
+  });
+
+  it.each([
+    "not-json",
+    JSON.stringify(null),
+    JSON.stringify({}),
+    JSON.stringify([]),
+    JSON.stringify([{}]),
+    JSON.stringify([{ workspace_id: "T_UNSON", channel_id: "C_ROUTER" }]),
+    JSON.stringify([{ workspace_id: "T_UNSON", channel_id: "C_ROUTER", authenticated_subject_id: "U123", extra: "reject" }]),
+    JSON.stringify([{ workspace_id: 123, channel_id: "C_ROUTER", authenticated_subject_id: "U123" }]),
+    JSON.stringify([{ workspace_id: "*", channel_id: "C_ROUTER", authenticated_subject_id: "U123" }]),
+    JSON.stringify([{ workspace_id: "T_UNSON*", channel_id: "C_ROUTER", authenticated_subject_id: "U123" }]),
+    JSON.stringify([{ workspace_id: "T_UNSON", channel_id: "", authenticated_subject_id: "U123" }]),
+    JSON.stringify([{ workspace_id: "T_UNSON", channel_id: "C_ROUTER", authenticated_subject_id: "   " }]),
+    JSON.stringify([
+      { workspace_id: "T_UNSON", channel_id: "C_ROUTER", authenticated_subject_id: "U123" },
+      { workspace_id: "T_UNSON", channel_id: "C_ROUTER", authenticated_subject_id: "U123" },
+    ]),
+  ])("rejects invalid Slack rollout tuple configuration %s", (rollout) => {
+    expectInvalid({ ...validEnv(), MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON: rollout });
+  });
+
+  it("does not silently disable when only the Slack rollout setting is present", () => {
+    expectInvalid({
+      MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON: JSON.stringify([{
+        workspace_id: "T_UNSON",
+        channel_id: "C_ROUTER",
+        authenticated_subject_id: "U123",
+      }]),
+    });
+  });
 });
