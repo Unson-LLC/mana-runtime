@@ -3568,7 +3568,6 @@ export default {
                 if (completedReply) {
                   return { outcome: "already_completed" as const, responseTs: completedReply.responseTs };
                 }
-                const actorIdentityResolver = resolveActorIdentityResolverFromEnv(env);
                 return executeTenantContainerOperation({
                   tenant_context: tenantBody.tenant_context,
                   expected_scope: tenantConsumerOptions.expected_scope(tenantBody),
@@ -3589,7 +3588,9 @@ export default {
                         hydrateThreadContext,
                       });
                     },
-                    processReply: () => executeReplyRuntime({
+                    processReply: () => {
+                      const actorIdentityResolver = resolveActorIdentityResolverFromEnv(env);
+                      return executeReplyRuntime({
                       fs: workspace.fs,
                       event,
                       taskSearch: {
@@ -3689,7 +3690,8 @@ export default {
                         });
                         return decision;
                       },
-                    }),
+                      });
+                    },
                   }),
                 });
               });
