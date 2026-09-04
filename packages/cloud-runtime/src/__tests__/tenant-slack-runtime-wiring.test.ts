@@ -9,10 +9,24 @@ describe("tenant Slack runtime wiring", () => {
     const eventStart = source.indexOf('url.pathname !== "/slack/events"', commandStart);
     const queueStart = source.indexOf("async queue(", eventStart);
     const ingress = source.slice(commandStart, queueStart);
+    const parseAt = ingress.indexOf("parseCompanyAuthorityRuntimeConfiguration(env)");
+    const configureAt = ingress.indexOf("companyAuthorityIngressConfiguration(");
+    const handlerAt = ingress.indexOf("handleTenantSlackRequest(request");
+    const envStart = source.indexOf("interface Env");
+    const eventQueueStart = source.indexOf("TECHKNIGHT_EVENTS:", envStart);
+    const nextBindingStart = source.indexOf("TASK_BOARD_REPAIRS:", eventQueueStart);
+    const eventQueueBinding = source.slice(eventQueueStart, nextBindingStart);
 
     expect(commandStart).toBeGreaterThan(-1);
     expect(ingress).toContain("resolveSlackWorkerIngress({");
     expect(ingress).toContain("handleTenantSlackRequest(request");
+    expect(parseAt).toBeGreaterThan(-1);
+    expect(configureAt).toBeGreaterThan(-1);
+    expect(parseAt).toBeGreaterThan(configureAt);
+    expect(handlerAt).toBeGreaterThan(configureAt);
+    expect(ingress).toContain("company_authority:");
+    expect(ingress).toContain("env.TECHKNIGHT_EVENTS.send(event)");
+    expect(eventQueueBinding).toContain("| CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>");
     expect(ingress).toContain('schema_version: "1.0"');
     expect(ingress).not.toContain("tenantId: env.TENANT_ID");
     expect(ingress).not.toContain("handleSlackRequest(request");
@@ -42,6 +56,39 @@ describe("tenant Slack runtime wiring", () => {
     expect(queue).toContain("createDurableTenantStateClient");
     expect(queue).toContain("expectedTenantQueueScope(env, body)");
     expect(queue).toContain('code: "FALLBACK_FORBIDDEN"');
+  });
+
+  it("connects company-authority envelopes to the verified Queue consumer without legacy fallback", () => {
+    const queueStart = source.indexOf("async queue(");
+    const queue = source.slice(queueStart);
+    const candidateAt = queue.indexOf("isCompanyAuthorityRuntimeEnvelopeCandidate(message.body)");
+    const strictAt = queue.indexOf("isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)");
+    const legacyAt = queue.indexOf("if (ackMalformedTenantQueueMessage", candidateAt);
+
+    expect(candidateAt).toBeGreaterThan(-1);
+    expect(strictAt).toBeGreaterThan(candidateAt);
+    expect(legacyAt).toBeGreaterThan(strictAt);
+    expect(queue.slice(candidateAt, legacyAt)).toContain("diagnoseCompanyAuthorityRuntimeEnvelope(message.body)");
+    expect(queue.slice(candidateAt, legacyAt)).toContain('code: diagnostic.code');
+    expect(queue.slice(candidateAt, legacyAt)).toContain("message.retry();");
+    expect(queue).toContain("isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)");
+    expect(queue).toContain("parseCompanyAuthorityRuntimeConfiguration(env)");
+    expect(queue).toContain("consumeCompanyAuthorityQueueMessage({");
+    expect(queue).toContain("resolveCompanyAuthoritySlackQueueScope({");
+    expect(queue).toContain("createDurableTenantStateClient(env.TENANT_RUNTIME_STATE");
+    expect(queue).toContain("companyAuthorityProviderRoutes");
+    expect(queue).toContain("processCompanyAuthorityAutoQueueRoute({");
+    expect(queue).toContain("request: snapshot.request");
+    expect(queue).toContain("envelope: snapshot.envelope");
+    expect(queue).toContain("registry: companyAuthorityProviderRoutes");
+    expect(queue).toContain("executeTenantContainerOperationWithRegistry({");
+    expect(queue).toContain("processCompanyAuthorityHumanHandoff({");
+    expect(queue).toContain("createDurableCompanyAuthorityHumanHandoffClient(");
+    expect(queue).toContain("execution_hash: snapshot.execution_hash");
+    expect(queue).not.toContain('unavailableCompanyAuthorityQueueRoute("approval")');
+    expect(queue).not.toContain('unavailableCompanyAuthorityQueueRoute("human_action")');
+    expect(queue).toContain('stage: "company_authority_runtime_configuration"');
+    expect(queue).toContain('stage: "company_authority_runtime_disabled"');
   });
 
   it("exposes installation lifecycle and single-use OAuth intent routes", () => {

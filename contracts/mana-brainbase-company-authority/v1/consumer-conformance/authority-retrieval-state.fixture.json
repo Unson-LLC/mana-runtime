@@ -1,0 +1,8 @@
+{
+  "cases": [
+    { "id": "NEG-AUTHORITY-RETRIEVAL-NO_DATA", "state": "no_data", "expected_code": "AUTHORITY_UNAVAILABLE", "business_effect": false },
+    { "id": "NEG-AUTHORITY-RETRIEVAL-UNKNOWN", "state": "unknown", "expected_code": "AUTHORITY_UNAVAILABLE", "business_effect": false },
+    { "id": "NEG-AUTHORITY-RETRIEVAL-PARTIAL", "state": "partial", "expected_code": "AUTHORITY_UNAVAILABLE", "business_effect": false },
+    { "id": "NEG-AUTHORITY-RETRIEVAL-NOT_COLLECTED", "state": "not_collected", "expected_code": "AUTHORITY_UNAVAILABLE", "business_effect": false }
+  ]
+}

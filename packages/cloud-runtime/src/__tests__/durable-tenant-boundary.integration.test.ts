@@ -45,6 +45,7 @@ class IsolatedBoundaryNamespace {
     tenant_context: TenantContextEnvelope;
     expected_scope: ExpectedTenantScope;
     now: string;
+    company_authority_envelope?: unknown;
   }) => undefined);
 
   idFromName(name: string): string { return name; }
@@ -81,6 +82,8 @@ describe("durable tenant boundary integration", () => {
     expect(namespace.validate).toHaveBeenNthCalledWith(2, expect.objectContaining({
       boundary: "brainbase_proxy", tenant_context: CONTEXT, expected_scope: SCOPE,
     }));
+    expect(namespace.validate.mock.calls[0]?.[0]).not.toHaveProperty("company_authority_envelope");
+    expect(namespace.validate.mock.calls[1]?.[0]).not.toHaveProperty("company_authority_envelope");
 
     await registry.dispose(handle);
     const disposed = await authorizeDurableTenantBoundaryRequest(namespace, request, "mcp_gateway", NOW);
@@ -133,5 +136,61 @@ describe("durable tenant boundary integration", () => {
     expect(namespace.validate).toHaveBeenNthCalledWith(1, expect.objectContaining({ boundary: "mcp_gateway" }));
     expect(namespace.validate).toHaveBeenNthCalledWith(2, expect.objectContaining({ boundary: "brainbase_proxy" }));
     expect(request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER)).toBe(handle);
+  });
+
+  it("stores and revalidates an optional outer Company Authority envelope without putting it in headers", async () => {
+    const namespace = new IsolatedBoundaryNamespace();
+    const registry = createDurableTenantBoundaryRegistry(namespace);
+    const outerEnvelope = {
+      schema_version: "1.0",
+      correlation_id: "corr-company-authority-outer",
+      company_authority_request: { correlation_id: "corr-company-authority-outer" },
+      company_authority_response: { context: { authority: { decision: "auto" } } },
+      payload: { event_id: "event-company-authority-outer" },
+    };
+    const handle = await registry.register({
+      tenant_context: CONTEXT,
+      expected_scope: SCOPE,
+      company_authority_envelope: outerEnvelope,
+      now: NOW,
+    });
+    const request = new Request("https://gateway.internal/api/runtime/gateway", {
+      headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle },
+    });
+
+    const resolved = await resolveDurableTenantBoundaryContext(
+      namespace,
+      request,
+      ["mcp_gateway", "brainbase_proxy", "slack_delivery"],
+      NOW,
+    );
+
+    expect(resolved).toEqual({
+      tenant_context: CONTEXT,
+      expected_scope: SCOPE,
+      company_authority_envelope: outerEnvelope,
+    });
+    expect(resolved).not.toBe(outerEnvelope);
+    expect(namespace.validate).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      boundary: "container_launch",
+      company_authority_envelope: outerEnvelope,
+    }));
+    expect(namespace.validate).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      boundary: "mcp_gateway",
+      company_authority_envelope: outerEnvelope,
+    }));
+    expect(namespace.validate).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      boundary: "brainbase_proxy",
+      company_authority_envelope: outerEnvelope,
+    }));
+    expect(namespace.validate).toHaveBeenNthCalledWith(4, expect.objectContaining({
+      boundary: "slack_delivery",
+      company_authority_envelope: outerEnvelope,
+    }));
+    expect(request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER)).toBe(handle);
+    const serializedHeaders: string[] = [];
+    request.headers.forEach((value, name) => serializedHeaders.push(`${name}: ${value}`));
+    expect(serializedHeaders.join("\n")).not.toContain("corr-company-authority-outer");
+    expect(serializedHeaders.join("\n")).not.toContain("event-company-authority-outer");
   });
 });

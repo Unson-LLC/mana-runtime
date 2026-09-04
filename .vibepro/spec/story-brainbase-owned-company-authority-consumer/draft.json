@@ -1,0 +1,371 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "story-brainbase-owned-company-authority-consumer",
+  "generated_by": {
+    "caller": "unknown",
+    "stage": "ai_synthesis"
+  },
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenant_id",
+      "resolved_from": [
+        "Brainbase signed CanonicalExecutionContextV1"
+      ],
+      "resolution_point": "Mana fixture consumer verifies the signed nested TenantContext before any business effect",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "fixture_consumer",
+        "queue",
+        "worker",
+        "durable_object",
+        "container",
+        "mcp",
+        "brainbase_proxy",
+        "slack_delivery"
+      ],
+      "verified_surfaces": [
+        "fixture_consumer"
+      ]
+    },
+    "resources": [
+      {
+        "name": "canonical_company_authority_context",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenant_id",
+        "partition_key": "tenant_id/connection_id/correlation_id",
+        "trust_zone": "brainbase_to_mana_control_plane",
+        "residue_policy": "fixture-only; production retention is not established by A0",
+        "data_owner": "Brainbase",
+        "operational_owner": "mana-runtime",
+        "credential_scope": "opaque credential_ref only"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenant_id",
+      "scope": "tenant_id/connection_id/operation_id/audience",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "Brainbase"
+      ],
+      "residency": "not_collected by A0 fixture work",
+      "migration": "not_performed",
+      "rollback": "remove consumer fixture; no production state is changed"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "deny_as_authority_unavailable",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_shared",
+      "managed_dedicated",
+      "customer_managed"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "cross_tenant_candidate",
+      "no_data"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "CanonicalExecutionContextV1",
+        "TenantContextEnvelope"
+      ],
+      "boundary_edges": [
+        "BrainbaseProducer->ManaFixtureConsumer"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "unverified",
+      "evidence_state": "not_collected",
+      "evidence": {
+        "propagation_surfaces": [
+          "fixture_consumer"
+        ],
+        "negative_scenarios": [
+          "unknown_tenant",
+          "ambiguous_tenant",
+          "unavailable_connection",
+          "cross_tenant_candidate",
+          "no_data"
+        ],
+        "evidence_refs": [
+          "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts"
+        ]
+      }
+    }
+  },
+  "production_e2e_plan": {
+    "status": "not_collected",
+    "artifact": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json",
+    "acceptance_criterion": "AC-012",
+    "implementation_claim": "none",
+    "required_observations": [
+      "operator-visible rejection",
+      "not shown as success, empty, or in-progress",
+      "business_effect=false and side_effect_count=0",
+      "Receipt and readback share the correlation ID",
+      "unknown observations retain next_action",
+      "expected_code is a canonical locked-producer code or expected_code_status=not_defined owned by T0",
+      "rejected-first redelivery preserves the original rejection code with original, delta, and aggregate effect counts all zero"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "Manaはbrainbase-unson PR #1302のmerge SHAとfixture digestを固定し、現行v1ではlocked Slack fixtureのobserved requestとCanonicalExecutionContextV1だけをexact schemaで受け入れる。Codex、Claude Code、serviceはprovider固有nested envelopeが契約化されるまでfuture / not_implementedであり、AC-001のverified範囲に含めない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-001"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/13_brainbase_owned_company_authority.md",
+            "section": "Canonical contract"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "pins the exact producer source lock and artifact digests"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "must_cover": "exact producer source lock"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "A0 fixture consumerは署名済みCanonicalExecutionContextV1を検証・伝播し、欠落または未確定contextをfail-closedで拒否する。この適合性helperは実runtime surfaceへの接続証拠ではない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-003" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "実行フローとA0境界" }],
+        "test_refs": [{ "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "case": "accepts all signed positive contexts without generating Mana authority semantics" }, { "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "case": "fails closed for all producer negative fixtures and preserves their no-effect contract" }]
+      },
+      "verifiable_by": { "test_pattern": [{ "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts", "must_cover": "accepts all signed positive contexts" }] },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "A0 fixture consumerは外側とnested TenantContextの署名をconsumer trustで検証し、受理したauto／approval／human_action decisionとcontextを変更せず返す。denyまたはnested署名改竄はbusiness effect前に拒否する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-005"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/13_brainbase_owned_company_authority.md",
+            "section": "authority decisionの動作"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "accepts positive decisions unchanged and rejects deny or nested-signature tampering without effects"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "must_cover": "accepts positive decisions unchanged"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-006",
+      "type": "contract",
+      "statement": "AC-005のauto／approval／human_action／denyはT0でローカルroutingと作用ゼロ境界を実装・検証済みだが、production providerでのdecision実行と外部effect readbackはnot_collectedとする。A0のfixture acceptanceやT0ローカル検証をproduction decision execution証拠へ昇格させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-005" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "authority decisionの動作" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-005 runtime decision execution remains not_collected" }]
+      },
+      "verifiable_by": {},
+      "confidence": 1,
+      "first_seen_at": "2026-09-02T00:00:00.000Z",
+      "last_revised_at": "2026-09-02T00:00:00.000Z"
+    },
+    {
+      "id": "BND-005",
+      "type": "contract",
+      "statement": "旧Slack requestからObservedExecutionRequestV1へのmapping、service除外、切替順、v1 opt-in後のlegacy fallback禁止をA0の計画契約として固定する。T0のlocal adapter、Queue、selected Container境界は実装・ローカル検証済みだが、production endpoint／trust binding、互換性実行証拠、live readbackはnot_collectedである",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-001" }, { "kind": "acceptance_criteria", "ac_id": "AC-002" }, { "kind": "acceptance_criteria", "ac_id": "AC-007" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "runtime adapter transition contract" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/a0-evidence-conformance.test.mjs", "case": "production E2E plan is bound to the locked producer and remains not_collected" }]
+      },
+      "verifiable_by": {},
+      "confidence": 1,
+      "first_seen_at": "2026-09-02T00:00:00.000Z",
+      "last_revised_at": "2026-09-02T00:00:00.000Z"
+    },
+    {
+      "id": "BND-004",
+      "type": "contract",
+      "statement": "AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証はT0でローカル実装・検証済みだが、production endpoint／trust binding、実外部作用、live readbackはnot_collectedとする。fixture consumerやassertCanonicalAuthorityRetrieval helperだけをruntime integration証拠へ昇格させず、T0ローカル証拠もproduction proofへ昇格させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-004" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "実行フローとA0境界" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-004 runtime boundary integrations remain not_collected" }]
+      },
+      "verifiable_by": {},
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-002",
+      "type": "contract",
+      "statement": "AC-010のduplicate delivery、各effect exactly once、Receipt／correlation／idempotency identity同一性はT0 runtime adapterの実行証拠が得られるまでnot_collectedとし、fixture/mockを実行証拠へ昇格させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-010" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Production evidence boundary" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-010 runtime duplicate delivery and exactly-once effects remain not_collected" }]
+      },
+      "verifiable_by": {},
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-003",
+      "type": "contract",
+      "statement": "AC-011のOperationReceipt、UsageEvent、external readback、authority-resolution receiptの同一correlation結合はT0 runtime surfaceの実行証拠が得られるまでnot_collectedとし、fixture/mockをcompletion証拠へ昇格させない",
+      "origin": {
+        "story_refs": [{ "kind": "acceptance_criteria", "ac_id": "AC-011" }],
+        "architecture_refs": [{ "file": "docs/architecture/13_brainbase_owned_company_authority.md", "section": "Production evidence boundary" }],
+        "test_refs": [{ "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs", "case": "AC-011 correlated runtime completion evidence remains not_collected" }]
+      },
+      "verifiable_by": {},
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "INV-002",
+      "type": "invariant",
+      "statement": "tenant/project mismatch、unknown/ambiguous authority、authority retrievalのno_data/unknown/partial/not_collected、tamper/additional property、期限・署名違反はbusiness effect前にfail-closedとしfallbackしない。retrieval未確定状態はempty/zeroへ丸めずAUTHORITY_UNAVAILABLEとして拒否する。credential leaseは既存mana-brainbase-tenant-context/v1の責務であり、A0 company-authority contractのAcceptance Criteria外とする",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-002"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-006"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-007"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-008"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-009"
+          },
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-013"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/13_brainbase_owned_company_authority.md",
+            "section": "Fail-closed"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "case": "fails closed for all producer negative fixtures and preserves their no-effect contract"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/canonical-consumer-conformance.test.ts",
+            "must_cover": "fails closed for all producer negative fixtures"
+          }
+        ]
+      },
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    },
+    {
+      "id": "BND-001",
+      "type": "contract",
+      "statement": "本Storyのfixture/mock適合はproduction 2 tenant E2E、trusted kid/key rotation/revocation、T0完了、deploy、release-readyを証明しない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-012"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/management/milestones/M0-brainbase-owned-company-authority.md",
+            "section": "Dependencies"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": ".vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-not-collected.test.mjs",
+            "case": "production 2x2 tenant/person E2E remains not_collected"
+          }
+        ]
+      },
+      "verifiable_by": {},
+      "confidence": 1,
+      "first_seen_at": "2026-08-22T00:00:00.000Z",
+      "last_revised_at": "2026-08-22T01:01:21.954Z"
+    }
+  ],
+  "generated_at": "2026-08-22T01:01:21.952Z",
+  "previous_spec_id": ""
+}

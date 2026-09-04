@@ -4,7 +4,7 @@ import {
   type DurableObjectStorageLike,
   type WorkspaceHandle,
 } from "@cloudflare/computer";
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject } from "./multitenancy/cloudflare-worker-runtime.js";
 
 import { handleTenantSlackRequest } from "./slack.js";
 import { bootstrapUnsonSlackCredential } from "./tenant-credential-bootstrap.js";
@@ -24,6 +24,27 @@ import {
 } from "./sandbox-runtime.js";
 import { destroyTenantContainer } from "./multitenancy/container-lifecycle.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
+import {
+  consumeCompanyAuthorityQueueMessage,
+  diagnoseCompanyAuthorityRuntimeEnvelope,
+  executeCompanyAuthorityRuntimeBoundary,
+  isCompanyAuthorityRuntimeEnvelopeCandidate,
+  isCompanyAuthorityRuntimeEnvelope,
+  type CompanyAuthorityRuntimeEnvelope,
+} from "./multitenancy/company-authority-runtime-adapter.js";
+import {
+  companyAuthorityIngressConfiguration,
+  parseCompanyAuthorityRuntimeConfiguration,
+} from "./multitenancy/company-authority-runtime-config.js";
+import {
+  processCompanyAuthorityAutoQueueRoute,
+  resolveCompanyAuthoritySlackQueueScope,
+  type CompanyAuthorityCapabilityProviderRegistry,
+} from "./multitenancy/company-authority-queue-runtime.js";
+import {
+  companyAuthorityHumanHandoffIdentity,
+  processCompanyAuthorityHumanHandoff,
+} from "./multitenancy/company-authority-human-handoff.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
   currentMeetingMinutesActionTs,
@@ -158,6 +179,7 @@ import {
   parseWorkspaceConnectionHints,
 } from "./multitenancy/http-clients.js";
 import {
+  createDurableCompanyAuthorityHumanHandoffClient,
   createDurableTenantAccountingClient,
   createDurableTenantStateClient,
   TenantRuntimeStateHandler,
@@ -186,11 +208,12 @@ import { jcsCanonicalize } from "./multitenancy/jcs.js";
 import { createTenantCredentialFetch } from "./multitenancy/tenant-credential-fetch.js";
 import { createBrainbaseTrustedProviderForwarderFromEnv } from "./multitenancy/trusted-provider-forwarder.js";
 import {
-  createDurableTenantBoundaryRegistry,
   resolveDurableTenantBoundaryContext,
   TENANT_BOUNDARY_HANDLE_HEADER,
   TenantBoundaryContextHandler,
 } from "./multitenancy/durable-tenant-boundary.js";
+import { executeTenantContainerOperation as executeTenantContainerOperationWithRegistry }
+  from "./multitenancy/tenant-container-operation.js";
 import {
   claimDevelopmentJobOwner,
   developmentTenantContextHash,
@@ -308,6 +331,10 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS?: string;
   BRAINBASE_WORKSPACE_CONNECTIONS_JSON?: string;
   BRAINBASE_TENANT_CONTEXT_JWKS_JSON?: string;
+  BRAINBASE_COMPANY_AUTHORITY_BASE_URL?: string;
+  BRAINBASE_COMPANY_AUTHORITY_EXPECTED_DEPLOYMENT_ID?: string;
+  BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON?: string;
+  MANA_COMPANY_AUTHORITY_OPERATIONS_JSON?: string;
   BRAINBASE_TENANT_RUNTIME_ENABLED?: string;
   BRAINBASE_TENANT_RUNTIME_HOST?: string;
   BRAINBASE_TENANT_RUNTIME_PORT?: string;
@@ -335,6 +362,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   TECHKNIGHT_EVENTS: Queue<TenantQueueBody<SlackQueueEvent> | TenantQueueBody<MeetingMinutesSelection>
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
+    | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery>;
   TASK_BOARD_REPAIRS: Queue<TenantQueueBody<TaskBoardRepairEvent> | TaskBoardRepairEvent>;
   TASK_WRITE_BUDGETS: DurableObjectNamespace;
@@ -349,9 +377,15 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
 
 interface WorkspaceEnv {}
 
+// Production remains fail closed until a credential-backed provider adapter
+// with reconciliation evidence is registered explicitly per capability.
+const companyAuthorityProviderRoutes = {} as const satisfies
+  CompanyAuthorityCapabilityProviderRegistry<SlackQueueEvent>;
+
 export class TenantRuntimeState extends DurableObject<Env> {
   readonly #handler = new TenantRuntimeStateHandler(
     this.ctx.storage as unknown as TenantStateStorage,
+    this.ctx.id.name,
   );
   readonly #boundaryContext = new TenantBoundaryContextHandler(
     this.ctx.storage,
@@ -361,6 +395,37 @@ export class TenantRuntimeState extends DurableObject<Env> {
         read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(this.env, keyId),
       });
+      if (input.company_authority_envelope !== undefined) {
+        if (!isCompanyAuthorityRuntimeEnvelope(input.company_authority_envelope)) {
+          throw new TenantBoundaryError(input.boundary, "AUTHORITY_ENVELOPE_INVALID");
+        }
+        const runtimeConfig = parseCompanyAuthorityRuntimeConfiguration(this.env);
+        if (runtimeConfig.state !== "enabled") {
+          throw new TenantBoundaryError(input.boundary, "AUTHORITY_UNAVAILABLE");
+        }
+        await executeCompanyAuthorityRuntimeBoundary<SlackQueueEvent, void>({
+          boundary: input.boundary,
+          // The outer envelope guard validates the protocol carrier. The
+          // Slack payload shape and binding are validated below before any
+          // boundary effect can run.
+          envelope: input.company_authority_envelope as CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>,
+          acceptance: { ...runtimeConfig.acceptance, now: input.now },
+          tenant_verifier: verifier,
+          expected_tenant_scope: input.expected_scope,
+          validate_payload_binding: async (context, request, payload) => {
+            await resolveCompanyAuthoritySlackQueueScope({
+              context,
+              request,
+              payload,
+              expected_audience: requiredRuntimeBinding(this.env.MANA_REQUIRED_AUDIENCE),
+              desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
+            });
+          },
+          require_auto: true,
+          execute_auto: async () => undefined,
+        });
+        return;
+      }
       await executeTenantBoundary({ ...input, verifier, execute: async () => undefined });
     },
   );
@@ -2536,6 +2601,9 @@ export default {
       const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
         .split(",").map((value) => value.trim()).filter(Boolean);
       const placements = canonicalRuntimePlacements(env);
+      const companyAuthorityIngress = companyAuthorityIngressConfiguration(
+        parseCompanyAuthorityRuntimeConfiguration(env),
+      );
       return handleTenantSlackRequest(request, {
         signing_secret: env.SLACK_SIGNING_SECRET,
         expected_app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
@@ -2551,6 +2619,12 @@ export default {
         },
         authority: clients.authority,
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        ...(companyAuthorityIngress ? {
+          company_authority: {
+            ...companyAuthorityIngress,
+            send: (event) => env.TECHKNIGHT_EVENTS.send(event),
+          },
+        } : {}),
         send: (event) => env.TECHKNIGHT_EVENTS.send(event),
       });
     } catch (error) {
@@ -2590,6 +2664,7 @@ export default {
     | TenantQueueBody<MeetingMinutesRedo>
     | TenantQueueBody<MeetingMinutesRecovery>
     | TenantQueueBody<TaskBoardRepairEvent>
+    | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
     | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
     | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>, env: Env): Promise<void> {
     const executeTenantContainerOperation = <T>(input: {
@@ -2598,26 +2673,11 @@ export default {
       verifier: TenantRuntimeBoundaryVerifier;
       now: string;
       release?: "on_completion" | "on_expiration";
+      company_authority_envelope?: CompanyAuthorityRuntimeEnvelope<unknown>;
       execute(tenantBoundaryHandle: string): Promise<T>;
-    }): Promise<T> => executeTenantBoundary({
-      boundary: "container_launch",
-      tenant_context: input.tenant_context,
-      expected_scope: input.expected_scope,
-      verifier: input.verifier,
-      now: input.now,
-      execute: async () => {
-        const registry = createDurableTenantBoundaryRegistry(env.TENANT_RUNTIME_STATE);
-        const handle = await registry.register({
-          tenant_context: input.tenant_context,
-          expected_scope: input.expected_scope,
-          now: input.now,
-        });
-        try {
-          return await input.execute(handle);
-        } finally {
-          if (input.release !== "on_expiration") await registry.dispose(handle);
-        }
-      },
+    }): Promise<T> => executeTenantContainerOperationWithRegistry({
+      ...input,
+      namespace: env.TENANT_RUNTIME_STATE,
     });
     for (const message of batch.messages) {
       if (isContractLedgerEvent(message.body)) {
@@ -2645,6 +2705,118 @@ export default {
             runId: message.body.runId, error: error instanceof Error ? error.message : "unexpected_error" }));
           message.retry();
         }
+        continue;
+      }
+      if (isCompanyAuthorityRuntimeEnvelopeCandidate(message.body)) {
+        if (!isCompanyAuthorityRuntimeEnvelope<SlackQueueEvent>(message.body)) {
+          const diagnostic = diagnoseCompanyAuthorityRuntimeEnvelope(message.body);
+          console.error(JSON.stringify({
+            event: "company_authority_queue_failed",
+            code: diagnostic.code,
+            correlation_id: diagnostic.correlation_id,
+            stage: diagnostic.stage,
+            reason: diagnostic.reason,
+          }));
+          message.retry();
+          continue;
+        }
+        const companyAuthorityEnvelope = message.body;
+        let runtimeConfig: ReturnType<typeof parseCompanyAuthorityRuntimeConfiguration>;
+        try {
+          runtimeConfig = parseCompanyAuthorityRuntimeConfiguration(env);
+        } catch (error) {
+          console.error(JSON.stringify({
+            event: "company_authority_queue_failed",
+            code: error instanceof TenantBoundaryError ? error.code : "CONFIGURATION_INVALID",
+            correlation_id: companyAuthorityEnvelope.correlation_id,
+            stage: "company_authority_runtime_configuration",
+          }));
+          message.retry();
+          continue;
+        }
+        if (runtimeConfig.state === "disabled") {
+          console.error(JSON.stringify({
+            event: "company_authority_queue_failed",
+            code: "UPSTREAM_UNAVAILABLE",
+            correlation_id: companyAuthorityEnvelope.correlation_id,
+            stage: "company_authority_runtime_disabled",
+          }));
+          message.retry();
+          continue;
+        }
+        await consumeCompanyAuthorityQueueMessage({
+          body: companyAuthorityEnvelope,
+          ack: () => message.ack(),
+          retry: (options) => message.retry(options),
+        }, {
+          acceptance: runtimeConfig.acceptance,
+          resolve_runtime: async ({ context, request, payload }) => {
+            const tenantContext = context.tenant_context as unknown as TenantContextEnvelope;
+            const expectedScope = await resolveCompanyAuthoritySlackQueueScope({
+              context,
+              request,
+              payload,
+              expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
+            });
+            const clients = tenantRuntimeClients(env, tenantContext);
+            return {
+              tenant_verifier: new TenantRuntimeBoundaryVerifier({
+                read_authoritative_snapshot: (connectionId) =>
+                  clients.authority.read_workspace_connection(connectionId),
+                resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+              }),
+              expected_tenant_scope: expectedScope,
+              ownership: createDurableTenantStateClient(
+                env.TENANT_RUNTIME_STATE,
+                tenantContext.tenant.tenant_id,
+              ),
+            };
+          },
+          validate_payload_binding: async (context, request, payload) => {
+            await resolveCompanyAuthoritySlackQueueScope({
+              context,
+              request,
+              payload,
+              expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+              desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
+            });
+          },
+          process_auto: (context, payload, snapshot) => processCompanyAuthorityAutoQueueRoute({
+            context,
+            request: snapshot.request,
+            envelope: snapshot.envelope,
+            payload,
+            registry: companyAuthorityProviderRoutes,
+          }),
+          route_approval: (context, payload, snapshot) => {
+            const scope = companyAuthorityHumanHandoffIdentity(context);
+            return processCompanyAuthorityHumanHandoff({
+              context,
+              request: snapshot.request,
+              payload,
+              execution_hash: snapshot.execution_hash,
+              store: createDurableCompanyAuthorityHumanHandoffClient(env.TENANT_RUNTIME_STATE, scope),
+              now: () => new Date().toISOString(),
+            });
+          },
+          route_human_action: (context, payload, snapshot) => {
+            const scope = companyAuthorityHumanHandoffIdentity(context);
+            return processCompanyAuthorityHumanHandoff({
+              context,
+              request: snapshot.request,
+              payload,
+              execution_hash: snapshot.execution_hash,
+              store: createDurableCompanyAuthorityHumanHandoffClient(env.TENANT_RUNTIME_STATE, scope),
+              now: () => new Date().toISOString(),
+            });
+          },
+          execution_hash: tenantPayloadHash,
+          retention_until: tenantRetentionUntil,
+          now: () => new Date().toISOString(),
+          log: (entry) => console.log(JSON.stringify(entry)),
+          log_error: (entry) => console.error(JSON.stringify(entry)),
+        });
         continue;
       }
       if (ackMalformedTenantQueueMessage(message,
@@ -3500,5 +3672,6 @@ export default {
   | TenantQueueBody<MeetingMinutesRedo>
   | TenantQueueBody<MeetingMinutesRecovery>
   | TenantQueueBody<TaskBoardRepairEvent>
+  | CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>
   | SlackQueueEvent | MeetingMinutesSelection | MeetingMinutesRedo | MeetingMinutesRecovery | TaskBoardRepairEvent
   | ContractLedgerSyncEvent | ContractLedgerApprovalEvent>;

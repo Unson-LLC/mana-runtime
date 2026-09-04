@@ -21,6 +21,19 @@ import {
 import { deny, TenantBoundaryError } from "./errors.js";
 import { tenantPartitionKey } from "./isolation.js";
 import type { TenantContextEnvelope } from "./contracts.js";
+import {
+  assertClaimTokenOwner,
+  assertSameEffect,
+  assertValidClaim,
+  assertValidTransition,
+  type ExternalEffectOutboxRecord,
+  type ExternalEffectOutboxStore,
+} from "./company-authority-external-effect-outbox.js";
+import {
+  assertSameCompanyAuthorityHumanHandoff,
+  type CompanyAuthorityHumanHandoffRecord,
+  type CompanyAuthorityHumanHandoffStore,
+} from "./company-authority-human-handoff.js";
 
 export interface TenantStateTransaction {
   get<T>(key: string): Promise<T | undefined>;
@@ -38,6 +51,153 @@ function clone<T>(value: T): T {
 
 function idempotencyStorageKey(partitionKey: string): string {
   return `idempotency:${partitionKey}`;
+}
+
+function externalEffectStorageKey(tenantId: string, effectId: string): string {
+  return `external-effect-outbox:${JSON.stringify([tenantId, effectId])}`;
+}
+
+const EXTERNAL_EFFECT_SCOPE_KEY = "external-effect-outbox:scope";
+
+function humanHandoffStorageKey(tenantId: string, handoffId: string): string {
+  return `company-authority-handoff:${JSON.stringify([tenantId, handoffId])}`;
+}
+
+const HUMAN_HANDOFF_SCOPE_KEY = "company-authority-handoff:scope";
+
+async function bindHumanHandoffScope(
+  storage: TenantStateStorage,
+  scope: { tenant_id: string; handoff_id: string },
+): Promise<void> {
+  await storage.transaction(async (transaction) => {
+    const existing = await transaction.get<{ tenant_id: string; handoff_id: string }>(HUMAN_HANDOFF_SCOPE_KEY);
+    if (existing && (existing.tenant_id !== scope.tenant_id || existing.handoff_id !== scope.handoff_id)) {
+      deny("durable_object", "CROSS_TENANT_CANDIDATE");
+    }
+    if (!existing) await transaction.put(HUMAN_HANDOFF_SCOPE_KEY, clone(scope));
+  });
+}
+
+async function bindExternalEffectScope(
+  storage: TenantStateStorage,
+  scope: { tenant_id: string; effect_id: string },
+): Promise<void> {
+  await storage.transaction(async (transaction) => {
+    const existing = await transaction.get<{ tenant_id: string; effect_id: string }>(EXTERNAL_EFFECT_SCOPE_KEY);
+    if (existing && (existing.tenant_id !== scope.tenant_id || existing.effect_id !== scope.effect_id)) {
+      deny("external_effect", "CROSS_TENANT_CANDIDATE");
+    }
+    if (!existing) await transaction.put(EXTERNAL_EFFECT_SCOPE_KEY, clone(scope));
+  });
+}
+
+class DurableExternalEffectOutboxStore implements ExternalEffectOutboxStore {
+  constructor(
+    private readonly storage: TenantStateStorage,
+    private readonly scope: { tenant_id: string; effect_id: string },
+  ) {}
+
+  #assertScope(record: Pick<ExternalEffectOutboxRecord, "tenant_id" | "effect_id">): void {
+    if (record.tenant_id !== this.scope.tenant_id || record.effect_id !== this.scope.effect_id) {
+      deny("external_effect", "CROSS_TENANT_CANDIDATE");
+    }
+  }
+
+  async begin(record: ExternalEffectOutboxRecord): Promise<{
+    record: ExternalEffectOutboxRecord;
+    created: boolean;
+  }> {
+    this.#assertScope(record);
+    return this.storage.transaction(async (transaction) => {
+      const key = externalEffectStorageKey(record.tenant_id, record.effect_id);
+      const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
+      if (existing) {
+        assertSameEffect(existing, record);
+        return { record: clone(existing), created: false };
+      }
+      await transaction.put(key, clone(record));
+      return { record: clone(record), created: true };
+    });
+  }
+
+  async write(record: ExternalEffectOutboxRecord): Promise<void> {
+    this.#assertScope(record);
+    await this.storage.transaction(async (transaction) => {
+      const key = externalEffectStorageKey(record.tenant_id, record.effect_id);
+      const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
+      if (!existing) deny("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
+      assertSameEffect(existing, record);
+      assertClaimTokenOwner(existing, record);
+      assertValidTransition(existing, record);
+      await transaction.put(key, clone(record));
+    });
+  }
+
+  async claim(record: ExternalEffectOutboxRecord): Promise<{
+    record: ExternalEffectOutboxRecord;
+    claimed: boolean;
+  }> {
+    this.#assertScope(record);
+    return this.storage.transaction(async (transaction) => {
+      const key = externalEffectStorageKey(record.tenant_id, record.effect_id);
+      const existing = await transaction.get<ExternalEffectOutboxRecord>(key);
+      if (!existing) deny("external_effect", "EXTERNAL_EFFECT_OUTBOX_MISSING");
+      assertSameEffect(existing, record);
+      if (existing.state !== "pending") {
+        return { record: clone(existing), claimed: false };
+      }
+      assertValidClaim(record);
+      assertValidTransition(existing, record);
+      await transaction.put(key, clone(record));
+      return { record: clone(record), claimed: true };
+    });
+  }
+
+  async read(tenantId: string, effectId: string): Promise<ExternalEffectOutboxRecord | null> {
+    this.#assertScope({ tenant_id: tenantId, effect_id: effectId });
+    const record = await this.storage.get<ExternalEffectOutboxRecord>(
+      externalEffectStorageKey(tenantId, effectId),
+    );
+    return record ? clone(record) : null;
+  }
+}
+
+class DurableCompanyAuthorityHumanHandoffStore implements CompanyAuthorityHumanHandoffStore {
+  constructor(
+    private readonly storage: TenantStateStorage,
+    private readonly scope: { tenant_id: string; handoff_id: string },
+  ) {}
+
+  #assertScope(candidate: { tenant_id: string; handoff_id: string }): void {
+    if (candidate.tenant_id !== this.scope.tenant_id || candidate.handoff_id !== this.scope.handoff_id) {
+      deny("durable_object", "CROSS_TENANT_CANDIDATE");
+    }
+  }
+
+  async begin(record: CompanyAuthorityHumanHandoffRecord): Promise<{
+    record: CompanyAuthorityHumanHandoffRecord;
+    created: boolean;
+  }> {
+    this.#assertScope(record);
+    return this.storage.transaction(async (transaction) => {
+      const key = humanHandoffStorageKey(record.tenant_id, record.handoff_id);
+      const existing = await transaction.get<CompanyAuthorityHumanHandoffRecord>(key);
+      if (existing) {
+        assertSameCompanyAuthorityHumanHandoff(existing, record);
+        return { record: clone(existing), created: false };
+      }
+      await transaction.put(key, clone(record));
+      return { record: clone(record), created: true };
+    });
+  }
+
+  async read(tenantId: string, handoffId: string): Promise<CompanyAuthorityHumanHandoffRecord | null> {
+    this.#assertScope({ tenant_id: tenantId, handoff_id: handoffId });
+    const record = await this.storage.get<CompanyAuthorityHumanHandoffRecord>(
+      humanHandoffStorageKey(tenantId, handoffId),
+    );
+    return record ? clone(record) : null;
+  }
 }
 
 function createStoredClaim(input: IdempotencyClaimInput): IdempotencyClaim {
@@ -356,6 +516,20 @@ export function createDurableTenantAccountingStore(storage: TenantStateStorage):
   };
 }
 
+export function createDurableExternalEffectOutboxStore(
+  storage: TenantStateStorage,
+  scope: { tenant_id: string; effect_id: string },
+): ExternalEffectOutboxStore {
+  return new DurableExternalEffectOutboxStore(storage, scope);
+}
+
+export function createDurableCompanyAuthorityHumanHandoffStore(
+  storage: TenantStateStorage,
+  scope: { tenant_id: string; handoff_id: string },
+): CompanyAuthorityHumanHandoffStore {
+  return new DurableCompanyAuthorityHumanHandoffStore(storage, scope);
+}
+
 interface DurableObjectStubLike {
   fetch(request: Request): Promise<Response>;
 }
@@ -363,6 +537,23 @@ interface DurableObjectStubLike {
 export interface TenantRuntimeStateNamespace {
   idFromName(name: string): unknown;
   get(id: unknown): DurableObjectStubLike;
+}
+
+function externalEffectObjectName(scope: { tenant_id: string; effect_id: string }): string {
+  return `external-effect:${JSON.stringify([scope.tenant_id, scope.effect_id])}`;
+}
+
+function humanHandoffObjectName(scope: { tenant_id: string; handoff_id: string }): string {
+  return `company-authority-handoff:${JSON.stringify([scope.tenant_id, scope.handoff_id])}`;
+}
+
+function assertExternalEffectClientScope(
+  scope: { tenant_id: string; effect_id: string },
+  candidate: Pick<ExternalEffectOutboxRecord, "tenant_id" | "effect_id">,
+): void {
+  if (candidate.tenant_id !== scope.tenant_id || candidate.effect_id !== scope.effect_id) {
+    deny("durable_object", "CROSS_TENANT_CANDIDATE");
+  }
 }
 
 async function callState<T>(stub: DurableObjectStubLike, operation: string, input: unknown): Promise<T> {
@@ -428,6 +619,61 @@ export function createDurableTenantStateClient(
   };
 }
 
+export function createDurableExternalEffectOutboxClient(
+  namespace: TenantRuntimeStateNamespace,
+  scope: { tenant_id: string; effect_id: string },
+): ExternalEffectOutboxStore {
+  // This namespace is a trusted internal capability, not a public authorization
+  // boundary. Keep it unavailable to application-controlled callers; record
+  // transitions still enforce scope and claim-token ownership for stale writers.
+  const stub = namespace.get(namespace.idFromName(externalEffectObjectName(scope)));
+  return {
+    begin: async (record) => {
+      assertExternalEffectClientScope(scope, record);
+      return callState(stub, "external-effect/begin", record);
+    },
+    claim: async (record) => {
+      assertExternalEffectClientScope(scope, record);
+      return callState(stub, "external-effect/claim", record);
+    },
+    write: async (record) => {
+      assertExternalEffectClientScope(scope, record);
+      return callState(stub, "external-effect/write", record);
+    },
+    read: async (tenantId, effectId) => {
+      assertExternalEffectClientScope(scope, { tenant_id: tenantId, effect_id: effectId });
+      return callState(stub, "external-effect/read", { tenant_id: tenantId, effect_id: effectId });
+    },
+  };
+}
+
+export function createDurableCompanyAuthorityHumanHandoffClient(
+  namespace: TenantRuntimeStateNamespace,
+  scope: { tenant_id: string; handoff_id: string },
+): CompanyAuthorityHumanHandoffStore {
+  // Internal persistence only. This API neither notifies the named person nor
+  // authorizes or completes the protected business effect.
+  const stub = namespace.get(namespace.idFromName(humanHandoffObjectName(scope)));
+  const assertScope = (candidate: { tenant_id: string; handoff_id: string }): void => {
+    if (candidate.tenant_id !== scope.tenant_id || candidate.handoff_id !== scope.handoff_id) {
+      deny("durable_object", "CROSS_TENANT_CANDIDATE");
+    }
+  };
+  return {
+    begin: async (record) => {
+      assertScope(record);
+      return callState(stub, "company-authority-handoff/begin", record);
+    },
+    read: async (tenantId, handoffId) => {
+      assertScope({ tenant_id: tenantId, handoff_id: handoffId });
+      return callState(stub, "company-authority-handoff/read", {
+        tenant_id: tenantId,
+        handoff_id: handoffId,
+      });
+    },
+  };
+}
+
 export function createDurableTenantAccountingClient(
   namespace: TenantRuntimeStateNamespace,
   tenantContext: TenantContextEnvelope,
@@ -488,8 +734,13 @@ export function createDurableTenantAccountingClient(
 export class TenantRuntimeStateHandler {
   readonly #idempotency: DurableTenantStateStore;
   readonly #accounting: TenantAccountingLedgerStore;
+  readonly #storage: TenantStateStorage;
 
-  constructor(storage: TenantStateStorage) {
+  constructor(
+    storage: TenantStateStorage,
+    private readonly objectName?: string,
+  ) {
+    this.#storage = storage;
     this.#idempotency = new DurableTenantStateStore(storage);
     this.#accounting = createDurableTenantAccountingStore(storage);
   }
@@ -539,6 +790,107 @@ export class TenantRuntimeStateHandler {
       } else if (url.pathname === "/accounting/release") {
         await this.#accounting.release(input as unknown as AccountingLedgerClaim);
         result = null;
+      } else if (url.pathname.startsWith("/external-effect/")) {
+        const operations = new Set([
+          "/external-effect/begin",
+          "/external-effect/claim",
+          "/external-effect/write",
+          "/external-effect/read",
+        ]);
+        if (!operations.has(url.pathname)) {
+          return Response.json({ error: "not_found" }, { status: 404 });
+        }
+        const candidate = input as unknown as ExternalEffectOutboxRecord;
+        const scope = { tenant_id: candidate.tenant_id, effect_id: candidate.effect_id };
+        if (typeof scope.tenant_id !== "string" || scope.tenant_id.length === 0
+          || typeof scope.effect_id !== "string" || scope.effect_id.length === 0) {
+          deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+        }
+        if (this.objectName !== externalEffectObjectName(scope)) {
+          deny("external_effect", "CROSS_TENANT_CANDIDATE");
+        }
+        if (url.pathname !== "/external-effect/read") {
+          const states = new Set(["pending", "in_flight", "succeeded", "failed_terminal", "unknown_requires_reconcile"]);
+          if (typeof candidate.provider_key !== "string" || candidate.provider_key.length === 0
+            || typeof candidate.payload_hash !== "string" || candidate.payload_hash.length === 0
+            || !states.has(candidate.state)) {
+            deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+          }
+        }
+        if (url.pathname === "/external-effect/begin" && candidate.state !== "pending") {
+          deny("external_effect", "EXTERNAL_EFFECT_STATE_CONFLICT");
+        }
+        if (url.pathname === "/external-effect/claim") {
+          assertValidClaim(candidate);
+          if ((candidate.claim_expires_at ?? 0) <= Date.now()) {
+            deny("external_effect", "EXTERNAL_EFFECT_CLAIM_INVALID");
+          }
+        }
+        if (url.pathname === "/external-effect/write") {
+          if (candidate.state === "pending") deny("external_effect", "EXTERNAL_EFFECT_STATE_CONFLICT");
+          if (candidate.state === "in_flight") assertValidClaim(candidate);
+          if (candidate.state === "succeeded"
+            && (typeof candidate.result_ref !== "string" || candidate.result_ref.length === 0)) {
+            deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+          }
+          if (candidate.state === "failed_terminal"
+            && (typeof candidate.failure_code !== "string" || candidate.failure_code.length === 0)) {
+            deny("external_effect", "EXTERNAL_EFFECT_CONTEXT_INVALID");
+          }
+        }
+        await bindExternalEffectScope(this.#storage, scope);
+        const outbox = createDurableExternalEffectOutboxStore(this.#storage, scope);
+        if (url.pathname === "/external-effect/begin") {
+          result = await outbox.begin(candidate);
+        } else if (url.pathname === "/external-effect/claim") {
+          result = await outbox.claim(candidate);
+        } else if (url.pathname === "/external-effect/write") {
+          await outbox.write(candidate);
+          result = null;
+        } else if (url.pathname === "/external-effect/read") {
+          result = await outbox.read(scope.tenant_id, scope.effect_id);
+        }
+      } else if (url.pathname.startsWith("/company-authority-handoff/")) {
+        const operations = new Set([
+          "/company-authority-handoff/begin",
+          "/company-authority-handoff/read",
+        ]);
+        if (!operations.has(url.pathname)) {
+          return Response.json({ error: "not_found" }, { status: 404 });
+        }
+        const candidate = input as unknown as CompanyAuthorityHumanHandoffRecord;
+        const scope = { tenant_id: candidate.tenant_id, handoff_id: candidate.handoff_id };
+        if (typeof scope.tenant_id !== "string" || scope.tenant_id.length === 0
+          || typeof scope.handoff_id !== "string" || scope.handoff_id.length === 0) {
+          deny("durable_object", "SCHEMA_INVALID");
+        }
+        if (this.objectName !== humanHandoffObjectName(scope)) {
+          deny("durable_object", "CROSS_TENANT_CANDIDATE");
+        }
+        if (url.pathname === "/company-authority-handoff/begin") {
+          const validDecisionState = (candidate.decision === "approval" && candidate.state === "pending_approval")
+            || (candidate.decision === "human_action" && candidate.state === "pending_human_action");
+          const validTarget = (candidate.decision === "approval"
+            && candidate.target?.role === "approver"
+            && typeof candidate.target.person_id === "string" && candidate.target.person_id.length > 0)
+            || (candidate.decision === "human_action"
+              && candidate.target?.role === "responsible"
+              && typeof candidate.target.person_id === "string" && candidate.target.person_id.length > 0);
+          if (candidate.schema_version !== "1.0" || !validDecisionState || !validTarget
+            || typeof candidate.execution_hash !== "string" || candidate.execution_hash.length === 0
+            || typeof candidate.capability_id !== "string" || candidate.capability_id.length === 0
+            || typeof candidate.authority_receipt_id !== "string" || candidate.authority_receipt_id.length === 0
+            || !candidate.source || typeof candidate.source !== "object") {
+            deny("durable_object", "SCHEMA_INVALID");
+          }
+        }
+        await bindHumanHandoffScope(this.#storage, scope);
+        const handoff = createDurableCompanyAuthorityHumanHandoffStore(this.#storage, scope);
+        if (url.pathname === "/company-authority-handoff/begin") {
+          result = await handoff.begin(candidate);
+        } else {
+          result = await handoff.read(scope.tenant_id, scope.handoff_id);
+        }
       } else {
         return Response.json({ error: "not_found" }, { status: 404 });
       }

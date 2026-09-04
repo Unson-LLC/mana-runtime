@@ -64,10 +64,12 @@ MANAはperson、owner、organization、project、RACI、approver、policy、plac
 
 MANAからBrainbaseへ送るものは、観測事実と要求に限定する。
 
+現行`ObservedExecutionRequestV1`はSlack限定である。locked schemaは`provider: "slack"`だけを受理し、Codex、Claude Code、serviceはprovider固有のnested envelopeが契約化されるまで`future / not_implemented`として拒否する。A0のAC-001 verified範囲もSlack fixture conformanceだけであり、non-Slack providerの入力またはruntime接続を証明しない。
+
 ```ts
 interface ObservedExecutionRequestV1 {
   provider_identity: {
-    provider: "slack" | "codex" | "claude_code" | "service";
+    provider: "slack";
     authenticated_subject_id: string;
     app_id?: string;
     workspace_id?: string;
@@ -145,10 +147,14 @@ interface CanonicalExecutionContextV1 {
 
 既存TenantContextのactor／authorizationも、移行後はBrainbase解決値から作る。MANAの入力値をコピーしない。
 
-## 6. 実行フロー
+## 6. 実行フローとA0境界
+
+A0で実証済みなのは、locked producer fixtureをfixture consumerへ入力し、署名済みcontextを検証・伝播するconformance境界だけである。`assertCanonicalAuthorityRetrieval`は未確定retrievalをfail-closedにするhelperであり、下記runtime経路への接続を証明しない。
+
+目標runtimeフロー（A0では未接続・`not_collected`。現行v1入力はSlackだけ）:
 
 ```text
-Slack／Codex／Claude Code／service event
+Slack event
   → provider identityを検証
   → ObservedExecutionRequestを作る
   → Brainbaseへcompany authority resolution
@@ -161,7 +167,9 @@ Slack／Codex／Claude Code／service event
   → Usage／Operation Receipt／authority receiptを相関
 ```
 
-Brainbaseが到達不能、identityが未解決、contextが古い場合は、モデル実行前に止める。
+Codex、Claude Code、serviceから始まる同等フローは将来のprovider固有nested envelope契約後の対象であり、現行v1では`not_implemented`である。
+
+Brainbaseが到達不能、identityが未解決、contextが古い場合は、モデル実行前に止める。この停止をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryの各実runtime surfaceで確認するのはT0以後のexit conditionであり、fixture conformanceを接続証拠へ読み替えない。
 
 ## 7. authority decisionの動作
 
@@ -251,6 +259,29 @@ MANAはPersonal KG本文を組織Graphへ転送しない。組織共有はBrainb
 6. tenant単位でwrite有効化
 7.旧runtime actor／authorization constructionを削除
 
+### runtime adapter transition contract
+
+A0は移行契約だけを固定し、runtime adapter自体は実装しない。T0でSlack ingressから公開contractへ変換するときは次を守る。
+
+| 旧Slack request | `ObservedExecutionRequestV1` | 扱い |
+|---|---|---|
+| `slack.requester_id` | `provider_identity.authenticated_subject_id` | 認証済みsubjectとして移す |
+| 固定値`slack` | `provider_identity.provider` | 現行v1の唯一のprovider |
+| `workspace_connection.app_id` | `provider_identity.app_id` | nestedへ移す |
+| `workspace_connection.workspace_id` | `provider_identity.workspace_id` | nestedへ移す |
+| `slack.enterprise_id` | `provider_identity.enterprise_id` | 存在する場合だけ移す |
+| `required_authorization.capability_id` | `requested_action.capability_id` | capabilityだけを観測値として移す |
+| `project:${required_authorization.project_id}` | `requested_action.resource_ref` | resourceの観測値として移す |
+| `required_authorization.project_id` | `requested_action.project_hint` | authorityではなくhintとして移す |
+| `slack.event_id/channel_id/thread_ts` | `delivery.*` | transport情報として移す |
+| `correlation_id` | `correlation_id` | 同一値を保つ |
+
+`tenant_id`、tenant／connection revision、`connection_id`、top-level `workspace_id`／`app_id`、`operation_id`、`requested_action.project_ids`は公開bodyへ送らない。routingとstalenessの内部入力に限定する。`desired_effect`はcall siteから明示するか閉じたcapability mappingで決め、未知capabilityを`read`へdefaultせず拒否する。
+
+`provider=service`は現行v1では`not_implemented`であり、Slack requestへ変換しない。会社権限resolution endpointはproducer contractに未定義のため、endpoint bindingもT0 ownerの`not_defined`とする。
+
+切替はA0 fixture契約、T0 adapter、dual-read診断、tenant単位read-only、negative E2E、writeの順で行う。dual-readのlegacy結果は会社権限の成功証拠に使わない。v1 opt-in後にschema rejection、Brainbase unavailable、結果不一致が起きても旧authorizationへfallbackしない。rollbackは旧権限で業務を継続することではなく、v1 opt-inを止めてbusiness operationを拒否することとする。
+
 ## 11. Verification matrix
 
 | Case | 期待結果 |
@@ -279,3 +310,13 @@ MANAはPersonal KG本文を組織Graphへ転送しない。組織共有はBrainb
 - Personal owner fallbackが0件
 - authority欠落時に会社データoperationが0件
 - `not_collected`を成功へ丸めない
+
+## 13. Production negative E2Eの観測境界
+
+AC-012の将来E2Eは、`.vibepro/spec/story-brainbase-owned-company-authority-consumer/production-e2e-plan.json`を正本test planとする。各caseは入口、予定するoperator-visible surface、locked producer fixture由来のcanonical拒否code、非成功表示、`business_effect=false`、side effect 0、同一correlation IDのReceipt/readback、未確認状態とnext actionを一組で観測する。契約にcodeがなければ捏造せず`expected_code_status=not_defined`としてT0へ戻し、成功・coverage対象外にする。Queue negative caseはrejected-first-deliveryに限定し、original effect 0、redelivery delta 0、aggregate effect 0と同一拒否codeを確認する。accepted-first-deliveryのexactly-onceは別計画であり、このnegative E2E証拠へ含めない。
+
+A0時点ではproduction E2E、runtime trust store、key rotation／revocation、T0接続が未完了だった。現在のT0では7つのruntime境界をローカル接続・再検証済みだが、production endpoint／trust binding、実外部作用、live readbackは未完了である。計画上の画面、Slack応答、CLI、log、Receiptをproduction実証済みsurfaceとして扱わず、取得できない観測は`not_collected`のまま残す。
+
+AC-004のWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへのconsumer接続と境界ごとの再検証は、T0のローカル実装・検証まで収集済みである。A0で確認したfixture consumerと`assertCanonicalAuthorityRetrieval` helperだけをruntime integration証拠にはせず、production接続とlive readbackは`not_collected`のまま分離する。
+
+同様に、AC-010のduplicate delivery／effect exactly-once／Receipt・correlation・idempotency identity結合はT0でローカルoutbox契約まで検証済みだが、production provider実行と外部readbackは`not_collected`とする。AC-011のOperationReceipt・UsageEvent・external readback・authority receiptのproduction correlation結合も`not_collected`である。fixture/mockやローカル形式検証をproduction実行証拠へ読み替えない。

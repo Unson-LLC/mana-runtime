@@ -1,0 +1,79 @@
+---
+story_id: story-brainbase-owned-company-authority-runtime-adapter-v1
+title: "MANAの実行境界をBrainbase署名済み会社権限へ接続する"
+status: active
+source:
+  type: program-work-package
+  id: T0
+architecture_reason: "A0で固定した会社権限consumer契約を、既存TenantContext境界を壊さず7つのruntime surfaceへfail-closedで接続する。"
+architecture_docs:
+  - docs/architecture/story-brainbase-owned-company-authority-runtime-adapter-v1.md
+  - docs/architecture/13_brainbase_owned_company_authority.md
+spec_docs:
+  - .vibepro/spec/story-brainbase-owned-company-authority-runtime-adapter-v1/draft.json
+related_stories:
+  - story-brainbase-owned-company-authority-consumer
+  - story-mana-multitenant-runtime
+---
+
+# MANAの実行境界をBrainbase署名済み会社権限へ接続する
+
+## 背景
+
+A0は、Brainbase producerのexact source lock、`ObservedExecutionRequestV1`、署名済み`CanonicalExecutionContextV1`、fixture consumerのfail-closed受理境界を固定した。しかし現行runtimeは、Slack入力から旧`TenantContextIssueRequest`を組み立て、`/api/v1/runtime/tenant-context:resolve`へ送っている。A0 consumerはproduction call siteへ未接続で、Worker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryの実行証拠は`not_collected`である。
+
+このStoryはT0の最小実装sliceとして、会社権限resolutionを注入可能なadapter portへ分離し、旧認可へ戻らないfail-closed境界を先に成立させる。Brainbase側のlive endpoint、production trust store、鍵rotation／revocation、本番デプロイは別の実証段階とし、未収集を成功へ丸めない。
+
+## 利用者の成果
+
+利用者のSlack操作は、Brainbaseが本人・所属・対象resource・RACI・policyを解決して署名した権限が受理された場合だけ実行される。Brainbaseへ到達できない、本人やscopeを確定できない、署名が不正、contextが古い場合は、モデル・書き込み・外部作用・Slack配送の前に安全に停止する。
+
+## Acceptance criteria
+
+- [ ] AC-001: 認証済みSlack ingressだけから`ObservedExecutionRequestV1`を作る。canonical person、organization、project、RACI、approver、policy revision、tenant、connection、credentialをrequestへ自己申告しない。
+- [ ] AC-002: `desired_effect`はcapabilityごとの明示mappingから決める。未知capabilityを`read`へ既定化せず、authority取得前に安定した拒否codeで止める。
+- [ ] AC-003: `CompanyAuthorityClient`をadapter portとして注入し、transport endpoint未定義でもfixture transportと取得不能を同じproduction adapter境界で検証できる。live endpointの存在を仮定しない。
+- [ ] AC-004: responseはA0 exact source lockの`acceptCompanyAuthorityResponse`で外側・nested署名、audience、deployment、TTL、tenant、connection、membership、resource、RACI、policyを検証する。MANA独自の権限判定を足さない。
+- [ ] AC-005: authority取得が`no_data / unknown / partial / not_collected / unavailable`、またはresponseが不正な場合、`AUTHORITY_UNAVAILABLE`またはproducer由来の安定codeで停止し、business callbackとlegacy authorization fallbackを各0回にする。
+- [ ] AC-006: 受理した`CanonicalExecutionContextV1`をWorker、Queue、Durable Object、Container、MCP、Brainbase proxy、Slack deliveryへ変更せず伝播し、各境界で再検証する。既存`TenantContextEnvelope`検証は置換せず内側のtenant safetyとして維持する。
+- [ ] AC-007: `auto / approval / human_action / deny`を変更しない。`deny`は全business effect前に拒否し、`approval`と`human_action`を`auto`として実行しない。
+- [ ] AC-008: 明示的なruntime routing selectorでCompany Authorityへopt-inしたoperationは、Brainbase unavailable、schema rejection、dual-read不一致、stale context時に旧`authorization.data_scopes`へfallbackしない。`company_authority_v1`はnested TenantContextのprotocol markerであり、operation selectorとして流用しない。実HTTP ingressはruntime設定からselectorを組み立てる。live transport未定義の間、選択operationは`not_collected`を返すclientで作用前に停止し、旧authorityと両Queue送信を各0回にする。本番設定値と本番実行証拠は`not_collected`である。
+- [ ] AC-009: 現行v1はSlack providerだけを受理する。service、Codex、Claude CodeをSlackへ偽装せず、provider固有契約ができるまで`not_implemented`で拒否する。
+- [ ] AC-010: 最初のRED testは、明示的runtime routing selectorがoperationをopt-in済みと判定した後に呼ぶ共通Worker基盤境界を直接実行し、authority endpoint取得不能時に`AUTHORITY_UNAVAILABLE`、business callback 0、legacy fallback 0を観測する。`company_authority_v1` marker単独ではこの境界を選択しない。実HTTP ingressの設定選択も同じfail-closed clientへ接続し、live endpointやsecretを必要とせず副作用0を検証する。本番値・live transport・本番readbackは別途必要とする。
+- [ ] AC-011: duplicate／redeliveryでは、model、Brainbase write、external side effect、Slack deliveryを各1回以下にし、OperationReceipt、UsageEvent、authority receipt、readbackを同一correlation IDへ結ぶ。
+- [ ] AC-012: 本番完了判定には、2 tenant × 2 person、7 runtime surface、read／write／approval／deny、negative effect 0、exactly-once、same-correlation、鍵rotation／revocation、exact deploy readbackの同一run証拠を要求する。
+
+## 依存関係
+
+- Program T0のhard dependencyであるR0
+- A0 exact producer／consumer source lock（元HEAD `167116c8b4aa92a9d2a50b70c8222f0336ffd792`、最新mainへのpatch-equivalent取込）
+- `story-mana-multitenant-runtime`の既存TenantContextと7 surface境界
+- Brainbase側company-authority live endpoint契約（現時点`not_defined`）
+- production trust storeとkey rotation／revocation運用（現時点`not_implemented`）
+
+## 実装境界
+
+最初の実装対象:
+
+- Slack observationから公開requestへの純粋mapping
+- 明示的なdesired-effect mappingと未知capability拒否
+- transportを注入する`CompanyAuthorityClient` port
+- A0 reference consumerを使うresponse acceptance
+- Worker入口の取得不能fail-closed test
+- 7 surfaceへ外側company authorityを伝播するための型と検証境界
+
+このStoryだけでは完了にしない対象:
+
+- Brainbase live endpointのURL／service binding確定
+- production JWK配布、rotation、revocation
+- production DB schema、bridge、secret、OAuth、deploy変更
+- 本番2×2、7 surface同一run、negative E2E、exactly-once、same-correlation readback
+- service、Codex、Claude Code provider対応
+
+## Evidence ceiling
+
+ローカルfixture・unit・integration testが成功しても、証明できるのはadapterの入力変換、fail-closed、署名受理、境界伝播だけである。live Brainbase resolution、production trust、production runtime、外部作用readbackは`not_collected`を維持する。`acceptance-e2e-runtime-flow-not-collected`は、同一runの本番証跡を収集するまでcloseしない。
+
+Queue sliceでは、未知のCompany Authority envelopeをlegacy fallbackとしてACKせず再試行する入口guardと、署名済みouter／nested contextを受理し、payload binding後に受理済みcontextだけからruntime依存を解決して`auto / approval / human_action`を分岐するconsumerを`worker.queue`へ接続した。tenant verifierとownership storeは署名受理・payload照合後にだけ選択する。Slack ingressではJCS正規化した全Queue payloadのSHA-256を署名対象の`resource_ref`へ束縛し、Queueで再計算するため、本文・時刻・event種別・files・thread／attachment contextの差替えを拒否する。無効・改ざんenvelopeまたはpayloadではruntime resolverを呼ばない。受理済みrequest/context/payloadはimmutable snapshotとしてcallbackへ渡し、`approval / human_action`は署名済みapproverまたはresponsibleだけを対象とするtenant-bound Durable Objectへ、確定済みexecution hashとともに`pending_approval / pending_human_action`として保存する。永続化後の応答喪失はretryし、同一再配送は1件のpending recordを再利用してACKするが、通知、判断、完了、protected effectは行わない。`auto`の外部作用については、provider call前の`pending`保存、原子的なclaim、成功・恒久失敗・`unknown_requires_reconcile`の分離、deterministic provider keyによる照合、同一effect IDでのpayload差替え拒否をtenant-bound durable-state outboxのローカル契約として追加した。production auto provider registryは空で、盲目的な期限切れclaim再取得は行わず、元のclaim tokenなしに状態遷移できない。さらに、runtime環境変数からHTTPS endpoint、expected deployment ID、公開Ed25519 JWK、operation mapping、audience、単一tenant verification keyを解釈するfail-closed parserをローカル実装し、欠落・秘密鍵混入・曖昧なJWKS・未知effectを拒否する。disabled・partial設定はQueue claim前にretryする。production設定値、live HTTP client／認証、production auto provider／reconciler、本番trust値、通知・承認完了、外部provider readbackは未定義・未設定または`not_collected`であり、production Queue成功や本番exactly-onceとは判定しない。
+今回の選択operation境界sliceでは、Queueが受理済みrequest／outer envelope／payloadをimmutable snapshotとして確定し、注入型provider routeがそのsnapshotからscopeを再束縛してContainer実行へ渡す。Containerは既存opaque handleをtenant-bound Durable registryへ登録し、そのhandleを使うtrusted local boundary handlerが`container_launch`、`mcp_gateway`、`brainbase_proxy`、`slack_delivery`でouter／nested／payloadを再検証する。`send_message`だけが`slack_delivery`を要求し、read／search、類似名、不正JSONでは過剰適用しない。`approval`／`human_action`は`require_auto` guardでstorage／effect前に拒否する。これは注入した選択operationから4境界までのローカル接続・検証であり、credential-backed production provider登録、実MCP／Brainbase／Slack呼び出し、live runtime、同一run本番証跡は未接続・`not_collected`である。
+実HTTP ingress selector sliceでは、`parseCompanyAuthorityRuntimeConfiguration`の結果を`companyAuthorityIngressConfiguration`へ渡し、有効なcapability mappingだけを`handleTenantSlackRequest.company_authority`へ接続した。live transport／authenticationは未定義のためclientは`not_collected`を返し、選択operationを`AUTHORITY_UNAVAILABLE`で停止する。無効設定では従来のlegacy経路を維持し、partial設定はhandler呼出し前に`CONFIGURATION_INVALID`で停止する。これはローカル配線と副作用0の証拠であり、本番設定、live resolution、Company Authority Queue成功、本番readbackの証拠ではない。

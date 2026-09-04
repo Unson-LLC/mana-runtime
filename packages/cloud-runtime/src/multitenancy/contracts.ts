@@ -138,7 +138,8 @@ export interface TenantPartitionInput {
     | "mcp_config"
     | "secret_handle"
     | "usage"
-    | "idempotency";
+    | "idempotency"
+    | "external_effect";
   connection_id: string;
   workspace_id: string;
   channel_id: string;
