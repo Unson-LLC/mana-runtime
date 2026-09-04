@@ -30,6 +30,7 @@ describe("Worker task Canvas repair producers", () => {
       .toHaveLength(2);
     expect(source).toContain("(repair) => resolveDerivedSlackTenantContext(env, tenantContext");
     expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
+    expect(source).toContain("requester_id: requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)");
     expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
       .toHaveLength(2);
   });
