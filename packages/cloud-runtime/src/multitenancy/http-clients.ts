@@ -10,6 +10,11 @@ import { TENANT_QUOTA_METRIC, TENANT_QUOTA_REQUESTED_QUANTITY } from "./contract
 import type { OperationReceipt, UsageEvent } from "./accounting.js";
 import type { CredentialBrokerClient } from "./credentials.js";
 import type { TenantAuthorityClient, TenantContextIssueRequest } from "./runtime-boundaries.js";
+import type {
+  CompanyAuthorityClient,
+  CompanyAuthorityResolution,
+  ObservedExecutionRequestV1,
+} from "./company-authority-runtime-adapter.js";
 import type { WorkspaceConnectionLookup, WorkspaceConnectionManagementPort } from "./workspace-connection.js";
 import {
   CanonicalContractError,
@@ -108,6 +113,7 @@ export interface TenantAccountingHttpClient {
 
 export interface TenantRuntimeHttpClients {
   authority: TenantAuthorityClient;
+  company_authority: CompanyAuthorityClient;
   workspace_connections: WorkspaceConnectionManagementPort;
   credential_broker: CredentialBrokerClient;
   quota: TenantQuotaHttpClient;
@@ -400,6 +406,22 @@ export function createTenantRuntimeHttpClients(
     return canonicalSnapshot(response, context, hints.find((hint) => hint.connection_id === connectionId));
   };
 
+  const resolveCompanyAuthority = async (
+    request: ObservedExecutionRequestV1,
+  ): Promise<CompanyAuthorityResolution> => {
+    const response = await postJson(
+      bindings,
+      "/company-authority:resolve",
+      request,
+      "company_authority",
+    );
+    // A successful HTTP response with malformed JSON is evidence of no
+    // authority response, not a resolved response. Valid JSON remains
+    // intentionally opaque so the adapter owns signature and scope checks.
+    if (response === undefined) return { state: "not_collected" };
+    return { state: "resolved", response };
+  };
+
   return {
     authority: {
       resolve_workspace_connection: resolve,
@@ -451,6 +473,9 @@ export function createTenantRuntimeHttpClients(
         contexts.set(context.workspace_connection.connection_id, structuredClone(context));
         return context;
       },
+    },
+    company_authority: {
+      resolve: resolveCompanyAuthority,
     },
     workspace_connections: {
       async register_slack_installation(): Promise<WorkspaceConnectionSnapshot> {
