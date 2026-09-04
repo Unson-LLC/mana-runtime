@@ -132,6 +132,7 @@ export async function processCompanyAuthorityHumanHandoff<T>(input: {
 }): Promise<{ record: CompanyAuthorityHumanHandoffRecord; created: boolean }> {
   const tenantContext = input.context.tenant_context as {
     tenant?: { tenant_id?: unknown };
+    authorization?: { project_ids?: unknown };
     idempotency_key?: unknown;
     operation_id?: unknown;
     correlation_id?: unknown;
@@ -164,11 +165,14 @@ export async function processCompanyAuthorityHumanHandoff<T>(input: {
     || !requiredString(input.context.issued_at) || !requiredString(input.context.expires_at)) {
     invalidHandoff("company_authority_handoff_context");
   }
+  const projectIds = tenantContext.authorization?.project_ids;
+  if (!Array.isArray(projectIds) || projectIds.length !== 1 || projectIds[0] !== projectId) {
+    invalidHandoff("company_authority_project_binding");
+  }
   const requested = input.request.requested_action;
   if (input.request.correlation_id !== correlationId
     || requested.capability_id !== capabilityId
     || requested.resource_ref !== resourceRef
-    || requested.project_hint !== projectId
     || !Array.isArray(authority.allowed_effects)
     || !authority.allowed_effects.includes(requested.desired_effect)) {
     invalidHandoff("company_authority_handoff_binding");

@@ -57,6 +57,21 @@ const tenantContext = {
   placement: { deployment_id: "deployment-a", profile: "shared_cloud" },
 } as unknown as TenantContextEnvelope;
 
+const payload = {
+  tenantId: "tenant-a",
+  workspaceId: "workspace-a",
+  eventId: "event-a",
+  channelId: "channel-a",
+  threadTs: "thread-a",
+  messageTs: "thread-a",
+  userId: "person-a",
+  eventType: "message",
+  text: "hello",
+  receivedAt: "2026-09-02T00:00:00.000Z",
+} satisfies SlackQueueEvent;
+
+const canonicalResourceRef = await companyAuthoritySlackResourceRef("project-a", payload);
+
 class MemoryBoundaryStorage {
   readonly values = new Map<string, unknown>();
   get<T>(key: string): Promise<T | undefined> {
@@ -94,6 +109,10 @@ class IsolatedBoundaryNamespace implements TenantBoundaryContextNamespace {
 
 const context = {
   tenant_context: tenantContext,
+  scope: {
+    project_id: "project-a",
+    resource_ref: canonicalResourceRef,
+  },
   authority: {
     decision: "auto",
     capability_id: "company_read",
@@ -110,19 +129,6 @@ const externalEffectContext = {
   },
 } as AcceptedCompanyAuthorityContext;
 
-const payload = {
-  tenantId: "tenant-a",
-  workspaceId: "workspace-a",
-  eventId: "event-a",
-  channelId: "channel-a",
-  threadTs: "thread-a",
-  messageTs: "thread-a",
-  userId: "person-a",
-  eventType: "message",
-  text: "hello",
-  receivedAt: "2026-09-02T00:00:00.000Z",
-} satisfies SlackQueueEvent;
-
 const request: ObservedExecutionRequestV1 = {
   provider_identity: {
     provider: "slack",
@@ -132,7 +138,7 @@ const request: ObservedExecutionRequestV1 = {
   },
   requested_action: {
     capability_id: "company_read",
-    resource_ref: await companyAuthoritySlackResourceRef("project-a", payload),
+    resource_ref: canonicalResourceRef,
     project_hint: "project-a",
     desired_effect: "read",
   },
@@ -174,6 +180,34 @@ describe("company authority Queue production seam", () => {
     });
   });
 
+  it("accepts the producer-resolved project code alias for payload binding", async () => {
+    const projectCode = "project-code-a";
+    const resourceRef = await companyAuthoritySlackResourceRef(projectCode, payload);
+    const aliasedRequest: ObservedExecutionRequestV1 = {
+      ...request,
+      requested_action: {
+        ...request.requested_action,
+        resource_ref: resourceRef,
+        project_hint: projectCode,
+      },
+    };
+    const aliasedContext = {
+      ...context,
+      scope: { ...context.scope, resource_ref: resourceRef },
+    } as AcceptedCompanyAuthorityContext;
+
+    await expect(resolveCompanyAuthoritySlackQueueScope({
+      context: aliasedContext,
+      request: aliasedRequest,
+      payload,
+      expected_audience: "mana-runtime",
+      desired_effect_by_capability: { company_read: "read" },
+    })).resolves.toMatchObject({
+      project_id: "project-a",
+      project_ids: ["project-a"],
+    });
+  });
+
   it.each([
     ["unconfigured capability", { desired_effect_by_capability: {} }],
     ["effect mismatch", { desired_effect_by_capability: { company_read: "write" as const } }],
@@ -193,6 +227,12 @@ describe("company authority Queue production seam", () => {
         },
       } as AcceptedCompanyAuthorityContext,
     }],
+    ["outer and nested project mismatch", {
+      context: {
+        ...context,
+        scope: { ...context.scope, project_id: "project-b" },
+      } as AcceptedCompanyAuthorityContext,
+    }],
   ])("fails closed for %s", async (_label, override) => {
     await expect(resolveCompanyAuthoritySlackQueueScope({
       context,
@@ -204,6 +244,26 @@ describe("company authority Queue production seam", () => {
     })).rejects.toEqual(expect.objectContaining({
       boundary: "queue_consumer",
       code: "AUTHORITY_SCOPE_MISMATCH",
+    }));
+  });
+
+  it.each([
+    ["resource reference", { resource_ref: "project:project-a#payload_sha256=invalid" }],
+    ["project hint", { project_hint: "project-other" }],
+  ])("rejects post-acceptance %s substitution", async (_label, change) => {
+    await expect(resolveCompanyAuthoritySlackQueueScope({
+      context,
+      request: {
+        ...request,
+        requested_action: { ...request.requested_action, ...change },
+      },
+      payload,
+      expected_audience: "mana-runtime",
+      desired_effect_by_capability: { company_read: "read" },
+    })).rejects.toEqual(expect.objectContaining({
+      boundary: "queue_consumer",
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      details: { phase: "company_authority_payload_binding" },
     }));
   });
 
