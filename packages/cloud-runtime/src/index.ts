@@ -1099,7 +1099,14 @@ function meetingMinutesClients(
           env,
           targetId,
           "task_write",
-          (repair) => resolveTaskBoardRepairTenantContext(env, repair),
+          (repair) => resolveDerivedSlackTenantContext(env, tenantContext, {
+            app_id: tenantContext.workspace_connection.app_id,
+            workspace_id: repair.workspaceId,
+            event_id: taskBoardRepairEventId(repair),
+            channel_id: repair.channelId,
+            thread_ts: repair.requestedAt,
+            requester_id: tenantContext.actor.authenticated_subject_id,
+          }),
         )),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
