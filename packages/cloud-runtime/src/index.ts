@@ -1105,7 +1105,7 @@ function meetingMinutesClients(
             event_id: taskBoardRepairEventId(repair),
             channel_id: repair.channelId,
             thread_ts: repair.requestedAt,
-            requester_id: tenantContext.actor.authenticated_subject_id,
+            requester_id: requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID),
           }),
         )),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
