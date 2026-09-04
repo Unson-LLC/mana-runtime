@@ -1,5 +1,35 @@
 import type { MeetingMinutesContextReceipt, MeetingMinutesDiagnosticStage, MeetingMinutesDiagnostics,
-  MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+  MeetingMinutesRun, MeetingMinutesRedoStage } from "./meeting-minutes-contracts.js";
+
+export function classifyMeetingMinutesRedoFailure(stage: MeetingMinutesRedoStage, error: unknown):
+  { stage: MeetingMinutesRedoStage; code: string; retryable: boolean } {
+  const message = error instanceof Error ? error.message : "";
+  const taskStatus = error && typeof error === "object" ? (error as { status?: unknown }).status : undefined;
+  const prefix = { redo_github_delete: "REDO_GITHUB", redo_task_delete: "REDO_TASK",
+    redo_slack_retract: "REDO_SLACK", redo_destination_selection: "REDO_DESTINATION_SELECTION" }[stage];
+  if (stage === "redo_task_delete" && message === "meeting_minutes_redo_task_registration_pending") {
+    return { stage, code: "REDO_TASK_REGISTRATION_PENDING", retryable: false };
+  }
+  if (stage === "redo_slack_retract" || stage === "redo_destination_selection") {
+    const slackError = message.match(/^slack_api_failed:[A-Za-z.]+:([a-z_]+|\d{3})$/)?.[1];
+    if (message === "slack_bot_token_not_configured" ||
+      ["invalid_auth", "not_authed", "token_revoked", "account_inactive", "401"].includes(slackError ?? "")) {
+      return { stage, code: `${prefix}_AUTHENTICATION_FAILED`, retryable: false };
+    }
+    if (["not_in_channel", "missing_scope", "channel_not_found", "no_permission", "cant_update_message", "403"].includes(slackError ?? "")) {
+      return { stage, code: `${prefix}_FORBIDDEN`, retryable: false };
+    }
+    if (["ratelimited", "rate_limited", "429"].includes(slackError ?? "")) {
+      return { stage, code: `${prefix}_RATE_LIMITED`, retryable: true };
+    }
+  }
+  const status = stage === "redo_task_delete" ? taskStatus
+    : stage === "redo_github_delete" ? Number(message.match(/^github_(?:read|delete)_failed:(\d{3})$/)?.[1]) : undefined;
+  if (status === 401) return { stage, code: `${prefix}_AUTHENTICATION_FAILED`, retryable: false };
+  if (status === 403) return { stage, code: `${prefix}_FORBIDDEN`, retryable: false };
+  if (status === 429) return { stage, code: `${prefix}_RATE_LIMITED`, retryable: true };
+  return { stage, code: `${prefix}_FAILED`, retryable: true };
+}
 
 const SAFE_RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const RECEIPT_ERROR_CODES = new Set([
@@ -95,7 +125,7 @@ export interface MeetingMinutesFailureLog {
 }
 
 export function meetingMinutesFailureLog(run: MeetingMinutesRun): MeetingMinutesFailureLog {
-  const failure = run.projectionFailure ?? run.diagnostics;
+  const failure = run.redo?.failure ?? run.projectionFailure ?? run.diagnostics;
   const taskFailure = run.taskRegistration?.failure;
   return { runId: run.runId, stage: failure?.stage ?? "unknown",
     code: failure?.code ?? "UNCLASSIFIED_FAILURE", retryable: failure?.retryable ?? true,

@@ -971,6 +971,94 @@ describe("meeting minutes pipeline", () => {
     expect(reopened).not.toHaveProperty("failure");
   });
 
+  it("acknowledges a stale redo as a terminal no-op without changing the newer completed run", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const resume = resumeOptions({ generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+      tasks: [{ title: "確認する" }] }) });
+    await resumeMeetingMinutesRun(fs, selection, resume);
+    await redoMeetingMinutesRun(fs, { ...redo, revision: 0 }, { destinations: [destination],
+      deleteGitHub: vi.fn(), deleteTask: vi.fn(), retractSharedMinutes: vi.fn(),
+      showDestinationSelection: vi.fn().mockResolvedValue("4.1") });
+    await resumeMeetingMinutesRun(fs, selection, resume);
+
+    const currentRun = await loadMeetingMinutesRun(fs, selection.runId);
+    const deleteGitHub = vi.fn(); const deleteTask = vi.fn(); const retractSharedMinutes = vi.fn();
+    const showDestinationSelection = vi.fn();
+    await expect(redoMeetingMinutesRun(fs, { ...redo, revision: 0 }, { destinations: [destination],
+      deleteGitHub, deleteTask, retractSharedMinutes, showDestinationSelection }))
+      .resolves.toEqual(currentRun);
+
+    expect(deleteGitHub).not.toHaveBeenCalled();
+    expect(deleteTask).not.toHaveBeenCalled();
+    expect(retractSharedMinutes).not.toHaveBeenCalled();
+    expect(showDestinationSelection).not.toHaveBeenCalled();
+    await expect(redoMeetingMinutesRun(fs, redo, { destinations: [destination],
+      deleteGitHub, deleteTask, retractSharedMinutes, showDestinationSelection }))
+      .resolves.toEqual(currentRun);
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed", revision: 1,
+      github: { minutesPath: "docs/minutes/a.md" }, taskRegistration: { registered: [{ taskId: "task-1" }] } });
+  });
+
+  it("deletes only tasks created by this run during redo", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "今回作成するタスク" }] }),
+    }));
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    persisted.taskRegistration!.registered.push(
+      { index: 1, title: "既存の完全一致タスク", taskId: "task-exact", status: "reused", projectCodes: ["mana"] },
+      { index: 2, title: "既存の類似タスク", taskId: "task-similar", status: "needs_review", projectCodes: ["mana"] },
+      { index: 3, title: "既に削除済みのタスク", taskId: "task-removed", status: "removed", projectCodes: ["mana"] },
+    );
+    await saveMeetingMinutesRun(fs, persisted);
+    const deleteTask = vi.fn();
+
+    await redoMeetingMinutesRun(fs, redo, { destinations: [destination], deleteGitHub: vi.fn(), deleteTask,
+      retractSharedMinutes: vi.fn(), showDestinationSelection: vi.fn().mockResolvedValue("3.1") });
+
+    expect(deleteTask).toHaveBeenCalledTimes(1);
+    expect(deleteTask).toHaveBeenCalledWith("task-1", "meeting-minutes-redo-Ev1_F1-revision-0-0");
+    expect(deleteTask).not.toHaveBeenCalledWith("task-exact", expect.any(String));
+    expect(deleteTask).not.toHaveBeenCalledWith("task-similar", expect.any(String));
+    expect(deleteTask).not.toHaveBeenCalledWith("task-removed", expect.any(String));
+  });
+
+  it("fails closed when task registration is still pending before external cleanup", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "今回作成するタスク" }] }),
+    }));
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    const pending = { index: 1, idempotencyKey: "pending-recovery-key",
+      input: { title: "未完了のタスク", project_codes: ["mana"] } };
+    persisted.taskRegistration!.pending = pending;
+    await saveMeetingMinutesRun(fs, persisted);
+    const deleteGitHub = vi.fn(); const deleteTask = vi.fn(); const retractSharedMinutes = vi.fn();
+    const showDestinationSelection = vi.fn(); const showRedoFailure = vi.fn();
+
+    await expect(redoMeetingMinutesRun(fs, redo, { destinations: [destination], deleteGitHub, deleteTask,
+      retractSharedMinutes, showDestinationSelection, showRedoFailure })).rejects
+      .toThrow("meeting_minutes_redo_task_registration_pending");
+
+    expect(deleteGitHub).not.toHaveBeenCalled();
+    expect(deleteTask).not.toHaveBeenCalled();
+    expect(retractSharedMinutes).not.toHaveBeenCalled();
+    expect(showDestinationSelection).not.toHaveBeenCalled();
+    expect(showRedoFailure).toHaveBeenCalledOnce();
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed",
+      taskRegistration: { pending },
+      redo: { revision: 0, deletedTaskIds: [], failure: {
+        message: "REDO_TASK_REGISTRATION_PENDING", stage: "redo_task_delete",
+        code: "REDO_TASK_REGISTRATION_PENDING", retryable: false,
+      } },
+    });
+  });
+
   it("resumes a partially completed redo without repeating finished cleanup", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
@@ -986,7 +1074,7 @@ describe("meeting minutes pipeline", () => {
     await expect(redoMeetingMinutesRun(fs, redo, options)).rejects.toThrow("Slack unavailable");
     expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed", redo: {
       revision: 0, githubDeletedAt: expect.any(String), deletedTaskIds: ["task-1"],
-      failure: { message: "Slack unavailable" },
+      failure: { message: "REDO_SLACK_FAILED", stage: "redo_slack_retract", code: "REDO_SLACK_FAILED" },
     } });
     expect(showRedoFailure).toHaveBeenCalledOnce();
     const reopened = await redoMeetingMinutesRun(fs, redo, options);
@@ -1014,7 +1102,8 @@ describe("meeting minutes pipeline", () => {
     await expect(redoMeetingMinutesRun(fs, redo, options)).rejects.toThrow("source Slack unavailable");
     expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed", redo: {
       revision: 0, githubDeletedAt: expect.any(String), deletedTaskIds: ["task-1"],
-      sharedRetractedAt: expect.any(String), failure: { message: "source Slack unavailable" },
+      sharedRetractedAt: expect.any(String), failure: { message: "REDO_DESTINATION_SELECTION_FAILED",
+        stage: "redo_destination_selection", code: "REDO_DESTINATION_SELECTION_FAILED" },
     } });
     expect(showRedoFailure).toHaveBeenCalledOnce();
 

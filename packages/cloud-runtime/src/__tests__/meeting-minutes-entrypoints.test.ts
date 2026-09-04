@@ -96,6 +96,14 @@ describe("meeting minutes entrypoints", () => {
   it("recognizes only a complete redo Queue message", () => {
     expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1", workspaceId: "T1",
       appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" })).toBe(true);
+    expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1", revision: 0, workspaceId: "T1",
+      appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" })).toBe(true);
+    expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1", revision: 1, workspaceId: "T1",
+      appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" })).toBe(true);
+    expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1", revision: -1, workspaceId: "T1",
+      appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" })).toBe(false);
+    expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1", revision: "1", workspaceId: "T1",
+      appId: "A1", channelId: "C1", threadTs: "1.1", userId: "U1", actionTs: "2.1" })).toBe(false);
     expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1", workspaceId: "T1",
       channelId: "C1", userId: "U1", actionTs: "2.1" })).toBe(false);
     expect(isMeetingMinutesRedo({ kind: "meeting_minutes_redo", runId: "E1_F1" })).toBe(false);

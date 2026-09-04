@@ -363,6 +363,33 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("GitHubの議事録・文字起こしと自動登録タスクを取り消し");
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("取り消して選び直す");
   });
+  it("forwards the displayed redo revision through confirmation and queueing", async () => {
+    const redoPayload = structuredClone(payload);
+    redoPayload.actions[0]!.action_id = "mana_meeting_minutes_redo";
+    redoPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt", revision: 1 });
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(redoPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
+      destinations, send, updateOriginal, defer: background.defer });
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    const confirmation = updateOriginal.mock.calls[0]?.[1] as
+      { blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }> };
+    const confirmButton = confirmation.blocks?.flatMap((block) => block.elements ?? [])
+      .find((element) => element.action_id === "mana_meeting_minutes_confirm_redo");
+    expect(confirmButton?.value).toBeDefined();
+    expect(JSON.parse(confirmButton!.value!)).toMatchObject({ runId: "Ev1_F1", revision: 1 });
+
+    const confirmPayload = structuredClone(payload);
+    confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
+    confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt", revision: 1 });
+    const confirmSend = vi.fn().mockResolvedValue(undefined); const confirmUpdate = vi.fn();
+    const confirmBackground = deferred();
+    const confirmResponse = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
+      ...tenantBoundary, destinations, send: confirmSend, updateOriginal: confirmUpdate, defer: confirmBackground.defer });
+    expect(confirmResponse.status).toBe(200); await Promise.all(confirmBackground.work);
+    expect(confirmSend).toHaveBeenCalledWith(expect.objectContaining({ kind: "meeting_minutes_redo", revision: 1 }));
+  });
   it("uses a bounded fallback when the redo confirmation projection fails", async () => {
     const redoPayload = structuredClone(payload);
     redoPayload.actions[0]!.action_id = "mana_meeting_minutes_redo";
@@ -391,9 +418,10 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先変更の要求を受け付けました");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("古い操作の場合は現在の議事録・タスクを変更せず終了します");
     expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1", appId: "A1",
-      channelId: "C1", threadTs: "1.0", userId: "U1", actionTs: "1.2" });
+      channelId: "C1", threadTs: "1.0", userId: "U1", actionTs: "1.2", revision: 0 });
   });
   it("replaces the confirmation with a durable retry when redo enqueue fails", async () => {
     const confirmPayload = structuredClone(payload);
@@ -406,7 +434,7 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(updateOriginal).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先をやり直しています");
+    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先変更の要求を受け付けました");
     expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("取り消しを再実行");
   });
   it("does not log raw errors when redo status projections fail", async () => {

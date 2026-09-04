@@ -102,6 +102,10 @@ function validOptionalText(value: unknown, maxLength: number): boolean {
   return value === undefined || (typeof value === "string" && value.trim().length > 0 && value.length <= maxLength);
 }
 
+function validOptionalMeetingMinutesRevision(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+}
+
 function isMeetingMinutesInteractionAction(actionId: string | undefined): boolean {
   return actionId === MEETING_MINUTES_CHOOSE_ACTION_ID ||
     actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`) === true ||
@@ -168,6 +172,8 @@ function validMeetingMinutesInteractionValue(
     return !!organizationId && meetingMinutesDestinationIdPattern.test(organizationId) &&
       meetingMinutesDestinationIdPattern.test(qualifiedOrganizationId);
   }
+  if ((actionId === MEETING_MINUTES_REDO_ACTION_ID || actionId === MEETING_MINUTES_CONFIRM_REDO_ACTION_ID) &&
+    !validOptionalMeetingMinutesRevision(value?.revision)) return false;
   return true;
 }
 
@@ -507,6 +513,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const value = actionValue;
   const runId = string(value?.runId); const destinationId = string(value?.destinationId);
   const organizationId = string(value?.organizationId); const fileName = string(value?.fileName);
+  const revision = typeof value?.revision === "number" ? value.revision : 0;
   const sourceThreadTs = threadTsCandidates[0];
   let intakePaused = false;
   if (options.isIntakePaused) {
@@ -559,16 +566,16 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
     options.defer((async () => {
       try {
-        await guardedSlackEffect(tenantEffects, `redo-confirm:${runId}`,
-          target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId },
+        await guardedSlackEffect(tenantEffects, `redo-confirm:${runId}:${revision}`,
+          target(channelId, sourceThreadTs), { kind: "redo_confirmation", runId, revision },
           (credentialFetch) => options.updateOriginal!(
-            responseUrl, redoConfirmationMessage(runId, fileName), credentialFetch));
+            responseUrl, redoConfirmationMessage(runId, fileName, revision), credentialFetch));
       } catch {
         await attemptInteractionFailureProjection({
           effects: tenantEffects,
-          effectId: `redo-confirm-projection:${runId}`,
+          effectId: `redo-confirm-projection:${runId}:${revision}`,
           effectTarget: target(channelId, sourceThreadTs),
-          effect: { kind: "redo_confirmation_projection_fallback", runId },
+          effect: { kind: "redo_confirmation_projection_fallback", runId, revision },
           responseUrl,
           runId,
           message: statusProjectionFailedMessage(runId, fileName),
@@ -588,8 +595,8 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     options.defer((async () => {
       let processingProjectionFailed = false;
       try {
-        await guardedSlackEffect(tenantEffects, `redo-processing:${runId}`,
-          target(channelId, sourceThreadTs), { kind: "redo_processing", runId },
+        await guardedSlackEffect(tenantEffects, `redo-processing:${runId}:${revision}`,
+          target(channelId, sourceThreadTs), { kind: "redo_processing", runId, revision },
           (credentialFetch) => options.updateOriginal!(responseUrl, redoProcessingMessage(fileName, runId), credentialFetch));
       } catch {
         processingProjectionFailed = true;
@@ -598,7 +605,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           correlation_id: deriveCorrelationId(runId, "status_projection", "STATUS_PROJECTION_FAILED"), retryable: true }));
       }
       try {
-        await options.send({ kind: "meeting_minutes_redo", runId,
+        await options.send({ kind: "meeting_minutes_redo", runId, revision,
           workspaceId: interactionWorkspaceId, appId,
           channelId, threadTs: sourceThreadTs, userId, actionTs });
       } catch (error) {
@@ -606,16 +613,16 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           stage: "redo_enqueue", code: "REDO_ENQUEUE_FAILED",
           correlation_id: deriveCorrelationId(runId, "redo_enqueue", "REDO_ENQUEUE_FAILED"), retryable: true }));
         try {
-          await guardedSlackEffect(tenantEffects, `redo-failed:${runId}`,
-            target(channelId, sourceThreadTs), { kind: "redo_failed", runId },
+          await guardedSlackEffect(tenantEffects, `redo-failed:${runId}:${revision}`,
+            target(channelId, sourceThreadTs), { kind: "redo_failed", runId, revision },
             (credentialFetch) => options.updateOriginal!(responseUrl,
-              redoFailedMessage(runId, fileName), credentialFetch));
+              redoFailedMessage(runId, fileName, undefined, revision), credentialFetch));
         } catch {
           await attemptInteractionFailureProjection({
             effects: tenantEffects,
-            effectId: `redo-failed-projection:${runId}`,
+            effectId: `redo-failed-projection:${runId}:${revision}`,
             effectTarget: target(channelId, sourceThreadTs),
-            effect: { kind: "redo_failure_projection_fallback", runId },
+            effect: { kind: "redo_failure_projection_fallback", runId, revision },
             responseUrl,
             runId,
             message: statusProjectionFailedMessage(runId, fileName),
@@ -628,9 +635,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       if (processingProjectionFailed) {
         await attemptInteractionFailureProjection({
           effects: tenantEffects,
-          effectId: `redo-processing-projection:${runId}`,
+          effectId: `redo-processing-projection:${runId}:${revision}`,
           effectTarget: target(channelId, sourceThreadTs),
-          effect: { kind: "redo_processing_projection_fallback", runId },
+          effect: { kind: "redo_processing_projection_fallback", runId, revision },
           responseUrl,
           runId,
           message: statusProjectionFailedMessage(runId, fileName),

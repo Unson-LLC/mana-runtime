@@ -175,6 +175,17 @@ export type MeetingMinutesRunStatus =
 export type MeetingMinutesDiagnosticStage = "interaction_enqueue" | "transcript_download" | "context_resolve"
   | "context_gate" | "generation" | "github_save" | "slack_publish" | "task_registration" | "status_projection";
 
+export type MeetingMinutesRedoStage = "redo_github_delete" | "redo_task_delete"
+  | "redo_slack_retract" | "redo_destination_selection";
+export interface MeetingMinutesRedoFailure {
+  /** Legacy runs may contain an upstream message. Never expose it in projections. */
+  message: string;
+  failedAt: string;
+  stage?: MeetingMinutesRedoStage;
+  code?: string;
+  retryable?: boolean;
+}
+
 export interface MeetingMinutesDiagnostics {
   schemaVersion: "meeting_minutes_diagnostics.v1";
   stage?: MeetingMinutesDiagnosticStage;
@@ -271,7 +282,7 @@ export interface MeetingMinutesRun {
     githubDeletedAt?: string;
     deletedTaskIds: string[];
     sharedRetractedAt?: string;
-    failure?: { message: string; failedAt: string };
+    failure?: MeetingMinutesRedoFailure;
   };
   createdAt: string;
   updatedAt: string;
@@ -292,6 +303,8 @@ export interface MeetingMinutesSelection {
 export interface MeetingMinutesRedo {
   kind: "meeting_minutes_redo";
   runId: string;
+  /** Revision displayed by the completed-run button. Legacy buttons omit it and mean revision 0. */
+  revision?: number;
   workspaceId: string;
   appId: string;
   channelId: string;
