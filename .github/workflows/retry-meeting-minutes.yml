@@ -105,10 +105,11 @@ jobs:
               '$status == "200" and .runId == $runId' "$response_file" >/dev/null
             run_status="$(jq -r '.status' "$response_file")"
             if [[ "$run_status" == "completed" ]]; then
-              jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
+              if jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
                 and .taskRegistration.pendingPresent == false and (.taskRegistration.failure == null)
-                and .checkpoint.hasTaskCard == true' "$response_file" >/dev/null
-              break
+                and .checkpoint.hasTaskCard == true' "$response_file" >/dev/null; then
+                break
+              fi
             fi
             if [[ "$run_status" == "failed" ]]; then
               current_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
