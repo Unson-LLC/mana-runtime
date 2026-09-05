@@ -2,6 +2,8 @@ import type { SlackQueueEvent } from "./types.js";
 import {
   isReplyCompleted,
   persistReplyCompletion,
+  persistReplyFailureNotice,
+  readReplyFailureNotice,
   type WorkspaceFs,
 } from "./workspace-store.js";
 import {
@@ -54,6 +56,9 @@ const SLACK_REACTION_TIMEOUT_MS = 5_000;
 // granting every attempt a fresh five-minute lease.
 const REPLY_SANDBOX_MAX_TIMEOUT_MS = 270_000;
 const REPLY_TENANT_BOUNDARY_SAFETY_MARGIN_MS = 30_000;
+const REPLY_AUDIT_FAILURE_CODE = "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing";
+const REPLY_FAILURE_NOTICE_TEXT = "処理結果の確認でエラーが起きました。依頼された操作が完了したかは、まだ確認できていません。";
+const REPLY_FAILURE_NOTICE_EFFECT_ID = "reply_failure_notice";
 
 interface ExecResult {
   success: boolean;
@@ -105,13 +110,22 @@ export interface ReplyPipelineOptions {
   /** Injectable wall clock for the tenant-boundary execution budget. */
   nowMs?: () => number;
   hydrateThreadContext?(event: SlackQueueEvent): Promise<SlackQueueEvent>;
-  postReply?(event: SlackQueueEvent, text: string): Promise<string>;
+  postReply?(event: SlackQueueEvent, text: string, effectId?: string): Promise<string>;
 }
 
-export interface ReplyProcessResult {
+export interface ReplyProcessSuccessResult {
   outcome: "ignored" | "already_completed" | "reacted" | "replied";
   responseTs?: string;
 }
+
+export interface ReplyProcessFailedResult {
+  outcome: "failed";
+  failureCode: string;
+  replyState: "not_attempted" | "delivered" | "failed" | "unknown";
+  responseTs?: string;
+}
+
+export type ReplyProcessResult = ReplyProcessSuccessResult | ReplyProcessFailedResult;
 
 export class ReplyPipelineError extends Error {
   constructor(readonly code: string, readonly auditDiagnostics?: ReplyJudgmentAuditDiagnostics) {
@@ -139,6 +153,65 @@ function safeFailureCode(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0
     ? value.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 80)
     : fallback;
+}
+
+async function deliverAuditFailureNotice(
+  fs: WorkspaceFs,
+  event: SlackQueueEvent,
+  options: ReplyPipelineOptions,
+  failureCode: string,
+): Promise<ReplyProcessFailedResult> {
+  const existing = await readReplyFailureNotice(fs, event.eventId);
+  const effectiveFailureCode = existing?.failureCode ?? failureCode;
+  if (existing?.status === "sent" && existing.responseTs) {
+    return {
+      outcome: "failed",
+      failureCode: effectiveFailureCode,
+      replyState: "delivered",
+      responseTs: existing.responseTs,
+    };
+  }
+
+  if (!existing) {
+    await persistReplyFailureNotice(fs, {
+      eventId: event.eventId,
+      failureCode: effectiveFailureCode,
+      status: "pending",
+      updatedAt: options.now?.() ?? new Date().toISOString(),
+    });
+  }
+
+  const responseTs = options.postReply
+    ? await options.postReply(event, REPLY_FAILURE_NOTICE_TEXT, REPLY_FAILURE_NOTICE_EFFECT_ID)
+    : await postSlackReply(event, REPLY_FAILURE_NOTICE_TEXT, options);
+  try {
+    await persistReplyFailureNotice(fs, {
+      eventId: event.eventId,
+      failureCode: effectiveFailureCode,
+      status: "sent",
+      responseTs,
+      updatedAt: options.now?.() ?? new Date().toISOString(),
+    });
+  } catch {
+    // The tenant delivery boundary already returned a provider receipt. Keep
+    // that observed result visible to accounting while leaving the pending
+    // marker available for a later idempotent retry.
+    emitTurnLog("error", "mana_reply_failure_notice_state_failed", event, {
+      ...options.trace,
+      model: options.claudeRuntime.model,
+      effort: options.claudeRuntime.effort,
+    }, {
+      outcome: "error",
+      reasonCode: "reply_failure_notice_sent_state_persist_failed",
+      state: "sent",
+    });
+  }
+  return {
+    outcome: "failed",
+    failureCode: effectiveFailureCode,
+    replyState: "delivered",
+    responseTs,
+  };
 }
 
 function logSlackPostFailure(code: string, details: { status?: number; slackError?: unknown } = {}): void {
@@ -803,6 +876,10 @@ export async function processReplyEvent(
   if (!eligible) return { outcome: "ignored" };
   if (await isReplyCompleted(fs, event.eventId)
     || await isReplyJudgmentCompleted(fs, event.eventId)) return { outcome: "already_completed" };
+  const existingFailureNotice = await readReplyFailureNotice(fs, event.eventId);
+  if (existingFailureNotice) {
+    return deliverAuditFailureNotice(fs, event, options, existingFailureNotice.failureCode);
+  }
 
   // An accepted canonical identity is part of the caller's authority context,
   // not a task-search-only hint. Preserve it for ordinary replies too; only
@@ -873,6 +950,14 @@ export async function processReplyEvent(
         failureCode,
         options.now?.() ?? new Date().toISOString(),
       ).catch(() => undefined);
+      if (failureStage === "reply_generation" && failureCode === REPLY_AUDIT_FAILURE_CODE) {
+        try {
+          return await deliverAuditFailureNotice(fs, hydratedEvent, options, failureCode);
+        } catch {
+          // Preserve the original audit failure and retry boundary when the
+          // fixed notice cannot be sent or its pending state cannot be saved.
+        }
+      }
       throw error;
     }
   });

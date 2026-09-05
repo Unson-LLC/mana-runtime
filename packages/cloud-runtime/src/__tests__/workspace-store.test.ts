@@ -2,7 +2,9 @@ import {
   isReplyCompleted,
   persistEventOnce,
   persistReplyCompletion,
+  persistReplyFailureNotice,
   readReplyCompletion,
+  readReplyFailureNotice,
 } from "../workspace-store.js";
 
 class MemoryFs {
@@ -117,5 +119,39 @@ describe("disabled meeting task completion", () => {
       completedAt: "2026-09-05T00:00:00.000Z", outcome: "unknown_failure",
     }));
     await expect(readReplyCompletion(fs, "EvUnknown")).rejects.toThrow("reply_completion_invalid");
+  });
+});
+
+describe("reply failure notice", () => {
+  it("keeps pending and sent notice state separate from reply completion", async () => {
+    const fs = new MemoryFs();
+    const pending = {
+      eventId: "EvFailureNotice",
+      failureCode: "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing",
+      status: "pending" as const,
+      updatedAt: "2026-09-06T00:00:00.000Z",
+    };
+    await expect(persistReplyFailureNotice(fs, pending)).resolves.toBe(
+      "/reply-failure-notices/EvFailureNotice.json",
+    );
+    await expect(readReplyFailureNotice(fs, pending.eventId)).resolves.toEqual(pending);
+
+    const sent = { ...pending, status: "sent" as const, responseTs: "4.0" };
+    await persistReplyFailureNotice(fs, sent);
+    await expect(readReplyFailureNotice(fs, sent.eventId)).resolves.toEqual(sent);
+    expect(await isReplyCompleted(fs, sent.eventId)).toBe(false);
+    expect(fs.files.has(`/replies/${sent.eventId}.json`)).toBe(false);
+  });
+
+  it("rejects malformed or secret-bearing failure notice state", async () => {
+    const fs = new MemoryFs();
+    fs.files.set("/reply-failure-notices/EvInvalid.json", JSON.stringify({
+      eventId: "EvInvalid",
+      failureCode: "Bearer secret-token",
+      status: "pending",
+      updatedAt: "2026-09-06T00:00:00.000Z",
+    }));
+    await expect(readReplyFailureNotice(fs, "EvInvalid"))
+      .rejects.toThrow("reply_failure_notice_invalid");
   });
 });

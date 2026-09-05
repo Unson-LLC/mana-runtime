@@ -1993,7 +1993,7 @@ export async function executeCompanyAuthorityReplyOperation(
               tenantBoundaryExpiresAt: tenantContext.expires_at, trace,
               canonicalPersonId: operation.canonical_person_id as string,
               canonicalProjectId: expectedScope.project_id,
-              postReply: async (replyEvent, text) => {
+              postReply: async (replyEvent, text, effectId = providerKey) => {
                 if (observedTs !== undefined) deny("slack_delivery", "REPLY_OWNERSHIP_CONFLICT");
                 // Hydration may add prompt context, but cannot redirect the
                 // signed request to another tenant, actor, message, or thread.
@@ -2022,7 +2022,7 @@ export async function executeCompanyAuthorityReplyOperation(
                   ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, tenantContext.tenant.tenant_id),
                   read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey,
                   now: deliveryNow, retention_until: tenantRetentionUntil(deliveryNow),
-                  event: replyEvent, text, effect_id: providerKey, release_on_failure: false,
+                  event: replyEvent, text, effect_id: effectId, release_on_failure: false,
                   post: () => {
                     deliveryAttempted = true;
                     return postSlackReply(replyEvent, text, { fetch: brokerFetch, provider_key: providerKey });
@@ -2311,7 +2311,7 @@ interface SharedReplyRuntimeInput {
   tenantBoundaryHandle: string;
   tenantBoundaryExpiresAt: string;
   trace: TurnRuntimeTrace;
-  postReply(event: SlackQueueEvent, text: string): Promise<string>;
+  postReply(event: SlackQueueEvent, text: string, effectId?: string): Promise<string>;
   /** Set only for an already accepted Company Authority actor. */
   canonicalPersonId?: string;
   /** Set only for an already accepted Company Authority project scope. */
@@ -4288,7 +4288,7 @@ export default {
                 env.TENANT_RUNTIME_STATE,
                 tenantContext.tenant.tenant_id,
               );
-              const postTenantReply = (replyEvent: SlackQueueEvent, text: string) => {
+              const postTenantReply = (replyEvent: SlackQueueEvent, text: string, effectId = "reply") => {
                 const deliveryNow = tenantConsumerOptions.now();
                 return postTenantSlackReply({
                   tenant_context: tenantContext,
@@ -4302,6 +4302,7 @@ export default {
                   retention_until: tenantRetentionUntil(deliveryNow),
                   event: replyEvent,
                   text,
+                  effect_id: effectId,
                   post: () => postSlackReply(replyEvent, text, {
                     fetch: tenantCredentialFetch,
                   }),
@@ -4311,6 +4312,8 @@ export default {
                 outcome?: string;
                 responseTs?: string;
                 accounting?: "deferred" | "already_recorded";
+                failureCode?: string;
+                replyState?: "not_attempted" | "delivered" | "failed" | "unknown";
               }>(
                 process: (quotaDecision: QuotaDecision) => Promise<R>,
                 quotaUnit = "model_tokens",
