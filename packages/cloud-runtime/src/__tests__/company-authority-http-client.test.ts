@@ -128,7 +128,11 @@ function canonicalContext(
   };
 }
 
-function clientsWithResponse(responseContext: TenantContextEnvelope, captures: unknown[]) {
+function clientsWithResponse(
+  responseContext: TenantContextEnvelope,
+  captures: unknown[],
+  desiredEffectByCapability?: Readonly<Record<string, "read" | "write" | "external_side_effect">>,
+) {
   const service = {
     fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       captures.push(JSON.parse(String(init?.body)));
@@ -140,6 +144,7 @@ function clientsWithResponse(responseContext: TenantContextEnvelope, captures: u
     service,
     timeout_ms: 1_000,
     workspace_connections: [{ ...workspaceConnection, tenant_revision: "7" }],
+    ...(desiredEffectByCapability ? { desired_effect_by_capability: desiredEffectByCapability } : {}),
   });
 }
 
@@ -240,6 +245,47 @@ describe("Brainbase-owned company authority HTTP client", () => {
     await clients.authority.issue_tenant_context(request("task.update"));
     const body = captures[0] as { requested_action: { desired_effect: string } };
     expect(body.requested_action.desired_effect).toBe("write");
+  });
+
+  it("uses the canonical operation map for runtime.execute external effects", async () => {
+    const captures: unknown[] = [];
+    const clients = clientsWithResponse(
+      canonicalContext("runtime.execute", "external_side_effect"),
+      captures,
+      { "runtime.execute": "external_side_effect" },
+    );
+
+    await clients.authority.issue_tenant_context(request("runtime.execute"));
+
+    expect((captures[0] as { requested_action: { desired_effect: string } }).requested_action.desired_effect)
+      .toBe("external_side_effect");
+  });
+
+  it("fails closed instead of inferring runtime.execute without the canonical operation map", async () => {
+    const captures: unknown[] = [];
+    const clients = clientsWithResponse(
+      canonicalContext("runtime.execute", "external_side_effect"),
+      captures,
+    );
+
+    await expect(clients.authority.issue_tenant_context(request("runtime.execute"))).rejects.toSatisfy((error: unknown) => (
+      error instanceof TenantBoundaryError && error.code === "DESIRED_EFFECT_REQUIRED"
+    ));
+    expect(captures).toHaveLength(0);
+  });
+
+  it("fails closed when the canonical operation map does not cover the requested capability", async () => {
+    const captures: unknown[] = [];
+    const clients = clientsWithResponse(
+      canonicalContext("runtime.execute", "external_side_effect"),
+      captures,
+      { "task.update": "write" },
+    );
+
+    await expect(clients.authority.issue_tenant_context(request("runtime.execute"))).rejects.toSatisfy((error: unknown) => (
+      error instanceof TenantBoundaryError && error.code === "DESIRED_EFFECT_REQUIRED"
+    ));
+    expect(captures).toHaveLength(0);
   });
 
   it("fails closed when Brainbase returns a signed tenant context without company authority receipts", async () => {

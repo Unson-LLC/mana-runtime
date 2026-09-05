@@ -46,6 +46,7 @@ import {
   companyAuthorityHumanHandoffIdentity,
   processCompanyAuthorityHumanHandoff,
 } from "./multitenancy/company-authority-human-handoff.js";
+import type { CompanyAuthorityDesiredEffect } from "./multitenancy/company-authority-runtime-adapter.js";
 import type { SlackQueueEvent } from "./types.js";
 import {
   currentMeetingMinutesActionTs,
@@ -743,8 +744,9 @@ async function resolveDerivedSlackTenantContext(
   identity: TenantInteractionIdentity,
   options: { workspace_policy?: "same_workspace" | "same_tenant";
     destination?: MeetingMinutesDestination } = {},
+  desiredEffectByCapability?: Readonly<Record<string, CompanyAuthorityDesiredEffect>>,
 ): Promise<TenantContextEnvelope> {
-  const clients = tenantRuntimeClients(env);
+  const clients = tenantRuntimeClients(env, undefined, desiredEffectByCapability);
   const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination);
   if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
   const sourceProjectIds = [...(destinationAuthorization?.trusted_project_ids
@@ -778,10 +780,13 @@ async function resolveDerivedSlackTenantContext(
 function createTenantInteractionEffectResolver(env: Env) {
   const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
     .split(",").map((value) => value.trim()).filter(Boolean);
-  const clients = tenantRuntimeClients(env);
+  let cachedClients: ReturnType<typeof tenantRuntimeClients> | undefined;
+  const getClients = (): ReturnType<typeof tenantRuntimeClients> => cachedClients ??= tenantRuntimeClients(
+    env, undefined, tenantInteractionDesiredEffectByCapability(env));
   const resolve = (identity: TenantInteractionIdentity,
     destinationAuthorization?: ReturnType<typeof placementAuthorizationForIdentity>) => {
     const placementAuthorization = destinationAuthorization ?? placementAuthorizationForIdentity(env, identity);
+    const clients = getClients();
     return resolveSlackWorkerIngress({
       identity: { provider: "slack", ...identity },
       required_scopes: requiredScopes,
@@ -794,6 +799,7 @@ function createTenantInteractionEffectResolver(env: Env) {
   return async (source: TenantInteractionIdentity, destination?: MeetingMinutesDestination): Promise<TenantInteractionEffects> => {
     const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
     const sourceResolved = await resolve(source, destinationAuthorization);
+    const clients = getClients();
     const sourceTenantContext = sourceResolved.tenant_context;
     const resolveEffect = async (effectId: string, target: TenantInteractionTarget) => {
       const identity: TenantInteractionIdentity = {
@@ -1279,14 +1285,46 @@ function tenantDeploymentProfile(env: Env): DeploymentProfileName {
   return profile;
 }
 
-function tenantRuntimeClients(env: Env, tenantContext?: TenantContextEnvelope) {
+function tenantRuntimeClients(
+  env: Env,
+  tenantContext?: TenantContextEnvelope,
+  desiredEffectByCapability?: Readonly<Record<string, CompanyAuthorityDesiredEffect>>,
+) {
   return createTenantRuntimeHttpClients({
     deployment_profile: tenantDeploymentProfile(env),
     service: env.BRAINBASE_TENANT_RUNTIME_SERVICE,
     timeout_ms: Number(env.BRAINBASE_RUNTIME_HTTP_TIMEOUT_MS ?? "5000"),
     workspace_connections: parseWorkspaceConnectionHints(env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON),
     ...(tenantContext ? { tenant_context: tenantContext } : {}),
+    ...(desiredEffectByCapability ? { desired_effect_by_capability: desiredEffectByCapability } : {}),
   });
+}
+
+function tenantInteractionDesiredEffectByCapability(
+  env: Env,
+): Readonly<Record<string, CompanyAuthorityDesiredEffect>> {
+  const configuration = parseCompanyAuthorityRuntimeConfiguration(env);
+  if (configuration.state !== "enabled") {
+    deny("runtime_configuration", "CONFIGURATION_INVALID", {
+      binding: "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON",
+    });
+  }
+  const capabilityId = requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID);
+  const desiredEffect = configuration.desired_effect_by_capability[capabilityId];
+  if (!desiredEffect) {
+    deny("runtime_configuration", "CONFIGURATION_INVALID", {
+      binding: "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON",
+      capability_id: capabilityId,
+    });
+  }
+  if (capabilityId === "runtime.execute" && desiredEffect !== "external_side_effect") {
+    deny("runtime_configuration", "CONFIGURATION_INVALID", {
+      binding: "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON",
+      capability_id: capabilityId,
+      expected_effect: "external_side_effect",
+    });
+  }
+  return configuration.desired_effect_by_capability;
 }
 
 async function writeDevelopmentTerminalAccounting(env: Env, input: {
@@ -3054,7 +3092,7 @@ export default {
         })),
         defer: (work) => ctx.waitUntil(work),
         accept: async (submission) => {
-          const clients = tenantRuntimeClients(env);
+          const clients = tenantRuntimeClients(env, undefined, tenantInteractionDesiredEffectByCapability(env));
           const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
             .split(",").map((value) => value.trim()).filter(Boolean);
           const submissionIdentity: TenantInteractionIdentity = {
@@ -3262,14 +3300,14 @@ export default {
                     channel_id: repair.channelId,
                     thread_ts: repair.requestedAt,
                     requester_id: requiredRuntimeBinding(taskBoardTenantContext.slack.requester_id),
-                  }),
+                  }, undefined, tenantInteractionDesiredEffectByCapability(env)),
                 ),
               );
             },
             defer: (work) => ctx.waitUntil(work),
           });
         }, async (command, destination) => {
-          const clients = tenantRuntimeClients(env);
+          const clients = tenantRuntimeClients(env, undefined, tenantInteractionDesiredEffectByCapability(env));
           const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
             .split(",").map((value) => value.trim()).filter(Boolean);
           const commandIdentity: TenantInteractionIdentity = {
