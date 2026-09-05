@@ -249,6 +249,131 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
+  it("uses an exact PreToolUse denial from an empty terminal result when Stop verifies the answer", () => {
+    const answer = `${judgmentLine}\n${brainbaseLine}\n回答本文`;
+    const lines = stream({ withTool: true }).split("\n");
+    const promptIndex = lines.findIndex((line) => line.includes('"hook_event":"UserPromptSubmit"'));
+    lines.splice(promptIndex + 1, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "blocked-tool", name: "mcp__brainbase__brainbase_knowledge_resolve", input: {},
+        }] },
+      }),
+      JSON.stringify({
+        type: "system", subtype: "hook_response", hook_event: "PreToolUse",
+        exit_code: 2, outcome: "error", stderr: "judgment_resolve_turn_required_first",
+      }),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "blocked-tool", is_error: true,
+          content: "PreToolUse hook error",
+        }] },
+      }),
+    );
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage += `\n${verifiedAnswerPrefix}${JSON.stringify({
+      answer,
+      answer_digest: "c".repeat(64),
+    })}`;
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+    const resultIndex = lines.findIndex((line) => JSON.parse(line).type === "result");
+    const result = JSON.parse(lines[resultIndex]!);
+    result.result = "";
+    result.permission_denials = [{
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+      tool_use_id: "blocked-tool",
+      tool_input: { untrusted: "must-not-be-persisted" },
+    }];
+    lines[resultIndex] = JSON.stringify(result);
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      reply: answer,
+      stop: "completed",
+      toolJournal: [{ toolUseId: "tool-1", outcome: "success" }],
+    });
+  });
+
+  it("fails closed when an empty terminal result omits a PreToolUse denial", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const promptIndex = lines.findIndex((line) => line.includes('"hook_event":"UserPromptSubmit"'));
+    lines.splice(promptIndex + 1, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "blocked-tool", name: "mcp__brainbase__brainbase_knowledge_resolve", input: {},
+        }] },
+      }),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "blocked-tool", is_error: true,
+          content: "PreToolUse hook error",
+        }] },
+      }),
+    );
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage += `\n${verifiedAnswerPrefix}${JSON.stringify({
+      answer: `${judgmentLine}\n${brainbaseLine}\n回答本文`,
+      answer_digest: "e".repeat(64),
+    })}`;
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+    const resultIndex = lines.findIndex((line) => JSON.parse(line).type === "result");
+    const result = JSON.parse(lines[resultIndex]!);
+    result.result = "";
+    lines[resultIndex] = JSON.stringify(result);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing");
+  });
+
+  it("fails closed when a terminal result is omitted after a PreToolUse denial", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const promptIndex = lines.findIndex((line) => line.includes('"hook_event":"UserPromptSubmit"'));
+    lines.splice(promptIndex + 1, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "blocked-tool", name: "mcp__brainbase__brainbase_knowledge_resolve", input: {},
+        }] },
+      }),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "blocked-tool", is_error: true,
+          content: "PreToolUse hook error",
+        }] },
+      }),
+    );
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    const stopHook = JSON.parse(lines[stopIndex]!);
+    const stopOutput = JSON.parse(stopHook.stdout);
+    stopOutput.systemMessage += `\n${verifiedAnswerPrefix}${JSON.stringify({
+      answer: `${judgmentLine}\n${brainbaseLine}\n回答本文`,
+      answer_digest: "f".repeat(64),
+    })}`;
+    stopHook.stdout = JSON.stringify(stopOutput);
+    lines[stopIndex] = JSON.stringify(stopHook);
+    const resultIndex = lines.findIndex((line) => JSON.parse(line).type === "result");
+    lines.splice(resultIndex, 1);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing");
+  });
+
+  it("fails closed for malformed denials on an empty terminal result", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const resultIndex = lines.findIndex((line) => JSON.parse(line).type === "result");
+    const result = JSON.parse(lines[resultIndex]!);
+    result.result = "";
+    result.permission_denials = [{ tool_name: "mcp__brainbase__brainbase_knowledge_resolve" }];
+    lines[resultIndex] = JSON.stringify(result);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_permission_denial_invalid");
+  });
+
   it.each([
     {
       name: "tool name mismatch",
