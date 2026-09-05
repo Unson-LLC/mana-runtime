@@ -151,6 +151,56 @@ describe("Brainbase canonical tenant runtime transport", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("preserves a service actor identity for scheduled external task-board writes", async () => {
+    const serviceContext = structuredClone(context);
+    serviceContext.actor = {
+      principal_id: "svc_mana_runtime",
+      principal_type: "service",
+      authenticated_subject_id: "svc_mana_runtime",
+    };
+    serviceContext.slack.requester_id = "svc_mana_runtime";
+    serviceContext.authorization.capability_ids = ["task_board_send"];
+    serviceContext.authorization.data_scopes = serviceContext.authorization.data_scopes
+      .map((scope) => scope === "company_authority:effect:write"
+        ? "company_authority:effect:external_side_effect" : scope);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.provider_identity).toEqual({
+        provider: "service",
+        authenticated_subject_id: "svc_mana_runtime",
+        workspace_id: "T1",
+        app_id: "A1",
+      });
+      expect(body.requested_action).toMatchObject({
+        capability_id: "task_board_send",
+        desired_effect: "external_side_effect",
+      });
+      return Response.json(serviceContext);
+    });
+    const result = await clients(fetchMock).authority.issue_tenant_context({
+      workspace_connection: snapshot,
+      tenant_revision: "3",
+      slack: {
+        event_id: serviceContext.slack.event_id,
+        channel_id: serviceContext.slack.channel_id,
+        thread_ts: serviceContext.slack.thread_ts ?? "",
+        requester_id: serviceContext.slack.requester_id ?? "",
+      },
+      provider_identity: {
+        provider: "service",
+        authenticated_subject_id: "svc_mana_runtime",
+        workspace_id: "T1",
+        app_id: "A1",
+      },
+      required_authorization: {
+        audience: "mana-runtime",
+        project_id: "project-1",
+        capability_id: "task_board_send",
+      },
+    });
+    expect(result.actor.principal_type).toBe("service");
+  });
+
   it("sends signed tenant context and protocol/deployment headers on credential and quota calls", async () => {
     const seen: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
     const leaseRequest: CredentialLeaseRequest = {

@@ -226,6 +226,11 @@ export async function enqueueScheduledTaskBoardRepair(
     };
     await env.TASK_BOARD_REPAIRS.send(await createCanonicalTaskBoardRepairMessage(repair, resolveTenantContext));
   }));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") console.error("task_board_repair_enqueue_failed", {
+      targetId: activeTargets[index]?.targetId, reason: "scheduled", error: result.reason,
+    });
+  });
   if (results.some((result) => result.status === "rejected")) throw new Error("task_board_schedule_enqueue_failed");
 }
 

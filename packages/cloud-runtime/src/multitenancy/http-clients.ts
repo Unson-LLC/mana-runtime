@@ -450,11 +450,15 @@ export function createTenantRuntimeHttpClients(
           workspace_id: request.workspace_connection.workspace_id,
           app_id: request.workspace_connection.app_id,
           provider_identity: {
-            provider: "slack",
-            authenticated_subject_id: request.slack.requester_id,
-            workspace_id: request.workspace_connection.workspace_id,
-            app_id: request.workspace_connection.app_id,
-            ...(request.slack.enterprise_id ? { enterprise_id: request.slack.enterprise_id } : {}),
+            provider: request.provider_identity?.provider ?? "slack",
+            authenticated_subject_id: request.provider_identity?.authenticated_subject_id
+              ?? request.slack.requester_id,
+            workspace_id: request.provider_identity?.workspace_id
+              ?? request.workspace_connection.workspace_id,
+            app_id: request.provider_identity?.app_id ?? request.workspace_connection.app_id,
+            ...(request.provider_identity?.enterprise_id || request.slack.enterprise_id
+              ? { enterprise_id: request.provider_identity?.enterprise_id ?? request.slack.enterprise_id }
+              : {}),
           },
           requested_action: {
             capability_id: request.required_authorization.capability_id,

@@ -1344,6 +1344,7 @@ async function resolveTaskBoardRepairTenantContext(
   repair: TaskBoardRepairEvent,
 ): Promise<TenantContextEnvelope> {
   const clients = tenantRuntimeClients(env);
+  const serviceActorId = requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID);
   const placementProjectScope = placementProjectScopeForEvent(env, {
     tenantId: env.TENANT_ID,
     eventId: taskBoardRepairEventId(repair),
@@ -1351,7 +1352,7 @@ async function resolveTaskBoardRepairTenantContext(
     channelId: repair.channelId,
     threadTs: repair.requestedAt,
     messageTs: repair.requestedAt,
-    userId: requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID),
+    userId: serviceActorId,
     eventType: "message",
     text: "",
     receivedAt: repair.requestedAt,
@@ -1364,14 +1365,20 @@ async function resolveTaskBoardRepairTenantContext(
       event_id: taskBoardRepairEventId(repair),
       channel_id: repair.channelId,
       thread_ts: repair.requestedAt,
-      requester_id: requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID),
+      requester_id: serviceActorId,
     },
     required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
       .split(",").map((value) => value.trim()).filter(Boolean),
     required_authorization: {
       audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
       project_id: placementProjectScope.project_id,
-      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+      capability_id: "task_board_send",
+    },
+    provider_identity: {
+      provider: "service",
+      authenticated_subject_id: serviceActorId,
+      workspace_id: repair.workspaceId,
+      app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
     },
     trusted_project_ids: placementProjectScope.project_ids,
     authority: clients.authority,

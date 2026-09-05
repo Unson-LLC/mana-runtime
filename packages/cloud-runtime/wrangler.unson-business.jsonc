@@ -58,7 +58,7 @@
     "BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON": "{\"crv\":\"Ed25519\",\"x\":\"eWbEUe--SU-Z0010NfiLcbAMIC3Q57h_Q9oJV9CekoQ\",\"kty\":\"OKP\",\"kid\":\"brainbase-tenant-context-20260819\",\"use\":\"sig\",\"alg\":\"EdDSA\",\"key_ops\":[\"verify\"]}",
     "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON": "{\"runtime.execute\":\"external_side_effect\"}",
     "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON": "[{\"workspace_id\":\"T0882T8N9UH\",\"channel_id\":\"C0BKE4D0TK9\",\"authenticated_subject_id\":\"U088D1HBY6L\"}]",
-    "MANA_TASK_BOARD_SERVICE_ACTOR_ID": "service:mana-runtime:task-board",
+    "MANA_TASK_BOARD_SERVICE_ACTOR_ID": "svc_mana_runtime",
     "MANA_AUTONOMY_DISABLED": "true",
     "MANA_AUTONOMY_CRON": "*/15 * * * *",
     "MANA_AUTONOMY_PLACEMENT_ID": "mana-autonomy",
