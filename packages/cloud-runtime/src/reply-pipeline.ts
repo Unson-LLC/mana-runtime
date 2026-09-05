@@ -184,13 +184,28 @@ async function deliverAuditFailureNotice(
   const responseTs = options.postReply
     ? await options.postReply(event, REPLY_FAILURE_NOTICE_TEXT, REPLY_FAILURE_NOTICE_EFFECT_ID)
     : await postSlackReply(event, REPLY_FAILURE_NOTICE_TEXT, options);
-  await persistReplyFailureNotice(fs, {
-    eventId: event.eventId,
-    failureCode: effectiveFailureCode,
-    status: "sent",
-    responseTs,
-    updatedAt: options.now?.() ?? new Date().toISOString(),
-  });
+  try {
+    await persistReplyFailureNotice(fs, {
+      eventId: event.eventId,
+      failureCode: effectiveFailureCode,
+      status: "sent",
+      responseTs,
+      updatedAt: options.now?.() ?? new Date().toISOString(),
+    });
+  } catch {
+    // The tenant delivery boundary already returned a provider receipt. Keep
+    // that observed result visible to accounting while leaving the pending
+    // marker available for a later idempotent retry.
+    emitTurnLog("error", "mana_reply_failure_notice_state_failed", event, {
+      ...options.trace,
+      model: options.claudeRuntime.model,
+      effort: options.claudeRuntime.effort,
+    }, {
+      outcome: "error",
+      reasonCode: "reply_failure_notice_sent_state_persist_failed",
+      state: "sent",
+    });
+  }
   return {
     outcome: "failed",
     failureCode: effectiveFailureCode,
@@ -940,7 +955,7 @@ export async function processReplyEvent(
           return await deliverAuditFailureNotice(fs, hydratedEvent, options, failureCode);
         } catch {
           // Preserve the original audit failure and retry boundary when the
-          // fixed notice cannot be sent or its durable state cannot be saved.
+          // fixed notice cannot be sent or its pending state cannot be saved.
         }
       }
       throw error;

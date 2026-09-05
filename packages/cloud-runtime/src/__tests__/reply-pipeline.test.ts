@@ -1282,6 +1282,7 @@ describe("TechKnight Slack reply pipeline", () => {
     }
 
     const fs = new FailFailureNoticeSentOnceFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const canaries = {
       prompt: "prompt-secret-retry-canary",
       toolInput: "tool-input-secret-retry-canary",
@@ -1314,9 +1315,22 @@ describe("TechKnight Slack reply pipeline", () => {
       exitCode: 0,
     });
 
-    await expect(processReplyEvent(fs, event({ text: canaries.prompt }), options)).rejects.toEqual(
-      expect.objectContaining<Partial<ReplyPipelineError>>({ code: diagnosticCode }),
-    );
+    const first = await processReplyEvent(fs, event({ text: canaries.prompt }), options);
+    expect(first).toEqual({
+      outcome: "failed",
+      failureCode: diagnosticCode,
+      replyState: "delivered",
+      responseTs: "1786455000.000009",
+    });
+    expect(JSON.parse(fs.files.get("/reply-failure-notices/EvReply123.json")!)).toMatchObject({
+      status: "pending",
+      failureCode: diagnosticCode,
+    });
+    expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      event: "mana_reply_failure_notice_state_failed",
+      reasonCode: "reply_failure_notice_sent_state_persist_failed",
+      state: "sent",
+    }));
     await expect(processReplyEvent(fs, event({ text: canaries.prompt }), options)).resolves.toEqual({
       outcome: "failed",
       failureCode: diagnosticCode,
@@ -1342,6 +1356,7 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.reply);
     expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.toolUseId);
     expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.hostReceiptId);
+    errorSpy.mockRestore();
   });
 
   it("keeps the notice state pending when the tenant delivery outcome is unknown", async () => {
