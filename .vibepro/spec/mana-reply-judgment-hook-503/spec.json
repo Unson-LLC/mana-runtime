@@ -163,7 +163,7 @@
     {
       "id": "C-001",
       "type": "contract",
-      "statement": "通常replyがJudgment Hook eventを要求するときはUserPromptSubmit、Brainbase MCPの成功にPostToolUse、失敗にPostToolUseFailure、Stopを持つreply専用settingsを使う。内部state記録を除く各Post Tool受領票は非空のHost監査とtool_use_id・tool_nameで実呼び出しへ結合し、成功/エラーのtool_resultとHook種別が一致しない、受領票が欠ける、または競合する場合はfail closedする",
+      "statement": "通常replyがJudgment Hook eventを要求するときはUserPromptSubmit、Brainbase MCPの成功にPostToolUse、失敗にPostToolUseFailure、Stopを持つreply専用settingsを使う。claude --resumeの再開前履歴を監査対象にせず、最新UserPromptSubmit以降の内部state記録を除く各Post Tool受領票だけを非空のHost監査とtool_use_id・tool_nameで実呼び出しへ結合し、成功/エラーのtool_resultとHook種別が一致しない、受領票が欠ける、または競合する場合はfail closedする",
       "origin": {
         "story_refs": [
           {
@@ -365,7 +365,7 @@
     {
       "id": "C-003",
       "type": "contract",
-      "statement": "全PostToolUse受領票にtool_use_idとtool_nameを必須とし、制御用を含む全Brainbase呼び出しを実行結果と受領票へidentity結合した後、参照・取得受領票だけを証跡journalへ数える。Judgment制御用受領票は累積監査行を含んでも参照実績へ数えない。同一内容の再掲だけを1件に畳み、内容不一致・識別子欠落・受領票欠落・監査欠落・未完了監査はfail closedする",
+      "statement": "最新UserPromptSubmit以降の全PostToolUse受領票にtool_use_idとtool_nameを必須とし、制御用を含む当該attemptのBrainbase呼び出しだけを実行結果と受領票へidentity結合した後、参照・取得受領票だけを証跡journalへ数える。Judgment制御用受領票は累積監査行を含んでも参照実績へ数えない。同一内容の再掲だけを1件に畳み、開始境界以降の内容不一致・識別子欠落・受領票欠落・監査欠落・未完了監査はfail closedする",
       "origin": {
         "story_refs": [
           {
