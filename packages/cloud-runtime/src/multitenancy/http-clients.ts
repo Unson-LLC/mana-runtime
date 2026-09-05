@@ -10,11 +10,12 @@ import { TENANT_QUOTA_METRIC, TENANT_QUOTA_REQUESTED_QUANTITY } from "./contract
 import type { OperationReceipt, UsageEvent } from "./accounting.js";
 import type { CredentialBrokerClient } from "./credentials.js";
 import type { TenantAuthorityClient, TenantContextIssueRequest } from "./runtime-boundaries.js";
-import type {
-  CompanyAuthorityClient,
-  CompanyAuthorityResolution,
-  CompanyAuthorityDesiredEffect,
-  ObservedExecutionRequestV1,
+import {
+  resolveCompanyAuthorityDesiredEffect,
+  type CompanyAuthorityClient,
+  type CompanyAuthorityResolution,
+  type CompanyAuthorityDesiredEffect,
+  type ObservedExecutionRequestV1,
 } from "./company-authority-runtime-adapter.js";
 import type { WorkspaceConnectionLookup, WorkspaceConnectionManagementPort } from "./workspace-connection.js";
 import {
@@ -245,16 +246,12 @@ function desiredEffectForCapability(
   desiredEffectByCapability?: Readonly<Record<string, CompanyAuthorityDesiredEffect>>,
 ): DesiredEffect {
   if (desiredEffectByCapability !== undefined) {
-    const desiredEffect = desiredEffectByCapability[capabilityId];
-    if (!desiredEffect) {
-      deny("worker_ingress", "DESIRED_EFFECT_REQUIRED", { capability_id: capabilityId });
-    }
-    return desiredEffect;
+    return resolveCompanyAuthorityDesiredEffect(capabilityId, desiredEffectByCapability);
   }
   // runtime.execute is an externally-effectful capability. Never infer its
   // effect from a capability name when the canonical map was not supplied.
   if (capabilityId === "runtime.execute") {
-    deny("worker_ingress", "DESIRED_EFFECT_REQUIRED", { capability_id: capabilityId });
+    return resolveCompanyAuthorityDesiredEffect(capabilityId, {});
   }
   const value = capabilityId.toLowerCase();
   if (/(send|publish|post|deliver|external)/u.test(value)) return "external_side_effect";

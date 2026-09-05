@@ -476,7 +476,8 @@ export class TenantRuntimeState extends DurableObject<Env> {
   readonly #boundaryContext = new TenantBoundaryContextHandler(
     this.ctx.storage,
     async (input) => {
-      const clients = tenantRuntimeClients(this.env, input.tenant_context);
+      const clients = tenantRuntimeClients(this.env, input.tenant_context,
+        tenantConfiguredDesiredEffectByCapability(this.env));
       const verifier = new TenantRuntimeBoundaryVerifier({
         read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(this.env, keyId),
@@ -680,7 +681,8 @@ async function reissueMeetingMinutesRecoveryTenantContext(
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
   if (authorization.projectIds.length === 0) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH");
-  const clients = tenantRuntimeClients(env);
+  const clients = tenantRuntimeClients(env, undefined,
+    tenantConfiguredDesiredEffectByCapability(env));
   const resolved = await resolveSlackWorkerIngress({
     identity: {
       provider: "slack",
@@ -744,14 +746,21 @@ async function resolveDerivedSlackTenantContext(
   identity: TenantInteractionIdentity,
   options: { workspace_policy?: "same_workspace" | "same_tenant";
     destination?: MeetingMinutesDestination } = {},
-  desiredEffectByCapability?: Readonly<Record<string, CompanyAuthorityDesiredEffect>>,
+  desiredEffectByCapability?: Readonly<Record<string, CompanyAuthorityDesiredEffect>>
+    | (() => Readonly<Record<string, CompanyAuthorityDesiredEffect>> | undefined),
 ): Promise<TenantContextEnvelope> {
-  const clients = tenantRuntimeClients(env, undefined, desiredEffectByCapability);
   const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination);
   if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
   const sourceProjectIds = [...(destinationAuthorization?.trusted_project_ids
     ?? sourceTenantContext.authorization.project_ids)];
   if (sourceProjectIds.length === 0) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  // Keep destination scope validation ahead of runtime configuration parsing.
+  // Callers pass a lazy provider so a malformed effect map cannot mask a
+  // destination mismatch.
+  const resolvedDesiredEffectByCapability = typeof desiredEffectByCapability === "function"
+    ? desiredEffectByCapability()
+    : desiredEffectByCapability;
+  const clients = tenantRuntimeClients(env, undefined, resolvedDesiredEffectByCapability);
   const resolved = await resolveSlackWorkerIngress({
     identity: { provider: "slack", ...identity },
     required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
@@ -948,7 +957,8 @@ function createMeetingMinutesTenantEffectGuard(input: {
   verifier: TenantRuntimeBoundaryVerifier;
   now(): string;
 }): MeetingMinutesTenantEffectGuard {
-  const clients = tenantRuntimeClients(input.env, input.tenant_context);
+  const clients = tenantRuntimeClients(input.env, input.tenant_context,
+    tenantConfiguredDesiredEffectByCapability(input.env));
   const trustedWorkspaceConnections = parseWorkspaceConnectionHints(input.env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON);
   const preflightDestinationSlack = (destinations: readonly MeetingMinutesDestination[]) =>
     preflightMeetingMinutesDestinationSlackBindings({
@@ -1059,7 +1069,8 @@ function createMeetingMinutesTenantEffectGuard(input: {
         channel_id: destination.slackChannelId,
         thread_ts: destinationThreadTs,
         requester_id: requesterId,
-      }, { workspace_policy: "same_tenant" });
+      }, { workspace_policy: "same_tenant" },
+        () => tenantConfiguredDesiredEffectByCapability(input.env));
       const expectedScope: ExpectedTenantScope = {
         audience: requiredRuntimeBinding(input.env.MANA_REQUIRED_AUDIENCE),
         project_id: tenantContext.authorization.project_ids[0]!,
@@ -1207,7 +1218,7 @@ function meetingMinutesClients(
             channel_id: repair.channelId,
             thread_ts: repair.requestedAt,
             requester_id: requiredRuntimeBinding(tenantContext.slack.requester_id),
-          }),
+          }, undefined, () => tenantConfiguredDesiredEffectByCapability(env)),
         )),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
@@ -1303,28 +1314,30 @@ function tenantRuntimeClients(
 function tenantInteractionDesiredEffectByCapability(
   env: Env,
 ): Readonly<Record<string, CompanyAuthorityDesiredEffect>> {
-  const configuration = parseCompanyAuthorityRuntimeConfiguration(env);
-  if (configuration.state !== "enabled") {
+  const desiredEffectByCapability = tenantConfiguredDesiredEffectByCapability(env);
+  if (!desiredEffectByCapability) {
     deny("runtime_configuration", "CONFIGURATION_INVALID", {
       binding: "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON",
     });
   }
   const capabilityId = requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID);
-  const desiredEffect = configuration.desired_effect_by_capability[capabilityId];
+  const desiredEffect = desiredEffectByCapability[capabilityId];
   if (!desiredEffect) {
     deny("runtime_configuration", "CONFIGURATION_INVALID", {
       binding: "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON",
       capability_id: capabilityId,
     });
   }
-  if (capabilityId === "runtime.execute" && desiredEffect !== "external_side_effect") {
-    deny("runtime_configuration", "CONFIGURATION_INVALID", {
-      binding: "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON",
-      capability_id: capabilityId,
-      expected_effect: "external_side_effect",
-    });
-  }
-  return configuration.desired_effect_by_capability;
+  return desiredEffectByCapability;
+}
+
+function tenantConfiguredDesiredEffectByCapability(
+  env: Env,
+): Readonly<Record<string, CompanyAuthorityDesiredEffect>> | undefined {
+  const configuration = parseCompanyAuthorityRuntimeConfiguration(env);
+  return configuration.state === "enabled"
+    ? configuration.desired_effect_by_capability
+    : undefined;
 }
 
 async function writeDevelopmentTerminalAccounting(env: Env, input: {
@@ -1332,7 +1345,8 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
   expected_scope: ExpectedTenantScope;
   artifact: AccountingArtifact;
 }): Promise<{ result_ref: string }> {
-  const clients = tenantRuntimeClients(env, input.tenant_context);
+  const clients = tenantRuntimeClients(env, input.tenant_context,
+    tenantConfiguredDesiredEffectByCapability(env));
   const artifactContext = input.tenant_context;
   const snapshot = await clients.authority.read_workspace_connection(
     artifactContext.workspace_connection.connection_id,
@@ -1387,7 +1401,8 @@ async function resolveTaskBoardRepairTenantContext(
   env: Env,
   repair: TaskBoardRepairEvent,
 ): Promise<TenantContextEnvelope> {
-  const clients = tenantRuntimeClients(env);
+  const clients = tenantRuntimeClients(env, undefined,
+    tenantConfiguredDesiredEffectByCapability(env));
   const serviceActorId = requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID);
   const placementProjectScope = placementProjectScopeForEvent(env, {
     tenantId: env.TENANT_ID,
@@ -1886,7 +1901,8 @@ export async function executeCompanyAuthorityReplyOperation(
   }
   const config = parseCompanyAuthorityRuntimeConfiguration(env);
   if (config.state !== "enabled") deny("container_launch", "AUTHORITY_UNAVAILABLE");
-  const clients = tenantRuntimeClients(env, tenantContext);
+  const clients = tenantRuntimeClients(env, tenantContext,
+    config.desired_effect_by_capability);
   const now = () => new Date().toISOString();
   const readSnapshot = () => clients.authority.read_workspace_connection(
     tenantContext.workspace_connection.connection_id);
@@ -2162,7 +2178,8 @@ export async function reconcileCompanyAuthorityReplyOperation(
         deny("external_effect", "CROSS_TENANT_CANDIDATE");
       }
       const expectedScope = expectedExternalEffectReconciliationScope(env, persistedJob);
-      const authorityClients = tenantRuntimeClients(env);
+      const desiredEffectByCapability = tenantConfiguredDesiredEffectByCapability(env);
+      const authorityClients = tenantRuntimeClients(env, undefined, desiredEffectByCapability);
       const snapshot = await authorityClients.authority.read_workspace_connection(
         context.workspace_connection.connection_id,
       );
@@ -2188,7 +2205,7 @@ export async function reconcileCompanyAuthorityReplyOperation(
         },
         trusted_project_ids: expectedScope.project_ids ?? [expectedScope.project_id],
       });
-      const clients = tenantRuntimeClients(env, authorizationContext);
+      const clients = tenantRuntimeClients(env, authorizationContext, desiredEffectByCapability);
       const verifier = new TenantRuntimeBoundaryVerifier({
         read_authoritative_snapshot: (connectionId) =>
           clients.authority.read_workspace_connection(connectionId),
@@ -2555,7 +2572,7 @@ async function processTenantMeetingMinutesSelection(input: {
           channel_id: armed.event.channelId,
           thread_ts: armed.event.threadTs,
           requester_id: armed.event.userId,
-        });
+        }, undefined, () => tenantConfiguredDesiredEffectByCapability(env));
         await meetingMinutesDeploymentGate(env, tenantId).markActive({ runId: selection.runId,
           startedAt: now(),
           deadlineAt: new Date(Date.parse(now()) + armed.delaySeconds * 1_000).toISOString() });
@@ -2662,7 +2679,7 @@ async function processTenantMeetingMinutesRedo(input: {
             channel_id: command.channelId,
             thread_ts: command.threadTs,
             requester_id: command.userId,
-          }, { destination });
+          }, { destination }, () => tenantConfiguredDesiredEffectByCapability(env));
           const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
           if (!destinationAuthorization) deny("brainbase_proxy", "PROJECT_SCOPE_MISMATCH");
           const taskScope: ExpectedTenantScope = {
@@ -2703,7 +2720,8 @@ export default {
     if (url.pathname === "/internal/slack/installations/lifecycle") {
       let clients;
       try {
-        clients = tenantRuntimeClients(env);
+        clients = tenantRuntimeClients(env, undefined,
+          tenantConfiguredDesiredEffectByCapability(env));
       } catch {
         return Response.json({ error: "CONFIGURATION_INVALID" }, { status: 503 });
       }
@@ -2896,7 +2914,8 @@ export default {
           payload: selection,
         };
         const expectedScope = expectedTenantMeetingMinutesSelectionScope(env, tenantBody);
-        const runtimeClients = tenantRuntimeClients(env);
+        const runtimeClients = tenantRuntimeClients(env, undefined,
+          tenantConfiguredDesiredEffectByCapability(env));
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => runtimeClients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -2975,7 +2994,8 @@ export default {
         new Date().toISOString(),
       );
       if (callbackBoundary instanceof Response) return callbackBoundary;
-      const callbackClients = tenantRuntimeClients(env);
+      const callbackClients = tenantRuntimeClients(env, undefined,
+        tenantConfiguredDesiredEffectByCapability(env));
       const callbackVerifier = new TenantRuntimeBoundaryVerifier({
         read_authoritative_snapshot: (connectionId) => callbackClients.authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -3300,7 +3320,7 @@ export default {
                     channel_id: repair.channelId,
                     thread_ts: repair.requestedAt,
                     requester_id: requiredRuntimeBinding(taskBoardTenantContext.slack.requester_id),
-                  }, undefined, tenantInteractionDesiredEffectByCapability(env)),
+                  }, undefined, () => tenantConfiguredDesiredEffectByCapability(env)),
                 ),
               );
             },
@@ -3363,7 +3383,8 @@ export default {
         placements: developmentPlacements.map((placement) => ({ channelId: placement.channelId,
           allowedUserIds: placement.audience?.allowedUserIds ?? [] })),
         openModal: async (input) => {
-          const clients = tenantRuntimeClients(env);
+          const clients = tenantRuntimeClients(env, undefined,
+            tenantConfiguredDesiredEffectByCapability(env));
           const receivedAt = new Date().toISOString();
           const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
             .split(",").map((value) => value.trim()).filter(Boolean);
@@ -3422,7 +3443,8 @@ export default {
         },
         defer: (work) => ctx.waitUntil(work.then(() => undefined)),
         send: async (event) => {
-          const clients = tenantRuntimeClients(env);
+          const clients = tenantRuntimeClients(env, undefined,
+            tenantConfiguredDesiredEffectByCapability(env));
           const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
             .split(",").map((value) => value.trim()).filter(Boolean);
           const commandIdentity: TenantInteractionIdentity = {
@@ -3452,12 +3474,16 @@ export default {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     try {
-      const clients = tenantRuntimeClients(env);
+      const runtimeConfiguration = parseCompanyAuthorityRuntimeConfiguration(env);
+      const desiredEffectByCapability = runtimeConfiguration.state === "enabled"
+        ? runtimeConfiguration.desired_effect_by_capability
+        : undefined;
+      const clients = tenantRuntimeClients(env, undefined, desiredEffectByCapability);
       const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
         .split(",").map((value) => value.trim()).filter(Boolean);
       const placements = canonicalRuntimePlacements(env);
       const companyAuthorityIngress = companyAuthorityIngressConfiguration(
-        parseCompanyAuthorityRuntimeConfiguration(env),
+        runtimeConfiguration,
         clients.company_authority,
       );
       return handleTenantSlackRequest(request, {
@@ -3625,7 +3651,8 @@ export default {
               expected_audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
               desired_effect_by_capability: runtimeConfig.desired_effect_by_capability,
             });
-            const clients = tenantRuntimeClients(env, tenantContext);
+            const clients = tenantRuntimeClients(env, tenantContext,
+              runtimeConfig.desired_effect_by_capability);
             return {
               tenant_verifier: new TenantRuntimeBoundaryVerifier({
                 read_authoritative_snapshot: (connectionId) =>
@@ -3692,7 +3719,8 @@ export default {
       if (isTenantTaskBoardRepairBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
+        const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
+          tenantConfiguredDesiredEffectByCapability(env));
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -3767,7 +3795,8 @@ export default {
       if (isTenantMeetingMinutesRedoBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
+        const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
+          tenantConfiguredDesiredEffectByCapability(env));
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -3831,7 +3860,8 @@ export default {
           reissueTenantContext: (runtimeEnv, body) =>
             reissueMeetingMinutesRecoveryTenantContext(runtimeEnv, body),
           readAuthoritativeSnapshot: (runtimeEnv, tenantContext, connectionId) =>
-            tenantRuntimeClients(runtimeEnv, tenantContext).authority.read_workspace_connection(connectionId),
+            tenantRuntimeClients(runtimeEnv, tenantContext,
+              tenantConfiguredDesiredEffectByCapability(runtimeEnv)).authority.read_workspace_connection(connectionId),
           resolveVerificationKey: (runtimeEnv, keyId) => resolveTenantVerificationKey(runtimeEnv, keyId),
           deploymentProfile: tenantDeploymentProfile,
           requiredAudience: (runtimeEnv) => requiredRuntimeBinding(runtimeEnv.MANA_REQUIRED_AUDIENCE),
@@ -3869,7 +3899,8 @@ export default {
       if (isTenantMeetingMinutesSelectionBody(message.body)) {
         const tenantBody = message.body;
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
-        const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
+        const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
+          tenantConfiguredDesiredEffectByCapability(env));
         const verifier = new TenantRuntimeBoundaryVerifier({
           read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -3931,7 +3962,8 @@ export default {
       const tenantBody = message.body;
       const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
       const runtimeWorkspaceId = tenantBody.tenant_context.workspace_connection.workspace_id;
-      const clients = tenantRuntimeClients(env, tenantBody.tenant_context);
+      const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
+        tenantConfiguredDesiredEffectByCapability(env));
       const verifier = new TenantRuntimeBoundaryVerifier({
         read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
@@ -4007,7 +4039,7 @@ export default {
                   channel_id: childEvent.channelId,
                   thread_ts: childEvent.threadTs,
                   requester_id: childEvent.userId ?? "",
-                });
+                }, undefined, () => tenantConfiguredDesiredEffectByCapability(env));
                 const childBody: TenantQueueBody<SlackQueueEvent> = {
                   schema_version: "1.0",
                   tenant_context: childTenantContext,

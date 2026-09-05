@@ -261,6 +261,23 @@ describe("Brainbase-owned company authority HTTP client", () => {
       .toBe("external_side_effect");
   });
 
+  it.each(["read", "write"] as const)(
+    "fails closed before network when the canonical map classifies runtime.execute as %s",
+    async (effect) => {
+      const captures: unknown[] = [];
+      const clients = clientsWithResponse(
+        canonicalContext("runtime.execute", "external_side_effect"),
+        captures,
+        { "runtime.execute": effect },
+      );
+
+      await expect(clients.authority.issue_tenant_context(request("runtime.execute"))).rejects.toSatisfy((error: unknown) => (
+        error instanceof TenantBoundaryError && error.code === "DESIRED_EFFECT_REQUIRED"
+      ));
+      expect(captures).toHaveLength(0);
+    },
+  );
+
   it("fails closed instead of inferring runtime.execute without the canonical operation map", async () => {
     const captures: unknown[] = [];
     const clients = clientsWithResponse(
