@@ -13,9 +13,18 @@ export interface SlackDevelopmentCommandInput {
   initialProblem: string;
 }
 
+export interface SlackMeetingMinutesRepairInput {
+  workspaceId: string;
+  channelId: string;
+  requesterId: string;
+  runId: string;
+  sourceThreadTs: string;
+}
+
 export async function handleSlackCommandRequest(request: Request, options: {
   signingSecret: string;
   placements: ReadonlyArray<{ channelId: string; allowedUserIds: readonly string[] }>;
+  repairPlacements?: ReadonlyArray<{ channelId: string; allowedUserIds: readonly string[] }>;
   nowMs?: number;
   /**
    * Production supplies this to open the non-engineer improvement form. The
@@ -24,6 +33,8 @@ export async function handleSlackCommandRequest(request: Request, options: {
    * a synthetic Slack thread timestamp.
    */
   openModal?(input: SlackDevelopmentCommandInput): Promise<unknown>;
+  /** Operator-only repair for re-projecting an already completed run. */
+  repairMeetingMinutes?(input: SlackMeetingMinutesRepairInput): Promise<unknown>;
   /** Keep modal opening alive after returning Slack's required fast acknowledgement. */
   defer?(work: Promise<unknown>): void;
   send(event: Omit<SlackQueueEvent, "tenantId">): Promise<unknown>;
@@ -52,12 +63,23 @@ export async function handleSlackCommandRequest(request: Request, options: {
   const command = form.get("command") ?? "";
   const triggerId = form.get("trigger_id") ?? "";
   const text = (form.get("text") ?? "").trim();
+  const repairMatch = text.match(/^repair-meeting-minutes\s+([A-Za-z0-9_-]{3,260})\s+(\d{1,20}(?:\.\d{1,12})?)$/);
   const placement = options.placements.find((candidate) => candidate.channelId === channelId);
-  if (!COMMANDS.has(command) || !placement?.allowedUserIds.includes(requesterId)) {
+  const repairPlacement = options.repairPlacements?.find((candidate) => candidate.channelId === channelId);
+  const authorized = repairMatch
+    ? repairPlacement?.allowedUserIds.includes(requesterId)
+    : placement?.allowedUserIds.includes(requesterId);
+  if (!COMMANDS.has(command) || !authorized) {
     return Response.json({
       response_type: "ephemeral",
       text: "このコマンドを実行する権限がありません。",
     }, { status: 200 });
+  }
+
+  if (repairMatch && options.repairMeetingMinutes) {
+    await options.repairMeetingMinutes({ workspaceId, channelId, requesterId,
+      runId: repairMatch[1]!, sourceThreadTs: repairMatch[2]! });
+    return Response.json({ response_type: "ephemeral", text: "既存の議事録投稿を正常な完了表示へ更新しました。" });
   }
 
   if (options.openModal) {

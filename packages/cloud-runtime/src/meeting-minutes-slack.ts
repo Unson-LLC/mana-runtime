@@ -201,7 +201,7 @@ function isBrainbaseProjectBindingFailure(run: MeetingMinutesRun): boolean {
   ));
 }
 function safeFailureDetails(run: MeetingMinutesRun): string[] {
-  const failure = run.projectionFailure ?? run.diagnostics;
+  const failure = run.projectionFailure ?? (run.diagnostics?.failedAt ? run.diagnostics : undefined);
   const taskFailure = run.taskRegistration?.failure;
   const stage = failure?.stage ?? taskFailure?.stage ?? run.failure?.stage;
   const code = failure?.code ?? (taskFailure ? "TASK_REGISTRATION_FAILED" : "UNCLASSIFIED_FAILURE");
@@ -462,8 +462,9 @@ export class MeetingMinutesSlackClient {
         run.github?.minutesUrl ? `<${run.github.minutesUrl}|GitHubで議事録を開く>` : undefined,
         `共有先: <#${run.destination.slackChannelId}>`].filter(Boolean).join("\n")
       : failedRunDetails(run).join("\n");
-    const hasLifecycleFailure = !completed || Boolean(run.failure || run.projectionFailure || run.diagnostics || run.taskRegistration?.failure);
-    const lifecycleFailure = run.projectionFailure ?? run.diagnostics;
+    const diagnosticFailure = run.diagnostics?.failedAt ? run.diagnostics : undefined;
+    const hasLifecycleFailure = !completed || Boolean(run.failure || run.projectionFailure || diagnosticFailure || run.taskRegistration?.failure);
+    const lifecycleFailure = run.projectionFailure ?? diagnosticFailure;
     const lifecycleStage = lifecycleFailure?.stage ?? run.taskRegistration?.failure?.stage ?? run.failure?.stage ?? "unknown";
     const lifecycleCode = lifecycleFailure?.code
       ?? (run.taskRegistration?.failure ? "TASK_REGISTRATION_FAILED" : "UNCLASSIFIED_FAILURE");

@@ -84,6 +84,22 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(calls[1]?.body)).toContain("保存先をやり直す");
   });
 
+  it("does not render an in-progress diagnostic checkpoint as a completed-run failure", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) }); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1" as const,
+      stage: "generation" as const, receiptSnapshot: { receiptId: "receipt-1", status: "resolved" as const,
+        errorCodes: [] } } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+    const serialized = JSON.stringify(calls[1]?.body);
+    expect(serialized).toContain("議事録を作成しました");
+    expect(serialized).not.toContain("失敗段階");
+    expect(serialized).not.toContain("UNCLASSIFIED_FAILURE");
+    expect(serialized).not.toContain("問い合わせID");
+  });
+
   it("binds the current run revision to the redo button", async () => {
     let body: { blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }> } = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

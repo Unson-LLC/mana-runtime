@@ -3324,6 +3324,61 @@ export default {
       return handleSlackCommandRequest(request, { signingSecret: env.SLACK_SIGNING_SECRET,
         placements: developmentPlacements.map((placement) => ({ channelId: placement.channelId,
           allowedUserIds: placement.audience?.allowedUserIds ?? [] })),
+        repairPlacements: [{ channelId: requiredRuntimeBinding(env.MEETING_MINUTES_ROUTER_CHANNEL_ID),
+          allowedUserIds: [...meetingMinutesRuntimeConfig(env).operatorUserIds] }],
+        repairMeetingMinutes: async (input) => {
+          const clients = tenantRuntimeClients(env);
+          const receivedAt = new Date().toISOString();
+          const appId = requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID);
+          const identity: TenantInteractionIdentity = {
+            app_id: appId,
+            workspace_id: input.workspaceId,
+            event_id: `minutes_repair_${input.runId}`,
+            channel_id: input.channelId,
+            thread_ts: input.sourceThreadTs,
+            requester_id: input.requesterId,
+          };
+          const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+            .split(",").map((value) => value.trim()).filter(Boolean);
+          const resolved = await resolveSlackWorkerIngress({
+            identity: { provider: "slack", ...identity },
+            required_scopes: requiredScopes,
+            ...placementAuthorizationForIdentity(env, identity),
+            authority: clients.authority,
+            now: receivedAt,
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          const tenantContext = resolved.tenant_context;
+          const expectedScope: ExpectedTenantScope = {
+            audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+            workspace_id: input.workspaceId,
+            app_id: appId,
+            channel_id: input.channelId,
+            thread_ts: input.sourceThreadTs,
+            actor_principal_id: tenantContext.actor.principal_id,
+            project_id: tenantContext.authorization.project_ids[0]!,
+            project_ids: [...tenantContext.authorization.project_ids],
+            capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+            deployment_id: tenantContext.placement.deployment_id,
+          };
+          const verifier = new TenantRuntimeBoundaryVerifier({
+            read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+            resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          });
+          const effects = createMeetingMinutesTenantEffectGuard({ env, tenant_context: tenantContext,
+            expected_scope: expectedScope, verifier, now: () => new Date().toISOString() });
+          const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+            tenantContext.tenant.tenant_id, input.workspaceId, input.runId,
+          ));
+          const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+          const run = await withDisposableResource(() => getWorkspace(handle),
+            (workspace) => loadMeetingMinutesRun(workspace.fs, input.runId));
+          if (!run || run.status !== "completed" || run.sourceChannelId !== input.channelId
+            || run.sourceThreadTs !== input.sourceThreadTs || !run.slack?.processingTs) {
+            throw new Error("meeting_minutes_completed_run_not_found");
+          }
+          await meetingMinutesClients(env, effects, tenantContext).slack.updateRunStatus(run, "completed");
+        },
         openModal: async (input) => {
           const clients = tenantRuntimeClients(env);
           const receivedAt = new Date().toISOString();
