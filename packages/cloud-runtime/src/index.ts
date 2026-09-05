@@ -168,6 +168,7 @@ import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
   MEETING_MINUTES_RECOVERY_DELAY_SECONDS } from "./meeting-minutes-recovery.js";
 import {
   handleMeetingMinutesRecoveryQueue,
+  meetingMinutesRecoveryProjectScope,
 } from "./meeting-minutes-recovery-production.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
@@ -3797,18 +3798,8 @@ export default {
           deploymentProfile: tenantDeploymentProfile,
           requiredAudience: (runtimeEnv) => requiredRuntimeBinding(runtimeEnv.MANA_REQUIRED_AUDIENCE),
           requiredCapabilityId: (runtimeEnv) => requiredRuntimeBinding(runtimeEnv.MANA_REQUIRED_CAPABILITY_ID),
-          resolveProjectScope: (runtimeEnv, body) => expectedProjectScopeForEvent(runtimeEnv, {
-            tenantId: body.tenant_context.tenant.tenant_id,
-            eventId: meetingMinutesRecoveryEventId(body.payload),
-            workspaceId: body.payload.workspaceId,
-            channelId: body.payload.channelId,
-            threadTs: body.payload.threadTs,
-            messageTs: body.payload.threadTs,
-            userId: body.payload.userId,
-            eventType: "message",
-            text: "",
-            receivedAt: body.payload.actionTs,
-          }, body.tenant_context),
+          resolveProjectScope: (_runtimeEnv, body) =>
+            meetingMinutesRecoveryProjectScope(body.tenant_context),
           now: () => new Date().toISOString(),
           ownership: (runtimeEnv, tenantId) =>
             createDurableTenantStateClient(runtimeEnv.TENANT_RUNTIME_STATE, tenantId),
