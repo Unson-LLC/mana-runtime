@@ -792,6 +792,57 @@ async function reissueMeetingMinutesAdminSelectionTenantContext(
   return fresh;
 }
 
+async function reissueLongRunningTenantContext(
+  env: Env,
+  accepted: TenantContextEnvelope,
+  expectedScope: ExpectedTenantScope,
+): Promise<TenantContextEnvelope> {
+  const projectIds = [...(expectedScope.project_ids ?? accepted.authorization.project_ids)];
+  if (projectIds.length === 0 || !projectIds.includes(expectedScope.project_id)
+    || accepted.slack.thread_ts !== expectedScope.thread_ts || !accepted.slack.requester_id) {
+    deny("container_launch", "PROJECT_SCOPE_MISMATCH");
+  }
+  const clients = tenantRuntimeClients(env, undefined,
+    tenantConfiguredDesiredEffectByCapability(env));
+  const fresh = (await resolveSlackWorkerIngress({
+    identity: {
+      provider: "slack",
+      app_id: accepted.workspace_connection.app_id,
+      workspace_id: accepted.workspace_connection.workspace_id,
+      event_id: accepted.slack.event_id,
+      channel_id: accepted.slack.channel_id,
+      thread_ts: accepted.slack.thread_ts,
+      requester_id: accepted.slack.requester_id,
+    },
+    required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+      .split(",").map((value) => value.trim()).filter(Boolean),
+    required_authorization: {
+      audience: expectedScope.audience,
+      project_id: expectedScope.project_id,
+      capability_id: expectedScope.capability_id,
+    },
+    trusted_project_ids: projectIds,
+    tenant_revision: accepted.tenant.tenant_revision,
+    authority: clients.authority,
+    now: new Date().toISOString(),
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  })).tenant_context;
+  const sameProjects = [...fresh.authorization.project_ids].sort().join("\0") ===
+    [...projectIds].sort().join("\0");
+  if (fresh.tenant.tenant_id !== accepted.tenant.tenant_id ||
+    fresh.tenant.tenant_revision !== accepted.tenant.tenant_revision ||
+    fresh.workspace_connection.connection_id !== accepted.workspace_connection.connection_id ||
+    fresh.workspace_connection.connection_revision !== accepted.workspace_connection.connection_revision ||
+    fresh.workspace_connection.workspace_id !== expectedScope.workspace_id ||
+    fresh.workspace_connection.app_id !== expectedScope.app_id ||
+    fresh.actor.principal_id !== expectedScope.actor_principal_id || !sameProjects ||
+    fresh.placement.deployment_id !== expectedScope.deployment_id ||
+    fresh.placement.profile !== accepted.placement.profile) {
+    deny("container_launch", "CROSS_TENANT_CANDIDATE");
+  }
+  return fresh;
+}
+
 function meetingMinutesDeploymentGate(env: Env, tenantId: string): DurableObjectStub<MeetingMinutesDeploymentGate> {
   return env.MEETING_MINUTES_DEPLOYMENT_GATE.get(env.MEETING_MINUTES_DEPLOYMENT_GATE.idFromName(tenantId));
 }
@@ -3760,6 +3811,11 @@ export default {
       now: string;
       release?: "on_completion" | "on_expiration";
       company_authority_envelope?: CompanyAuthorityRuntimeEnvelope<unknown>;
+      refresh?: {
+        issue(): Promise<TenantContextEnvelope>;
+        now(): string;
+        before_expiry_ms?: number;
+      };
       execute(tenantBoundaryHandle: string): Promise<T>;
     }): Promise<T> => executeTenantContainerOperationWithRegistry({
       ...input,
@@ -4033,6 +4089,10 @@ export default {
                 expected_scope: expectedScope,
                 verifier,
                 now: now(),
+                refresh: {
+                  issue: () => reissueLongRunningTenantContext(env, tenantContext, expectedScope),
+                  now,
+                },
                 execute: (tenantBoundaryHandle) => processTenantMeetingMinutesRedo({
                   env,
                   config: meetingMinutesConfig,
@@ -4137,6 +4197,10 @@ export default {
                 expected_scope: expectedScope,
                 verifier,
                 now: now(),
+                refresh: {
+                  issue: () => reissueLongRunningTenantContext(env, tenantContext, expectedScope),
+                  now,
+                },
                 execute: (tenantBoundaryHandle) => processTenantMeetingMinutesSelection({
                   env,
                   config: meetingMinutesConfig,

@@ -8,6 +8,8 @@ import {
   TENANT_BOUNDARY_HANDLE_HEADER,
 } from "../multitenancy/durable-tenant-boundary.js";
 import { TenantBoundaryError } from "../multitenancy/errors.js";
+import { executeTenantContainerOperation } from "../multitenancy/tenant-container-operation.js";
+import type { TenantRuntimeBoundaryVerifier } from "../multitenancy/runtime-boundaries.js";
 import type {
   BoundaryName,
   ExpectedTenantScope,
@@ -136,6 +138,79 @@ describe("durable tenant boundary integration", () => {
     expect(namespace.validate).toHaveBeenNthCalledWith(1, expect.objectContaining({ boundary: "mcp_gateway" }));
     expect(namespace.validate).toHaveBeenNthCalledWith(2, expect.objectContaining({ boundary: "brainbase_proxy" }));
     expect(request.headers.get(TENANT_BOUNDARY_HANDLE_HEADER)).toBe(handle);
+  });
+
+  it("refreshes the same opaque handle with a newly verified context without widening its scope", async () => {
+    const namespace = new IsolatedBoundaryNamespace();
+    const registry = createDurableTenantBoundaryRegistry(namespace);
+    const handle = await registry.register({ tenant_context: CONTEXT, expected_scope: SCOPE, now: NOW });
+    const refreshed = {
+      ...CONTEXT,
+      expires_at: "2026-08-17T04:06:00.000Z",
+    } as TenantContextEnvelope;
+
+    await registry.refresh(handle, {
+      tenant_context: refreshed,
+      now: "2026-08-17T04:00:30.000Z",
+    });
+
+    const resolved = await resolveDurableTenantBoundaryContext(namespace, new Request(
+      "https://gateway.internal/api/runtime/gateway",
+      { headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle } },
+    ), ["mcp_gateway"], "2026-08-17T04:02:00.000Z");
+    expect(resolved).toEqual({ tenant_context: refreshed, expected_scope: SCOPE });
+    expect(namespace.validate).toHaveBeenCalledWith(expect.objectContaining({
+      boundary: "container_launch", tenant_context: refreshed, expected_scope: SCOPE,
+    }));
+  });
+
+  it("rejects a refresh that changes the tenant identity and keeps the accepted context", async () => {
+    const namespace = new IsolatedBoundaryNamespace();
+    const registry = createDurableTenantBoundaryRegistry(namespace);
+    const handle = await registry.register({ tenant_context: CONTEXT, expected_scope: SCOPE, now: NOW });
+
+    await expect(registry.refresh(handle, {
+      tenant_context: {
+        ...CONTEXT,
+        expires_at: "2026-08-17T04:06:00.000Z",
+        tenant: { ...CONTEXT.tenant, tenant_id: "ten_other" },
+      },
+      now: "2026-08-17T04:00:30.000Z",
+    })).rejects.toMatchObject({ code: "CROSS_TENANT_CANDIDATE" });
+
+    const resolved = await resolveDurableTenantBoundaryContext(namespace, new Request(
+      "https://gateway.internal/api/runtime/gateway",
+      { headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle } },
+    ), ["mcp_gateway"], "2026-08-17T04:00:45.000Z");
+    expect(resolved).toEqual({ tenant_context: CONTEXT, expected_scope: SCOPE });
+  });
+
+  it("refreshes a long-running Container operation before its accepted context expires", async () => {
+    vi.useFakeTimers();
+    try {
+      const namespace = new IsolatedBoundaryNamespace();
+      const issue = vi.fn(async () => ({
+        ...CONTEXT,
+        expires_at: "2026-08-17T04:06:00.000Z",
+      } as TenantContextEnvelope));
+      let finish: ((value: string) => void) | undefined;
+      const operation = executeTenantContainerOperation({
+        namespace,
+        tenant_context: CONTEXT,
+        expected_scope: SCOPE,
+        verifier: { validate: vi.fn(async () => undefined) } as unknown as TenantRuntimeBoundaryVerifier,
+        now: NOW,
+        refresh: { issue, now: () => NOW, before_expiry_ms: 59_999 },
+        execute: () => new Promise<string>((resolve) => { finish = resolve; }),
+      });
+
+      await vi.advanceTimersByTimeAsync(2);
+      expect(issue).toHaveBeenCalledOnce();
+      finish?.("completed");
+      await expect(operation).resolves.toBe("completed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stores and revalidates an optional outer Company Authority envelope without putting it in headers", async () => {
