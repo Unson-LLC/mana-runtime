@@ -10,6 +10,22 @@ import { TenantRuntimeBoundaryVerifier, type TenantQueueBody,
   type TenantQueueMessageLike } from "./multitenancy/runtime-boundaries.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 
+/**
+ * Recovery runs with a freshly reissued context whose project ids were
+ * reconstructed from the run's durable recovery authorization.  Reusing the
+ * router placement here rejects destination-scoped minutes (for example PMS)
+ * because the router and destination intentionally have different projects.
+ */
+export function meetingMinutesRecoveryProjectScope(
+  tenantContext: TenantContextEnvelope,
+): { project_id: string; project_ids: readonly string[] } {
+  const projectIds = [...tenantContext.authorization.project_ids];
+  if (projectIds.length === 0 || new Set(projectIds).size !== projectIds.length) {
+    deny("queue_consumer", "PROJECT_SCOPE_MISMATCH");
+  }
+  return { project_id: projectIds[0]!, project_ids: projectIds };
+}
+
 /** Platform primitives below the production recovery composition contract. */
 export interface MeetingMinutesRecoveryPlatform<Env> {
   reissueTenantContext(env: Env, body: TenantQueueBody<MeetingMinutesRecovery>): Promise<TenantContextEnvelope>;

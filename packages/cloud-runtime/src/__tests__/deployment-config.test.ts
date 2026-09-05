@@ -698,7 +698,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("isTenantMeetingMinutesRedoBody(message.body)");
     expect(worker).toContain("isTenantMeetingMinutesRecoveryBody(message.body)");
     expect(worker).toContain("expectedTenantMeetingMinutesRedoScope(env, tenantBody)");
-    expect(worker).toContain("resolveProjectScope: (runtimeEnv, body) => expectedProjectScopeForEvent");
+    expect(worker).toContain("meetingMinutesRecoveryProjectScope(body.tenant_context)");
     expect(worker).toContain("readAuthoritativeSnapshot: (runtimeEnv, tenantContext, connectionId)");
     expect(worker).toContain("executeSlack: ({ env: runtimeEnv, effectId, event, tenantContext");
     expect(worker).toContain("isMeetingMinutesRecovery(message.body)");

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { armMeetingMinutesRecovery } from "../meeting-minutes-recovery.js";
 import {
   handleMeetingMinutesRecoveryQueue,
+  meetingMinutesRecoveryProjectScope,
   type MeetingMinutesRecoveryPlatform,
 } from "../meeting-minutes-recovery-production.js";
 import {
@@ -151,6 +152,27 @@ function queueMessage(body: TenantQueueBody<MeetingMinutesRecovery>) {
 }
 
 describe("meeting-minutes recovery production wiring", () => {
+  it("keeps the destination-scoped project from the freshly reissued context", async () => {
+    const fresh = await signedRecoveryContext();
+
+    expect(meetingMinutesRecoveryProjectScope(fresh.value)).toEqual({
+      project_id: "project-a",
+      project_ids: ["project-a"],
+    });
+  });
+
+  it("rejects an empty or duplicate recovery project scope", async () => {
+    const fresh = await signedRecoveryContext();
+    expect(() => meetingMinutesRecoveryProjectScope({
+      ...fresh.value,
+      authorization: { ...fresh.value.authorization, project_ids: [] },
+    })).toThrow("PROJECT_SCOPE_MISMATCH");
+    expect(() => meetingMinutesRecoveryProjectScope({
+      ...fresh.value,
+      authorization: { ...fresh.value.authorization, project_ids: ["project-a", "project-a"] },
+    })).toThrow("PROJECT_SCOPE_MISMATCH");
+  });
+
   it("reissues a fresh context and projects the durable result when assistant status cleanup is unavailable", async () => {
     const fs = new MemoryFs();
     await saveMeetingMinutesRun(fs, run());
