@@ -19,6 +19,33 @@ export interface MeetingMinutesStatusProjectionOptions {
     code: string; retryable: boolean; receipt?: unknown; checkpoint?: unknown }): void;
 }
 
+/**
+ * Builds the clean view used by the operator-only status repair command.
+ *
+ * A projection failure is not a processing failure: the generated minutes and
+ * their delivery remain authoritative. Legacy runs may have copied that final
+ * projection error into `failure`/`diagnostics`, so accept those only when the
+ * durable output checkpoints prove that processing reached completion.
+ */
+export function meetingMinutesCompletedProjectionRepair(
+  run: MeetingMinutesRun | undefined,
+  source: { channelId: string; threadTs: string },
+): MeetingMinutesRun | undefined {
+  if (!run || run.sourceChannelId !== source.channelId || run.sourceThreadTs !== source.threadTs
+    || !run.destination || !run.generated || !run.github || !run.slack?.processingTs || !run.slack.parentTs) return undefined;
+  const legacyProjectionOnlyFailure = run.status === "failed"
+    && run.failure?.stage === "completed"
+    && run.diagnostics?.stage === "status_projection"
+    && run.diagnostics.code === "STATUS_PROJECTION_FAILED";
+  if (run.status !== "completed" && !legacyProjectionOnlyFailure) return undefined;
+  if (run.taskRegistration?.pending || run.taskRegistration?.failure) return undefined;
+  const repaired: MeetingMinutesRun = { ...run, status: "completed" };
+  delete repaired.failure;
+  delete repaired.diagnostics;
+  delete repaired.projectionFailure;
+  return repaired;
+}
+
 async function recordProjectionFailure(fs: WorkspaceFs, run: MeetingMinutesRun,
   outcome: "completed" | "failed", error: unknown, options: MeetingMinutesStatusProjectionOptions): Promise<void> {
   const classified = classifyMeetingMinutesFailure("status_projection", error);

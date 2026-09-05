@@ -1,8 +1,8 @@
-import { processMeetingMinutesSelectionWithStatus } from "../meeting-minutes-lifecycle.js";
+import { meetingMinutesCompletedProjectionRepair, processMeetingMinutesSelectionWithStatus } from "../meeting-minutes-lifecycle.js";
 import { startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
 import { loadMeetingMinutesRun } from "../meeting-minutes-state.js";
 import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
-  MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
+  MeetingMinutesRun, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
 import { MemoryFs } from "./meeting-minutes-test-helpers.js";
 
@@ -15,6 +15,47 @@ const event: SlackQueueEvent = { tenantId: "unson", eventId: "Ev1", workspaceId:
   files: [{ id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 100 }] };
 const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", runId: "Ev1_F1", destinationId: "mana",
   workspaceId: "T1", appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
+
+function completedProjectionRun(overrides: Partial<MeetingMinutesRun> = {}): MeetingMinutesRun {
+  return { version: 1, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "CROUTER",
+    sourceThreadTs: "1.1", sourceMessageTs: "1.1", file: { id: "F1", name: "meeting.txt" }, status: "completed",
+    destination, generated: { title: "定例", overview: "概要", body: "本文" },
+    github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "https://example.com/t",
+      minutesUrl: "https://example.com/m" },
+    slack: { processingTs: "2.1", parentTs: "3.1", postedChunkIndexes: [0] },
+    createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:01.000Z", ...overrides };
+}
+
+describe("completed projection repair eligibility", () => {
+  it("cleans a completed run whose only failure is status projection", () => {
+    const repaired = meetingMinutesCompletedProjectionRepair(completedProjectionRun({
+      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true,
+        failedAt: "2026-09-06T00:00:02.000Z" },
+    }), { channelId: "CROUTER", threadTs: "1.1" });
+    expect(repaired).toMatchObject({ status: "completed", runId: "run-1" });
+    expect(repaired?.projectionFailure).toBeUndefined();
+  });
+
+  it("accepts the legacy completed-then-projection-failed shape", () => {
+    const repaired = meetingMinutesCompletedProjectionRepair(completedProjectionRun({ status: "failed",
+      failure: { stage: "completed", message: "meeting_minutes_status_projection_failed" },
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1", stage: "status_projection",
+        code: "STATUS_PROJECTION_FAILED", retryable: true, failedAt: "2026-09-06T00:00:02.000Z" },
+    }), { channelId: "CROUTER", threadTs: "1.1" });
+    expect(repaired).toMatchObject({ status: "completed", runId: "run-1" });
+    expect(repaired?.failure).toBeUndefined();
+    expect(repaired?.diagnostics).toBeUndefined();
+  });
+
+  it("rejects a genuine processing failure", () => {
+    const repaired = meetingMinutesCompletedProjectionRepair(completedProjectionRun({ status: "failed",
+      failure: { stage: "github_saved", message: "meeting_minutes_task_failed" },
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1", stage: "task_registration",
+        code: "TASK_REGISTRATION_FAILED", retryable: true, failedAt: "2026-09-06T00:00:02.000Z" },
+    }), { channelId: "CROUTER", threadTs: "1.1" });
+    expect(repaired).toBeUndefined();
+  });
+});
 
 async function setup() {
   const fs = new MemoryFs();
