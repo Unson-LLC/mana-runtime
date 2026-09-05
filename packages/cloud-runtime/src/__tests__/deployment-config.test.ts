@@ -81,8 +81,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(minutesTargets).toHaveLength(23);
     const autoProvisioned = targets.filter((target) => target.autoProvision);
     expect(autoProvisioned).toHaveLength(targets.length);
-    expect(autoProvisioned.every((target) =>
-      target.enabled === true && (target.manaCanvasId ?? null) === null && target.bindingRevision === 1)).toBe(true);
+    expect(autoProvisioned.every((target) => target.enabled === true && (target.manaCanvasId ?? null) === null
+      && target.bindingRevision === (target.targetId === "minutes-pms" ? 2 : 1))).toBe(true);
     expect(minutesTargets.reduce<Record<string, number>>((counts, target) => ({ ...counts,
       [target.organizationId]: (counts[target.organizationId] ?? 0) + 1 }), {}))
       .toEqual({ "unson-business": 9, unson: 4, "tech-knight": 10 });
