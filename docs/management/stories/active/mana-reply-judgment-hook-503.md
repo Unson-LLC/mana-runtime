@@ -26,11 +26,11 @@ related_stories:
 ## 受け入れ基準
 
 - [x] AC1: `reply` purposeでJudgment Hook eventを要求するClaude commandは、通常返信専用settingsを指定する。
-- [x] AC2: 通常返信専用settingsは `UserPromptSubmit`、Brainbase MCPを対象とする`PostToolUse`、`Stop`を `brainbase-judgment-hook.mjs` へ接続する。
+- [x] AC2: 通常返信専用settingsは `UserPromptSubmit`、Brainbase MCPの成功を対象とする`PostToolUse`、失敗を対象とする`PostToolUseFailure`、`Stop`を `brainbase-judgment-hook.mjs` へ接続する。
 - [x] AC3: `meeting-minutes` purposeは従来の議事録専用settingsを使い続け、通常返信用settingsへ混線しない。
 - [x] AC4: container imageは通常返信専用settingsを `/opt/mana` へ読み取り専用で同梱する。
 - [ ] AC5: 対象の単体テストと既存の関連テストが通り、本番配備後のfresh Slack mentionで同一threadの回答と完了したJudgment lifecycleを確認する。
-- [x] AC6: 全PostToolUse受領票に`tool_use_id`と`tool_name`を必須とし、各Brainbase受領票を実呼び出しへ結合する。同一受領票の再掲だけを1件として扱い、異なる内容・識別子欠落・監査欠落・未完了監査はfail closedする。
+- [x] AC6: 全PostToolUse/PostToolUseFailure受領票に`tool_use_id`と`tool_name`を必須とし、各Brainbase受領票を実呼び出しへ結合する。成功の`tool_result`はPostToolUse、エラーの`tool_result`はPostToolUseFailureと厳密に照合し、エラー呼び出しも記録する。同一受領票の再掲だけを1件として扱い、異なる内容・識別子欠落・受領票欠落・監査欠落・未完了監査・成功失敗種別の不一致はfail closedする。
 - [x] AC7: 監査不一致はfail closedを維持したまま固定語彙の非機密サブコードで分類し、raw stream、tool引数、回答本文、receipt IDを保存せずに本番の発火条件をreadbackできる。
 
 ## 非対象
@@ -42,4 +42,4 @@ related_stories:
 
 ## 最小の検証可能な変更
 
-通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。加えて、Slack配送payloadのJCS正規化、Stop修復要求の透過、Host receiptの回答digest検証、tenant / workspace / channel / thread scopeを必須にしたredacted episode readbackを境界テスト付きで行う。PostToolUse受領票は実呼び出しの識別子で結合し、同一受領票の再掲だけを安全に吸収する。未完了または空のStop監査、識別子不一致は補完せずfail closedする。監査不一致のreason codeには固定語彙の分岐サブコードだけを含め、入力値や受領票内容は含めない。Queueの再試行方針と議事録経路は変更しない。
+通常返信専用settingsファイルを追加し、`reply` commandとDockerfileから参照する。加えて、Slack配送payloadのJCS正規化、Stop修復要求の透過、Host receiptの回答digest検証、tenant / workspace / channel / thread scopeを必須にしたredacted episode readbackを境界テスト付きで行う。PostToolUse/PostToolUseFailure受領票は実呼び出しの識別子で結合し、成功/エラーの`tool_result`とHook種別を照合したうえで、同一受領票の再掲だけを安全に吸収する。未完了または空のStop監査、識別子不一致は補完せずfail closedする。監査不一致のreason codeには固定語彙の分岐サブコードだけを含め、入力値や受領票内容は含めない。Queueの再試行方針と議事録経路は変更しない。

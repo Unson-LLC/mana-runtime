@@ -1195,7 +1195,7 @@ describe("TechKnight Slack reply pipeline", () => {
       expect.objectContaining<Partial<ReplyPipelineError>>({
         code: diagnosticCode,
         auditDiagnostics: expect.objectContaining({
-          reasonCodes: ["tool_use_id_mismatch"],
+          reasonCodes: ["missing_posttool_receipt"],
           expectedCallCount: 1,
           postToolReceiptCount: 1,
           boundReceiptCount: 0,
@@ -1207,7 +1207,7 @@ describe("TechKnight Slack reply pipeline", () => {
       expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
         event: logEvent,
         reasonCode: diagnosticCode,
-        auditDiagnostics: expect.objectContaining({ reasonCodes: ["tool_use_id_mismatch"] }),
+        auditDiagnostics: expect.objectContaining({ reasonCodes: ["missing_posttool_receipt"] }),
       }));
     }
     const episode = JSON.parse(fs.files.get("/judgment-episodes/EvReply123.json")!);

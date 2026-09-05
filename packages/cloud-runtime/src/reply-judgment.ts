@@ -34,7 +34,7 @@ interface StreamEvent extends Record<string, unknown> {
 
 interface EmbeddedHookReceipt {
   schema_version: "mana_judgment_hook_receipt.v1";
-  hook_event_name: "UserPromptSubmit" | "PostToolUse" | "Stop";
+  hook_event_name: "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" | "Stop";
   session_id: string;
   turn_id: string;
   host_receipt_id?: string;
@@ -376,15 +376,10 @@ function buildAuditBindingDiagnostics(
   for (const call of executedCalls) {
     const idMatches = postToolReceipts.filter((hook) => hook.receipt.tool_use_id === call.id);
     if (idMatches.length === 0) {
-      // A receipt with the expected name but another id is an id-binding
-      // mismatch. With no such receipt, a short receipt set is a genuinely
-      // missing receipt; a full-sized set still proves an id mismatch.
-      const sameNameReceipt = postToolReceipts.some((hook) => hook.receipt.tool_name === call.name);
-      if (sameNameReceipt || postToolReceipts.length >= executedCalls.length) {
-        toolUseIdMismatchCount += 1;
-      } else {
-        missingReceiptCount += 1;
-      }
+      // A matching name or the same total count does not prove that this call's
+      // id was used. Treat an unbound id as missing rather than guessing an id
+      // mismatch from unrelated receipt metadata.
+      missingReceiptCount += 1;
       continue;
     }
     if (idMatches.some((hook) => hook.receipt.tool_name === call.name)) {
@@ -439,6 +434,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     if (event.type === "system" && event.subtype === "hook_response"
         && (event.hook_event === "UserPromptSubmit"
           || event.hook_event === "PostToolUse"
+          || event.hook_event === "PostToolUseFailure"
           || event.hook_event === "Stop")) {
       const parsed = hookReceipt(event);
       hooks.push({ index, ...parsed });
@@ -458,7 +454,9 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   });
 
   const promptHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "UserPromptSubmit");
-  const postToolHookCandidates = hooks.filter((hook) => hook.receipt.hook_event_name === "PostToolUse");
+  const postToolHookCandidates = hooks.filter((hook) =>
+    hook.receipt.hook_event_name === "PostToolUse"
+    || hook.receipt.hook_event_name === "PostToolUseFailure");
   const hasToolUseId = (hook: typeof postToolHookCandidates[number]): boolean =>
     typeof hook.receipt.tool_use_id === "string" && Boolean(hook.receipt.tool_use_id.trim());
   const hasToolName = (hook: typeof postToolHookCandidates[number]): boolean =>
@@ -483,7 +481,8 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
   // call. Claude can recover by calling resolve_turn first and then retrying.
   // Only calls that produced a tool_result crossed the execution boundary;
-  // every such call must still have an authenticated PostToolUse receipt.
+  // every such call must still have an authenticated PostToolUse or
+  // PostToolUseFailure receipt whose kind matches the result outcome.
   const executedCalls = calls.filter((call) => results.has(call.id));
   if (promptHooks.length !== 1 || stopHooks.length < 1) throw new Error("reply_judgment_lifecycle_incomplete");
   if (typeof promptHooks[0]!.receipt.host_receipt_id !== "string"
@@ -525,6 +524,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       const existing = hooksByToolUseId.get(toolUseId);
       if (existing) {
         if (existing.receipt.tool_name !== hook.receipt.tool_name
+            || existing.receipt.hook_event_name !== hook.receipt.hook_event_name
             || existing.receipt.host_receipt_id !== hook.receipt.host_receipt_id
             || JSON.stringify(auditLines(existing.output)) !== JSON.stringify(auditLines(hook.output))) {
           throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_conflict");
@@ -565,6 +565,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     if (promptHooks[0]!.index >= call.index || result.index >= successfulStop.index
         || audit.index >= successfulStop.index) {
       throw new Error("reply_judgment_event_order_invalid");
+    }
+    const expectedHookEvent = result.outcome === "success" ? "PostToolUse" : "PostToolUseFailure";
+    if (audit.receipt.hook_event_name !== expectedHookEvent) {
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_result_outcome_mismatch");
     }
   });
   // Control-plane receipts can carry the Host's cumulative audit text after

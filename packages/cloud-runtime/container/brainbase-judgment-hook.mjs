@@ -99,13 +99,14 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
       || !envelope.output || typeof envelope.output !== "object" || Array.isArray(envelope.output)) {
     throw new Error("judgment_hook_response_invalid");
   }
-  if (payload.hook_event_name === "PostToolUse"
+  const isPostToolEvent = payload.hook_event_name === "PostToolUse"
+    || payload.hook_event_name === "PostToolUseFailure";
+  if (isPostToolEvent
       && (typeof payload.tool_use_id !== "string" || !payload.tool_use_id.trim()
         || typeof payload.tool_name !== "string" || !payload.tool_name.trim())) {
     throw new Error("judgment_hook_tool_identity_missing");
   }
-  if (payload.hook_event_name === "PostToolUse"
-      && !isInternalJudgmentStateTool(payload)
+  if (isPostToolEvent && !isInternalJudgmentStateTool(payload)
       && (typeof envelope.output.systemMessage !== "string" || !envelope.output.systemMessage.trim())) {
     throw new Error("judgment_hook_audit_not_recorded");
   }
@@ -133,15 +134,16 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
     ...(typeof envelope.receipt_id === "string" && envelope.receipt_id.trim()
       ? { host_receipt_id: envelope.receipt_id } : {}),
     ...(routeResolutionSha256 ? { route_resolution_sha256: routeResolutionSha256 } : {}),
-    ...(payload.hook_event_name === "PostToolUse" ? {
+    ...(isPostToolEvent ? {
       tool_use_id: payload.tool_use_id,
       tool_name: payload.tool_name,
     } : {}),
   };
   // UserPromptSubmit and Stop systemMessages are interactive response-rewrite
   // instructions. Passing either back into a schema-constrained runtime turn can
-  // replace structured_output with audit prose. PostToolUse is the one lifecycle
-  // event whose non-empty audit message is part of the validated contract.
+  // replace structured_output with audit prose. PostToolUse and
+  // PostToolUseFailure carry the non-empty Host audit required by this contract,
+  // except for the already-exempt internal state-record control-plane call.
   const receiptMarker = `${JUDGMENT_RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
   const existingSystemMessage = typeof documentedOutput.systemMessage === "string"
     ? documentedOutput.systemMessage.trim()
