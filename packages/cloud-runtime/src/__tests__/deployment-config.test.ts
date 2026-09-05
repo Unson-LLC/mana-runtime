@@ -771,6 +771,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/intake"');
     expect(worker).toContain("/admin\\/meeting-minutes\\/runs");
     expect(worker).toContain("/authorized-retry$");
+    expect(worker).toContain("/authorized-status$");
+    expect(worker).toContain("meetingMinutesAdminRunStatus(run)");
     expect(worker).toContain("reissueMeetingMinutesAdminSelectionTenantContext(env, run, selection)");
     expect(worker).toContain("const clients = tenantRuntimeClients(env, undefined,\n    tenantConfiguredDesiredEffectByCapability(env));");
     expect(worker).toContain('error: "meeting_minutes_admin_retry_not_authorized"');
