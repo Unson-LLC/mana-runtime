@@ -35,7 +35,7 @@ const tenantBoundary = {
     return {
       tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
       source,
-      durableObject: async (_effectId, _target, execute) => execute(),
+      durableObject: async (_effectId, _target, execute) => execute({} as never),
       brainbaseProxy: async (_effectId, _target, _mode, execute) => execute(credentialFetch),
       slackDelivery: async (_effectId, _target, _event, execute) => execute(credentialFetch),
     };

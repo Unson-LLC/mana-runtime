@@ -146,6 +146,7 @@ import {
   issueTaskWriteRequestContext,
   processTaskBoardRepair,
   taskBoardRepairEventId,
+  taskBoardTargets,
 } from "./task-runtime-entrypoints.js";
 import {
   isTaskBoardRepairEvent,
@@ -861,11 +862,11 @@ function createTenantInteractionEffectResolver(env: Env) {
       tenant_id: sourceTenantContext.tenant.tenant_id,
       source,
       async durableObject<T>(effectId: string, target: TenantInteractionTarget,
-        execute: () => Promise<T>): Promise<T> {
+        execute: (tenantContext: TenantContextEnvelope) => Promise<T>): Promise<T> {
         const effect = await resolveEffect(effectId, target);
         return executeTenantBoundary({ boundary: "durable_object", tenant_context: effect.tenantContext,
           expected_scope: effect.expectedScope, verifier: effect.verifier,
-          now: new Date().toISOString(), execute });
+          now: new Date().toISOString(), execute: () => execute(effect.tenantContext) });
       },
       async brainbaseProxy<T>(effectId: string, target: TenantInteractionTarget, mode: "read" | "write",
         execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T> {
@@ -1193,7 +1194,7 @@ function meetingMinutesClients(
             event_id: taskBoardRepairEventId(repair),
             channel_id: repair.channelId,
             thread_ts: repair.requestedAt,
-            requester_id: requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID),
+            requester_id: requiredRuntimeBinding(tenantContext.slack.requester_id),
           }),
         )),
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
@@ -3196,14 +3197,24 @@ export default {
               const source = canonicalSource();
               const run = cachedRun;
               if (!run) deny("brainbase_proxy", "CROSS_TENANT_CANDIDATE");
+              const target = taskBoardTargets(env).find((candidate) => candidate.targetId === targetId);
+              if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
               return effects.durableObject(
                 `task-board-repair:${targetId}:${run.runId}:${run.updatedAt}`,
-                sourceTarget(source),
-                () => enqueueMeetingMinutesTaskBoardRepair(
+                { workspace_id: target.workspaceId, channel_id: target.channelId,
+                  thread_ts: run.slack?.parentTs ?? source.threadTs },
+                (taskBoardTenantContext) => enqueueMeetingMinutesTaskBoardRepair(
                   env,
                   targetId,
                   "task_write",
-                  (repair) => resolveTaskBoardRepairTenantContext(env, repair),
+                  (repair) => resolveDerivedSlackTenantContext(env, taskBoardTenantContext, {
+                    app_id: taskBoardTenantContext.workspace_connection.app_id,
+                    workspace_id: repair.workspaceId,
+                    event_id: taskBoardRepairEventId(repair),
+                    channel_id: repair.channelId,
+                    thread_ts: repair.requestedAt,
+                    requester_id: requiredRuntimeBinding(taskBoardTenantContext.slack.requester_id),
+                  }),
                 ),
               );
             },
