@@ -92,14 +92,43 @@ describe("handleMeetingMinutesInteraction", () => {
     }), expect.any(Function));
   });
 
+  it("rejects an empty destination-qualified action id as malformed before tenant resolution", async () => {
+    const malformedPayload = structuredClone(payload);
+    malformedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:";
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
+    const resolveDestinations = vi.fn(() => destinations);
+    const send = vi.fn();
+    const result = await handleMeetingMinutesInteraction(request(malformedPayload), {
+      signingSecret: secret,
+      expectedTeamId: "T1",
+      expectedAppId: "A1",
+      operatorUserIds: new Set(["U1"]),
+      nowMs: now * 1000,
+      ...tenantBoundary,
+      resolveTenantEffects,
+      resolveDestinations,
+      send,
+    });
+
+    expect(result.status).toBe(400);
+    await expect(result.json()).resolves.toEqual({ error: "slack_interaction_invalid" });
+    expect(resolveDestinations).not.toHaveBeenCalled();
+    expect(resolveTenantEffects).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("verifies and queues an authorized selection", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
-      destinations, send, showProcessing, updateOriginal, defer: background.defer });
+      destinations, send, showProcessing, updateOriginal, defer: background.defer, resolveTenantEffects });
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledWith(expect.objectContaining({
       runId: "Ev1_F1", destinationId: "mana", threadTs: "1.0",
+    }), expect.objectContaining({ id: "mana", contextProjectCode: "back-office" }));
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_id: "T1", channel_id: "C1",
     }), expect.objectContaining({ id: "mana", contextProjectCode: "back-office" }));
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "meeting.txt の保存先に Back Office を受け付けました。議事録を作成中です。",
@@ -171,10 +200,14 @@ describe("handleMeetingMinutesInteraction", () => {
     organizationPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", organizationId: "tech-knight",
       fileName: "定例.txt" });
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
     const response = await handleMeetingMinutesInteraction(request(organizationPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
-      destinations, send, updateOriginal, defer: background.defer });
+      destinations, send, updateOriginal, defer: background.defer, resolveTenantEffects });
     expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_id: "T1", channel_id: "C1",
+    }));
     expect(send).not.toHaveBeenCalled();
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "定例.txt の保存先プロジェクトを選択してください。",
@@ -594,9 +627,16 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(rejected.status).toBe(400);
   });
   it("fails closed for a non-operator", async () => {
-    const send = vi.fn(); const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, ...tenantBoundary, send });
-    expect(response.status).toBe(403); expect(send).not.toHaveBeenCalled();
+    const send = vi.fn();
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
+    const resolveDestinations = vi.fn(() => destinations);
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000,
+      ...tenantBoundary, resolveTenantEffects, resolveDestinations, send });
+    expect(response.status).toBe(403);
+    expect(resolveDestinations).not.toHaveBeenCalled();
+    expect(resolveTenantEffects).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
   it("shows the durable pause reason to an authorized operator without queueing even when minutes are disabled", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
@@ -653,7 +693,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(503); expect(background.work).toHaveLength(0);
     expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
       workspace_id: "T1", channel_id: "C1",
-    }));
+    }), expect.objectContaining({ id: "mana", contextProjectCode: "back-office" }));
     expect(showProcessing).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
   it("projects a safe tenant error code and run id back to the clicked Slack message", async () => {
@@ -766,13 +806,18 @@ describe("handleMeetingMinutesInteraction", () => {
   it("routes a signed task approval with the immutable payload hash", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn();
     const approveTaskWrite = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
     const approvalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const approvalPayload = { ...payload, user: { id: "U_APPROVER" }, actions: [{ action_id: "mana_task_write_approve",
       value: JSON.stringify({ approvalId, payloadHash: "a".repeat(64) }) }] };
     const response = await handleMeetingMinutesInteraction(request(approvalPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, ...tenantBoundary,
-      send, updateOriginal, resolveDestinations: () => { throw new Error("minutes config unavailable"); }, approveTaskWrite });
+      send, updateOriginal, resolveTenantEffects,
+      resolveDestinations: () => { throw new Error("minutes config unavailable"); }, approveTaskWrite });
     expect(response.status).toBe(200);
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_id: "T1", channel_id: "C1",
+    }));
     expect(approveTaskWrite).toHaveBeenCalledWith({ approvalId, payloadHash: "a".repeat(64),
       approverId: "U_APPROVER", channelId: "C1" }, expect.objectContaining({
       tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",

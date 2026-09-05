@@ -69,6 +69,7 @@ import {
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import {
   meetingMinutesSelectionDestination,
+  resolveMeetingMinutesDestinationAuthorization,
   resolveMeetingMinutesDestinationProjectScope,
 } from "./meeting-minutes-selection-scope.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -777,8 +778,9 @@ function createTenantInteractionEffectResolver(env: Env) {
   const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
     .split(",").map((value) => value.trim()).filter(Boolean);
   const clients = tenantRuntimeClients(env);
-  const resolve = (identity: TenantInteractionIdentity) => {
-    const placementAuthorization = placementAuthorizationForIdentity(env, identity);
+  const resolve = (identity: TenantInteractionIdentity,
+    destinationAuthorization?: ReturnType<typeof placementAuthorizationForIdentity>) => {
+    const placementAuthorization = destinationAuthorization ?? placementAuthorizationForIdentity(env, identity);
     return resolveSlackWorkerIngress({
       identity: { provider: "slack", ...identity },
       required_scopes: requiredScopes,
@@ -788,8 +790,9 @@ function createTenantInteractionEffectResolver(env: Env) {
       resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
     });
   };
-  return async (source: TenantInteractionIdentity): Promise<TenantInteractionEffects> => {
-    const sourceResolved = await resolve(source);
+  return async (source: TenantInteractionIdentity, destination?: MeetingMinutesDestination): Promise<TenantInteractionEffects> => {
+    const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+    const sourceResolved = await resolve(source, destinationAuthorization);
     const sourceTenantContext = sourceResolved.tenant_context;
     const resolveEffect = async (effectId: string, target: TenantInteractionTarget) => {
       const identity: TenantInteractionIdentity = {
@@ -797,7 +800,7 @@ function createTenantInteractionEffectResolver(env: Env) {
         ...target,
         event_id: await childInteractionEventId(source.event_id, effectId),
       };
-      const resolved = await resolve(identity);
+      const resolved = await resolve(identity, destinationAuthorization);
       const tenantContext = resolved.tenant_context;
       if (tenantContext.tenant.tenant_id !== sourceTenantContext.tenant.tenant_id
         || tenantContext.placement.deployment_id !== sourceTenantContext.placement.deployment_id
@@ -1632,29 +1635,16 @@ function placementAuthorizationForIdentity(
 function destinationAuthorizationForSelection(
   env: Env,
   destination: MeetingMinutesDestination | undefined,
+  boundary: BoundaryName = "worker_ingress",
 ): ReturnType<typeof placementAuthorizationForIdentity> | undefined {
-  if (!destination?.contextProjectCode) return undefined;
-  let configured: Record<string, unknown>;
-  try {
-    configured = env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON
-      ? JSON.parse(env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON) as Record<string, unknown>
-      : {};
-  } catch {
-    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_ids_invalid" });
-  }
-  const projectId = configured[destination.contextProjectCode];
-  if (projectId === undefined) return undefined;
-  if (typeof projectId !== "string" || !/^prj_[A-Za-z0-9]+$/.test(projectId)) {
-    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_id_missing" });
-  }
-  return {
-    required_authorization: {
-      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-      project_id: projectId,
-      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
-    },
-    trusted_project_ids: [projectId],
-  };
+  if (!destination) return undefined;
+  return resolveMeetingMinutesDestinationAuthorization(
+    destination,
+    env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON,
+    requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    boundary,
+  );
 }
 
 function expectedTenantMeetingMinutesSelectionScope(
@@ -1688,7 +1678,7 @@ function expectedTenantMeetingMinutesSelectionScope(
     selection,
     meetingMinutesRuntimeConfig(env).destinations,
   );
-  const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination, "queue_consumer");
   const placementProjectScope = destinationAuthorization
     ? resolveMeetingMinutesDestinationProjectScope(
       envelope.authorization,
@@ -3313,8 +3303,8 @@ export default {
                 tenant_context: resolved.tenant_context,
                 payload: command,
               });
-        }, async (identity) => {
-          const effects = await resolveInteractionEffects(identity);
+        }, async (identity, destination) => {
+          const effects = await resolveInteractionEffects(identity, destination);
           canonicalInteractionTenantId = effects.tenant_id;
           return effects;
         }, () => {

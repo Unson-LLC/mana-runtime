@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { MeetingMinutesDestination, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import {
   meetingMinutesSelectionDestination,
+  resolveMeetingMinutesDestinationAuthorization,
   resolveMeetingMinutesDestinationProjectScope,
 } from "../meeting-minutes-selection-scope.js";
 import { TenantBoundaryError } from "../multitenancy/errors.js";
@@ -19,6 +20,35 @@ const council: MeetingMinutesDestination = {
 };
 
 describe("meetingMinutesSelectionDestination", () => {
+  it("fails closed when a selected destination has no canonical authority mapping", () => {
+    expect(() => resolveMeetingMinutesDestinationAuthorization(
+      council,
+      JSON.stringify({ ncom: "prj_ncom" }),
+      "mana-runtime",
+      "meeting-minutes",
+      "worker_ingress",
+    )).toThrowError(
+      expect.objectContaining({ code: "PROJECT_SCOPE_MISMATCH" }),
+    );
+  });
+
+  it("returns the configured canonical authority for a selected destination", () => {
+    expect(resolveMeetingMinutesDestinationAuthorization(
+      council,
+      JSON.stringify({ techknight: "prj_techknight" }),
+      "mana-runtime",
+      "meeting-minutes",
+      "worker_ingress",
+    )).toEqual({
+      required_authorization: {
+        audience: "mana-runtime",
+        project_id: "prj_techknight",
+        capability_id: "meeting-minutes",
+      },
+      trusted_project_ids: ["prj_techknight"],
+    });
+  });
+
   it.each(["techknight", "ncom"])("requires the %s destination scope for redo task deletion", (projectCode) => {
     const destination = { ...council, contextProjectCode: projectCode };
     expect(resolveMeetingMinutesDestinationProjectScope({

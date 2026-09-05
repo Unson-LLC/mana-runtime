@@ -29,3 +29,40 @@ export function resolveMeetingMinutesDestinationProjectScope(
   }
   return resolveCanonicalProjectScope(authorization, [destination.contextProjectCode], boundary);
 }
+
+export function resolveMeetingMinutesDestinationAuthorization(
+  destination: MeetingMinutesDestination,
+  authorityProjectIdsJson: string | undefined,
+  audience: string,
+  capabilityId: string,
+  boundary: BoundaryName,
+): {
+  required_authorization: { audience: string; project_id: string; capability_id: string };
+  trusted_project_ids: readonly string[];
+} {
+  if (!destination.contextProjectCode) {
+    throw new TenantBoundaryError(boundary, "PROJECT_SCOPE_MISMATCH", "PROJECT_SCOPE_MISMATCH", {
+      scope_reason: "destination_authority_project_id_missing",
+    });
+  }
+  let configured: Record<string, unknown>;
+  try {
+    configured = authorityProjectIdsJson
+      ? JSON.parse(authorityProjectIdsJson) as Record<string, unknown>
+      : {};
+  } catch {
+    throw new TenantBoundaryError(boundary, "PROJECT_SCOPE_MISMATCH", "PROJECT_SCOPE_MISMATCH", {
+      scope_reason: "destination_authority_project_ids_invalid",
+    });
+  }
+  const projectId = configured[destination.contextProjectCode];
+  if (typeof projectId !== "string" || !/^prj_[A-Za-z0-9]+$/.test(projectId)) {
+    throw new TenantBoundaryError(boundary, "PROJECT_SCOPE_MISMATCH", "PROJECT_SCOPE_MISMATCH", {
+      scope_reason: "destination_authority_project_id_missing",
+    });
+  }
+  return {
+    required_authorization: { audience, project_id: projectId, capability_id: capabilityId },
+    trusted_project_ids: [projectId],
+  };
+}

@@ -45,7 +45,8 @@ interface InteractionOptions {
     effects: TenantInteractionEffects): Promise<Response>;
   handleMeetingTaskAction?(payload: Record<string, unknown>, effects: TenantInteractionEffects): Promise<Response | undefined>;
   handleContractLedgerAction?(payload: Record<string, unknown>): Promise<Response | undefined>;
-  resolveTenantEffects(identity: TenantInteractionIdentity): Promise<TenantInteractionEffects>;
+  resolveTenantEffects(identity: TenantInteractionIdentity,
+    destination?: MeetingMinutesDestination): Promise<TenantInteractionEffects>;
   isIntakePaused?(): Promise<boolean>;
 }
 
@@ -129,6 +130,11 @@ function isMeetingMinutesInteractionAction(actionId: string | undefined): boolea
     actionId === MEETING_MINUTES_CONFIRM_REDO_ACTION_ID;
 }
 
+function isMeetingMinutesDestinationAction(actionId: string | undefined): boolean {
+  return actionId === MEETING_MINUTES_CHOOSE_ACTION_ID ||
+    actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`) === true;
+}
+
 function isMeetingMinutesTaskInteraction(
   actionId: string | undefined,
   callbackId: string | undefined,
@@ -178,7 +184,7 @@ function validMeetingMinutesInteractionValue(
     const qualifiedDestinationId = actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)
       ? actionId.slice(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`.length) : undefined;
     return !!destinationId && meetingMinutesDestinationIdPattern.test(destinationId) &&
-      (!qualifiedDestinationId || meetingMinutesDestinationIdPattern.test(qualifiedDestinationId));
+      (qualifiedDestinationId === undefined || meetingMinutesDestinationIdPattern.test(qualifiedDestinationId));
   }
   if (actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`)) {
     const organizationId = string(value?.organizationId);
@@ -441,6 +447,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const interactionThreadTs = string(sourceMessage?.thread_ts) ?? string(sourceContainer?.thread_ts)
     ?? string(actionValue?.sourceThreadTs) ?? string(sourceMessage?.ts) ?? string(action?.action_ts)
     ?? `interaction:${interactionId.slice("slack-interaction-".length)}`;
+  const destinationAction = isMeetingMinutesDestinationAction(actionId);
+  const userId = string(user?.id);
+  let destinations: readonly MeetingMinutesDestination[] | undefined;
+  let destinationResolutionFailed = false;
+  let selectedDestination: MeetingMinutesDestination | undefined;
   if (!options.resolveTenantEffects) return response("FALLBACK_FORBIDDEN", 503);
   const enterpriseId = string(object(payload?.enterprise)?.id);
   const threadIdentityValid = timestampPattern.test(interactionThreadTs) ||
@@ -452,9 +463,26 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     (enterpriseId !== undefined && !slackIdPattern.test(enterpriseId)) || !threadIdentityValid) {
     return response("slack_interaction_invalid", 400);
   }
+  if (destinationAction && (!userId || !options.operatorUserIds.has(userId))) {
+    return response("meeting_minutes_operator_forbidden", 403);
+  }
+  if (destinationAction) {
+    try {
+      destinations = options.destinations ?? options.resolveDestinations?.();
+      const destinationId = string(actionValue?.destinationId);
+      const qualifiedDestinationId = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)
+        ? actionId.slice(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`.length)
+        : undefined;
+      if (!qualifiedDestinationId || qualifiedDestinationId === destinationId) {
+        selectedDestination = destinations?.find((item) => item.id === destinationId);
+      }
+    } catch {
+      destinationResolutionFailed = true;
+    }
+  }
   let tenantEffects: TenantInteractionEffects;
   try {
-    tenantEffects = await options.resolveTenantEffects({
+    const tenantIdentity: TenantInteractionIdentity = {
       app_id: appId,
       workspace_id: interactionWorkspaceId,
       event_id: interactionId,
@@ -462,7 +490,10 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       thread_ts: interactionThreadTs,
       requester_id: interactionRequesterId,
       ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
-    });
+    };
+    tenantEffects = selectedDestination
+      ? await options.resolveTenantEffects(tenantIdentity, selectedDestination)
+      : await options.resolveTenantEffects(tenantIdentity);
   } catch (error) {
     const responseUrl = slackResponseUrl(payload?.response_url);
     const runId = string(actionValue?.runId) ?? interactionId;
@@ -502,7 +533,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         effects: tenantEffects, options });
     }
   }
-  const userId = string(user?.id);
   const channelId = string(channel?.id);
   if (actionId === "mana_task_write_approve" && options.approveTaskWrite) {
     const approvalId = string(actionValue?.approvalId); const payloadHash = string(actionValue?.payloadHash);
@@ -516,7 +546,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
   }
   if (!userId || !options.operatorUserIds.has(userId)) return response("meeting_minutes_operator_forbidden", 403);
-  const destinationAction = actionId === MEETING_MINUTES_CHOOSE_ACTION_ID || actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`);
   const organizationAction = actionId?.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`);
   const backAction = actionId === MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID;
   const redoAction = actionId === MEETING_MINUTES_REDO_ACTION_ID;
@@ -570,9 +599,12 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     }
     return Response.json({ ok: true, intake_paused: true });
   }
-  let destinations: readonly MeetingMinutesDestination[] | undefined;
-  try { destinations = options.destinations ?? options.resolveDestinations?.(); }
-  catch { return response("slack_interaction_invalid", 400); }
+  if (destinationAction) {
+    if (destinationResolutionFailed) return response("slack_interaction_invalid", 400);
+  } else {
+    try { destinations = options.destinations ?? options.resolveDestinations?.(); }
+    catch { return response("slack_interaction_invalid", 400); }
+  }
   if (redoAction) {
     const responseUrl = slackResponseUrl(payload?.response_url);
     if (!runId || !fileName || !responseUrl || !options.updateOriginal || !options.defer) {

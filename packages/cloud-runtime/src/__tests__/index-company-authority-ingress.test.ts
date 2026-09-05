@@ -5,11 +5,14 @@ import type {
   TenantContextIssueRequest,
 } from "../multitenancy/runtime-boundaries.js";
 import type {
+  TenantContextEnvelope,
   UnsignedTenantContextEnvelope,
   WorkspaceConnectionSnapshot,
 } from "../multitenancy/contracts.js";
 import { signTenantContextEnvelope } from "../multitenancy/envelope.js";
 import { createIdempotencyKey } from "../multitenancy/idempotency.js";
+import type { TenantQueueBody } from "../multitenancy/runtime-boundaries.js";
+import type { MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 
 const runtimeMocks = vi.hoisted(() => ({
   createClients: vi.fn(),
@@ -58,6 +61,18 @@ const capabilities = [
   "idempotent_effects_v1",
   "container_sanitization_v1",
 ].join(",");
+
+const meetingMinutesDestination = {
+  id: "mana",
+  projectId: "p1",
+  contextProjectCode: "back-office",
+  taskProjectCodes: ["back-office"],
+  taskBoardTargetId: "minutes-back-office",
+  name: "Back Office",
+  organization: { id: "unson-business", name: "雲孫 事業運営" },
+  slackChannelId: "C2",
+  github: { owner: "Unson-LLC", repo: "back_office" },
+};
 
 function env(overrides: Record<string, unknown> = {}) {
   return {
@@ -124,6 +139,95 @@ function signedEventRequest(): Request {
     },
     body,
   });
+}
+
+function signedSelectionRequest(): Request {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const body = new URLSearchParams({ payload: JSON.stringify({
+    api_app_id: "A_UNSON",
+    team: { id: "T_UNSON" },
+    user: { id: "U123" },
+    channel: { id: "CROUTER" },
+    message: { ts: "1786420000.000450", thread_ts: "1786420000.000451" },
+    actions: [{
+      action_id: "mana_meeting_minutes_choose_destination:mana",
+      action_ts: "1786420000.000452",
+      value: JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", fileName: "meeting.txt" }),
+    }],
+  }) }).toString();
+  const signature = `v0=${createHmac("sha256", signingSecret)
+    .update(`v0:${nowSeconds}:${body}`)
+    .digest("hex")}`;
+  return new Request("https://example.com/slack/interactions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-slack-request-timestamp": String(nowSeconds),
+      "x-slack-signature": signature,
+    },
+    body,
+  });
+}
+
+function meetingMinutesBindings(overrides: Record<string, unknown> = {}) {
+  return env({
+    SLACK_ALLOWED_CHANNEL_ID: "CROUTER",
+    MEETING_MINUTES_ENABLED: "true",
+    MEETING_MINUTES_ROUTER_CHANNEL_ID: "CROUTER",
+    MEETING_MINUTES_OPERATOR_USER_IDS: "U123",
+    MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([meetingMinutesDestination]),
+    ...overrides,
+  });
+}
+
+function selectionTenantContext(selection: MeetingMinutesSelection): TenantContextEnvelope {
+  return {
+    schema_version: "1.0",
+    protocol_id: "mana-brainbase-tenant-context",
+    protocol_version: "1.0",
+    issuer: "brainbase",
+    audience: ["mana-runtime"],
+    tenant: { tenant_id: tenantId, tenant_revision: "3" },
+    workspace_connection: {
+      connection_id: connectionId,
+      connection_revision: "7",
+      provider: "slack",
+      installation_id: "installation-unson",
+      workspace_id: selection.workspaceId,
+      app_id: selection.appId,
+      status: "active",
+    },
+    actor: {
+      principal_id: "person-1",
+      principal_type: "person",
+      authenticated_subject_id: selection.userId,
+    },
+    authorization: {
+      organization_ids: ["organization-1"],
+      project_ids: ["prj_backoffice"],
+      data_scopes: ["tasks:tenant"],
+      capability_ids: ["task.write"],
+    },
+    placement: { deployment_id: deploymentId, profile: "shared_cloud" },
+    slack: {
+      event_id: `meeting_minutes_selection:${selection.runId}:${selection.actionTs}`,
+      channel_id: selection.channelId,
+      thread_ts: selection.threadTs,
+      requester_id: selection.userId,
+    },
+    correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FAY",
+    operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+    idempotency_key: "idem_01ARZ3NDEKTSV4RRFFQ69G5FB0",
+    contract_revision: "11",
+    credential: {
+      mode: "customer_oauth",
+      credential_ref: "credential-ref-1",
+      billing_principal_id: "person-1",
+    },
+    issued_at: new Date(Date.now() - 1_000).toISOString(),
+    expires_at: new Date(Date.now() + 300_000).toISOString(),
+    integrity: { method: "jws_detached", algorithm: "EdDSA", key_id: "tenant-key-1", value: "signature" },
+  };
 }
 
 const snapshot: WorkspaceConnectionSnapshot = {
@@ -321,5 +425,57 @@ describe("default Worker Company Authority ingress", () => {
     expect(runtimeMocks.legacyAuthority.issue_tenant_context).not.toHaveBeenCalled();
     expect(bindings.TECHKNIGHT_EVENTS.send).not.toHaveBeenCalled();
     errorLog.mockRestore();
+  });
+
+  it("fails closed during initial destination-scoped interaction resolution when the authority project is unmapped", async () => {
+    const bindings = meetingMinutesBindings();
+    const waitUntil = vi.fn();
+    const response = await worker.fetch(signedSelectionRequest(), bindings as never, { waitUntil } as never);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: "administrator_action_required" });
+    expect(runtimeMocks.legacyAuthority.resolve_workspace_connection).not.toHaveBeenCalled();
+    expect(runtimeMocks.legacyAuthority.issue_tenant_context).not.toHaveBeenCalled();
+    expect(runtimeMocks.legacyAuthority.read_workspace_connection).not.toHaveBeenCalled();
+    expect(bindings.TECHKNIGHT_EVENTS.send).not.toHaveBeenCalled();
+    expect(waitUntil).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before Queue consumption when the destination authority project is unmapped", async () => {
+    const selection: MeetingMinutesSelection = {
+      kind: "meeting_minutes_selection",
+      runId: "Ev1_F1",
+      destinationId: "mana",
+      workspaceId: "T_UNSON",
+      appId: "A_UNSON",
+      channelId: "CROUTER",
+      threadTs: "1786420000.000451",
+      userId: "U123",
+      actionTs: "1786420000.000452",
+    };
+    const body: TenantQueueBody<MeetingMinutesSelection> = {
+      schema_version: "1.0",
+      tenant_context: selectionTenantContext(selection),
+      payload: selection,
+    };
+    const bindings = meetingMinutesBindings({ MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON: "{}" });
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await worker.queue({
+        queue: "unson-mana-runtime-events",
+        messages: [{ body, ack, retry }],
+      } as never, bindings as never);
+    } finally {
+      errorLog.mockRestore();
+    }
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(runtimeMocks.legacyAuthority.resolve_workspace_connection).not.toHaveBeenCalled();
+    expect(runtimeMocks.legacyAuthority.read_workspace_connection).not.toHaveBeenCalled();
+    expect(runtimeMocks.legacyAuthority.issue_tenant_context).not.toHaveBeenCalled();
+    expect(bindings.TECHKNIGHT_EVENTS.send).not.toHaveBeenCalled();
   });
 });
