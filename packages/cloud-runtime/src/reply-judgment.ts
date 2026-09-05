@@ -29,7 +29,13 @@ interface StreamEvent extends Record<string, unknown> {
   output?: unknown;
   stdout?: unknown;
   stderr?: unknown;
+  permission_denials?: unknown;
   message?: { content?: unknown };
+}
+
+interface CliPermissionDenial {
+  toolUseId: string;
+  toolName: string;
 }
 
 interface EmbeddedHookReceipt {
@@ -444,7 +450,9 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   const hooks: Array<{ index: number; output: Record<string, unknown>; receipt: EmbeddedHookReceipt }> = [];
   const calls: Array<{ index: number; id: string; name: string }> = [];
   const results = new Map<string, { index: number; outcome: "success" | "error" }>();
+  const resultCounts = new Map<string, number>();
   let final: { index: number; reply: string; sessionId: string } | undefined;
+  let terminalPermissionDenials: CliPermissionDenial[] = [];
 
   events.forEach((event, index) => {
     if (event.type === "system" && event.subtype === "hook_response"
@@ -459,12 +467,31 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       if (item.type === "tool_use" && typeof item.id === "string" && typeof item.name === "string"
           && item.name.startsWith("mcp__brainbase__")) calls.push({ index, id: item.id, name: item.name });
       if (item.type === "tool_result" && typeof item.tool_use_id === "string") {
+        resultCounts.set(item.tool_use_id, (resultCounts.get(item.tool_use_id) ?? 0) + 1);
         results.set(item.tool_use_id, { index, outcome: item.is_error === true ? "error" : "success" });
       }
     }
     if (event.type === "result" && typeof event.result === "string" && event.result.trim()) {
       const sessionId = event.session_id ?? event.sessionId;
       if (typeof sessionId !== "string" || !sessionId) throw new Error("reply_judgment_session_missing");
+      if (event.permission_denials !== undefined) {
+        if (!Array.isArray(event.permission_denials)) {
+          throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_invalid");
+        }
+        terminalPermissionDenials = event.permission_denials.map((raw): CliPermissionDenial => {
+          if (!raw || typeof raw !== "object") {
+            throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_invalid");
+          }
+          const denial = raw as Record<string, unknown>;
+          if (typeof denial.tool_use_id !== "string" || !denial.tool_use_id.trim()
+              || typeof denial.tool_name !== "string" || !denial.tool_name.trim()) {
+            throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_invalid");
+          }
+          return { toolUseId: denial.tool_use_id, toolName: denial.tool_name };
+        });
+      } else {
+        terminalPermissionDenials = [];
+      }
       final = { index, reply: event.result.trim(), sessionId };
     }
   });
@@ -489,17 +516,49 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   };
   const brainbaseIdentityBoundHooks = postToolHookCandidates.filter((hook) =>
     isBrainbaseToolReceipt(hook) && hasToolUseId(hook) && hasToolName(hook));
+  const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
+  const deniedCallIds = new Set<string>();
+  for (const denial of terminalPermissionDenials) {
+    const matchingCalls = calls.filter((call) => call.id === denial.toolUseId);
+    const matchingBrainbaseCall = matchingCalls.find((call) => call.name.startsWith("mcp__brainbase__"));
+    if (!matchingBrainbaseCall) {
+      if (denial.toolName.startsWith("mcp__brainbase__")) {
+        throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_identity_mismatch");
+      }
+      continue;
+    }
+    if (matchingCalls.length !== 1 || matchingBrainbaseCall.name !== denial.toolName) {
+      throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_tool_name_mismatch");
+    }
+    const result = results.get(matchingBrainbaseCall.id);
+    if (resultCounts.get(matchingBrainbaseCall.id) !== 1) {
+      throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_result_conflict");
+    }
+    if (!result || result.outcome !== "error") {
+      throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_result_outcome_mismatch");
+    }
+    if (result.index <= matchingBrainbaseCall.index
+        || (stopHooks.length > 0 && result.index >= stopHooks.at(-1)!.index)) {
+      throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_event_order_invalid");
+    }
+    if (postToolHookCandidates.some((hook) => hook.receipt.tool_use_id === matchingBrainbaseCall.id)) {
+      throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_posttool_receipt_conflict");
+    }
+    if (deniedCallIds.has(matchingBrainbaseCall.id)) {
+      throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_identity_conflict");
+    }
+    deniedCallIds.add(matchingBrainbaseCall.id);
+  }
   if (brainbaseIdentityBoundHooks.some((hook) => isBrainbaseEvidenceTool(hook.receipt.tool_name!)
       && toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
     throw new Error("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
   }
-  const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   // A rejected PreToolUse attempt is a guard decision, not an executed MCP
-  // call. Claude can recover by calling resolve_turn first and then retrying.
-  // Only calls that produced a tool_result crossed the execution boundary;
-  // every such call must still have an authenticated PostToolUse or
-  // PostToolUseFailure receipt whose kind matches the result outcome.
-  const executedCalls = calls.filter((call) => results.has(call.id));
+  // call. Claude still emits an error tool_result for it, so exclusion requires
+  // an exact identity match in the CLI-owned terminal permission_denials list.
+  // Every other call with a tool_result must have an authenticated PostToolUse
+  // or PostToolUseFailure receipt whose kind matches the result outcome.
+  const executedCalls = calls.filter((call) => results.has(call.id) && !deniedCallIds.has(call.id));
   if (promptHooks.length !== 1 || stopHooks.length < 1) throw new Error("reply_judgment_lifecycle_incomplete");
   if (typeof promptHooks[0]!.receipt.host_receipt_id !== "string"
       || !promptHooks[0]!.receipt.host_receipt_id.trim()

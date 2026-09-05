@@ -2,7 +2,7 @@
 
 ## 決定
 
-Brainbaseの各実呼び出しとPost Tool監査受領票を、配列上の件数・順序ではなくClaude Codeが発行した`tool_use_id`と`tool_name`で結合する。`claude --resume`が再開前のtranscriptを再出力しても、最新の`UserPromptSubmit`より前は前attemptの履歴として監査対象外にする。正常な`tool_result`にはPostToolUse、エラーの`tool_result`にはPostToolUseFailureを要求し、container wrapperは実際の`hook_event_name`とこの2項目をHost受領票へ追加する。stream parserは当該attemptで実行済みのBrainbase callごとに同一識別子と成功/失敗種別の受領票を要求する。
+Brainbaseの各実呼び出しとPost Tool監査受領票を、配列上の件数・順序ではなくClaude Codeが発行した`tool_use_id`と`tool_name`で結合する。`claude --resume`が再開前のtranscriptを再出力しても、最新の`UserPromptSubmit`より前は前attemptの履歴として監査対象外にする。正常な`tool_result`にはPostToolUse、エラーの`tool_result`にはPostToolUseFailureを要求し、container wrapperは実際の`hook_event_name`とこの2項目をHost受領票へ追加する。例外はPreToolUseで実行前に拒否された呼び出しだけである。Claude Codeのterminal resultが持つ`permission_denials`の`tool_use_id`と`tool_name`が呼び出しおよびエラー`tool_result`へ完全一致し、同じIDのPost Tool受領票が無い場合に限り、stream parserはその呼び出しを未実行として除外する。名前・結果・受領票との矛盾、重複した拒否識別子、不正な拒否構造はfail closedする。それ以外の当該attemptで実行済みのBrainbase callには、同一識別子と成功/失敗種別の受領票を要求する。
 
 同じ`tool_use_id`、`tool_name`、Hook種別、Host receipt、監査行を持つPostToolUse/PostToolUseFailureの再掲は配送上の重複として1件に畳む。識別子が同じで内容が異なる場合、対応する受領票が欠ける場合、監査が未完了の場合、成功/失敗とHook種別が一致しない場合はfail closedする。現行Host契約では全Post Tool受領票に識別子を必須とし、識別子のない旧形式や新旧が混ざるstreamは受理しない。
 
@@ -14,7 +14,7 @@ A0が外部効果のreadbackを待つために`preserveUntilReconciled`を付け
 
 ## 検証境界
 
-- unit: 受領票へのtool identityと実際のHook種別の埋込み、再開前履歴を除いた当該attempt境界、成功/失敗の`tool_result`とPostToolUse/PostToolUseFailureの厳密照合、同一受領票再掲の重複排除、制御用受領票に含まれる累積監査行の除外、制御用を含むID・tool名の不一致、受領票欠落、競合再掲、未完了監査の拒否
+- unit: 受領票へのtool identityと実際のHook種別の埋込み、再開前履歴を除いた当該attempt境界、CLI terminal resultの厳密な`permission_denials`一致によるPreToolUse拒否の除外、拒否と名前・結果・Post Tool受領票が矛盾する場合の拒否、成功/失敗の`tool_result`とPostToolUse/PostToolUseFailureの厳密照合、同一受領票再掲の重複排除、制御用受領票に含まれる累積監査行の除外、制御用を含むID・tool名の不一致、受領票欠落、競合再掲、未完了監査の拒否
 - regression: Judgment lifecycle、Stop修復、議事録専用経路、episode receipt
 - diagnostics: identity欠落、監査欠落、receipt競合・欠落・件数不一致、順序不正、Stop監査不足・過剰を固定サブコードまで検証し、代表コードが両失敗ログと永続episodeへ同値で伝播することを確認
 - runtime claim regression: 保持claimの`in_progress`識別子、通常claimの識別子に加え、永続job欠落・delivery/claim token不一致・読取不能をT0がretryし、未完了で完全結合されたjobだけをackする分岐を固定する
