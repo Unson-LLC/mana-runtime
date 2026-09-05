@@ -735,8 +735,11 @@ describe("meeting minutes pipeline", () => {
   it("persists a safe task-board cause without exposing arbitrary error text", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
-    const scoped = Object.assign(new Error("CREDENTIAL_LEASE_SCOPE_MISMATCH"),
-      { code: "CREDENTIAL_LEASE_SCOPE_MISMATCH", details: { secret: "must-not-leak" } });
+    const scoped = Object.assign(new Error("CREDENTIAL_LEASE_SCOPE_MISMATCH"), {
+      code: "CREDENTIAL_LEASE_SCOPE_MISMATCH",
+      boundary: "credential_lease",
+      details: { scope_reason: "provider_forwarder_mismatch", secret: "must-not-leak" },
+    });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
         tasks: [{ title: "Kartzの確認事項を進める" }] }),
@@ -749,6 +752,8 @@ describe("meeting minutes pipeline", () => {
     expect(failed.taskRegistration?.failure).toMatchObject({
       stage: "task_board", message: "meeting_minutes_task_board_failed",
       code: "CREDENTIAL_LEASE_SCOPE_MISMATCH",
+      boundary: "credential_lease",
+      scopeReason: "provider_forwarder_mismatch",
     });
     expect(JSON.stringify(failed)).not.toContain("must-not-leak");
 
@@ -765,8 +770,11 @@ describe("meeting minutes pipeline", () => {
   it("persists an unknown machine-readable task-board code without exposing details", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
-    const scoped = Object.assign(new Error("contains a secret value"),
-      { code: "credential_lease_rejected", details: { secret: "must-not-leak" } });
+    const scoped = Object.assign(new Error("contains a secret value"), {
+      code: "credential_lease_rejected",
+      boundary: "credential lease contains spaces",
+      details: { scope_reason: "must/not/leak", secret: "must-not-leak" },
+    });
     const options = resumeOptions({
       generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
         tasks: [{ title: "Kartzの確認事項を進める" }] }),
@@ -781,6 +789,8 @@ describe("meeting minutes pipeline", () => {
       code: "credential_lease_rejected",
     });
     expect(JSON.stringify(failed)).not.toContain("must-not-leak");
+    expect(failed.taskRegistration?.failure).not.toHaveProperty("boundary");
+    expect(failed.taskRegistration?.failure).not.toHaveProperty("scopeReason");
   });
 
   it("repairs a legacy task-board failure even when local task receipts are empty", async () => {

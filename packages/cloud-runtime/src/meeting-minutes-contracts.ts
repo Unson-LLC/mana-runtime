@@ -248,7 +248,9 @@ export interface MeetingMinutesRun {
       /** Safe execution point used to distinguish failures without exposing upstream payloads. */
       failurePoint?: "assignee_resolution" | "task_create" | "task_scope_update";
       /** Stable Task API classification retained so Slack can distinguish configuration errors from retryable failures. */
-      code?: string; status?: number; failedAt: string } };
+      code?: string; status?: number;
+      /** Sanitized tenant-boundary location and reason; never contains IDs, payloads, or credentials. */
+      boundary?: string; scopeReason?: string; failedAt: string } };
   slack?: { selectionTs?: string; processingTs?: string; parentTs?: string; taskCardTs?: string; postedChunkIndexes: number[] };
   failure?: { stage: string; message: string };
   /** Sanitized diagnostics only; never store upstream bodies, transcript text, hashes, or credentials. */

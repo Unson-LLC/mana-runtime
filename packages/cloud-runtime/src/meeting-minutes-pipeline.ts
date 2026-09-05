@@ -188,6 +188,11 @@ function safeTaskFailureCode(value: unknown): string | undefined {
   return SAFE_TASK_FAILURE_CODES.has(value) || isMachineCode ? value : undefined;
 }
 
+function safeTaskBoundaryDetail(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,119}$/u.test(value)
+    ? value : undefined;
+}
+
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
   receipt: MeetingMinutesContextReceipt, options: ResumeMeetingMinutesOptions): Promise<void> {
   const tasks: MeetingMinutesTaskCandidate[] = run.generated?.tasks ?? [];
@@ -285,12 +290,19 @@ async function deferTaskIntegration(fs: WorkspaceFs, run: MeetingMinutesRun,
   const existingClassification = stage === "task_registration" ? run.taskRegistration.failure : undefined;
   const boundaryCode = error && typeof error === "object" && "code" in error
     ? safeTaskFailureCode(error.code) : undefined;
+  const boundary = error && typeof error === "object" && "boundary" in error
+    ? safeTaskBoundaryDetail(error.boundary) : undefined;
+  const scopeReason = error && typeof error === "object" && "details" in error
+    && error.details && typeof error.details === "object" && "scope_reason" in error.details
+    ? safeTaskBoundaryDetail(error.details.scope_reason) : undefined;
   run.taskRegistration.failure = { index: run.taskRegistration.failure?.index ??
     Math.max(0, run.taskRegistration.registered.length - 1), stage,
     message: safeTaskFailureMessage(error, `meeting_minutes_${stage}_failed`),
     ...(existingClassification?.failurePoint ? { failurePoint: existingClassification.failurePoint } : {}),
     ...(existingClassification?.code ? { code: existingClassification.code } : {}),
     ...(boundaryCode ? { code: boundaryCode } : {}),
+    ...(boundary ? { boundary } : {}),
+    ...(scopeReason ? { scopeReason } : {}),
     ...(existingClassification?.status ? { status: existingClassification.status } : {}),
     failedAt: now(options) };
   const classified = classifyMeetingMinutesFailure("task_registration", error);
