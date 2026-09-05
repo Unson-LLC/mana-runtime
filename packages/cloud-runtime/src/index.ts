@@ -1942,7 +1942,8 @@ export async function executeCompanyAuthorityReplyOperation(
             execute: (tenantBoundaryHandle) => executeSharedReplyRuntime({ env, fs: workspace.fs, event,
               placement, runtimeTenantId: tenantContext.tenant.tenant_id,
               runtimeWorkspaceId: tenantContext.workspace_connection.workspace_id,
-              workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle, trace,
+              workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle,
+              tenantBoundaryExpiresAt: tenantContext.expires_at, trace,
               canonicalPersonId: operation.canonical_person_id as string,
               canonicalProjectId: expectedScope.project_id,
               postReply: async (replyEvent, text) => {
@@ -2260,6 +2261,7 @@ interface SharedReplyRuntimeInput {
   tenantCredentialFetch: typeof fetch;
   claudeRuntime: ReturnType<typeof resolveClaudeRuntimeConfig>;
   tenantBoundaryHandle: string;
+  tenantBoundaryExpiresAt: string;
   trace: TurnRuntimeTrace;
   postReply(event: SlackQueueEvent, text: string): Promise<string>;
   /** Set only for an already accepted Company Authority actor. */
@@ -2286,6 +2288,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
     tenantCredentialFetch,
     claudeRuntime,
     tenantBoundaryHandle,
+    tenantBoundaryExpiresAt,
     trace,
     postReply,
   } = input;
@@ -2372,6 +2375,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       fetch: tenantCredentialFetch,
       oauthConfigured: true,
       tenantBoundaryHandle,
+      tenantBoundaryExpiresAt,
       claudeRuntime,
       brainbaseProjectCode: canonicalProjectId,
       runtimeContext: placement.runtimeContext
@@ -4413,6 +4417,7 @@ export default {
                       tenantCredentialFetch,
                       claudeRuntime,
                       tenantBoundaryHandle,
+                      tenantBoundaryExpiresAt: tenantBody.tenant_context.expires_at,
                       trace,
                       postReply: postTenantReply,
                     }),

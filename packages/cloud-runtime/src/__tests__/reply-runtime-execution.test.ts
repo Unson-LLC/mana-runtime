@@ -93,9 +93,11 @@ function baseOptions(overrides: Partial<ReplyRuntimeBaseOptions> = {}): ReplyRun
     allowedChannelId: "C_MANA_TEST",
     oauthConfigured: true,
     tenantBoundaryHandle: boundaryHandle,
+    tenantBoundaryExpiresAt: "2026-08-11T13:35:00.000Z",
     claudeRuntime: resolveClaudeRuntimeConfig({ RUNTIME_CLAUDE_MODEL: "opus", RUNTIME_CLAUDE_EFFORT: "xhigh" }),
     createSandbox: vi.fn(() => sandbox),
     now: () => "2026-08-11T13:30:00.000Z",
+    nowMs: () => Date.parse("2026-08-11T13:30:00.000Z"),
     postReply: vi.fn().mockResolvedValue("1786455000.000001"),
     ...overrides,
   };

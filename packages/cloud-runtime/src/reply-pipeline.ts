@@ -49,9 +49,11 @@ const SLACK_STATUS_REFRESH_MS = 90_000;
 const SLACK_STATUS_TIMEOUT_MS = 5_000;
 const SLACK_REACTION_TIMEOUT_MS = 5_000;
 // A complete judgment turn may need a second Stop-hook pass after Brainbase
-// repairs missing audit lines. Keep the reply runner below the five-minute
-// tenant-boundary lease while allowing that authenticated repair to finish.
-const REPLY_SANDBOX_TIMEOUT_MS = 240_000;
+// repairs missing audit lines. Each exec consumes the same signed tenant
+// boundary, so calculate its timeout from the remaining deadline rather than
+// granting every attempt a fresh five-minute lease.
+const REPLY_SANDBOX_MAX_TIMEOUT_MS = 270_000;
+const REPLY_TENANT_BOUNDARY_SAFETY_MARGIN_MS = 30_000;
 
 interface ExecResult {
   success: boolean;
@@ -78,6 +80,8 @@ export interface ReplyPipelineOptions {
   slackBotToken?: string;
   oauthConfigured: boolean;
   tenantBoundaryHandle: string;
+  /** Absolute expiry from the signed tenant context registered for this operation. */
+  tenantBoundaryExpiresAt: string;
   claudeRuntime: ClaudeRuntimeConfig;
   taskSearchEnabled?: boolean;
   taskWriteEnabled?: boolean;
@@ -98,6 +102,8 @@ export interface ReplyPipelineOptions {
   createSandbox(id: string): ReplySandbox;
   fetch?: typeof fetch;
   now?: () => string;
+  /** Injectable wall clock for the tenant-boundary execution budget. */
+  nowMs?: () => number;
   hydrateThreadContext?(event: SlackQueueEvent): Promise<SlackQueueEvent>;
   postReply?(event: SlackQueueEvent, text: string): Promise<string>;
 }
@@ -112,6 +118,21 @@ export class ReplyPipelineError extends Error {
     super(code);
     this.name = "ReplyPipelineError";
   }
+}
+
+function remainingReplySandboxTimeoutMs(
+  tenantBoundaryExpiresAt: string,
+  nowMs: number,
+): number {
+  const deadlineMs = Date.parse(tenantBoundaryExpiresAt);
+  const timeout = Math.min(
+    REPLY_SANDBOX_MAX_TIMEOUT_MS,
+    deadlineMs - nowMs - REPLY_TENANT_BOUNDARY_SAFETY_MARGIN_MS,
+  );
+  if (!Number.isFinite(deadlineMs) || !Number.isFinite(nowMs) || timeout <= 0) {
+    throw new ReplyPipelineError("tenant_boundary_deadline_exhausted");
+  }
+  return timeout;
 }
 
 function safeFailureCode(value: unknown, fallback: string): string {
@@ -291,7 +312,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "brainbaseProjectCode" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "tenantBoundaryExpiresAt" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "brainbaseProjectCode" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "nowMs">,
 ): Promise<ReplyJudgmentResult> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
@@ -357,25 +378,22 @@ export async function generateClaudeReply(
       await target.writeFile(runtimeReplySettingsPath(), runtimeReplySettingsContent());
     };
     await prepareSandbox(sandbox);
-    const execOptions = {
-      timeout: REPLY_SANDBOX_TIMEOUT_MS,
-      env: {
-        IS_SANDBOX: "1",
-        // Resolver routing must be based on the authenticated Slack request,
-        // not the larger model prompt that also contains runtime scaffolding.
-        MANA_JUDGMENT_REQUEST: normalizePromptText(event.text) || "呼びかけに応答してください。",
-        MANA_TRACE_ID: event.eventId,
-        MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
-        MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
-        MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
-        ...(options.taskSearchEnabled && requestsOwnTasks(event.text) && requesterIdentity ? {
-          MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID: requesterIdentity.personId,
-        } : {}),
-        ...(options.taskWriteEnabled ? {
-          MANA_TASK_WRITE_REQUEST_ID: event.eventId,
-          MANA_TASK_WRITE_CAPABILITY: options.taskWriteCapability,
-        } : {}),
-      },
+    const execEnv = {
+      IS_SANDBOX: "1",
+      // Resolver routing must be based on the authenticated Slack request,
+      // not the larger model prompt that also contains runtime scaffolding.
+      MANA_JUDGMENT_REQUEST: normalizePromptText(event.text) || "呼びかけに応答してください。",
+      MANA_TRACE_ID: event.eventId,
+      MANA_TENANT_BOUNDARY_HANDLE: options.tenantBoundaryHandle,
+      MANA_TRACE_PLACEMENT_ID: options.trace?.placementId,
+      MANA_TRACE_PROJECT_CODES: options.trace?.projectCodes?.join(","),
+      ...(options.taskSearchEnabled && requestsOwnTasks(event.text) && requesterIdentity ? {
+        MANA_TASK_SEARCH_ASSIGNEE_PERSON_ID: requesterIdentity.personId,
+      } : {}),
+      ...(options.taskWriteEnabled ? {
+        MANA_TASK_WRITE_REQUEST_ID: event.eventId,
+        MANA_TASK_WRITE_CAPABILITY: options.taskWriteCapability,
+      } : {}),
     };
     const claudeSessionId = crypto.randomUUID();
     const runClaude = (resumeSession: boolean) => sandbox.exec(
@@ -387,7 +405,13 @@ export async function generateClaudeReply(
         sessionId: claudeSessionId,
         ...(resumeSession ? { resumeSession: true } : {}),
       }),
-      execOptions,
+      {
+        timeout: remainingReplySandboxTimeoutMs(
+          options.tenantBoundaryExpiresAt,
+          options.nowMs?.() ?? Date.now(),
+        ),
+        env: execEnv,
+      },
     );
     let resumedSession = false;
     let result;
