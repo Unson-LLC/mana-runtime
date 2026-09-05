@@ -1738,7 +1738,7 @@ function expectedTenantTaskBoardRepairScope(
     || repair.channelId !== envelope.slack.channel_id
     || repair.requestedAt !== envelope.slack.thread_ts
     || taskBoardRepairEventId(repair) !== envelope.slack.event_id
-    || envelope.actor.authenticated_subject_id !== requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)
+    || envelope.actor.authenticated_subject_id !== requiredRuntimeBinding(envelope.slack.requester_id)
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
