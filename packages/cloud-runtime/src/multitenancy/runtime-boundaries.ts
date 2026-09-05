@@ -44,6 +44,14 @@ export interface TenantContextIssueRequest {
   };
   /** Trusted project scope resolved from the runtime placement, never from Slack input. */
   trusted_project_ids?: readonly string[];
+  /** Canonical actor identity. Slack ingress omits this and defaults to the Slack requester. */
+  provider_identity?: {
+    provider: "slack" | "service";
+    authenticated_subject_id: string;
+    workspace_id?: string;
+    app_id?: string;
+    enterprise_id?: string;
+  };
 }
 
 export interface TenantAuthorityClient {
@@ -128,6 +136,7 @@ export async function resolveSlackWorkerIngress(input: {
   required_authorization: TenantContextIssueRequest["required_authorization"];
   trusted_project_ids?: readonly string[];
   tenant_revision?: string;
+  provider_identity?: TenantContextIssueRequest["provider_identity"];
   authority: TenantAuthorityClient;
   now: string;
   resolve_verification_key(keyId: string): Promise<CryptoKey | undefined>;
@@ -173,6 +182,7 @@ export async function resolveSlackWorkerIngress(input: {
     },
     required_authorization: structuredClone(input.required_authorization),
     ...(trustedProjectIds ? { trusted_project_ids: trustedProjectIds } : {}),
+    ...(input.provider_identity ? { provider_identity: structuredClone(input.provider_identity) } : {}),
   };
   assertSecretArtifactFree(issueRequest);
   let tenantContext: TenantContextEnvelope;
