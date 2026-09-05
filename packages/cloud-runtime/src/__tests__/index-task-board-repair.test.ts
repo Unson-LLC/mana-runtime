@@ -34,15 +34,15 @@ describe("Worker task Canvas repair producers", () => {
     expect(resumeClient).toContain("repairTaskBoard: async (targetId: string) =>");
     expect(resumeClient).toContain("execute: () => processTaskBoardRepair(repair, env, repair.tenantId, repairCredentialFetch,");
     expect(resumeClient).not.toContain("enqueueMeetingMinutesTaskBoardRepair(");
-    expect(resumeClient).toContain("const repairTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext");
+    expect(resumeClient).toContain("const repairTenantContext = await resolveTaskBoardRepairTenantContext(env, repair");
     expect(resumeClient).toContain("const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding");
-    expect(resumeClient).toContain("app_id: destinationSlackBinding.app_id");
-    expect(resumeClient).toContain('{ workspace_policy: "same_tenant", destination }');
+    expect(resumeClient).toContain("appId: destinationSlackBinding.app_id");
+    expect(resumeClient).toContain("destination,");
+    expect(resumeClient).toContain("capabilityId: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID)");
     expect(resumeClient.indexOf("resolveMeetingMinutesDestinationSlackBinding"))
-      .toBeLessThan(resumeClient.indexOf("resolveDerivedSlackTenantContext"));
+      .toBeLessThan(resumeClient.indexOf("resolveTaskBoardRepairTenantContext"));
     expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
-    expect(source.match(/requester_id: requiredRuntimeBinding\((?:taskBoardT|t)enantContext\.slack\.requester_id\)/g))
-      .toHaveLength(2);
+    expect(source).toContain("requester_id: serviceActorId");
     expect(source).toContain("(taskBoardTenantContext) => enqueueMeetingMinutesTaskBoardRepair(");
     expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
       .toHaveLength(1);

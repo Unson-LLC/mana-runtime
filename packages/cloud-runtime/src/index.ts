@@ -1345,15 +1345,16 @@ function meetingMinutesClients(
           reason: "task_write",
           requestedAt: new Date().toISOString(),
         };
-        const repairTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
-          app_id: destinationSlackBinding.app_id,
-          workspace_id: repair.workspaceId,
-          event_id: taskBoardRepairEventId(repair),
-          channel_id: repair.channelId,
-          thread_ts: repair.requestedAt,
-          requester_id: requiredRuntimeBinding(tenantContext.slack.requester_id),
-        }, { workspace_policy: "same_tenant", destination },
-        () => tenantConfiguredDesiredEffectByCapability(env));
+        const repairTenantContext = await resolveTaskBoardRepairTenantContext(env, repair, {
+          appId: destinationSlackBinding.app_id,
+          destination,
+          capabilityId: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+        });
+        if (repairTenantContext.tenant.tenant_id !== tenantContext.tenant.tenant_id
+          || repairTenantContext.placement.deployment_id !== tenantContext.placement.deployment_id
+          || repairTenantContext.placement.profile !== tenantContext.placement.profile) {
+          deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+        }
         repair.tenantId = repairTenantContext.tenant.tenant_id;
         const repairBody: TenantQueueBody<TaskBoardRepairEvent> = {
           schema_version: "1.0",
@@ -1577,6 +1578,11 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
 async function resolveTaskBoardRepairTenantContext(
   env: Env,
   repair: TaskBoardRepairEvent,
+  options: {
+    appId?: string;
+    destination?: MeetingMinutesDestination;
+    capabilityId?: string;
+  } = {},
 ): Promise<TenantContextEnvelope> {
   const clients = tenantRuntimeClients(env, undefined,
     tenantConfiguredDesiredEffectByCapability(env));
@@ -1593,10 +1599,18 @@ async function resolveTaskBoardRepairTenantContext(
     text: "",
     receivedAt: repair.requestedAt,
   });
+  const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination);
+  if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  const requiredAuthorization = destinationAuthorization?.required_authorization ?? {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    project_id: placementProjectScope.project_id,
+    capability_id: options.capabilityId ?? "task_board_send",
+  };
+  const appId = requiredRuntimeBinding(options.appId ?? env.SLACK_EXPECTED_APP_ID);
   const resolved = await resolveSlackWorkerIngress({
     identity: {
       provider: "slack",
-      app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+      app_id: appId,
       workspace_id: repair.workspaceId,
       event_id: taskBoardRepairEventId(repair),
       channel_id: repair.channelId,
@@ -1605,18 +1619,14 @@ async function resolveTaskBoardRepairTenantContext(
     },
     required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
       .split(",").map((value) => value.trim()).filter(Boolean),
-    required_authorization: {
-      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-      project_id: placementProjectScope.project_id,
-      capability_id: "task_board_send",
-    },
+    required_authorization: requiredAuthorization,
     provider_identity: {
       provider: "service",
       authenticated_subject_id: serviceActorId,
       workspace_id: repair.workspaceId,
-      app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+      app_id: appId,
     },
-    trusted_project_ids: placementProjectScope.project_ids,
+    trusted_project_ids: destinationAuthorization?.trusted_project_ids ?? placementProjectScope.project_ids,
     authority: clients.authority,
     now: repair.requestedAt,
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
