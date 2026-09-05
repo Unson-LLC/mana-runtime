@@ -726,6 +726,58 @@ async function reissueMeetingMinutesRecoveryTenantContext(
   return fresh;
 }
 
+async function reissueMeetingMinutesAdminSelectionTenantContext(
+  env: Env,
+  run: MeetingMinutesRun,
+  selection: MeetingMinutesSelection,
+): Promise<TenantContextEnvelope> {
+  const authorization = run.recoveryAuthorization;
+  if (!authorization || run.status !== "failed" || run.runId !== selection.runId || run.workspaceId !== selection.workspaceId ||
+    run.sourceAppId !== selection.appId || run.sourceChannelId !== selection.channelId ||
+    run.sourceThreadTs !== selection.threadTs || authorization.tenantId.length === 0 ||
+    authorization.workspaceId !== selection.workspaceId || authorization.appId !== selection.appId ||
+    authorization.channelId !== selection.channelId || authorization.threadTs !== selection.threadTs ||
+    authorization.requesterId !== selection.userId || authorization.projectIds.length === 0) {
+    deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+  }
+  const clients = tenantRuntimeClients(env);
+  const fresh = (await resolveSlackWorkerIngress({
+    identity: {
+      provider: "slack",
+      app_id: authorization.appId,
+      workspace_id: authorization.workspaceId,
+      event_id: meetingMinutesSelectionEventId(selection),
+      channel_id: authorization.channelId,
+      thread_ts: authorization.threadTs,
+      requester_id: authorization.requesterId,
+    },
+    required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
+      .split(",").map((value) => value.trim()).filter(Boolean),
+    required_authorization: {
+      audience: authorization.audience,
+      project_id: authorization.projectIds[0]!,
+      capability_id: authorization.capabilityId,
+    },
+    trusted_project_ids: authorization.projectIds,
+    tenant_revision: authorization.tenantRevision,
+    authority: clients.authority,
+    now: new Date().toISOString(),
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  })).tenant_context;
+  const sameProjects = [...fresh.authorization.project_ids].sort().join("\0") ===
+    [...authorization.projectIds].sort().join("\0");
+  if (fresh.tenant.tenant_id !== authorization.tenantId ||
+    fresh.tenant.tenant_revision !== authorization.tenantRevision ||
+    fresh.workspace_connection.connection_id !== authorization.connectionId ||
+    fresh.workspace_connection.connection_revision !== authorization.connectionRevision ||
+    fresh.actor.principal_id !== authorization.actorPrincipalId || !sameProjects ||
+    fresh.placement.deployment_id !== authorization.deploymentId ||
+    fresh.placement.profile !== authorization.profile) {
+    deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+  }
+  return fresh;
+}
+
 function meetingMinutesDeploymentGate(env: Env, tenantId: string): DurableObjectStub<MeetingMinutesDeploymentGate> {
   return env.MEETING_MINUTES_DEPLOYMENT_GATE.get(env.MEETING_MINUTES_DEPLOYMENT_GATE.idFromName(tenantId));
 }
@@ -2856,6 +2908,60 @@ export default {
         setPaused: (paused) => gate.setIntakePaused(paused),
         status: () => gate.status(),
       });
+    }
+    const authorizedRetryMatch = url.pathname.match(
+      /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-retry$/,
+    );
+    if (request.method === "POST" && authorizedRetryMatch) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } | null;
+      try {
+        const parsed = await readAdminJsonRequest(request);
+        payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } : null;
+      } catch (error) {
+        const rejected = adminJsonInputErrorResponse(error);
+        if (rejected) return rejected;
+        throw error;
+      }
+      const tenantId = typeof payload?.tenantId === "string" && /^[A-Za-z0-9_-]{3,128}$/.test(payload.tenantId)
+        ? payload.tenantId : undefined;
+      const workspaceId = typeof payload?.workspaceId === "string" && /^[A-Z0-9]{3,32}$/.test(payload.workspaceId)
+        ? payload.workspaceId : undefined;
+      const actionTs = typeof payload?.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
+        ? payload.actionTs : undefined;
+      if (!tenantId || !workspaceId || !actionTs) {
+        return Response.json({ error: "meeting_minutes_admin_retry_scope_invalid" }, { status: 400 });
+      }
+      const runId = authorizedRetryMatch[1]!;
+      const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+        tenantId, workspaceId, runId,
+      ));
+      const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+      const run = await withDisposableResource(() => getWorkspace(handle),
+        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
+      const authorization = run.recoveryAuthorization;
+      if (!authorization || authorization.tenantId !== tenantId ||
+        authorization.workspaceId !== workspaceId || !run.destination || !run.sourceAppId) {
+        return Response.json({ error: "meeting_minutes_admin_retry_not_authorized" }, { status: 409 });
+      }
+      const selection: MeetingMinutesSelection = {
+        kind: "meeting_minutes_selection",
+        runId,
+        destinationId: run.destination.id,
+        workspaceId,
+        appId: run.sourceAppId,
+        channelId: run.sourceChannelId,
+        threadTs: run.sourceThreadTs,
+        userId: authorization.requesterId,
+        actionTs,
+      };
+      const tenantContext = await reissueMeetingMinutesAdminSelectionTenantContext(env, run, selection);
+      await env.TECHKNIGHT_EVENTS.send({ schema_version: "1.0", tenant_context: tenantContext, payload: selection });
+      return Response.json({ runId, status: run.status, destinationId: run.destination.id, enqueued: true });
     }
     const runAdminMatch = url.pathname.match(/^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})(\/retry|\/adopt-tasks)?$/);
     if (runAdminMatch && (request.method === "GET" || request.method === "POST")) {
