@@ -28,8 +28,9 @@ describe("Worker task Canvas repair producers", () => {
     expect(source).not.toMatch(/async function enqueueMeetingMinutesTaskBoardRepair\s*\(/);
     expect(source.match(/enqueueMeetingMinutesTaskBoardRepair\(\s*env,\s*targetId,\s*"task_write",/g))
       .toHaveLength(1);
-    const resumeClient = source.slice(source.indexOf("function meetingMinutesClients("),
-      source.indexOf("async function processMeetingMinutesSlackEvent("));
+    const resumeClientStart = source.indexOf("function meetingMinutesClients(");
+    const resumeClient = source.slice(resumeClientStart,
+      source.indexOf("async function processTenantMeetingMinutesSelection(", resumeClientStart));
     expect(resumeClient).toContain("repairTaskBoard: async (targetId: string) =>");
     expect(resumeClient).toContain("await processTaskBoardRepair(repair, env, repair.tenantId, repairCredentialFetch,");
     expect(resumeClient).not.toContain("enqueueMeetingMinutesTaskBoardRepair(");
