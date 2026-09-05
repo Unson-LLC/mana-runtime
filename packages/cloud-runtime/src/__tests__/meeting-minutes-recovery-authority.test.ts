@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { MeetingMinutesRecoveryAuthorization } from "../meeting-minutes-contracts.js";
 import type { TenantContextEnvelope } from "../multitenancy/contracts.js";
-import { hasStableMeetingMinutesRecoveryAuthority } from "../meeting-minutes-recovery-authority.js";
+import { hasStableMeetingMinutesRecoveryAuthority,
+  isMeetingMinutesAdminRecoveryEligible } from "../meeting-minutes-recovery-authority.js";
 
 const authorization: MeetingMinutesRecoveryAuthorization = {
   tenantId: "tenant-a",
@@ -44,6 +45,12 @@ function freshContext(): TenantContextEnvelope {
 }
 
 describe("hasStableMeetingMinutesRecoveryAuthority", () => {
+  it("allows failed recovery and completed downstream reconciliation", () => {
+    expect(isMeetingMinutesAdminRecoveryEligible({ status: "failed" } as never)).toBe(true);
+    expect(isMeetingMinutesAdminRecoveryEligible({ status: "completed" } as never)).toBe(true);
+    expect(isMeetingMinutesAdminRecoveryEligible({ status: "posting" } as never)).toBe(false);
+  });
+
   it("accepts refreshed revisions and a canonicalized principal for the same external identity and scope", () => {
     const value = freshContext();
     value.actor.principal_id = "person-canonical";

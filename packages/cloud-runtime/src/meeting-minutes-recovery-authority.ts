@@ -1,5 +1,10 @@
 import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
-import type { MeetingMinutesRecoveryAuthorization } from "./meeting-minutes-contracts.js";
+import type { MeetingMinutesRecoveryAuthorization, MeetingMinutesRun } from "./meeting-minutes-contracts.js";
+
+/** A completed minutes run can still need its downstream Task effects reconciled. */
+export function isMeetingMinutesAdminRecoveryEligible(run: MeetingMinutesRun): boolean {
+  return run.status === "failed" || run.status === "completed";
+}
 
 export function meetingMinutesRecoveryAuthorityMismatches(
   fresh: TenantContextEnvelope,

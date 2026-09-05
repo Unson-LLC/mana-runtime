@@ -93,7 +93,7 @@ import { classifyMeetingMinutesDestinationInSandbox,
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
-import { hasStableMeetingMinutesRecoveryAuthority,
+import { hasStableMeetingMinutesRecoveryAuthority, isMeetingMinutesAdminRecoveryEligible,
   meetingMinutesRecoveryAuthorityMismatches } from "./meeting-minutes-recovery-authority.js";
 import { isReplyEligible, postSlackReply, ReplyPipelineError, type ReplyProcessResult } from "./reply-pipeline.js";
 import { executeReplyRuntime } from "./reply-runtime-execution.js";
@@ -738,7 +738,7 @@ async function reissueMeetingMinutesAdminSelectionTenantContext(
   selection: MeetingMinutesSelection,
 ): Promise<TenantContextEnvelope> {
   const authorization = run.recoveryAuthorization;
-  if (!authorization || run.status !== "failed" || run.runId !== selection.runId || run.workspaceId !== selection.workspaceId ||
+  if (!authorization || !isMeetingMinutesAdminRecoveryEligible(run) || run.runId !== selection.runId || run.workspaceId !== selection.workspaceId ||
     run.sourceAppId !== selection.appId || run.sourceChannelId !== selection.channelId ||
     run.sourceThreadTs !== selection.threadTs || authorization.tenantId.length === 0 ||
     authorization.workspaceId !== selection.workspaceId || authorization.appId !== selection.appId ||
