@@ -1,0 +1,81 @@
+name: 失敗済み議事録を再実行
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 再実行する議事録run ID
+        required: true
+        type: string
+      tenant_id:
+        description: 対象tenant ID
+        required: true
+        type: string
+      workspace_id:
+        description: 対象Slack workspace ID
+        required: true
+        type: string
+      reason:
+        description: 再実行理由（監査用）
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  retry:
+    name: 保存済み権限を再照合して再投入
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production
+      url: https://unson-business-mana-runtime.unson.workers.dev
+    steps:
+      - name: 入力形式を検証
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          TENANT_ID: ${{ inputs.tenant_id }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[A-Za-z0-9_-]{3,260}$ ]]
+          [[ "$TENANT_ID" =~ ^[A-Za-z0-9_-]{3,128}$ ]]
+          [[ "$WORKSPACE_ID" =~ ^[A-Z0-9]{3,32}$ ]]
+
+      - name: 失敗済みrunを再投入
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          TENANT_ID: ${{ inputs.tenant_id }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+          RETRY_REASON: ${{ inputs.reason }}
+          SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$SANDBOX_PROBE_TOKEN"
+          action_ts="$(date +%s.%3N)"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl -sS -o "$response_file" -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -cn \
+              --arg tenantId "$TENANT_ID" \
+              --arg workspaceId "$WORKSPACE_ID" \
+              --arg actionTs "$action_ts" \
+              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs}')" \
+            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-retry")"
+          jq -e --arg runId "$RUN_ID" --arg status "$status" \
+            '$status == "200" and .runId == $runId and .enqueued == true' \
+            "$response_file" >/dev/null
+          {
+            echo "## 議事録run再投入"
+            echo "- run ID: \`$RUN_ID\`"
+            echo "- tenant ID: \`$TENANT_ID\`"
+            echo "- workspace ID: \`$WORKSPACE_ID\`"
+            echo "- 理由: $RETRY_REASON"
+            echo "- 結果: 保存済み権限の再照合とキュー投入に成功"
+          } >> "$GITHUB_STEP_SUMMARY"
