@@ -762,6 +762,27 @@ describe("meeting minutes pipeline", () => {
     expect(slackFailure.taskRegistration?.failure?.message).toBe("task_board_missing_scope");
   });
 
+  it("persists an unknown machine-readable task-board code without exposing details", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const scoped = Object.assign(new Error("contains a secret value"),
+      { code: "credential_lease_rejected", details: { secret: "must-not-leak" } });
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }),
+      createTask: vi.fn().mockResolvedValue({ id: "task-kartz" }),
+      repairTaskBoard: vi.fn().mockRejectedValue(scoped),
+    });
+
+    const failed = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(failed.taskRegistration?.failure).toMatchObject({
+      stage: "task_board", message: "meeting_minutes_task_board_failed",
+      code: "credential_lease_rejected",
+    });
+    expect(JSON.stringify(failed)).not.toContain("must-not-leak");
+  });
+
   it("repairs a legacy task-board failure even when local task receipts are empty", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

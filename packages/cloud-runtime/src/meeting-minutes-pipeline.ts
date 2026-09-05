@@ -182,7 +182,10 @@ function safeTaskFailureMessage(error: unknown, fallback: string): string {
 }
 
 function safeTaskFailureCode(value: unknown): string | undefined {
-  return typeof value === "string" && SAFE_TASK_FAILURE_CODES.has(value) ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const isMachineCode = /^[a-z][a-z0-9_]{2,96}$/u.test(value)
+    || /^[A-Z][A-Z0-9_]{2,96}$/u.test(value);
+  return SAFE_TASK_FAILURE_CODES.has(value) || isMachineCode ? value : undefined;
 }
 
 async function registerGeneratedTasks(fs: WorkspaceFs, run: MeetingMinutesRun,
