@@ -112,6 +112,9 @@ jobs:
                 and .checkpoint.hasTaskCard == true' "$response_file" >/dev/null; then
                 break
               fi
+              echo "Fresh retry completed with an incomplete task integration" >&2
+              jq '{runId,status,updatedAt,checkpoint,taskRegistration,diagnostics}' "$response_file"
+              exit 1
             fi
             if [[ "$run_status" == "failed" ]]; then
               current_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
