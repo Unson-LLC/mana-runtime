@@ -123,29 +123,14 @@ export class TaskBoardCanvasProvisioningError extends Error {
   }
 }
 
-async function findReusableManaTaskBoardCanvas(
+async function findChannelTaskBoardCanvas(
   channelId: string,
   token: string | undefined,
   fetchImpl: typeof fetch,
 ): Promise<string | null> {
   try {
-    const auth = await slackApi("auth.test", token, {}, fetchImpl);
-    const botUserId = typeof auth.user_id === "string" ? auth.user_id : "";
-    if (!SLACK_ID.test(botUserId)) return null;
-
     const channelInfo = await slackApiGet("conversations.info", token, { channel: channelId }, fetchImpl);
-    const matches: string[] = [];
-    for (const canvasId of canvasIdsFromInfo(channelInfo)) {
-      if (!SLACK_ID.test(canvasId)) continue;
-      const info = await slackApiGet("files.info", token, { file: canvasId }, fetchImpl);
-      const file = info.file as Record<string, unknown> | undefined;
-      const title = typeof file?.title === "string" ? file.title.trim() : "";
-      if (file?.user === botUserId
-        && file.editable === true
-        && (title === "タスクボード" || title === "Mana タスクボード")) {
-        matches.push(canvasId);
-      }
-    }
+    const matches = [...canvasIdsFromInfo(channelInfo)].filter((canvasId) => SLACK_ID.test(canvasId));
     return matches.length === 1 ? matches[0]! : null;
   } catch {
     return null;
@@ -159,13 +144,12 @@ export async function createManagedTaskBoardCanvas(
 ): Promise<string> {
   const fetchImpl = options.fetch ?? fetch;
   const createCanvas = async (): Promise<{ response: Response; payload: Record<string, unknown> | null }> => {
-    const response = await fetchImpl("https://slack.com/api/canvases.create", {
+    const response = await fetchImpl("https://slack.com/api/conversations.canvases.create", {
       method: "POST",
       headers: { ...(token ? { authorization: `Bearer ${token}` } : {}),
         "content-type": "application/json; charset=utf-8" },
       body: JSON.stringify({
         channel_id: channelId,
-        title: "Mana タスクボード",
         document_content: {
           type: "markdown",
           markdown: "# タスクボード\n\nManaがBrainbaseの正本タスクを同期します。",
@@ -202,10 +186,10 @@ export async function createManagedTaskBoardCanvas(
   const definitive = response.status < 500
     && payload?.ok === false
     && !AMBIGUOUS_SLACK_ERRORS.has(code);
-  if (code === "free_team_canvas_tab_already_exists") {
-    const canvasId = await findReusableManaTaskBoardCanvas(channelId, token, fetchImpl);
+  if (code === "channel_canvas_already_exists" || code === "free_team_canvas_tab_already_exists") {
+    const canvasId = await findChannelTaskBoardCanvas(channelId, token, fetchImpl);
     if (canvasId) {
-      console.log(JSON.stringify({ event: "task_board_legacy_canvas_reused", channelId, canvasId }));
+      console.log(JSON.stringify({ event: "task_board_channel_canvas_reused", channelId, canvasId }));
       return canvasId;
     }
   }
