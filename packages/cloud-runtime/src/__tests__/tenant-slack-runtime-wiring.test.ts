@@ -21,8 +21,8 @@ describe("tenant Slack runtime wiring", () => {
     expect(queueIngress.indexOf("destinationAuthorizationForSelection(env, destination)"))
       .toBeLessThan(queueIngress.indexOf("env.TECHKNIGHT_EVENTS.send("));
     expect(consumerStart).toBeGreaterThan(-1);
-    expect(consumer).toContain("destinationAuthorizationForSelection(env, destination)");
-    expect(consumer.indexOf("destinationAuthorizationForSelection(env, destination)"))
+    expect(consumer).toContain('destinationAuthorizationForSelection(env, destination, "queue_consumer")');
+    expect(consumer.indexOf('destinationAuthorizationForSelection(env, destination, "queue_consumer")'))
       .toBeLessThan(consumer.indexOf("resolveMeetingMinutesDestinationProjectScope("));
     expect(source).not.toContain("if (projectId === undefined) return undefined");
   });
