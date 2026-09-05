@@ -171,11 +171,14 @@ const SAFE_TASK_FAILURE_MESSAGES = new Set([
   "meeting_minutes_task_invalid_response", "project_code_not_allowed", "task_scope_not_configured",
 ]);
 const SAFE_TASK_FAILURE_CODES = new Set(["project_code_not_allowed", "task_scope_not_configured",
-  "idempotency_conflict", "canonical_task_operation_in_progress"]);
+  "idempotency_conflict", "canonical_task_operation_in_progress",
+  "CREDENTIAL_LEASE_SCOPE_MISMATCH", "CREDENTIAL_FORWARDING_UNAVAILABLE",
+  "PROVIDER_OPERATION_UNSUPPORTED", "UPSTREAM_UNAVAILABLE", "UPSTREAM_INVALID_RESPONSE"]);
 
 function safeTaskFailureMessage(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : "";
-  return SAFE_TASK_FAILURE_MESSAGES.has(message) ? message : fallback;
+  return SAFE_TASK_FAILURE_MESSAGES.has(message) || /^task_board_[a-z0-9_-]{1,96}$/u.test(message)
+    ? message : fallback;
 }
 
 function safeTaskFailureCode(value: unknown): string | undefined {
@@ -277,11 +280,14 @@ async function deferTaskIntegration(fs: WorkspaceFs, run: MeetingMinutesRun,
   options: ResumeMeetingMinutesOptions): Promise<void> {
   run.taskRegistration ??= { registered: [] };
   const existingClassification = stage === "task_registration" ? run.taskRegistration.failure : undefined;
+  const boundaryCode = error && typeof error === "object" && "code" in error
+    ? safeTaskFailureCode(error.code) : undefined;
   run.taskRegistration.failure = { index: run.taskRegistration.failure?.index ??
     Math.max(0, run.taskRegistration.registered.length - 1), stage,
     message: safeTaskFailureMessage(error, `meeting_minutes_${stage}_failed`),
     ...(existingClassification?.failurePoint ? { failurePoint: existingClassification.failurePoint } : {}),
     ...(existingClassification?.code ? { code: existingClassification.code } : {}),
+    ...(boundaryCode ? { code: boundaryCode } : {}),
     ...(existingClassification?.status ? { status: existingClassification.status } : {}),
     failedAt: now(options) };
   const classified = classifyMeetingMinutesFailure("task_registration", error);
