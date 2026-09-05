@@ -957,8 +957,9 @@ function createMeetingMinutesTenantEffectGuard(input: {
   verifier: TenantRuntimeBoundaryVerifier;
   now(): string;
 }): MeetingMinutesTenantEffectGuard {
-  const clients = tenantRuntimeClients(input.env, input.tenant_context,
-    tenantConfiguredDesiredEffectByCapability(input.env));
+  let clients: ReturnType<typeof tenantRuntimeClients> | undefined;
+  const getClients = (): ReturnType<typeof tenantRuntimeClients> => clients ??= tenantRuntimeClients(
+    input.env, input.tenant_context, tenantConfiguredDesiredEffectByCapability(input.env));
   const trustedWorkspaceConnections = parseWorkspaceConnectionHints(input.env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON);
   const preflightDestinationSlack = (destinations: readonly MeetingMinutesDestination[]) =>
     preflightMeetingMinutesDestinationSlackBindings({
@@ -975,12 +976,12 @@ function createMeetingMinutesTenantEffectGuard(input: {
     createTenantCredentialFetch({
     envelope: tenantContext,
     expected_scope: expectedScope,
-    broker: clients.credential_broker,
+    broker: getClients().credential_broker,
     trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
       env: input.env,
       tenant_context: tenantContext,
     }),
-    read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+    read_authoritative_snapshot: () => getClients().authority.read_workspace_connection(
       tenantContext.workspace_connection.connection_id),
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(input.env, keyId),
     now: input.now,
@@ -995,7 +996,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
       expected_scope: expectedScope,
       ownership: createDurableTenantStateClient(input.env.TENANT_RUNTIME_STATE,
         tenantContext.tenant.tenant_id),
-      read_authoritative_snapshot: () => clients.authority.read_workspace_connection(
+      read_authoritative_snapshot: () => getClients().authority.read_workspace_connection(
         tenantContext.workspace_connection.connection_id,
       ),
       resolve_verification_key: (keyId) => resolveTenantVerificationKey(input.env, keyId),
@@ -1084,7 +1085,7 @@ function createMeetingMinutesTenantEffectGuard(input: {
         deployment_id: tenantContext.placement.deployment_id,
       };
       const verifier = new TenantRuntimeBoundaryVerifier({
-        read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+        read_authoritative_snapshot: (connectionId) => getClients().authority.read_workspace_connection(connectionId),
         resolve_verification_key: (keyId) => resolveTenantVerificationKey(input.env, keyId),
       });
       return runSlack(effectId, event, tenantContext, expectedScope, verifier, execute);

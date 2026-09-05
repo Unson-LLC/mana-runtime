@@ -684,7 +684,7 @@ describe("会社別Cloudflare deployment", () => {
     const guardStart = worker.indexOf("function createMeetingMinutesTenantEffectGuard(");
     const guardEnd = worker.indexOf("function meetingMinutesClients(", guardStart);
     const guard = worker.slice(guardStart, guardEnd);
-    expect(guard).toContain("tenantRuntimeClients(input.env, input.tenant_context,");
+    expect(guard).toContain("tenantRuntimeClients(\n    input.env, input.tenant_context,");
     expect(guard).not.toContain("tenantRuntimeClients(input.env);");
     expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeGreaterThanOrEqual(0);
     expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeLessThan(
