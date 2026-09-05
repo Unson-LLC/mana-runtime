@@ -14,6 +14,7 @@ import {
   readAdminJsonRequest,
   validateMeetingMinutesAdminTaskIds,
 } from "./admin-json-input.js";
+import { meetingMinutesCompletedProjectionRepair } from "./meeting-minutes-lifecycle.js";
 import {
   handleSandboxAdminRequest,
   isSandboxAdminAuthorized,
@@ -3371,10 +3372,18 @@ export default {
             tenantContext.tenant.tenant_id, input.workspaceId, input.runId,
           ));
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-          const run = await withDisposableResource(() => getWorkspace(handle),
+          const storedRun = await withDisposableResource(() => getWorkspace(handle),
             (workspace) => loadMeetingMinutesRun(workspace.fs, input.runId));
-          if (!run || run.status !== "completed" || run.sourceChannelId !== input.channelId
-            || run.sourceThreadTs !== input.sourceThreadTs || !run.slack?.processingTs) {
+          const run = meetingMinutesCompletedProjectionRepair(storedRun,
+            { channelId: input.channelId, threadTs: input.sourceThreadTs });
+          if (!run) {
+            console.warn(JSON.stringify({ event: "meeting_minutes_projection_repair_rejected", runId: input.runId,
+              found: Boolean(storedRun), status: storedRun?.status, failureStage: storedRun?.failure?.stage,
+              diagnosticStage: storedRun?.diagnostics?.stage, diagnosticCode: storedRun?.diagnostics?.code,
+              hasGenerated: Boolean(storedRun?.generated), hasGitHub: Boolean(storedRun?.github),
+              hasSlackParent: Boolean(storedRun?.slack?.parentTs), hasProcessingStatus: Boolean(storedRun?.slack?.processingTs),
+              sourceMatches: storedRun?.sourceChannelId === input.channelId
+                && storedRun?.sourceThreadTs === input.sourceThreadTs }));
             throw new Error("meeting_minutes_completed_run_not_found");
           }
           await meetingMinutesClients(env, effects, tenantContext).slack.updateRunStatus(run, "completed");
