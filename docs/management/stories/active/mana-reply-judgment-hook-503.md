@@ -35,6 +35,7 @@ related_stories:
 - [x] AC6: 全PostToolUse/PostToolUseFailure受領票に`tool_use_id`と`tool_name`を必須とし、当該attemptの`UserPromptSubmit`以降に現れた各Brainbase受領票だけを実呼び出しへ結合する。PreToolUseで拒否された呼び出しは、terminal resultの`permission_denials`にある`tool_use_id`と`tool_name`が呼び出しおよびエラー`tool_result`へ厳密一致し、Post Tool受領票が存在しない場合だけ実行済みから除外する。成功の`tool_result`はPostToolUse、拒否以外のエラー`tool_result`はPostToolUseFailureと厳密に照合し、エラー呼び出しも記録する。同一受領票の再掲だけを1件として扱い、開始境界以降の異なる内容・識別子欠落・受領票欠落・監査欠落・未完了監査・成功失敗種別の不一致、拒否情報と結果・受領票の矛盾はfail closedする。
 - [x] AC7: 監査不一致はfail closedを維持したまま固定語彙の非機密サブコードで分類し、raw stream、tool引数、回答本文、receipt IDを保存せずに本番の発火条件をreadbackできる。
 - [ ] AC8: A0の外部効果照合が同一Slack messageのruntime claimを保持している間でも、T0がQueueをackできるのは、署名検証済みのtenant contextと同一tenant / effect / delivery / claim tokenへ結合された未完了reconciliation jobをDurable Objectから読めた場合だけとする。jobの欠落・不一致・読取不能、pre-send失敗、通常の`in_progress` claimは従来どおりQueue再試行を維持する。
+- [x] AC9: 監査不一致で通常回答を投稿できない場合も、未承認の本文や内部監査情報を外部へ出さず、既存のtenant-owned Slack送信境界から固定の日本語通知を同じthreadへ送る。通知済みの処理は成功ではなくfailure codeと`reply_state=delivered`を持つfailed会計として保存し、pending状態、保存失敗、Queue再試行、既存通知を考慮して重複投稿を抑止する。
 
 ## 非対象
 
