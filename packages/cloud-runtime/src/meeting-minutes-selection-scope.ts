@@ -27,6 +27,12 @@ export function resolveMeetingMinutesDestinationProjectScope(
   } catch (error) {
     if (!(error instanceof TenantBoundaryError) || error.code !== "PROJECT_SCOPE_MISMATCH") throw error;
   }
+  // Brainbase can sign a destination authority together with other projects
+  // already authorized for the same tenant. Keep that exact signed set while
+  // requiring the configured destination authority to be present.
+  if (authorization.project_ids.includes(authorityProjectId)) {
+    return { project_id: authorityProjectId, project_ids: [...authorization.project_ids] };
+  }
   return resolveCanonicalProjectScope(authorization, [destination.contextProjectCode], boundary);
 }
 
