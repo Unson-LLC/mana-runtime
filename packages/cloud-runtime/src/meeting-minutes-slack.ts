@@ -201,7 +201,8 @@ function isBrainbaseProjectBindingFailure(run: MeetingMinutesRun): boolean {
   ));
 }
 function safeFailureDetails(run: MeetingMinutesRun): string[] {
-  const failure = run.projectionFailure ?? (run.diagnostics?.failedAt ? run.diagnostics : undefined);
+  const processingFailure = run.diagnostics?.failedAt ? run.diagnostics : undefined;
+  const failure = processingFailure ?? run.projectionFailure;
   const taskFailure = run.taskRegistration?.failure;
   const stage = failure?.stage ?? taskFailure?.stage ?? run.failure?.stage;
   const code = failure?.code ?? (taskFailure ? "TASK_REGISTRATION_FAILED" : "UNCLASSIFIED_FAILURE");
@@ -215,7 +216,10 @@ function safeFailureDetails(run: MeetingMinutesRun): string[] {
     status_projection: "状態表示",
   };
   return [`処理ID: ${run.runId}`, `失敗段階: ${stage ? stageLabels[stage] ?? "不明" : "不明（旧形式）"}`,
-    `エラーコード: ${code}`, `問い合わせID: ${correlationId}`];
+    `エラーコード: ${code}`, `問い合わせID: ${correlationId}`,
+    processingFailure && run.projectionFailure
+      ? `状態表示エラー: ${run.projectionFailure.code ?? "STATUS_PROJECTION_FAILED"}` : undefined]
+    .filter((line): line is string => Boolean(line));
 }
 
 function taskActionFailureDetails(failure: MeetingMinutesTaskActionFailure): string[] {
@@ -282,7 +286,7 @@ function failedRunDetails(run: MeetingMinutesRun): string[] {
       "認証設定を修正するまで再実行しても成功しません。運用担当者へ確認してください。"];
   } else {
     details = ["*⚠️ 議事録の作成に失敗しました*", destination,
-      (run.projectionFailure ?? run.diagnostics)?.retryable === false
+      (run.diagnostics?.failedAt ? run.diagnostics : run.projectionFailure)?.retryable === false
         ? "同じ条件では再実行せず、処理IDを添えて運用担当者へ確認してください。"
         : "下のボタンから再実行できます。"];
   }
@@ -464,7 +468,7 @@ export class MeetingMinutesSlackClient {
       : failedRunDetails(run).join("\n");
     const diagnosticFailure = run.diagnostics?.failedAt ? run.diagnostics : undefined;
     const hasLifecycleFailure = !completed || Boolean(run.failure || run.projectionFailure || diagnosticFailure || run.taskRegistration?.failure);
-    const lifecycleFailure = run.projectionFailure ?? diagnosticFailure;
+    const lifecycleFailure = diagnosticFailure ?? run.projectionFailure;
     const lifecycleStage = lifecycleFailure?.stage ?? run.taskRegistration?.failure?.stage ?? run.failure?.stage ?? "unknown";
     const lifecycleCode = lifecycleFailure?.code
       ?? (run.taskRegistration?.failure ? "TASK_REGISTRATION_FAILED" : "UNCLASSIFIED_FAILURE");
@@ -485,7 +489,8 @@ export class MeetingMinutesSlackClient {
         action_id: MEETING_MINUTES_REDO_ACTION_ID,
         value: JSON.stringify({ runId: run.runId, fileName: run.file.name, revision: run.revision ?? 0 }) });
       blocks.push({ type: "actions", elements });
-    } else if (!permanentBrainbaseFailure && (run.projectionFailure ?? run.diagnostics)?.retryable !== false) {
+    } else if (!permanentBrainbaseFailure
+      && (diagnosticFailure ?? run.projectionFailure)?.retryable !== false) {
       blocks.push({ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "再実行" },
         action_id: `${MEETING_MINUTES_CHOOSE_ACTION_ID}:${run.destination.id}`,
         value: JSON.stringify({ runId: run.runId, destinationId: run.destination.id,
@@ -500,7 +505,12 @@ export class MeetingMinutesSlackClient {
    */
   async projectStatusFailure(run: MeetingMinutesRun): Promise<void> {
     if (!run.slack?.processingTs) throw new Error("meeting_minutes_status_coordinates_missing");
-    const message = statusProjectionFailedMessage(run.runId, run.file.name);
+    const processingFailure = run.diagnostics?.failedAt ? run.diagnostics : undefined;
+    const message = processingFailure
+      ? { text: `議事録作成に失敗しました: ${run.file.name}`,
+        blocks: [{ type: "section", text: { type: "mrkdwn",
+          text: [`*⚠️ 議事録作成に失敗しました*`, ...safeFailureDetails(run)].join("\n") } }] }
+      : statusProjectionFailedMessage(run.runId, run.file.name);
     await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs,
       text: message.text, blocks: message.blocks });
   }

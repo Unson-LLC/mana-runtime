@@ -103,4 +103,20 @@ describe("meeting minutes diagnostics", () => {
       failurePoint: "task_create", pendingPresent: false } });
     expect(JSON.stringify(entry)).not.toContain("secret");
   });
+
+  it("keeps the primary processing failure when status projection also fails", () => {
+    const run = { version: 1, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
+      sourceThreadTs: "1", sourceMessageTs: "1", file: { id: "F1", name: "m.txt" }, status: "failed",
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1", stage: "github_save",
+        code: "GITHUB_SAVE_FAILED", retryable: true, failedAt: "2026-09-06T00:00:00.000Z" },
+      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true,
+        failedAt: "2026-09-06T00:00:01.000Z" },
+      createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:01.000Z" } as MeetingMinutesRun;
+
+    expect(meetingMinutesFailureLog(run)).toMatchObject({
+      stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      primaryFailure: { stage: "github_save", code: "GITHUB_SAVE_FAILED" },
+      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED" },
+    });
+  });
 });

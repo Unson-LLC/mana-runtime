@@ -120,12 +120,15 @@ export interface MeetingMinutesFailureLog {
   retryable: boolean;
   receipt?: unknown;
   checkpoint?: unknown;
+  primaryFailure?: { stage: string; code: string; retryable: boolean };
+  projectionFailure?: { stage: "status_projection"; code: string; retryable: boolean };
   taskFailure?: { index?: number; status?: number; code?: string;
     failurePoint?: "assignee_resolution" | "task_create" | "task_scope_update"; pendingPresent: boolean };
 }
 
 export function meetingMinutesFailureLog(run: MeetingMinutesRun): MeetingMinutesFailureLog {
-  const failure = run.redo?.failure ?? run.projectionFailure ?? run.diagnostics;
+  const processingFailure = run.diagnostics?.failedAt ? run.diagnostics : undefined;
+  const failure = run.redo?.failure ?? run.projectionFailure ?? processingFailure;
   const taskFailure = run.taskRegistration?.failure;
   return { runId: run.runId, stage: failure?.stage ?? "unknown",
     code: failure?.code ?? "UNCLASSIFIED_FAILURE", retryable: failure?.retryable ?? true,
@@ -133,6 +136,15 @@ export function meetingMinutesFailureLog(run: MeetingMinutesRun): MeetingMinutes
     taskFailure: taskFailure ? { index: taskFailure.index, status: taskFailure.status,
       code: taskFailure.code, failurePoint: taskFailure.failurePoint,
       pendingPresent: Boolean(run.taskRegistration?.pending) } : undefined,
+    primaryFailure: run.projectionFailure && processingFailure ? {
+      stage: processingFailure.stage ?? run.failure?.stage ?? "unknown",
+      code: processingFailure.code ?? "UNCLASSIFIED_FAILURE",
+      retryable: processingFailure.retryable ?? true,
+    } : undefined,
+    projectionFailure: run.projectionFailure ? {
+      stage: "status_projection", code: run.projectionFailure.code ?? "STATUS_PROJECTION_FAILED",
+      retryable: run.projectionFailure.retryable ?? true,
+    } : undefined,
     checkpoint: run.diagnostics?.checkpoint ?? { hasGitHub: Boolean(run.github),
       hasSlackParent: Boolean(run.slack?.parentTs), postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 } };
 }
