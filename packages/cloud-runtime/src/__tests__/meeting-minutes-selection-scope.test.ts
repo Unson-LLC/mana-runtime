@@ -88,6 +88,20 @@ describe("meetingMinutesSelectionDestination", () => {
     });
   });
 
+  it("preserves a signed multi-project set containing the destination authority", () => {
+    expect(resolveMeetingMinutesDestinationProjectScope({
+      project_ids: ["prj_source", "prj_techknight"], data_scopes: [],
+    }, council, "prj_techknight", "queue_consumer")).toEqual({
+      project_id: "prj_techknight", project_ids: ["prj_source", "prj_techknight"],
+    });
+  });
+
+  it("rejects a signed multi-project set without the destination authority", () => {
+    expect(() => resolveMeetingMinutesDestinationProjectScope({
+      project_ids: ["prj_source", "prj_other"], data_scopes: [],
+    }, council, "prj_techknight", "queue_consumer")).toThrowError(TenantBoundaryError);
+  });
+
   it("accepts a canonical signed id attested to the destination project code", () => {
     expect(resolveMeetingMinutesDestinationProjectScope({
       project_ids: ["prj_canonical"],
