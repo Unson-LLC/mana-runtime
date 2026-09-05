@@ -745,7 +745,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("destinations.find((candidate) => candidate.slackChannelId === channelId)");
     expect(worker).toContain("isTenantTaskBoardRepairBody(message.body)");
     expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
-    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch,");
     expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
     expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context,/g)).toHaveLength(4);
     expect(worker).toContain("tenantRuntimeClients(runtimeEnv, tenantContext,");
@@ -805,7 +805,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toMatch(
       /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*placement,\s*requesterResolution\.personId,\s*\)/,
     );
-    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
+    expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch,");
     expect(worker).toContain("enqueueScheduledTaskBoardRepair(");
     expect(worker).toContain("resolveTaskBoardRepairTenantContext(env, repair)");
     expect(worker).toContain("`task-board-repair:${targetId}:${run.runId}:${run.updatedAt}`");

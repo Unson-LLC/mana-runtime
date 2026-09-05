@@ -132,20 +132,22 @@ export async function processTaskBoardRepair(
   refresh: (bindings: TaskBoardEnv, options?: { fetch?: typeof fetch }) => Promise<unknown> = refreshTaskBoard,
   createCanvas: (channelId: string, token: string | undefined,
     options?: { fetch?: typeof fetch }) => Promise<string> = createManagedTaskBoardCanvas,
+  expectedWorkspaceId = env.SLACK_EXPECTED_TEAM_ID,
 ): Promise<void> {
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
-  const placementScopeMatches = Boolean(target && taskBoardPlacementMatchesTarget(env, target));
+  const destinationWorkspace = Boolean(target && target.workspaceId === expectedWorkspaceId);
+  const placementScopeMatches = Boolean(target && (taskBoardPlacementMatchesTarget(env, target)
+    || (destinationWorkspace && target.workspaceId !== env.SLACK_EXPECTED_TEAM_ID)));
   if (
     repair.tenantId !== expectedTenantId ||
-    !target || target.organizationId !== env.TENANT_ID || target.workspaceId !== env.SLACK_EXPECTED_TEAM_ID || !target.enabled
+    !target || !destinationWorkspace || !target.enabled
     || !placementScopeMatches
     || (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ||
     repair.workspaceId !== target.workspaceId || repair.channelId !== target.channelId ||
     repair.manaCanvasId !== target.manaCanvasId || repair.bindingRevision !== target.bindingRevision
   ) {
     const rejectionReason = repair.tenantId !== expectedTenantId ? "tenant_mismatch" :
-      !target ? "target_unknown" : target.organizationId !== env.TENANT_ID ? "target_tenant_mismatch"
-        : target.workspaceId !== env.SLACK_EXPECTED_TEAM_ID ? "target_workspace_mismatch"
+      !target ? "target_unknown" : !destinationWorkspace ? "target_workspace_mismatch"
         : !target.enabled ? "target_disabled" :
         !placementScopeMatches ? "placement_scope_mismatch" :
         (!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision ? "canvas_binding_missing" :
@@ -199,6 +201,8 @@ export async function processTaskBoardRepair(
     SLACK_ALLOWED_CHANNEL_ID: target.channelId,
     TASK_BOARD_CANVAS_ID: canvasId,
     RUNTIME_PROJECT_CODES: target.projectCodes.join(",") }, { fetch: credentialFetch });
+  console.log(JSON.stringify({ event: "task_board_repair_completed", targetId: target.targetId,
+    workspaceId: target.workspaceId, channelId: target.channelId, canvasId }));
 }
 
 export async function enqueueScheduledTaskBoardRepair(
@@ -271,7 +275,16 @@ export async function enqueueMeetingMinutesTaskBoardRepair(env: TaskBoardRuntime
 ): Promise<void> {
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === targetId);
   if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
-  const scopeReason = taskBoardTargetScopeReason(env, target);
+  // Meeting destinations may be another Slack workspace owned by the same
+  // signed Brainbase tenant. Static Worker ownership is intentionally not used
+  // here; the derived tenant envelope and queue consumer bind the exact
+  // destination workspace/channel before credentials are issued.
+  const crossWorkspaceDestination = target.workspaceId !== env.SLACK_EXPECTED_TEAM_ID;
+  const scopeReason = crossWorkspaceDestination
+    ? (!target.enabled ? "target_disabled"
+      : ((!target.manaCanvasId && !target.autoProvision) || !target.bindingRevision)
+        ? "canvas_binding_missing" : null)
+    : taskBoardTargetScopeReason(env, target);
   if (scopeReason) {
     console.info(JSON.stringify({ event: "task_board_repair_suppressed", targetId,
       reason: scopeReason }));

@@ -323,8 +323,8 @@ describe("Cloudflare task runtime entrypoints", () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     await expect(processTaskBoardRepair({ ...repair, targetId: "tech", workspaceId: "T07A9J3PEMB",
       channelId: "C0BKX9Y169F", manaCanvasId: "FTECH", bindingRevision: 2 },
-    env, "unson-business", fetch, refresh)).rejects.toThrow("task_board_scope_mismatch");
-    expect(refresh).not.toHaveBeenCalled();
+    env, "unson-business", fetch, refresh, undefined, "T07A9J3PEMB")).resolves.toBeUndefined();
+    expect(refresh).toHaveBeenCalledOnce();
     info.mockRestore();
   });
 
