@@ -1961,7 +1961,7 @@ function expectedTenantTaskBoardRepairScope(
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: repair.workspaceId,
-    app_id: requiredRuntimeBinding(env.SLACK_EXPECTED_APP_ID),
+    app_id: envelope.workspace_connection.app_id,
     channel_id: repair.channelId,
     thread_ts: repair.requestedAt,
     actor_principal_id: envelope.actor.principal_id,
@@ -4023,7 +4023,8 @@ export default {
                   verifier,
                   now: now(),
                   execute: async () => {
-                    await processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch);
+                    await processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch,
+                      undefined, undefined, tenantContext.workspace_connection.workspace_id);
                     return { outcome: "completed" as const };
                   },
                 }),

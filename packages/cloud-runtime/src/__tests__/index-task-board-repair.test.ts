@@ -75,7 +75,7 @@ describe("Worker task Canvas repair producers", () => {
     info.mockRestore();
   });
 
-  it("suppresses active meeting and project repairs outside tenant, workspace, or placement scope", async () => {
+  it("enqueues a signed cross-workspace meeting repair but suppresses generic project fanout", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const foreignTarget = { ...disabledTarget, enabled: true, manaCanvasId: "FFOREIGN", bindingRevision: 1 };
@@ -90,7 +90,10 @@ describe("Worker task Canvas repair producers", () => {
     await enqueueMeetingMinutesTaskBoardRepair(env, "minutes-pms", "task_write", tenantContext);
     await enqueueTaskBoardRepairsForProjects(env, ["proj_pms"], "task_write", tenantContext);
 
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({
+      targetId: "minutes-pms", tenantId: "ten_test", workspaceId: "T07A9J3PEMB",
+    }) }));
     expect(info).toHaveBeenCalledWith(JSON.stringify({ event: "task_board_repair_suppressed",
       targetId: "minutes-pms", reason: "tenant_mismatch" }));
     info.mockRestore();
