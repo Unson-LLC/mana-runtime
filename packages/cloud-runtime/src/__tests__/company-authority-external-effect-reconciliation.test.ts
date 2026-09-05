@@ -229,11 +229,35 @@ describe("company authority external effect reconciliation boundary", () => {
   });
 
   it("acknowledges only an uncompleted durable job bound to tenant, effect, delivery, and claim", async () => {
-    const { queue } = await createUnknownEffect();
+    const { queue, job } = await createUnknownEffect();
 
     await expect(hasVerifiedPendingExternalEffectReconciliation(
       pendingReconciliationInput(queue),
     )).resolves.toBe(true);
+
+    await queue.update?.({
+      ...job,
+      settlement: {
+        state: "accounting_completed",
+        result_ref: `slack:${recovery.delivery_identity.channel_id}:${recovery.delivery_identity.response_ts}`,
+        updated_at: "2026-09-05T05:00:00.000Z",
+      },
+    });
+    await expect(hasVerifiedPendingExternalEffectReconciliation(
+      pendingReconciliationInput(queue),
+    )).resolves.toBe(true);
+
+    await queue.update?.({
+      ...job,
+      settlement: {
+        state: "settled",
+        result_ref: `slack:${recovery.delivery_identity.channel_id}:${recovery.delivery_identity.response_ts}`,
+        updated_at: "2026-09-05T05:00:01.000Z",
+      },
+    });
+    await expect(hasVerifiedPendingExternalEffectReconciliation(
+      pendingReconciliationInput(queue),
+    )).resolves.toBe(false);
   });
 
   it("durably stores one tenant/effect reconciliation job and rejects scope or identity conflicts", async () => {

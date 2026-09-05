@@ -136,7 +136,10 @@ export async function hasVerifiedPendingExternalEffectReconciliation(input: {
     // outer Queue retry rather than acknowledge an unprovable duplicate.
     return false;
   }
-  if (!job || job.settlement !== undefined) return false;
+  // Intermediate settlement markers still mean A0 owns an unfinished,
+  // durable recovery path. Only the terminal marker makes the preserved
+  // runtime claim ineligible for duplicate T0 acknowledgement.
+  if (!job || job.settlement?.state === "settled") return false;
 
   try {
     assertValidExternalEffectReconciliationJob(job);
