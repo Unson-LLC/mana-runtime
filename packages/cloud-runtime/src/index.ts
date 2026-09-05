@@ -93,7 +93,8 @@ import { classifyMeetingMinutesDestinationInSandbox,
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
-import { hasStableMeetingMinutesRecoveryAuthority } from "./meeting-minutes-recovery-authority.js";
+import { hasStableMeetingMinutesRecoveryAuthority,
+  meetingMinutesRecoveryAuthorityMismatches } from "./meeting-minutes-recovery-authority.js";
 import { isReplyEligible, postSlackReply, ReplyPipelineError, type ReplyProcessResult } from "./reply-pipeline.js";
 import { executeReplyRuntime } from "./reply-runtime-execution.js";
 import { readReplyJudgmentEpisode } from "./reply-judgment.js";
@@ -723,6 +724,9 @@ async function reissueMeetingMinutesRecoveryTenantContext(
   });
   const fresh = resolved.tenant_context;
   if (!hasStableMeetingMinutesRecoveryAuthority(fresh, authorization)) {
+    console.error(JSON.stringify({ event: "meeting_minutes_recovery_authority_mismatch",
+      boundary: "queue_consumer",
+      mismatches: meetingMinutesRecoveryAuthorityMismatches(fresh, authorization) }));
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
   return fresh;
@@ -768,6 +772,9 @@ async function reissueMeetingMinutesAdminSelectionTenantContext(
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
   })).tenant_context;
   if (!hasStableMeetingMinutesRecoveryAuthority(fresh, authorization)) {
+    console.error(JSON.stringify({ event: "meeting_minutes_recovery_authority_mismatch",
+      boundary: "worker_ingress",
+      mismatches: meetingMinutesRecoveryAuthorityMismatches(fresh, authorization) }));
     deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
   }
   return fresh;
