@@ -35,6 +35,11 @@ describe("Worker task Canvas repair producers", () => {
     expect(resumeClient).toContain("execute: () => processTaskBoardRepair(repair, env, repair.tenantId, repairCredentialFetch,");
     expect(resumeClient).not.toContain("enqueueMeetingMinutesTaskBoardRepair(");
     expect(resumeClient).toContain("const repairTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext");
+    expect(resumeClient).toContain("const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding");
+    expect(resumeClient).toContain("app_id: destinationSlackBinding.app_id");
+    expect(resumeClient).toContain('{ workspace_policy: "same_tenant", destination }');
+    expect(resumeClient.indexOf("resolveMeetingMinutesDestinationSlackBinding"))
+      .toBeLessThan(resumeClient.indexOf("resolveDerivedSlackTenantContext"));
     expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
     expect(source.match(/requester_id: requiredRuntimeBinding\((?:taskBoardT|t)enantContext\.slack\.requester_id\)/g))
       .toHaveLength(2);

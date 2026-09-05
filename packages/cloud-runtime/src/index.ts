@@ -1316,6 +1316,24 @@ function meetingMinutesClients(
       repairTaskBoard: async (targetId: string) => {
         const target = taskBoardTargets(env).find((candidate) => candidate.targetId === targetId);
         if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
+        const destination = destinations.find((candidate) => candidate.taskBoardTargetId === targetId
+          && candidate.organization.id === target.organizationId);
+        const ambiguousDestination = destinations.some((candidate) => candidate !== destination
+          && candidate.taskBoardTargetId === targetId);
+        if (!destination || ambiguousDestination) {
+          throw new Error(`meeting_minutes_task_board_destination_not_found:${targetId}`);
+        }
+        const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding({
+          organizationId: destination.organization.id,
+          destination,
+          destinationTeamIdsJson: env.MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON,
+          trustedWorkspaceConnections: parseWorkspaceConnectionHints(env.BRAINBASE_WORKSPACE_CONNECTIONS_JSON),
+          sourceTenantId: tenantContext.tenant.tenant_id,
+          sourceWorkspaceId: tenantContext.workspace_connection.workspace_id,
+          sourceAppId: tenantContext.workspace_connection.app_id,
+          sourceDeploymentId: tenantContext.placement.deployment_id,
+          sourceProfile: tenantContext.placement.profile,
+        });
         const repair: TaskBoardRepairEvent = {
           eventType: "task_board_repair",
           tenantId: "",
@@ -1328,13 +1346,14 @@ function meetingMinutesClients(
           requestedAt: new Date().toISOString(),
         };
         const repairTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
-          app_id: tenantContext.workspace_connection.app_id,
+          app_id: destinationSlackBinding.app_id,
           workspace_id: repair.workspaceId,
           event_id: taskBoardRepairEventId(repair),
           channel_id: repair.channelId,
           thread_ts: repair.requestedAt,
           requester_id: requiredRuntimeBinding(tenantContext.slack.requester_id),
-        }, undefined, () => tenantConfiguredDesiredEffectByCapability(env));
+        }, { workspace_policy: "same_tenant", destination },
+        () => tenantConfiguredDesiredEffectByCapability(env));
         repair.tenantId = repairTenantContext.tenant.tenant_id;
         const repairBody: TenantQueueBody<TaskBoardRepairEvent> = {
           schema_version: "1.0",
