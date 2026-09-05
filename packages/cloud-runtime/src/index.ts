@@ -628,7 +628,7 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 }
 
 function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
-  return { runId: run.runId, status: run.status,
+  return { runId: run.runId, status: run.status, updatedAt: run.updatedAt,
     destinationId: run.destination?.id, diagnostics: run.diagnostics,
     taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
       pendingPresent: Boolean(run.taskRegistration?.pending),
@@ -1313,20 +1313,71 @@ function meetingMinutesClients(
         { kind: "task_card", runId: run.runId, channelId: run.destination!.slackChannelId },
         (credentialFetch, destinationToken) => destinationSlack(
           run.destination!, credentialFetch, destinationToken).postTaskCard(run)),
-      repairTaskBoard: (targetId: string) =>
-        effects.boundary("durable_object", () => enqueueMeetingMinutesTaskBoardRepair(
-          env,
-          targetId,
-          "task_write",
-          (repair) => resolveDerivedSlackTenantContext(env, tenantContext, {
-            app_id: tenantContext.workspace_connection.app_id,
-            workspace_id: repair.workspaceId,
-            event_id: taskBoardRepairEventId(repair),
-            channel_id: repair.channelId,
-            thread_ts: repair.requestedAt,
-            requester_id: requiredRuntimeBinding(tenantContext.slack.requester_id),
-          }, undefined, () => tenantConfiguredDesiredEffectByCapability(env)),
-        )),
+      repairTaskBoard: async (targetId: string) => {
+        const target = taskBoardTargets(env).find((candidate) => candidate.targetId === targetId);
+        if (!target) throw new Error(`meeting_minutes_task_board_target_not_found:${targetId}`);
+        const repair: TaskBoardRepairEvent = {
+          eventType: "task_board_repair",
+          tenantId: "",
+          targetId: target.targetId,
+          workspaceId: target.workspaceId,
+          channelId: target.channelId,
+          manaCanvasId: target.manaCanvasId,
+          bindingRevision: target.bindingRevision!,
+          reason: "task_write",
+          requestedAt: new Date().toISOString(),
+        };
+        const repairTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext, {
+          app_id: tenantContext.workspace_connection.app_id,
+          workspace_id: repair.workspaceId,
+          event_id: taskBoardRepairEventId(repair),
+          channel_id: repair.channelId,
+          thread_ts: repair.requestedAt,
+          requester_id: requiredRuntimeBinding(tenantContext.slack.requester_id),
+        }, undefined, () => tenantConfiguredDesiredEffectByCapability(env));
+        repair.tenantId = repairTenantContext.tenant.tenant_id;
+        const repairBody: TenantQueueBody<TaskBoardRepairEvent> = {
+          schema_version: "1.0",
+          tenant_context: repairTenantContext,
+          payload: repair,
+        };
+        const repairExpectedScope = expectedTenantTaskBoardRepairScope(env, repairBody);
+        const repairClients = tenantRuntimeClients(env, repairTenantContext,
+          tenantConfiguredDesiredEffectByCapability(env));
+        const repairVerifier = new TenantRuntimeBoundaryVerifier({
+          read_authoritative_snapshot: (connectionId) => repairClients.authority.read_workspace_connection(connectionId),
+          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+        });
+        const repairCredentialFetch = createTenantCredentialFetch({
+          envelope: repairTenantContext,
+          expected_scope: repairExpectedScope,
+          broker: repairClients.credential_broker,
+          trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({
+            env,
+            tenant_context: repairTenantContext,
+          }),
+          read_authoritative_snapshot: () => repairClients.authority.read_workspace_connection(
+            repairTenantContext.workspace_connection.connection_id),
+          resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+          now: () => new Date().toISOString(),
+        });
+        await executeTenantBoundary({
+          boundary: "brainbase_proxy",
+          tenant_context: repairTenantContext,
+          expected_scope: repairExpectedScope,
+          verifier: repairVerifier,
+          now: new Date().toISOString(),
+          execute: () => executeTenantBoundary({
+            boundary: "slack_delivery",
+            tenant_context: repairTenantContext,
+            expected_scope: repairExpectedScope,
+            verifier: repairVerifier,
+            now: new Date().toISOString(),
+            execute: () => processTaskBoardRepair(repair, env, repair.tenantId, repairCredentialFetch,
+              undefined, undefined, repair.workspaceId),
+          }),
+        });
+      },
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>
         effects.destinationSlack(`destination-thread:${clientMsgId}:${index}`, destinationForChannel(channelId), threadTs,

@@ -27,8 +27,14 @@ describe("Worker task Canvas repair producers", () => {
 
     expect(source).not.toMatch(/async function enqueueMeetingMinutesTaskBoardRepair\s*\(/);
     expect(source.match(/enqueueMeetingMinutesTaskBoardRepair\(\s*env,\s*targetId,\s*"task_write",/g))
-      .toHaveLength(2);
-    expect(source).toContain("(repair) => resolveDerivedSlackTenantContext(env, tenantContext");
+      .toHaveLength(1);
+    const resumeClientStart = source.indexOf("function meetingMinutesClients(");
+    const resumeClient = source.slice(resumeClientStart,
+      source.indexOf("async function processTenantMeetingMinutesSelection(", resumeClientStart));
+    expect(resumeClient).toContain("repairTaskBoard: async (targetId: string) =>");
+    expect(resumeClient).toContain("execute: () => processTaskBoardRepair(repair, env, repair.tenantId, repairCredentialFetch,");
+    expect(resumeClient).not.toContain("enqueueMeetingMinutesTaskBoardRepair(");
+    expect(resumeClient).toContain("const repairTenantContext = await resolveDerivedSlackTenantContext(env, tenantContext");
     expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
     expect(source.match(/requester_id: requiredRuntimeBinding\((?:taskBoardT|t)enantContext\.slack\.requester_id\)/g))
       .toHaveLength(2);
