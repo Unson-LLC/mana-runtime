@@ -31,6 +31,8 @@ const brainbaseLine = "📚 Brainbase参照先: 「質問」→ 採用: workspac
 const zeroCallLine = "📚 Brainbase未参照: 必須参照なし・実呼び出し0回 ✓";
 const secondBrainbaseLine = "📚 Brainbase参照先: 「追加質問」→ 採用: graph ✓";
 const failedOptionalBrainbaseLine = "⚠️ Brainbase呼出: brainbase_bootstrap_config「入力なし」→ 失敗または結果不明";
+const failedRetrieveBrainbaseLine = "⚠️ Brainbase取得: get_context「質問」→ 失敗または結果不明";
+const failedSearchBrainbaseLine = "⚠️ Brainbase検索: search「質問」→ 失敗または結果不明";
 const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const verifiedAnswerPrefix = "__MANA_VERIFIED_ANSWER_V1__:";
 
@@ -91,6 +93,8 @@ function bindPostToolReceipt(stdout: string, toolUseId: string, toolName: string
 function stream(options: {
   withTool?: boolean;
   toolCount?: number;
+  toolAuditLines?: string[];
+  toolErrors?: boolean[];
   stop?: boolean;
   turn?: string;
   replyLines?: string[];
@@ -100,7 +104,7 @@ function stream(options: {
     hook("UserPromptSubmit", ""),
   ];
   const toolCount = options.toolCount ?? (options.withTool ? 1 : 0);
-  const toolAuditLines = [brainbaseLine, secondBrainbaseLine];
+  const toolAuditLines = options.toolAuditLines ?? [brainbaseLine, secondBrainbaseLine];
   for (let index = 0; index < toolCount; index += 1) {
     const toolNumber = index + 1;
     events.push(
@@ -112,7 +116,8 @@ function stream(options: {
         tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
       }),
       { type: "user", session_id: "session-1", message: { content: [
-        { type: "tool_result", tool_use_id: `tool-${toolNumber}`, content: "{}" },
+        { type: "tool_result", tool_use_id: `tool-${toolNumber}`,
+          ...(options.toolErrors?.[index] ? { is_error: true } : {}), content: "{}" },
       ] } },
     );
   }
@@ -643,6 +648,46 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
+  it.each([
+    ["retrieve", failedRetrieveBrainbaseLine],
+    ["search", failedSearchBrainbaseLine],
+  ])("accepts a Host-completed answer after a failed %s warning audit", (_operation, warningLine) => {
+    const result = parseReplyJudgmentStream(stream({
+      withTool: true,
+      toolAuditLines: [warningLine],
+      toolErrors: [true],
+      replyLines: ["回答本文"],
+    }));
+
+    expect(result).toMatchObject({
+      stop: "completed",
+      auditLines: [judgmentLine, warningLine],
+      toolJournal: [{
+        toolUseId: "tool-1",
+        outcome: "error",
+      }],
+    });
+  });
+
+  it("accepts an unconfirmed knowledge_resolve followed by a successful retry", () => {
+    const unresolvedDestination = "⚠️ Brainbase参照先: 「質問」→ 参照先を確定できず（不在確定ではない）";
+    const result = parseReplyJudgmentStream(stream({
+      toolCount: 2,
+      toolAuditLines: [unresolvedDestination, brainbaseLine],
+      toolErrors: [true, false],
+      replyLines: ["回答本文"],
+    }));
+
+    expect(result).toMatchObject({
+      stop: "completed",
+      auditLines: [judgmentLine, unresolvedDestination, brainbaseLine],
+      toolJournal: [
+        { sequence: 1, toolUseId: "tool-1", outcome: "error" },
+        { sequence: 2, toolUseId: "tool-2", outcome: "success" },
+      ],
+    });
+  });
+
   it("fails closed when Stop reports an incomplete audit despite a bound PostToolUse receipt", () => {
     const lines = stream({ withTool: true, replyLines: ["回答本文"] }).split("\n");
     const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
@@ -682,6 +727,20 @@ describe("Slack reply Judgment lifecycle", () => {
     );
     postToolHook.stdout = JSON.stringify(postToolOutput);
     lines[postToolIndex] = JSON.stringify(postToolHook);
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
+  });
+
+  it.each([
+    ["incomplete warning", "⚠️ Brainbase監査未完了: 参照有無を確認できず（不在確定ではない）"],
+    ["no-reference warning", "⚠️ Brainbase未参照: 必須参照なし・実呼び出し0回 ✓"],
+    ["generic warning", "⚠️ Brainbase: 失敗または結果不明"],
+  ])("rejects a PostToolUse %s as an evidence audit", (_label, warningLine) => {
+    const lines = stream({
+      withTool: true,
+      toolAuditLines: [warningLine],
+    }).split("\n");
+
     expect(() => parseReplyJudgmentStream(lines.join("\n")))
       .toThrow("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
   });
