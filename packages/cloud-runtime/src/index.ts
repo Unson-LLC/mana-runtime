@@ -4365,7 +4365,10 @@ export default {
               return runTenantOperation(async () => {
                 const completedReply = await readReplyCompletion(workspace.fs, event.eventId);
                 if (completedReply) {
-                  return { outcome: "already_completed" as const, responseTs: completedReply.responseTs };
+                  return {
+                    outcome: completedReply.outcome ?? "already_completed" as const,
+                    responseTs: completedReply.responseTs,
+                  };
                 }
                 return executeTenantContainerOperation({
                   tenant_context: tenantBody.tenant_context,
@@ -4374,6 +4377,19 @@ export default {
                   now: tenantConsumerOptions.now(),
                   execute: (tenantBoundaryHandle) => routeRuntimeEvent(event, {
                     meetingTasksEnabled: env.RUNTIME_EXECUTION_MODE === "meeting_tasks",
+                    processDisabledMeetingTask: async () => {
+                      const responseTs = await postTenantReply(event,
+                        "この環境では、議事録からのタスク登録はまだ利用できません。管理者に利用開始の設定を確認してください。");
+                      const completedAt = new Date().toISOString();
+                      await persistReplyCompletion(workspace.fs, {
+                        eventId: event.eventId,
+                        responseTs,
+                        completedAt,
+                        outcome: "meeting_tasks_disabled",
+                      });
+                      await markWorkspaceEngaged(workspace.fs, completedAt);
+                      return { outcome: "meeting_tasks_disabled", responseTs };
+                    },
                     processMeetingTask: () => {
                       const binding = placement;
                       return processMeetingTaskEvent(workspace.fs, event, {

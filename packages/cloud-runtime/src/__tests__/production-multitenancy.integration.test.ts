@@ -289,6 +289,79 @@ describe("production multitenancy integration", () => {
     }));
   });
 
+  it.each([false, true])("records disabled meeting tasks as failed and settles redelivery (accounting outage: %s)", async (accountingOutage) => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      workspace_id: "T-A",
+      channel_id: "C-A",
+      actor_principal_id: "person-a",
+      project_id: "project-a",
+      deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-DISABLED-MEETING-001",
+      operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FC4",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FC5",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+    const ledger = new TenantAccountingLedger();
+    const ownership = new IdempotencyMemoryStore();
+    const quota = { read_authoritative_decision: vi.fn(async () => allowedQuota(TENANT_A)) };
+    const accounting = { write: vi.fn(async (_payload: unknown) => ({ result_ref: "disabled-receipt" })) };
+    if (accountingOutage) accounting.write.mockRejectedValueOnce(new Error("accounting_unavailable"));
+    const terminalResult = { outcome: "meeting_tasks_disabled", responseTs: "1723800001.000002" };
+    const process = vi.fn(async () => terminalResult);
+    const run = (message: ReturnType<typeof queueMessage>) => consumeTenantQueueMessage(message, {
+      verifier,
+      expected_scope: () => expectedScopeA,
+      now: () => NOW,
+      process: () => executeTenantRuntimeOperation({
+        tenant_context: value,
+        expected_scope: expectedScopeA,
+        verifier,
+        quota,
+        accounting,
+        ledger,
+        usage_unit: "model_tokens",
+        now: () => NOW,
+        process,
+      }),
+      ownership,
+      payload_hash: () => `sha256:${"a".repeat(64)}`,
+      retention_until: () => RETENTION_UNTIL,
+      log_error: vi.fn(),
+    });
+
+    const first = queueMessage(value);
+    await run(first);
+    const replay = queueMessage(value);
+    await run(replay);
+    const duplicate = queueMessage(value);
+    await run(duplicate);
+
+    expect(first.ack).toHaveBeenCalledTimes(accountingOutage ? 0 : 1);
+    expect(first.retry).toHaveBeenCalledTimes(accountingOutage ? 1 : 0);
+    expect(replay.ack).toHaveBeenCalledOnce();
+    expect(replay.retry).not.toHaveBeenCalled();
+    expect(duplicate.ack).toHaveBeenCalledOnce();
+    expect(duplicate.retry).not.toHaveBeenCalled();
+    expect(process).toHaveBeenCalledOnce();
+    expect(quota.read_authoritative_decision).toHaveBeenCalledOnce();
+    expect(accounting.write).toHaveBeenCalledTimes(accountingOutage ? 2 : 1);
+    for (const [payload] of accounting.write.mock.calls) {
+      expect(payload).toMatchObject({
+        usage_events: [{ outcome: "failed", failure_code: "MEETING_TASKS_DISABLED", quantity: null }],
+        receipt: {
+          outcome: "failed",
+          failure_code: "MEETING_TASKS_DISABLED",
+          reply: { state: "delivered", slack_reply_ts: terminalResult.responseTs, reply_count: 1 },
+        },
+      });
+    }
+  });
+
   it("preserves an ambiguous reply state when processing fails after delivery was attempted", async () => {
     const { value, publicKey } = await signedEnvelope({
       tenant_id: TENANT_A,

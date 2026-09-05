@@ -7,6 +7,7 @@ import type { SlackQueueEvent } from "./types.js";
 
 export interface DisabledMeetingTaskResult {
   outcome: "meeting_tasks_disabled";
+  responseTs: string;
 }
 
 export type RuntimeEventResult =
@@ -18,6 +19,7 @@ export interface RuntimeEventRouterOptions {
   meetingTasksEnabled: boolean;
   processMeetingTask(): Promise<MeetingTaskProcessResult>;
   processReply(): Promise<ReplyProcessResult>;
+  processDisabledMeetingTask(): Promise<DisabledMeetingTaskResult>;
 }
 
 export async function routeRuntimeEvent(
@@ -25,6 +27,6 @@ export async function routeRuntimeEvent(
   options: RuntimeEventRouterOptions,
 ): Promise<RuntimeEventResult> {
   if (!isMeetingTaskRequest(event)) return options.processReply();
-  if (!options.meetingTasksEnabled) return { outcome: "meeting_tasks_disabled" };
+  if (!options.meetingTasksEnabled) return options.processDisabledMeetingTask();
   return options.processMeetingTask();
 }

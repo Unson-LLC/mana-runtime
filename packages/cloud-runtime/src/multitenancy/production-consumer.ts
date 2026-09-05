@@ -194,6 +194,17 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
       write: (payload) => input.accounting.write({ ...payload, tenant_context: input.tenant_context }),
     });
     if (pending.receipt.outcome !== "succeeded") {
+      const result = pendingResult && typeof pendingResult === "object"
+        ? pendingResult as RuntimeProcessResult
+        : undefined;
+      if (pending.receipt.outcome === "failed"
+        && pending.receipt.failure_code === "MEETING_TASKS_DISABLED"
+        && pending.receipt.reply.state === "delivered"
+        && result?.outcome === "meeting_tasks_disabled"
+        && typeof result.responseTs === "string" && result.responseTs.length > 0
+        && result.responseTs === pending.receipt.reply.slack_reply_ts) {
+        return structuredClone(result) as R;
+      }
       deny("brainbase_proxy", pending.receipt.failure_code ?? "UPSTREAM_UNAVAILABLE");
     }
     if (pendingResult !== undefined) return structuredClone(pendingResult) as R;
@@ -286,6 +297,7 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     throw error;
   }
   if (result.accounting === "deferred" || result.accounting === "already_recorded") return result;
+  const meetingTasksDisabled = result.outcome === "meeting_tasks_disabled";
   await recordOperation({
     tenant_context: input.tenant_context,
     expected_scope: input.expected_scope,
@@ -294,8 +306,8 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     accounting: input.accounting,
     quota_decision: quotaDecision.decision,
     unit: input.usage_unit,
-    outcome: "succeeded",
-    failure_code: null,
+    outcome: meetingTasksDisabled ? "failed" : "succeeded",
+    failure_code: meetingTasksDisabled ? "MEETING_TASKS_DISABLED" : null,
     ...(result.responseTs ? { response_ts: result.responseTs } : {}),
     operation_result: result,
     ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),

@@ -116,6 +116,58 @@
         "test_refs": [{ "file": "packages/cloudflare-techknight-poc/src/__tests__/slack.test.ts", "case": "rejects a signed request from a different Slack App" }]
       },
       "confidence": 1
+    },
+    {
+      "id": "INV-CFPRIMARY-DISABLED-REPLY",
+      "type": "invariant",
+      "statement": "議事録タスク処理の所有権がない環境は利用不可を元スレッドへ通知し、failed / MEETING_TASKS_DISABLEDを保存する。AIとタスク登録は実行せず、通知済み状態と記録送信の再試行でも失敗を成功へ変えず、同じ通知を重複させない。",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "index": 9
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/story-cloudflare-primary-runtime.md",
+            "section": "障害時の扱い"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/runtime-event-router.ts",
+            "anchor": "routeRuntimeEvent"
+          },
+          {
+            "file": "packages/cloud-runtime/src/index.ts",
+            "anchor": "processDisabledMeetingTask"
+          },
+          {
+            "file": "packages/cloud-runtime/src/workspace-store.ts",
+            "anchor": "readReplyCompletion"
+          },
+          {
+            "file": "packages/cloud-runtime/src/multitenancy/production-consumer.ts",
+            "anchor": "executeTenantRuntimeOperation"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/runtime-event-router.test.ts",
+            "case": "does not run either pipeline until the deployment owns meeting tasks"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/workspace-store.test.ts",
+            "case": "preserves the failed outcome when reading a delivered reply for redelivery"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/production-multitenancy.integration.test.ts",
+            "case": "records disabled meeting tasks as failed and settles redelivery (accounting outage: %s)"
+          }
+        ]
+      },
+      "confidence": 1
     }
   ],
   "open_questions": []
