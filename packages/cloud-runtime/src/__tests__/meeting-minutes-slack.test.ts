@@ -40,7 +40,7 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).toContain("エラーコード: INTERACTION_ENQUEUE_FAILED");
   });
 
-  it("prefers projection failure diagnostics when Slack status projection fails", async () => {
+  it("preserves primary diagnostics when Slack status projection also fails", async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
@@ -51,9 +51,10 @@ describe("MeetingMinutesSlackClient", () => {
       projectionFailure: { stage: "status_projection" as const, code: "STATUS_PROJECTION_FAILED",
         retryable: true, failedAt: "2026-08-18T00:01:00.000Z" } };
     await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "failed");
-    expect(JSON.stringify(body)).toContain("エラーコード: STATUS_PROJECTION_FAILED");
+    expect(JSON.stringify(body)).toContain("エラーコード: GITHUB_SAVE_FAILED");
+    expect(JSON.stringify(body)).toContain("状態表示エラー: STATUS_PROJECTION_FAILED");
     expect(JSON.stringify(body)).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
-    expect(JSON.stringify(body)).toContain("mana_meeting_minutes_choose_destination:mana");
+    expect(JSON.stringify(body)).not.toContain("mana_meeting_minutes_choose_destination:mana");
   });
   const routedRun = () => ({ version: 1 as const, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
     sourceThreadTs: "1.0", sourceMessageTs: "1.0", file: { id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 10 },
@@ -82,6 +83,40 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(calls[1]?.body)).toContain("receipt-1");
     expect(JSON.stringify(calls[1]?.body)).not.toContain("再実行");
     expect(JSON.stringify(calls[1]?.body)).toContain("保存先をやり直す");
+  });
+
+  it("does not render an in-progress diagnostic checkpoint as a completed-run failure", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) }); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1" as const,
+      stage: "generation" as const, receiptSnapshot: { receiptId: "receipt-1", status: "resolved" as const,
+        errorCodes: [] } } };
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+    const serialized = JSON.stringify(calls[1]?.body);
+    expect(serialized).toContain("議事録を作成しました");
+    expect(serialized).not.toContain("失敗段階");
+    expect(serialized).not.toContain("UNCLASSIFIED_FAILURE");
+    expect(serialized).not.toContain("問い合わせID");
+  });
+
+  it("shows the primary processing failure when the normal failure projection also failed", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) }); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "failed" as const,
+      diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1" as const, stage: "github_save" as const,
+        code: "GITHUB_SAVE_FAILED", retryable: true, failedAt: "2026-09-06T00:00:00.000Z" },
+      projectionFailure: { stage: "status_projection" as const, code: "STATUS_PROJECTION_FAILED",
+        retryable: true, failedAt: "2026-09-06T00:00:01.000Z" } };
+
+    await new MeetingMinutesSlackClient("token", fetchImpl).projectStatusFailure(run);
+    const serialized = JSON.stringify(calls[0]?.body);
+    expect(serialized).toContain("GitHub保存");
+    expect(serialized).toContain("GITHUB_SAVE_FAILED");
+    expect(serialized).toContain("状態表示エラー: STATUS_PROJECTION_FAILED");
   });
 
   it("binds the current run revision to the redo button", async () => {

@@ -19,6 +19,29 @@ function make(body: string) {
 }
 
 describe("Slack native development command", () => {
+  it("re-projects an existing completed meeting-minutes run without opening the development form", async () => {
+    const send = vi.fn();
+    const openModal = vi.fn(async () => undefined);
+    const repairMeetingMinutes = vi.fn(async () => undefined);
+    const body = new URLSearchParams({
+      team_id: "T1", channel_id: "C1", user_id: "U1", command: "/vibepro",
+      trigger_id: "tr-repair", text: "repair-meeting-minutes run_123 1788180000.749479",
+    }).toString();
+
+    const response = await handleSlackCommandRequest(make(body), {
+      signingSecret: secret,
+      placements: [],
+      repairPlacements: [{ channelId: "C1", allowedUserIds: ["U1"] }],
+      nowMs, openModal, repairMeetingMinutes, send,
+    });
+
+    expect(response.status).toBe(200);
+    expect(repairMeetingMinutes).toHaveBeenCalledWith({ workspaceId: "T1", channelId: "C1",
+      requesterId: "U1", runId: "run_123", sourceThreadTs: "1788180000.749479" });
+    expect(openModal).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("rejects an oversized body without Content-Length before signature verification or queueing", async () => {
     const send = vi.fn();
     const request = new Request("https://runtime.test/slack/commands", {
