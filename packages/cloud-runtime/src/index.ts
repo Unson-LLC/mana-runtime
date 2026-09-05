@@ -1465,6 +1465,50 @@ function isExternalEffectReconciliationQueueCandidate(
         && Object.prototype.hasOwnProperty.call(body, "payload_hash")));
 }
 
+type ExternalEffectReconciliationProcessor = (
+  env: Env,
+  job: ExternalEffectReconciliationJob,
+) => Promise<"succeeded" | "retry">;
+
+/**
+ * Dispatch only the internal readback/settlement worker for a reconciliation
+ * candidate. The caller owns the queue message; this function ACKs only after
+ * the worker has durably completed every settlement stage.
+ */
+export async function handleExternalEffectReconciliationQueueMessage(
+  input: {
+    body: unknown;
+    ack(): void;
+    retry(): void;
+  },
+  env: Env,
+  reconcile: ExternalEffectReconciliationProcessor = reconcileCompanyAuthorityReplyOperation,
+): Promise<boolean> {
+  if (!isExternalEffectReconciliationQueueCandidate(input.body)) return false;
+  try {
+    const job = input.body;
+    assertValidExternalEffectReconciliationJob(job);
+    const outcome = await reconcile(env, job);
+    if (outcome === "succeeded") {
+      console.log(JSON.stringify({
+        event: "company_authority_external_effect_reconciled",
+        tenant_id: job.tenant_id,
+        effect_id: job.effect_id,
+      }));
+      input.ack();
+    } else {
+      input.retry();
+    }
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "company_authority_external_effect_reconciliation_failed",
+      code: error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE",
+    }));
+    input.retry();
+  }
+  return true;
+}
+
 function meetingMinutesSelectionEventId(selection: MeetingMinutesSelection): string {
   return `meeting_minutes_selection:${selection.runId}:${selection.actionTs}`;
 }
@@ -3458,6 +3502,14 @@ export default {
       namespace: env.TENANT_RUNTIME_STATE,
     });
     for (const message of batch.messages) {
+      if (isExternalEffectReconciliationQueueCandidate(message.body)) {
+        await handleExternalEffectReconciliationQueueMessage({
+          body: message.body,
+          ack: () => message.ack(),
+          retry: () => message.retry(),
+        }, env);
+        continue;
+      }
       if (isContractLedgerEvent(message.body)) {
         if (batch.queue === "unson-business-contract-ledger-syncs-dlq") {
           try { await notifyContractLedgerDeadLetter(message.body, env); message.ack(); }
@@ -3481,29 +3533,6 @@ export default {
         } catch (error) {
           console.error(JSON.stringify({ event: "contract_ledger_processing_failed", kind: message.body.kind,
             runId: message.body.runId, error: error instanceof Error ? error.message : "unexpected_error" }));
-          message.retry();
-        }
-        continue;
-      }
-      if (isExternalEffectReconciliationQueueCandidate(message.body)) {
-        try {
-          assertValidExternalEffectReconciliationJob(message.body);
-          const outcome = await reconcileCompanyAuthorityReplyOperation(env, message.body);
-          if (outcome === "succeeded") {
-            console.log(JSON.stringify({
-              event: "company_authority_external_effect_reconciled",
-              tenant_id: message.body.tenant_id,
-              effect_id: message.body.effect_id,
-            }));
-            message.ack();
-          } else {
-            message.retry();
-          }
-        } catch (error) {
-          console.error(JSON.stringify({
-            event: "company_authority_external_effect_reconciliation_failed",
-            code: error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE",
-          }));
           message.retry();
         }
         continue;
