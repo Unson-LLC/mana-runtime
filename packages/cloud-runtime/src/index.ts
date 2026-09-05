@@ -2041,13 +2041,17 @@ function expectedTenantTaskBoardRepairScope(
   } as const;
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId
     && candidate.workspaceId === repair.workspaceId && candidate.channelId === repair.channelId);
-  if (!target) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH");
+  if (!target) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
+    scope_reason: "task_board_target_missing",
+  });
   const destinations = meetingMinutesRuntimeConfig(env).destinations;
   const destination = destinations.find((candidate) => candidate.taskBoardTargetId === repair.targetId
     && candidate.organization.id === target.organizationId);
   const ambiguousDestination = destinations.some((candidate) => candidate !== destination
     && candidate.taskBoardTargetId === repair.targetId);
-  if (ambiguousDestination) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH");
+  if (ambiguousDestination) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
+    scope_reason: "task_board_destination_ambiguous",
+  });
   const destinationAuthorization = destinationAuthorizationForSelection(env, destination, "queue_consumer");
   const projectScope = destination && destinationAuthorization
     ? resolveMeetingMinutesDestinationProjectScope(

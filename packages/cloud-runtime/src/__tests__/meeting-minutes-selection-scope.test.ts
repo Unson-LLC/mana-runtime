@@ -97,9 +97,17 @@ describe("meetingMinutesSelectionDestination", () => {
   });
 
   it("rejects a signed multi-project set without the destination authority", () => {
-    expect(() => resolveMeetingMinutesDestinationProjectScope({
-      project_ids: ["prj_source", "prj_other"], data_scopes: [],
-    }, council, "prj_techknight", "queue_consumer")).toThrowError(TenantBoundaryError);
+    try {
+      resolveMeetingMinutesDestinationProjectScope({
+        project_ids: ["prj_source", "prj_other"], data_scopes: [],
+      }, council, "prj_techknight", "queue_consumer");
+      throw new Error("expected project scope validation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(TenantBoundaryError);
+      expect((error as TenantBoundaryError).details).toEqual({
+        scope_reason: "destination_authority_not_signed",
+      });
+    }
   });
 
   it("accepts a canonical signed id attested to the destination project code", () => {
