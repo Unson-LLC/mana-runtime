@@ -7,7 +7,7 @@ const canonical = (id: string, status: string) => ({
 });
 
 describe("Cloudflare bounded task Canvas", () => {
-  it("story-task-canvas-ownership:ac:1 creates a Mana-owned Canvas in the trusted channel", async () => {
+  it("story-task-canvas-ownership:ac:1 creates the trusted channel Canvas", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true, canvas_id: "FMANABOARD" }));
 
     const canvasId = await createManagedTaskBoardCanvas(
@@ -19,10 +19,9 @@ describe("Cloudflare bounded task Canvas", () => {
     expect(canvasId).toBe("FMANABOARD");
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe("https://slack.com/api/canvases.create");
+    expect(String(url)).toBe("https://slack.com/api/conversations.canvases.create");
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({
       channel_id: "C_TRUSTED",
-      title: "Mana タスクボード",
       document_content: {
         type: "markdown",
         markdown: "# タスクボード\n\nManaがBrainbaseの正本タスクを同期します。",
@@ -43,7 +42,7 @@ describe("Cloudflare bounded task Canvas", () => {
     expect(String(fetchMock.mock.calls[1]![0])).toBe("https://slack.com/api/conversations.join");
     expect(JSON.parse(String((fetchMock.mock.calls[1]![1] as RequestInit).body)))
       .toEqual({ channel: "C_TRUSTED" });
-    expect(String(fetchMock.mock.calls[2]![0])).toBe("https://slack.com/api/canvases.create");
+    expect(String(fetchMock.mock.calls[2]![0])).toBe("https://slack.com/api/conversations.canvases.create");
   });
 
   it("reports the actual channel join failure without retrying indefinitely", async () => {
@@ -56,14 +55,11 @@ describe("Cloudflare bounded task Canvas", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("story-task-canvas-ownership:ac:2 reuses the only legacy task board owned by the same Mana bot", async () => {
+  it("story-task-canvas-ownership:ac:2 reuses the authoritative channel Canvas", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);
-      if (parsed.pathname.endsWith("canvases.create")) {
-        return Response.json({ ok: false, error: "free_team_canvas_tab_already_exists" });
-      }
-      if (parsed.pathname.endsWith("auth.test")) {
-        return Response.json({ ok: true, user_id: "UMANABOT" });
+      if (parsed.pathname.endsWith("conversations.canvases.create")) {
+        return Response.json({ ok: false, error: "channel_canvas_already_exists" });
       }
       if (parsed.pathname.endsWith("conversations.info")) {
         return Response.json({
@@ -73,13 +69,6 @@ describe("Cloudflare bounded task Canvas", () => {
           ] } },
         });
       }
-      if (parsed.pathname.endsWith("files.info")) {
-        expect(parsed.searchParams.get("file")).toBe("FLEGACY");
-        return Response.json({
-          ok: true,
-          file: { id: "FLEGACY", user: "UMANABOT", title: "タスクボード", editable: true },
-        });
-      }
       throw new Error(`unexpected ${url}`);
     });
 
@@ -87,40 +76,28 @@ describe("Cloudflare bounded task Canvas", () => {
       .resolves.toBe("FLEGACY");
   });
 
-  it.each([
-    ["a human-owned Canvas", { id: "FHUMAN", user: "UHUMAN", title: "タスクボード", editable: true }],
-    ["a different-purpose Canvas", { id: "FOTHER", user: "UMANABOT", title: "過去ログ", editable: true }],
-    ["a read-only Canvas", { id: "FREADONLY", user: "UMANABOT", title: "タスクボード", editable: false }],
-  ])("does not reuse %s when channel Canvas creation is blocked", async (_label, file) => {
+  it("does not guess a Canvas when Slack reports an existing channel Canvas but none is readable", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);
-      if (parsed.pathname.endsWith("canvases.create")) {
-        return Response.json({ ok: false, error: "free_team_canvas_tab_already_exists" });
+      if (parsed.pathname.endsWith("conversations.canvases.create")) {
+        return Response.json({ ok: false, error: "channel_canvas_already_exists" });
       }
-      if (parsed.pathname.endsWith("auth.test")) return Response.json({ ok: true, user_id: "UMANABOT" });
       if (parsed.pathname.endsWith("conversations.info")) {
-        return Response.json({
-          ok: true,
-          channel: { properties: { tabs: [
-            { id: "Ct_EXISTING", type: "canvas", data: { file_id: file.id } },
-          ] } },
-        });
+        return Response.json({ ok: true, channel: { properties: {} } });
       }
-      if (parsed.pathname.endsWith("files.info")) return Response.json({ ok: true, file });
       throw new Error(`unexpected ${url}`);
     });
 
     await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
-      .rejects.toThrow("task_board_free_team_canvas_tab_already_exists");
+      .rejects.toThrow("task_board_channel_canvas_already_exists");
   });
 
-  it("does not choose between multiple legacy Mana-owned task boards", async () => {
+  it("does not choose between multiple Canvas identifiers", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);
-      if (parsed.pathname.endsWith("canvases.create")) {
-        return Response.json({ ok: false, error: "free_team_canvas_tab_already_exists" });
+      if (parsed.pathname.endsWith("conversations.canvases.create")) {
+        return Response.json({ ok: false, error: "channel_canvas_already_exists" });
       }
-      if (parsed.pathname.endsWith("auth.test")) return Response.json({ ok: true, user_id: "UMANABOT" });
       if (parsed.pathname.endsWith("conversations.info")) {
         return Response.json({
           ok: true,
@@ -130,15 +107,11 @@ describe("Cloudflare bounded task Canvas", () => {
           ] } },
         });
       }
-      if (parsed.pathname.endsWith("files.info")) {
-        const id = parsed.searchParams.get("file");
-        return Response.json({ ok: true, file: { id, user: "UMANABOT", title: "タスクボード", editable: true } });
-      }
       throw new Error(`unexpected ${url}`);
     });
 
     await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
-      .rejects.toThrow("task_board_free_team_canvas_tab_already_exists");
+      .rejects.toThrow("task_board_channel_canvas_already_exists");
   });
 
   it("renders truncation as a lower bound rather than an exact total", () => {
