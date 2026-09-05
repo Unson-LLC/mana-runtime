@@ -163,7 +163,7 @@
     {
       "id": "C-001",
       "type": "contract",
-      "statement": "通常replyがJudgment Hook eventを要求するときはUserPromptSubmit、Brainbase MCPの成功にPostToolUse、失敗にPostToolUseFailure、Stopを持つreply専用settingsを使う。claude --resumeの再開前履歴を監査対象にせず、最新UserPromptSubmit以降の内部state記録を除く各Post Tool受領票だけを非空のHost監査とtool_use_id・tool_nameで実呼び出しへ結合し、成功/エラーのtool_resultとHook種別が一致しない、受領票が欠ける、または競合する場合はfail closedする",
+      "statement": "通常replyがJudgment Hook eventを要求するときはUserPromptSubmit、Brainbase MCPの成功にPostToolUse、失敗にPostToolUseFailure、Stopを持つreply専用settingsを使う。claude --resumeの再開前履歴を監査対象にせず、最新UserPromptSubmit以降の内部state記録を除く各Post Tool受領票だけを非空のHost監査とtool_use_id・tool_nameで実呼び出しへ結合する。PreToolUse拒否はCLI terminal resultのpermission_denialsにあるtool_use_id・tool_nameが呼び出しとエラーtool_resultへ完全一致しPost Tool受領票が無い場合だけ未実行として除外する。成功/エラーのtool_resultとHook種別が一致しない、受領票が欠ける、拒否情報が名前・結果・受領票と矛盾する、または識別情報が競合する場合はfail closedする",
       "origin": {
         "story_refs": [
           {
@@ -207,7 +207,7 @@
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "case": "rejects a %s tool result paired with %s"
+            "case": "ignores an exact CLI-owned PreToolUse denial when the model recovers into a fully audited lifecycle"
           },
           {
             "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
@@ -223,7 +223,7 @@
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
-            "must_cover": "rejects a %s tool result paired with %s"
+            "must_cover": "fails closed for a PreToolUse denial with $name"
           },
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",

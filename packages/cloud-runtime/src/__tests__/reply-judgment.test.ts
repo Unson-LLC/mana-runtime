@@ -214,7 +214,7 @@ describe("Slack reply Judgment lifecycle", () => {
       .toThrow("reply_judgment_hook_failed_judgment_hook_http_401");
   });
 
-  it("ignores a PreToolUse rejection when the model recovers into a fully audited lifecycle", () => {
+  it("ignores an exact CLI-owned PreToolUse denial when the model recovers into a fully audited lifecycle", () => {
     const lines = stream({ withTool: true }).split("\n");
     const promptIndex = lines.findIndex((line) => line.includes('"hook_event":"UserPromptSubmit"'));
     lines.splice(promptIndex + 1, 0,
@@ -227,12 +227,104 @@ describe("Slack reply Judgment lifecycle", () => {
         type: "system", subtype: "hook_response", hook_event: "PreToolUse",
         exit_code: 2, outcome: "error", stderr: "judgment_resolve_turn_required_first",
       }),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "blocked-tool", is_error: true,
+          content: "PreToolUse hook error",
+        }] },
+      }),
     );
+    const resultIndex = lines.findIndex((line) => JSON.parse(line).type === "result");
+    const result = JSON.parse(lines[resultIndex]!);
+    result.permission_denials = [{
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+      tool_use_id: "blocked-tool",
+      tool_input: { untrusted: "must-not-be-persisted" },
+    }];
+    lines[resultIndex] = JSON.stringify(result);
 
     expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
       stop: "completed",
       toolJournal: [{ toolUseId: "tool-1", outcome: "success" }],
     });
+  });
+
+  it.each([
+    {
+      name: "tool name mismatch",
+      resultError: true,
+      denialName: "mcp__brainbase__brainbase_bootstrap_config",
+      withReceipt: false,
+      code: "reply_judgment_tool_audit_mismatch_permission_denial_tool_name_mismatch",
+    },
+    {
+      name: "successful result",
+      resultError: false,
+      denialName: "mcp__brainbase__brainbase_knowledge_resolve",
+      withReceipt: false,
+      code: "reply_judgment_tool_audit_mismatch_permission_denial_result_outcome_mismatch",
+    },
+    {
+      name: "PostTool receipt conflict",
+      resultError: true,
+      denialName: "mcp__brainbase__brainbase_knowledge_resolve",
+      withReceipt: true,
+      code: "reply_judgment_tool_audit_mismatch_permission_denial_posttool_receipt_conflict",
+    },
+  ])("fails closed for a PreToolUse denial with $name", ({ resultError, denialName, withReceipt, code }) => {
+    const lines = stream().split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "blocked-tool", name: "mcp__brainbase__brainbase_knowledge_resolve", input: {},
+        }] },
+      }),
+      ...(withReceipt ? [JSON.stringify(hook("PostToolUseFailure", brainbaseLine, "turn-1", {
+        tool_use_id: "blocked-tool",
+        tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+      }))] : []),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "blocked-tool", ...(resultError ? { is_error: true } : {}), content: "{}",
+        }] },
+      }),
+    );
+    const resultIndex = lines.findIndex((line) => JSON.parse(line).type === "result");
+    const result = JSON.parse(lines[resultIndex]!);
+    result.permission_denials = [{ tool_name: denialName, tool_use_id: "blocked-tool", tool_input: {} }];
+    lines[resultIndex] = JSON.stringify(result);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n"))).toThrow(code);
+  });
+
+  it("fails closed when a denied tool identity has more than one tool result", () => {
+    const lines = stream().split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "blocked-tool", name: "mcp__brainbase__brainbase_knowledge_resolve", input: {},
+        }] },
+      }),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [
+          { type: "tool_result", tool_use_id: "blocked-tool", content: "{}" },
+          { type: "tool_result", tool_use_id: "blocked-tool", is_error: true, content: "PreToolUse hook error" },
+        ] },
+      }),
+    );
+    const resultIndex = lines.findIndex((line) => JSON.parse(line).type === "result");
+    const result = JSON.parse(lines[resultIndex]!);
+    result.permission_denials = [{
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+      tool_use_id: "blocked-tool",
+      tool_input: {},
+    }];
+    lines[resultIndex] = JSON.stringify(result);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_permission_denial_result_conflict");
   });
 
   it("ignores PostToolUse receipts for non-Brainbase tools", () => {
