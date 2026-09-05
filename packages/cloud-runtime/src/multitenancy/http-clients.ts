@@ -10,10 +10,12 @@ import { TENANT_QUOTA_METRIC, TENANT_QUOTA_REQUESTED_QUANTITY } from "./contract
 import type { OperationReceipt, UsageEvent } from "./accounting.js";
 import type { CredentialBrokerClient } from "./credentials.js";
 import type { TenantAuthorityClient, TenantContextIssueRequest } from "./runtime-boundaries.js";
-import type {
-  CompanyAuthorityClient,
-  CompanyAuthorityResolution,
-  ObservedExecutionRequestV1,
+import {
+  resolveCompanyAuthorityDesiredEffect,
+  type CompanyAuthorityClient,
+  type CompanyAuthorityResolution,
+  type CompanyAuthorityDesiredEffect,
+  type ObservedExecutionRequestV1,
 } from "./company-authority-runtime-adapter.js";
 import type { WorkspaceConnectionLookup, WorkspaceConnectionManagementPort } from "./workspace-connection.js";
 import {
@@ -31,7 +33,7 @@ import { resolveCanonicalProjectScope } from "./project-scope.js";
 const CANONICAL_ORIGIN = "https://brainbase.internal";
 const RUNTIME_PREFIX = "/api/v1/runtime";
 
-type DesiredEffect = "read" | "write" | "external_side_effect";
+type DesiredEffect = CompanyAuthorityDesiredEffect;
 
 export interface TenantRuntimeServiceBinding {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
@@ -74,6 +76,8 @@ export interface TenantRuntimeHttpBindings {
   timeout_ms: number;
   workspace_connections?: readonly WorkspaceConnectionHint[];
   tenant_context?: TenantContextEnvelope;
+  /** Canonical capability-to-effect map for strict tenant ingress callers. */
+  desired_effect_by_capability?: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
 }
 
 export interface TenantQuotaHttpClient {
@@ -237,7 +241,18 @@ function canonicalContext(value: unknown): TenantContextEnvelope {
   return structuredClone(context);
 }
 
-function desiredEffectForCapability(capabilityId: string): DesiredEffect {
+function desiredEffectForCapability(
+  capabilityId: string,
+  desiredEffectByCapability?: Readonly<Record<string, CompanyAuthorityDesiredEffect>>,
+): DesiredEffect {
+  if (desiredEffectByCapability !== undefined) {
+    return resolveCompanyAuthorityDesiredEffect(capabilityId, desiredEffectByCapability);
+  }
+  // runtime.execute is an externally-effectful capability. Never infer its
+  // effect from a capability name when the canonical map was not supplied.
+  if (capabilityId === "runtime.execute") {
+    return resolveCompanyAuthorityDesiredEffect(capabilityId, {});
+  }
   const value = capabilityId.toLowerCase();
   if (/(send|publish|post|deliver|external)/u.test(value)) return "external_side_effect";
   if (/(create|write|update|transition|delete|apply|approve|reject)/u.test(value)) return "write";
@@ -429,7 +444,10 @@ export function createTenantRuntimeHttpClients(
       async issue_tenant_context(request: TenantContextIssueRequest): Promise<TenantContextEnvelope> {
         const seed = [request.workspace_connection.tenant_id, request.workspace_connection.connection_id,
           request.slack.event_id].join(":");
-        const desiredEffect = desiredEffectForCapability(request.required_authorization.capability_id);
+        const desiredEffect = desiredEffectForCapability(
+          request.required_authorization.capability_id,
+          bindings.desired_effect_by_capability,
+        );
         const trustedProjectIds = request.trusted_project_ids
           ? [...request.trusted_project_ids]
           : undefined;

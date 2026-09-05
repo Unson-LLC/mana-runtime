@@ -149,7 +149,8 @@ function parseOperations(value: string): Readonly<Record<string, CompanyAuthorit
     capability === "company_authority_v1"
     || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(capability)
     || typeof effect !== "string"
-    || !effects.has(effect as CompanyAuthorityDesiredEffect))) {
+    || !effects.has(effect as CompanyAuthorityDesiredEffect)
+    || (capability === "runtime.execute" && effect !== "external_side_effect"))) {
     invalid({ binding: "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON" });
   }
   return Object.fromEntries(

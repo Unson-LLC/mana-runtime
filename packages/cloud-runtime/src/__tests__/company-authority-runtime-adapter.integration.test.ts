@@ -137,6 +137,19 @@ describe("company authority runtime adapter foundation after explicit opt-in", (
     }));
   });
 
+  it.each(["read", "write"] as const)(
+    "rejects runtime.execute when the canonical map classifies it as %s",
+    (effect) => {
+      expect(() => createObservedExecutionRequest({
+        ...observation,
+        capability_id: "runtime.execute",
+      }, { "runtime.execute": effect })).toThrow(expect.objectContaining({
+        boundary: "worker_ingress",
+        code: "DESIRED_EFFECT_REQUIRED",
+      }));
+    },
+  );
+
   it("maps only Slack observations and preserves accepted signed decisions unchanged", async () => {
     const contractRoot = new URL(
       "../../../../contracts/mana-brainbase-company-authority/v1/",
