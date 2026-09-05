@@ -29,9 +29,11 @@ import {
   auditReplyJudgmentAttempt,
   completeReplyJudgmentAttempt,
   failReplyJudgmentAttempt,
+  getReplyJudgmentAuditDiagnostics,
   isReplyJudgmentCompleted,
   parseReplyJudgmentStream,
   startReplyJudgmentAttempt,
+  type ReplyJudgmentAuditDiagnostics,
   type ReplyJudgmentResult,
 } from "./reply-judgment.js";
 import {
@@ -106,7 +108,7 @@ export interface ReplyProcessResult {
 }
 
 export class ReplyPipelineError extends Error {
-  constructor(readonly code: string) {
+  constructor(readonly code: string, readonly auditDiagnostics?: ReplyJudgmentAuditDiagnostics) {
     super(code);
     this.name = "ReplyPipelineError";
   }
@@ -435,6 +437,7 @@ export async function generateClaudeReply(
     try {
       judgment = parseReplyJudgmentStream(result.stdout);
     } catch (error) {
+      const auditDiagnostics = getReplyJudgmentAuditDiagnostics(error);
       const code = error instanceof Error && /^reply_judgment_[a-z0-9_]+$/.test(error.message)
         ? error.message
         : "reply_judgment_stream_invalid";
@@ -462,18 +465,22 @@ export async function generateClaudeReply(
             && /^reply_judgment_[a-z0-9_]+$/.test(retryError.message)
             ? retryError.message
             : "reply_judgment_stream_invalid";
+          const retryAuditDiagnostics = getReplyJudgmentAuditDiagnostics(retryError);
           emitTurnLog("error", "mana_claude_failed", event, trace, {
-            outcome: "error", reasonCode: retryCode, durationMs: Date.now() - startedAt,
+            outcome: "error", reasonCode: retryCode,
+            ...(retryAuditDiagnostics ? { auditDiagnostics: retryAuditDiagnostics } : {}),
+            durationMs: Date.now() - startedAt,
           });
-          throw new ReplyPipelineError(retryCode);
+          throw new ReplyPipelineError(retryCode, retryAuditDiagnostics);
         }
       } else {
-      emitTurnLog("error", "mana_claude_failed", event, trace, {
-        outcome: "error",
-        reasonCode: code,
-        durationMs: Date.now() - startedAt,
-      });
-      throw new ReplyPipelineError(code);
+        emitTurnLog("error", "mana_claude_failed", event, trace, {
+          outcome: "error",
+          reasonCode: code,
+          ...(auditDiagnostics ? { auditDiagnostics } : {}),
+          durationMs: Date.now() - startedAt,
+        });
+        throw new ReplyPipelineError(code, auditDiagnostics);
       }
     }
     const reply = normalizeReply(judgment.reply);
@@ -829,6 +836,8 @@ export async function processReplyEvent(
         reasonCode: failureCode,
         failureStage,
         ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+        ...(error instanceof ReplyPipelineError && error.auditDiagnostics
+          ? { auditDiagnostics: error.auditDiagnostics } : {}),
         ...(failureCode === "reply_judgment_attempt_failed" && error instanceof Error
           ? { errorSummary: safeExecutionErrorSummary(error.message) }
           : {}),

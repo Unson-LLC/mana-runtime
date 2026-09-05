@@ -2,6 +2,7 @@ import {
   auditReplyJudgmentAttempt,
   completeReplyJudgmentAttempt,
   failReplyJudgmentAttempt,
+  getReplyJudgmentAuditDiagnostics,
   isReplyJudgmentCompleted,
   parseReplyJudgmentStream,
   readReplyJudgmentEpisode,
@@ -323,6 +324,63 @@ describe("Slack reply Judgment lifecycle", () => {
       expect(() => parseReplyJudgmentStream(lines.join("\n")))
         .toThrow(expectedCode);
     }
+  });
+
+  it("mana-reply-judgment-hook-503:ac:7 classifies binding failures without exposing identities", () => {
+    const mismatchCases = [
+      {
+        stream: bindPostToolReceipt(
+          stream({ withTool: true }),
+          "different-tool-id",
+          "mcp__brainbase__brainbase_knowledge_resolve",
+        ),
+        reason: "tool_use_id_mismatch",
+      },
+      {
+        stream: bindPostToolReceipt(
+          stream({ withTool: true }),
+          "tool-1",
+          "mcp__brainbase__brainbase_bootstrap_config",
+        ),
+        reason: "tool_name_mismatch",
+      },
+    ] as const;
+
+    for (const mismatch of mismatchCases) {
+      let thrown: unknown;
+      try {
+        parseReplyJudgmentStream(mismatch.stream);
+      } catch (error) {
+        thrown = error;
+      }
+      const diagnostics = getReplyJudgmentAuditDiagnostics(thrown);
+      expect(diagnostics).toMatchObject({
+        schemaVersion: "reply_judgment_audit_diagnostics.v1",
+        scope: "posttool_receipt_binding",
+        expectedCallCount: 1,
+        postToolReceiptCount: 1,
+        boundReceiptCount: 0,
+        reasonCodes: [mismatch.reason],
+      });
+      expect(JSON.stringify(diagnostics)).not.toContain("tool-1");
+      expect(JSON.stringify(diagnostics)).not.toContain("mcp__brainbase__");
+    }
+
+    const withoutPostToolReceipt = stream({ withTool: true }).split("\n")
+      .filter((line) => !line.includes('"hook_event":"PostToolUse"'))
+      .join("\n");
+    let missingThrown: unknown;
+    try {
+      parseReplyJudgmentStream(withoutPostToolReceipt);
+    } catch (error) {
+      missingThrown = error;
+    }
+    expect(getReplyJudgmentAuditDiagnostics(missingThrown)).toMatchObject({
+      reasonCodes: ["missing_posttool_receipt"],
+      expectedCallCount: 1,
+      postToolReceiptCount: 0,
+      missingReceiptCount: 1,
+    });
   });
 
   it("mana-reply-judgment-hook-503:ac:6 rejects conflicting replayed control-plane receipts", () => {

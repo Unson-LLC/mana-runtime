@@ -34,6 +34,45 @@ interface EmbeddedHookReceipt {
   tool_name?: string;
 }
 
+export type ReplyJudgmentAuditMismatchReason =
+  | "missing_posttool_receipt"
+  | "tool_use_id_mismatch"
+  | "tool_name_mismatch";
+
+/**
+ * Content-free diagnostics for a failed PostToolUse binding.
+ *
+ * This object is intentionally limited to counts and categorical reasons. It
+ * must never become a second stream of prompts, tool inputs, or identifiers.
+ */
+export interface ReplyJudgmentAuditDiagnostics {
+  schemaVersion: "reply_judgment_audit_diagnostics.v1";
+  scope: "posttool_receipt_binding";
+  reasonCodes: ReplyJudgmentAuditMismatchReason[];
+  expectedCallCount: number;
+  postToolReceiptCount: number;
+  boundReceiptCount: number;
+  missingReceiptCount: number;
+  toolUseIdMismatchCount: number;
+  toolNameMismatchCount: number;
+}
+
+export class ReplyJudgmentParseError extends Error {
+  constructor(
+    message: string,
+    readonly auditDiagnostics?: ReplyJudgmentAuditDiagnostics,
+  ) {
+    super(message);
+    this.name = "ReplyJudgmentParseError";
+  }
+}
+
+export function getReplyJudgmentAuditDiagnostics(
+  error: unknown,
+): ReplyJudgmentAuditDiagnostics | undefined {
+  return error instanceof ReplyJudgmentParseError ? error.auditDiagnostics : undefined;
+}
+
 export interface ReplyJudgmentResult {
   reply: string;
   sessionId: string;
@@ -310,6 +349,54 @@ function isBrainbaseEvidenceTool(name: string): boolean {
     && name !== "mcp__brainbase__brainbase_judgment_state_record";
 }
 
+function buildAuditBindingDiagnostics(
+  executedCalls: ReadonlyArray<{ id: string; name: string }>,
+  postToolReceipts: ReadonlyArray<{ receipt: EmbeddedHookReceipt }>,
+): ReplyJudgmentAuditDiagnostics {
+  let boundReceiptCount = 0;
+  let missingReceiptCount = 0;
+  let toolUseIdMismatchCount = 0;
+  let toolNameMismatchCount = 0;
+
+  for (const call of executedCalls) {
+    const idMatches = postToolReceipts.filter((hook) => hook.receipt.tool_use_id === call.id);
+    if (idMatches.length === 0) {
+      // A receipt with the expected name but another id is an id-binding
+      // mismatch. With no such receipt, a short receipt set is a genuinely
+      // missing receipt; a full-sized set still proves an id mismatch.
+      const sameNameReceipt = postToolReceipts.some((hook) => hook.receipt.tool_name === call.name);
+      if (sameNameReceipt || postToolReceipts.length >= executedCalls.length) {
+        toolUseIdMismatchCount += 1;
+      } else {
+        missingReceiptCount += 1;
+      }
+      continue;
+    }
+    if (idMatches.some((hook) => hook.receipt.tool_name === call.name)) {
+      boundReceiptCount += 1;
+    } else {
+      toolNameMismatchCount += 1;
+    }
+  }
+
+  const reasonCodes: ReplyJudgmentAuditMismatchReason[] = [];
+  if (missingReceiptCount > 0) reasonCodes.push("missing_posttool_receipt");
+  if (toolUseIdMismatchCount > 0) reasonCodes.push("tool_use_id_mismatch");
+  if (toolNameMismatchCount > 0) reasonCodes.push("tool_name_mismatch");
+
+  return {
+    schemaVersion: "reply_judgment_audit_diagnostics.v1",
+    scope: "posttool_receipt_binding",
+    reasonCodes,
+    expectedCallCount: executedCalls.length,
+    postToolReceiptCount: postToolReceipts.length,
+    boundReceiptCount,
+    missingReceiptCount,
+    toolUseIdMismatchCount,
+    toolNameMismatchCount,
+  };
+}
+
 function verifiedAnswer(output: Record<string, unknown>): string | undefined {
   if (typeof output.systemMessage !== "string") return undefined;
   const markers = output.systemMessage.split(/\r?\n/)
@@ -434,7 +521,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     boundPostToolHooks = executedCalls.map((call) => {
       const hook = hooksByToolUseId.get(call.id);
       if (!hook || hook.receipt.tool_name !== call.name) {
-        throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing");
+        throw new ReplyJudgmentParseError(
+          "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing",
+          buildAuditBindingDiagnostics(executedCalls, brainbaseIdentityBoundHooks),
+        );
       }
       return hook;
     });
@@ -443,7 +533,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
   } else {
     if (executedCalls.length > 0) {
-      throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_missing");
+      throw new ReplyJudgmentParseError(
+        "reply_judgment_tool_audit_mismatch_posttool_receipt_missing",
+        buildAuditBindingDiagnostics(executedCalls, brainbaseIdentityBoundHooks),
+      );
     }
     boundPostToolHooks = brainbaseIdentityBoundHooks;
   }
