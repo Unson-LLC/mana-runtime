@@ -30,6 +30,32 @@ describe("Cloudflare bounded task Canvas", () => {
     });
   });
 
+  it("joins a public task channel and retries Canvas creation when Mana is not yet a member", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ok: false, error: "channel_not_found" }))
+      .mockResolvedValueOnce(Response.json({ ok: true, channel: { id: "C_TRUSTED" } }))
+      .mockResolvedValueOnce(Response.json({ ok: true, canvas_id: "FMANABOARD" }));
+
+    await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
+      .resolves.toBe("FMANABOARD");
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[1]![0])).toBe("https://slack.com/api/conversations.join");
+    expect(JSON.parse(String((fetchMock.mock.calls[1]![1] as RequestInit).body)))
+      .toEqual({ channel: "C_TRUSTED" });
+    expect(String(fetchMock.mock.calls[2]![0])).toBe("https://slack.com/api/canvases.create");
+  });
+
+  it("reports the actual channel join failure without retrying indefinitely", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ok: false, error: "not_in_channel" }))
+      .mockResolvedValueOnce(Response.json({ ok: false, error: "missing_scope" }));
+
+    await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
+      .rejects.toMatchObject({ message: "task_board_missing_scope", definitive: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("story-task-canvas-ownership:ac:2 reuses the only legacy task board owned by the same Mana bot", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);
