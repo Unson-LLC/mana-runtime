@@ -524,6 +524,60 @@
       "confidence": 0.99,
       "first_seen_at": "2026-09-04T02:45:00.000Z",
       "last_revised_at": "2026-09-04T02:45:00.000Z"
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "A0が外部効果照合のためにpreserveUntilReconciled付きで保持したcanonical Slack messageのruntime claimでも、T0が同一配送をackできるのは、Queue境界で署名検証済みのtenant contextと同一tenant / effect / delivery / claim tokenに結合された未完了reconciliation jobをDurable Objectから読めた場合だけとする。claim tokenは等値照合だけに使い、job欠落・不一致・読取不能、pre-send失敗、保持されていないin_progress claimはQueue再試行を維持する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-8"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/mana-reply-judgment-hook-503.md",
+            "section": "決定"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/runtime-event-claim.ts",
+            "anchor": "claimRuntimeEvent"
+          },
+          {
+            "file": "packages/cloud-runtime/src/index.ts",
+            "anchor": "queue"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/company-authority-external-effect-reconciliation.test.ts",
+            "case": "acknowledges only an uncompleted durable job bound to tenant, effect, delivery, and claim"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/company-authority-external-effect-reconciliation.test.ts",
+            "must_cover": "keeps queue retry eligible when a preserved claim has no durable reconciliation job"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/company-authority-external-effect-reconciliation.test.ts",
+            "must_cover": "keeps queue retry eligible when a durable reconciliation job is not bound to the delivery and claim token"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/company-authority-external-effect-reconciliation.test.ts",
+            "must_cover": "acknowledges only an uncompleted durable job bound to tenant, effect, delivery, and claim"
+          }
+        ]
+      },
+      "confidence": 0.99,
+      "first_seen_at": "2026-09-05T00:00:00.000Z",
+      "last_revised_at": "2026-09-05T00:00:00.000Z"
     }
   ],
   "generated_at": "2026-09-01T13:42:23.198Z",

@@ -4,6 +4,7 @@ import {
   releaseRuntimeEvent,
   runtimeClaimSettlement,
   runtimeDeliveryId,
+  shouldAckRuntimeEventInProgress,
 } from "../runtime-event-claim.js";
 
 function storage() {
@@ -25,7 +26,12 @@ describe("runtime event claim", () => {
     const db = storage();
     const owner = await claimRuntimeEvent(db, "Ev_same", 1_000);
     expect(owner).toMatchObject({ disposition: "claimed" });
-    expect(await claimRuntimeEvent(db, "Ev_same", 1_001)).toMatchObject({ disposition: "in_progress" });
+    expect(await claimRuntimeEvent(db, "Ev_same", 1_001)).toMatchObject({
+      disposition: "in_progress",
+      preserveUntilReconciled: false,
+      retryAfterMs: 15 * 60 * 1_000 - 1,
+      claimToken: expect.any(String),
+    });
     if (owner.disposition !== "claimed") throw new Error("expected_claim_owner");
     await completeRuntimeEvent(db, "Ev_same", owner.claimToken, "1700.1", 1_100);
     expect(await claimRuntimeEvent(db, "Ev_same", 9_999_999))
@@ -69,9 +75,24 @@ describe("runtime event claim", () => {
     });
 
     const retry = await claimRuntimeEvent(db, "Ev_unknown", 15 * 60 * 1_000 + 1_001, true);
-    expect(retry.disposition).toBe("in_progress");
+    expect(retry).toMatchObject({ disposition: "in_progress", preserveUntilReconciled: true });
     if (retry.disposition !== "in_progress") throw new Error("expected_preserved_claim");
     expect(retry.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it("acknowledges only an in-progress claim preserved for reconciliation", () => {
+    expect(shouldAckRuntimeEventInProgress({
+      disposition: "in_progress",
+      preserveUntilReconciled: true,
+      retryAfterMs: 15 * 60 * 1_000,
+      claimToken: "runtime-claim",
+    })).toBe(true);
+    expect(shouldAckRuntimeEventInProgress({
+      disposition: "in_progress",
+      preserveUntilReconciled: false,
+      retryAfterMs: 15 * 60 * 1_000,
+      claimToken: "runtime-claim",
+    })).toBe(false);
   });
 
   it("allows a preserved claim to complete after its lease expires", async () => {

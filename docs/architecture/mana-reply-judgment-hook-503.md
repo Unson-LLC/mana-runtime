@@ -10,11 +10,14 @@ Brainbaseの各実呼び出しとPost Tool監査受領票を、配列上の件�
 
 監査不一致のfail closed動作は維持しつつ、実ストリームから到達可能な9つの検証分岐は`reply_judgment_tool_audit_mismatch_`に続く固定語彙のサブコードを返す。サブコードは欠落、競合、件数、順序、Stop監査のどの契約で拒否したかだけを示し、raw stream、tool引数、回答本文、tenant境界値、`tool_use_id`、Host receiptは含めない。pipelineの既存reason code保存契約で安全にreadbackし、productionの具体的不一致型を次の修正へ結合する。
 
+A0が外部効果のreadbackを待つために`preserveUntilReconciled`を付けて保持したruntime claimは、通常のlease中claimと区別してT0へ返す。T0はこの保持フラグだけではackせず、Durable Objectの未完了reconciliation jobを読み、Queue境界で署名・権限検証済みのtenant context、tenant / effect、canonical Slack delivery、runtime claim tokenが完全一致したときだけ同じmessageをackする。claim tokenはこの等値照合だけに使い、T0へ外部効果の送信・完了権限は渡さない。jobの欠落・不一致・読取不能、pre-send失敗、保持されていない`in_progress`は既存どおり`UPSTREAM_UNAVAILABLE`で再試行し、所有者の完了またはlease回収を待つ。A0は引き続き唯一の外部効果照合・送信責任者である。
+
 ## 検証境界
 
 - unit: 受領票へのtool identityと実際のHook種別の埋込み、再開前履歴を除いた当該attempt境界、成功/失敗の`tool_result`とPostToolUse/PostToolUseFailureの厳密照合、同一受領票再掲の重複排除、制御用受領票に含まれる累積監査行の除外、制御用を含むID・tool名の不一致、受領票欠落、競合再掲、未完了監査の拒否
 - regression: Judgment lifecycle、Stop修復、議事録専用経路、episode receipt
 - diagnostics: identity欠落、監査欠落、receipt競合・欠落・件数不一致、順序不正、Stop監査不足・過剰を固定サブコードまで検証し、代表コードが両失敗ログと永続episodeへ同値で伝播することを確認
+- runtime claim regression: 保持claimの`in_progress`識別子、通常claimの識別子に加え、永続job欠落・delivery/claim token不一致・読取不能をT0がretryし、未完了で完全結合されたjobだけをackする分岐を固定する
 - production: fresh Slack eventでquota許可、Brainbase実呼び出し、完了episode、Slack `response_ts`、同一threadの可視返信を同一eventへ結合して読む
 
 本番で元streamを保存していないため、重複Hook応答を既発障害の確定原因とは扱わない。この変更は、現在の件数順照合が持つ識別不能性を除き、再発時にも不一致を呼び出し単位で判定できる契約修正とする。

@@ -160,6 +160,7 @@ import {
   releaseRuntimeEvent,
   runtimeClaimSettlement,
   runtimeDeliveryId,
+  shouldAckRuntimeEventInProgress,
 } from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
 import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
@@ -214,6 +215,7 @@ import {
 import type { AcceptedCompanyAuthorityContext } from "./multitenancy/company-authority-runtime-adapter.js";
 import {
   assertValidExternalEffectReconciliationJob,
+  hasVerifiedPendingExternalEffectReconciliation,
   reconcileCompanyAuthorityExternalEffectFromQueue,
   type ExternalEffectProviderResult,
   type ExternalEffectReconciliationJob,
@@ -4113,6 +4115,35 @@ export default {
                 };
               }
               if (runtimeClaim.disposition === "in_progress") {
+                if (shouldAckRuntimeEventInProgress(runtimeClaim)) {
+                  const reconciliationQueue = createDurableExternalEffectReconciliationQueueClient(
+                    env.TENANT_RUNTIME_STATE,
+                    { tenant_id: tenantContext.tenant.tenant_id, effect_id: tenantContext.idempotency_key },
+                  );
+                  const reconcilesThisClaim = await hasVerifiedPendingExternalEffectReconciliation({
+                    reconciliation_queue: reconciliationQueue,
+                    tenant_context: tenantContext,
+                    runtime_event_id: deliveryId,
+                    runtime_claim_token: runtimeClaim.claimToken,
+                    delivery_identity: {
+                      provider: "slack",
+                      workspace_id: event.workspaceId,
+                      app_id: tenantContext.workspace_connection.app_id,
+                      channel_id: event.channelId,
+                      thread_ts: event.threadTs,
+                      event_id: event.eventId,
+                      delivery_id: deliveryId,
+                      message_ts: event.messageTs,
+                      workspace_name: workspaceName(event),
+                    },
+                  });
+                  if (reconcilesThisClaim) {
+                    // A0 owns this exact durable reconciliation. T0 observes
+                    // the claim token solely for equality; it cannot settle or
+                    // send the external effect.
+                    return { outcome: "reconciliation_in_progress" as const };
+                  }
+                }
                 // Another delivery still owns this canonical Slack message. Do
                 // not complete the outer Queue claim: retry until the owner
                 // completes or its runtime lease can be reclaimed.
