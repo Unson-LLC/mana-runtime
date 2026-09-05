@@ -286,6 +286,7 @@ describe("handleMeetingMinutesInteraction", () => {
     const send = vi.fn().mockRejectedValue(new TenantBoundaryError(
       "worker_ingress", "WORKSPACE_CONNECTION_REAUTH_REQUIRED", "Authorization Bearer secret"));
     const updateOriginal = vi.fn(); const background = deferred();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
@@ -296,6 +297,10 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(projected).toContain("問い合わせID: cor_");
     expect(projected).not.toContain("WORKSPACE_CONNECTION_REAUTH_REQUIRED");
     expect(projected).not.toContain("Bearer secret");
+    const serialized = consoleError.mock.calls.flat().join(" ");
+    expect(serialized).toContain('"code":"WORKSPACE_CONNECTION_REAUTH_REQUIRED"');
+    expect(serialized).not.toContain("Bearer secret");
+    consoleError.mockRestore();
   });
   it("still queues when immediate Slack feedback fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);

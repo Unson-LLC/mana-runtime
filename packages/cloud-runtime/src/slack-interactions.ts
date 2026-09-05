@@ -748,9 +748,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         workspaceId: interactionWorkspaceId, appId,
         channelId, threadTs: feedbackThreadTs, userId, actionTs }, destination);
     } catch (error) {
-      const enqueueCorrelationId = deriveCorrelationId(runId, "interaction_enqueue", "INTERACTION_ENQUEUE_FAILED");
+      const enqueueCode = error instanceof TenantBoundaryError
+        ? error.code : "INTERACTION_ENQUEUE_FAILED";
+      const enqueueCorrelationId = deriveCorrelationId(runId, "interaction_enqueue", enqueueCode);
       console.error(JSON.stringify({ event: "meeting_minutes_interaction_enqueue_failed", runId,
-        stage: "interaction_enqueue", code: "INTERACTION_ENQUEUE_FAILED", correlation_id: enqueueCorrelationId, retryable: true }));
+        stage: "interaction_enqueue", code: enqueueCode, correlation_id: enqueueCorrelationId, retryable: true }));
       if (responseUrl && options.updateOriginal) {
         try {
           const correlationId = deriveCorrelationId(runId, "interaction_enqueue", error instanceof TenantBoundaryError
