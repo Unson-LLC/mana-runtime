@@ -49,9 +49,9 @@ const SLACK_STATUS_REFRESH_MS = 90_000;
 const SLACK_STATUS_TIMEOUT_MS = 5_000;
 const SLACK_REACTION_TIMEOUT_MS = 5_000;
 // A complete judgment turn may need a second Stop-hook pass after Brainbase
-// repairs missing audit lines. Keep the reply runner below the five-minute
-// tenant-boundary lease while allowing that authenticated repair to finish.
-const REPLY_SANDBOX_TIMEOUT_MS = 240_000;
+// repairs missing audit lines. Allow 270 seconds while retaining a 30-second
+// margin below the five-minute tenant-boundary lease.
+const REPLY_SANDBOX_TIMEOUT_MS = 270_000;
 
 interface ExecResult {
   success: boolean;
