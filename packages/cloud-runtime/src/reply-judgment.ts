@@ -5,6 +5,15 @@ const JUDGMENT_AUDIT_PREFIX = "🧠 判断参照:";
 const JUDGMENT_WARNING_PREFIX = "⚠️ 判断参照:";
 const BRAINBASE_AUDIT_PREFIX = "📚 Brainbase";
 const BRAINBASE_WARNING_PREFIX = "⚠️ Brainbase";
+const BRAINBASE_INCOMPLETE_AUDIT_PREFIXES = [
+  "📚 Brainbase監査未完了:",
+  "⚠️ Brainbase監査未完了:",
+];
+const BRAINBASE_NO_REFERENCE_AUDIT_PREFIX = "📚 Brainbase未参照:";
+// Only these Host-owned operation labels can prove a Brainbase tool event.
+// Keep the allowlist finite so generic or incomplete warning text cannot
+// satisfy an evidence check merely by sharing the Brainbase prefix.
+const BRAINBASE_COMPLETED_AUDIT_PATTERN = /^(?:📚|⚠️) Brainbase(?:参照先|検索|取得|書込|呼出):\s*\S/u;
 const CONTINUATION_AUDIT_PREFIX = "🔁 ";
 const STOP_REPAIR_AUDIT_PREFIX = "🛠️ ";
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
@@ -331,14 +340,20 @@ function isAuditLine(line: string): boolean {
 }
 
 function completedBrainbaseAuditLines(lines: string[]): string[] {
-  return lines.filter((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX)
-    && !line.startsWith("📚 Brainbase未参照:")
-    && !line.startsWith("📚 Brainbase監査未完了:"));
+  return lines.filter(isCompletedBrainbaseAuditLine);
 }
 
 function toolBrainbaseAuditLines(lines: string[]): string[] {
-  return lines.filter((line) => completedBrainbaseAuditLines([line]).length > 0
-    || line.startsWith(`${BRAINBASE_WARNING_PREFIX}呼出:`));
+  return lines.filter(isCompletedBrainbaseAuditLine);
+}
+
+function isCompletedBrainbaseAuditLine(line: string): boolean {
+  return BRAINBASE_COMPLETED_AUDIT_PATTERN.test(line);
+}
+
+function hasBrainbaseAuditLine(lines: string[]): boolean {
+  return lines.some((line) => isCompletedBrainbaseAuditLine(line)
+    || line.startsWith(BRAINBASE_NO_REFERENCE_AUDIT_PREFIX));
 }
 
 function isBrainbaseEvidenceTool(name: string): boolean {
@@ -572,10 +587,11 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   const judgmentAuditLines = expectedAuditLines.filter((line) =>
     line.startsWith(JUDGMENT_AUDIT_PREFIX) || line.startsWith(JUDGMENT_WARNING_PREFIX));
   if (judgmentAuditLines.length !== 1
-      || !expectedAuditLines.some((line) => line.startsWith(BRAINBASE_AUDIT_PREFIX))) {
+      || !hasBrainbaseAuditLine(expectedAuditLines)) {
     throw new Error("reply_judgment_audit_lines_missing");
   }
-  if (expectedAuditLines.some((line) => line.startsWith("📚 Brainbase監査未完了:"))) {
+  if (expectedAuditLines.some((line) => BRAINBASE_INCOMPLETE_AUDIT_PREFIXES
+    .some((prefix) => line.startsWith(prefix)))) {
     // Stop is the canonical completed-episode receipt. Incremental PostToolUse
     // receipts prove individual calls, but cannot upgrade an explicitly
     // incomplete final audit into a completed Judgment episode.
