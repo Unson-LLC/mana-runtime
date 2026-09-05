@@ -625,6 +625,19 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
   return [tenantId, workspaceId, "meeting-minutes", runId].join(":");
 }
 
+function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
+  return { runId: run.runId, status: run.status,
+    destinationId: run.destination?.id, diagnostics: run.diagnostics,
+    taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
+      pendingPresent: Boolean(run.taskRegistration?.pending),
+      failure: run.taskRegistration?.failure,
+      failedCandidateTitle: run.taskRegistration?.failure
+        ? run.generated?.tasks?.[run.taskRegistration.failure.index]?.title : undefined },
+    checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
+      postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0,
+      hasTaskCard: Boolean(run.slack?.taskCardTs) } };
+}
+
 function meetingMinutesRecoveryAuthorization(
   tenantContext: TenantContextEnvelope,
   expectedScope: ExpectedTenantScope,
@@ -2964,6 +2977,32 @@ export default {
       await env.TECHKNIGHT_EVENTS.send({ schema_version: "1.0", tenant_context: tenantContext, payload: selection });
       return Response.json({ runId, status: run.status, destinationId: run.destination.id, enqueued: true });
     }
+    const authorizedStatusMatch = url.pathname.match(
+      /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-status$/,
+    );
+    if (request.method === "GET" && authorizedStatusMatch) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const tenantId = url.searchParams.get("tenant_id") ?? "";
+      const workspaceId = url.searchParams.get("workspace_id") ?? "";
+      if (!/^[A-Za-z0-9_-]{3,128}$/.test(tenantId) || !/^[A-Z0-9]{3,32}$/.test(workspaceId)) {
+        return Response.json({ error: "meeting_minutes_admin_status_scope_invalid" }, { status: 400 });
+      }
+      const runId = authorizedStatusMatch[1]!;
+      const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+        tenantId, workspaceId, runId,
+      ));
+      const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+      const run = await withDisposableResource(() => getWorkspace(handle),
+        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
+      const authorization = run.recoveryAuthorization;
+      if (!authorization || authorization.tenantId !== tenantId || authorization.workspaceId !== workspaceId) {
+        return Response.json({ error: "meeting_minutes_admin_status_not_authorized" }, { status: 409 });
+      }
+      return Response.json(meetingMinutesAdminRunStatus(run));
+    }
     const runAdminMatch = url.pathname.match(/^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})(\/retry|\/adopt-tasks)?$/);
     if (runAdminMatch && (request.method === "GET" || request.method === "POST")) {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
@@ -3068,19 +3107,11 @@ export default {
         }
         await effects.boundary("queue_consumer", () => env.TECHKNIGHT_EVENTS.send(tenantBody));
       }
-      return Response.json({ runId: run.runId, status: run.status,
-        destinationId: run.destination?.id, diagnostics: run.diagnostics,
+      return Response.json({ ...meetingMinutesAdminRunStatus(run),
         redo: run.redo ? { revision: run.redo.revision, githubDeleted: Boolean(run.redo.githubDeletedAt),
           deletedTaskCount: run.redo.deletedTaskIds.length, sharedRetracted: Boolean(run.redo.sharedRetractedAt),
           failure: run.redo.failure ? { stage: run.redo.failure.stage, code: run.redo.failure.code,
             retryable: run.redo.failure.retryable, failedAt: run.redo.failure.failedAt } : undefined } : undefined,
-        taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
-          pendingPresent: Boolean(run.taskRegistration?.pending),
-          failure: run.taskRegistration?.failure,
-          failedCandidateTitle: run.taskRegistration?.failure
-            ? run.generated?.tasks?.[run.taskRegistration.failure.index]?.title : undefined },
-        checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
-          postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 },
         ...(request.method === "POST" ? { enqueued: true } : {}) });
     }
     if (request.method === "POST" && url.pathname === "/internal/contract-ledger/sync") {
