@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SlackQueueEvent } from "../types.js";
+import type { ExternalEffectReconciliationJob } from "../multitenancy/company-authority-external-effect-outbox.js";
 
 const runtimeMocks = vi.hoisted(() => ({
   createClients: vi.fn(),
@@ -126,7 +127,10 @@ vi.mock("../disposable-resource.js", async (importOriginal) => {
   return { ...actual, withDisposableResource: runtimeMocks.withDisposableResource };
 });
 
-import { executeCompanyAuthorityReplyOperation } from "../index.js";
+import {
+  executeCompanyAuthorityReplyOperation,
+  handleExternalEffectReconciliationQueueMessage,
+} from "../index.js";
 
 type CompanyAuthorityReplyOperation = Parameters<typeof executeCompanyAuthorityReplyOperation>[1];
 type RuntimeEnv = Parameters<typeof executeCompanyAuthorityReplyOperation>[0];
@@ -239,6 +243,68 @@ function tenantContext(projectIds: string[] = [projectId]) {
       value: "signed-tenant-context",
     },
   };
+}
+
+function reconciliationJob(): ExternalEffectReconciliationJob {
+  const context = tenantContext();
+  const runtimeEventId = "runtime-event-reconcile";
+  const accountingArtifact = {
+    partition_key: `${tenantId}/${connectionId}/usage`,
+    usage_events: [{
+      usage_event_id: "usage-reconcile",
+      tenant_id: tenantId,
+      connection_id: connectionId,
+      connection_revision: context.workspace_connection.connection_revision,
+      contract_revision: context.contract_revision,
+      deployment_id: deploymentId,
+      correlation_id: context.correlation_id,
+      operation_id: context.operation_id,
+      idempotency_key: context.idempotency_key,
+    }],
+    receipt: {
+      receipt_id: "receipt-reconcile",
+      tenant_id: tenantId,
+      connection_id: connectionId,
+      connection_revision: context.workspace_connection.connection_revision,
+      contract_revision: context.contract_revision,
+      deployment_id: deploymentId,
+      correlation_id: context.correlation_id,
+      operation_ids: [context.operation_id],
+      idempotency_keys: [context.idempotency_key],
+      actor_principal_id: context.actor.principal_id,
+      project_id: projectId,
+      reply: { state: "delivered" },
+    },
+  };
+  return {
+    schema_version: "1.0",
+    tenant_id: tenantId,
+    effect_id: context.idempotency_key,
+    provider_key: "provider-key-reconcile",
+    payload_hash: `sha256:${"a".repeat(64)}`,
+    recovery: {
+      runtime_event_id: runtimeEventId,
+      runtime_claim_token: "runtime-claim-token-reconcile",
+      operation_id: context.operation_id,
+      correlation_id: context.correlation_id,
+      accounting_context: context,
+      accounting_artifact: accountingArtifact,
+      delivery_identity: {
+        provider: "slack",
+        workspace_id: workspaceId,
+        app_id: appId,
+        channel_id: channelId,
+        thread_ts: threadTs,
+        event_id: context.slack.event_id,
+        delivery_id: runtimeEventId,
+        response_ts: responseTs,
+        body_hash: `sha256:${"b".repeat(64)}`,
+        bot_id: "B_UNSON",
+        workspace_name: "runtime-workspace-reconcile",
+      },
+    },
+    enqueued_at: "2026-09-05T00:00:01.000Z",
+  } as unknown as ExternalEffectReconciliationJob;
 }
 
 function operation(options: {
@@ -544,5 +610,57 @@ describe("Company Authority runtime.execute reply executor", () => {
     expect(runtimeMocks.slackRequests.filter(({ request }) =>
       request.url.endsWith("/chat.postMessage"))).toHaveLength(0);
     expect(runtimeMocks.postTenantSlackReply).not.toHaveBeenCalled();
+  });
+
+  it("does not ACK the reconciliation queue message before settlement completes", async () => {
+    const message = { body: reconciliationJob(), ack: vi.fn(), retry: vi.fn() };
+    const started = vi.fn();
+    let release: (() => void) | undefined;
+    const processing = handleExternalEffectReconciliationQueueMessage(
+      message,
+      runtimeEnv(),
+      async () => {
+        started();
+        await new Promise<void>((resolve) => { release = resolve; });
+        return "succeeded";
+      },
+    );
+
+    await vi.waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).not.toHaveBeenCalled();
+    if (!release) throw new Error("reconciliation_settlement_not_started");
+    release();
+    await expect(processing).resolves.toBe(true);
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it("retries unknown or transient reconciliation outcomes without ACK", async () => {
+    const message = { body: reconciliationJob(), ack: vi.fn(), retry: vi.fn() };
+    const readbackOnly = vi.fn(async () => "retry" as const);
+
+    await expect(handleExternalEffectReconciliationQueueMessage(
+      message,
+      runtimeEnv(),
+      readbackOnly,
+    )).resolves.toBe(true);
+
+    expect(readbackOnly).toHaveBeenCalledOnce();
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledOnce();
+  });
+
+  it("retries malformed reconciliation candidates instead of dropping them", async () => {
+    const message = {
+      body: { effect_id: "effect-reconcile", provider_key: "provider-reconcile", payload_hash: "payload" },
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+
+    await expect(handleExternalEffectReconciliationQueueMessage(message, runtimeEnv())).resolves.toBe(true);
+
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledOnce();
   });
 });

@@ -121,10 +121,11 @@ describe("tenant Slack runtime wiring", () => {
     expect(reconciliationAt).toBeGreaterThan(-1);
     expect(malformedAckAt).toBeGreaterThan(reconciliationAt);
     expect(queue.slice(reconciliationAt, malformedAckAt)).toContain(
-      "reconcileCompanyAuthorityReplyOperation(env, message.body)",
+      "handleExternalEffectReconciliationQueueMessage({",
     );
-    expect(queue.slice(reconciliationAt, malformedAckAt)).toContain('outcome === "succeeded"');
-    expect(queue.slice(reconciliationAt, malformedAckAt)).toContain("message.retry();");
+    expect(queue.slice(reconciliationAt, malformedAckAt)).toContain("ack: () => message.ack()");
+    expect(queue.slice(reconciliationAt, malformedAckAt)).toContain("retry: () => message.retry()");
+    expect(source).toContain('outcome === "succeeded"');
     expect(queue.slice(reconciliationAt, malformedAckAt)).not.toContain("postSlackReply(");
   });
 
