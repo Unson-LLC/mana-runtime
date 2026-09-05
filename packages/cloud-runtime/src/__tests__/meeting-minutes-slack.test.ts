@@ -618,7 +618,7 @@ describe("MeetingMinutesSlackClient", () => {
   });
 
   it("shows the automatically suggested project with confirmation and a manual-change path", async () => {
-    let body: Record<string, unknown> = {};
+    let body: { blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }> } = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       body = JSON.parse(String(init?.body)); return Response.json({ ok: true, ts: "1.2" });
     }) as typeof fetch;
@@ -636,6 +636,9 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).toContain("案件名が一致");
     expect(serialized).toContain("mana_meeting_minutes_choose_destination:one");
     expect(serialized).toContain("この候補で進める");
+    const candidateButton = body.blocks?.flatMap((block) => block.elements ?? [])
+      .find((element) => element.action_id === "mana_meeting_minutes_choose_destination:one");
+    expect(JSON.parse(candidateButton?.value ?? "{}")).toMatchObject({ sourceThreadTs: "1.0" });
     expect(serialized).toContain("別の保存先を選ぶ");
   });
 

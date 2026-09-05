@@ -6,6 +6,7 @@ import {
   type TenantInteractionEffects,
   type TenantInteractionIdentity,
 } from "../slack-interactions.js";
+import { suggestedDestinationMessage } from "../meeting-minutes-slack.js";
 import { MAX_SLACK_REQUEST_BODY_BYTES } from "../slack-request-body.js";
 import { TenantBoundaryError } from "../multitenancy/errors.js";
 
@@ -138,6 +139,33 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(send.mock.invocationCallOrder[0]).toBeLessThan(showProcessing.mock.invocationCallOrder[0]!);
     expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(updateOriginal.mock.invocationCallOrder[0]!);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it("queues a suggested destination selected from a root Slack message", async () => {
+    const suggestedRun = { version: 1 as const, runId: "Ev1_F1", eventId: "Ev1", workspaceId: "T1", sourceChannelId: "C1",
+      sourceThreadTs: "1.0", sourceMessageTs: "1.0", file: { id: "F1", name: "meeting.txt", mimetype: "text/plain", size: 10 },
+      status: "awaiting_destination" as const,
+      routing: { evaluated: true as const, suggestedDestinationId: "mana", reason: "案件名が一致" },
+      createdAt: "2026-08-13T00:00:00.000Z", updatedAt: "2026-08-13T00:00:00.000Z" };
+    const suggestion = suggestedDestinationMessage(suggestedRun, destinations);
+    const candidateValue = (suggestion?.blocks[1] as { elements?: Array<{ value?: string }> } | undefined)
+      ?.elements?.[0]?.value;
+    expect(candidateValue).toBeDefined();
+
+    const rootMessagePayload = structuredClone(payload);
+    (rootMessagePayload as { message: { ts: string; thread_ts?: string } }).message = { ts: "1.1" };
+    rootMessagePayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:mana";
+    rootMessagePayload.actions[0]!.value = candidateValue!;
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+
+    const response = await handleMeetingMinutesInteraction(request(rootMessagePayload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
+      destinations, send, updateOriginal, defer: background.defer });
+
+    expect(response.status).toBe(200); await Promise.all(background.work);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "Ev1_F1", destinationId: "mana", threadTs: "1.0",
+    }), expect.objectContaining({ id: "mana" }));
   });
   it("converts a meeting task handler rejection into one safe failure response and does not double-handle", async () => {
     const taskPayload = structuredClone(payload);
@@ -580,6 +608,8 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).not.toContain("INTERACTION_ENQUEUE_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("失敗段階: スレッド特定");
     expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("処理ID: Ev1_F1");
+    expect(updateOriginal).toHaveBeenCalledWith(payload.response_url,
+      expect.objectContaining({ replace_original: true }), expect.any(Function));
   });
   it("shows immediate feedback for an existing retry button using the signed container thread", async () => {
     const retryPayload = structuredClone(payload);
