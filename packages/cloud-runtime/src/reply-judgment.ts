@@ -471,9 +471,11 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
         results.set(item.tool_use_id, { index, outcome: item.is_error === true ? "error" : "success" });
       }
     }
-    if (event.type === "result" && typeof event.result === "string" && event.result.trim()) {
-      const sessionId = event.session_id ?? event.sessionId;
-      if (typeof sessionId !== "string" || !sessionId) throw new Error("reply_judgment_session_missing");
+    if (event.type === "result") {
+      // permission_denials is terminal CLI metadata, independent from whether
+      // the CLI supplied a reply body. A verified Stop answer may legitimately
+      // replace an empty or omitted body, but an exact PreToolUse denial must
+      // still be excluded from PostTool receipt accounting.
       if (event.permission_denials !== undefined) {
         if (!Array.isArray(event.permission_denials)) {
           throw new Error("reply_judgment_tool_audit_mismatch_permission_denial_invalid");
@@ -492,6 +494,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       } else {
         terminalPermissionDenials = [];
       }
+    }
+    if (event.type === "result" && typeof event.result === "string" && event.result.trim()) {
+      const sessionId = event.session_id ?? event.sessionId;
+      if (typeof sessionId !== "string" || !sessionId) throw new Error("reply_judgment_session_missing");
       final = { index, reply: event.result.trim(), sessionId };
     }
   });
