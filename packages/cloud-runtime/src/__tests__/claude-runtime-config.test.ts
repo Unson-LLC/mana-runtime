@@ -1,6 +1,7 @@
 import {
   buildRuntimeClaudeCommand,
   runtimeMeetingMinutesMcpConfigPath,
+  runtimeReplySettingsContent,
   runtimeTaskSearchMcpConfigPath,
   resolveClaudeRuntimeConfig,
   runtimeClaudePromptPath,
@@ -128,10 +129,14 @@ describe("Cloudflare Claude runtime config", () => {
     const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>>;
     };
-    expect(Object.keys(settings.hooks)).toEqual(["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]);
+    expect(Object.keys(settings.hooks)).toEqual([
+      "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop",
+    ]);
     expect(settings.hooks.PreToolUse?.[0]?.matcher).toBe(".*");
     expect(settings.hooks.PostToolUse?.[0]?.matcher).toBe("^mcp__brainbase__.*$");
-    for (const eventName of ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] as const) {
+    expect(settings.hooks.PostToolUseFailure?.[0]?.matcher).toBe("^mcp__brainbase__.*$");
+    expect(JSON.parse(runtimeReplySettingsContent())).toEqual(settings);
+    for (const eventName of ["UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"] as const) {
       expect(settings.hooks[eventName]?.[0]?.hooks).toEqual([
         {
           type: "command",

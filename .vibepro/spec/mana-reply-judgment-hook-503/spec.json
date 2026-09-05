@@ -163,7 +163,7 @@
     {
       "id": "C-001",
       "type": "contract",
-      "statement": "通常replyがJudgment Hook eventを要求するときはUserPromptSubmit、Brainbase MCP PostToolUse、Stopを持つreply専用settingsを使う",
+      "statement": "通常replyがJudgment Hook eventを要求するときはUserPromptSubmit、Brainbase MCPの成功にPostToolUse、失敗にPostToolUseFailure、Stopを持つreply専用settingsを使う。内部state記録を除く各Post Tool受領票は非空のHost監査とtool_use_id・tool_nameで実呼び出しへ結合し、成功/エラーのtool_resultとHook種別が一致しない、受領票が欠ける、または競合する場合はfail closedする",
       "origin": {
         "story_refs": [
           {
@@ -176,6 +176,10 @@
           }
         ],
         "architecture_refs": [
+          {
+            "file": "docs/architecture/mana-reply-judgment-hook-503.md",
+            "section": "決定"
+          },
           {
             "file": "docs/architecture/story-slack-mention-brainbase-judgment.md",
             "section": "データフロー"
@@ -200,6 +204,14 @@
           {
             "file": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
             "case": "mana-reply-judgment-hook-503:ac:1 ac:2 uses reply-specific Judgment Hook settings"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "case": "rejects a %s tool result paired with %s"
+          },
+          {
+            "file": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
+            "case": "fails closed when a bound %s response lacks an audit receipt"
           }
         ]
       },
@@ -208,12 +220,20 @@
           {
             "file_glob": "packages/cloud-runtime/src/__tests__/claude-runtime-config.test.ts",
             "must_cover": "uses reply-specific Judgment Hook settings"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/reply-judgment.test.ts",
+            "must_cover": "rejects a %s tool result paired with %s"
+          },
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/brainbase-judgment-hook.test.ts",
+            "must_cover": "fails closed when a bound %s response lacks an audit receipt"
           }
         ]
       },
       "confidence": 0.99,
       "first_seen_at": "2026-09-01T13:45:00.000Z",
-      "last_revised_at": "2026-09-01T14:03:15.966Z"
+      "last_revised_at": "2026-09-05T00:00:00.000Z"
     },
     {
       "id": "INV-001",

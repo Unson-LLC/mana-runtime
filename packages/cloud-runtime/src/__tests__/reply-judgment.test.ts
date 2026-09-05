@@ -36,7 +36,7 @@ const failedSearchBrainbaseLine = "⚠️ Brainbase検索: search「質問」→
 const receiptPrefix = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const verifiedAnswerPrefix = "__MANA_VERIFIED_ANSWER_V1__:";
 
-function hook(event: "UserPromptSubmit" | "PostToolUse" | "Stop", systemMessage: string, turn = "turn-1",
+function hook(event: "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" | "Stop", systemMessage: string, turn = "turn-1",
   toolIdentity?: { tool_use_id: string; tool_name: string }) {
   return {
     type: "system",
@@ -111,7 +111,7 @@ function stream(options: {
       { type: "assistant", session_id: "session-1", message: { content: [
         { type: "tool_use", id: `tool-${toolNumber}`, name: "mcp__brainbase__brainbase_knowledge_resolve", input: {} },
       ] } },
-      hook("PostToolUse", toolAuditLines[index]!, options.turn, {
+      hook(options.toolErrors?.[index] ? "PostToolUseFailure" : "PostToolUse", toolAuditLines[index]!, options.turn, {
         tool_use_id: `tool-${toolNumber}`,
         tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
       }),
@@ -339,7 +339,7 @@ describe("Slack reply Judgment lifecycle", () => {
           "different-tool-id",
           "mcp__brainbase__brainbase_knowledge_resolve",
         ),
-        reason: "tool_use_id_mismatch",
+        reason: "missing_posttool_receipt",
       },
       {
         stream: bindPostToolReceipt(
@@ -628,7 +628,7 @@ describe("Slack reply Judgment lifecycle", () => {
           type: "tool_use", id: "optional-tool", name: "mcp__brainbase__brainbase_bootstrap_config", input: {},
         }] },
       }),
-      JSON.stringify(hook("PostToolUse", failedOptionalBrainbaseLine, "turn-1", {
+      JSON.stringify(hook("PostToolUseFailure", failedOptionalBrainbaseLine, "turn-1", {
         tool_use_id: "optional-tool",
         tool_name: "mcp__brainbase__brainbase_bootstrap_config",
       })),
@@ -646,6 +646,41 @@ describe("Slack reply Judgment lifecycle", () => {
         { toolUseId: "optional-tool", outcome: "error" },
       ],
     });
+  });
+
+  it.each([
+    [false, "PostToolUseFailure"],
+    [true, "PostToolUse"],
+  ])("rejects a %s tool result paired with %s", (isError, replacementEvent) => {
+    const lines = stream({ withTool: true, toolErrors: [isError] }).split("\n");
+    const hookIndex = lines.findIndex((line) => line.includes('"hook_event":"PostToolUse"')
+      || line.includes('"hook_event":"PostToolUseFailure"'));
+    const event = JSON.parse(lines[hookIndex]!);
+    if (event.hook_event === "UserPromptSubmit") throw new Error("test_hook_missing");
+    event.hook_event = replacementEvent;
+    const output = JSON.parse(event.stdout);
+    output.systemMessage = output.systemMessage.split("\n").map((line: string) => {
+      if (!line.startsWith(receiptPrefix)) return line;
+      const receipt = JSON.parse(line.slice(receiptPrefix.length));
+      return `${receiptPrefix}${JSON.stringify({ ...receipt, hook_event_name: replacementEvent })}`;
+    }).join("\n");
+    event.stdout = JSON.stringify(output);
+    lines[hookIndex] = JSON.stringify(event);
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_result_outcome_mismatch");
+  });
+
+  it("rejects conflicting PostToolUse and PostToolUseFailure receipts for one tool call", () => {
+    const lines = stream({ withTool: true, toolErrors: [true] }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0, JSON.stringify(hook("PostToolUse", brainbaseLine, "turn-1", {
+      tool_use_id: "tool-1",
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+    })));
+
+    expect(() => parseReplyJudgmentStream(lines.join("\n")))
+      .toThrow("reply_judgment_tool_audit_mismatch_posttool_receipt_conflict");
   });
 
   it.each([

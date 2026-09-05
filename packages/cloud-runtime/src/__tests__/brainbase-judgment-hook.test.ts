@@ -157,7 +157,7 @@ describe("Brainbase judgment Hook forwarder", () => {
         ...(payload.hook_event_name === "UserPromptSubmit"
           ? { route_resolution_sha256: "a".repeat(64) }
           : {}),
-        output: payload.hook_event_name === "PostToolUse"
+        output: payload.hook_event_name === "PostToolUse" || payload.hook_event_name === "PostToolUseFailure"
           ? { systemMessage: "Brainbase tool use recorded" }
           : payload.hook_event_name === "Stop"
             ? {
@@ -187,11 +187,11 @@ describe("Brainbase judgment Hook forwarder", () => {
       BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
       BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
     };
-    for (const hook_event_name of ["UserPromptSubmit", "PostToolUse", "Stop"]) {
+    for (const hook_event_name of ["UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "Stop"]) {
       const result = await runHook({
         hook_event_name,
         session_id: "session-1",
-        ...(hook_event_name === "PostToolUse" ? {
+        ...(hook_event_name === "PostToolUse" || hook_event_name === "PostToolUseFailure" ? {
           tool_use_id: "tool-use-1",
           tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
         } : {}),
@@ -201,7 +201,7 @@ describe("Brainbase judgment Hook forwarder", () => {
       }, env);
       expect(result.code).toBe(0);
       const output = JSON.parse(result.stdout);
-      if (hook_event_name === "PostToolUse") {
+      if (hook_event_name === "PostToolUse" || hook_event_name === "PostToolUseFailure") {
         expect(output.systemMessage).toContain("recorded");
       } else if (hook_event_name === "UserPromptSubmit") {
         expect(output).toHaveProperty("hookSpecificOutput");
@@ -222,7 +222,7 @@ describe("Brainbase judgment Hook forwarder", () => {
       expect(embeddedReceipt.turn_id).toBeTruthy();
       if (hook_event_name === "UserPromptSubmit") {
         expect(embeddedReceipt.route_resolution_sha256).toBe("a".repeat(64));
-      } else if (hook_event_name === "PostToolUse") {
+      } else if (hook_event_name === "PostToolUse" || hook_event_name === "PostToolUseFailure") {
         expect(embeddedReceipt).toMatchObject({
           tool_use_id: "tool-use-1",
           tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
@@ -724,7 +724,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(result.stderr).toContain("judgment_hook_payload_too_large");
   }, 15_000);
 
-  it("fails closed when a bound PostToolUse response lacks an audit receipt", async () => {
+  it.each(["PostToolUse", "PostToolUseFailure"])("fails closed when a bound %s response lacks an audit receipt", async (postToolEvent) => {
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk as Buffer);
@@ -761,7 +761,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     const submitted = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "session-5" }, env);
     expect(submitted.code).toBe(0);
     const result = await runHook({
-      hook_event_name: "PostToolUse",
+      hook_event_name: postToolEvent,
       session_id: "session-5",
       tool_use_id: "tool-use-5",
       tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
@@ -770,7 +770,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     expect(result.stderr).toContain("judgment_hook_audit_not_recorded");
   });
 
-  it("fails closed when PostToolUse lacks the exact Claude tool identity", async () => {
+  it.each(["PostToolUse", "PostToolUseFailure"])("fails closed when %s lacks the exact Claude tool identity", async (postToolEvent) => {
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk as Buffer);
@@ -810,7 +810,7 @@ describe("Brainbase judgment Hook forwarder", () => {
     }, env)).code).toBe(0);
 
     const result = await runHook({
-      hook_event_name: "PostToolUse",
+      hook_event_name: postToolEvent,
       session_id: "session-tool-identity",
       tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
     }, env);
