@@ -176,7 +176,7 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(createCanvas).toHaveBeenCalledWith("CBACKOFFICE", undefined, { fetch });
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       SLACK_ALLOWED_CHANNEL_ID: "CBACKOFFICE", SLACK_BOT_TOKEN: undefined, TASK_BOARD_CANVAS_ID: "FMANA",
-    }), { fetch });
+    }), { fetch, taskFetch: fetch });
     expect(bindingFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -229,7 +229,7 @@ describe("Cloudflare task runtime entrypoints", () => {
       manaCanvasId: "FDEV123456" }, env, "unson-business", fetch, refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       SLACK_ALLOWED_CHANNEL_ID: "C0DEV123456", TASK_BOARD_CANVAS_ID: "FDEV123456", RUNTIME_PROJECT_CODES: "mana",
-    }), { fetch });
+    }), { fetch, taskFetch: fetch });
   });
 
   it("schedules only targets owned by this tenant and backed by a task-board placement", async () => {
@@ -289,7 +289,7 @@ describe("Cloudflare task runtime entrypoints", () => {
       manaCanvasId: "FDEV123456" }, env, "unson-business", fetch, refresh);
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
       RUNTIME_TASK_BOARD_ENABLED: "true", SLACK_ALLOWED_CHANNEL_ID: "C0DEV123456", RUNTIME_PROJECT_CODES: "mana",
-    }), { fetch });
+    }), { fetch, taskFetch: fetch });
   });
 
   it("suppresses foreign tenant targets and rejects them at the queue consumer boundary", async () => {

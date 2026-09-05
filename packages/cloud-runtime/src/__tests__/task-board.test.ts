@@ -192,6 +192,42 @@ describe("Cloudflare bounded task Canvas", () => {
     expect(String((edit?.[1] as RequestInit).body)).not.toContain("task-secret");
   });
 
+  it("uses separate authority fetches for canonical tasks and destination Slack", async () => {
+    const taskFetch = vi.fn().mockImplementation(async (url: string) => {
+      expect(new URL(url).hostname).toBe("bb.example.test");
+      return Response.json({ items: [], next_cursor: null });
+    });
+    const slackFetch = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      expect(parsed.hostname).toBe("slack.com");
+      if (parsed.pathname.endsWith("conversations.info")) {
+        return Response.json({
+          ok: true,
+          channel: { properties: { tabs: [
+            { id: "Ct_TAB", type: "canvas", data: { file_id: "F_CANVAS" } },
+          ] } },
+        });
+      }
+      if (parsed.pathname.endsWith("canvases.edit")) return Response.json({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+
+    await expect(refreshTaskBoard({
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      RUNTIME_PROJECT_CODES: "back-office",
+      BRAINBASE_TASK_API_BASE_URL: "https://bb.example.test",
+      BRAINBASE_TASK_API_TOKEN: "task-secret",
+      SLACK_BOT_TOKEN: "slack-secret",
+      SLACK_ALLOWED_CHANNEL_ID: "C_BACK_OFFICE",
+      TASK_BOARD_CANVAS_ID: "F_CANVAS",
+    }, { fetch: slackFetch, taskFetch })).resolves.toEqual({
+      outcome: "updated", displayed: 0, hasMore: false,
+    });
+
+    expect(taskFetch).toHaveBeenCalledTimes(4);
+    expect(slackFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("does not adopt or create an unbound channel Canvas", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);

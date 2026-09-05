@@ -1381,22 +1381,18 @@ function meetingMinutesClients(
           resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
           now: () => new Date().toISOString(),
         });
-        await executeTenantBoundary({
-          boundary: "brainbase_proxy",
-          tenant_context: repairTenantContext,
-          expected_scope: repairExpectedScope,
-          verifier: repairVerifier,
-          now: new Date().toISOString(),
-          execute: () => executeTenantBoundary({
+        // Reading canonical tasks and updating the destination Slack Canvas are
+        // different authority boundaries. Keep Task API reads on the source
+        // meeting context; use the destination context only for Slack.
+        await effects.boundary("brainbase_proxy", (taskCredentialFetch) => executeTenantBoundary({
             boundary: "slack_delivery",
             tenant_context: repairTenantContext,
             expected_scope: repairExpectedScope,
             verifier: repairVerifier,
             now: new Date().toISOString(),
             execute: () => processTaskBoardRepair(repair, env, repair.tenantId, repairCredentialFetch,
-              undefined, undefined, repair.workspaceId),
-          }),
-        });
+              undefined, undefined, repair.workspaceId, taskCredentialFetch),
+          }));
       },
       postThreadChunk: (channelId: string, threadTs: string, fileName: string, text: string,
         index: number, total: number, clientMsgId: string) =>

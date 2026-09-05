@@ -255,7 +255,7 @@ async function publishCanvas(
 
 export async function refreshTaskBoard(
   env: TaskBoardEnv,
-  options: { fetch?: typeof fetch; now?: () => string } = {},
+  options: { fetch?: typeof fetch; taskFetch?: typeof fetch; now?: () => string } = {},
 ): Promise<{ outcome: "disabled" | "updated"; displayed?: number; hasMore?: boolean }> {
   if (env.RUNTIME_TASK_BOARD_ENABLED !== "true") return { outcome: "disabled" };
   const projects = parseRuntimeProjectCodes(env.RUNTIME_PROJECT_CODES);
@@ -265,10 +265,11 @@ export async function refreshTaskBoard(
     throw new Error("task_board_not_configured");
   }
   const fetchImpl = options.fetch ?? fetch;
+  const taskFetchImpl = options.taskFetch ?? fetchImpl;
   const client = new TaskApiClient({
     baseUrl: env.BRAINBASE_TASK_API_BASE_URL,
     token: env.BRAINBASE_TASK_API_TOKEN,
-    fetchImpl,
+    fetchImpl: taskFetchImpl,
   });
   const board = await fetchBoundedTaskBoard(client, projects, DISPLAY_LIMIT);
   const now = options.now?.() ?? new Date().toISOString();

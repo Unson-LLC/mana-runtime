@@ -129,10 +129,11 @@ export async function processTaskBoardRepair(
   env: TaskBoardRuntimeEnv,
   expectedTenantId: string,
   credentialFetch: typeof fetch,
-  refresh: (bindings: TaskBoardEnv, options?: { fetch?: typeof fetch }) => Promise<unknown> = refreshTaskBoard,
+  refresh: (bindings: TaskBoardEnv, options?: { fetch?: typeof fetch; taskFetch?: typeof fetch }) => Promise<unknown> = refreshTaskBoard,
   createCanvas: (channelId: string, token: string | undefined,
     options?: { fetch?: typeof fetch }) => Promise<string> = createManagedTaskBoardCanvas,
   expectedWorkspaceId = env.SLACK_EXPECTED_TEAM_ID,
+  taskCredentialFetch: typeof fetch = credentialFetch,
 ): Promise<void> {
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
   const destinationWorkspace = Boolean(target && target.workspaceId === expectedWorkspaceId);
@@ -200,7 +201,10 @@ export async function processTaskBoardRepair(
     SLACK_BOT_TOKEN: undefined,
     SLACK_ALLOWED_CHANNEL_ID: target.channelId,
     TASK_BOARD_CANVAS_ID: canvasId,
-    RUNTIME_PROJECT_CODES: target.projectCodes.join(",") }, { fetch: credentialFetch });
+    RUNTIME_PROJECT_CODES: target.projectCodes.join(",") }, {
+    fetch: credentialFetch,
+    taskFetch: taskCredentialFetch,
+  });
   console.log(JSON.stringify({ event: "task_board_repair_completed", targetId: target.targetId,
     workspaceId: target.workspaceId, channelId: target.channelId, canvasId }));
 }
