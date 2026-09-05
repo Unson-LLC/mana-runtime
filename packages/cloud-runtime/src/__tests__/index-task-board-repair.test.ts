@@ -43,6 +43,8 @@ describe("Worker task Canvas repair producers", () => {
       .toBeLessThan(resumeClient.indexOf("resolveTaskBoardRepairTenantContext"));
     expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
     expect(source).toContain("requester_id: serviceActorId");
+    expect(source).toContain("const destinationAuthorization = destinationAuthorizationForSelection(env, destination, \"queue_consumer\")");
+    expect(source).toContain("resolveMeetingMinutesDestinationProjectScope(");
     expect(source).toContain("(taskBoardTenantContext) => enqueueMeetingMinutesTaskBoardRepair(");
     expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
       .toHaveLength(1);

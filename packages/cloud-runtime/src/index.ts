@@ -2026,7 +2026,7 @@ function expectedTenantTaskBoardRepairScope(
     || envelope.placement.profile !== tenantDeploymentProfile(env)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
-  const placementProjectScope = expectedProjectScopeForEvent(env, {
+  const repairEvent = {
     tenantId: envelope.tenant.tenant_id,
     eventId: taskBoardRepairEventId(repair),
     workspaceId: repair.workspaceId,
@@ -2037,7 +2037,25 @@ function expectedTenantTaskBoardRepairScope(
     eventType: "message",
     text: "",
     receivedAt: repair.requestedAt,
-  }, envelope);
+  } as const;
+  const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId
+    && candidate.workspaceId === repair.workspaceId && candidate.channelId === repair.channelId);
+  if (!target) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH");
+  const destinations = meetingMinutesRuntimeConfig(env).destinations;
+  const destination = destinations.find((candidate) => candidate.taskBoardTargetId === repair.targetId
+    && candidate.organization.id === target.organizationId);
+  const ambiguousDestination = destinations.some((candidate) => candidate !== destination
+    && candidate.taskBoardTargetId === repair.targetId);
+  if (ambiguousDestination) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH");
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination, "queue_consumer");
+  const projectScope = destination && destinationAuthorization
+    ? resolveMeetingMinutesDestinationProjectScope(
+      envelope.authorization,
+      destination,
+      destinationAuthorization.required_authorization.project_id,
+      "queue_consumer",
+    )
+    : expectedProjectScopeForEvent(env, repairEvent, envelope);
   return {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
     workspace_id: repair.workspaceId,
@@ -2045,7 +2063,7 @@ function expectedTenantTaskBoardRepairScope(
     channel_id: repair.channelId,
     thread_ts: repair.requestedAt,
     actor_principal_id: envelope.actor.principal_id,
-    ...placementProjectScope,
+    ...projectScope,
     capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
     deployment_id: envelope.placement.deployment_id,
   };
