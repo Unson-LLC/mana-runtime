@@ -128,6 +128,8 @@ describe("company authority runtime configuration", () => {
     JSON.stringify({ "task.read": "delete" }),
     JSON.stringify({ "": "read" }),
     JSON.stringify({ company_authority_v1: "read" }),
+    JSON.stringify({ "runtime.execute": "read" }),
+    JSON.stringify({ "runtime.execute": "write" }),
     JSON.stringify(["task.read"]),
     JSON.stringify("task.read"),
   ])("rejects invalid operation map %s", (operations) => {

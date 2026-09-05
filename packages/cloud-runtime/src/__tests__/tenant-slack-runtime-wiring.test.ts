@@ -35,7 +35,7 @@ describe("tenant Slack runtime wiring", () => {
     expect(redo).toContain("candidate.id === run?.destination?.id");
     expect(redo).toContain("destination.contextProjectCode !== run?.destination?.contextProjectCode");
     expect(redo).toContain("resolveDerivedSlackTenantContext(env, tenantContext");
-    expect(redo).toContain("}, { destination })");
+    expect(redo).toContain("}, { destination }, () => tenantConfiguredDesiredEffectByCapability(env))");
     expect(redo).toContain("resolveMeetingMinutesDestinationProjectScope(");
     expect(redo).toContain("tenant_context: taskContext");
     expect(redo).toContain("expected_scope: taskScope");
@@ -46,6 +46,11 @@ describe("tenant Slack runtime wiring", () => {
     expect(derived).toContain("destinationAuthorizationForSelection(env, options.destination)");
     expect(derived).toContain("destinationAuthorization?.trusted_project_ids");
     expect(derived).toContain('if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH")');
+    expect(derived).toContain("typeof desiredEffectByCapability === \"function\"");
+    expect(derived.indexOf("destinationAuthorizationForSelection(env, options.destination)"))
+      .toBeLessThan(derived.indexOf("const resolvedDesiredEffectByCapability"));
+    expect(derived.indexOf("const resolvedDesiredEffectByCapability"))
+      .toBeLessThan(derived.indexOf("tenantRuntimeClients(env, undefined, resolvedDesiredEffectByCapability)"));
   });
 
   it("resolves signed events and commands through the canonical tenant authority", () => {
@@ -66,9 +71,12 @@ describe("tenant Slack runtime wiring", () => {
     expect(ingress).toContain("handleTenantSlackRequest(request");
     expect(parseAt).toBeGreaterThan(-1);
     expect(configureAt).toBeGreaterThan(-1);
-    expect(parseAt).toBeGreaterThan(configureAt);
+    expect(parseAt).toBeLessThan(configureAt);
     expect(handlerAt).toBeGreaterThan(configureAt);
     expect(ingress).toContain("company_authority:");
+    expect(ingress).toContain("const desiredEffectByCapability = runtimeConfiguration.state === \"enabled\"");
+    expect(ingress).toContain("tenantRuntimeClients(env, undefined, desiredEffectByCapability)");
+    expect(ingress).toContain("tenantConfiguredDesiredEffectByCapability(env)");
     expect(ingress).toContain("env.TECHKNIGHT_EVENTS.send(event)");
     expect(eventQueueBinding).toContain("| CompanyAuthorityRuntimeEnvelope<SlackQueueEvent>");
     expect(ingress).toContain('schema_version: "1.0"');
@@ -205,5 +213,28 @@ describe("tenant Slack runtime wiring", () => {
     expect(redo).toContain(`redo-failure:\${run.runId}:revision-\${${revision}}`);
     expect(redo).toContain(`kind: "destination_selection", runId: run.runId, revision: ${revision}`);
     expect(redo).toContain(`kind: "redo_failure", runId: run.runId, revision: ${revision}`);
+  });
+
+  it("keeps destination scope failures ahead of malformed effect configuration", () => {
+    const guardStart = source.indexOf("function createMeetingMinutesTenantEffectGuard(");
+    const guardEnd = source.indexOf("function meetingMinutesClients(", guardStart);
+    const guard = source.slice(guardStart, guardEnd);
+    const clientsFactoryAt = guard.indexOf("const getClients = (): ReturnType<typeof tenantRuntimeClients>");
+    const configAt = guard.indexOf("tenantConfiguredDesiredEffectByCapability(input.env)");
+    const destinationStart = guard.indexOf("async destinationSlack");
+    const destination = guard.slice(destinationStart);
+    const bindingAt = destination.indexOf("resolveMeetingMinutesDestinationSlackBinding");
+    const derivedAt = destination.indexOf("resolveDerivedSlackTenantContext");
+    const effectConfigAt = destination.indexOf("tenantConfiguredDesiredEffectByCapability(input.env)");
+
+    expect(guardStart).toBeGreaterThan(-1);
+    expect(guardEnd).toBeGreaterThan(guardStart);
+    expect(clientsFactoryAt).toBeGreaterThan(-1);
+    expect(configAt).toBeGreaterThan(clientsFactoryAt);
+    expect(configAt).toBeLessThan(guard.indexOf("const trustedWorkspaceConnections"));
+    expect(guard).toContain("const getClients = (): ReturnType<typeof tenantRuntimeClients> => clients ??=");
+    expect(bindingAt).toBeGreaterThan(-1);
+    expect(derivedAt).toBeGreaterThan(bindingAt);
+    expect(effectConfigAt).toBeGreaterThan(derivedAt);
   });
 });

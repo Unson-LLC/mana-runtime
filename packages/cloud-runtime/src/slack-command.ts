@@ -77,9 +77,11 @@ export async function handleSlackCommandRequest(request: Request, options: {
   }
 
   if (repairMatch && options.repairMeetingMinutes) {
-    await options.repairMeetingMinutes({ workspaceId, channelId, requesterId,
+    const repairWork = options.repairMeetingMinutes({ workspaceId, channelId, requesterId,
       runId: repairMatch[1]!, sourceThreadTs: repairMatch[2]! });
-    return Response.json({ response_type: "ephemeral", text: "既存の議事録投稿を正常な完了表示へ更新しました。" });
+    if (options.defer) options.defer(repairWork);
+    else await repairWork;
+    return Response.json({ response_type: "ephemeral", text: "既存の議事録投稿の表示修復を受け付けました。" });
   }
 
   if (options.openModal) {

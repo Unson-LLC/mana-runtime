@@ -251,12 +251,28 @@ function mapContractFailureAtBoundary(error: unknown, boundary: string): never {
   throw error;
 }
 
-function desiredEffect(
+/**
+ * Resolves a capability effect from the canonical Company Authority map.
+ *
+ * The map is runtime input at the HTTP boundary, so do not rely on the
+ * TypeScript union to validate it. In particular, runtime.execute is always
+ * an external side effect and must never be reclassified from an arbitrary
+ * map value before the request reaches the network.
+ */
+export function resolveCompanyAuthorityDesiredEffect(
   capabilityId: string,
-  mapping: Readonly<Record<string, CompanyAuthorityDesiredEffect>>,
+  mapping: Readonly<Record<string, unknown>>,
 ): CompanyAuthorityDesiredEffect {
   const effect = mapping[capabilityId];
-  if (!effect) fail("DESIRED_EFFECT_REQUIRED", { capability_id: capabilityId });
+  if (effect !== "read" && effect !== "write" && effect !== "external_side_effect") {
+    fail("DESIRED_EFFECT_REQUIRED", { capability_id: capabilityId });
+  }
+  if (capabilityId === "runtime.execute" && effect !== "external_side_effect") {
+    fail("DESIRED_EFFECT_REQUIRED", {
+      capability_id: capabilityId,
+      expected_effect: "external_side_effect",
+    });
+  }
   return effect;
 }
 
@@ -299,7 +315,10 @@ export function createObservedExecutionRequest(
       capability_id: observation.capability_id,
       resource_ref: observation.resource_ref,
       ...(observation.project_hint ? { project_hint: observation.project_hint } : {}),
-      desired_effect: desiredEffect(observation.capability_id, desiredEffectByCapability),
+      desired_effect: resolveCompanyAuthorityDesiredEffect(
+        observation.capability_id,
+        desiredEffectByCapability,
+      ),
     },
     ...(Object.keys(delivery).length > 0 ? { delivery } : {}),
     correlation_id: observation.correlation_id,

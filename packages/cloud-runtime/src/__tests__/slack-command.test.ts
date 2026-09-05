@@ -42,6 +42,38 @@ describe("Slack native development command", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("acknowledges Slack before a meeting-minutes repair completes", async () => {
+    let completeRepair!: () => void;
+    const repairWork = new Promise<void>((resolve) => { completeRepair = resolve; });
+    const defer = vi.fn<(work: Promise<void>) => void>();
+    const body = new URLSearchParams({
+      team_id: "T1", channel_id: "C1", user_id: "U1", command: "/vibepro",
+      trigger_id: "tr-repair-slow", text: "repair-meeting-minutes run_123 1788180000.749479",
+    }).toString();
+
+    const response = await Promise.race([
+      handleSlackCommandRequest(make(body), {
+        signingSecret: secret,
+        placements: [],
+        repairPlacements: [{ channelId: "C1", allowedUserIds: ["U1"] }],
+        nowMs,
+        repairMeetingMinutes: () => repairWork,
+        defer,
+        send: vi.fn(),
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("slack_ack_waited_for_repair")), 50)),
+    ]);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      response_type: "ephemeral",
+      text: "既存の議事録投稿の表示修復を受け付けました。",
+    });
+    expect(defer).toHaveBeenCalledWith(repairWork);
+    completeRepair();
+    await repairWork;
+  });
+
   it("rejects an oversized body without Content-Length before signature verification or queueing", async () => {
     const send = vi.fn();
     const request = new Request("https://runtime.test/slack/commands", {

@@ -684,7 +684,7 @@ describe("会社別Cloudflare deployment", () => {
     const guardStart = worker.indexOf("function createMeetingMinutesTenantEffectGuard(");
     const guardEnd = worker.indexOf("function meetingMinutesClients(", guardStart);
     const guard = worker.slice(guardStart, guardEnd);
-    expect(guard).toContain("tenantRuntimeClients(input.env, input.tenant_context)");
+    expect(guard).toContain("tenantRuntimeClients(\n    input.env, input.tenant_context,");
     expect(guard).not.toContain("tenantRuntimeClients(input.env);");
     expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeGreaterThanOrEqual(0);
     expect(guard.indexOf("resolveMeetingMinutesDestinationSlackBinding")).toBeLessThan(
@@ -729,7 +729,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).not.toContain("credentialLeaseHandle");
     expect(worker).toContain("executeTenantContainerOperationWithRegistry({");
     expect(worker).toContain("namespace: env.TENANT_RUNTIME_STATE");
-    expect(worker).toContain("tenantRuntimeClients(this.env, input.tenant_context)");
+    expect(worker).toContain("tenantRuntimeClients(this.env, input.tenant_context,");
     expect(worker).not.toContain("const clients = tenantRuntimeClients(this.env);");
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
@@ -747,8 +747,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("expectedTenantTaskBoardRepairScope(env, tenantBody)");
     expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch)");
     expect(worker).toContain('{ event: "task_board_repair_failed", code: "FALLBACK_FORBIDDEN" }');
-    expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context\)/g)).toHaveLength(4);
-    expect(worker).toContain("tenantRuntimeClients(runtimeEnv, tenantContext).authority.read_workspace_connection");
+    expect(worker.match(/tenantRuntimeClients\(env, tenantBody\.tenant_context,/g)).toHaveLength(4);
+    expect(worker).toContain("tenantRuntimeClients(runtimeEnv, tenantContext,");
   });
 
   it("fails deployment closed behind the authenticated meeting-minutes drain gate", () => {
