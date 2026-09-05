@@ -119,12 +119,14 @@ function replyOptions(
     slackBotToken: "xoxb-secret",
     oauthConfigured: true,
     tenantBoundaryHandle: "tb_00000000000000000000000000000001",
+    tenantBoundaryExpiresAt: "2026-08-11T13:35:00.000Z",
     claudeRuntime: resolveClaudeRuntimeConfig({
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
     }),
     createSandbox: () => createSandbox,
     fetch: fetchImpl,
+    nowMs: () => Date.parse("2026-08-11T13:30:00.000Z"),
     hydrateThreadContext,
   };
 }

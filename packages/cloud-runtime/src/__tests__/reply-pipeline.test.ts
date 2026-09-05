@@ -13,6 +13,7 @@ import { resolveClaudeRuntimeConfig } from "../claude-runtime-config.js";
 
 const TENANT_BOUNDARY_A = `tb_${"A".repeat(32)}`;
 const TENANT_BOUNDARY_B = `tb_${"B".repeat(32)}`;
+const REPLY_START_MS = Date.parse("2026-08-11T13:30:00.000Z");
 
 class MemoryFs {
   readonly files = new Map<string, string>();
@@ -213,6 +214,7 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
     slackBotToken: "xoxb-worker-secret",
     oauthConfigured: true,
     tenantBoundaryHandle: TENANT_BOUNDARY_A,
+    tenantBoundaryExpiresAt: new Date(REPLY_START_MS + 300_000).toISOString(),
     claudeRuntime: resolveClaudeRuntimeConfig({
       RUNTIME_CLAUDE_MODEL: "opus",
       RUNTIME_CLAUDE_EFFORT: "xhigh",
@@ -220,6 +222,7 @@ function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
     createSandbox: vi.fn(() => sandbox),
     fetch: fetchMock,
     now: () => "2026-08-11T13:30:00.000Z",
+    nowMs: () => REPLY_START_MS,
     ...overrides,
   };
   return { options, sandbox, fetchMock };
@@ -291,10 +294,17 @@ describe("TechKnight Slack reply pipeline", () => {
   });
 
   it("resumes the same Claude session once when a blocking Stop hook suppresses the result event", async () => {
-    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    let nowMs = REPLY_START_MS;
+    const { options, sandbox } = harness({
+      tenantBoundaryHandle: TENANT_BOUNDARY_A,
+      nowMs: () => nowMs,
+    });
     const incomplete = auditedReplyStream().split("\n").slice(0, -1).join("\n");
     sandbox.exec
-      .mockResolvedValueOnce({ success: true, stdout: incomplete, stderr: "", exitCode: 0 })
+      .mockImplementationOnce(async () => {
+        nowMs += 120_000;
+        return { success: true, stdout: incomplete, stderr: "", exitCode: 0 };
+      })
       .mockResolvedValueOnce({ success: true, stdout: auditedReplyStream(), stderr: "", exitCode: 0 });
 
     await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
@@ -307,11 +317,17 @@ describe("TechKnight Slack reply pipeline", () => {
     const sessionId = firstCommand.match(/--session-id ([0-9a-f-]{36})/)?.[1];
     expect(sessionId).toBeTruthy();
     expect(secondCommand).toContain(`--resume ${sessionId}`);
+    expect(sandbox.exec.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 270_000 }));
+    expect(sandbox.exec.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ timeout: 150_000 }));
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
   it("resumes the same Claude session once when the blocking Stop boundary surfaces as Sandbox HTTP 500", async () => {
-    const { options, sandbox: disconnectedSandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    let nowMs = REPLY_START_MS;
+    const { options, sandbox: disconnectedSandbox } = harness({
+      tenantBoundaryHandle: TENANT_BOUNDARY_A,
+      nowMs: () => nowMs,
+    });
     const reconnectedSandbox = {
       writeFile: vi.fn().mockResolvedValue(undefined),
       exec: vi.fn().mockResolvedValue({
@@ -322,7 +338,10 @@ describe("TechKnight Slack reply pipeline", () => {
       }),
       destroy: vi.fn().mockResolvedValue(undefined),
     };
-    disconnectedSandbox.exec.mockRejectedValueOnce(new Error("HTTP error! status: 500"));
+    disconnectedSandbox.exec.mockImplementationOnce(async () => {
+      nowMs += 120_000;
+      throw new Error("HTTP error! status: 500");
+    });
     vi.mocked(options.createSandbox)
       .mockReturnValueOnce(disconnectedSandbox)
       .mockReturnValueOnce(reconnectedSandbox);
@@ -344,8 +363,22 @@ describe("TechKnight Slack reply pipeline", () => {
     const sessionId = firstCommand.match(/--session-id ([0-9a-f-]{36})/)?.[1];
     expect(sessionId).toBeTruthy();
     expect(secondCommand).toContain(`--resume ${sessionId}`);
+    expect(disconnectedSandbox.exec.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 270_000 }));
+    expect(reconnectedSandbox.exec.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 150_000 }));
     expect(disconnectedSandbox.destroy).not.toHaveBeenCalled();
     expect(reconnectedSandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("caps the first Claude exec by the remaining tenant boundary after sandbox preparation", async () => {
+    let nowMs = REPLY_START_MS;
+    const { options, sandbox } = harness({ nowMs: () => nowMs });
+    sandbox.writeFile.mockImplementation(async () => {
+      nowMs += 20_000;
+    });
+
+    await generateClaudeReply(event(), options);
+
+    expect(sandbox.exec.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 210_000 }));
   });
 
   it("fails closed when a tenant Container cannot be destroyed", async () => {
