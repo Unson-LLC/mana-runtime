@@ -2039,19 +2039,7 @@ function expectedTenantTaskBoardRepairScope(
     text: "",
     receivedAt: repair.requestedAt,
   } as const;
-  const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId
-    && candidate.workspaceId === repair.workspaceId && candidate.channelId === repair.channelId);
-  if (!target) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
-    scope_reason: "task_board_target_missing",
-  });
-  const destinations = meetingMinutesRuntimeConfig(env).destinations;
-  const destination = destinations.find((candidate) => candidate.taskBoardTargetId === repair.targetId
-    && candidate.organization.id === target.organizationId);
-  const ambiguousDestination = destinations.some((candidate) => candidate !== destination
-    && candidate.taskBoardTargetId === repair.targetId);
-  if (ambiguousDestination) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
-    scope_reason: "task_board_destination_ambiguous",
-  });
+  const destination = tenantTaskBoardRepairDestination(env, repair);
   const destinationAuthorization = destinationAuthorizationForSelection(env, destination, "queue_consumer");
   const projectScope = destination && destinationAuthorization
     ? resolveMeetingMinutesDestinationProjectScope(
@@ -2072,6 +2060,24 @@ function expectedTenantTaskBoardRepairScope(
     capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
     deployment_id: envelope.placement.deployment_id,
   };
+}
+
+function tenantTaskBoardRepairDestination(env: Env, repair: TaskBoardRepairEvent) {
+  const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId
+    && candidate.workspaceId === repair.workspaceId && candidate.channelId === repair.channelId);
+  if (!target) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
+    scope_reason: "task_board_target_missing",
+  });
+  const destinations = meetingMinutesRuntimeConfig(env).destinations.filter(
+    (candidate) => candidate.taskBoardTargetId === repair.targetId
+      && candidate.organization.id === target.organizationId,
+  );
+  if (destinations.length !== 1) deny("queue_consumer", "PROJECT_SCOPE_MISMATCH", {
+    scope_reason: destinations.length === 0
+      ? "task_board_destination_missing"
+      : "task_board_destination_ambiguous",
+  });
+  return destinations[0];
 }
 
 async function tenantPayloadHash(payload: unknown): Promise<string> {
@@ -4068,6 +4074,7 @@ export default {
       }
       if (isTenantTaskBoardRepairBody(message.body)) {
         const tenantBody = message.body;
+        const repairDestination = tenantTaskBoardRepairDestination(env, tenantBody.payload);
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
         const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
           tenantConfiguredDesiredEffectByCapability(env));
@@ -4127,7 +4134,8 @@ export default {
                   now: now(),
                   execute: async () => {
                     await processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch,
-                      undefined, undefined, tenantContext.workspace_connection.workspace_id);
+                      undefined, undefined, tenantContext.workspace_connection.workspace_id,
+                      tenantCredentialFetch, repairDestination.taskProjectCodes);
                     return { outcome: "completed" as const };
                   },
                 }),

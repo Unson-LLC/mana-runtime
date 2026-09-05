@@ -54,6 +54,11 @@ describe("Worker task Canvas repair producers", () => {
       .toHaveLength(1);
     expect(source).toContain("envelope.actor.authenticated_subject_id !== requiredRuntimeBinding(envelope.slack.requester_id)");
     expect(source).not.toContain("envelope.actor.authenticated_subject_id !== requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)");
+    const queueConsumerStart = source.indexOf("if (isTenantTaskBoardRepairBody(message.body))");
+    const queueConsumer = source.slice(queueConsumerStart,
+      source.indexOf("if (isTaskBoardRepairEvent(message.body))", queueConsumerStart));
+    expect(queueConsumer).toContain("const repairDestination = tenantTaskBoardRepairDestination(env, tenantBody.payload)");
+    expect(queueConsumer).toContain("tenantCredentialFetch, repairDestination.taskProjectCodes");
   });
 
   it("suppresses a disabled meeting repair with an ownership decision log", async () => {
