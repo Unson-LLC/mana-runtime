@@ -1,5 +1,6 @@
 const ID = /^[A-Z0-9]{2,32}$/;
 const TARGET_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const PROVISIONING_LEASE_MS = 5 * 60 * 1000;
 // Brainbase canonical tenant IDs are opaque identifiers (for example,
 // `ten_01M0HMA228ES64N4TFX846V8T8`), not only tenant-key slugs.
 const TENANT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -126,7 +127,12 @@ export class TaskBoardBinding {
         if (existing?.status === "bound" && existing.canvasId) {
           return { status: "bound", canvasId: existing.canvasId } as const;
         }
-        if (existing?.status === "provisioning") return { status: "provisioning" } as const;
+        if (existing?.status === "provisioning") {
+          const updatedAt = Date.parse(existing.updatedAt);
+          if (Number.isFinite(updatedAt) && Date.now() - updatedAt < PROVISIONING_LEASE_MS) {
+            return { status: "provisioning" } as const;
+          }
+        }
         await storage.put("binding", {
           ...input,
           status: "provisioning",

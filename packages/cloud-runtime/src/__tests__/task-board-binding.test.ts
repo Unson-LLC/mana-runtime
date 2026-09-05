@@ -43,6 +43,20 @@ describe("task board runtime binding", () => {
     expect(await reserveTaskBoardBinding(namespace, coordinates)).toEqual({ status: "provisioning" });
   });
 
+  it("reclaims a provisioning reservation after its lease expires", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-05T22:00:00.000Z"));
+      const { namespace } = bindingHarness();
+      expect(await reserveTaskBoardBinding(namespace, coordinates)).toEqual({ status: "reserved" });
+      vi.setSystemTime(new Date("2026-09-05T22:05:01.000Z"));
+      expect(await reserveTaskBoardBinding(namespace, coordinates)).toEqual({ status: "reserved" });
+      expect(await reserveTaskBoardBinding(namespace, coordinates)).toEqual({ status: "provisioning" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("accepts the canonical opaque tenant ID returned by Brainbase", async () => {
     const { namespace } = bindingHarness();
     expect(await reserveTaskBoardBinding(namespace, {
