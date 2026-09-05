@@ -33,6 +33,8 @@ describe("Worker task Canvas repair producers", () => {
       source.indexOf("async function processTenantMeetingMinutesSelection(", resumeClientStart));
     expect(resumeClient).toContain("repairTaskBoard: async (targetId: string) =>");
     expect(resumeClient).toContain("execute: () => processTaskBoardRepair(repair, env, repair.tenantId, repairCredentialFetch,");
+    expect(resumeClient).toContain("repair.workspaceId, repairCredentialFetch, destination.taskProjectCodes");
+    expect(resumeClient).not.toContain("effects.boundary(\"brainbase_proxy\", (taskCredentialFetch)");
     expect(resumeClient).not.toContain("enqueueMeetingMinutesTaskBoardRepair(");
     expect(resumeClient).toContain("const repairTenantContext = await resolveTaskBoardRepairTenantContext(env, repair");
     expect(resumeClient).toContain("const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding");
