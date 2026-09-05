@@ -13,6 +13,7 @@ export interface ReplyCompletion {
   eventId: string;
   responseTs: string;
   completedAt: string;
+  outcome?: "meeting_tasks_disabled";
 }
 
 export async function persistEventOnce(
@@ -67,10 +68,14 @@ export async function readReplyCompletion(
   if (typeof raw !== "string") throw new Error("reply_completion_invalid");
   const value = JSON.parse(raw) as Partial<ReplyCompletion>;
   if (value.eventId !== eventId || typeof value.responseTs !== "string" || !value.responseTs
-    || typeof value.completedAt !== "string" || !Number.isFinite(Date.parse(value.completedAt))) {
+    || typeof value.completedAt !== "string" || !Number.isFinite(Date.parse(value.completedAt))
+    || (value.outcome !== undefined && value.outcome !== "meeting_tasks_disabled")) {
     throw new Error("reply_completion_invalid");
   }
-  return { eventId, responseTs: value.responseTs, completedAt: value.completedAt };
+  return {
+    eventId, responseTs: value.responseTs, completedAt: value.completedAt,
+    ...(value.outcome ? { outcome: value.outcome } : {}),
+  };
 }
 
 export async function persistReplyCompletion(

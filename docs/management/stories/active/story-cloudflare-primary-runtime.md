@@ -45,6 +45,10 @@ Cloudflare側を今後の主runtimeとし、会社ごとに分離した実行環
 - Cloudflareはdeployment専用Slack AppのHTTP Events APIを使い、LightsailでSocket Modeを
   使用する既存Slack Appを共用または切り替えない。
 
+- 実行担当が未移管の環境で議事録タスク登録を依頼した場合は、利用できない理由を元スレッドへ返す。
+  タスクやAI処理は実行せず、実行記録を失敗として保存する。通知後の再配送や記録送信の再試行でも、
+  失敗を成功へ変えず、通知を重複させない。
+
 ## シナリオ
 
 - `CFPRIMARY-S-001`: 許可チャンネルの議事録タスク化依頼は、設定済みproject codeを
@@ -61,6 +65,10 @@ Cloudflare側を今後の主runtimeとし、会社ごとに分離した実行環
   TechKnight deploymentのWorker、Queue、DLQ、workspace identityを参照しない。
 - `CFPRIMARY-S-007`: 雲孫Cloudflare専用の八雲まなAppを追加しても、Lightsailの既存Appと
   イベント配送方式、token、Signing Secretを共有しない。
+
+- `CFPRIMARY-S-008`: `reply_only`でタスク登録を依頼すると利用不可の返信を受け取り、
+  実行記録には`failed / MEETING_TASKS_DISABLED`が残る。通知済み状態の読戻しと記録送信の再試行でも
+  同じ失敗結果を保持し、記録送信が復旧した後はQueue再試行を終える。
 
 ## 対象外
 

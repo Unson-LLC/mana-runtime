@@ -26,6 +26,7 @@ describe("Cloudflare runtime event router", () => {
       meetingTasksEnabled: true,
       processMeetingTask,
       processReply,
+      processDisabledMeetingTask: vi.fn(),
     })).resolves.toEqual({ outcome: "tasks_registered" });
 
     expect(processMeetingTask).toHaveBeenCalledOnce();
@@ -40,6 +41,7 @@ describe("Cloudflare runtime event router", () => {
       meetingTasksEnabled: true,
       processMeetingTask,
       processReply,
+      processDisabledMeetingTask: vi.fn(),
     })).resolves.toEqual({ outcome: "replied" });
 
     expect(processMeetingTask).not.toHaveBeenCalled();
@@ -50,12 +52,37 @@ describe("Cloudflare runtime event router", () => {
     const processMeetingTask = vi.fn();
     const processReply = vi.fn();
 
+    const processDisabledMeetingTask = vi.fn().mockResolvedValue({
+      outcome: "meeting_tasks_disabled", responseTs: "1786454654.000001",
+    });
+
     await expect(routeRuntimeEvent(event(), {
       meetingTasksEnabled: false,
       processMeetingTask,
       processReply,
-    })).resolves.toEqual({ outcome: "meeting_tasks_disabled" });
+      processDisabledMeetingTask,
+    })).resolves.toEqual({
+      outcome: "meeting_tasks_disabled", responseTs: "1786454654.000001",
+    });
 
+    expect(processDisabledMeetingTask).toHaveBeenCalledOnce();
+
+    expect(processMeetingTask).not.toHaveBeenCalled();
+    expect(processReply).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("disabled meeting task notification", () => {
+  it("does not report completion when the unavailable reply fails", async () => {
+    const processMeetingTask = vi.fn();
+    const processReply = vi.fn();
+    await expect(routeRuntimeEvent(event(), {
+      meetingTasksEnabled: false,
+      processMeetingTask,
+      processReply,
+      processDisabledMeetingTask: vi.fn().mockRejectedValue(new Error("slack_reply_failed")),
+    })).rejects.toThrow("slack_reply_failed");
     expect(processMeetingTask).not.toHaveBeenCalled();
     expect(processReply).not.toHaveBeenCalled();
   });

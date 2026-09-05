@@ -2,6 +2,7 @@ import {
   isReplyCompleted,
   persistEventOnce,
   persistReplyCompletion,
+  readReplyCompletion,
 } from "../workspace-store.js";
 
 class MemoryFs {
@@ -88,10 +89,33 @@ describe("reply completion", () => {
       completedAt: "2026-08-11T13:30:00.000Z",
     })).resolves.toBe("/replies/Ev123.json");
     await expect(isReplyCompleted(fs, "Ev123")).resolves.toBe(true);
-    expect(JSON.parse(fs.files.get("/replies/Ev123.json") ?? "{}")).toEqual({
+    await expect(readReplyCompletion(fs, "Ev123")).resolves.toEqual({
       eventId: "Ev123",
       responseTs: "3.0",
       completedAt: "2026-08-11T13:30:00.000Z",
     });
+  });
+});
+
+
+describe("disabled meeting task completion", () => {
+  it("preserves the failed outcome when reading a delivered reply for redelivery", async () => {
+    const fs = new MemoryFs();
+    const completion = {
+      eventId: "EvDisabled", responseTs: "3.0",
+      completedAt: "2026-09-05T00:00:00.000Z",
+      outcome: "meeting_tasks_disabled" as const,
+    };
+    await persistReplyCompletion(fs, completion);
+    await expect(readReplyCompletion(fs, completion.eventId)).resolves.toEqual(completion);
+  });
+
+  it("rejects an unknown saved outcome instead of treating it as success", async () => {
+    const fs = new MemoryFs();
+    fs.files.set("/replies/EvUnknown.json", JSON.stringify({
+      eventId: "EvUnknown", responseTs: "3.0",
+      completedAt: "2026-09-05T00:00:00.000Z", outcome: "unknown_failure",
+    }));
+    await expect(readReplyCompletion(fs, "EvUnknown")).rejects.toThrow("reply_completion_invalid");
   });
 });
