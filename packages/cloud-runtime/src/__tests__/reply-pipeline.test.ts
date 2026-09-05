@@ -136,6 +136,63 @@ function auditedReplyStreamWithOutOfOrderPostTool(secretCanary: string): string 
   ].map((entry) => JSON.stringify(entry)).join("\n");
 }
 
+function auditedReplyStreamWithBindingMismatch(canaries: {
+  toolInput: string;
+  toolResult: string;
+  reply: string;
+  toolUseId: string;
+  hostReceiptId: string;
+}): string {
+  const toolName = "mcp__brainbase__brainbase_knowledge_resolve";
+  const evidenceAuditLine = "📚 Brainbase参照先: 「質問」→ 採用: workspace_home ✓";
+  const hookReceipt = (
+    hookEventName: "UserPromptSubmit" | "PostToolUse" | "Stop",
+    toolIdentity?: { tool_use_id: string; tool_name: string },
+  ) => ({
+    type: "system",
+    subtype: "hook_response",
+    hook_event: hookEventName,
+    exit_code: 0,
+    outcome: "success",
+    session_id: "session-1",
+    stdout: JSON.stringify({
+      systemMessage: [
+        ...(hookEventName === "PostToolUse" ? [evidenceAuditLine] : []),
+        ...(hookEventName === "Stop" ? [judgmentLine, evidenceAuditLine] : []),
+        `${receiptPrefix}${JSON.stringify({
+          schema_version: "mana_judgment_hook_receipt.v1",
+          hook_event_name: hookEventName,
+          session_id: "session-1",
+          turn_id: "turn-1",
+          host_receipt_id: canaries.hostReceiptId,
+          route_resolution_sha256: "a".repeat(64),
+          ...(toolIdentity ?? {}),
+        })}`,
+      ].join("\n"),
+    }),
+  });
+  return [
+    { type: "system", subtype: "init", session_id: "session-1" },
+    hookReceipt("UserPromptSubmit"),
+    { type: "assistant", session_id: "session-1", message: { content: [{
+      type: "tool_use",
+      id: canaries.toolUseId,
+      name: toolName,
+      input: { query: canaries.toolInput },
+    }] } },
+    hookReceipt("PostToolUse", { tool_use_id: `${canaries.toolUseId}-mismatch`, tool_name: toolName }),
+    { type: "user", session_id: "session-1", message: { content: [{
+      type: "tool_result",
+      tool_use_id: canaries.toolUseId,
+      content: canaries.toolResult,
+    }] } },
+    hookReceipt("Stop"),
+    { type: "result", session_id: "session-1", result: [
+      judgmentLine, evidenceAuditLine, canaries.reply,
+    ].join("\n") },
+  ].map((entry) => JSON.stringify(entry)).join("\n");
+}
+
 function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
   const sandbox = {
     writeFile: vi.fn().mockResolvedValue(undefined),
@@ -1111,6 +1168,54 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(episode.attempts).toMatchObject([{ status: "failed", failureCode: diagnosticCode }]);
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(secretCanary);
     expect(JSON.stringify(episode)).not.toContain(secretCanary);
+    errorSpy.mockRestore();
+  });
+
+  it("keeps binding-mismatch diagnostics free of prompt, tool, reply, and receipt identities", async () => {
+    const fs = new MemoryFs();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const canaries = {
+      prompt: "prompt-secret-binding-canary",
+      toolInput: "tool-input-secret-binding-canary",
+      toolResult: "tool-result-secret-binding-canary",
+      reply: "reply-secret-binding-canary",
+      toolUseId: "tool-use-id-secret-binding-canary",
+      hostReceiptId: "host-receipt-id-secret-binding-canary",
+    };
+    const diagnosticCode = "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing";
+    const { options, sandbox } = harness();
+    sandbox.exec.mockResolvedValueOnce({
+      success: true,
+      stdout: auditedReplyStreamWithBindingMismatch(canaries),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(processReplyEvent(fs, event({ text: canaries.prompt }), options)).rejects.toEqual(
+      expect.objectContaining<Partial<ReplyPipelineError>>({
+        code: diagnosticCode,
+        auditDiagnostics: expect.objectContaining({
+          reasonCodes: ["tool_use_id_mismatch"],
+          expectedCallCount: 1,
+          postToolReceiptCount: 1,
+          boundReceiptCount: 0,
+        }),
+      }),
+    );
+
+    for (const logEvent of ["mana_claude_failed", "mana_reply_failed"]) {
+      expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+        event: logEvent,
+        reasonCode: diagnosticCode,
+        auditDiagnostics: expect.objectContaining({ reasonCodes: ["tool_use_id_mismatch"] }),
+      }));
+    }
+    const episode = JSON.parse(fs.files.get("/judgment-episodes/EvReply123.json")!);
+    expect(episode.attempts).toMatchObject([{ status: "failed", failureCode: diagnosticCode }]);
+    const serializedEvidence = JSON.stringify({ logs: errorSpy.mock.calls, episode });
+    for (const canary of Object.values(canaries)) {
+      expect(serializedEvidence).not.toContain(canary);
+    }
     errorSpy.mockRestore();
   });
 
