@@ -168,4 +168,18 @@ describe("tenant Slack runtime wiring", () => {
     expect(clients.slice(redoStart)).toContain("deleteTask: createMeetingMinutesTaskDeleter({");
     expect(clients.slice(redoStart)).toContain("boundary: effects.boundary");
   });
+
+  it("scopes redo Slack effect keys to the redo revision", () => {
+    const clientsStart = source.indexOf("function meetingMinutesClients(");
+    const clientsEnd = source.indexOf("function ", clientsStart + 1);
+    const clients = source.slice(clientsStart, clientsEnd);
+    const redoStart = clients.indexOf("redo: {");
+    const redo = clients.slice(redoStart);
+    const revision = "run.redo?.revision ?? run.revision ?? 0";
+
+    expect(redo).toContain(`destination-selection:\${run.runId}:revision-\${${revision}}`);
+    expect(redo).toContain(`redo-failure:\${run.runId}:revision-\${${revision}}`);
+    expect(redo).toContain(`kind: "destination_selection", runId: run.runId, revision: ${revision}`);
+    expect(redo).toContain(`kind: "redo_failure", runId: run.runId, revision: ${revision}`);
+  });
 });
