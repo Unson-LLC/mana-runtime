@@ -23,10 +23,14 @@ import { jcsCanonicalize } from "./jcs.js";
 import type { TenantAccountingHttpClient, TenantQuotaHttpClient } from "./http-clients.js";
 import type { TenantRuntimeBoundaryVerifier } from "./runtime-boundaries.js";
 
+type RuntimeReplyState = "not_attempted" | "delivered" | "failed" | "unknown";
+
 interface RuntimeProcessResult {
   outcome?: string;
   responseTs?: string;
   accounting?: "deferred" | "already_recorded";
+  failureCode?: string;
+  replyState?: RuntimeReplyState;
 }
 
 function quotaDisposition(code: string): QuotaDecision["decision"] {
@@ -205,6 +209,16 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
         && result.responseTs === pending.receipt.reply.slack_reply_ts) {
         return structuredClone(result) as R;
       }
+      if (pending.receipt.outcome === "failed"
+        && typeof pending.receipt.failure_code === "string"
+        && pending.receipt.reply.state === "delivered"
+        && result?.outcome === "failed"
+        && result.failureCode === pending.receipt.failure_code
+        && result.replyState === "delivered"
+        && typeof result.responseTs === "string" && result.responseTs.length > 0
+        && result.responseTs === pending.receipt.reply.slack_reply_ts) {
+        return structuredClone(result) as R;
+      }
       deny("brainbase_proxy", pending.receipt.failure_code ?? "UPSTREAM_UNAVAILABLE");
     }
     if (pendingResult !== undefined) return structuredClone(pendingResult) as R;
@@ -298,6 +312,15 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
   }
   if (result.accounting === "deferred" || result.accounting === "already_recorded") return result;
   const meetingTasksDisabled = result.outcome === "meeting_tasks_disabled";
+  const typedFailure = result.outcome === "failed";
+  if (typedFailure && (typeof result.failureCode !== "string" || !result.failureCode.trim())) {
+    deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+  }
+  if (typedFailure && result.replyState === "delivered"
+    && (typeof result.responseTs !== "string" || !result.responseTs)) {
+    deny("brainbase_proxy", "UPSTREAM_UNAVAILABLE");
+  }
+  const replyState = typedFailure ? result.replyState ?? "not_attempted" : undefined;
   await recordOperation({
     tenant_context: input.tenant_context,
     expected_scope: input.expected_scope,
@@ -306,9 +329,13 @@ export async function executeTenantRuntimeOperation<R extends RuntimeProcessResu
     accounting: input.accounting,
     quota_decision: quotaDecision.decision,
     unit: input.usage_unit,
-    outcome: meetingTasksDisabled ? "failed" : "succeeded",
-    failure_code: meetingTasksDisabled ? "MEETING_TASKS_DISABLED" : null,
-    ...(result.responseTs ? { response_ts: result.responseTs } : {}),
+    outcome: typedFailure || meetingTasksDisabled ? "failed" : "succeeded",
+    failure_code: typedFailure ? result.failureCode! : meetingTasksDisabled ? "MEETING_TASKS_DISABLED" : null,
+    ...(typedFailure
+      ? (replyState === "delivered" && result.responseTs
+        ? { response_ts: result.responseTs, reply_state: replyState }
+        : { reply_state: replyState })
+      : (result.responseTs ? { response_ts: result.responseTs } : {})),
     operation_result: result,
     ...(input.accounting_effect_id ? { accounting_effect_id: input.accounting_effect_id } : {}),
     now: input.now(),

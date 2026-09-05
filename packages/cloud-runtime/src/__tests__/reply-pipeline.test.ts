@@ -1204,7 +1204,7 @@ describe("TechKnight Slack reply pipeline", () => {
     errorSpy.mockRestore();
   });
 
-  it("keeps binding-mismatch diagnostics free of prompt, tool, reply, and receipt identities", async () => {
+  it("sends one fixed notice for binding-mismatch diagnostics without prompt, tool, reply, or receipt identities", async () => {
     const fs = new MemoryFs();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const canaries = {
@@ -1216,7 +1216,7 @@ describe("TechKnight Slack reply pipeline", () => {
       hostReceiptId: "host-receipt-id-secret-binding-canary",
     };
     const diagnosticCode = "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing";
-    const { options, sandbox } = harness();
+    const { options, sandbox, fetchMock } = harness();
     sandbox.exec.mockResolvedValueOnce({
       success: true,
       stdout: auditedReplyStreamWithBindingMismatch(canaries),
@@ -1224,17 +1224,23 @@ describe("TechKnight Slack reply pipeline", () => {
       exitCode: 0,
     });
 
-    await expect(processReplyEvent(fs, event({ text: canaries.prompt }), options)).rejects.toEqual(
-      expect.objectContaining<Partial<ReplyPipelineError>>({
-        code: diagnosticCode,
-        auditDiagnostics: expect.objectContaining({
-          reasonCodes: ["missing_posttool_receipt"],
-          expectedCallCount: 1,
-          postToolReceiptCount: 1,
-          boundReceiptCount: 0,
-        }),
-      }),
-    );
+    const first = await processReplyEvent(fs, event({ text: canaries.prompt }), options);
+    expect(first).toEqual({
+      outcome: "failed",
+      failureCode: diagnosticCode,
+      replyState: "delivered",
+      responseTs: "1786455000.000001",
+    });
+    const second = await processReplyEvent(fs, event({ text: canaries.prompt }), options);
+    expect(second).toEqual(first);
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("chat.postMessage")))
+      .toHaveLength(1);
+    const postCall = fetchMock.mock.calls.find(([url]) => String(url).includes("chat.postMessage"));
+    const postRequest = postCall?.[1] as RequestInit | undefined;
+    expect(JSON.parse(String(postRequest?.body))).toMatchObject({
+      text: "処理結果の確認でエラーが起きました。依頼された操作が完了したかは、まだ確認できていません。",
+    });
 
     for (const logEvent of ["mana_claude_failed", "mana_reply_failed"]) {
       expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -1245,11 +1251,144 @@ describe("TechKnight Slack reply pipeline", () => {
     }
     const episode = JSON.parse(fs.files.get("/judgment-episodes/EvReply123.json")!);
     expect(episode.attempts).toMatchObject([{ status: "failed", failureCode: diagnosticCode }]);
-    const serializedEvidence = JSON.stringify({ logs: errorSpy.mock.calls, episode });
+    const notice = JSON.parse(fs.files.get("/reply-failure-notices/EvReply123.json")!);
+    expect(notice).toEqual({
+      eventId: "EvReply123",
+      failureCode: diagnosticCode,
+      status: "sent",
+      responseTs: "1786455000.000001",
+      updatedAt: "2026-08-11T13:30:00.000Z",
+    });
+    expect(fs.files.has("/replies/EvReply123.json")).toBe(false);
+    const serializedEvidence = JSON.stringify({ logs: errorSpy.mock.calls, episode, notice });
     for (const canary of Object.values(canaries)) {
       expect(serializedEvidence).not.toContain(canary);
     }
     errorSpy.mockRestore();
+  });
+
+  it("retries only the pending notice after sent-state persistence fails", async () => {
+    class FailFailureNoticeSentOnceFs extends MemoryFs {
+      private shouldFail = true;
+
+      override async writeFile(path: string, value: string): Promise<void> {
+        if (path === "/reply-failure-notices/EvReply123.json"
+          && value.includes('"status":"sent"') && this.shouldFail) {
+          this.shouldFail = false;
+          throw new Error("simulated_failure_notice_state_write_failure");
+        }
+        await super.writeFile(path, value);
+      }
+    }
+
+    const fs = new FailFailureNoticeSentOnceFs();
+    const canaries = {
+      prompt: "prompt-secret-retry-canary",
+      toolInput: "tool-input-secret-retry-canary",
+      toolResult: "tool-result-secret-retry-canary",
+      reply: "reply-secret-retry-canary",
+      toolUseId: "tool-use-id-secret-retry-canary",
+      hostReceiptId: "host-receipt-id-secret-retry-canary",
+    };
+    const diagnosticCode = "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing";
+    const providerPost = vi.fn(async () => "1786455000.000009");
+    const delivered = new Map<string, string>();
+    const postReply = vi.fn(async (
+      replyEvent: SlackQueueEvent,
+      text: string,
+      effectId?: string,
+    ) => {
+      const key = `${replyEvent.eventId}:${effectId ?? "reply"}`;
+      const existing = delivered.get(key);
+      if (existing) return existing;
+      expect(text).toBe("処理結果の確認でエラーが起きました。依頼された操作が完了したかは、まだ確認できていません。");
+      const responseTs = await providerPost();
+      delivered.set(key, responseTs);
+      return responseTs;
+    });
+    const { options, sandbox } = harness({ postReply });
+    sandbox.exec.mockResolvedValueOnce({
+      success: true,
+      stdout: auditedReplyStreamWithBindingMismatch(canaries),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(processReplyEvent(fs, event({ text: canaries.prompt }), options)).rejects.toEqual(
+      expect.objectContaining<Partial<ReplyPipelineError>>({ code: diagnosticCode }),
+    );
+    await expect(processReplyEvent(fs, event({ text: canaries.prompt }), options)).resolves.toEqual({
+      outcome: "failed",
+      failureCode: diagnosticCode,
+      replyState: "delivered",
+      responseTs: "1786455000.000009",
+    });
+
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+    expect(postReply).toHaveBeenCalledTimes(2);
+    expect(postReply.mock.calls.map(([, , effectId]) => effectId)).toEqual([
+      "reply_failure_notice",
+      "reply_failure_notice",
+    ]);
+    expect(providerPost).toHaveBeenCalledOnce();
+    expect(JSON.parse(fs.files.get("/reply-failure-notices/EvReply123.json")!)).toMatchObject({
+      status: "sent",
+      responseTs: "1786455000.000009",
+    });
+    expect(fs.files.has("/replies/EvReply123.json")).toBe(false);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.prompt);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.toolInput);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.toolResult);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.reply);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.toolUseId);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.hostReceiptId);
+  });
+
+  it("keeps the notice state pending when the tenant delivery outcome is unknown", async () => {
+    const fs = new MemoryFs();
+    const canaries = {
+      prompt: "prompt-secret-delivery-unknown-canary",
+      toolInput: "tool-input-secret-delivery-unknown-canary",
+      toolResult: "tool-result-secret-delivery-unknown-canary",
+      reply: "reply-secret-delivery-unknown-canary",
+      toolUseId: "tool-use-id-secret-delivery-unknown-canary",
+      hostReceiptId: "host-receipt-id-secret-delivery-unknown-canary",
+    };
+    const diagnosticCode = "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing";
+    const postReply = vi.fn().mockRejectedValue(
+      new TenantBoundaryError("slack_delivery", "UPSTREAM_UNAVAILABLE"),
+    );
+    const { options, sandbox } = harness({ postReply });
+    sandbox.exec.mockResolvedValueOnce({
+      success: true,
+      stdout: auditedReplyStreamWithBindingMismatch(canaries),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(processReplyEvent(fs, event({ text: canaries.prompt }), options)).rejects.toEqual(
+      expect.objectContaining<Partial<ReplyPipelineError>>({ code: diagnosticCode }),
+    );
+
+    expect(postReply).toHaveBeenCalledOnce();
+    expect(postReply).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: "EvReply123" }),
+      "処理結果の確認でエラーが起きました。依頼された操作が完了したかは、まだ確認できていません。",
+      "reply_failure_notice",
+    );
+    expect(JSON.parse(fs.files.get("/reply-failure-notices/EvReply123.json")!)).toEqual({
+      eventId: "EvReply123",
+      failureCode: diagnosticCode,
+      status: "pending",
+      updatedAt: "2026-08-11T13:30:00.000Z",
+    });
+    expect(fs.files.has("/replies/EvReply123.json")).toBe(false);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.prompt);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.toolInput);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.toolResult);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.reply);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.toolUseId);
+    expect(JSON.stringify([...fs.files.entries()])).not.toContain(canaries.hostReceiptId);
   });
 
   it("records a redacted Claude stdout diagnostic when stderr is empty", async () => {
