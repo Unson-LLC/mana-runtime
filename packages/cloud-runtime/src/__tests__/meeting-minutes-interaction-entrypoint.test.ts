@@ -160,6 +160,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
     const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
     const send = vi.fn().mockResolvedValue(undefined); const deferred: Promise<unknown>[] = [];
+    const resolveTenantEffects = tenantEffectResolver();
     const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
       SLACK_EXPECTED_APP_ID_TECHKNIGHT: "A-TECHKNIGHT",
@@ -173,9 +174,12 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
       method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
     }), env as never, { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never,
-    new Set(["U1"]), undefined, undefined, undefined, send, tenantEffectResolver());
+    new Set(["U1"]), undefined, undefined, undefined, send, resolveTenantEffects);
 
     expect(response.status).toBe(200); await Promise.all(deferred);
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_id: "T-TECHKNIGHT", channel_id: "CDEST",
+    }), expect.objectContaining({ id: "techknight-board", contextProjectCode: "techknight" }));
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       kind: "meeting_minutes_selection",
       workspaceId: "T-TECHKNIGHT",
@@ -273,10 +277,12 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       MEETING_MINUTES_ENABLED: "true", MEETING_MINUTES_ROUTER_CHANNEL_ID: "C1", MEETING_MINUTES_OPERATOR_USER_IDS: "U1",
       MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "techknight-board", projectId: "p1",
         contextProjectCode: "techknight", taskProjectCodes: ["techknight"], taskBoardTargetId: "minutes-techknight-board",
-        name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" } }]), TECHKNIGHT_EVENTS: { send } };
+        name: "ボード定例", organization: { id: "tech-knight", name: "Tech Knight" }, slackChannelId: "C2",
+        github: { owner: "Tech-Knight-inc", repo: "tech-knight-project" } }]), TECHKNIGHT_EVENTS: { send } };
     const resolveTenantEffects = vi.fn(async () => {
       throw new TenantBoundaryError("worker_ingress", "UPSTREAM_UNAVAILABLE", "Bearer secret");
     });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", { method: "POST", body,
       headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature } }), env as never,
       { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]),
@@ -288,6 +294,23 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(projected).toContain("エラーコード: temporary_failure");
     expect(projected).toContain("問い合わせID: cor_");
     expect(projected).not.toContain("Bearer secret");
+    const diagnostic = JSON.parse(String(log.mock.calls.find(([entry]) =>
+      typeof entry === "string" && entry.includes("meeting_minutes_tenant_resolution_failed"))?.[0]));
+    expect(diagnostic).toMatchObject({
+      event: "meeting_minutes_tenant_resolution_failed",
+      runId: "Ev1_F1",
+      workspace_id: "T1",
+      channel_id: "C1",
+      destination_id: "techknight-board",
+      destination_project_code: "techknight",
+      stage: "tenant_context_resolution",
+      code: "UPSTREAM_UNAVAILABLE",
+      correlation_id: expect.stringMatching(/^cor_/),
+      retryable: true,
+      boundary: "worker_ingress",
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain("Bearer secret");
+    log.mockRestore();
     vi.unstubAllGlobals();
   });
 

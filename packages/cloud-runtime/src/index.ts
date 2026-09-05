@@ -69,6 +69,7 @@ import {
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import {
   meetingMinutesSelectionDestination,
+  resolveMeetingMinutesDestinationAuthorization,
   resolveMeetingMinutesDestinationProjectScope,
 } from "./meeting-minutes-selection-scope.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -167,6 +168,7 @@ import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
   MEETING_MINUTES_RECOVERY_DELAY_SECONDS } from "./meeting-minutes-recovery.js";
 import {
   handleMeetingMinutesRecoveryQueue,
+  meetingMinutesRecoveryProjectScope,
 } from "./meeting-minutes-recovery-production.js";
 import { MeetingMinutesDeploymentGate } from "./meeting-minutes-deployment-gate.js";
 import {
@@ -777,8 +779,9 @@ function createTenantInteractionEffectResolver(env: Env) {
   const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
     .split(",").map((value) => value.trim()).filter(Boolean);
   const clients = tenantRuntimeClients(env);
-  const resolve = (identity: TenantInteractionIdentity) => {
-    const placementAuthorization = placementAuthorizationForIdentity(env, identity);
+  const resolve = (identity: TenantInteractionIdentity,
+    destinationAuthorization?: ReturnType<typeof placementAuthorizationForIdentity>) => {
+    const placementAuthorization = destinationAuthorization ?? placementAuthorizationForIdentity(env, identity);
     return resolveSlackWorkerIngress({
       identity: { provider: "slack", ...identity },
       required_scopes: requiredScopes,
@@ -788,8 +791,9 @@ function createTenantInteractionEffectResolver(env: Env) {
       resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
     });
   };
-  return async (source: TenantInteractionIdentity): Promise<TenantInteractionEffects> => {
-    const sourceResolved = await resolve(source);
+  return async (source: TenantInteractionIdentity, destination?: MeetingMinutesDestination): Promise<TenantInteractionEffects> => {
+    const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+    const sourceResolved = await resolve(source, destinationAuthorization);
     const sourceTenantContext = sourceResolved.tenant_context;
     const resolveEffect = async (effectId: string, target: TenantInteractionTarget) => {
       const identity: TenantInteractionIdentity = {
@@ -797,7 +801,7 @@ function createTenantInteractionEffectResolver(env: Env) {
         ...target,
         event_id: await childInteractionEventId(source.event_id, effectId),
       };
-      const resolved = await resolve(identity);
+      const resolved = await resolve(identity, destinationAuthorization);
       const tenantContext = resolved.tenant_context;
       if (tenantContext.tenant.tenant_id !== sourceTenantContext.tenant.tenant_id
         || tenantContext.placement.deployment_id !== sourceTenantContext.placement.deployment_id
@@ -1632,29 +1636,16 @@ function placementAuthorizationForIdentity(
 function destinationAuthorizationForSelection(
   env: Env,
   destination: MeetingMinutesDestination | undefined,
+  boundary: BoundaryName = "worker_ingress",
 ): ReturnType<typeof placementAuthorizationForIdentity> | undefined {
-  if (!destination?.contextProjectCode) return undefined;
-  let configured: Record<string, unknown>;
-  try {
-    configured = env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON
-      ? JSON.parse(env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON) as Record<string, unknown>
-      : {};
-  } catch {
-    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_ids_invalid" });
-  }
-  const projectId = configured[destination.contextProjectCode];
-  if (projectId === undefined) return undefined;
-  if (typeof projectId !== "string" || !/^prj_[A-Za-z0-9]+$/.test(projectId)) {
-    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_id_missing" });
-  }
-  return {
-    required_authorization: {
-      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-      project_id: projectId,
-      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
-    },
-    trusted_project_ids: [projectId],
-  };
+  if (!destination) return undefined;
+  return resolveMeetingMinutesDestinationAuthorization(
+    destination,
+    env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON,
+    requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    boundary,
+  );
 }
 
 function expectedTenantMeetingMinutesSelectionScope(
@@ -1688,7 +1679,7 @@ function expectedTenantMeetingMinutesSelectionScope(
     selection,
     meetingMinutesRuntimeConfig(env).destinations,
   );
-  const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination, "queue_consumer");
   const placementProjectScope = destinationAuthorization
     ? resolveMeetingMinutesDestinationProjectScope(
       envelope.authorization,
@@ -1942,7 +1933,8 @@ export async function executeCompanyAuthorityReplyOperation(
             execute: (tenantBoundaryHandle) => executeSharedReplyRuntime({ env, fs: workspace.fs, event,
               placement, runtimeTenantId: tenantContext.tenant.tenant_id,
               runtimeWorkspaceId: tenantContext.workspace_connection.workspace_id,
-              workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle, trace,
+              workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle,
+              tenantBoundaryExpiresAt: tenantContext.expires_at, trace,
               canonicalPersonId: operation.canonical_person_id as string,
               canonicalProjectId: expectedScope.project_id,
               postReply: async (replyEvent, text) => {
@@ -2260,6 +2252,7 @@ interface SharedReplyRuntimeInput {
   tenantCredentialFetch: typeof fetch;
   claudeRuntime: ReturnType<typeof resolveClaudeRuntimeConfig>;
   tenantBoundaryHandle: string;
+  tenantBoundaryExpiresAt: string;
   trace: TurnRuntimeTrace;
   postReply(event: SlackQueueEvent, text: string): Promise<string>;
   /** Set only for an already accepted Company Authority actor. */
@@ -2286,6 +2279,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
     tenantCredentialFetch,
     claudeRuntime,
     tenantBoundaryHandle,
+    tenantBoundaryExpiresAt,
     trace,
     postReply,
   } = input;
@@ -2372,6 +2366,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       fetch: tenantCredentialFetch,
       oauthConfigured: true,
       tenantBoundaryHandle,
+      tenantBoundaryExpiresAt,
       claudeRuntime,
       brainbaseProjectCode: canonicalProjectId,
       runtimeContext: placement.runtimeContext
@@ -3309,8 +3304,8 @@ export default {
                 tenant_context: resolved.tenant_context,
                 payload: command,
               });
-        }, async (identity) => {
-          const effects = await resolveInteractionEffects(identity);
+        }, async (identity, destination) => {
+          const effects = await resolveInteractionEffects(identity, destination);
           canonicalInteractionTenantId = effects.tenant_id;
           return effects;
         }, () => {
@@ -3803,18 +3798,8 @@ export default {
           deploymentProfile: tenantDeploymentProfile,
           requiredAudience: (runtimeEnv) => requiredRuntimeBinding(runtimeEnv.MANA_REQUIRED_AUDIENCE),
           requiredCapabilityId: (runtimeEnv) => requiredRuntimeBinding(runtimeEnv.MANA_REQUIRED_CAPABILITY_ID),
-          resolveProjectScope: (runtimeEnv, body) => expectedProjectScopeForEvent(runtimeEnv, {
-            tenantId: body.tenant_context.tenant.tenant_id,
-            eventId: meetingMinutesRecoveryEventId(body.payload),
-            workspaceId: body.payload.workspaceId,
-            channelId: body.payload.channelId,
-            threadTs: body.payload.threadTs,
-            messageTs: body.payload.threadTs,
-            userId: body.payload.userId,
-            eventType: "message",
-            text: "",
-            receivedAt: body.payload.actionTs,
-          }, body.tenant_context),
+          resolveProjectScope: (_runtimeEnv, body) =>
+            meetingMinutesRecoveryProjectScope(body.tenant_context),
           now: () => new Date().toISOString(),
           ownership: (runtimeEnv, tenantId) =>
             createDurableTenantStateClient(runtimeEnv.TENANT_RUNTIME_STATE, tenantId),
@@ -4429,6 +4414,7 @@ export default {
                       tenantCredentialFetch,
                       claudeRuntime,
                       tenantBoundaryHandle,
+                      tenantBoundaryExpiresAt: tenantBody.tenant_context.expires_at,
                       trace,
                       postReply: postTenantReply,
                     }),
