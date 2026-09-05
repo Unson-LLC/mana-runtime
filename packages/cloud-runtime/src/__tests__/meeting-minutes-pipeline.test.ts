@@ -732,6 +732,36 @@ describe("meeting minutes pipeline", () => {
     expect(postTaskCard).toHaveBeenCalledTimes(1);
   });
 
+  it("persists a safe task-board cause without exposing arbitrary error text", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const scoped = Object.assign(new Error("CREDENTIAL_LEASE_SCOPE_MISMATCH"),
+      { code: "CREDENTIAL_LEASE_SCOPE_MISMATCH", details: { secret: "must-not-leak" } });
+    const options = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }),
+      createTask: vi.fn().mockResolvedValue({ id: "task-kartz" }),
+      repairTaskBoard: vi.fn().mockRejectedValue(scoped),
+    });
+
+    const failed = await resumeMeetingMinutesRun(fs, selection, options);
+
+    expect(failed.taskRegistration?.failure).toMatchObject({
+      stage: "task_board", message: "meeting_minutes_task_board_failed",
+      code: "CREDENTIAL_LEASE_SCOPE_MISMATCH",
+    });
+    expect(JSON.stringify(failed)).not.toContain("must-not-leak");
+
+    const fs2 = new MemoryFs(); await startMeetingMinutesRuns(fs2, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const slackFailure = await resumeMeetingMinutesRun(fs2, selection, resumeOptions({
+      generate: options.generate,
+      createTask: vi.fn().mockResolvedValue({ id: "task-kartz" }),
+      repairTaskBoard: vi.fn().mockRejectedValue(new Error("task_board_missing_scope")),
+    }));
+    expect(slackFailure.taskRegistration?.failure?.message).toBe("task_board_missing_scope");
+  });
+
   it("repairs a legacy task-board failure even when local task receipts are empty", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
