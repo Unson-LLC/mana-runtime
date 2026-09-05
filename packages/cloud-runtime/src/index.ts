@@ -1626,7 +1626,15 @@ async function resolveTaskBoardRepairTenantContext(
       workspace_id: repair.workspaceId,
       app_id: appId,
     },
-    trusted_project_ids: destinationAuthorization?.trusted_project_ids ?? placementProjectScope.project_ids,
+    // A destination authorization carries a canonical Brainbase project ID.
+    // Do not pass it through the legacy project-code exact-match field: the
+    // authority may sign that required destination together with other
+    // projects already authorized for the tenant. The required project is
+    // checked by required_authorization here, and the exact returned signed
+    // set is preserved and verified at the queue boundary.
+    ...(destinationAuthorization
+      ? {}
+      : { trusted_project_ids: placementProjectScope.project_ids }),
     authority: clients.authority,
     now: repair.requestedAt,
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
