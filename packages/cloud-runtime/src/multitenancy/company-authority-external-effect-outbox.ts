@@ -110,6 +110,57 @@ export interface ExternalEffectReconciliationQueue {
   update?(job: ExternalEffectReconciliationJob): Promise<ExternalEffectReconciliationJob>;
 }
 
+/**
+ * The only recovery proof that lets a duplicate T0 delivery acknowledge a
+ * preserved runtime claim. The expected tenant context has already passed the
+ * Queue boundary's signature and authority verification; equality therefore
+ * prevents a stored (or malformed) recovery record from becoming authority on
+ * its own.
+ */
+export async function hasVerifiedPendingExternalEffectReconciliation(input: {
+  readonly reconciliation_queue: Pick<ExternalEffectReconciliationQueue, "read">;
+  readonly tenant_context: TenantContextEnvelope;
+  readonly runtime_event_id: string;
+  readonly runtime_claim_token: string;
+  readonly delivery_identity: Pick<ExternalEffectDeliveryIdentity,
+    "provider" | "workspace_id" | "app_id" | "channel_id" | "thread_ts" | "event_id"
+    | "delivery_id" | "message_ts" | "workspace_name">;
+}): Promise<boolean> {
+  const tenantId = input.tenant_context.tenant.tenant_id;
+  const effectId = input.tenant_context.idempotency_key;
+  let job: ExternalEffectReconciliationJob | null;
+  try {
+    job = await input.reconciliation_queue.read(tenantId, effectId);
+  } catch {
+    // A read failure is not evidence that reconciliation is durable. Let the
+    // outer Queue retry rather than acknowledge an unprovable duplicate.
+    return false;
+  }
+  if (!job || job.settlement !== undefined) return false;
+
+  try {
+    assertValidExternalEffectReconciliationJob(job);
+    const recovery = job.recovery;
+    const delivery = recovery.delivery_identity;
+    return job.tenant_id === tenantId
+      && job.effect_id === effectId
+      && jcsCanonicalize(recovery.accounting_context) === jcsCanonicalize(input.tenant_context)
+      && recovery.runtime_event_id === input.runtime_event_id
+      && recovery.runtime_claim_token === input.runtime_claim_token
+      && delivery.provider === input.delivery_identity.provider
+      && delivery.workspace_id === input.delivery_identity.workspace_id
+      && delivery.app_id === input.delivery_identity.app_id
+      && delivery.channel_id === input.delivery_identity.channel_id
+      && delivery.thread_ts === input.delivery_identity.thread_ts
+      && delivery.event_id === input.delivery_identity.event_id
+      && delivery.delivery_id === input.delivery_identity.delivery_id
+      && delivery.message_ts === input.delivery_identity.message_ts
+      && delivery.workspace_name === input.delivery_identity.workspace_name;
+  } catch {
+    return false;
+  }
+}
+
 export class ExternalEffectOutboxMemoryStore implements ExternalEffectOutboxStore {
   readonly #records = new Map<string, ExternalEffectOutboxRecord>();
 

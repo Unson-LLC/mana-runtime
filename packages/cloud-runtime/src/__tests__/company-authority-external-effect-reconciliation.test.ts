@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ExternalEffectOutboxMemoryStore,
   ExternalEffectReconciliationMemoryQueue,
+  hasVerifiedPendingExternalEffectReconciliation,
   processCompanyAuthorityExternalEffect,
   reconcileCompanyAuthorityExternalEffectFromQueue,
   type ExternalEffectReconciliationJob,
@@ -190,7 +191,51 @@ async function createUnknownEffect(
   return { outbox, queue, job };
 }
 
+function pendingReconciliationInput(
+  queue: Pick<ExternalEffectReconciliationQueue, "read">,
+) {
+  return {
+    reconciliation_queue: queue,
+    tenant_context: tenantContext,
+    runtime_event_id: recovery.runtime_event_id,
+    runtime_claim_token: recovery.runtime_claim_token,
+    delivery_identity: recovery.delivery_identity,
+  };
+}
+
 describe("company authority external effect reconciliation boundary", () => {
+  it("keeps queue retry eligible when a preserved claim has no durable reconciliation job", async () => {
+    await expect(hasVerifiedPendingExternalEffectReconciliation(
+      pendingReconciliationInput(new ExternalEffectReconciliationMemoryQueue()),
+    )).resolves.toBe(false);
+  });
+
+  it("keeps queue retry eligible when a durable reconciliation job is not bound to the delivery and claim token", async () => {
+    const { queue } = await createUnknownEffect();
+
+    await expect(hasVerifiedPendingExternalEffectReconciliation({
+      ...pendingReconciliationInput(queue),
+      runtime_event_id: "message_other_delivery",
+      runtime_claim_token: "another-runtime-claim",
+    })).resolves.toBe(false);
+  });
+
+  it("keeps queue retry eligible when durable reconciliation state cannot be read", async () => {
+    await expect(hasVerifiedPendingExternalEffectReconciliation({
+      ...pendingReconciliationInput({
+        read: async () => { throw new Error("durable_read_unavailable"); },
+      }),
+    })).resolves.toBe(false);
+  });
+
+  it("acknowledges only an uncompleted durable job bound to tenant, effect, delivery, and claim", async () => {
+    const { queue } = await createUnknownEffect();
+
+    await expect(hasVerifiedPendingExternalEffectReconciliation(
+      pendingReconciliationInput(queue),
+    )).resolves.toBe(true);
+  });
+
   it("durably stores one tenant/effect reconciliation job and rejects scope or identity conflicts", async () => {
     const storage = new MemoryStorage();
     const scope = { tenant_id: tenantContext.tenant.tenant_id, effect_id: tenantContext.idempotency_key };

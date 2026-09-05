@@ -24,7 +24,7 @@ type EventClaim = RuntimeEventClaimSnapshot;
 
 export type RuntimeEventClaimResult =
   | { disposition: "claimed"; claimToken: string }
-  | { disposition: "in_progress"; retryAfterMs: number; preserveUntilReconciled: boolean }
+  | { disposition: "in_progress"; retryAfterMs: number; preserveUntilReconciled: boolean; claimToken: string }
   | { disposition: "completed"; responseTs?: string };
 
 export type RuntimeClaimSettlement = "complete" | "release";
@@ -66,6 +66,7 @@ export async function claimRuntimeEvent(
           disposition: "in_progress",
           preserveUntilReconciled: current.preserveUntilReconciled === true,
           retryAfterMs: current.preserveUntilReconciled ? LEASE_MS : LEASE_MS - elapsedMs,
+          claimToken: current.claimToken,
         };
       }
     }
@@ -82,8 +83,8 @@ export async function claimRuntimeEvent(
 
 /**
  * A preserved claim is owned by the A0 reconciliation path. A matching T0
- * queue delivery must acknowledge its duplicate instead of retrying and
- * competing for the same canonical Slack message.
+ * queue delivery may acknowledge its duplicate only after it also verifies a
+ * durable reconciliation job bound to this claim token.
  */
 export function shouldAckRuntimeEventInProgress(
   claim: Extract<RuntimeEventClaimResult, { disposition: "in_progress" }>,

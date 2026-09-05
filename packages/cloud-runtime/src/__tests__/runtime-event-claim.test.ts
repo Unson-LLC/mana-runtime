@@ -26,10 +26,11 @@ describe("runtime event claim", () => {
     const db = storage();
     const owner = await claimRuntimeEvent(db, "Ev_same", 1_000);
     expect(owner).toMatchObject({ disposition: "claimed" });
-    expect(await claimRuntimeEvent(db, "Ev_same", 1_001)).toEqual({
+    expect(await claimRuntimeEvent(db, "Ev_same", 1_001)).toMatchObject({
       disposition: "in_progress",
       preserveUntilReconciled: false,
       retryAfterMs: 15 * 60 * 1_000 - 1,
+      claimToken: expect.any(String),
     });
     if (owner.disposition !== "claimed") throw new Error("expected_claim_owner");
     await completeRuntimeEvent(db, "Ev_same", owner.claimToken, "1700.1", 1_100);
@@ -84,11 +85,13 @@ describe("runtime event claim", () => {
       disposition: "in_progress",
       preserveUntilReconciled: true,
       retryAfterMs: 15 * 60 * 1_000,
+      claimToken: "runtime-claim",
     })).toBe(true);
     expect(shouldAckRuntimeEventInProgress({
       disposition: "in_progress",
       preserveUntilReconciled: false,
       retryAfterMs: 15 * 60 * 1_000,
+      claimToken: "runtime-claim",
     })).toBe(false);
   });
 
