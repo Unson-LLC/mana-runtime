@@ -160,6 +160,7 @@ import {
   releaseRuntimeEvent,
   runtimeClaimSettlement,
   runtimeDeliveryId,
+  shouldAckRuntimeEventInProgress,
 } from "./runtime-event-claim.js";
 import { runRuntimeTriage } from "./runtime-triage.js";
 import { armMeetingMinutesRecovery, isMeetingMinutesRecovery,
@@ -4113,6 +4114,12 @@ export default {
                 };
               }
               if (runtimeClaim.disposition === "in_progress") {
+                if (shouldAckRuntimeEventInProgress(runtimeClaim)) {
+                  // A0 owns the matching delivery while reconciling an
+                  // ambiguous external effect. T0 has no claim token and must
+                  // not turn that ownership into a Queue retry storm.
+                  return { outcome: "reconciliation_in_progress" as const };
+                }
                 // Another delivery still owns this canonical Slack message. Do
                 // not complete the outer Queue claim: retry until the owner
                 // completes or its runtime lease can be reclaimed.
