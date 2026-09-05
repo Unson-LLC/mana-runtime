@@ -184,7 +184,7 @@ function validMeetingMinutesInteractionValue(
     const qualifiedDestinationId = actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`)
       ? actionId.slice(`${MEETING_MINUTES_CHOOSE_ACTION_ID}:`.length) : undefined;
     return !!destinationId && meetingMinutesDestinationIdPattern.test(destinationId) &&
-      (!qualifiedDestinationId || meetingMinutesDestinationIdPattern.test(qualifiedDestinationId));
+      (qualifiedDestinationId === undefined || meetingMinutesDestinationIdPattern.test(qualifiedDestinationId));
   }
   if (actionId.startsWith(`${MEETING_MINUTES_CHOOSE_ORGANIZATION_ACTION_ID}:`)) {
     const organizationId = string(value?.organizationId);
@@ -448,6 +448,7 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     ?? string(actionValue?.sourceThreadTs) ?? string(sourceMessage?.ts) ?? string(action?.action_ts)
     ?? `interaction:${interactionId.slice("slack-interaction-".length)}`;
   const destinationAction = isMeetingMinutesDestinationAction(actionId);
+  const userId = string(user?.id);
   let destinations: readonly MeetingMinutesDestination[] | undefined;
   let destinationResolutionFailed = false;
   let selectedDestination: MeetingMinutesDestination | undefined;
@@ -461,6 +462,9 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     !interactionChannelId || !slackIdPattern.test(interactionChannelId) ||
     (enterpriseId !== undefined && !slackIdPattern.test(enterpriseId)) || !threadIdentityValid) {
     return response("slack_interaction_invalid", 400);
+  }
+  if (destinationAction && (!userId || !options.operatorUserIds.has(userId))) {
+    return response("meeting_minutes_operator_forbidden", 403);
   }
   if (destinationAction) {
     try {
@@ -529,7 +533,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         effects: tenantEffects, options });
     }
   }
-  const userId = string(user?.id);
   const channelId = string(channel?.id);
   if (actionId === "mana_task_write_approve" && options.approveTaskWrite) {
     const approvalId = string(actionValue?.approvalId); const payloadHash = string(actionValue?.payloadHash);

@@ -4,6 +4,29 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 
 describe("tenant Slack runtime wiring", () => {
+  it("fails closed on a missing destination authority before all three selection effects", () => {
+    const resolverStart = source.indexOf("function createTenantInteractionEffectResolver(");
+    const resolver = source.slice(resolverStart, source.indexOf("function tenantInteractionEvent(", resolverStart));
+    const queueStart = source.indexOf("const destinationAuthorization = command.kind === \"meeting_minutes_selection\"");
+    const queueIngress = source.slice(queueStart, source.indexOf("}, async (identity, destination)", queueStart));
+    const consumerStart = source.indexOf("function expectedTenantMeetingMinutesSelectionScope(");
+    const consumer = source.slice(consumerStart, source.indexOf("function expectedTenantMeetingMinutesRedoScope(", consumerStart));
+
+    expect(resolverStart).toBeGreaterThan(-1);
+    expect(resolver).toContain("destinationAuthorizationForSelection(env, destination)");
+    expect(resolver.indexOf("destinationAuthorizationForSelection(env, destination)"))
+      .toBeLessThan(resolver.indexOf("const sourceResolved = await resolve("));
+    expect(queueStart).toBeGreaterThan(-1);
+    expect(queueIngress).toContain("destinationAuthorizationForSelection(env, destination)");
+    expect(queueIngress.indexOf("destinationAuthorizationForSelection(env, destination)"))
+      .toBeLessThan(queueIngress.indexOf("env.TECHKNIGHT_EVENTS.send("));
+    expect(consumerStart).toBeGreaterThan(-1);
+    expect(consumer).toContain("destinationAuthorizationForSelection(env, destination)");
+    expect(consumer.indexOf("destinationAuthorizationForSelection(env, destination)"))
+      .toBeLessThan(consumer.indexOf("resolveMeetingMinutesDestinationProjectScope("));
+    expect(source).not.toContain("if (projectId === undefined) return undefined");
+  });
+
   it("re-authorizes redo task deletion for the persisted configured destination", () => {
     const start = source.indexOf("async function processTenantMeetingMinutesRedo(");
     expect(start).toBeGreaterThan(-1);

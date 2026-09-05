@@ -92,6 +92,31 @@ describe("handleMeetingMinutesInteraction", () => {
     }), expect.any(Function));
   });
 
+  it("rejects an empty destination-qualified action id as malformed before tenant resolution", async () => {
+    const malformedPayload = structuredClone(payload);
+    malformedPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_destination:";
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
+    const resolveDestinations = vi.fn(() => destinations);
+    const send = vi.fn();
+    const result = await handleMeetingMinutesInteraction(request(malformedPayload), {
+      signingSecret: secret,
+      expectedTeamId: "T1",
+      expectedAppId: "A1",
+      operatorUserIds: new Set(["U1"]),
+      nowMs: now * 1000,
+      ...tenantBoundary,
+      resolveTenantEffects,
+      resolveDestinations,
+      send,
+    });
+
+    expect(result.status).toBe(400);
+    await expect(result.json()).resolves.toEqual({ error: "slack_interaction_invalid" });
+    expect(resolveDestinations).not.toHaveBeenCalled();
+    expect(resolveTenantEffects).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("verifies and queues an authorized selection", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const showProcessing = vi.fn(); const background = deferred();
     const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
@@ -602,9 +627,16 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(rejected.status).toBe(400);
   });
   it("fails closed for a non-operator", async () => {
-    const send = vi.fn(); const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
-      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000, ...tenantBoundary, send });
-    expect(response.status).toBe(403); expect(send).not.toHaveBeenCalled();
+    const send = vi.fn();
+    const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
+    const resolveDestinations = vi.fn(() => destinations);
+    const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
+      expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(), nowMs: now * 1000,
+      ...tenantBoundary, resolveTenantEffects, resolveDestinations, send });
+    expect(response.status).toBe(403);
+    expect(resolveDestinations).not.toHaveBeenCalled();
+    expect(resolveTenantEffects).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
   it("shows the durable pause reason to an authorized operator without queueing even when minutes are disabled", async () => {
     const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();

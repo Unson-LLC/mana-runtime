@@ -69,6 +69,7 @@ import {
 import { processMeetingMinutesSelectionWithStatus } from "./meeting-minutes-lifecycle.js";
 import {
   meetingMinutesSelectionDestination,
+  resolveMeetingMinutesDestinationAuthorization,
   resolveMeetingMinutesDestinationProjectScope,
 } from "./meeting-minutes-selection-scope.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-state.js";
@@ -1634,29 +1635,16 @@ function placementAuthorizationForIdentity(
 function destinationAuthorizationForSelection(
   env: Env,
   destination: MeetingMinutesDestination | undefined,
+  boundary: BoundaryName = "worker_ingress",
 ): ReturnType<typeof placementAuthorizationForIdentity> | undefined {
-  if (!destination?.contextProjectCode) return undefined;
-  let configured: Record<string, unknown>;
-  try {
-    configured = env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON
-      ? JSON.parse(env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON) as Record<string, unknown>
-      : {};
-  } catch {
-    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_ids_invalid" });
-  }
-  const projectId = configured[destination.contextProjectCode];
-  if (projectId === undefined) return undefined;
-  if (typeof projectId !== "string" || !/^prj_[A-Za-z0-9]+$/.test(projectId)) {
-    deny("worker_ingress", "PROJECT_SCOPE_MISMATCH", { scope_reason: "destination_authority_project_id_missing" });
-  }
-  return {
-    required_authorization: {
-      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-      project_id: projectId,
-      capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
-    },
-    trusted_project_ids: [projectId],
-  };
+  if (!destination) return undefined;
+  return resolveMeetingMinutesDestinationAuthorization(
+    destination,
+    env.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON,
+    requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+    requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    boundary,
+  );
 }
 
 function expectedTenantMeetingMinutesSelectionScope(
@@ -1690,7 +1678,7 @@ function expectedTenantMeetingMinutesSelectionScope(
     selection,
     meetingMinutesRuntimeConfig(env).destinations,
   );
-  const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination, "queue_consumer");
   const placementProjectScope = destinationAuthorization
     ? resolveMeetingMinutesDestinationProjectScope(
       envelope.authorization,
