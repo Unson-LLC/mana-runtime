@@ -740,7 +740,8 @@ async function reissueMeetingMinutesAdminSelectionTenantContext(
     authorization.requesterId !== selection.userId || authorization.projectIds.length === 0) {
     deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
   }
-  const clients = tenantRuntimeClients(env);
+  const clients = tenantRuntimeClients(env, undefined,
+    tenantConfiguredDesiredEffectByCapability(env));
   const fresh = (await resolveSlackWorkerIngress({
     identity: {
       provider: "slack",
