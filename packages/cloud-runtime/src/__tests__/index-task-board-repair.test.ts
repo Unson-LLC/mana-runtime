@@ -45,7 +45,10 @@ describe("Worker task Canvas repair producers", () => {
       .toBeLessThan(resumeClient.indexOf("resolveTaskBoardRepairTenantContext"));
     expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
     expect(source).toContain("requester_id: serviceActorId");
-    expect(source).toContain("destinationAuthorization\n      ? {}\n      : { trusted_project_ids: placementProjectScope.project_ids }");
+    expect(source).toContain("const placementProjectScope = destinationAuthorization ? undefined : placementProjectScopeForEvent(env");
+    expect(source.indexOf("const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination)"))
+      .toBeLessThan(source.indexOf("const placementProjectScope = destinationAuthorization ? undefined", source.indexOf("async function resolveTaskBoardRepairTenantContext")));
+    expect(source).toContain("destinationAuthorization\n      ? {}\n      : { trusted_project_ids: placementProjectScope!.project_ids }");
     expect(source).not.toContain("trusted_project_ids: destinationAuthorization?.trusted_project_ids ?? placementProjectScope.project_ids");
     expect(source).toContain("const destinationAuthorization = destinationAuthorizationForSelection(env, destination, \"queue_consumer\")");
     expect(source).toContain("resolveMeetingMinutesDestinationProjectScope(");
