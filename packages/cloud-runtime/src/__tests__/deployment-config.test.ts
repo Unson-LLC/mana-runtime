@@ -770,6 +770,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain('error: "reply_judgment_scope_mismatch"');
     expect(worker).toContain('url.pathname === "/admin/meeting-minutes/intake"');
     expect(worker).toContain("/admin\\/meeting-minutes\\/runs");
+    expect(worker).toContain("/authorized-retry$");
+    expect(worker).toContain("reissueMeetingMinutesAdminSelectionTenantContext(env, run, selection)");
+    expect(worker).toContain('error: "meeting_minutes_admin_retry_not_authorized"');
+    expect(worker).toContain('event_id: meetingMinutesSelectionEventId(selection)');
     expect(worker).toContain("isIntakePaused()");
     expect(worker).toContain("isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN)");
     expect(worker).toContain("env, requiredRuntimeBinding(env.TENANT_ID),\n      ).status()");
