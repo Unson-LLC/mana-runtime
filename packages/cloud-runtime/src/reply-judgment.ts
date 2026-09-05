@@ -423,8 +423,24 @@ function verifiedAnswer(output: Record<string, unknown>): string | undefined {
   }
 }
 
+function currentAttemptEvents(events: StreamEvent[]): StreamEvent[] {
+  // `claude --resume` can replay earlier assistant and tool-result items before
+  // emitting this attempt's UserPromptSubmit Hook. The latest submit event is
+  // the authenticated boundary for the current attempt; treating replayed
+  // history as current executions would require receipts that belong to an
+  // earlier attempt and can turn a valid retry into silence.
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.type === "system" && event.subtype === "hook_response"
+        && event.hook_event === "UserPromptSubmit") {
+      return events.slice(index);
+    }
+  }
+  throw new Error("reply_judgment_lifecycle_incomplete");
+}
+
 export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
-  const events = parseEvents(stdout);
+  const events = currentAttemptEvents(parseEvents(stdout));
   const hooks: Array<{ index: number; output: Record<string, unknown>; receipt: EmbeddedHookReceipt }> = [];
   const calls: Array<{ index: number; id: string; name: string }> = [];
   const results = new Map<string, { index: number; outcome: "success" | "error" }>();

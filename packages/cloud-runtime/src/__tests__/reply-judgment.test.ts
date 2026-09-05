@@ -139,7 +139,42 @@ function stream(options: {
   return events.map((event) => JSON.stringify(event)).join("\n");
 }
 
+function resumedHistoryWithUnauditedBrainbaseCalls(callCount: number): string {
+  const events: unknown[] = [];
+  for (let index = 0; index < callCount; index += 1) {
+    const toolNumber = index + 1;
+    events.push(
+      { type: "assistant", session_id: "session-1", message: { content: [
+        { type: "tool_use", id: `previous-tool-${toolNumber}`, name: "mcp__brainbase__brainbase_knowledge_resolve", input: {} },
+      ] } },
+      { type: "user", session_id: "session-1", message: { content: [
+        { type: "tool_result", tool_use_id: `previous-tool-${toolNumber}`, content: "{}" },
+      ] } },
+    );
+  }
+  // Claude --resume can retain prior transcript items while emitting only the
+  // new attempt's lifecycle Hook responses. These calls deliberately have no
+  // matching receipt: their receipts belonged to the earlier attempt and are
+  // not present in this retry stream.
+  return events.map((event) => JSON.stringify(event)).join("\n");
+}
+
 describe("Slack reply Judgment lifecycle", () => {
+  it("mana-reply-judgment-hook-503:ac:6 audits only Brainbase calls after the current UserPromptSubmit when Claude resumes a session", () => {
+    const resumed = [
+      resumedHistoryWithUnauditedBrainbaseCalls(3),
+      stream({ toolCount: 2 }),
+    ].join("\n");
+
+    expect(parseReplyJudgmentStream(resumed)).toMatchObject({
+      stop: "completed",
+      toolJournal: [
+        { sequence: 1, toolUseId: "tool-1", outcome: "success" },
+        { sequence: 2, toolUseId: "tool-2", outcome: "success" },
+      ],
+    });
+  });
+
   it.each([
     ["\uFEFFnot-json", "reply_judgment_stream_invalid_bom"],
     ["\u001b[31mnot-json", "reply_judgment_stream_invalid_ansi"],

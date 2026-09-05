@@ -22,6 +22,7 @@ related_stories:
 - 通常返信のClaude commandが `hooks` の空な議事録用settingsを指定していた。
 - 通常返信用settingsへ切り替えた後も、Judgment Hostが返したStop修復要求をcontainer wrapperが破棄して固定文へ置換したため、runtimeは `reply_judgment_hook_failed` としてfail closedした。
 - 2026-09-03のfresh E2Eではquota revision 4の判定とBrainbase取得は成功したが、PostToolUse受領票を呼び出し件数順だけで照合したため `reply_judgment_tool_audit_mismatch` でSlack投稿前にfail closedした。元streamは保存していないため、重複Hook応答が直接原因だったかは未確定とする。
+- 2026-09-05の本番`--resume` retryでは、当該attemptのPostTool受領票は7件すべて結合できた一方、再開streamに残った前attemptの3呼び出しも監査対象に数え、`expected=10 / receipt=7 / bound=7 / missing=3`でfail closedした。監査の開始境界を当該attemptの`UserPromptSubmit`に固定する。
 
 ## 受け入れ基準
 
@@ -30,7 +31,7 @@ related_stories:
 - [x] AC3: `meeting-minutes` purposeは従来の議事録専用settingsを使い続け、通常返信用settingsへ混線しない。
 - [x] AC4: container imageは通常返信専用settingsを `/opt/mana` へ読み取り専用で同梱する。
 - [ ] AC5: 対象の単体テストと既存の関連テストが通り、本番配備後のfresh Slack mentionで同一threadの回答と完了したJudgment lifecycleを確認する。
-- [x] AC6: 全PostToolUse/PostToolUseFailure受領票に`tool_use_id`と`tool_name`を必須とし、各Brainbase受領票を実呼び出しへ結合する。成功の`tool_result`はPostToolUse、エラーの`tool_result`はPostToolUseFailureと厳密に照合し、エラー呼び出しも記録する。同一受領票の再掲だけを1件として扱い、異なる内容・識別子欠落・受領票欠落・監査欠落・未完了監査・成功失敗種別の不一致はfail closedする。
+- [x] AC6: 全PostToolUse/PostToolUseFailure受領票に`tool_use_id`と`tool_name`を必須とし、当該attemptの`UserPromptSubmit`以降に現れた各Brainbase受領票だけを実呼び出しへ結合する。成功の`tool_result`はPostToolUse、エラーの`tool_result`はPostToolUseFailureと厳密に照合し、エラー呼び出しも記録する。同一受領票の再掲だけを1件として扱い、開始境界以降の異なる内容・識別子欠落・受領票欠落・監査欠落・未完了監査・成功失敗種別の不一致はfail closedする。
 - [x] AC7: 監査不一致はfail closedを維持したまま固定語彙の非機密サブコードで分類し、raw stream、tool引数、回答本文、receipt IDを保存せずに本番の発火条件をreadbackできる。
 
 ## 非対象
