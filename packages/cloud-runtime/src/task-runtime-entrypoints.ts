@@ -135,6 +135,7 @@ export async function processTaskBoardRepair(
   expectedWorkspaceId = env.SLACK_EXPECTED_TEAM_ID,
   taskCredentialFetch: typeof fetch = credentialFetch,
   repairProjectCodes?: readonly string[],
+  slackToken?: string,
 ): Promise<void> {
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
   const destinationWorkspace = Boolean(target && target.workspaceId === expectedWorkspaceId);
@@ -189,7 +190,7 @@ export async function processTaskBoardRepair(
       return;
     } else {
       try {
-        canvasId = await createCanvas(target.channelId, undefined, { fetch: credentialFetch });
+        canvasId = await createCanvas(target.channelId, slackToken, { fetch: credentialFetch });
       } catch (error) {
         if (error instanceof TaskBoardCanvasProvisioningError && error.definitive) {
           await releaseTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates);
@@ -205,7 +206,7 @@ export async function processTaskBoardRepair(
   await refresh({ ...env,
     RUNTIME_TASK_BOARD_ENABLED: "true",
     BRAINBASE_TASK_API_TOKEN: undefined,
-    SLACK_BOT_TOKEN: undefined,
+    SLACK_BOT_TOKEN: slackToken,
     SLACK_ALLOWED_CHANNEL_ID: target.channelId,
     TASK_BOARD_CANVAS_ID: canvasId,
     RUNTIME_PROJECT_CODES: projectCodes.join(",") }, {

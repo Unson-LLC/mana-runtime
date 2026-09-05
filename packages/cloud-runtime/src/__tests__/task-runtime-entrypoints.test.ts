@@ -193,11 +193,39 @@ describe("Cloudflare task runtime entrypoints", () => {
       TASK_BOARD_REPAIRS: { send: vi.fn() },
     };
     const destinationFetch = vi.fn() as never;
+    const taskFetch = vi.fn() as never;
     await processTaskBoardRepair(ownedRepair, env, "unson-business", destinationFetch, refresh,
-      undefined, "TUNSON", destinationFetch, ["canonical-pms"]);
+      undefined, "TUNSON", taskFetch, ["canonical-pms"], "destination-slack-token");
     expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
-      RUNTIME_PROJECT_CODES: "canonical-pms",
-    }), { fetch: destinationFetch, taskFetch: destinationFetch });
+      RUNTIME_PROJECT_CODES: "canonical-pms", SLACK_BOT_TOKEN: "destination-slack-token",
+    }), { fetch: destinationFetch, taskFetch });
+  });
+
+  it("uses an explicit destination Slack token when provisioning a cross-workspace Canvas", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const createCanvas = vi.fn().mockResolvedValue("FMANA");
+    const bindingFetch = vi.fn(async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/reserve") return Response.json({ status: "reserved" });
+      if (path === "/complete") return new Response(null, { status: 204 });
+      return Response.json({ error: "not_found" }, { status: 404 });
+    });
+    const target = { ...ownedTarget, autoProvision: true, manaCanvasId: null, bindingRevision: 1 };
+    const env = {
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "TSOURCE", SLACK_ALLOWED_CHANNEL_ID: "CSOURCE",
+      TASK_BOARD_TARGETS_JSON: JSON.stringify([target]),
+      TASK_BOARD_REPAIRS: { send: vi.fn() },
+      TASK_BOARD_BINDINGS: { idFromName: vi.fn((name) => name), get: vi.fn(() => ({ fetch: bindingFetch })) },
+    };
+    const slackFetch = vi.fn() as never;
+    const taskFetch = vi.fn() as never;
+    await processTaskBoardRepair({ ...ownedRepair, manaCanvasId: null }, env,
+      "unson-business", slackFetch, refresh, createCanvas, "TUNSON", taskFetch,
+      ["back-office"], "destination-slack-token");
+    expect(createCanvas).toHaveBeenCalledWith("CBACKOFFICE", "destination-slack-token", { fetch: slackFetch });
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
+      SLACK_BOT_TOKEN: "destination-slack-token", TASK_BOARD_CANVAS_ID: "FMANA",
+    }), { fetch: slackFetch, taskFetch });
   });
 
   it("rejects meeting-triggered project scope outside the configured board target", async () => {

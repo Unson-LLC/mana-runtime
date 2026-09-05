@@ -38,6 +38,11 @@ describe("Worker task Canvas repair producers", () => {
     expect(resumeClient).not.toContain("enqueueMeetingMinutesTaskBoardRepair(");
     expect(resumeClient).toContain("const repairTenantContext = await resolveTaskBoardRepairTenantContext(env, repair");
     expect(resumeClient).toContain("const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding");
+    expect(resumeClient).toContain("const destinationToken = resolveCrossWorkspaceMeetingMinutesSlackToken");
+    expect(resumeClient).toContain("if (destinationToken)");
+    expect(resumeClient).toContain("destination.taskProjectCodes, destinationToken");
+    expect(resumeClient.indexOf("if (destinationToken)"))
+      .toBeLessThan(resumeClient.indexOf("resolveTaskBoardRepairTenantContext"));
     expect(resumeClient).toContain("appId: destinationSlackBinding.app_id");
     expect(resumeClient).toContain("destination,");
     expect(resumeClient).toContain("capabilityId: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID)");

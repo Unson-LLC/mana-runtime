@@ -1336,7 +1336,7 @@ function meetingMinutesClients(
         });
         const repair: TaskBoardRepairEvent = {
           eventType: "task_board_repair",
-          tenantId: "",
+          tenantId: tenantContext.tenant.tenant_id,
           targetId: target.targetId,
           workspaceId: target.workspaceId,
           channelId: target.channelId,
@@ -1345,6 +1345,20 @@ function meetingMinutesClients(
           reason: "task_write",
           requestedAt: new Date().toISOString(),
         };
+        const destinationToken = resolveCrossWorkspaceMeetingMinutesSlackToken(
+          env,
+          destination.organization.id,
+          tenantContext.workspace_connection.workspace_id,
+          destinationSlackBinding,
+        );
+        if (destinationToken) {
+          await effects.boundary("slack_delivery", (credentialFetch) => processTaskBoardRepair(
+            repair, env, repair.tenantId, credentialFetch,
+            undefined, undefined, repair.workspaceId, credentialFetch,
+            destination.taskProjectCodes, destinationToken,
+          ));
+          return;
+        }
         const repairTenantContext = await resolveTaskBoardRepairTenantContext(env, repair, {
           appId: destinationSlackBinding.app_id,
           destination,
