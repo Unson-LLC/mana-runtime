@@ -158,9 +158,8 @@ export async function createManagedTaskBoardCanvas(
   options: { fetch?: typeof fetch } = {},
 ): Promise<string> {
   const fetchImpl = options.fetch ?? fetch;
-  let response: Response;
-  try {
-    response = await fetchImpl("https://slack.com/api/canvases.create", {
+  const createCanvas = async (): Promise<{ response: Response; payload: Record<string, unknown> | null }> => {
+    const response = await fetchImpl("https://slack.com/api/canvases.create", {
       method: "POST",
       headers: { ...(token ? { authorization: `Bearer ${token}` } : {}),
         "content-type": "application/json; charset=utf-8" },
@@ -174,10 +173,27 @@ export async function createManagedTaskBoardCanvas(
       }),
       signal: AbortSignal.timeout(15_000),
     });
+    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+    return { response, payload };
+  };
+
+  let response: Response;
+  let payload: Record<string, unknown> | null;
+  try {
+    ({ response, payload } = await createCanvas());
   } catch {
     throw new TaskBoardCanvasProvisioningError("task_board_canvas_create_uncertain", false);
   }
-  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (payload?.ok === false && (payload.error === "channel_not_found" || payload.error === "not_in_channel")) {
+    try {
+      await slackApi("conversations.join", token, { channel: channelId }, fetchImpl);
+      ({ response, payload } = await createCanvas());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "task_board_channel_join_failed";
+      const definitive = !AMBIGUOUS_SLACK_ERRORS.has(message.replace(/^task_board_/, ""));
+      throw new TaskBoardCanvasProvisioningError(message, definitive);
+    }
+  }
   const canvasId = typeof payload?.canvas_id === "string" ? payload.canvas_id : "";
   if (response.ok && payload?.ok === true && SLACK_ID.test(canvasId)) return canvasId;
   const code = typeof payload?.error === "string"
