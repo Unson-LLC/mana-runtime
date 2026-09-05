@@ -160,6 +160,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
     const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
     const send = vi.fn().mockResolvedValue(undefined); const deferred: Promise<unknown>[] = [];
+    const resolveTenantEffects = tenantEffectResolver();
     const env = { SLACK_SIGNING_SECRET: "unson-secret", SLACK_SIGNING_SECRET_TECHKNIGHT: signingSecret,
       SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
       SLACK_EXPECTED_APP_ID_TECHKNIGHT: "A-TECHKNIGHT",
@@ -173,9 +174,12 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     const response = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
       method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
     }), env as never, { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never,
-    new Set(["U1"]), undefined, undefined, undefined, send, tenantEffectResolver());
+    new Set(["U1"]), undefined, undefined, undefined, send, resolveTenantEffects);
 
     expect(response.status).toBe(200); await Promise.all(deferred);
+    expect(resolveTenantEffects).toHaveBeenCalledWith(expect.objectContaining({
+      workspace_id: "T-TECHKNIGHT", channel_id: "CDEST",
+    }), expect.objectContaining({ id: "techknight-board", contextProjectCode: "techknight" }));
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       kind: "meeting_minutes_selection",
       workspaceId: "T-TECHKNIGHT",
