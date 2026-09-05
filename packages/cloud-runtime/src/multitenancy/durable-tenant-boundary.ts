@@ -91,6 +91,17 @@ export function createDurableTenantBoundaryRegistry(namespace: TenantBoundaryCon
       if (!response.ok) return boundaryFailure(response);
       return handle;
     },
+    async refresh(handle: string, input: {
+      tenant_context: TenantContextEnvelope;
+      now: string;
+    }): Promise<void> {
+      const response = await boundaryStub(namespace, handle).fetch(new Request(`https://${BOUNDARY_HOST}/refresh`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tenant_context: input.tenant_context, now: input.now }),
+      }));
+      if (!response.ok) await boundaryFailure(response);
+    },
     async dispose(handle: string): Promise<void> {
       const response = await boundaryStub(namespace, handle).fetch(new Request(`https://${BOUNDARY_HOST}/dispose`, {
         method: "POST",
@@ -202,6 +213,40 @@ export class TenantBoundaryContextHandler {
         }
         await this.storage.put(CONTEXT_KEY, context);
         await this.storage.setAlarm?.(Date.parse(input.expires_at));
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname === "/refresh") {
+        const input = await request.json() as { tenant_context?: TenantContextEnvelope; now?: unknown };
+        if (!input.tenant_context || typeof input.now !== "string" || !Number.isFinite(Date.parse(input.now))
+          || !Number.isFinite(Date.parse(input.tenant_context.expires_at))
+          || Date.parse(input.tenant_context.expires_at) <= Date.parse(input.now)) {
+          throw new TenantBoundaryError("container_launch", "TENANT_CONTEXT_INVALID");
+        }
+        const current = await this.storage.get<BoundaryContext>(CONTEXT_KEY);
+        if (!current) throw new TenantBoundaryError("container_launch", "TENANT_CONTEXT_MISSING");
+        const fresh = input.tenant_context;
+        if (fresh.tenant.tenant_id !== current.tenant_context.tenant.tenant_id
+          || fresh.workspace_connection?.connection_id !== current.tenant_context.workspace_connection?.connection_id
+          || fresh.workspace_connection?.workspace_id !== current.tenant_context.workspace_connection?.workspace_id
+          || fresh.workspace_connection?.app_id !== current.tenant_context.workspace_connection?.app_id
+          || fresh.actor?.principal_id !== current.tenant_context.actor?.principal_id) {
+          throw new TenantBoundaryError("container_launch", "CROSS_TENANT_CANDIDATE");
+        }
+        await this.validate({
+          boundary: "container_launch",
+          tenant_context: fresh,
+          expected_scope: current.expected_scope,
+          now: input.now,
+          ...(current.company_authority_envelope !== undefined
+            ? { company_authority_envelope: structuredClone(current.company_authority_envelope) }
+            : {}),
+        });
+        await this.storage.put(CONTEXT_KEY, {
+          ...current,
+          tenant_context: fresh,
+          expires_at: fresh.expires_at,
+        } satisfies BoundaryContext);
+        await this.storage.setAlarm?.(Date.parse(fresh.expires_at));
         return new Response(null, { status: 204 });
       }
       if (url.pathname === "/authorize" || url.pathname === "/resolve") {

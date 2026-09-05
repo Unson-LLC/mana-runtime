@@ -19,6 +19,11 @@ export function executeTenantContainerOperation<T>(input: {
   now: string;
   release?: "on_completion" | "on_expiration";
   company_authority_envelope?: unknown;
+  refresh?: {
+    issue(): Promise<TenantContextEnvelope>;
+    now(): string;
+    before_expiry_ms?: number;
+  };
   execute(tenantBoundaryHandle: string): Promise<T>;
 }): Promise<T> {
   return executeTenantBoundary({
@@ -37,9 +42,34 @@ export function executeTenantContainerOperation<T>(input: {
           : {}),
         now: input.now,
       });
+      let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+      let refreshInFlight: Promise<void> | undefined;
+      let stopped = false;
+      let rejectRefresh: ((reason?: unknown) => void) | undefined;
+      const refreshFailure = new Promise<never>((_resolve, reject) => { rejectRefresh = reject; });
+      const scheduleRefresh = (context: TenantContextEnvelope): void => {
+        if (!input.refresh) return;
+        const beforeExpiryMs = input.refresh.before_expiry_ms ?? 60_000;
+        const delayMs = Math.max(0, Date.parse(context.expires_at) - Date.parse(input.refresh.now()) - beforeExpiryMs);
+        refreshTimer = setTimeout(() => {
+          refreshInFlight = (async () => {
+            const fresh = await input.refresh!.issue();
+            if (stopped) return;
+            await registry.refresh(handle, { tenant_context: fresh, now: input.refresh!.now() });
+            if (!stopped) scheduleRefresh(fresh);
+          })();
+          void refreshInFlight.catch(rejectRefresh);
+        }, delayMs);
+      };
       try {
-        return await input.execute(handle);
+        scheduleRefresh(input.tenant_context);
+        return input.refresh
+          ? await Promise.race([input.execute(handle), refreshFailure])
+          : await input.execute(handle);
       } finally {
+        stopped = true;
+        if (refreshTimer !== undefined) clearTimeout(refreshTimer);
+        await refreshInFlight?.catch(() => undefined);
         if (input.release !== "on_expiration") await registry.dispose(handle);
       }
     },
