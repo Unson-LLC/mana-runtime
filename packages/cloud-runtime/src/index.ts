@@ -93,6 +93,7 @@ import { classifyMeetingMinutesDestinationInSandbox,
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
+import { hasStableMeetingMinutesRecoveryAuthority } from "./meeting-minutes-recovery-authority.js";
 import { isReplyEligible, postSlackReply, ReplyPipelineError, type ReplyProcessResult } from "./reply-pipeline.js";
 import { executeReplyRuntime } from "./reply-runtime-execution.js";
 import { readReplyJudgmentEpisode } from "./reply-judgment.js";
@@ -721,19 +722,7 @@ async function reissueMeetingMinutesRecoveryTenantContext(
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
   });
   const fresh = resolved.tenant_context;
-  const freshProjects = [...fresh.authorization.project_ids].sort();
-  const authorizedProjects = [...authorization.projectIds].sort();
-  const sameProjects = freshProjects.length === authorizedProjects.length &&
-    freshProjects.every((projectId, index) => projectId === authorizedProjects[index]);
-  if (fresh.tenant.tenant_id !== authorization.tenantId ||
-    fresh.tenant.tenant_revision !== authorization.tenantRevision ||
-    fresh.workspace_connection.connection_id !== authorization.connectionId ||
-    fresh.workspace_connection.connection_revision !== authorization.connectionRevision ||
-    fresh.workspace_connection.workspace_id !== authorization.workspaceId ||
-    fresh.workspace_connection.app_id !== authorization.appId ||
-    fresh.actor.principal_id !== authorization.actorPrincipalId ||
-    !sameProjects || fresh.placement.deployment_id !== authorization.deploymentId ||
-    fresh.placement.profile !== authorization.profile) {
+  if (!hasStableMeetingMinutesRecoveryAuthority(fresh, authorization)) {
     deny("queue_consumer", "CROSS_TENANT_CANDIDATE");
   }
   return fresh;
@@ -778,15 +767,7 @@ async function reissueMeetingMinutesAdminSelectionTenantContext(
     now: new Date().toISOString(),
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
   })).tenant_context;
-  const sameProjects = [...fresh.authorization.project_ids].sort().join("\0") ===
-    [...authorization.projectIds].sort().join("\0");
-  if (fresh.tenant.tenant_id !== authorization.tenantId ||
-    fresh.tenant.tenant_revision !== authorization.tenantRevision ||
-    fresh.workspace_connection.connection_id !== authorization.connectionId ||
-    fresh.workspace_connection.connection_revision !== authorization.connectionRevision ||
-    fresh.actor.principal_id !== authorization.actorPrincipalId || !sameProjects ||
-    fresh.placement.deployment_id !== authorization.deploymentId ||
-    fresh.placement.profile !== authorization.profile) {
+  if (!hasStableMeetingMinutesRecoveryAuthority(fresh, authorization)) {
     deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
   }
   return fresh;
