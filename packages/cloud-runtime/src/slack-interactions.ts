@@ -9,6 +9,7 @@ import { destinationSelectedMessage, organizationSelectionMessage, projectSelect
   tenantInteractionFailedMessage, interactionActionFailedMessage, MeetingMinutesSlackClient,
   type SlackSelectionMessage } from "./meeting-minutes-slack.js";
 import { TenantBoundaryError } from "./multitenancy/errors.js";
+import type { TenantContextEnvelope } from "./multitenancy/contracts.js";
 import { createUserFailure } from "./multitenancy/failure.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
 import { verifySlackRequest } from "./slack.js";
@@ -63,7 +64,8 @@ export type TenantInteractionTarget = Partial<Omit<TenantInteractionIdentity, "e
 export interface TenantInteractionEffects {
   readonly tenant_id: string;
   readonly source: TenantInteractionIdentity;
-  durableObject<T>(effectId: string, target: TenantInteractionTarget, execute: () => Promise<T>): Promise<T>;
+  durableObject<T>(effectId: string, target: TenantInteractionTarget,
+    execute: (tenantContext: TenantContextEnvelope) => Promise<T>): Promise<T>;
   brainbaseProxy<T>(effectId: string, target: TenantInteractionTarget, mode: "read" | "write",
     execute: (credentialFetch: typeof fetch) => Promise<T>): Promise<T>;
   slackDelivery(effectId: string, target: TenantInteractionTarget, event: unknown,

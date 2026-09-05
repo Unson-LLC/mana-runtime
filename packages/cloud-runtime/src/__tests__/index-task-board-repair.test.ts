@@ -30,9 +30,11 @@ describe("Worker task Canvas repair producers", () => {
       .toHaveLength(2);
     expect(source).toContain("(repair) => resolveDerivedSlackTenantContext(env, tenantContext");
     expect(source).toContain("event_id: taskBoardRepairEventId(repair)");
-    expect(source).toContain("requester_id: requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID)");
-    expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
+    expect(source.match(/requester_id: requiredRuntimeBinding\((?:taskBoardT|t)enantContext\.slack\.requester_id\)/g))
       .toHaveLength(2);
+    expect(source).toContain("(taskBoardTenantContext) => enqueueMeetingMinutesTaskBoardRepair(");
+    expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
+      .toHaveLength(1);
   });
 
   it("suppresses a disabled meeting repair with an ownership decision log", async () => {

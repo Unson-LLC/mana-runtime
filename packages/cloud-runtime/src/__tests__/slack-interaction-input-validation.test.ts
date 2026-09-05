@@ -40,7 +40,7 @@ function effects(source: TenantInteractionIdentity): TenantInteractionEffects {
   return {
     tenant_id: "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV",
     source,
-    durableObject: async (_effectId, _target, execute) => execute(),
+    durableObject: async (_effectId, _target, execute) => execute({} as never),
     brainbaseProxy: async (_effectId, _target, _mode, execute) => execute(fetch),
     slackDelivery: async (_effectId, _target, _event, execute) => execute(fetch),
   };
@@ -121,4 +121,3 @@ describe("signed Slack interaction input bounds", () => {
     expect(handleMeetingTaskAction).not.toHaveBeenCalled();
   });
 });
-
