@@ -13,7 +13,6 @@ export function hasStableMeetingMinutesRecoveryAuthority(
   return fresh.tenant.tenant_id === authorization.tenantId &&
     fresh.workspace_connection.workspace_id === authorization.workspaceId &&
     fresh.workspace_connection.app_id === authorization.appId &&
-    fresh.actor.principal_id === authorization.actorPrincipalId &&
     fresh.actor.authenticated_subject_id === authorization.requesterId &&
     fresh.slack.channel_id === authorization.channelId &&
     fresh.slack.thread_ts === authorization.threadTs &&
