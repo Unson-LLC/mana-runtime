@@ -33,7 +33,14 @@ export function resolveMeetingMinutesDestinationProjectScope(
   if (authorization.project_ids.includes(authorityProjectId)) {
     return { project_id: authorityProjectId, project_ids: [...authorization.project_ids] };
   }
-  return resolveCanonicalProjectScope(authorization, [destination.contextProjectCode], boundary);
+  try {
+    return resolveCanonicalProjectScope(authorization, [destination.contextProjectCode], boundary);
+  } catch (error) {
+    if (!(error instanceof TenantBoundaryError) || error.code !== "PROJECT_SCOPE_MISMATCH") throw error;
+    throw new TenantBoundaryError(boundary, "PROJECT_SCOPE_MISMATCH", "PROJECT_SCOPE_MISMATCH", {
+      scope_reason: "destination_authority_not_signed",
+    });
+  }
 }
 
 export function resolveMeetingMinutesDestinationAuthorization(
