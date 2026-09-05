@@ -500,6 +500,23 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     const failureSeedCode = error instanceof TenantBoundaryError ? error.code : "TENANT_RESOLUTION_FAILED";
     const correlationId = deriveCorrelationId(runId, "tenant_authentication", failureSeedCode);
     const failure = createUserFailure({ error, correlation_id: correlationId });
+    console.error(JSON.stringify({
+      event: "meeting_minutes_tenant_resolution_failed",
+      runId,
+      workspace_id: interactionWorkspaceId,
+      channel_id: interactionChannelId,
+      ...(selectedDestination ? {
+        destination_id: selectedDestination.id,
+        destination_project_code: selectedDestination.contextProjectCode,
+      } : {}),
+      stage: "tenant_context_resolution",
+      code: failureSeedCode,
+      correlation_id: correlationId,
+      retryable: error instanceof TenantBoundaryError && typeof error.details?.retryable === "boolean"
+        ? error.details.retryable
+        : failure.next_actions.includes("retry_later"),
+      ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+    }));
     if (responseUrl && options.updateBeforeTenant && isMeetingMinutesInteractionAction(actionId) &&
       isTenantFailureResponseUrlEligible(error)) {
       const notice = options.updateBeforeTenant(responseUrl,
