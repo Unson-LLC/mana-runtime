@@ -58,8 +58,21 @@ jobs:
           action_ts="$(date +%s.%3N)"
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
-          status="$(curl -sS --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 15 \
-            -o "$response_file" -w '%{http_code}' \
+          request_json() {
+            local attempt status
+            for attempt in $(seq 1 6); do
+              status="$(curl -sS --connect-timeout 15 --max-time 30 \
+                -o "$response_file" -w '%{http_code}' "$@")" || status="000"
+              if [[ "$status" == "200" ]] && jq -e . "$response_file" >/dev/null 2>&1; then
+                printf '%s' "$status"
+                return 0
+              fi
+              echo "JSON API request failed (attempt=${attempt}, status=${status})" >&2
+              sleep 2
+            done
+            return 1
+          }
+          status="$(request_json \
             -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
             --get \
             --data-urlencode "tenant_id=$TENANT_ID" \
@@ -68,8 +81,7 @@ jobs:
           jq -e --arg runId "$RUN_ID" --arg status "$status" \
             '$status == "200" and .runId == $runId' "$response_file" >/dev/null
           baseline_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
-          status="$(curl -sS --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 15 \
-            -o "$response_file" -w '%{http_code}' \
+          status="$(request_json \
             -X POST \
             -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
             -H 'Content-Type: application/json' \
@@ -83,8 +95,7 @@ jobs:
             '$status == "200" and .runId == $runId and .enqueued == true' \
             "$response_file" >/dev/null
           for attempt in $(seq 1 90); do
-            status="$(curl -sS --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 15 \
-              -o "$response_file" -w '%{http_code}' \
+            status="$(request_json \
               -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
               --get \
               --data-urlencode "tenant_id=$TENANT_ID" \
