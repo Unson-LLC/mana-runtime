@@ -1580,7 +1580,9 @@ async function resolveTaskBoardRepairTenantContext(
   const clients = tenantRuntimeClients(env, undefined,
     tenantConfiguredDesiredEffectByCapability(env));
   const serviceActorId = requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID);
-  const placementProjectScope = placementProjectScopeForEvent(env, {
+  const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination);
+  if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  const placementProjectScope = destinationAuthorization ? undefined : placementProjectScopeForEvent(env, {
     tenantId: env.TENANT_ID,
     eventId: taskBoardRepairEventId(repair),
     workspaceId: repair.workspaceId,
@@ -1592,11 +1594,9 @@ async function resolveTaskBoardRepairTenantContext(
     text: "",
     receivedAt: repair.requestedAt,
   });
-  const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination);
-  if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
   const requiredAuthorization = destinationAuthorization?.required_authorization ?? {
     audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-    project_id: placementProjectScope.project_id,
+    project_id: placementProjectScope!.project_id,
     capability_id: options.capabilityId ?? "task_board_send",
   };
   const appId = requiredRuntimeBinding(options.appId ?? env.SLACK_EXPECTED_APP_ID);
@@ -1627,7 +1627,7 @@ async function resolveTaskBoardRepairTenantContext(
     // set is preserved and verified at the queue boundary.
     ...(destinationAuthorization
       ? {}
-      : { trusted_project_ids: placementProjectScope.project_ids }),
+      : { trusted_project_ids: placementProjectScope!.project_ids }),
     authority: clients.authority,
     now: repair.requestedAt,
     resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
