@@ -44,15 +44,17 @@ function freshContext(): TenantContextEnvelope {
 }
 
 describe("hasStableMeetingMinutesRecoveryAuthority", () => {
-  it("accepts a newer authority and connection revision for the same stable scope", () => {
-    expect(hasStableMeetingMinutesRecoveryAuthority(freshContext(), authorization)).toBe(true);
+  it("accepts refreshed revisions and a canonicalized principal for the same external identity and scope", () => {
+    const value = freshContext();
+    value.actor.principal_id = "person-canonical";
+    expect(hasStableMeetingMinutesRecoveryAuthority(value, authorization)).toBe(true);
   });
 
-  it("rejects a different tenant, workspace, actor, or project", () => {
+  it("rejects a different tenant, workspace, authenticated subject, or project", () => {
     for (const mutate of [
       (value: TenantContextEnvelope) => { value.tenant.tenant_id = "tenant-b"; },
       (value: TenantContextEnvelope) => { value.workspace_connection.workspace_id = "T-OTHER"; },
-      (value: TenantContextEnvelope) => { value.actor.principal_id = "person-b"; },
+      (value: TenantContextEnvelope) => { value.actor.authenticated_subject_id = "U-OTHER"; },
       (value: TenantContextEnvelope) => { value.authorization.project_ids = ["project-b"]; },
     ]) {
       const value = freshContext();
