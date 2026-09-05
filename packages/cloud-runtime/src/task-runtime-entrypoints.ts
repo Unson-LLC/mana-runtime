@@ -134,6 +134,7 @@ export async function processTaskBoardRepair(
     options?: { fetch?: typeof fetch }) => Promise<string> = createManagedTaskBoardCanvas,
   expectedWorkspaceId = env.SLACK_EXPECTED_TEAM_ID,
   taskCredentialFetch: typeof fetch = credentialFetch,
+  repairProjectCodes?: readonly string[],
 ): Promise<void> {
   const target = taskBoardTargets(env).find((candidate) => candidate.targetId === repair.targetId);
   const destinationWorkspace = Boolean(target && target.workspaceId === expectedWorkspaceId);
@@ -157,6 +158,12 @@ export async function processTaskBoardRepair(
     console.error(JSON.stringify({ event: "task_board_repair_rejected", targetId: repair.targetId,
       reason: rejectionReason,
       expectedBindingRevision: target?.bindingRevision ?? null }));
+    throw new Error("task_board_scope_mismatch");
+  }
+  const projectCodes = repairProjectCodes?.length ? [...repairProjectCodes] : target.projectCodes;
+  if (projectCodes.length === 0 || projectCodes.some((projectCode) => !target.projectCodes.includes(projectCode))) {
+    console.error(JSON.stringify({ event: "task_board_repair_rejected", targetId: repair.targetId,
+      reason: "project_scope_mismatch" }));
     throw new Error("task_board_scope_mismatch");
   }
   let canvasId = target.manaCanvasId;
@@ -201,7 +208,7 @@ export async function processTaskBoardRepair(
     SLACK_BOT_TOKEN: undefined,
     SLACK_ALLOWED_CHANNEL_ID: target.channelId,
     TASK_BOARD_CANVAS_ID: canvasId,
-    RUNTIME_PROJECT_CODES: target.projectCodes.join(",") }, {
+    RUNTIME_PROJECT_CODES: projectCodes.join(",") }, {
     fetch: credentialFetch,
     taskFetch: taskCredentialFetch,
   });

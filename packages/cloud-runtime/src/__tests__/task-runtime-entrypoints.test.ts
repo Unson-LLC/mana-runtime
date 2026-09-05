@@ -180,6 +180,38 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(bindingFetch).toHaveBeenCalledTimes(2);
   });
 
+  it("limits a meeting-triggered board refresh to the destination task projects", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const target = { ...ownedTarget, projectCodes: ["canonical-pms", "proj_pms"] };
+    const env = {
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "TUNSON", SLACK_ALLOWED_CHANNEL_ID: "CBACKOFFICE",
+      SLACK_BOT_TOKEN: "unson-token", TASK_BOARD_TARGETS_JSON: JSON.stringify([target]),
+      RUNTIME_PLACEMENTS_JSON: JSON.stringify([
+        { placementId: "accounting", channelId: "CBACKOFFICE",
+          projectCodes: ["canonical-pms", "proj_pms"], taskBoardEnabled: true },
+      ]),
+      TASK_BOARD_REPAIRS: { send: vi.fn() },
+    };
+    const destinationFetch = vi.fn() as never;
+    await processTaskBoardRepair(ownedRepair, env, "unson-business", destinationFetch, refresh,
+      undefined, "TUNSON", destinationFetch, ["canonical-pms"]);
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
+      RUNTIME_PROJECT_CODES: "canonical-pms",
+    }), { fetch: destinationFetch, taskFetch: destinationFetch });
+  });
+
+  it("rejects meeting-triggered project scope outside the configured board target", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const env = {
+      TENANT_ID: "unson-business", SLACK_EXPECTED_TEAM_ID: "TUNSON", SLACK_ALLOWED_CHANNEL_ID: "CBACKOFFICE",
+      SLACK_BOT_TOKEN: "unson-token", TASK_BOARD_TARGETS_JSON: JSON.stringify([ownedTarget]),
+      TASK_BOARD_REPAIRS: { send: vi.fn() },
+    };
+    await expect(processTaskBoardRepair(ownedRepair, env, "unson-business", fetch, refresh,
+      undefined, "TUNSON", fetch, ["outside-project"])).rejects.toThrow("task_board_scope_mismatch");
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("propagates a failed canonical repair and enqueues the scheduled scoped repair", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const env = {
