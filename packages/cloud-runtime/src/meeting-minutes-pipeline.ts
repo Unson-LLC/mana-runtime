@@ -649,14 +649,18 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
     }
     redoStage = "redo_destination_selection";
     const selectionTs = await options.showDestinationSelection(structuredClone(run), options.destinations);
-    run.status = "awaiting_destination";
-    run.revision = redoRevision + 1;
-    delete run.destination; delete run.approvedBy; delete run.context; delete run.generated; delete run.github;
-    delete run.taskRegistration; delete run.failure; delete run.redo;
-    run.slack = { selectionTs, postedChunkIndexes: [] };
-    run.updatedAt = now(options);
-    await saveMeetingMinutesRun(fs, run);
-    return run;
+    // Keep the completed run and its redo checkpoint intact until the final
+    // state write succeeds.  If this write fails, the catch block must be
+    // able to persist the checkpoint and leave the redo action retryable.
+    const nextRun = structuredClone(run);
+    nextRun.status = "awaiting_destination";
+    nextRun.revision = redoRevision + 1;
+    delete nextRun.destination; delete nextRun.approvedBy; delete nextRun.context; delete nextRun.generated; delete nextRun.github;
+    delete nextRun.taskRegistration; delete nextRun.failure; delete nextRun.redo;
+    nextRun.slack = { selectionTs, postedChunkIndexes: [] };
+    nextRun.updatedAt = now(options);
+    await saveMeetingMinutesRun(fs, nextRun);
+    return nextRun;
   } catch (error) {
     const diagnostic = classifyMeetingMinutesRedoFailure(redoStage, error);
     redoState.failure = { ...diagnostic, message: diagnostic.code, failedAt: now(options) };

@@ -1221,11 +1221,12 @@ function meetingMinutesClients(
             destination.slackChannelId, parentTs, fileName)),
       showDestinationSelection: (run: MeetingMinutesRun,
         destinations: Parameters<MeetingMinutesSlackClient["showDestinationSelection"]>[1]) =>
-        effects.slack(`destination-selection:${run.runId}`,
-          { kind: "destination_selection", runId: run.runId },
+        effects.slack(`destination-selection:${run.runId}:revision-${run.redo?.revision ?? run.revision ?? 0}`,
+          { kind: "destination_selection", runId: run.runId, revision: run.redo?.revision ?? run.revision ?? 0 },
           (credentialFetch) => sourceSlack(credentialFetch).showDestinationSelection(run, destinations)),
-      showRedoFailure: (run: MeetingMinutesRun) => effects.slack(`redo-failure:${run.runId}`,
-        { kind: "redo_failure", runId: run.runId },
+      showRedoFailure: (run: MeetingMinutesRun) => effects.slack(
+        `redo-failure:${run.runId}:revision-${run.redo?.revision ?? run.revision ?? 0}`,
+        { kind: "redo_failure", runId: run.runId, revision: run.redo?.revision ?? run.revision ?? 0 },
         (credentialFetch) => sourceSlack(credentialFetch).showRedoFailure(run)),
     },
   };

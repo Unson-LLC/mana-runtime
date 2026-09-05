@@ -18,6 +18,23 @@ const selection: MeetingMinutesSelection = { kind: "meeting_minutes_selection", 
   workspaceId: "T1", appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "2.1" };
 const redo: MeetingMinutesRedo = { kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1",
   appId: "A1", channelId: "CROUTER", threadTs: "1.1", userId: "U1", actionTs: "20.1" };
+
+class FailOnceOnRedoFinalStateFs extends MemoryFs {
+  private failed = false;
+  private armed = false;
+
+  arm(): void { this.armed = true; }
+
+  override async writeFile(path: string, value: string): Promise<void> {
+    const persisted = JSON.parse(value) as { status?: string };
+    if (this.armed && !this.failed && path.endsWith(".json") && persisted.status === "awaiting_destination") {
+      this.failed = true;
+      throw new Error("redo final state unavailable");
+    }
+    await super.writeFile(path, value);
+  }
+}
+
 function audited(minutes: GeneratedMeetingMinutes, context: MeetingMinutesContextReceipt) {
   return { ...minutes, brainbase_context_attestation: {
     schema_version: "meeting_minutes_context_attestation.v1" as const,
@@ -1118,6 +1135,39 @@ describe("meeting minutes pipeline", () => {
     expect(reopened).not.toHaveProperty("generated");
     expect(reopened).not.toHaveProperty("github");
     expect(reopened).not.toHaveProperty("taskRegistration");
+  });
+
+  it("keeps the completed redo checkpoint when the final reopened-state save fails", async () => {
+    const fs = new FailOnceOnRedoFinalStateFs(); await startMeetingMinutesRuns(fs, event, { enabled: true,
+      routerChannelId: "CROUTER", sourceAppId: "A1", destinations: [destination],
+      requestDestination: vi.fn().mockResolvedValue("2.1") });
+    await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "確認する" }] }),
+    }));
+    fs.arm();
+    const deleteGitHub = vi.fn(); const deleteTask = vi.fn(); const retractSharedMinutes = vi.fn();
+    const showDestinationSelection = vi.fn().mockResolvedValueOnce("3.1").mockResolvedValueOnce("4.1");
+    const showRedoFailure = vi.fn();
+    const options = { destinations: [destination], deleteGitHub, deleteTask, retractSharedMinutes,
+      showDestinationSelection, showRedoFailure };
+
+    await expect(redoMeetingMinutesRun(fs, redo, options)).rejects.toThrow("redo final state unavailable");
+    expect(await loadMeetingMinutesRun(fs, redo.runId)).toMatchObject({ status: "completed",
+      destination, github: { minutesPath: "docs/minutes/a.md" }, taskRegistration: { registered: [{ taskId: "task-1" }] },
+      redo: { revision: 0, githubDeletedAt: expect.any(String), deletedTaskIds: ["task-1"],
+        sharedRetractedAt: expect.any(String), failure: { stage: "redo_destination_selection",
+          code: "REDO_DESTINATION_SELECTION_FAILED" } },
+    });
+    expect(showRedoFailure).toHaveBeenCalledOnce();
+
+    const reopened = await redoMeetingMinutesRun(fs, redo, options);
+
+    expect(deleteGitHub).toHaveBeenCalledOnce(); expect(deleteTask).toHaveBeenCalledOnce();
+    expect(retractSharedMinutes).toHaveBeenCalledOnce(); expect(showDestinationSelection).toHaveBeenCalledTimes(2);
+    expect(reopened).toMatchObject({ status: "awaiting_destination", revision: 1,
+      slack: { selectionTs: "4.1", postedChunkIndexes: [] } });
+    expect(reopened).not.toHaveProperty("redo");
   });
 
   it("uses fresh external idempotency keys after a redo", async () => {
