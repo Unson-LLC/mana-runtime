@@ -128,7 +128,17 @@ jobs:
                 taskRegistration: {
                   registeredCount: (.taskRegistration.registeredCount | number_or_null),
                   pendingPresent: (.taskRegistration.pendingPresent | bool_or_null),
-                  hasFailure: (if .taskRegistration | type == "object" then .taskRegistration.failure != null else null end)
+                  hasFailure: (if .taskRegistration | type == "object" then .taskRegistration.failure != null else null end),
+                  failure: (if .taskRegistration.failure | type == "object" then {
+                    stage: (.stage | one_of(["task_registration","task_board","task_card"])),
+                    failurePoint: (.failurePoint | one_of(["assignee_resolution","task_create","task_scope_update"])),
+                    code: (if .code | type == "string" and test("^[A-Za-z][A-Za-z0-9_]{1,96}$") then . else null end),
+                    status: (.status | number_or_null),
+                    boundary: (if .boundary | type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{0,119}$") then . else null end),
+                    scopeReason: (if .scopeReason | type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{0,119}$") then . else null end),
+                    message: (if .message | type == "string" and test("^[A-Za-z][A-Za-z0-9_-]{1,128}$") then . else null end),
+                    failedAt: (.failedAt | timestamp)
+                  } else null end)
                 },
                 generation: {
                   startedAt: (.diagnostics.generation.startedAt | timestamp),
@@ -219,6 +229,11 @@ jobs:
               if jq -e '.taskRegistration.pendingPresent == true
                 or ((.taskRegistration.failure.message // "") | endswith("_pending"))' \
                 "$response_file" >/dev/null; then
+                if [[ "$attempt" == "90" ]]; then
+                  echo "Fresh retry remained pending until the polling deadline" >&2
+                  jq '{runId,status,updatedAt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+                  exit 1
+                fi
                 sleep 10
                 continue
               fi
