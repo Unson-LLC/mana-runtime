@@ -84,6 +84,20 @@ describe("tenant Slack runtime wiring", () => {
     expect(ingress).not.toContain("handleSlackRequest(request");
   });
 
+  it("passes configured desired effects into meeting-minutes repair ingress", () => {
+    const repairStart = source.indexOf("repairMeetingMinutes: async (input) => {");
+    const repairEnd = source.indexOf("openModal: async (input) => {", repairStart);
+    const repair = source.slice(repairStart, repairEnd);
+    const clientsAt = repair.indexOf("const clients = tenantRuntimeClients(env, undefined,");
+    const desiredEffectAt = repair.indexOf("tenantConfiguredDesiredEffectByCapability(env)", clientsAt);
+
+    expect(repairStart).toBeGreaterThan(-1);
+    expect(repairEnd).toBeGreaterThan(repairStart);
+    expect(clientsAt).toBeGreaterThan(-1);
+    expect(desiredEffectAt).toBeGreaterThan(clientsAt);
+    expect(repair).not.toContain("const clients = tenantRuntimeClients(env);");
+  });
+
   it("keeps pre-handler Slack ingress failures diagnosable without exposing raw errors", () => {
     const eventStart = source.indexOf('url.pathname !== "/slack/events"');
     const queueStart = source.indexOf("async queue(", eventStart);
