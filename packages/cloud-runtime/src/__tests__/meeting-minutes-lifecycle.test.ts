@@ -120,6 +120,29 @@ describe("meeting minutes source status lifecycle", () => {
     expect(updateStatus).not.toHaveBeenCalledWith(expect.anything(), "failed");
   });
 
+  it("records a successful source status only after a task-board retry clears its warning", async () => {
+    const fs = await setup(); const updateStatus = vi.fn().mockResolvedValue(undefined);
+    const repairTaskBoard = vi.fn().mockRejectedValueOnce(new Error("board down")).mockResolvedValue(undefined);
+    const operations = resume({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Kartzの確認事項を進める" }] }),
+      repairTaskBoard,
+      postTaskCard: vi.fn().mockResolvedValue("task-card-ts"),
+    });
+    const first = await processMeetingMinutesSelectionWithStatus(fs, selection, config, operations, { updateStatus });
+    expect(first.taskRegistration?.failure).toMatchObject({ stage: "task_board" });
+
+    const repaired = await processMeetingMinutesSelectionWithStatus(fs, selection, config, operations, { updateStatus });
+    expect(repaired.taskRegistration?.failure).toBeUndefined();
+    expect(updateStatus).toHaveBeenLastCalledWith(expect.objectContaining({
+      taskRegistration: expect.objectContaining({ registered: [expect.objectContaining({ taskId: "task-1" })] }),
+    }), "completed");
+    expect(repaired.statusProjection).toMatchObject({ outcome: "completed", projectedAt: expect.any(String) });
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      statusProjection: { outcome: "completed" }, taskRegistration: { registered: [expect.objectContaining({ taskId: "task-1" })] },
+    });
+  });
+
   it("retries only the completion projection without repeating completed work", async () => {
     const fs = await setup(); const logProjectionError = vi.fn();
     const operations = resume();

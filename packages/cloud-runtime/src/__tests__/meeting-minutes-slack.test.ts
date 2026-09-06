@@ -629,6 +629,24 @@ describe("MeetingMinutesSlackClient", () => {
     expect(serialized).not.toContain("board down");
   });
 
+  it("replaces the task-board warning and removes its retry action after reflection succeeds", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), status: "completed" as const,
+      slack: { processingTs: "2.1", parentTs: "10.1", postedChunkIndexes: [0], taskCardTs: "11.1" },
+      taskRegistration: { registered: [{ index: 0, title: "確認する", taskId: "task-1" }] },
+      github: { transcriptPath: "t", minutesPath: "m", transcriptUrl: "tu", minutesUrl: "https://github/minutes" } };
+
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed");
+
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("議事録を作成しました");
+    expect(serialized).not.toContain("タスクボードへの反映が完了していません");
+    expect(serialized).not.toContain("タスク処理を再実行");
+  });
+
   it("shows only unique organizations in the initial selector", async () => {
     let body: { blocks?: Array<{ elements?: Array<{ action_id?: string }> }> } = {};
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
