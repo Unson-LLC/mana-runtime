@@ -328,6 +328,13 @@ export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
         return error("task_write_upstream_failed", 502);
       }
       const code = cause instanceof Error ? cause.message : "task_write_failed";
+      console.warn(JSON.stringify({
+        event: "task_write_request_rejected",
+        requestId: body.request_id,
+        operation: body.operation,
+        project: body.project,
+        code,
+      }));
       if (["invalid_write_capability","expired_write_capability","write_capability_scope_mismatch","write_intent_denied",
         "task_write_denied","task_write_scope_violation","task_write_budget_slot_reused","task_write_budget_exceeded",
         "autonomy_authority_scope_mismatch","autonomy_experiment_not_started","autonomy_experiment_expired",
