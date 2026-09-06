@@ -16,6 +16,7 @@ import {
   type CompanyAuthorityExternalEffectProviderRoute,
 } from "./company-authority-queue-runtime.js";
 import type { ExpectedTenantScope, TenantContextEnvelope } from "./contracts.js";
+import { TenantBoundaryError } from "./errors.js";
 
 export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
   create_outbox(context: AcceptedCompanyAuthorityContext): ExternalEffectOutboxStore;
@@ -45,22 +46,38 @@ export function createCompanyAuthoritySelectedContainerProviderRoute(input: {
       payload: SlackQueueEvent;
       capture_recovery?: (recovery: ExternalEffectRecoveryRecord) => Promise<void>;
     }) => {
-      const expectedScope = await resolveCompanyAuthoritySlackQueueScope({
-        context,
-        request,
-        payload,
-        expected_audience: input.expected_audience,
-        desired_effect_by_capability: input.desired_effect_by_capability,
-      });
-      return input.execute_container({
-        provider_key,
-        tenant_context: structuredClone(context.tenant_context as unknown as TenantContextEnvelope),
-        expected_scope: expectedScope,
-        company_authority_envelope: structuredClone(envelope),
-        payload: structuredClone(payload),
-        canonical_person_id: context.actor?.canonical_person_id,
-        ...(capture_recovery === undefined ? {} : { capture_recovery }),
-      });
+      try {
+        const expectedScope = await resolveCompanyAuthoritySlackQueueScope({
+          context,
+          request,
+          payload,
+          expected_audience: input.expected_audience,
+          desired_effect_by_capability: input.desired_effect_by_capability,
+        });
+        return await input.execute_container({
+          provider_key,
+          tenant_context: structuredClone(context.tenant_context as unknown as TenantContextEnvelope),
+          expected_scope: expectedScope,
+          company_authority_envelope: structuredClone(envelope),
+          payload: structuredClone(payload),
+          canonical_person_id: context.actor?.canonical_person_id,
+          ...(capture_recovery === undefined ? {} : { capture_recovery }),
+        });
+      } catch (error) {
+        console.error(JSON.stringify({
+          event: "company_authority_provider_failed",
+          correlation_id: envelope.correlation_id,
+          code: error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE",
+          ...(error instanceof TenantBoundaryError ? {
+            boundary: error.boundary,
+            ...(typeof error.details?.phase === "string" ? { phase: error.details.phase } : {}),
+            ...(typeof error.details?.scope_reason === "string"
+              ? { scope_reason: error.details.scope_reason }
+              : {}),
+          } : {}),
+        }));
+        throw error;
+      }
     },
   };
 }
