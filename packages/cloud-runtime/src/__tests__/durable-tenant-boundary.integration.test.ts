@@ -213,6 +213,27 @@ describe("durable tenant boundary integration", () => {
     }
   });
 
+  it("keeps an on-expiration handle resolvable after the operation completes", async () => {
+    const namespace = new IsolatedBoundaryNamespace();
+    const operation = executeTenantContainerOperation({
+      namespace,
+      tenant_context: CONTEXT,
+      expected_scope: SCOPE,
+      verifier: { validate: vi.fn(async () => undefined) } as unknown as TenantRuntimeBoundaryVerifier,
+      now: NOW,
+      release: "on_expiration",
+      execute: async (handle) => handle,
+    });
+
+    const handle = await operation;
+    const resolved = await resolveDurableTenantBoundaryContext(namespace, new Request(
+      "https://gateway.internal/api/runtime/gateway",
+      { headers: { [TENANT_BOUNDARY_HANDLE_HEADER]: handle } },
+    ), ["mcp_gateway"], NOW);
+
+    expect(resolved).toEqual({ tenant_context: CONTEXT, expected_scope: SCOPE });
+  });
+
   it("stores and revalidates an optional outer Company Authority envelope without putting it in headers", async () => {
     const namespace = new IsolatedBoundaryNamespace();
     const registry = createDurableTenantBoundaryRegistry(namespace);

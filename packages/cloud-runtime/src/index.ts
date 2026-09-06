@@ -2531,6 +2531,11 @@ export async function executeCompanyAuthorityReplyOperation(
         process: async () => {
           const processed = await executeTenantContainerOperationWithRegistry({ namespace: env.TENANT_RUNTIME_STATE,
             tenant_context: tenantContext, expected_scope: expectedScope, verifier, now: now(),
+            // Claude's managed process and its blocking hooks can outlive the
+            // worker callback that observes completion. Keep the opaque handle
+            // until its refreshed expiry so late MCP/Brainbase calls fail by
+            // expiry rather than racing an eager dispose.
+            release: "on_expiration",
             company_authority_envelope: envelope,
             refresh: {
               issue: async () => {
