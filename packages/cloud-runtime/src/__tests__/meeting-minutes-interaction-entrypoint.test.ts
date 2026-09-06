@@ -188,6 +188,27 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     }), expect.objectContaining({ id: "techknight-board", contextProjectCode: "techknight" }));
   });
 
+  it("rejects OutcomeCase injection through a normal Slack destination action", async () => {
+    const now = Math.floor(Date.now() / 1000); const signingSecret = "unson-secret";
+    const payload = { api_app_id: "A-UNSON", team: { id: "T-UNSON" }, user: { id: "U1" },
+      channel: { id: "CDEST" }, message: { ts: "2.1", thread_ts: "2.0" }, actions: [{
+        action_id: "mana_meeting_minutes_choose_destination:mana", action_ts: "2.2",
+        value: JSON.stringify({ runId: "Ev1_F1", destinationId: "mana", outcomeCaseId: "case_01" }),
+      }] };
+    const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+    const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
+    const send = vi.fn();
+    const env = { SLACK_SIGNING_SECRET: signingSecret, SLACK_EXPECTED_TEAM_ID: "T-UNSON", SLACK_EXPECTED_APP_ID: "A-UNSON",
+      TECHKNIGHT_EVENTS: { send } };
+    const result = await handleMeetingMinutesInteractionEntrypoint(new Request("https://worker/slack/interactions", {
+      method: "POST", body, headers: { "x-slack-request-timestamp": String(now), "x-slack-signature": signature },
+    }), env as never, { waitUntil: vi.fn() } as never, new Set(["U1"]), undefined, undefined, undefined, send,
+    tenantEffectResolver());
+    expect(result.status).toBe(400);
+    await expect(result.json()).resolves.toEqual({ error: "slack_interaction_invalid" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("does not accept a destination-team payload signed by the source Slack app", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "unson-secret";
     const payload = { api_app_id: "A-UNSON", team: { id: "T-TECHKNIGHT" }, user: { id: "U1" },

@@ -3,7 +3,7 @@ import { isMeetingMinutesFile, meetingMinutesRunId, type AuditedGeneratedMeeting
   type MeetingMinutesDestination, type MeetingMinutesDiagnosticStage, type MeetingMinutesGenerationDiagnostics,
   type MeetingMinutesRun, type MeetingMinutesSelection,
   type MeetingMinutesRedo, type MeetingMinutesRedoStage,
-  meetingMinutesContextProjectCode } from "./meeting-minutes-contracts.js";
+  meetingMinutesContextProjectCode, OUTCOME_CASE_ID_PATTERN } from "./meeting-minutes-contracts.js";
 import type { CreateTaskInput, UpdateTaskInput } from "@openryoko/task-runtime-core";
 import { assertGeneratedMeetingMinutesNotPlaceholder, splitMeetingMinutesForSlack,
   stripMeetingMinutesActionItems } from "./meeting-minutes-generator.js";
@@ -86,7 +86,9 @@ function destinationIsValid(value: MeetingMinutesDestination): boolean {
     typeof value.taskBoardTargetId === "string" &&
     /^[A-Za-z0-9_-]{1,128}$/.test(value.taskBoardTargetId) &&
     /^[A-Za-z0-9_-]{1,128}$/.test(value.organization?.id ?? "") && !!value.organization?.name.trim() &&
-    /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim() &&
+    /^[A-Z0-9]+$/.test(value.slackChannelId) &&
+    !("outcomeCaseId" in value) &&
+    !!value.github.owner.trim() && !!value.github.repo.trim() &&
     (Array.isArray(taskProjectCodes) && taskProjectCodes.length > 0 &&
       taskProjectCodes.length <= 10 &&
       taskProjectCodes.every((code) => /^[A-Za-z0-9_-]{1,128}$/.test(code)) &&
@@ -226,6 +228,27 @@ export async function resumeMeetingMinutesRun(fs: WorkspaceFs, selection: Meetin
     run.updatedAt = now(options); await saveMeetingMinutesRun(fs, run);
   }
   if (run.approvedBy && run.approvedBy !== selection.userId) throw new Error("meeting_minutes_approver_changed");
+  if ((selection.outcomeCaseId === undefined && selection.outcomeCaseSource !== undefined)
+    || (selection.outcomeCaseId !== undefined && (!OUTCOME_CASE_ID_PATTERN.test(selection.outcomeCaseId)
+      || selection.outcomeCaseSource !== "admin_authorized_retry"))) {
+    throw new Error("meeting_minutes_outcome_case_invalid");
+  }
+  if (run.outcomeCaseId && selection.outcomeCaseId && run.outcomeCaseId !== selection.outcomeCaseId) {
+    throw new Error("meeting_minutes_outcome_case_changed");
+  }
+  // A case may be supplied by the authenticated recovery route after the
+  // regular Slack selection has completed, but only before this source run has
+  // been delivered to Brainbase. Receipt identity is immutable, so silently
+  // adding a case after delivery would make Mana claim a link that Brainbase
+  // never evaluated.
+  if (!run.outcomeCaseId && selection.outcomeCaseId !== undefined) {
+    if (run.runReceipt?.status === "delivered") {
+      throw new Error("meeting_minutes_outcome_case_receipt_delivered");
+    }
+    run.outcomeCaseId = selection.outcomeCaseId;
+    run.updatedAt = now(options);
+    await saveMeetingMinutesRun(fs, run);
+  }
   if (run.generated) {
     try {
       assertGeneratedMeetingMinutesNotPlaceholder(run.generated);
@@ -438,6 +461,7 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
     nextRun.revision = redoRevision + 1;
     delete nextRun.destination; delete nextRun.approvedBy; delete nextRun.context; delete nextRun.generated; delete nextRun.github;
     delete nextRun.taskRegistration; delete nextRun.failure; delete nextRun.redo;
+    delete nextRun.statusProjection; delete nextRun.terminalSlackReadback; delete nextRun.runReceipt;
     nextRun.slack = { selectionTs, postedChunkIndexes: [] };
     nextRun.updatedAt = now(options);
     await saveMeetingMinutesRun(fs, nextRun);

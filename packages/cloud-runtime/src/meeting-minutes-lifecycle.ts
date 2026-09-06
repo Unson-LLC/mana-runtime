@@ -5,6 +5,7 @@ import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-
 import type { ResumeMeetingMinutesOptions } from "./meeting-minutes-pipeline.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 import { classifyMeetingMinutesFailure, meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
+import { buildMeetingMinutesRunReceipt, type ConfirmedRunReceiptDelivery, type RunReceiptV1 } from "./meeting-minutes-run-receipt.js";
 
 export interface MeetingMinutesStatusProjectionOptions {
   updateStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void>;
@@ -17,6 +18,8 @@ export interface MeetingMinutesStatusProjectionOptions {
     failure: NonNullable<MeetingMinutesRun["projectionFailure"]>): Promise<void>;
   logProjectionError?(entry: { runId: string; outcome: "completed" | "failed"; stage: string;
     code: string; retryable: boolean; receipt?: unknown; checkpoint?: unknown }): void;
+  /** Source-owned delivery. Brainbase validates and projects receipts; Mana never closes an OutcomeCase. */
+  emitRunReceipt?(receipt: RunReceiptV1): Promise<ConfirmedRunReceiptDelivery>;
 }
 
 /**
@@ -110,6 +113,22 @@ async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
     if (error instanceof Error && error.message === "meeting_minutes_status_coordinates_missing") return;
     throw error;
   }
+
+  // Receipt delivery is deliberately outside the status-projection catch. A
+  // transient Brainbase ingest failure must leave the confirmed Slack status
+  // intact so #708 retries only this terminal step rather than reclassifying a
+  // completed run as a source-status failure.
+  const receipt = await buildMeetingMinutesRunReceipt(run);
+  if (!receipt || run.runReceipt?.status === "delivered") return;
+  run.runReceipt = { caseId: run.outcomeCaseId, idempotencyKey: receipt.delivery.idempotency_key, status: "pending" };
+  run.updatedAt = new Date().toISOString();
+  await saveMeetingMinutesRun(fs, run);
+  if (!options.emitRunReceipt) return;
+  const delivered = await options.emitRunReceipt(receipt);
+  const deliveredAt = new Date().toISOString();
+  run.runReceipt = { ...run.runReceipt, receiptId: delivered.receiptId, status: "delivered", deliveredAt };
+  run.updatedAt = deliveredAt;
+  await saveMeetingMinutesRun(fs, run);
 }
 
 async function projectFailed(fs: WorkspaceFs, run: MeetingMinutesRun | undefined,

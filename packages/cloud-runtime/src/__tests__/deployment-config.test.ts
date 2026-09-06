@@ -194,6 +194,7 @@ describe("会社別Cloudflare deployment", () => {
       SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       TASK_WRITE_APPROVAL_CHANNEL_ID: "C0BMNSP6C80",
       BRAINBASE_TASK_API_BASE_URL: "https://bb.unson.jp",
+      BRAINBASE_RUN_RECEIPT_INGEST_URL: "https://bb.unson.jp/api/run-receipts/ingest",
       RUNTIME_PROJECT_CODES: "back-office,unson",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
       RUNTIME_PLACEMENT_ID: "mana-accounting",
@@ -277,6 +278,7 @@ describe("会社別Cloudflare deployment", () => {
       "SLACK_SIGNING_SECRET",
       "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
       "DEVELOPMENT_CALLBACK_TOKEN",
+      "BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN",
     ])).toEqual({ ready: true, missing_bindings: [] });
   });
 
@@ -789,6 +791,10 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("reissueMeetingMinutesAdminSelectionTenantContext(env, run, selection)");
     expect(worker).toContain("const clients = tenantRuntimeClients(env, undefined,\n    tenantConfiguredDesiredEffectByCapability(env));");
     expect(worker).toContain('error: "meeting_minutes_admin_retry_not_authorized"');
+    expect(worker).toContain('error: "meeting_minutes_admin_retry_outcome_case_invalid"');
+    expect(worker).toContain("OUTCOME_CASE_ID_PATTERN.test(payload.outcomeCaseId)");
+    expect(worker).toContain('outcomeCaseSource: "admin_authorized_retry" as const');
+    expect(worker).toContain('error: "meeting_minutes_task_adoption_outcome_case_forbidden"');
     expect(worker).toContain('event_id: meetingMinutesSelectionEventId(selection)');
     expect(worker).toContain("isIntakePaused()");
     expect(worker).toContain("isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN)");
@@ -798,6 +804,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("failure: run.taskRegistration?.failure");
     expect(worker).toContain("failedCandidateTitle: run.taskRegistration?.failure");
     expect(worker).toContain("sourceStatus: { outcome: run.statusProjection?.outcome");
+    expect(worker).toContain("outcomeCaseId: run.outcomeCaseId");
     const retryWorkflow = readFileSync(fileURLToPath(new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
     expect(retryWorkflow).toContain("baseline_source_projected_at");
     expect(retryWorkflow).toContain('.sourceStatus.outcome == "completed"');

@@ -6,6 +6,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
 import { meetingMinutesTaskCard } from "./meeting-minutes-task-cards.js";
 import type { UserFailure } from "./multitenancy/failure.js";
 import { deriveCorrelationId } from "./multitenancy/ids.js";
+import { readSlackDeliveryReadback } from "./multitenancy/slack-delivery-readback.js";
 import { escapeUntrustedSlackMrkdwn } from "./slack-mrkdwn.js";
 
 export interface SlackSelectionMessage {
@@ -184,7 +185,27 @@ export function suggestedDestinationMessage(run: MeetingMinutesRun,
   ] };
 }
 
-interface SlackApiResponse { ok?: boolean; error?: string; ts?: string }
+interface SlackApiResponse { ok?: boolean; error?: string; ts?: string; team_id?: string; bot_id?: string }
+
+/** Tenant identity and expiry bound to the source Slack credential readback. */
+export interface MeetingMinutesTerminalReadbackBinding {
+  workspaceId: string;
+  appId: string;
+  expiresAt: number;
+}
+
+/** Only this healthy terminal message can make a run receipt eligible. */
+function healthyCompletedStatusText(run: MeetingMinutesRun): string {
+  const safeFileName = escapeUntrustedSlackMrkdwn(run.file.name);
+  const contextWarning = run.generated?.brainbase_context_warnings?.includes("unknown_source_ref_removed");
+  return `${safeFileName} の議事録を作成しました。${contextWarning
+    ? " Brainbaseの正本にない参照候補は除外しました。" : ""}`;
+}
+
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return `sha256:${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
 function isBrainbaseAuthenticationFailure(run: MeetingMinutesRun): boolean {
   return run.failure?.message === "meeting_minutes_context_request_failed:401"
     || (run.taskRegistration?.failure?.stage === "task_registration"
@@ -387,7 +408,8 @@ export class MeetingMinutesSlackClient {
     await this.post("assistant.threads.setStatus", { channel_id: channelId, thread_ts: threadTs, status: "" },
       AbortSignal.timeout(1_500));
   }
-  async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void> {
+  async updateRunStatus(run: MeetingMinutesRun, outcome: "completed" | "failed",
+    terminalReadback?: MeetingMinutesTerminalReadbackBinding): Promise<void> {
     if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
     // The assistant status is a transient convenience. Some Slack threads do
     // not allow assistant.threads.setStatus even though chat.update is valid.
@@ -420,8 +442,7 @@ export class MeetingMinutesSlackClient {
       : taskRegistrationPending
       ? `${safeFileName} の議事録は作成・共有済みです。未完了のタスク連携を再実行できます。`
       : completed
-      ? `${safeFileName} の議事録を作成しました。${contextWarning
-        ? " Brainbaseの正本にない参照候補は除外しました。" : ""}`
+      ? healthyCompletedStatusText(run)
       : permanentAuthenticationFailure
       ? `${safeFileName} の議事録作成に失敗しました。Brainbaseの認証設定を確認してください。`
       : permanentProjectBindingFailure
@@ -497,6 +518,38 @@ export class MeetingMinutesSlackClient {
           sourceThreadTs: run.sourceThreadTs }) }] });
     }
     await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.processingTs, text: userText, blocks });
+    if (outcome !== "completed" || !terminalReadback) return;
+    await this.confirmTerminalRunStatus(run, terminalReadback);
+  }
+
+  /**
+   * This read runs outside the idempotent chat.update callback. A replay can
+   * reuse an effect result without re-running that callback, but it must still
+   * establish the source Slack state before a receipt may be emitted.
+   */
+  async confirmTerminalRunStatus(run: MeetingMinutesRun,
+    terminalReadback: MeetingMinutesTerminalReadbackBinding): Promise<void> {
+    if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
+    // The terminal source message is an external effect. A successful chat.update
+    // response alone is not evidence that Slack stored the exact final message.
+    const auth = await this.post("auth.test", {});
+    if (auth.team_id !== terminalReadback.workspaceId || !auth.bot_id) {
+      throw new Error("meeting_minutes_terminal_slack_identity_mismatch");
+    }
+    const bodyHash = await sha256(healthyCompletedStatusText(run));
+    const readback = await readSlackDeliveryReadback({
+      observed: { channel: run.sourceChannelId, ts: run.slack.processingTs },
+      expected: { workspaceId: terminalReadback.workspaceId, appId: terminalReadback.appId, botId: auth.bot_id },
+      threadTs: run.sourceThreadTs,
+      bodyHash,
+      window: { oldest: run.slack.processingTs, latest: run.slack.processingTs },
+      expiresAt: terminalReadback.expiresAt,
+    }, this.fetchImpl);
+    if (readback.state !== "confirmed") {
+      throw new Error(`meeting_minutes_terminal_slack_readback_${readback.reason}`);
+    }
+    run.terminalSlackReadback = { outcome: "completed", channel: readback.receipt.channel,
+      ts: readback.receipt.ts, bodyHash: readback.receipt.body_hash, confirmedAt: new Date().toISOString() };
   }
   /**
    * One-shot, non-recursive fallback for a failed status projection. It deliberately

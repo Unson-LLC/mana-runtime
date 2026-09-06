@@ -12,6 +12,8 @@ export const MEETING_MINUTES_TASK_ASSIGNEE_ACTION_ID = "mana_meeting_minutes_tas
 export const MEETING_MINUTES_REDO_ACTION_ID = "mana_meeting_minutes_redo";
 export const MEETING_MINUTES_CONFIRM_REDO_ACTION_ID = "mana_meeting_minutes_confirm_redo";
 
+export const OUTCOME_CASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+
 /**
  * The stable public failure envelope shared by the deferred Task action
  * reporter and its Slack projection.  Keep the correlation id in this
@@ -235,6 +237,12 @@ export interface MeetingMinutesRun {
   status: MeetingMinutesRunStatus;
   routing?: { evaluated: true; suggestedDestinationId?: string; reason?: string };
   destination?: MeetingMinutesDestination;
+  /**
+   * Optional OutcomeCase reference chosen for this immutable source run.
+   * It is intentionally not destination configuration: one project receives
+   * many meetings, and Mana never decides whether this case is closed.
+   */
+  outcomeCaseId?: string;
   approvedBy?: string;
   transcriptSha256?: string;
   context?: MeetingMinutesContextAudit;
@@ -261,6 +269,11 @@ export interface MeetingMinutesRun {
   projectionFailure?: Required<Pick<MeetingMinutesDiagnostics, "stage" | "code" | "retryable" | "failedAt">>;
   /** Durable receipt that the source Slack status message was updated for this outcome. */
   statusProjection?: { outcome: "completed" | "failed"; projectedAt: string };
+  /** Confirmed source Slack terminal display; absence is never treated as confirmation. */
+  terminalSlackReadback?: { outcome: "completed"; channel: string; ts: string; bodyHash: string; confirmedAt: string };
+  /** Source-owned delivery checkpoint for the immutable Brainbase run receipt. */
+  runReceipt?: { caseId?: string; idempotencyKey: string; receiptId?: string;
+    status: "pending" | "delivered"; deliveredAt?: string };
   /** Non-secret authority inputs used to reissue a fresh context for delayed recovery. */
   recoveryAuthorization?: MeetingMinutesRecoveryAuthorization;
   lifecycle?: {
@@ -298,6 +311,12 @@ export interface MeetingMinutesSelection {
   kind: "meeting_minutes_selection";
   runId: string;
   destinationId: string;
+  /**
+   * Optional case reference accepted only from the authenticated Host/admin
+   * recovery endpoint, never from a normal Slack destination action.
+   */
+  outcomeCaseId?: string;
+  outcomeCaseSource?: "admin_authorized_retry";
   workspaceId: string;
   appId: string;
   channelId: string;

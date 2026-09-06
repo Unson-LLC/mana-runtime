@@ -248,6 +248,37 @@ describe("meeting minutes source status lifecycle", () => {
     });
   });
 
+  it("emits one idempotent receipt only after terminal readback and task completion", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
+        bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
+    });
+    const emitRunReceipt = vi.fn().mockResolvedValue({ receiptId: "run-receipt-1" });
+    const run = await processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus, emitRunReceipt,
+    });
+    expect(emitRunReceipt).toHaveBeenCalledWith(expect.objectContaining({ contract_version: "run_receipt.v1",
+      run: expect.objectContaining({ status: "success", evidence_state: "confirmed" }) }));
+    expect(run.runReceipt).toMatchObject({ status: "delivered", idempotencyKey: expect.stringMatching(/^rr1_[a-f0-9]{64}$/) });
+
+    await processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), { updateStatus, emitRunReceipt });
+    expect(emitRunReceipt).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a confirmed source projection when receipt delivery needs a Queue retry", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
+        bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
+    });
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus, emitRunReceipt: vi.fn().mockRejectedValue(new Error("ingest down")),
+    })).rejects.toThrow("ingest down");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed",
+      statusProjection: { outcome: "completed" }, runReceipt: { status: "pending" } });
+  });
+
   it("retries only the completion projection without repeating completed work", async () => {
     const fs = await setup(); const logProjectionError = vi.fn();
     const operations = resume();

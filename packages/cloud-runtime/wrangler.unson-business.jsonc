@@ -32,6 +32,7 @@
     "SLACK_ALLOWED_CHANNEL_ID": "C0BKS6RL99T",
     "TASK_WRITE_APPROVAL_CHANNEL_ID": "C0BMNSP6C80",
     "BRAINBASE_TASK_API_BASE_URL": "https://bb.unson.jp",
+    "BRAINBASE_RUN_RECEIPT_INGEST_URL": "https://bb.unson.jp/api/run-receipts/ingest",
     "BRAINBASE_GRAPH_API_BASE_URL": "https://bb.unson.jp",
     "BRAINBASE_MCP_BASE_URL": "https://bb.unson.jp/runtime-mcp",
     "BRAINBASE_JUDGMENT_PROJECT_CODE": "mana",

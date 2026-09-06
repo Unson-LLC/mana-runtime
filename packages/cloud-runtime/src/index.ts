@@ -60,8 +60,9 @@ import {
   processMeetingMinutesRedo,
   type MeetingMinutesEnvironment,
 } from "./meeting-minutes-entrypoints.js";
-import type { MeetingMinutesDestination, MeetingMinutesRecovery, MeetingMinutesRecoveryAuthorization,
-  MeetingMinutesRedo, MeetingMinutesRun, MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
+import { OUTCOME_CASE_ID_PATTERN, type MeetingMinutesDestination, type MeetingMinutesRecovery,
+  type MeetingMinutesRecoveryAuthorization, type MeetingMinutesRedo, type MeetingMinutesRun,
+  type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import {
   handleMeetingMinutesInteractionEntrypoint,
   type TenantInteractionEffects,
@@ -91,6 +92,7 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
+import { MeetingMinutesRunReceiptClient } from "./meeting-minutes-run-receipt.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
 import { hasStableMeetingMinutesRecoveryAuthority, isMeetingMinutesAdminRecoveryEligible,
@@ -332,6 +334,9 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
+  /** Server-to-server credential scoped only to immutable run receipt ingest. */
+  BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN?: string;
+  BRAINBASE_RUN_RECEIPT_INGEST_URL?: string;
   MEETING_MINUTES_CONTEXT_MODE?: string;
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_EXECUTION_MODE?: string;
@@ -630,7 +635,9 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 
 function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
   return { runId: run.runId, status: run.status, updatedAt: run.updatedAt,
-    destinationId: run.destination?.id, diagnostics: run.diagnostics,
+    destinationId: run.destination?.id, outcomeCaseId: run.outcomeCaseId, diagnostics: run.diagnostics,
+    runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,
+      status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt } : undefined,
     taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,
       pendingPresent: Boolean(run.taskRegistration?.pending),
       failure: run.taskRegistration?.failure,
@@ -1243,7 +1250,15 @@ function meetingMinutesClients(
         outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
         effects.slack(`source-status:${run.runId}:${outcome}:${run.updatedAt}`,
           { kind: "source_status", runId: run.runId, outcome },
-          (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome)),
+          (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome))
+          .then(async () => {
+            if (outcome !== "completed") return;
+            await effects.boundary("slack_delivery", (credentialFetch) => sourceSlack(credentialFetch).confirmTerminalRunStatus(run, {
+              workspaceId: tenantContext.workspace_connection.workspace_id,
+              appId: tenantContext.workspace_connection.app_id,
+              expiresAt: Math.min(Date.now() + 30_000, Date.parse(tenantContext.expires_at)),
+            }));
+          }),
       fallbackStatus: (run: MeetingMinutesRun,
         outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
         effects.slack(`source-status-fallback:${run.runId}:${outcome}`,
@@ -1311,6 +1326,14 @@ function meetingMinutesClients(
         return effects.boundary("brainbase_proxy",
           (credentialFetch) => taskClient(credentialFetch).updateTask(taskId, input, idempotencyKey));
       },
+      emitRunReceipt: (receipt: Parameters<MeetingMinutesRunReceiptClient["emit"]>[0]) =>
+        effects.boundary("brainbase_proxy", () => new MeetingMinutesRunReceiptClient(
+          env.BRAINBASE_RUN_RECEIPT_INGEST_URL
+            ?? (env.BRAINBASE_TASK_API_BASE_URL
+              ? new URL("/api/run-receipts/ingest", env.BRAINBASE_TASK_API_BASE_URL).toString()
+              : ""),
+          env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN,
+        ).emit(receipt)),
       // Destination project IDs belong to the task destination contract and are
       // not Graph person scopes. Resolve globally, then let non-unique names
       // fail closed in resolveGraphPersonByName.
@@ -2899,6 +2922,7 @@ async function processTenantMeetingMinutesSelection(input: {
         await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, config, clients.resume, {
           updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
           fallbackStatus: (run, outcome) => clients.slack.fallbackStatus(run, outcome),
+          emitRunReceipt: (receipt) => clients.resume.emitRunReceipt(receipt),
           logProjectionError: (entry) => console.warn(JSON.stringify({
             event: "meeting_minutes_status_projection_failed", ...entry,
           })),
@@ -3173,11 +3197,11 @@ export default {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } | null;
+      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } | null;
       try {
         const parsed = await readAdminJsonRequest(request);
         payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } : null;
+          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } : null;
       } catch (error) {
         const rejected = adminJsonInputErrorResponse(error);
         if (rejected) return rejected;
@@ -3189,8 +3213,14 @@ export default {
         ? payload.workspaceId : undefined;
       const actionTs = typeof payload?.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
         ? payload.actionTs : undefined;
+      const outcomeCaseId = payload?.outcomeCaseId === undefined ? undefined
+        : typeof payload.outcomeCaseId === "string" && OUTCOME_CASE_ID_PATTERN.test(payload.outcomeCaseId)
+          ? payload.outcomeCaseId : null;
       if (!tenantId || !workspaceId || !actionTs) {
         return Response.json({ error: "meeting_minutes_admin_retry_scope_invalid" }, { status: 400 });
+      }
+      if (outcomeCaseId === null) {
+        return Response.json({ error: "meeting_minutes_admin_retry_outcome_case_invalid" }, { status: 400 });
       }
       const runId = authorizedRetryMatch[1]!;
       const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
@@ -3215,10 +3245,12 @@ export default {
         threadTs: run.sourceThreadTs,
         userId: authorization.requesterId,
         actionTs,
+        ...(outcomeCaseId ? { outcomeCaseId, outcomeCaseSource: "admin_authorized_retry" as const } : {}),
       };
       const tenantContext = await reissueMeetingMinutesAdminSelectionTenantContext(env, run, selection);
       await env.TECHKNIGHT_EVENTS.send({ schema_version: "1.0", tenant_context: tenantContext, payload: selection });
-      return Response.json({ runId, status: run.status, destinationId: run.destination.id, enqueued: true });
+      return Response.json({ runId, status: run.status, destinationId: run.destination.id,
+        ...(outcomeCaseId ? { outcomeCaseId } : {}), enqueued: true });
     }
     const authorizedStatusMatch = url.pathname.match(
       /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-status$/,
@@ -3276,11 +3308,11 @@ export default {
         if (!runAdminMatch[2] || !run.destination) {
           return Response.json({ error: "meeting_minutes_retry_not_available" }, { status: 409 });
         }
-        let payload: { taskIds?: unknown; actionTs?: unknown } | null;
+        let payload: { taskIds?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } | null;
         try {
           const parsed = await readAdminJsonRequest(request);
           payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? parsed as { taskIds?: unknown; actionTs?: unknown } : null;
+            ? parsed as { taskIds?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } : null;
         } catch (error) {
           const rejected = adminJsonInputErrorResponse(error);
           if (rejected) return rejected;
@@ -3289,8 +3321,17 @@ export default {
         const actionTs = typeof payload?.actionTs === "string"
           && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
           ? payload.actionTs : undefined;
+        const outcomeCaseId = payload?.outcomeCaseId === undefined ? undefined
+          : typeof payload.outcomeCaseId === "string" && OUTCOME_CASE_ID_PATTERN.test(payload.outcomeCaseId)
+            ? payload.outcomeCaseId : null;
         if (!actionTs) {
           return Response.json({ error: "meeting_minutes_admin_tenant_context_required" }, { status: 400 });
+        }
+        if (outcomeCaseId === null) {
+          return Response.json({ error: "meeting_minutes_admin_retry_outcome_case_invalid" }, { status: 400 });
+        }
+        if (runAdminMatch[2] === "/adopt-tasks" && outcomeCaseId !== undefined) {
+          return Response.json({ error: "meeting_minutes_task_adoption_outcome_case_forbidden" }, { status: 400 });
         }
         const selection = { kind: "meeting_minutes_selection", runId,
           destinationId: run.destination.id, workspaceId: adminWorkspaceId,
@@ -3298,7 +3339,9 @@ export default {
           channelId: adminTenantContext.slack.channel_id,
           userId: adminTenantContext.actor.authenticated_subject_id,
           threadTs: adminTenantContext.slack.thread_ts,
-          actionTs } satisfies MeetingMinutesSelection;
+          actionTs,
+          ...(outcomeCaseId ? { outcomeCaseId, outcomeCaseSource: "admin_authorized_retry" as const } : {}),
+        } satisfies MeetingMinutesSelection;
         const tenantBody: TenantQueueBody<MeetingMinutesSelection> = {
           schema_version: "1.0",
           tenant_context: adminTenantContext,
