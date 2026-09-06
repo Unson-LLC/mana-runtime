@@ -970,15 +970,17 @@ async function reissueLongRunningTenantContext(
   env: Env,
   accepted: TenantContextEnvelope,
   expectedScope: ExpectedTenantScope,
-  authorizationCapabilityId = expectedScope.capability_id,
+  authorizationDesiredEffect?: CompanyAuthorityDesiredEffect,
 ): Promise<TenantContextEnvelope> {
   const projectIds = [...(expectedScope.project_ids ?? accepted.authorization.project_ids)];
   if (projectIds.length === 0 || !projectIds.includes(expectedScope.project_id)
     || accepted.slack.thread_ts !== expectedScope.thread_ts || !accepted.slack.requester_id) {
     deny("container_launch", "PROJECT_SCOPE_MISMATCH");
   }
-  const clients = tenantRuntimeClients(env, undefined,
-    tenantConfiguredDesiredEffectByCapability(env));
+  const configuredDesiredEffects = tenantConfiguredDesiredEffectByCapability(env);
+  const clients = tenantRuntimeClients(env, undefined, authorizationDesiredEffect
+    ? { ...configuredDesiredEffects, [expectedScope.capability_id]: authorizationDesiredEffect }
+    : configuredDesiredEffects);
   const fresh = (await resolveSlackWorkerIngress({
     identity: {
       provider: "slack",
@@ -994,7 +996,7 @@ async function reissueLongRunningTenantContext(
     required_authorization: {
       audience: expectedScope.audience,
       project_id: expectedScope.project_id,
-      capability_id: authorizationCapabilityId,
+      capability_id: expectedScope.capability_id,
     },
     trusted_project_ids: projectIds,
     tenant_revision: accepted.tenant.tenant_revision,
@@ -2505,7 +2507,7 @@ export async function executeCompanyAuthorityReplyOperation(
                   env,
                   tenantContext,
                   expectedScope,
-                  request.requested_action.capability_id,
+                  request.requested_action.desired_effect,
                 );
                 activeTenantBoundaryExpiresAt = fresh.expires_at;
                 return fresh;

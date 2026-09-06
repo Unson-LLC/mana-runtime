@@ -229,12 +229,14 @@ describe("tenant Slack runtime wiring", () => {
     expect(selection).toContain("expectedScope, verifier, now");
   });
 
-  it("reissues Company Authority replies with the original execution capability", () => {
+  it("reissues Company Authority replies with the signed desired effect", () => {
     const replyStart = source.indexOf("export async function executeCompanyAuthorityReplyOperation(");
     const replyEnd = source.indexOf("\nasync function processTenantMeetingMinutesSelection", replyStart);
     const reply = source.slice(replyStart, replyEnd);
 
-    expect(reply).toContain("request.requested_action.capability_id");
+    expect(reply).toContain("request.requested_action.desired_effect");
+    expect(source).toContain("[expectedScope.capability_id]: authorizationDesiredEffect");
+    expect(source).toContain("capability_id: expectedScope.capability_id");
     expect(reply).toContain("reissueLongRunningTenantContext(");
   });
 
