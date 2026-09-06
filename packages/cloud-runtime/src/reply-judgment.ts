@@ -613,7 +613,56 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // MCP servers have their own lifecycle and are outside the Brainbase Hook
   // matcher and receipt contract.
   const executedCalls = calls.filter((call) => results.has(call.id) && !deniedCallIds.has(call.id));
-  const auditedExecutedCalls = executedCalls.filter((call) => isDirectBrainbaseTool(call.name));
+  const controlPlaneExecutedCalls = executedCalls.filter((call) =>
+    isDirectBrainbaseTool(call.name) && !isBrainbaseEvidenceTool(call.name));
+  const controlPlaneHooks = postToolHookCandidates.filter((hook) =>
+    hasToolUseId(hook) && hasToolName(hook)
+      && isDirectBrainbaseTool(hook.receipt.tool_name!)
+      && !isBrainbaseEvidenceTool(hook.receipt.tool_name!));
+  // Missing lifecycle PostTool receipts are tolerated for the affected Claude
+  // Code releases. If one is emitted, it is still authenticated against the
+  // CLI stream so a stale or conflicting receipt cannot be accepted silently.
+  const controlHooksByToolUseId = new Map<string, typeof controlPlaneHooks[number]>();
+  for (const hook of controlPlaneHooks) {
+    const toolUseId = hook.receipt.tool_use_id!;
+    const existing = controlHooksByToolUseId.get(toolUseId);
+    if (existing) {
+      if (existing.receipt.tool_name !== hook.receipt.tool_name
+          || existing.receipt.hook_event_name !== hook.receipt.hook_event_name
+          || existing.receipt.host_receipt_id !== hook.receipt.host_receipt_id
+          || JSON.stringify(auditLines(existing.output)) !== JSON.stringify(auditLines(hook.output))) {
+        throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_conflict");
+      }
+      continue;
+    }
+    controlHooksByToolUseId.set(toolUseId, hook);
+  }
+  for (const hook of controlHooksByToolUseId.values()) {
+    const call = controlPlaneExecutedCalls.find((candidate) =>
+      candidate.id === hook.receipt.tool_use_id && candidate.name === hook.receipt.tool_name);
+    if (!call) {
+      throw new ReplyJudgmentParseError(
+        "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing",
+        buildAuditBindingDiagnostics(controlPlaneExecutedCalls, controlPlaneHooks),
+      );
+    }
+    const result = results.get(call.id);
+    const expectedHookEvent = result?.outcome === "success" ? "PostToolUse" : "PostToolUseFailure";
+    if (!result || hook.receipt.hook_event_name !== expectedHookEvent) {
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_result_outcome_mismatch");
+    }
+    if (hook.index <= call.index || result.index <= call.index) {
+      throw new Error("reply_judgment_tool_audit_mismatch_posttool_event_order_invalid");
+    }
+  }
+  // Claude Code 2.1.x can omit PostToolUse entirely for MCP calls even though
+  // the tool call and result are both present in its stream. Judgment
+  // lifecycle tools are independently bound by the UserPromptSubmit/Stop Host
+  // receipts, so do not turn that upstream omission into Slack silence. Real
+  // Brainbase reads and writes remain fail-closed and still require their
+  // identity-bound PostToolUse receipt below.
+  const auditedExecutedCalls = executedCalls.filter((call) =>
+    isDirectBrainbaseTool(call.name) && isBrainbaseEvidenceTool(call.name));
   // The reply Hook may be configured broadly while a task-write MCP is
   // enabled. Only a PostTool receipt for an executed direct Brainbase call is
   // part of this contract; unrelated receipts must not change binding counts
@@ -621,7 +670,8 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // set so the later exact-name check still fails closed.
   const brainbaseIdentityBoundHooks = postToolHookCandidates.filter((hook) => {
     if (!hasToolUseId(hook) || !hasToolName(hook)) return false;
-    return isDirectBrainbaseTool(hook.receipt.tool_name!)
+    return (isDirectBrainbaseTool(hook.receipt.tool_name!)
+        && isBrainbaseEvidenceTool(hook.receipt.tool_name!))
       || auditedExecutedCalls.some((call) => call.id === hook.receipt.tool_use_id);
   });
   if (brainbaseIdentityBoundHooks.some((hook) => isBrainbaseEvidenceTool(hook.receipt.tool_name!)
