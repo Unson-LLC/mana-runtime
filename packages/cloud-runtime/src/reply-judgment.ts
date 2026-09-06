@@ -375,6 +375,10 @@ function isBrainbaseEvidenceTool(name: string): boolean {
     && name !== "mcp__brainbase__brainbase_judgment_state_record";
 }
 
+function isDirectBrainbaseTool(name: string): boolean {
+  return name.startsWith("mcp__brainbase__");
+}
+
 function buildAuditBindingDiagnostics(
   executedCalls: ReadonlyArray<{ id: string; name: string }>,
   postToolReceipts: ReadonlyArray<{ receipt: EmbeddedHookReceipt }>,
@@ -568,15 +572,6 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (postToolHookCandidates.some((hook) => !hasToolUseId(hook) || !hasToolName(hook))) {
     throw new Error("reply_judgment_tool_audit_mismatch_posttool_identity_missing");
   }
-  const matchesBrainbaseCall = (hook: typeof postToolHookCandidates[number]): boolean =>
-    hasToolUseId(hook) && calls.some((call) => call.id === hook.receipt.tool_use_id);
-  const isBrainbaseToolReceipt = (hook: typeof postToolHookCandidates[number]): boolean => {
-    const toolName = hook.receipt.tool_name;
-    return matchesBrainbaseCall(hook)
-      || (typeof toolName === "string" && toolName.startsWith("mcp__brainbase__"));
-  };
-  const brainbaseIdentityBoundHooks = postToolHookCandidates.filter((hook) =>
-    isBrainbaseToolReceipt(hook) && hasToolUseId(hook) && hasToolName(hook));
   const stopHooks = hooks.filter((hook) => hook.receipt.hook_event_name === "Stop");
   const deniedCallIds = new Set<string>();
   for (const denial of terminalPermissionDenials) {
@@ -610,16 +605,29 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     }
     deniedCallIds.add(matchingBrainbaseCall.id);
   }
+  // A rejected PreToolUse attempt is a guard decision, not an executed MCP
+  // call. Claude still emits an error tool_result for it, so exclusion requires
+  // an exact identity match in the CLI-owned terminal permission_denials list.
+  // Every executed direct Brainbase call must have an authenticated PostToolUse
+  // or PostToolUseFailure receipt whose kind matches the result outcome. Other
+  // MCP servers have their own lifecycle and are outside the Brainbase Hook
+  // matcher and receipt contract.
+  const executedCalls = calls.filter((call) => results.has(call.id) && !deniedCallIds.has(call.id));
+  const auditedExecutedCalls = executedCalls.filter((call) => isDirectBrainbaseTool(call.name));
+  // The reply Hook may be configured broadly while a task-write MCP is
+  // enabled. Only a PostTool receipt for an executed direct Brainbase call is
+  // part of this contract; unrelated receipts must not change binding counts
+  // or sequence checks. Keep same-ID Brainbase name mismatches in the scoped
+  // set so the later exact-name check still fails closed.
+  const brainbaseIdentityBoundHooks = postToolHookCandidates.filter((hook) => {
+    if (!hasToolUseId(hook) || !hasToolName(hook)) return false;
+    return isDirectBrainbaseTool(hook.receipt.tool_name!)
+      || auditedExecutedCalls.some((call) => call.id === hook.receipt.tool_use_id);
+  });
   if (brainbaseIdentityBoundHooks.some((hook) => isBrainbaseEvidenceTool(hook.receipt.tool_name!)
       && toolBrainbaseAuditLines(auditLines(hook.output)).length === 0)) {
     throw new Error("reply_judgment_tool_audit_mismatch_evidence_audit_missing");
   }
-  // A rejected PreToolUse attempt is a guard decision, not an executed MCP
-  // call. Claude still emits an error tool_result for it, so exclusion requires
-  // an exact identity match in the CLI-owned terminal permission_denials list.
-  // Every other call with a tool_result must have an authenticated PostToolUse
-  // or PostToolUseFailure receipt whose kind matches the result outcome.
-  const executedCalls = calls.filter((call) => results.has(call.id) && !deniedCallIds.has(call.id));
   if (promptHooks.length !== 1 || stopHooks.length < 1) throw new Error("reply_judgment_lifecycle_incomplete");
   if (typeof promptHooks[0]!.receipt.host_receipt_id !== "string"
       || !promptHooks[0]!.receipt.host_receipt_id.trim()
@@ -680,30 +688,30 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       }
       hooksByToolUseId.set(toolUseId, hook);
     }
-    boundPostToolHooks = executedCalls.map((call) => {
+    boundPostToolHooks = auditedExecutedCalls.map((call) => {
       const hook = hooksByToolUseId.get(call.id);
       if (!hook || hook.receipt.tool_name !== call.name) {
         throw new ReplyJudgmentParseError(
           "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing",
-          buildAuditBindingDiagnostics(executedCalls, authenticatedToolHooks),
+          buildAuditBindingDiagnostics(auditedExecutedCalls, authenticatedToolHooks),
         );
       }
       return hook;
     });
-    if (hooksByToolUseId.size !== executedCalls.length) {
+    if (hooksByToolUseId.size !== auditedExecutedCalls.length) {
       throw new Error("reply_judgment_tool_audit_mismatch_posttool_receipt_count_mismatch");
     }
   } else {
-    if (executedCalls.length > 0) {
+    if (auditedExecutedCalls.length > 0) {
       throw new ReplyJudgmentParseError(
         "reply_judgment_tool_audit_mismatch_posttool_receipt_missing",
-        buildAuditBindingDiagnostics(executedCalls, authenticatedToolHooks),
+        buildAuditBindingDiagnostics(auditedExecutedCalls, authenticatedToolHooks),
       );
     }
     boundPostToolHooks = authenticatedToolHooks;
   }
 
-  executedCalls.forEach((call, sequence) => {
+  auditedExecutedCalls.forEach((call, sequence) => {
     const result = results.get(call.id);
     const audit = boundPostToolHooks[sequence];
     if (!result || result.index <= call.index || !audit || audit.index <= call.index) {
@@ -721,7 +729,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   // Control-plane receipts can carry the Host's cumulative audit text after
   // an evidence call. Authenticate every Brainbase receipt first, then omit
   // lifecycle-only calls from the source-read journal by tool identity.
-  const evidenceCalls = executedCalls.filter((call) => isBrainbaseEvidenceTool(call.name));
+  const evidenceCalls = auditedExecutedCalls.filter((call) => isBrainbaseEvidenceTool(call.name));
   const toolJournal = evidenceCalls.map((call, sequence) => {
     const result = results.get(call.id)!;
     return { sequence: sequence + 1, toolUseId: call.id, toolName: call.name, outcome: result.outcome };

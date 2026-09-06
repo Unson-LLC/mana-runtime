@@ -926,8 +926,8 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(prompt).toContain("search_tasks");
     expect(prompt).toContain("has_more");
     expect(prompt).toContain("API障害");
-    expect(replySettings.hooks.PostToolUse[0].matcher).toBe(".*");
-    expect(replySettings.hooks.PostToolUseFailure[0].matcher).toBe(".*");
+    expect(replySettings.hooks.PostToolUse[0].matcher).toBe("mcp__brainbase__.*");
+    expect(replySettings.hooks.PostToolUseFailure[0].matcher).toBe("mcp__brainbase__.*");
     expect(mcpConfig).toBe(JSON.stringify({
       mcpServers: {
         brainbase: {
