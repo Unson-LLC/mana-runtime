@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 
 const hookUrl = process.env.BRAINBASE_JUDGMENT_HOOK_URL
@@ -126,6 +127,9 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
     ? envelope.route_resolution_sha256
     : undefined;
   const { manaJudgmentReceipt: _unsupportedReceipt, ...documentedOutput } = envelope.output;
+  const stopToolReceipts = payload.hook_event_name === "Stop"
+    ? await completedToolReceipts(payload)
+    : undefined;
   const receipt = {
     schema_version: "mana_judgment_hook_receipt.v1",
     hook_event_name: payload.hook_event_name,
@@ -138,6 +142,7 @@ async function validatedOutput(envelope, payload, { allowStopRepair = true } = {
       tool_use_id: payload.tool_use_id,
       tool_name: payload.tool_name,
     } : {}),
+    ...(stopToolReceipts ? { tool_receipts: stopToolReceipts } : {}),
   };
   // UserPromptSubmit and Stop systemMessages are interactive response-rewrite
   // instructions. Passing either back into a schema-constrained runtime turn can
@@ -312,6 +317,35 @@ async function persistTurnState(path, state) {
   await rename(temporary, path);
 }
 
+async function withTurnStateLock(path, operation) {
+  const lockPath = `${path}.lock`;
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    try {
+      await mkdir(lockPath);
+      try {
+        return await operation();
+      } finally {
+        await rm(lockPath, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      await delay(10);
+    }
+  }
+  throw new Error("judgment_turn_state_lock_timeout");
+}
+
+async function updateTurnState(payload, update) {
+  const path = statePath(payload);
+  return withTurnStateLock(path, async () => {
+    const { stored } = await readTurnState(payload);
+    if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+    const next = await update(stored);
+    if (next !== undefined) await persistTurnState(path, next);
+    return next;
+  });
+}
+
 async function readTurnState(payload) {
   const path = statePath(payload);
   try {
@@ -345,9 +379,7 @@ async function stopRepairActive(payload) {
 }
 
 async function markStopRepairRequested(payload) {
-  const { path, stored } = await readTurnState(payload);
-  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
-  await persistTurnState(path, { ...stored, stop_repair_requested: true });
+  await updateTurnState(payload, (stored) => ({ ...stored, stop_repair_requested: true }));
 }
 
 async function requireResolveTurnFirst(payload) {
@@ -360,9 +392,41 @@ async function requireResolveTurnFirst(payload) {
 }
 
 async function markResolveTurnCompleted(payload) {
-  const { path, stored } = await readTurnState(payload);
+  await updateTurnState(payload, (stored) => ({ ...stored, resolve_turn_completed: true }));
+}
+
+async function recordCompletedToolReceipt(payload) {
+  const toolUseId = payload.tool_use_id;
+  const toolName = payload.tool_name;
+  if (typeof toolUseId !== "string" || !toolUseId.trim()
+      || typeof toolName !== "string" || !toolName.trim()) {
+    throw new Error("judgment_hook_tool_identity_missing");
+  }
+  const outcome = payload.hook_event_name === "PostToolUse" ? "success" : "error";
+  await updateTurnState(payload, (stored) => {
+    const current = Array.isArray(stored.tool_receipts) ? stored.tool_receipts : [];
+    const existing = current.find((entry) => entry?.tool_use_id === toolUseId);
+    if (existing) {
+      if (existing.tool_name !== toolName || existing.outcome !== outcome) {
+        throw new Error("judgment_hook_tool_receipt_conflict");
+      }
+      return undefined;
+    }
+    return {
+      ...stored,
+      tool_receipts: [...current, {
+        tool_use_id: toolUseId,
+        tool_name: toolName,
+        outcome,
+      }],
+    };
+  });
+}
+
+async function completedToolReceipts(payload) {
+  const { stored } = await readTurnState(payload);
   if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
-  await persistTurnState(path, { ...stored, resolve_turn_completed: true });
+  return Array.isArray(stored.tool_receipts) ? stored.tool_receipts : [];
 }
 
 try {
@@ -388,6 +452,13 @@ try {
     ? { ...payload, stop_hook_active: await stopRepairActive(payload) }
     : payload;
   const output = await validatedOutput(await fetchHookEnvelope(hostPayload), hostPayload);
+  if (payload.hook_event_name === "PostToolUse" || payload.hook_event_name === "PostToolUseFailure") {
+    // Claude Code can omit an individual hook_response from stream-json even
+    // after the Hook and Host both completed. Persist the Host-accepted
+    // identity locally so the authenticated Stop receipt can prove the full
+    // tool lifecycle without weakening fail-closed validation.
+    await recordCompletedToolReceipt(payload);
+  }
   if (payload.hook_event_name === "PostToolUse" && isResolveTurnTool(payload)) {
     // PostToolUse is emitted only after the MCP call completed. The Host has
     // now recorded the model-owned classification, so later tools may proceed.

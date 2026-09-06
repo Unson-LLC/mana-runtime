@@ -6,6 +6,8 @@ export interface BrainbaseMcpProxyEnv {
   BRAINBASE_MCP_BASE_URL?: string;
   BRAINBASE_MCP_TOKEN?: string;
   BRAINBASE_JUDGMENT_PROJECT_CODE?: string;
+  /** Canonical Company Authority project ID to judgment Hook project code. */
+  BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON?: string;
 }
 
 async function mcpToolName(request: Request): Promise<string | undefined> {

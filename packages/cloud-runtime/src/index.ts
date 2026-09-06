@@ -2713,7 +2713,11 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       respondPolicy: placement.respondTo,
       isEngagedThread: workspaceSession.engaged === true,
       botAttributedAppMentionUserIds: placement.audience?.allowedUserIds,
-      createSandbox: (sandboxId: string) => createTechKnightSandbox(env, sandboxId),
+      // Judgment turns can legitimately exceed the SDK's one-minute idle alarm
+      // while Claude waits on Brainbase hooks. Keep this per-turn container
+      // alive for the full reply budget; the pipeline still destroys it in its
+      // finally block.
+      createSandbox: (sandboxId: string) => createTechKnightSandbox(env, sandboxId, "5m"),
       hydrateThreadContext: async (inputEvent: SlackQueueEvent) => {
         const hydrated = await hydrateSlackQueueEventThreadContext(inputEvent, {
           fetch: tenantCredentialFetch,
