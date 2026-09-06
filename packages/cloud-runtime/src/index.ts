@@ -2135,13 +2135,25 @@ export async function executeCompanyAuthorityReplyOperation(
     company_authority_envelope: envelope, payload: event, provider_key: providerKey,
     capture_recovery: captureRecovery } = operation;
   const request = envelope.company_authority_request;
-  if (request.requested_action.capability_id !== "runtime.execute"
-    || request.requested_action.desired_effect !== "external_side_effect"
-    || typeof operation.canonical_person_id !== "string" || !operation.canonical_person_id.trim()
-    || tenantContext.authorization.project_ids.length !== 1
-    || tenantContext.authorization.project_ids[0] !== expectedScope.project_id
-    || !providerKey || parseRuntimeControlCommand(event.text)) {
-    deny("container_launch", "AUTHORITY_SCOPE_MISMATCH");
+  const entryScopeFailure = request.requested_action.capability_id !== "runtime.execute"
+    ? "capability"
+    : request.requested_action.desired_effect !== "external_side_effect"
+      ? "desired_effect"
+      : typeof operation.canonical_person_id !== "string" || !operation.canonical_person_id.trim()
+        ? "canonical_person"
+        : tenantContext.authorization.project_ids.length !== 1
+          ? "project_cardinality"
+          : tenantContext.authorization.project_ids[0] !== expectedScope.project_id
+            ? "project_identity"
+            : !providerKey
+              ? "provider_key"
+              : parseRuntimeControlCommand(event.text)
+                ? "control_command"
+                : undefined;
+  if (entryScopeFailure) {
+    deny("container_launch", "AUTHORITY_SCOPE_MISMATCH", {
+      phase: `reply_entry_${entryScopeFailure}`,
+    });
   }
   const config = parseCompanyAuthorityRuntimeConfiguration(env);
   if (config.state !== "enabled") deny("container_launch", "AUTHORITY_UNAVAILABLE");
