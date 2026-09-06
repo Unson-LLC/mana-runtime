@@ -292,6 +292,22 @@ describe("meeting minutes source status lifecycle", () => {
       statusProjection: { outcome: "completed" }, runReceipt: { status: "pending" } });
   });
 
+  it("logs a safe receipt failure code before preserving the Queue retry", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
+        bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus,
+      emitRunReceipt: vi.fn().mockRejectedValue(new Error("meeting_minutes_run_receipt_request_failed:403")),
+    })).rejects.toThrow("meeting_minutes_run_receipt_request_failed:403");
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "meeting_minutes_run_receipt_delivery_failed",
+      runId: selection.runId, code: "meeting_minutes_run_receipt_request_failed:403" }));
+    log.mockRestore();
+  });
+
   it("retries only the completion projection without repeating completed work", async () => {
     const fs = await setup(); const logProjectionError = vi.fn();
     const operations = resume();
