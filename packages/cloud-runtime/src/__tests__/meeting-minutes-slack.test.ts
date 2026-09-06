@@ -885,4 +885,33 @@ describe("MeetingMinutesSlackClient", () => {
     expect(chunk).toContain("📄 *詳細議事録: 定例 &lt;@U_ATTACK&gt;.txt*");
     expect(chunk).toContain("*本文* &lt;!here&gt; &lt;https://evil.test&gt; &lt;!channel&gt;");
   });
+
+
+describe("operator selector repair", () => {
+  it("updates the original selector even when processing status was never created", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) }); return Response.json({ ok: true });
+    }) as typeof fetch;
+    const run = { ...routedRun(), slack: { selectionTs: "2.1", postedChunkIndexes: [] } };
+    expect(await new MeetingMinutesSlackClient("token", fetchImpl).repairDestinationSelection(run, [run.destination])).toBe("2.1");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain("chat.update");
+    expect(calls[0]!.body).toMatchObject({ channel: run.sourceChannelId, ts: "2.1" });
+    expect(JSON.stringify(calls[0]!.body)).toContain("保存先組織を選択");
+  });
+  it("posts a missing selector to the original thread with stable message identity", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: "2.1" });
+    }) as typeof fetch;
+    const run = { ...routedRun(), slack: { postedChunkIndexes: [] } }; const client = new MeetingMinutesSlackClient("token", fetchImpl);
+    await client.repairDestinationSelection(run, [run.destination]);
+    await client.repairDestinationSelection(run, [run.destination]);
+    expect(calls[0]).toMatchObject({ channel: run.sourceChannelId, thread_ts: run.sourceThreadTs });
+    expect(calls[0]!.client_msg_id).toBe(calls[1]!.client_msg_id);
+    expect(calls[0]!.client_msg_id).toBeTruthy();
+  });
+});
+
 });

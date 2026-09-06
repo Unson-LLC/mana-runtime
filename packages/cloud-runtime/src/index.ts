@@ -15,7 +15,7 @@ import {
   readAdminJsonRequest,
   validateMeetingMinutesAdminTaskIds,
 } from "./admin-json-input.js";
-import { repairMeetingMinutesCompletedProjection, retryMeetingMinutesRunReceipt } from "./meeting-minutes-lifecycle.js";
+import { repairMeetingMinutesCompletedProjection, repairMeetingMinutesDestinationProjection, retryMeetingMinutesRunReceipt } from "./meeting-minutes-lifecycle.js";
 import {
   handleSandboxAdminRequest,
   isSandboxAdminAuthorized,
@@ -1426,6 +1426,11 @@ function meetingMinutesClients(
           (credentialFetch) => sourceSlack(credentialFetch).projectStatusFailure(run)),
       downloadTextFile: (fileId: string) => effects.boundary("slack_delivery",
         (credentialFetch) => sourceSlack(credentialFetch).downloadTextFile(fileId)),
+      repairDestinationSelection: (run: MeetingMinutesRun,
+        candidates: Parameters<MeetingMinutesSlackClient["repairDestinationSelection"]>[1]) =>
+        effects.slack(`destination-repair:${run.runId}:${run.updatedAt}`,
+          { kind: "destination_repair", runId: run.runId },
+          (credentialFetch) => sourceSlack(credentialFetch).repairDestinationSelection(run, candidates)),
       requestDestination: (run: MeetingMinutesRun,
         candidates: Parameters<MeetingMinutesSlackClient["requestDestination"]>[1]) =>
         effects.slack(`destination-request:${run.runId}`,
@@ -4268,6 +4273,15 @@ export default {
           const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
           await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
             const storedRun = await loadMeetingMinutesRun(workspace.fs, input.runId);
+            const selectionRun = await repairMeetingMinutesDestinationProjection(workspace.fs, storedRun,
+              { workspaceId: input.workspaceId, appId, channelId: input.channelId, threadTs: input.sourceThreadTs },
+              (candidate) => meetingMinutesClients(env, effects, tenantContext).slack.repairDestinationSelection(
+                candidate, meetingMinutesRuntimeConfig(env).destinations));
+            if (selectionRun) {
+              console.info(JSON.stringify({ event: "meeting_minutes_selector_repaired", runId: selectionRun.runId,
+                status: selectionRun.status, selectionTs: selectionRun.slack?.selectionTs }));
+              return;
+            }
             const run = await repairMeetingMinutesCompletedProjection(workspace.fs, storedRun,
               { channelId: input.channelId, threadTs: input.sourceThreadTs },
               (candidate) => meetingMinutesClients(env, effects, tenantContext).slack.updateRunStatus(candidate, "completed"));
@@ -4275,6 +4289,8 @@ export default {
               console.warn(JSON.stringify({ event: "meeting_minutes_projection_repair_rejected", runId: input.runId,
                 found: Boolean(storedRun), status: storedRun?.status, failureStage: storedRun?.failure?.stage,
                 diagnosticStage: storedRun?.diagnostics?.stage, diagnosticCode: storedRun?.diagnostics?.code,
+                workspaceMatches: storedRun?.workspaceId === input.workspaceId,
+                appMatches: storedRun?.sourceAppId === appId, hasSelection: Boolean(storedRun?.slack?.selectionTs),
                 hasGenerated: Boolean(storedRun?.generated), hasGitHub: Boolean(storedRun?.github),
                 hasSlackParent: Boolean(storedRun?.slack?.parentTs), hasProcessingStatus: Boolean(storedRun?.slack?.processingTs),
                 sourceMatches: storedRun?.sourceChannelId === input.channelId

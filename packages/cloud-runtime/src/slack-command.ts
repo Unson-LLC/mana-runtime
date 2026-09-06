@@ -33,7 +33,7 @@ export async function handleSlackCommandRequest(request: Request, options: {
    * a synthetic Slack thread timestamp.
    */
   openModal?(input: SlackDevelopmentCommandInput): Promise<unknown>;
-  /** Operator-only repair for re-projecting an already completed run. */
+  /** Operator-only display repair for an awaiting selector or an already completed run. */
   repairMeetingMinutes?(input: SlackMeetingMinutesRepairInput): Promise<unknown>;
   /** Keep modal opening alive after returning Slack's required fast acknowledgement. */
   defer?(work: Promise<unknown>): void;

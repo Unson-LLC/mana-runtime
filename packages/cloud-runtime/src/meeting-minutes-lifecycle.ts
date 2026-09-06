@@ -76,6 +76,29 @@ export async function repairMeetingMinutesCompletedProjection(
   return repaired;
 }
 
+/** Reopen only an untouched selector; never restart processing or authorize a destination. */
+export async function repairMeetingMinutesDestinationProjection(
+  fs: WorkspaceFs,
+  run: MeetingMinutesRun | undefined,
+  source: { workspaceId: string; appId: string; channelId: string; threadTs: string },
+  updateSelection: (run: MeetingMinutesRun) => Promise<string>,
+): Promise<MeetingMinutesRun | undefined> {
+  if (!run || run.workspaceId !== source.workspaceId || run.sourceAppId !== source.appId
+    || run.sourceChannelId !== source.channelId || run.sourceThreadTs !== source.threadTs
+    || run.status !== "awaiting_destination" || run.destination || run.generated || run.github
+    || run.slack?.processingTs || run.slack?.parentTs || run.slack?.taskCardTs || run.taskRegistration
+    || (run.slack?.selectionTs && (run.slack.selectionTs === run.sourceThreadTs
+      || run.slack.selectionTs === run.sourceMessageTs))) return undefined;
+  const repaired = structuredClone(run);
+  const selectionTs = await updateSelection(repaired);
+  if (!selectionTs) throw new Error("meeting_minutes_selection_ts_missing");
+  repaired.slack = { postedChunkIndexes: [], ...repaired.slack, selectionTs };
+  delete repaired.projectionFailure;
+  repaired.updatedAt = new Date().toISOString();
+  await saveMeetingMinutesRun(fs, repaired);
+  return repaired;
+}
+
 async function recordProjectionFailure(fs: WorkspaceFs, run: MeetingMinutesRun,
   outcome: "completed" | "failed", error: unknown, options: MeetingMinutesStatusProjectionOptions): Promise<void> {
   const classified = classifyMeetingMinutesFailure("status_projection", error);
