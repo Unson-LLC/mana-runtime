@@ -274,6 +274,8 @@ export interface MeetingMinutesRun {
   /** Source-owned delivery checkpoint for the immutable Brainbase run receipt. */
   runReceipt?: { caseId?: string; idempotencyKey: string; receiptId?: string;
     status: "pending" | "delivered"; deliveredAt?: string };
+  /** Durable fence for the queued selection that finished processing before source-status projection. */
+  processing?: { completedActionTs: string; completedAt: string };
   /** Non-secret authority inputs used to reissue a fresh context for delayed recovery. */
   recoveryAuthorization?: MeetingMinutesRecoveryAuthorization;
   lifecycle?: {

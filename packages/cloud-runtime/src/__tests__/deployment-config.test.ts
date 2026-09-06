@@ -804,6 +804,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("failure: run.taskRegistration?.failure");
     expect(worker).toContain("failedCandidateTitle: run.taskRegistration?.failure");
     expect(worker).toContain("sourceStatus: { outcome: run.statusProjection?.outcome");
+    expect(worker).toContain("processing: run.processing");
     expect(worker).toContain("outcomeCaseId: run.outcomeCaseId");
     expect(worker).toContain("runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,");
     expect(worker).toContain("status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt }");
@@ -838,6 +839,12 @@ describe("会社別Cloudflare deployment", () => {
     expect(retryWorkflow).not.toContain('echo "$SANDBOX_PROBE_TOKEN"');
     expect(retryWorkflow).not.toContain("jq -n --arg token \"$SANDBOX_PROBE_TOKEN\"");
     expect(retryWorkflow).toContain("baseline_source_projected_at");
+    expect(retryWorkflow).not.toContain("baseline_updated_at");
+    expect(retryWorkflow).not.toContain("current_updated_at");
+    expect(retryWorkflow).toContain("processing_completed_action_ts");
+    expect(retryWorkflow).toContain('"$processing_completed_action_ts" == "$action_ts"');
+    expect(retryWorkflow).toContain(".processing.completedActionTs == $actionTs");
+    expect(retryWorkflow).toContain('(.sourceStatus.projectionFailure.failedAt // "") >= $processingCompletedAt');
     expect(retryWorkflow).toContain('.sourceStatus.outcome == "completed"');
     expect(retryWorkflow).toContain(".sourceStatus.projectedAt != $baselineSourceProjectedAt");
     expect(retryWorkflow).toContain(".sourceStatus.projectionFailure == null");

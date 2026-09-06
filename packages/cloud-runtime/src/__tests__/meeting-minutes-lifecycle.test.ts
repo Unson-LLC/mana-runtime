@@ -203,6 +203,19 @@ describe("meeting minutes source status lifecycle", () => {
     expect(updateStatus).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }), "completed");
   });
 
+  it("persists the action-specific processing fence before projecting completed", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async () => {
+      expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ processing: {
+        completedActionTs: selection.actionTs, completedAt: expect.any(String),
+      } });
+    });
+
+    await processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), { updateStatus });
+
+    expect(updateStatus).toHaveBeenCalledOnce();
+  });
+
   it("projects failed and preserves Queue retry when processing fails", async () => {
     const fs = await setup(); const updateStatus = vi.fn().mockResolvedValue(undefined);
     await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config,
