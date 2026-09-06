@@ -26,6 +26,16 @@ describe("Brainbase meeting-minutes project deployment check", () => {
     expect(projectCodesFromGraphResponse({ records: [{ id: "project:kartz", payload: { project_code: "kartz" } }] })).toEqual(["kartz", "project:kartz"]);
   });
 
+  it("collects mappings from compact task-board configuration", () => {
+    const bindings = collectMeetingMinutesProjectBindings(config({
+      TASK_BOARD_TARGETS_JSON: JSON.stringify({
+        defaults: { enabled: true, autoProvision: true, bindingRevision: 1 },
+        targets: [{ targetId: "minutes-kartz", projectCodes: ["kartz"] }],
+      }),
+    }));
+    expect(bindings.requiredCodes).toEqual(["kartz"]);
+  });
+
   it("rejects missing mappings and mismatched board targets", () => {
     expect(() => collectMeetingMinutesProjectBindings(config({ MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{ id: "kartz", taskProjectCodes: ["kartz"], taskBoardTargetId: "minutes-kartz" }]) })))
       .toThrow("meeting_minutes_brainbase_project_check_binding_missing:kartz");
