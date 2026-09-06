@@ -10,6 +10,7 @@ const runtimeMocks = vi.hoisted(() => ({
   getWorkspace: vi.fn(),
   withDisposableResource: vi.fn(),
   loadRun: vi.fn(),
+  saveRun: vi.fn(),
   runProbe: vi.fn(),
   resolveSlackWorkerIngress: vi.fn(),
   executeTenantBoundary: vi.fn(),
@@ -51,7 +52,7 @@ vi.mock("../meeting-minutes-generation-probe.js", () => ({
 }));
 vi.mock("../meeting-minutes-state.js", () => ({
   loadMeetingMinutesRun: runtimeMocks.loadRun,
-  saveMeetingMinutesRun: vi.fn(),
+  saveMeetingMinutesRun: runtimeMocks.saveRun,
 }));
 vi.mock("../disposable-resource.js", () => ({
   withDisposableResource: runtimeMocks.withDisposableResource,
@@ -377,6 +378,40 @@ describe("authorized meeting-minutes generation probe route", () => {
       runReceipt: { status: "delivered", receiptId: "receipt-001", deliveredAt: "2026-09-06T00:00:02.000Z" } });
     expect(runtimeMocks.executeTenantRuntimeOperation).toHaveBeenCalledOnce();
     expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
+  });
+
+  it("corrects a pending receipt OutcomeCase without re-entering the full minutes workflow", async () => {
+    const receiptRun = await retryableReceiptRun({ outcomeCaseId: "wrong_case" });
+    runtimeMocks.loadRun.mockImplementation(async () => receiptRun);
+
+    const response = await fetchWorker(authorizedReceiptRetryRequest({ tenantId: TENANT_ID,
+      workspaceId: WORKSPACE_ID, actionTs: "100.200", outcomeCaseId: "correct_case" },
+    { authorization: `Bearer ${ADMIN_TOKEN}` }));
+
+    expect(response.status).toBe(200);
+    expect(receiptRun.outcomeCaseId).toBe("correct_case");
+    expect(receiptRun.revision).toBe(2);
+    expect(runtimeMocks.saveRun).toHaveBeenCalled();
+    expect(runtimeMocks.executeTenantRuntimeOperation).toHaveBeenCalledOnce();
+    expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
+  });
+
+  it("does not correct an OutcomeCase before the saved recovery scope is authorized", async () => {
+    const receiptRun = await retryableReceiptRun({
+      outcomeCaseId: "wrong_case",
+      recoveryAuthorization: { ...recoveryAuthorization, workspaceId: "TOTHER" },
+    });
+    runtimeMocks.loadRun.mockResolvedValue(receiptRun);
+
+    const response = await fetchWorker(authorizedReceiptRetryRequest({ tenantId: TENANT_ID,
+      workspaceId: WORKSPACE_ID, actionTs: "100.200", outcomeCaseId: "correct_case" },
+    { authorization: `Bearer ${ADMIN_TOKEN}` }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "meeting_minutes_admin_retry_not_authorized" });
+    expect(receiptRun.outcomeCaseId).toBe("wrong_case");
+    expect(runtimeMocks.saveRun).not.toHaveBeenCalled();
+    expect(runtimeMocks.executeTenantRuntimeOperation).not.toHaveBeenCalled();
   });
 
   it("retries from the persisted run when destination metadata changed after completion", async () => {

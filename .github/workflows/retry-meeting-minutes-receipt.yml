@@ -23,6 +23,10 @@ on:
         description: 対象Slack workspace ID
         required: true
         type: string
+      outcome_case_id:
+        description: 誤ったOutcomeCase参照を訂正する場合の新しいcase ID（任意）
+        required: false
+        type: string
       reason:
         description: 再送理由（監査用）
         required: true
@@ -50,11 +54,13 @@ jobs:
           RUN_ID: ${{ inputs.run_id }}
           TENANT_ID: ${{ inputs.tenant_id }}
           WORKSPACE_ID: ${{ inputs.workspace_id }}
+          OUTCOME_CASE_ID: ${{ inputs.outcome_case_id }}
         run: |
           set -euo pipefail
           [[ "$RUN_ID" =~ ^[A-Za-z0-9_-]{3,260}$ ]]
           [[ "$TENANT_ID" =~ ^[A-Za-z0-9_-]{3,128}$ ]]
           [[ "$WORKSPACE_ID" =~ ^[A-Z0-9]{3,32}$ ]]
+          [[ -z "$OUTCOME_CASE_ID" || "$OUTCOME_CASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$ ]]
 
       - name: 状態確認またはRunReceiptを再送
         shell: bash
@@ -64,6 +70,7 @@ jobs:
           WORKSPACE_ID: ${{ inputs.workspace_id }}
           OPERATION: ${{ inputs.operation }}
           RETRY_REASON: ${{ inputs.reason }}
+          OUTCOME_CASE_ID: ${{ inputs.outcome_case_id }}
           SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
         run: |
           set -euo pipefail
@@ -131,7 +138,9 @@ jobs:
           fi
           status="$(request_json -X POST -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" -H 'Content-Type: application/json' \
             --data "$(jq -cn --arg tenantId "$TENANT_ID" --arg workspaceId "$WORKSPACE_ID" --arg actionTs "$action_ts" \
-              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs}')" \
+              --arg outcomeCaseId "$OUTCOME_CASE_ID" \
+              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs}
+               + (if $outcomeCaseId == "" then {} else {outcomeCaseId:$outcomeCaseId} end)')" \
             "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-receipt-retry")"
           if [[ "$status" != "200" ]] || ! jq -e --arg runId "$RUN_ID" '$runId == .runId and .runReceipt.status == "delivered" and (.runReceipt.receiptId // "") != "" and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
             echo "RunReceipt再送失敗: $(safe_code)" >&2

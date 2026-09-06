@@ -3547,11 +3547,11 @@ export default {
       if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } | null;
+      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } | null;
       try {
         const parsed = await readAdminJsonRequest(request);
         payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } : null;
+          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown; outcomeCaseId?: unknown } : null;
       } catch (error) {
         const rejected = adminJsonInputErrorResponse(error);
         if (rejected) return rejected;
@@ -3563,21 +3563,53 @@ export default {
         ? payload.workspaceId : undefined;
       const actionTs = typeof payload?.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
         ? payload.actionTs : undefined;
+      const outcomeCaseId = payload?.outcomeCaseId === undefined ? undefined
+        : typeof payload.outcomeCaseId === "string" && OUTCOME_CASE_ID_PATTERN.test(payload.outcomeCaseId)
+          ? payload.outcomeCaseId : null;
       if (!tenantId || !workspaceId || !actionTs) {
         return Response.json({ error: "meeting_minutes_admin_retry_scope_invalid" }, { status: 400 });
+      }
+      if (outcomeCaseId === null) {
+        return Response.json({ error: "meeting_minutes_admin_retry_outcome_case_invalid" }, { status: 400 });
       }
       const runId = authorizedRunReceiptRetryMatch[1]!;
       const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
         tenantId, workspaceId, runId,
       ));
       const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
-      const run = await withDisposableResource(() => getWorkspace(handle),
-        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      const run = await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
+        const saved = await loadMeetingMinutesRun(workspace.fs, runId);
+        if (!saved || outcomeCaseId === undefined || saved.outcomeCaseId === outcomeCaseId) return saved;
+        const savedAuthorization = saved.recoveryAuthorization;
+        if (!savedAuthorization || savedAuthorization.tenantId !== tenantId
+          || savedAuthorization.workspaceId !== workspaceId || !saved.destination || !saved.sourceAppId) {
+          return saved;
+        }
+        if (saved.runReceipt?.status === "delivered") return saved;
+        saved.outcomeCaseId = outcomeCaseId;
+        // A changed OutcomeCase changes the immutable receipt payload. Advance
+        // only the receipt identity; completed GitHub, Slack, generation and
+        // task checkpoints remain untouched and are never re-entered here.
+        saved.revision = (saved.revision ?? 0) + 1;
+        const correctedReceipt = await buildMeetingMinutesRunReceipt(saved);
+        if (!correctedReceipt) return saved;
+        saved.runReceipt = {
+          caseId: outcomeCaseId,
+          idempotencyKey: correctedReceipt.delivery.idempotency_key,
+          status: "pending",
+        };
+        saved.updatedAt = new Date().toISOString();
+        await saveMeetingMinutesRun(workspace.fs, saved);
+        return saved;
+      });
       if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
       const authorization = run.recoveryAuthorization;
       if (!authorization || authorization.tenantId !== tenantId ||
         authorization.workspaceId !== workspaceId || !run.destination || !run.sourceAppId) {
         return Response.json({ error: "meeting_minutes_admin_retry_not_authorized" }, { status: 409 });
+      }
+      if (outcomeCaseId !== undefined && run.runReceipt?.status === "delivered" && run.outcomeCaseId !== outcomeCaseId) {
+        return Response.json({ error: "meeting_minutes_outcome_case_receipt_delivered" }, { status: 409 });
       }
       if (run.runReceipt?.failure?.stage === "run_receipt" && run.runReceipt.failure.retryable === false
         && !isAdminReauthorizableRunReceiptFailure(run)) {

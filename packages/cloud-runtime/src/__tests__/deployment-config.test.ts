@@ -831,7 +831,8 @@ describe("会社別Cloudflare deployment", () => {
       new URL("../../../../.github/workflows/retry-meeting-minutes-receipt.yml", import.meta.url)), "utf8");
     expect(receiptRetryWorkflow).toContain("name: 失敗済み議事録のRunReceiptを再送");
     expect(receiptRetryWorkflow).toContain("RunReceipt再送（Slack投稿等は再実行しない）");
-    expect(receiptRetryWorkflow).not.toContain("outcome_case_id:");
+    expect(receiptRetryWorkflow).toContain("outcome_case_id:");
+    expect(receiptRetryWorkflow).toContain("OUTCOME_CASE_ID: ${{ inputs.outcome_case_id }}");
     expect(receiptRetryWorkflow).toContain("/authorized-receipt-retry");
     expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_UNAVAILABLE");
     expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_REJECTED");
