@@ -93,8 +93,8 @@ jobs:
               def code: if type == "string" and test("^RUN_RECEIPT_[A-Z_]{3,96}$") then . else null end;
               def receipt_operation: if . == "ingest" or . == "diagnosis" then . else null end;
               def http_status: if type == "number" and floor == . and . >= 100 and . <= 599 then . else null end;
-    {runId: (.runId | identifier), status: .status,
-     contextProjectCode: (.contextProjectCode | identifier),
+              {runId: (.runId | identifier), status: .status,
+               contextProjectCode: (.contextProjectCode | identifier),
                runReceipt: (if (.runReceipt | type) == "object" then {
                  status: (.runReceipt.status | if . == "pending" or . == "delivered" then . else null end),
                  receiptId: (.runReceipt.receiptId | identifier),
