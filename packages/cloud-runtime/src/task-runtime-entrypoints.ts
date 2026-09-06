@@ -41,6 +41,13 @@ interface TaskBoardRuntimeEnv extends TaskBoardEnv {
   RUNTIME_PLACEMENTS_JSON?: string;
 }
 
+export function taskBoardRepairCapabilityId(
+  repair: Pick<TaskBoardRepairEvent, "reason">,
+  runtimeCapabilityId: string,
+): string {
+  return repair.reason === "task_write" ? runtimeCapabilityId : "task_board_send";
+}
+
 function taskBoardPlacementMatchesTarget(env: TaskBoardRuntimeEnv, target: TaskBoardTarget): boolean {
   if (!env.RUNTIME_PLACEMENTS_JSON) return false;
   try {

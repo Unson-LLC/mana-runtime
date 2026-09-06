@@ -57,6 +57,8 @@ describe("Worker task Canvas repair producers", () => {
     expect(source).not.toContain("trusted_project_ids: destinationAuthorization?.trusted_project_ids ?? placementProjectScope.project_ids");
     expect(source).toContain("const destinationAuthorization = destinationAuthorizationForSelection(env, destination, \"queue_consumer\")");
     expect(source).toContain("resolveMeetingMinutesDestinationProjectScope(");
+    expect(source).toContain("capability_id: taskBoardRepairCapabilityId(");
+    expect(source).toContain("repair,\n      requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID)");
     expect(source).toContain("(taskBoardTenantContext) => enqueueMeetingMinutesTaskBoardRepair(");
     expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
       .toHaveLength(1);

@@ -150,6 +150,7 @@ import {
   enqueueScheduledTaskBoardRepair,
   issueTaskWriteRequestContext,
   processTaskBoardRepair,
+  taskBoardRepairCapabilityId,
   taskBoardRepairEventId,
   taskBoardTargets,
 } from "./task-runtime-entrypoints.js";
@@ -2071,7 +2072,10 @@ function expectedTenantTaskBoardRepairScope(
     thread_ts: repair.requestedAt,
     actor_principal_id: envelope.actor.principal_id,
     ...projectScope,
-    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    capability_id: taskBoardRepairCapabilityId(
+      repair,
+      requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+    ),
     deployment_id: envelope.placement.deployment_id,
   };
 }
