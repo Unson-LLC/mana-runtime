@@ -689,7 +689,8 @@ function meetingMinutesAdminRunReceiptFailure(failure: unknown):
 function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
   const failure = meetingMinutesAdminRunReceiptFailure(run.runReceipt?.failure);
   return { runId: run.runId, status: run.status, updatedAt: run.updatedAt,
-    destinationId: run.destination?.id, outcomeCaseId: run.outcomeCaseId, diagnostics: run.diagnostics,
+    destinationId: run.destination?.id, contextProjectCode: run.destination?.contextProjectCode,
+    outcomeCaseId: run.outcomeCaseId, diagnostics: run.diagnostics,
     processing: run.processing,
     runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,
       status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt,

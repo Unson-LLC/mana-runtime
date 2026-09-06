@@ -812,6 +812,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("sourceStatus: { outcome: run.statusProjection?.outcome");
     expect(worker).toContain("processing: run.processing");
     expect(worker).toContain("outcomeCaseId: run.outcomeCaseId");
+    expect(worker).toContain("contextProjectCode: run.destination?.contextProjectCode");
     expect(worker).toContain("runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,");
     expect(worker).toContain("status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt,");
     expect(worker).toContain("const failure = meetingMinutesAdminRunReceiptFailure(run.runReceipt?.failure);");
@@ -834,6 +835,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_REJECTED");
     expect(receiptRetryWorkflow).toContain("failure.operation");
     expect(receiptRetryWorkflow).toContain("failure.httpStatus");
+    expect(receiptRetryWorkflow).toContain("contextProjectCode: (.contextProjectCode | identifier)");
     expect(receiptRetryWorkflow).toContain("meeting_minutes_admin_retry_run_receipt_stale");
     expect(receiptRetryWorkflow).toContain('.runReceipt.failure.code != "RUN_RECEIPT_AUTHENTICATION_FAILED"');
     expect(receiptRetryWorkflow).toContain('.runReceipt.failure.code != "RUN_RECEIPT_FORBIDDEN"');
