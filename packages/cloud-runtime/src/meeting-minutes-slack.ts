@@ -546,6 +546,13 @@ export class MeetingMinutesSlackClient {
       expiresAt: terminalReadback.expiresAt,
     }, this.fetchImpl);
     if (readback.state !== "confirmed") {
+      console.error(JSON.stringify({
+        event: "meeting_minutes_terminal_slack_readback_failed",
+        runId: run.runId,
+        channel: run.sourceChannelId,
+        ts: run.slack.processingTs,
+        reason: readback.reason,
+      }));
       throw new Error(`meeting_minutes_terminal_slack_readback_${readback.reason}`);
     }
     run.terminalSlackReadback = { outcome: "completed", channel: readback.receipt.channel,

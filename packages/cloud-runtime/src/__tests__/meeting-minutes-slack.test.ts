@@ -115,6 +115,33 @@ describe("MeetingMinutesSlackClient", () => {
     expect(authRequest?.body).toBeUndefined();
   });
 
+  it("logs the safe readback reason when the terminal source message does not match", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("assistant.threads.setStatus") || url.includes("chat.update")) {
+        return Response.json({ ok: true });
+      }
+      if (url.includes("auth.test")) {
+        return Response.json({ ok: true, team_id: "T1", bot_id: "B1" });
+      }
+      if (url.includes("conversations.replies")) return Response.json({ ok: true, messages: [{
+        type: "message", ts: "3.1", thread_ts: "1.0", app_id: "A1", bot_id: "B1", text: "different",
+      }] });
+      throw new Error(`unexpected Slack request: ${url}`);
+    }) as typeof fetch;
+    const run = routedRun() as MeetingMinutesRun;
+
+    await expect(new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed", {
+      workspaceId: "T1", appId: "A1", expiresAt: Date.now() + 30_000,
+    })).rejects.toThrow("meeting_minutes_terminal_slack_readback_message_mismatch");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(
+      '"event":"meeting_minutes_terminal_slack_readback_failed"',
+    ));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('"reason":"message_mismatch"'));
+    error.mockRestore();
+  });
+
   it("does not render an in-progress diagnostic checkpoint as a completed-run failure", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
