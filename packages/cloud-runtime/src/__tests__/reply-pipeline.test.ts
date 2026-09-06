@@ -308,6 +308,30 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandbox.exec).not.toHaveBeenCalled();
   });
 
+  it("uses the refreshed tenant boundary expiry when starting a long reply process", async () => {
+    const nowMs = REPLY_START_MS + 240_000;
+    const { options, sandbox } = harness({
+      tenantBoundaryHandle: TENANT_BOUNDARY_A,
+      nowMs: () => nowMs,
+      tenantBoundaryExpiresAtNow: () => new Date(nowMs + 300_000).toISOString(),
+    });
+    const startProcess = vi.fn().mockResolvedValue({
+      getStatus: vi.fn().mockResolvedValue("completed"),
+      getLogs: vi.fn().mockResolvedValue({ stdout: auditedReplyStream(), stderr: "" }),
+      kill: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.mocked(options.createSandbox).mockReturnValue({ ...sandbox, startProcess });
+
+    await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
+      reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
+    });
+
+    expect(startProcess).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ timeout: 270_000 }),
+    );
+  });
+
   it("does not retry a stale-session-shaped failure and still destroys the fresh Container", async () => {
     const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     sandbox.exec.mockResolvedValueOnce({

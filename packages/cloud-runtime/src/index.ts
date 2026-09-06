@@ -2255,6 +2255,7 @@ export async function executeCompanyAuthorityReplyOperation(
       let deliveryBodyHash: string | undefined;
       let authBotId: string | undefined;
       let deliveryAttempted = false;
+      let activeTenantBoundaryExpiresAt = tenantContext.expires_at;
       const result = await executeTenantRuntimeOperation({ tenant_context: tenantContext,
         expected_scope: expectedScope, verifier, quota: clients.quota, accounting: clients.accounting,
         ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
@@ -2263,11 +2264,20 @@ export async function executeCompanyAuthorityReplyOperation(
           const processed = await executeTenantContainerOperationWithRegistry({ namespace: env.TENANT_RUNTIME_STATE,
             tenant_context: tenantContext, expected_scope: expectedScope, verifier, now: now(),
             company_authority_envelope: envelope,
+            refresh: {
+              issue: async () => {
+                const fresh = await reissueLongRunningTenantContext(env, tenantContext, expectedScope);
+                activeTenantBoundaryExpiresAt = fresh.expires_at;
+                return fresh;
+              },
+              now,
+            },
             execute: (tenantBoundaryHandle) => executeSharedReplyRuntime({ env, fs: workspace.fs, event,
               placement, runtimeTenantId: tenantContext.tenant.tenant_id,
               runtimeWorkspaceId: tenantContext.workspace_connection.workspace_id,
               workspaceSession, tenantCredentialFetch: credentialFetch, claudeRuntime, tenantBoundaryHandle,
               tenantBoundaryExpiresAt: tenantContext.expires_at, trace,
+              tenantBoundaryExpiresAtNow: () => activeTenantBoundaryExpiresAt,
               canonicalPersonId: operation.canonical_person_id as string,
               canonicalProjectId: expectedScope.project_id,
               postReply: async (replyEvent, text, effectId = providerKey) => {
@@ -2587,6 +2597,7 @@ interface SharedReplyRuntimeInput {
   claudeRuntime: ReturnType<typeof resolveClaudeRuntimeConfig>;
   tenantBoundaryHandle: string;
   tenantBoundaryExpiresAt: string;
+  tenantBoundaryExpiresAtNow?: () => string;
   trace: TurnRuntimeTrace;
   postReply(event: SlackQueueEvent, text: string, effectId?: string): Promise<string>;
   /** Set only for an already accepted Company Authority actor. */
@@ -2614,6 +2625,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
     claudeRuntime,
     tenantBoundaryHandle,
     tenantBoundaryExpiresAt,
+    tenantBoundaryExpiresAtNow,
     trace,
     postReply,
   } = input;
@@ -2702,6 +2714,7 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       oauthConfigured: true,
       tenantBoundaryHandle,
       tenantBoundaryExpiresAt,
+      tenantBoundaryExpiresAtNow,
       claudeRuntime,
       brainbaseProjectCode: canonicalProjectId,
       runtimeContext: placement.runtimeContext
