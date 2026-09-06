@@ -590,13 +590,11 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
-  it("mana-reply-judgment-hook-503:ac:6 fails closed when a control-plane receipt identity is invalid or missing", () => {
-    for (const [receiptId, receiptName, includeReceipt, expectedCode] of [
-      ["different-resolve-turn", "mcp__brainbase__brainbase_resolve_turn", true,
+  it("mana-reply-judgment-hook-503:ac:6 tolerates an omitted control-plane receipt but rejects invalid identities", () => {
+    for (const [receiptId, receiptName, expectedCode] of [
+      ["different-resolve-turn", "mcp__brainbase__brainbase_resolve_turn",
         "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing"],
-      ["resolve-turn", "mcp__brainbase__brainbase_resolve_turn", false,
-        "reply_judgment_tool_audit_mismatch_posttool_receipt_missing"],
-      ["resolve-turn", "mcp__brainbase__brainbase_judgment_state_record", true,
+      ["resolve-turn", "mcp__brainbase__brainbase_judgment_state_record",
         "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing"],
     ] as const) {
       const lines = stream().split("\n");
@@ -607,10 +605,10 @@ describe("Slack reply Judgment lifecycle", () => {
             type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
           }] },
         }),
-        ...(includeReceipt ? [JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1", {
+        JSON.stringify(hook("PostToolUse", zeroCallLine, "turn-1", {
           tool_use_id: receiptId,
           tool_name: receiptName,
-        }))] : []),
+        })),
         JSON.stringify({
           type: "user", session_id: "session-1", message: { content: [{
             type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
@@ -622,6 +620,22 @@ describe("Slack reply Judgment lifecycle", () => {
       expect(() => parseReplyJudgmentStream(lines.join("\n")))
         .toThrow(expectedCode);
     }
+
+    const withoutReceipt = stream().split("\n");
+    const stopIndex = withoutReceipt.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    withoutReceipt.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "resolve-turn", name: "mcp__brainbase__brainbase_resolve_turn", input: {},
+        }] },
+      }),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "resolve-turn", content: "{}",
+        }] },
+      }),
+    );
+    expect(parseReplyJudgmentStream(withoutReceipt.join("\n"))).toMatchObject({ toolJournal: [] });
   });
 
   it("mana-reply-judgment-hook-503:ac:7 classifies binding failures without exposing identities", () => {
