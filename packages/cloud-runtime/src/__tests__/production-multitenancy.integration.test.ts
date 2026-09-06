@@ -279,6 +279,73 @@ describe("production multitenancy integration", () => {
     expect(safeOperationalFailureReason(new Error("task_board_schedule_enqueue_failed"))).toBeUndefined();
     expect(safeOperationalFailureReason("meeting_minutes_run_not_found")).toBeUndefined();
   });
+
+  it("keeps receipt failure codes across an accounting replay without rerunning the receipt", async () => {
+    const { value, publicKey } = await signedEnvelope({
+      tenant_id: TENANT_A,
+      connection_id: CONNECTION_A,
+      workspace_id: "T-A",
+      channel_id: "C-A",
+      actor_principal_id: "person-a",
+      project_id: "project-a",
+      deployment_id: DEPLOYMENT_A,
+      event_id: "Ev-A-RECEIPT-REPLAY",
+      operation_id: "op_01ARZ3NDEKTSV4RRFFQ69G5FBR",
+      correlation_id: "cor_01ARZ3NDEKTSV4RRFFQ69G5FBS",
+    });
+    const verifier = new TenantRuntimeBoundaryVerifier({
+      read_authoritative_snapshot: async () => snapshotA,
+      resolve_verification_key: async () => publicKey,
+    });
+
+    for (const [code, retryable] of [
+      ["RUN_RECEIPT_FORBIDDEN", false],
+      ["RUN_RECEIPT_UPSTREAM_FAILED", true],
+      ["RUN_RECEIPT_TIMEOUT", true],
+      ["RUN_RECEIPT_AUTHORITY_UNAVAILABLE", true],
+      ["RUN_RECEIPT_AUTHORITY_REJECTED", false],
+    ] as const) {
+      const ledger = new TenantAccountingLedger();
+      const ownership = new IdempotencyMemoryStore();
+      const quota = { read_authoritative_decision: vi.fn(async () => allowedQuota(TENANT_A)) };
+      const accounting = { write: vi.fn(async () => ({ result_ref: `receipt-${code}` })) };
+      accounting.write.mockRejectedValueOnce(new Error("accounting_unavailable"));
+      const process = vi.fn(async () => { throw new TenantBoundaryError("brainbase_proxy", code); });
+      const logError = vi.fn();
+      const run = (message: ReturnType<typeof queueMessage>) => consumeTenantQueueMessage(message, {
+        verifier,
+        expected_scope: () => expectedScopeA,
+        now: () => NOW,
+        process: () => executeTenantRuntimeOperation({
+          tenant_context: value,
+          expected_scope: expectedScopeA,
+          verifier,
+          quota,
+          accounting,
+          ledger,
+          usage_unit: "model_tokens",
+          now: () => NOW,
+          process,
+        }),
+        ownership,
+        payload_hash: () => `sha256:${"a".repeat(64)}`,
+        retention_until: () => RETENTION_UNTIL,
+        log_error: logError,
+      });
+      const first = queueMessage(value);
+      await run(first);
+      const replay = queueMessage(value);
+      await run(replay);
+
+      expect(first.retry).toHaveBeenCalledOnce();
+      expect(replay.retry).toHaveBeenCalledTimes(retryable ? 1 : 0);
+      expect(replay.ack).toHaveBeenCalledTimes(retryable ? 0 : 1);
+      expect(process).toHaveBeenCalledOnce();
+      expect(accounting.write).toHaveBeenCalledTimes(2);
+      expect(logError).toHaveBeenLastCalledWith(expect.objectContaining({ code }));
+    }
+  });
+
   it("runs the production queue, quota, Slack delivery, and accounting path once across redelivery", async () => {
     const { value, publicKey } = await signedEnvelope({
       tenant_id: TENANT_A,

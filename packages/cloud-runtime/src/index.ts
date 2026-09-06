@@ -93,7 +93,7 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
-import { MeetingMinutesRunReceiptClient } from "./meeting-minutes-run-receipt.js";
+import { classifyMeetingMinutesRunReceiptFailure, MeetingMinutesRunReceiptClient } from "./meeting-minutes-run-receipt.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
 import { hasStableMeetingMinutesRecoveryAuthority, isMeetingMinutesAdminRecoveryEligible,
@@ -1401,14 +1401,25 @@ function meetingMinutesClients(
           (credentialFetch) => taskClient(credentialFetch).updateTask(taskId, input, idempotencyKey));
       },
       emitRunReceipt: (receipt: Parameters<MeetingMinutesRunReceiptClient["emit"]>[0]) =>
-        effects.boundary("brainbase_proxy", () => new MeetingMinutesRunReceiptClient(
-          env.BRAINBASE_RUN_RECEIPT_INGEST_URL
-            ?? (env.BRAINBASE_TASK_API_BASE_URL
-              ? new URL("/api/run-receipts/ingest", env.BRAINBASE_TASK_API_BASE_URL).toString()
-              : ""),
-          env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN,
-        ).emit(receipt)).catch((error: unknown) => {
+        effects.boundary("brainbase_proxy", async () => {
+          try {
+            return await new MeetingMinutesRunReceiptClient(
+              env.BRAINBASE_RUN_RECEIPT_INGEST_URL
+                ?? (env.BRAINBASE_TASK_API_BASE_URL
+                  ? new URL("/api/run-receipts/ingest", env.BRAINBASE_TASK_API_BASE_URL).toString()
+                  : ""),
+              env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN,
+            ).emit(receipt);
+          } catch (error) {
+            const failure = classifyMeetingMinutesRunReceiptFailure(error);
+            if (failure.code !== "RUN_RECEIPT_DELIVERY_FAILED") {
+              throw new TenantBoundaryError("brainbase_proxy", failure.code);
+            }
+            throw error;
+          }
+        }).catch((error: unknown) => {
           if (!(error instanceof TenantBoundaryError)) throw error;
+          if (error.code.startsWith("RUN_RECEIPT_")) throw error;
           if (error.code === "AUTHORITY_UNAVAILABLE" || error.code === "WORKSPACE_CONNECTION_UNAVAILABLE"
             || error.code === "UPSTREAM_UNAVAILABLE") {
             throw new Error("meeting_minutes_run_receipt_authority_unavailable");
