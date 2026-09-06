@@ -1,0 +1,85 @@
+name: 議事録の生成だけを確認
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 入力を読み取る議事録run ID
+        required: true
+        type: string
+      tenant_id:
+        description: 対象tenant ID
+        required: true
+        type: string
+      workspace_id:
+        description: 対象Slack workspace ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meeting-minutes-admin-${{ inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: 本番生成機を同じ入力で確認
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://unson-business-mana-runtime.unson.workers.dev
+    steps:
+      - name: 生成だけを一度実行
+        shell: bash
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          TENANT_ID: ${{ inputs.tenant_id }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+          SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[A-Za-z0-9_-]{3,260}$ ]]
+          [[ "$TENANT_ID" =~ ^[A-Za-z0-9_-]{3,128}$ ]]
+          [[ "$WORKSPACE_ID" =~ ^[A-Z0-9]{3,32}$ ]]
+          test -n "$SANDBOX_PROBE_TOKEN"
+          probe_id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          echo "probe_id=$probe_id"
+          # A transport failure is unknown. Do not retry a generation POST.
+          status="$(curl -sS --connect-timeout 15 --max-time 900 \
+            -o "$response_file" -w '%{http_code}' \
+            -X POST -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -cn --arg runId "$RUN_ID" --arg tenantId "$TENANT_ID" \
+              --arg workspaceId "$WORKSPACE_ID" --arg probeId "$probe_id" \
+              '{runId:$runId,tenantId:$tenantId,workspaceId:$workspaceId,probeId:$probeId}')" \
+            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-generation-probe")" || {
+              echo '生成結果を受信できませんでした。結果は未確認です。自動再実行はしません。' >&2
+              exit 1
+            }
+          echo "http_status=$status"
+          jq -e 'type == "object"' "$response_file" >/dev/null
+          jq '
+            def n: if type == "number" then . else null end;
+            def b: if type == "boolean" then . else null end;
+            def allowed($values): . as $v | if $values|index($v) then $v else null end;
+            {ok:(.ok|b), generationOk:(.generationOk|b), stage:(.stage|allowed(["authorization","execution","accounting","download","context","generation","completed"])),
+             code:(.code|allowed(["meeting_minutes_generation_probe_failed","meeting_minutes_destination_missing","meeting_minutes_transcript_empty","meeting_minutes_transcript_changed","meeting_minutes_context_identity_missing","meeting_minutes_context_receipt_missing","meeting_minutes_context_invalid_receipt","meeting_minutes_context_identity_mismatch","meeting_minutes_context_changed","meeting_minutes_context_partial","meeting_minutes_context_unavailable","meeting_minutes_context_output_mismatch","meeting_minutes_context_source_ref_unknown","meeting_minutes_context_attestation_mismatch","meeting_minutes_context_mode_invalid","meeting_minutes_generation_failed","meeting_minutes_generation_invalid","meeting_minutes_generation_result_error","meeting_minutes_generation_result_missing","meeting_minutes_generation_stream_malformed","meeting_minutes_generation_stream_too_large","meeting_minutes_generation_stream_too_many_events","meeting_minutes_probe_scope_invalid","meeting_minutes_run_not_found","meeting_minutes_probe_not_authorized","meeting_minutes_intake_paused","meeting_minutes_probe_execution_failed","UPSTREAM_UNAVAILABLE","CROSS_TENANT_CANDIDATE","PROJECT_SCOPE_MISMATCH","QUOTA_EXCEEDED","QUOTA_APPROVAL_REQUIRED","TENANT_CONTEXT_EXPIRED","CONNECTION_REVOKED"])), durationMs:(.durationMs|n),
+             progress:(.progress|{downloaded:(.downloaded|b),transcriptVerified:(.transcriptVerified|b),
+               contextResolved:(.contextResolved|b),generationStarted:(.generationStarted|b),generationCompleted:(.generationCompleted|b)}),
+             generation:(.generation|{elapsedMs:(.elapsedMs|n),timeoutMs:(.timeoutMs|n),exitCode:(.exitCode|n),
+               outcome:(.outcome|allowed(["success","timeout","nonzero_exit","transport_failure"])),
+               stderrCode:(.stderrCode|allowed(["TIMEOUT","RATE_LIMITED","AUTHENTICATION_FAILED","HOOK_FAILED","CLI_ERROR","UNKNOWN"])),
+               stdoutBytes:(.stdoutBytes|n),streamEventCount:(.streamEventCount|n),
+               progress:(.progress|{prompt_written:(.prompt_written|b),exec_started:(.exec_started|b),stdout_observed:(.stdout_observed|b),
+                 hook_observed:(.hook_observed|b),result_observed:(.result_observed|b)})}),
+             result:(.result|{taskCount:(.taskCount|n),sourceRefCount:(.sourceRefCount|n),decisionCandidateCount:(.decisionCandidateCount|n),
+               titleChars:(.titleChars|n),overviewChars:(.overviewChars|n),bodyChars:(.bodyChars|n)})}' "$response_file"
+          jq -e --arg probeId "$probe_id" --arg status "$status" \
+            '$status == "200" and .probeId == $probeId and .ok == true' "$response_file" >/dev/null
+          echo '同じ入力で生成が完了しました。元runの保存・投稿・タスク登録は実行していません。' >> "$GITHUB_STEP_SUMMARY"
