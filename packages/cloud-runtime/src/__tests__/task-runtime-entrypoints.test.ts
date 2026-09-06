@@ -4,6 +4,7 @@ import {
   enqueueScheduledTaskBoardRepair,
   issueTaskWriteRequestContext,
   processTaskBoardRepair,
+  taskBoardRepairCapabilityId,
   taskBoardTargets,
 } from "../task-runtime-entrypoints.js";
 
@@ -60,6 +61,15 @@ const resolveTaskBoardTenant = async (input: TaskBoardRepairEvent) => ({
 }) as never;
 
 describe("Cloudflare task runtime entrypoints", () => {
+  it("keeps task-write repairs on runtime.execute and service repairs on task_board_send", () => {
+    expect(taskBoardRepairCapabilityId({ reason: "task_write" }, "runtime.execute"))
+      .toBe("runtime.execute");
+    expect(taskBoardRepairCapabilityId({ reason: "scheduled" }, "runtime.execute"))
+      .toBe("task_board_send");
+    expect(taskBoardRepairCapabilityId({ reason: "manual" }, "runtime.execute"))
+      .toBe("task_board_send");
+  });
+
   it("rejects TaskBoard scheduling when canonical targets are absent instead of creating legacy targets", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const env = {
