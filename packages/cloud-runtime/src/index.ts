@@ -1205,10 +1205,13 @@ function createMeetingMinutesTenantEffectGuard(input: {
 
 function meetingMinutesClients(
   env: Env,
-  effects: MeetingMinutesTenantEffectGuard,
-  tenantContext: TenantContextEnvelope,
+  initialEffects: MeetingMinutesTenantEffectGuard,
+  initialTenantContext: TenantContextEnvelope,
   tenantBoundaryHandle?: string,
+  refresh?: { expectedScope: ExpectedTenantScope; verifier: TenantRuntimeBoundaryVerifier; now(): string },
 ) {
+  let effects = initialEffects;
+  let tenantContext = initialTenantContext;
   const claudeRuntime = resolveClaudeRuntimeConfig(env);
   const destinations = meetingMinutesRuntimeConfig(env).destinations;
   if (env.MEETING_MINUTES_ENABLED === "true") effects.preflightDestinationSlack(destinations);
@@ -1263,6 +1266,16 @@ function meetingMinutesClients(
     },
     resume: {
       contextMode,
+      refreshAuthorization: refresh ? async () => {
+        const fresh = await reissueLongRunningTenantContext(env, tenantContext, refresh.expectedScope);
+        tenantContext = fresh;
+        effects = createMeetingMinutesTenantEffectGuard({ env,
+          tenant_context: fresh,
+          expected_scope: refresh.expectedScope,
+          verifier: refresh.verifier,
+          now: refresh.now,
+        });
+      } : undefined,
       resolveContext: (identity: Parameters<MeetingMinutesBrainbaseContextClient["resolve"]>[0], receiptId?: string,
         projectId?: string) => {
         const contextDestination = destinations.find((destination) => destination.projectId === projectId
@@ -2842,7 +2855,8 @@ async function processTenantMeetingMinutesSelection(input: {
     ));
     const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
     await withDisposableResource(() => getWorkspace(handle), async (workspace) => {
-      const clients = meetingMinutesClients(env, effects, tenantContext, tenantBoundaryHandle);
+      const clients = meetingMinutesClients(env, effects, tenantContext, tenantBoundaryHandle,
+        { expectedScope, verifier, now });
       const recoveryEvent: MeetingMinutesRecovery = {
         kind: "meeting_minutes_recovery",
         runId: selection.runId,

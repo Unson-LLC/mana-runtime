@@ -201,6 +201,20 @@ describe("tenant Slack runtime wiring", () => {
     expect(clients.slice(redoStart)).toContain("boundary: effects.boundary");
   });
 
+  it("reissues meeting-minutes authority after long generation before downstream writes", () => {
+    const clientsStart = source.indexOf("function meetingMinutesClients(");
+    const clientsEnd = source.indexOf("\nasync function processTenantMeetingMinutesSelection", clientsStart);
+    const clients = source.slice(clientsStart, clientsEnd);
+    const selectionStart = source.indexOf("async function processTenantMeetingMinutesSelection(");
+    const selectionEnd = source.indexOf("\nasync function processTenantMeetingMinutesRedo", selectionStart);
+    const selection = source.slice(selectionStart, selectionEnd);
+
+    expect(clients).toContain("refreshAuthorization:");
+    expect(clients).toContain("reissueLongRunningTenantContext(env, tenantContext, expectedScope)");
+    expect(clients).toContain("tenant_context: fresh");
+    expect(selection).toContain("expectedScope, verifier, now");
+  });
+
   it("scopes redo Slack effect keys to the redo revision", () => {
     const clientsStart = source.indexOf("function meetingMinutesClients(");
     const clientsEnd = source.indexOf("function ", clientsStart + 1);
