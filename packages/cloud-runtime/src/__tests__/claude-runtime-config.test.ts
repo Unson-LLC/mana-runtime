@@ -133,8 +133,8 @@ describe("Cloudflare Claude runtime config", () => {
       "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop",
     ]);
     expect(settings.hooks.PreToolUse?.[0]?.matcher).toBe(".*");
-    expect(settings.hooks.PostToolUse?.[0]?.matcher).toBe("mcp__brainbase__.*");
-    expect(settings.hooks.PostToolUseFailure?.[0]?.matcher).toBe("mcp__brainbase__.*");
+    expect(settings.hooks.PostToolUse?.[0]?.matcher).toBe(".*");
+    expect(settings.hooks.PostToolUseFailure?.[0]?.matcher).toBe(".*");
     expect(JSON.parse(runtimeReplySettingsContent())).toEqual(settings);
     for (const eventName of ["UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"] as const) {
       expect(settings.hooks[eventName]?.[0]?.hooks).toEqual([
