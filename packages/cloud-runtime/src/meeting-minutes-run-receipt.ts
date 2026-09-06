@@ -41,6 +41,8 @@ export function classifyMeetingMinutesRunReceiptFailure(error: unknown): Meeting
     meeting_minutes_run_receipt_ingest_response_invalid: ["RUN_RECEIPT_INGEST_RESPONSE_INVALID", false],
     meeting_minutes_run_receipt_outcome_case_link_unconfirmed: ["RUN_RECEIPT_OUTCOME_CASE_LINK_UNCONFIRMED", false],
     meeting_minutes_run_receipt_readback_unconfirmed: ["RUN_RECEIPT_READBACK_UNCONFIRMED", false],
+    meeting_minutes_run_receipt_request_transport_failed: ["RUN_RECEIPT_INGEST_TRANSPORT_FAILED", true],
+    meeting_minutes_run_receipt_readback_transport_failed: ["RUN_RECEIPT_READBACK_TRANSPORT_FAILED", true],
   };
   const classified = exact[message];
   if (classified) return { stage, code: classified[0], retryable: classified[1] };
@@ -113,6 +115,9 @@ export class MeetingMinutesRunReceiptClient {
     const response = await this.fetchImpl(this.ingestUrl, {
       method: "POST", headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(receipt), signal: AbortSignal.timeout(15_000),
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.name === "TimeoutError") throw error;
+      throw new Error("meeting_minutes_run_receipt_request_transport_failed");
     });
     if (response.status !== 200 && response.status !== 201) {
       throw new Error(`meeting_minutes_run_receipt_request_failed:${response.status}`);
@@ -136,6 +141,9 @@ export class MeetingMinutesRunReceiptClient {
     readbackUrl.searchParams.set("project_id", receipt.run.project_id);
     const readback = await this.fetchImpl(readbackUrl, {
       headers: { authorization: `Bearer ${this.token}`, accept: "application/json" }, signal: AbortSignal.timeout(15_000),
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.name === "TimeoutError") throw error;
+      throw new Error("meeting_minutes_run_receipt_readback_transport_failed");
     });
     if (readback.status !== 200) throw new Error(`meeting_minutes_run_receipt_readback_failed:${readback.status}`);
     const confirmation = await readback.json().catch(() => null) as {

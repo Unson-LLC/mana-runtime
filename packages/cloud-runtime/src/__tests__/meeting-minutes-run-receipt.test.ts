@@ -1,4 +1,5 @@
-import { buildMeetingMinutesRunReceipt, MeetingMinutesRunReceiptClient } from "../meeting-minutes-run-receipt.js";
+import { buildMeetingMinutesRunReceipt, classifyMeetingMinutesRunReceiptFailure,
+  MeetingMinutesRunReceiptClient } from "../meeting-minutes-run-receipt.js";
 import type { MeetingMinutesRun } from "../meeting-minutes-contracts.js";
 
 function completedRun(overrides: Partial<MeetingMinutesRun> = {}): MeetingMinutesRun {
@@ -80,5 +81,27 @@ describe("meeting-minutes run receipt", () => {
     await expect(new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token", fetchImpl)
       .emit(receipt!)).rejects.toThrow("meeting_minutes_run_receipt_outcome_case_link_unconfirmed");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies ingest and readback transport failures without persisting arbitrary upstream details", async () => {
+    const receipt = await buildMeetingMinutesRunReceipt(completedRun());
+    const ingestFetch = vi.fn().mockRejectedValue(new TypeError("unsafe transport detail"));
+    const ingestError = await new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token", ingestFetch)
+      .emit(receipt!).catch((error: unknown) => error);
+    expect((ingestError as Error).message).toBe("meeting_minutes_run_receipt_request_transport_failed");
+    expect(classifyMeetingMinutesRunReceiptFailure(ingestError)).toEqual({
+      stage: "run_receipt", code: "RUN_RECEIPT_INGEST_TRANSPORT_FAILED", retryable: true,
+    });
+
+    const readbackFetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ status: "created", run: { id: "brainbase-run-1" },
+        outcome_case_links: [{ case_id: "case_01", status: "linked" }] }, { status: 201 }))
+      .mockRejectedValueOnce(new TypeError("unsafe readback detail"));
+    const readbackError = await new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token", readbackFetch)
+      .emit(receipt!).catch((error: unknown) => error);
+    expect((readbackError as Error).message).toBe("meeting_minutes_run_receipt_readback_transport_failed");
+    expect(classifyMeetingMinutesRunReceiptFailure(readbackError)).toEqual({
+      stage: "run_receipt", code: "RUN_RECEIPT_READBACK_TRANSPORT_FAILED", retryable: true,
+    });
   });
 });
