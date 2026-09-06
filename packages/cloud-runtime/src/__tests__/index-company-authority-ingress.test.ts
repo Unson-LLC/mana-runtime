@@ -510,13 +510,14 @@ describe("default Worker Company Authority ingress", () => {
     const waitUntil = vi.fn();
     const response = await worker.fetch(signedSelectionRequest(), bindings as never, { waitUntil } as never);
 
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({ error: "administrator_action_required" });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(waitUntil).toHaveBeenCalledOnce();
+    await Promise.all(waitUntil.mock.calls.map(([work]) => work));
     expect(runtimeMocks.legacyAuthority.resolve_workspace_connection).not.toHaveBeenCalled();
     expect(runtimeMocks.legacyAuthority.issue_tenant_context).not.toHaveBeenCalled();
     expect(runtimeMocks.legacyAuthority.read_workspace_connection).not.toHaveBeenCalled();
     expect(bindings.TECHKNIGHT_EVENTS.send).not.toHaveBeenCalled();
-    expect(waitUntil).not.toHaveBeenCalled();
   });
 
   it("fails closed before Queue consumption when the destination authority project is unmapped", async () => {

@@ -1,10 +1,20 @@
-import { immediateStatusFailedMessage, interactionActionFailedMessage, interactionEnqueueFailedMessage,
+import { destinationSelectedMessage, immediateStatusFailedMessage, interactionActionFailedMessage, interactionEnqueueFailedMessage,
   selectionConfirmationFailedMessage, statusProjectionFailedMessage, tenantInteractionFailedMessage,
   threadCoordinateMissingMessage, MeetingMinutesSlackClient, redoFailedMessage } from "../meeting-minutes-slack.js";
 import { meetingMinutesTaskActionFailure, type MeetingMinutesRun } from "../meeting-minutes-contracts.js";
 import { deriveCorrelationId } from "../multitenancy/ids.js";
 
 describe("MeetingMinutesSlackClient", () => {
+  it("shows a pending selection without offering another button or claiming generation started", () => {
+    const message = destinationSelectedMessage("run-42", "meeting.txt", {
+      id: "board", name: "定例会議",
+    } as Parameters<typeof destinationSelectedMessage>[2]);
+    expect(message.replace_original).toBe(true);
+    expect(message.text).toContain("処理の開始を確認しています");
+    expect(message.blocks.some((block) => block.type === "actions")).toBe(false);
+    expect(JSON.stringify(message)).not.toMatch(/作成中|共有しました|共有済み/);
+  });
+
   it("derives a stable inquiry id from the same run, stage, and code", () => {
     const first = deriveCorrelationId("run-42", "status_projection", "STATUS_PROJECTION_FAILED");
     expect(first).toBe(deriveCorrelationId("run-42", "status_projection", "STATUS_PROJECTION_FAILED"));

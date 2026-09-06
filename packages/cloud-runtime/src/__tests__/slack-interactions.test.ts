@@ -48,6 +48,50 @@ describe("handleMeetingMinutesInteraction", () => {
   function expectEphemeral(message: unknown) {
     expect(message).toMatchObject({ replace_original: false, response_type: "ephemeral" });
   }
+  it("acknowledges before remote authority resolves and retains authorization before effects", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const resolveTenantEffects = vi.fn(async (identity: TenantInteractionIdentity) => {
+      await gate;
+      return tenantBoundary.resolveTenantEffects(identity);
+    });
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    const response = await handleMeetingMinutesInteraction(request(payload), {
+      signingSecret: secret, expectedAppId: "A1", operatorUserIds: new Set(["U1"]),
+      nowMs: now * 1000, destinations, send, updateOriginal, resolveTenantEffects,
+      defer: background.defer, acknowledgeBeforeTenant: true,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(send).not.toHaveBeenCalled();
+    expect(updateOriginal).not.toHaveBeenCalled();
+    expect(background.work).toHaveLength(1);
+    release();
+    await Promise.all(background.work);
+    expect(send).toHaveBeenCalledOnce();
+    expect(updateOriginal).toHaveBeenCalledOnce();
+  });
+
+  it("replaces the selector before waiting for a missing thread lookup", async () => {
+    let release!: (value: string) => void;
+    const thread = new Promise<string>((resolve) => { release = resolve; });
+    const missingThread = structuredClone(payload);
+    delete (missingThread as { message?: unknown }).message;
+    const send = vi.fn(); const updateOriginal = vi.fn(); const background = deferred();
+    await handleMeetingMinutesInteraction(request(missingThread), {
+      signingSecret: secret, expectedAppId: "A1", operatorUserIds: new Set(["U1"]),
+      nowMs: now * 1000, ...tenantBoundary, destinations, send, updateOriginal,
+      resolveThreadTs: () => thread, defer: background.defer,
+    });
+    await vi.waitFor(() => expect(updateOriginal).toHaveBeenCalledOnce());
+    expect(JSON.stringify(updateOriginal.mock.calls[0][1])).toContain("処理の開始を確認しています");
+    expect(send).not.toHaveBeenCalled();
+    release("1.0");
+    await Promise.all(background.work);
+    expect(send).toHaveBeenCalledOnce();
+    expect(updateOriginal).toHaveBeenCalledOnce();
+  });
+
   it("rejects an oversized declared body before signature verification or tenant resolution", async () => {
     const send = vi.fn();
     const resolveTenantEffects = vi.fn(tenantBoundary.resolveTenantEffects);
@@ -89,7 +133,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(result.status).toBe(200);
     expect(send).toHaveBeenCalledOnce();
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
-      text: "meeting.txt の保存先に Back Office を受け付けました。議事録を作成中です。",
+      text: "meeting.txt の保存先に Back Office が選択されました。処理の開始を確認しています。",
     }), expect.any(Function));
   });
 
@@ -132,7 +176,7 @@ describe("handleMeetingMinutesInteraction", () => {
       workspace_id: "T1", channel_id: "C1",
     }), expect.objectContaining({ id: "mana", contextProjectCode: "back-office" }));
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
-      text: "meeting.txt の保存先に Back Office を受け付けました。議事録を作成中です。",
+      text: "meeting.txt の保存先に Back Office が選択されました。処理の開始を確認しています。",
     }), expect.any(Function));
     expect(showProcessing).toHaveBeenCalledWith(
       { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
@@ -240,7 +284,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url, expect.objectContaining({
       text: "定例.txt の保存先プロジェクトを選択してください。",
     }), expect.any(Function));
-    const message = updateOriginal.mock.calls[0]?.[1];
+    const message = updateOriginal.mock.calls.at(-1)?.[1];
     expect(JSON.stringify(message)).toContain("ボード定例");
     expect(JSON.stringify(message)).not.toContain("Back Office");
     expect(JSON.stringify(message)).toContain("組織選択に戻る");
@@ -250,7 +294,7 @@ describe("handleMeetingMinutesInteraction", () => {
     organizationPayload.actions[0]!.action_id = "mana_meeting_minutes_choose_organization:tech-knight";
     organizationPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", organizationId: "tech-knight",
       fileName: "定例.txt" });
-    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("selector unavailable"))
+    const send = vi.fn(); const updateOriginal = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("selector unavailable"))
       .mockResolvedValueOnce(undefined); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(organizationPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
@@ -258,7 +302,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
     expect(send).not.toHaveBeenCalled();
-    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(updateOriginal).toHaveBeenCalledTimes(3);
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
@@ -273,14 +317,14 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).not.toHaveBeenCalled();
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("雲孫 事業運営");
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("Tech Knight");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("雲孫 事業運営");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("Tech Knight");
   });
   it("uses a bounded fallback when the back-action projection fails", async () => {
     const backPayload = structuredClone(payload);
     backPayload.actions[0]!.action_id = "mana_meeting_minutes_back_to_organizations";
     backPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "定例.txt" });
-    const send = vi.fn(); const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("selector unavailable"))
+    const send = vi.fn(); const updateOriginal = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("selector unavailable"))
       .mockResolvedValueOnce(undefined); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(backPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
@@ -288,7 +332,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
     expect(send).not.toHaveBeenCalled();
-    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(updateOriginal).toHaveBeenCalledTimes(3);
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("STATUS_PROJECTION_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toMatch(/問い合わせID: cor_[0-9A-HJKMNP-TV-Z]{26}/);
@@ -332,7 +376,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
     expect(updateOriginal).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(updateOriginal.mock.calls[0])).toContain("保存先を受け付けました");
+    expect(JSON.stringify(updateOriginal.mock.calls[0])).toContain("保存先が選択されました");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("INTERACTION_ENQUEUE_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("処理ID: Ev1_F1");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("失敗段階: 処理受付");
@@ -386,7 +430,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledOnce();
     expect(updateOriginal).toHaveBeenCalledOnce();
-    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("保存先を受け付けました");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("保存先が選択されました");
   });
   it("uses one deterministic compound code when both status projections fail", async () => {
     const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("status unavailable"));
@@ -428,8 +472,8 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).not.toHaveBeenCalled();
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("GitHubの議事録・文字起こしと自動登録タスクを取り消し");
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("取り消して選び直す");
+    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("GitHubの議事録・文字起こしと自動登録タスクを取り消し");
+    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("取り消して選び直す");
     expectEphemeral(updateOriginal.mock.calls[0]?.[1]);
   });
   it("forwards the displayed redo revision through confirmation and queueing", async () => {
@@ -441,7 +485,7 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    const confirmation = updateOriginal.mock.calls[0]?.[1] as
+    const confirmation = updateOriginal.mock.calls.at(-1)?.[1] as
       { blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }> };
     const confirmButton = confirmation.blocks?.flatMap((block) => block.elements ?? [])
       .find((element) => element.action_id === "mana_meeting_minutes_confirm_redo");
@@ -473,14 +517,14 @@ describe("handleMeetingMinutesInteraction", () => {
     redoPayload.actions[0]!.action_id = "mana_meeting_minutes_redo";
     redoPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
     const send = vi.fn();
-    const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("confirmation projection unavailable"))
+    const updateOriginal = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("confirmation projection unavailable"))
       .mockResolvedValueOnce(undefined);
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(redoPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(updateOriginal).toHaveBeenCalledTimes(3);
     const fallback = JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1]);
     expect(fallback).toContain("STATUS_PROJECTION_FAILED");
     expect(fallback).toContain("処理ID: Ev1_F1");
@@ -498,8 +542,8 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先変更の要求を受け付けました");
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("古い操作の場合は現在の議事録・タスクを変更せず終了します");
+    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("保存先変更の要求を受け付けました");
+    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("古い操作の場合は現在の議事録・タスクを変更せず終了します");
     expectEphemeral(updateOriginal.mock.calls[0]?.[1]);
     expect(send).toHaveBeenCalledWith({ kind: "meeting_minutes_redo", runId: "Ev1_F1", workspaceId: "T1", appId: "A1",
       channelId: "C1", threadTs: "1.0", userId: "U1", actionTs: "1.2", revision: 0 });
@@ -514,9 +558,9 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000, ...tenantBoundary,
       destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(updateOriginal).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("保存先変更の要求を受け付けました");
-    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("取り消しを再実行");
+    expect(updateOriginal).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(updateOriginal.mock.calls[1]?.[1])).toContain("保存先変更の要求を受け付けました");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("取り消しを再実行");
     expectEphemeral(updateOriginal.mock.calls[0]?.[1]);
     expectEphemeral(updateOriginal.mock.calls[1]?.[1]);
   });
@@ -531,7 +575,7 @@ describe("handleMeetingMinutesInteraction", () => {
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       ...tenantBoundary, resolveTenantEffects, destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    const retryMessage = updateOriginal.mock.calls[1]?.[1] as {
+    const retryMessage = updateOriginal.mock.calls.at(-1)?.[1] as {
       blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }>;
     };
     const retryButton = retryMessage.blocks?.flatMap((block) => block.elements ?? [])
@@ -579,14 +623,14 @@ describe("handleMeetingMinutesInteraction", () => {
     confirmPayload.actions[0]!.action_id = "mana_meeting_minutes_confirm_redo";
     confirmPayload.actions[0]!.value = JSON.stringify({ runId: "Ev1_F1", fileName: "meeting.txt" });
     const send = vi.fn().mockResolvedValue(undefined);
-    const updateOriginal = vi.fn().mockRejectedValueOnce(new Error("projection unavailable"))
+    const updateOriginal = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("projection unavailable"))
       .mockResolvedValueOnce(undefined);
     const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(confirmPayload), { signingSecret: secret,
       expectedTeamId: "T1", expectedAppId: "A1", operatorUserIds: new Set(["U1"]), nowMs: now * 1000,
       ...tenantBoundary, destinations, send, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
-    expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).toHaveBeenCalledTimes(3);
     const fallback = JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1]);
     expect(fallback).toContain("STATUS_PROJECTION_FAILED");
     expect(fallback).toContain("処理ID: Ev1_F1");
@@ -603,10 +647,10 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
     expect(send).not.toHaveBeenCalled(); expect(showProcessing).not.toHaveBeenCalled();
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("THREAD_COORDINATE_MISSING");
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).not.toContain("INTERACTION_ENQUEUE_FAILED");
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("失敗段階: スレッド特定");
-    expect(JSON.stringify(updateOriginal.mock.calls[0]?.[1])).toContain("処理ID: Ev1_F1");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("THREAD_COORDINATE_MISSING");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).not.toContain("INTERACTION_ENQUEUE_FAILED");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("失敗段階: スレッド特定");
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("処理ID: Ev1_F1");
     expect(updateOriginal).toHaveBeenCalledWith(payload.response_url,
       expect.objectContaining({ replace_original: true }), expect.any(Function));
   });
