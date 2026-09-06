@@ -1401,6 +1401,7 @@ function meetingMinutesClients(
   initialTenantContext: TenantContextEnvelope,
   tenantBoundaryHandle?: string,
   refresh?: { expectedScope: ExpectedTenantScope; verifier: TenantRuntimeBoundaryVerifier; now(): string },
+  traceExecution = false,
 ) {
   let effects = initialEffects;
   let tenantContext = initialTenantContext;
@@ -1503,7 +1504,7 @@ function meetingMinutesClients(
         return effects.boundary("container_launch", () => generateMeetingMinutesInSandbox(
           transcript, destination, context, mode, claudeRuntime,
           createTechKnightSandbox(env, `meeting-minutes-${crypto.randomUUID()}`),
-          tenantBoundaryHandle, observe));
+          tenantBoundaryHandle, observe, traceExecution));
       },
       saveGitHub: (input: Parameters<CloudflareMeetingMinutesGitHubClient["save"]>[0]) =>
         effects.boundary("mcp_gateway", () => new CloudflareMeetingMinutesGitHubClient(
@@ -3486,7 +3487,7 @@ export default {
               tenant_context: context, expected_scope: expectedScope, verifier, now: now(),
               refresh: { issue: () => reissueLongRunningTenantContext(env, context, expectedScope), now },
               execute: (tenantBoundaryHandle) => {
-                const resume = meetingMinutesClients(env, effects, context, tenantBoundaryHandle).resume;
+                const resume = meetingMinutesClients(env, effects, context, tenantBoundaryHandle, undefined, true).resume;
                 return runMeetingMinutesGenerationProbe(run, { contextMode: resume.contextMode,
                   download: resume.download, resolveContext: resume.resolveContext, generate: resume.generate });
               },

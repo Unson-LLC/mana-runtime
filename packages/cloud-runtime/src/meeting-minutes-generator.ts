@@ -1,3 +1,4 @@
+import { MEETING_MINUTES_TRACE_RUNNER_PATH, MEETING_MINUTES_TRACE_RUNNER_SOURCE, parseMeetingMinutesExecutionTrace } from "./meeting-minutes-execution-trace.js";
 import type { AuditedGeneratedMeetingMinutes, GeneratedMeetingMinutes, MeetingMinutesDestination,
   MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
   MeetingMinutesGenerationDiagnostics, MeetingMinutesGenerationStdoutErrorCode,
@@ -934,6 +935,7 @@ export async function generateMeetingMinutesInSandbox(
   sandbox: ReplySandbox,
   tenantBoundaryHandle: string,
   observe?: (diagnostics: MeetingMinutesGenerationDiagnostics) => Promise<void>,
+  traceExecution = false,
 ): Promise<AuditedGeneratedMeetingMinutes> {
   if (!tenantBoundaryHandle) throw new Error("tenant_boundary_required");
   const generationRuntime: ClaudeRuntimeConfig = claudeRuntime.model === "opus"
@@ -944,20 +946,28 @@ export async function generateMeetingMinutesInSandbox(
     schemaVersion: "meeting_minutes_generation_diagnostics.v1", startedAt: new Date(startedAtMs).toISOString(),
     model: generationRuntime.model, timeoutMs: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
     progress: { prompt_written: false, exec_started: false },
+    ...(traceExecution ? { phaseTimings: {} } : {}),
   };
   try {
+    const prompt = generationPrompt(transcript, destination, context, mode);
+    if (traceExecution) {
+      base.inputChars = { transcript: transcript.length, context: JSON.stringify(context).length, prompt: prompt.length };
+      await sandbox.writeFile(MEETING_MINUTES_TRACE_RUNNER_PATH, MEETING_MINUTES_TRACE_RUNNER_SOURCE);
+    }
     await prepareMeetingMinutesRuntime(
       sandbox,
-      generationPrompt(transcript, destination, context, mode),
+      prompt,
       tenantBoundaryHandle,
     );
     base.progress.prompt_written = true;
+    if (base.phaseTimings) base.phaseTimings.prepareMs = Date.now() - startedAtMs;
     // Opus/xhigh repeatedly reaches the Queue wall-clock budget on long
     // transcripts. Keep the same audited prompt/schema contract, but execute
     // meeting-minutes generation with Sonnet so the job can finish in-band.
     const execution = sandbox.exec(buildRuntimeClaudeCommand("meeting-minutes", generationRuntime, {
       structuredOutput: "meeting-minutes",
       includeJudgmentHookEvents: true,
+      traceMeetingMinutes: traceExecution,
     }), {
       timeout: MEETING_MINUTES_GENERATION_TIMEOUT_MS,
       env: {
@@ -971,6 +981,10 @@ export async function generateMeetingMinutesInSandbox(
     base.progress.exec_started = true;
     await observe?.(structuredClone(base));
     const result = await execution;
+    if (traceExecution) {
+      const trace = parseMeetingMinutesExecutionTrace(result.stderr ?? "");
+      if (trace) base.executionTrace = trace;
+    }
     const finishedAtMs = Date.now();
     const stream = generationStreamProgress(result.stdout);
     const elapsedMs = safeDurationMs(result.duration) ?? safeDurationMs(result.elapsedMs)
@@ -1002,6 +1016,8 @@ export async function generateMeetingMinutesInSandbox(
       ...base, finishedAt: new Date(finishedAtMs).toISOString(), elapsedMs: Math.max(0, finishedAtMs - startedAtMs),
       outcome: timeout ? "timeout" : "transport_failure", stderrCode: timeout ? "TIMEOUT" : "UNKNOWN" });
   } finally {
-    await destroyTenantContainer(sandbox);
+    const cleanupStartedAt = Date.now();
+    try { await destroyTenantContainer(sandbox); }
+    finally { if (base.phaseTimings) base.phaseTimings.cleanupMs = Date.now() - cleanupStartedAt; }
   }
 }

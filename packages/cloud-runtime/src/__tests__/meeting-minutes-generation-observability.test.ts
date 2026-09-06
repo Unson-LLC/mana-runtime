@@ -76,6 +76,23 @@ describe("meeting minutes generation observability contract (RED)", () => {
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
+  it("enables the probe runner only explicitly and measures preparation and cleanup", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const sandbox = { writeFile: vi.fn(async () => { vi.advanceTimersByTime(10); }),
+      exec: vi.fn().mockResolvedValue({ success: true, exitCode: 0, stdout: successfulStream(), stderr: "" }),
+      destroy: vi.fn(async () => { vi.advanceTimersByTime(25); }) };
+    const generated = asRecord(await generateMeetingMinutesInSandbox(
+      "TRANSCRIPT_SECRET", destination, context, "required", { model: "sonnet" }, sandbox,
+      "tenant-boundary-handle", undefined, true,
+    ));
+    expect(sandbox.writeFile).toHaveBeenCalledWith("/tmp/meeting-minutes-trace-runner.mjs", expect.any(String));
+    expect(sandbox.exec.mock.calls[0]?.[0]).toContain("/tmp/meeting-minutes-trace-runner.mjs");
+    expect(generated.generationDiagnostics.phaseTimings).toEqual({ prepareMs: 30, cleanupMs: 25 });
+    expect(generated.generationDiagnostics.inputChars).toMatchObject({ transcript: 17 });
+    expect(JSON.stringify(generated.generationDiagnostics)).not.toContain("TRANSCRIPT_SECRET");
+  });
+
   it("uses the native SDK duration and diagnoses exit 124 as timeout only at the configured deadline", async () => {
     const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({
       success: false, exitCode: 124, stdout: "", stderr: "", command: "claude meeting-minutes",
