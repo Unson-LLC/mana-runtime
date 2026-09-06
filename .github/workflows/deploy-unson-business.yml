@@ -74,7 +74,7 @@ jobs:
           BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: ${{ secrets.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN }}
         run: |
           set -euo pipefail
-          printf '%s' "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN" | pnpm exec wrangler secret put BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN --config packages/cloud-runtime/wrangler.unson-business.jsonc
+          printf '%s' "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN" | pnpm --filter @mana-runtime/cloud-runtime exec wrangler secret put BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN --config packages/cloud-runtime/wrangler.unson-business.jsonc
 
       - name: 既存の安全ゲートを通して配備
         run: pnpm deploy:unson-business
