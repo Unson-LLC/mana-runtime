@@ -1,0 +1,323 @@
+{
+  "schema_version": "0.1.0",
+  "story_id": "meeting-minutes-stage-resume",
+  "generated_by": {
+    "caller": "codex",
+    "stage": "design"
+  },
+  "clauses": [
+    {
+      "id": "C-001",
+      "type": "contract",
+      "statement": "GitHub保存済みの共有は文脈取得・原文取得・生成へ戻らない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-1"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "shares a legacy GitHub result before attempting context for an unregistered Task"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/meeting-minutes-stage-resume.md",
+            "section": "責務と正本"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "shares a legacy GitHub result before attempting context for an unregistered Task"
+          }
+        ]
+      },
+      "confidence": 0.95
+    },
+    {
+      "id": "C-002",
+      "type": "contract",
+      "statement": "生成時の検証済みReceiptを固定保存し同じ会議のタスク再開に使う。旧runは必要時にだけ一致するReceiptを取得する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-2"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "retries Task registration from a persisted Receipt without reacquiring context or generation"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/meeting-minutes-stage-resume.md",
+            "section": "責務と正本"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "retries Task registration from a persisted Receipt without reacquiring context or generation"
+          }
+        ]
+      },
+      "confidence": 0.95
+    },
+    {
+      "id": "C-003",
+      "type": "contract",
+      "statement": "初回と再試行で共通のタスク連携を使い、ボード・カード修復は登録や文脈取得を呼ばない",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-3"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-task-integration.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "retries a Task board failure without reacquiring context, tasks, or generated minutes"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/meeting-minutes-stage-resume.md",
+            "section": "責務と正本"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "retries a Task board failure without reacquiring context, tasks, or generated minutes"
+          }
+        ]
+      },
+      "confidence": 0.95
+    },
+    {
+      "id": "C-004",
+      "type": "contract",
+      "statement": "タスク連携に必要な旧Receiptの取得失敗は共有済み成果物を保持して部分未完了を保存する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-4"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "shares a GitHub result from a contextless legacy run and defers Task integration"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/meeting-minutes-stage-resume.md",
+            "section": "責務と正本"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "shares a GitHub result from a contextless legacy run and defers Task integration"
+          }
+        ]
+      },
+      "confidence": 0.95
+    },
+    {
+      "id": "C-005",
+      "type": "contract",
+      "statement": "管理者の表示修復は外部更新と正本保存の成功後にだけ完了する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-5"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-lifecycle.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-lifecycle.test.ts",
+            "case": "updates the external display before saving the repaired state"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/meeting-minutes-stage-resume.md",
+            "section": "責務と正本"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-lifecycle.test.ts",
+            "must_cover": "updates the external display before saving the repaired state"
+          }
+        ]
+      },
+      "confidence": 0.95
+    },
+    {
+      "id": "INV-001",
+      "type": "invariant",
+      "statement": "既存の宛先・依頼者・workspaceの拒否境界と生成根拠検証・Task冪等キー・共有チェックポイントを維持する",
+      "origin": {
+        "story_refs": [
+          {
+            "kind": "acceptance_criteria",
+            "ac_id": "AC-6"
+          }
+        ],
+        "code_refs": [
+          {
+            "file": "packages/cloud-runtime/src/meeting-minutes-pipeline.ts"
+          }
+        ],
+        "test_refs": [
+          {
+            "file": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "case": "rejects a selection from a different operator after approval"
+          }
+        ],
+        "architecture_refs": [
+          {
+            "file": "docs/architecture/meeting-minutes-stage-resume.md",
+            "section": "責務と正本"
+          }
+        ]
+      },
+      "verifiable_by": {
+        "test_pattern": [
+          {
+            "file_glob": "packages/cloud-runtime/src/__tests__/meeting-minutes-pipeline.test.ts",
+            "must_cover": "rejects a selection from a different operator after approval"
+          }
+        ]
+      },
+      "confidence": 0.95
+    }
+  ],
+  "multi_tenancy": {
+    "schema_version": "0.1.0",
+    "applicability": "applicable",
+    "tenancy_model": "hybrid",
+    "tenant_identity": {
+      "canonical_key": "tenantId",
+      "resolved_from": [
+        "認証済みtenantContextとWorker設定"
+      ],
+      "resolution_point": "meetingMinutesWorkspaceNameでrunを取得する前",
+      "missing_behavior": "deny",
+      "ambiguity_behavior": "deny"
+    },
+    "propagation": {
+      "required_surfaces": [
+        "認証境界",
+        "run保存領域",
+        "外部書込adapter"
+      ],
+      "verified_surfaces": []
+    },
+    "resources": [
+      {
+        "name": "議事録runと固定Receipt",
+        "sharing": "tenant_partitioned",
+        "tenant_key": "tenantId",
+        "partition_key": "tenantId/workspaceId/meeting-minutes/runId",
+        "trust_zone": "既存Workspace Durable Object",
+        "residue_policy": "既存run保持方針を継承",
+        "data_owner": "mana-runtime",
+        "credential_scope": "認証済みtenantContextとworkspace"
+      }
+    ],
+    "credentials": {
+      "lookup_key": "tenantId",
+      "scope": "認証済みtenantContext、保存先organization、workspace",
+      "raw_secret_in_artifacts": "forbidden",
+      "cross_tenant_fallback": "forbidden"
+    },
+    "data": {
+      "canonical_owners": [
+        "mana-runtime"
+      ],
+      "residency": "既存tenant分離run領域",
+      "migration": "任意のreceiptフィールド追加。旧runは同じReceiptを必要時のみ取得。",
+      "rollback": "旧版は追加フィールドを無視でき、保存済み成果物と識別子を維持する。"
+    },
+    "failure_semantics": {
+      "unknown_tenant": "deny",
+      "ambiguous_tenant": "deny",
+      "unavailable_connection": "unavailable",
+      "no_data": "empty",
+      "cross_tenant_candidate": "deny_and_audit"
+    },
+    "deployment_modes": [
+      "managed_dedicated"
+    ],
+    "negative_scenarios": [
+      "unknown_tenant",
+      "ambiguous_tenant",
+      "unavailable_connection",
+      "no_data",
+      "cross_tenant_candidate"
+    ],
+    "graph_metadata": {
+      "tenant_entities": [
+        "認証済みtenantContext",
+        "Slack workspace"
+      ],
+      "boundary_edges": [
+        "tenantContextからrun partition",
+        "tenantContextから外部書込adapter"
+      ]
+    },
+    "verification": {
+      "scanner_coverage": "not_collected"
+    }
+  },
+  "open_questions": []
+}

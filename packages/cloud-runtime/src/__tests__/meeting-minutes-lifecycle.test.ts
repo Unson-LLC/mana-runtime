@@ -1,6 +1,7 @@
-import { meetingMinutesCompletedProjectionRepair, processMeetingMinutesSelectionWithStatus } from "../meeting-minutes-lifecycle.js";
+import { meetingMinutesCompletedProjectionRepair, processMeetingMinutesSelectionWithStatus,
+  repairMeetingMinutesCompletedProjection } from "../meeting-minutes-lifecycle.js";
 import { startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
-import { loadMeetingMinutesRun } from "../meeting-minutes-state.js";
+import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
 import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
   MeetingMinutesRun, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
 import type { SlackQueueEvent } from "../types.js";
@@ -24,6 +25,14 @@ function completedProjectionRun(overrides: Partial<MeetingMinutesRun> = {}): Mee
       minutesUrl: "https://example.com/m" },
     slack: { processingTs: "2.1", parentTs: "3.1", postedChunkIndexes: [0] },
     createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:01.000Z", ...overrides };
+}
+
+function legacyProjectionFailureRun(): MeetingMinutesRun {
+  return completedProjectionRun({ status: "failed",
+    failure: { stage: "completed", message: "meeting_minutes_status_projection_failed" },
+    diagnostics: { schemaVersion: "meeting_minutes_diagnostics.v1", stage: "status_projection",
+      code: "STATUS_PROJECTION_FAILED", retryable: true, failedAt: "2026-09-06T00:00:02.000Z" },
+  });
 }
 
 describe("completed projection repair eligibility", () => {
@@ -54,6 +63,102 @@ describe("completed projection repair eligibility", () => {
         code: "TASK_REGISTRATION_FAILED", retryable: true, failedAt: "2026-09-06T00:00:02.000Z" },
     }), { channelId: "CROUTER", threadTs: "1.1" });
     expect(repaired).toBeUndefined();
+  });
+});
+
+describe("completed projection repair persistence", () => {
+  it("updates the external display before saving the repaired state", async () => {
+    const fs = new MemoryFs();
+    const original = legacyProjectionFailureRun();
+    await saveMeetingMinutesRun(fs, original);
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      expect(run.status).toBe("completed");
+      expect(await loadMeetingMinutesRun(fs, original.runId)).toMatchObject({
+        status: "failed", failure: { stage: "completed" },
+      });
+    });
+
+    const repaired = await repairMeetingMinutesCompletedProjection(fs, original,
+      { channelId: "CROUTER", threadTs: "1.1" }, updateStatus);
+
+    expect(repaired).toMatchObject({ status: "completed", statusProjection: {
+      outcome: "completed", projectedAt: expect.any(String),
+    } });
+    expect(repaired).not.toHaveProperty("failure");
+    expect(repaired).not.toHaveProperty("diagnostics");
+    expect(await loadMeetingMinutesRun(fs, original.runId)).toMatchObject({
+      status: "completed", statusProjection: { outcome: "completed" },
+    });
+    expect(updateStatus).toHaveBeenCalledOnce();
+  });
+
+  it("preserves generation and Receipt evidence when saving a display repair", async () => {
+    const fs = new MemoryFs();
+    const original = legacyProjectionFailureRun();
+    original.diagnostics!.generation = { schemaVersion: "meeting_minutes_generation_diagnostics.v1",
+      startedAt: "2026-09-06T00:00:00.000Z", model: "sonnet", timeoutMs: 780_000, outcome: "success",
+      progress: { prompt_written: true, exec_started: true, result_observed: true } };
+    original.diagnostics!.receiptSnapshot = { receiptId: "receipt-1", status: "resolved", errorCodes: [] };
+    original.diagnostics!.checkpoint = { hasGitHub: true, hasSlackParent: true, postedChunkCount: 1 };
+    await saveMeetingMinutesRun(fs, original);
+
+    await repairMeetingMinutesCompletedProjection(fs, original,
+      { channelId: "CROUTER", threadTs: "1.1" }, vi.fn().mockResolvedValue(undefined));
+
+    const saved = (await loadMeetingMinutesRun(fs, original.runId))!;
+    expect(saved.diagnostics).toEqual({ schemaVersion: "meeting_minutes_diagnostics.v1",
+      generation: original.diagnostics!.generation, receiptSnapshot: original.diagnostics!.receiptSnapshot,
+      checkpoint: original.diagnostics!.checkpoint });
+    expect(original.diagnostics?.stage).toBe("status_projection");
+  });
+
+  it("keeps the durable failure when display update fails, then retries safely", async () => {
+    const fs = new MemoryFs();
+    const original = legacyProjectionFailureRun();
+    await saveMeetingMinutesRun(fs, original);
+    const updateStatus = vi.fn().mockRejectedValueOnce(new Error("slack down"))
+      .mockResolvedValue(undefined);
+
+    await expect(repairMeetingMinutesCompletedProjection(fs, original,
+      { channelId: "CROUTER", threadTs: "1.1" }, updateStatus)).rejects.toThrow("slack down");
+    expect(await loadMeetingMinutesRun(fs, original.runId)).toMatchObject({
+      status: "failed", failure: { stage: "completed" }, diagnostics: {
+        stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      },
+    });
+
+    const retried = await repairMeetingMinutesCompletedProjection(fs,
+      await loadMeetingMinutesRun(fs, original.runId),
+      { channelId: "CROUTER", threadTs: "1.1" }, updateStatus);
+    expect(retried).toMatchObject({ status: "completed", statusProjection: {
+      outcome: "completed",
+    } });
+    expect(updateStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the durable failure when repaired-state persistence fails, then retries safely", async () => {
+    const fs = new MemoryFs();
+    const original = legacyProjectionFailureRun();
+    await saveMeetingMinutesRun(fs, original);
+    const writeFile = vi.spyOn(fs, "writeFile").mockRejectedValueOnce(new Error("storage down"));
+    const updateStatus = vi.fn().mockResolvedValue(undefined);
+
+    await expect(repairMeetingMinutesCompletedProjection(fs, original,
+      { channelId: "CROUTER", threadTs: "1.1" }, updateStatus)).rejects.toThrow("storage down");
+    expect(await loadMeetingMinutesRun(fs, original.runId)).toMatchObject({
+      status: "failed", failure: { stage: "completed" }, diagnostics: {
+        stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+      },
+    });
+
+    const retried = await repairMeetingMinutesCompletedProjection(fs,
+      await loadMeetingMinutesRun(fs, original.runId),
+      { channelId: "CROUTER", threadTs: "1.1" }, updateStatus);
+    expect(retried).toMatchObject({ status: "completed", statusProjection: {
+      outcome: "completed",
+    } });
+    expect(updateStatus).toHaveBeenCalledTimes(2);
+    writeFile.mockRestore();
   });
 });
 

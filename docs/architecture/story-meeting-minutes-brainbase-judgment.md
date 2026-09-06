@@ -1,5 +1,7 @@
 # Architecture: 議事録生成のBrainbase判断ライフサイクル
 
+> 履歴文書：このHook経由の生成設計は後続の修正で廃止済みです。現行のWorker検証Receiptと工程再開の責務は[議事録の工程別再開](meeting-minutes-stage-resume.md)を参照してください。この文書の配備手順は現行手順ではありません。
+
 ## 決定
 
 Claude Codeのcommand Hooksを薄い転送層としてContainerへ配置する。判断、知識参照要求、tool journal、Stop監査の正本はBrainbaseの既存`processHookPayload`に置き、manaへ複製しない。
