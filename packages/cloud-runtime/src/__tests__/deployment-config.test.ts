@@ -569,6 +569,12 @@ describe("会社別Cloudflare deployment", () => {
       "minutes-ncom-catalyst": ["prj_01KGHVCMA6R6A9MEMGKHRXQ5J0"],
       "mana-dev-biz": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
     });
+    const taskWritePolicy = JSON.parse(unson.vars.TASK_WRITE_POLICY_JSON) as {
+      rules: Array<{ effect: string; placements: string[]; projects: string[] }>;
+    };
+    expect(taskWritePolicy.rules.find((rule) =>
+      rule.effect === "auto" && rule.placements.includes("mana-dev-biz")
+    )?.projects).toEqual(["prj_01KGHVCMA35JHSMXTSWQAS04PS"]);
     expect(JSON.parse(unson.vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON)).toEqual({
       prj_01KGHVCMA35JHSMXTSWQAS04PS: "mana",
     });

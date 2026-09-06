@@ -70,7 +70,7 @@ describe("Unson Business autonomy deployment contract", () => {
     };
     const serviceRules = policy.rules.filter((rule) => rule.actors.includes("mana_autonomy_v0"));
 
-    expect(policy.version).toBe("unson-business-v3");
+    expect(policy.version).toBe("unson-business-v4");
     expect(current.vars.MANA_AUTONOMY_CAPABILITY_ID).toBe("runtime.execute");
     expect(serviceRules).toEqual([{
       effect: "auto",
