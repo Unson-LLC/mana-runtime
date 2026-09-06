@@ -31,6 +31,26 @@ describe("Brainbase judgment Hook proxy", () => {
     expect(forward).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards the MCP session ID in both directions", async () => {
+    const forward = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("mcp-session-id")).toBe("session-123");
+      return Response.json(
+        { jsonrpc: "2.0", id: 1, result: {} },
+        { headers: { "mcp-session-id": "session-456" } },
+      );
+    }) as unknown as typeof fetch;
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", {
+        method: "POST",
+        headers: { "mcp-session-id": "session-123" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.example.test" }, forward,
+      { allowedTools: ["brainbase_resolve_turn"] },
+    );
+    expect(response.headers.get("mcp-session-id")).toBe("session-456");
+  });
+
   it.each(["brainbase_admin_write", "brainbase_graph_query", "unknown_tool"])("denies A0 tool %s before forwarding", async (name) => {
     const forward = vi.fn();
     const response = await handleBrainbaseMcpProxyRequest(
