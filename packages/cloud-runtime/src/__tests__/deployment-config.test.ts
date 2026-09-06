@@ -862,6 +862,18 @@ describe("会社別Cloudflare deployment", () => {
     expect(retryWorkflow).toContain("Run receipt has a non-retryable contract failure; retry was not enqueued");
     expect(retryWorkflow).toContain("Fresh retry has a non-retryable run receipt contract failure");
     expect(retryWorkflow).toContain("print_safe_run_receipt_failure");
+    const retryPollStart = retryWorkflow.indexOf("          retry_confirmed=false\n          for attempt in $(seq 1 90); do");
+    const retryPollEnd = retryWorkflow.indexOf('          {\n            echo "## 議事録run再投入"', retryPollStart);
+    const retryPoll = retryWorkflow.slice(retryPollStart, retryPollEnd);
+    expect(retryPollStart).toBeGreaterThan(-1);
+    expect(retryPollEnd).toBeGreaterThan(retryPollStart);
+    expect(retryPoll).toContain("retry_confirmed=true\n                break");
+    expect(retryPoll).toContain(
+      'if [[ "$retry_confirmed" != "true" ]]; then\n            echo "Fresh retry did not satisfy the completion contract before the polling deadline" >&2',
+    );
+    expect(retryPoll.indexOf('if [[ "$retry_confirmed" != "true" ]]; then')).toBeGreaterThan(
+      retryPoll.indexOf("          done"),
+    );
     const pendingDeadline = retryWorkflow.indexOf("Fresh retry remained pending until the polling deadline");
     expect(pendingDeadline).toBeGreaterThan(-1);
     expect(retryWorkflow.lastIndexOf('if [[ "$attempt" == "90" ]]', pendingDeadline)).toBeLessThan(

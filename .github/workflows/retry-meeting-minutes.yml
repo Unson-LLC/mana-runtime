@@ -226,6 +226,7 @@ jobs:
           jq -e --arg runId "$RUN_ID" --arg status "$status" \
             '$status == "200" and .runId == $runId and .enqueued == true' \
             "$response_file" >/dev/null
+          retry_confirmed=false
           for attempt in $(seq 1 90); do
             status="$(request_json \
               -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
@@ -256,6 +257,7 @@ jobs:
                 and .runReceipt.caseId == $expectedOutcomeCaseId
                 and (.runReceipt.receiptId // "") != ""
                 and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
+                retry_confirmed=true
                 break
               fi
               if jq -e --arg processingCompletedAt "$processing_completed_at" \
@@ -322,6 +324,11 @@ jobs:
             fi
             sleep 10
           done
+          if [[ "$retry_confirmed" != "true" ]]; then
+            echo "Fresh retry did not satisfy the completion contract before the polling deadline" >&2
+            jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+            exit 1
+          fi
           {
             echo "## 議事録run再投入"
             echo "- run ID: \`$RUN_ID\`"
