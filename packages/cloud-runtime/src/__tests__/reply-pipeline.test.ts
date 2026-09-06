@@ -196,6 +196,7 @@ function auditedReplyStreamWithBindingMismatch(canaries: {
 
 function harness(overrides: Partial<ReplyPipelineOptions> = {}) {
   const sandbox = {
+    setSleepAfter: vi.fn().mockResolvedValue(undefined),
     writeFile: vi.fn().mockResolvedValue(undefined),
     exec: vi.fn().mockResolvedValue({
       success: true,
@@ -329,6 +330,7 @@ describe("TechKnight Slack reply pipeline", () => {
       nowMs: () => nowMs,
     });
     const reconnectedSandbox = {
+      setSleepAfter: vi.fn().mockResolvedValue(undefined),
       writeFile: vi.fn().mockResolvedValue(undefined),
       exec: vi.fn().mockResolvedValue({
         success: true,
@@ -356,6 +358,14 @@ describe("TechKnight Slack reply pipeline", () => {
     );
     expect(disconnectedSandbox.exec).toHaveBeenCalledOnce();
     expect(reconnectedSandbox.exec).toHaveBeenCalledOnce();
+    expect(disconnectedSandbox.setSleepAfter).toHaveBeenCalledWith("5m");
+    expect(reconnectedSandbox.setSleepAfter).toHaveBeenCalledWith("5m");
+    expect(disconnectedSandbox.setSleepAfter.mock.invocationCallOrder[0]).toBeLessThan(
+      disconnectedSandbox.writeFile.mock.invocationCallOrder[0]!,
+    );
+    expect(reconnectedSandbox.setSleepAfter.mock.invocationCallOrder[0]).toBeLessThan(
+      reconnectedSandbox.writeFile.mock.invocationCallOrder[0]!,
+    );
     expect(disconnectedSandbox.writeFile).toHaveBeenCalledTimes(3);
     expect(reconnectedSandbox.writeFile).toHaveBeenCalledTimes(3);
     const firstCommand = String(disconnectedSandbox.exec.mock.calls[0]?.[0]);

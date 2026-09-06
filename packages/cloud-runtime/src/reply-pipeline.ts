@@ -70,6 +70,7 @@ interface ExecResult {
 }
 
 export interface ReplySandbox {
+  setSleepAfter?(sleepAfter: string | number): Promise<void>;
   writeFile(path: string, content: string): Promise<unknown>;
   exec(
     command: string,
@@ -446,6 +447,10 @@ export async function generateClaudeReply(
       },
     });
     const prepareSandbox = async (target: typeof sandbox) => {
+      // getSandbox applies options asynchronously without exposing that
+      // promise. Await the activity window here so an earlier alarm cannot
+      // stop a long-running Claude turn before its blocking hooks finish.
+      await target.setSleepAfter?.("5m");
       await target.writeFile(promptPath, promptContent);
       await target.writeFile(runtimeTaskSearchMcpConfigPath(), mcpConfigContent);
       await target.writeFile(runtimeReplySettingsPath(), runtimeReplySettingsContent());
