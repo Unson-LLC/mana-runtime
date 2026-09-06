@@ -4216,7 +4216,11 @@ export default {
       }
       const meetingMinutesConfig = meetingMinutesRuntimeConfig(env);
       if (isTenantMeetingMinutesRedoBody(message.body)) {
-        const tenantBody = message.body;
+        const queuedBody = message.body;
+        const queuedExpectedScope = expectedTenantMeetingMinutesRedoScope(env, queuedBody);
+        const tenantBody = { ...queuedBody, tenant_context: await reissueLongRunningTenantContext(
+          env, queuedBody.tenant_context, queuedExpectedScope,
+        ) };
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
         const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
           tenantConfiguredDesiredEffectByCapability(env));
@@ -4324,7 +4328,11 @@ export default {
         continue;
       }
       if (isTenantMeetingMinutesSelectionBody(message.body)) {
-        const tenantBody = message.body;
+        const queuedBody = message.body;
+        const queuedExpectedScope = expectedTenantMeetingMinutesSelectionScope(env, queuedBody);
+        const tenantBody = { ...queuedBody, tenant_context: await reissueLongRunningTenantContext(
+          env, queuedBody.tenant_context, queuedExpectedScope,
+        ) };
         const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
         const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
           tenantConfiguredDesiredEffectByCapability(env));
@@ -4390,7 +4398,15 @@ export default {
         message.ack();
         continue;
       }
-      const tenantBody = message.body;
+      const queuedTenantBody = message.body;
+      const queuedMeetingMinutesScope = isMeetingMinutesSlackEvent(queuedTenantBody.payload, meetingMinutesConfig)
+        ? expectedTenantQueueScope(env, queuedTenantBody)
+        : undefined;
+      const tenantBody = queuedMeetingMinutesScope
+        ? { ...queuedTenantBody, tenant_context: await reissueLongRunningTenantContext(
+            env, queuedTenantBody.tenant_context, queuedMeetingMinutesScope,
+          ) }
+        : queuedTenantBody;
       const runtimeTenantId = tenantBody.tenant_context.tenant.tenant_id;
       const runtimeWorkspaceId = tenantBody.tenant_context.workspace_connection.workspace_id;
       const clients = tenantRuntimeClients(env, tenantBody.tenant_context,
