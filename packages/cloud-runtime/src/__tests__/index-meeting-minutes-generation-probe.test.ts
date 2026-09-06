@@ -344,6 +344,27 @@ describe("authorized meeting-minutes generation probe route", () => {
     expect(events.send).not.toHaveBeenCalled();
   });
 
+  it.each(["RUN_RECEIPT_AUTHENTICATION_FAILED", "RUN_RECEIPT_FORBIDDEN"])(
+    "reauthorizes and retries an explicit admin receipt retry after %s",
+    async (code) => {
+      const receiptRun = await retryableReceiptRun();
+      runtimeMocks.loadRun.mockResolvedValue(run({ ...receiptRun, runReceipt: {
+        ...receiptRun.runReceipt!,
+        failure: { stage: "run_receipt", code, retryable: false,
+          failedAt: "2026-09-06T00:00:01.000Z", operation: "ingest", httpStatus: code.endsWith("FORBIDDEN") ? 403 : 401 },
+      } }));
+
+      const response = await fetchWorker(authorizedReceiptRetryRequest({ tenantId: TENANT_ID,
+        workspaceId: WORKSPACE_ID, actionTs: "100.200" }, { authorization: `Bearer ${ADMIN_TOKEN}` }));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ runId: RUN_ID, status: "completed",
+        runReceipt: { status: "delivered", receiptId: "receipt-001" } });
+      expect(runtimeMocks.executeTenantRuntimeOperation).toHaveBeenCalledOnce();
+      expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
+    },
+  );
+
   it("returns a delivered receipt result without enqueueing the full retry workflow", async () => {
     const receiptRun = await retryableReceiptRun();
     runtimeMocks.loadRun.mockResolvedValue(receiptRun);

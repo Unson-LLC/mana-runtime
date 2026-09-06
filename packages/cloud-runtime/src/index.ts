@@ -653,6 +653,18 @@ const MEETING_MINUTES_RUN_RECEIPT_FAILURE_CODES = new Set([
   "RUN_RECEIPT_AUTHORITY_REJECTED",
 ]);
 
+const ADMIN_REAUTHORIZABLE_RUN_RECEIPT_FAILURE_CODES = new Set([
+  "RUN_RECEIPT_AUTHENTICATION_FAILED",
+  "RUN_RECEIPT_FORBIDDEN",
+]);
+
+function isAdminReauthorizableRunReceiptFailure(run: MeetingMinutesRun): boolean {
+  const failure = run.runReceipt?.failure;
+  return failure?.stage === "run_receipt"
+    && failure.retryable === false
+    && ADMIN_REAUTHORIZABLE_RUN_RECEIPT_FAILURE_CODES.has(failure.code);
+}
+
 function meetingMinutesAdminRunReceiptFailure(failure: unknown):
   { stage: "run_receipt"; code: string; retryable: boolean; failedAt: string;
     operation?: "ingest" | "diagnosis"; httpStatus?: number } | undefined {
@@ -3564,7 +3576,8 @@ export default {
         authorization.workspaceId !== workspaceId || !run.destination || !run.sourceAppId) {
         return Response.json({ error: "meeting_minutes_admin_retry_not_authorized" }, { status: 409 });
       }
-      if (run.runReceipt?.failure?.stage === "run_receipt" && run.runReceipt.failure.retryable === false) {
+      if (run.runReceipt?.failure?.stage === "run_receipt" && run.runReceipt.failure.retryable === false
+        && !isAdminReauthorizableRunReceiptFailure(run)) {
         return Response.json({ error: "meeting_minutes_admin_retry_run_receipt_non_retryable" }, { status: 409 });
       }
       const receipt = await buildMeetingMinutesRunReceipt(run);
