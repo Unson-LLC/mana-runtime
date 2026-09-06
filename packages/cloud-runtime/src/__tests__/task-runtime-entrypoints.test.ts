@@ -419,3 +419,11 @@ describe("Cloudflare task runtime entrypoints", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 });
+
+it("loads task-board targets from the additional runtime binding", () => {
+  const target = { targetId: "additional", organizationId: "tech-knight", workspaceId: "TTECH",
+    channelId: "CTECH", projectCodes: ["synctoys"], enabled: true, autoProvision: true, bindingRevision: 1 };
+  expect(taskBoardTargets({ SLACK_EXPECTED_TEAM_ID: "TTECH", SLACK_ALLOWED_CHANNEL_ID: "CTECH",
+    TASK_BOARD_REPAIRS: { send: vi.fn() }, TASK_BOARD_ADDITIONAL_TARGETS_JSON: JSON.stringify([target]) }))
+    .toEqual([expect.objectContaining(target)]);
+});

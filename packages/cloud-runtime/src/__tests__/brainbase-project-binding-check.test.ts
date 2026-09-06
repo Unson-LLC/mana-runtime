@@ -150,3 +150,10 @@ describe("Brainbase meeting-minutes project deployment check", () => {
       fetchImpl: vi.fn().mockResolvedValue(Response.json({ records: [] })) })).rejects.toThrow("meeting_minutes_brainbase_project_check_missing:back-office,kartz");
   });
 });
+
+it("checks project scopes for targets in the additional binding", () => {
+  expect(collectMeetingMinutesProjectBindings(config({
+    TASK_BOARD_TARGETS_JSON: "[]",
+    TASK_BOARD_ADDITIONAL_TARGETS_JSON: JSON.stringify([{ targetId: "minutes-kartz", projectCodes: ["kartz"] }]),
+  })).requiredCodes).toEqual(["kartz"]);
+});

@@ -15,16 +15,22 @@ export interface TaskBoardTarget {
 
 export interface TaskBoardTargetEnv {
   TASK_BOARD_TARGETS_JSON?: string;
+  TASK_BOARD_ADDITIONAL_TARGETS_JSON?: string;
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_UNSON?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
 }
 
-export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[] {
-  if (!raw?.trim()) return [];
-  let value: unknown;
-  try { value = JSON.parse(raw); } catch { throw new Error("invalid_task_board_targets"); }
-  if (!Array.isArray(value) || value.length === 0 || value.length > 50) throw new Error("invalid_task_board_targets");
+export function parseTaskBoardTargets(raw: string | undefined, additionalRaw?: string): TaskBoardTarget[] {
+  const inputs = [raw, additionalRaw].filter((input): input is string => Boolean(input?.trim()));
+  if (inputs.length === 0) return [];
+  const value: unknown[] = inputs.flatMap((input) => {
+    let parsed: unknown;
+    try { parsed = JSON.parse(input); } catch { throw new Error("invalid_task_board_targets"); }
+    if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("invalid_task_board_targets");
+    return parsed;
+  });
+  if (value.length > 50) throw new Error("invalid_task_board_targets");
   const targetIds = new Set<string>();
   const canvasKeys = new Set<string>();
   const ownedCanvasKeys = new Set<string>();

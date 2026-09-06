@@ -61,3 +61,19 @@ describe("task-board targets", () => {
       .toThrow("task_board_slack_token_not_configured");
   });
 });
+
+describe("split task-board bindings", () => {
+  it("preserves target order and contents across bindings", () => {
+    expect(parseTaskBoardTargets(JSON.stringify(targets.slice(0, 1)), JSON.stringify(targets.slice(1))))
+      .toEqual(parseTaskBoardTargets(JSON.stringify(targets)));
+  });
+  it("rejects duplicate targets across bindings", () => {
+    expect(() => parseTaskBoardTargets(JSON.stringify(targets), JSON.stringify([targets[0]])))
+      .toThrow("duplicate_task_board_target_id");
+  });
+  it("rejects malformed additional settings and combined capacity overflow", () => {
+    expect(() => parseTaskBoardTargets(JSON.stringify(targets), "{}" )).toThrow("invalid_task_board_targets");
+    expect(() => parseTaskBoardTargets(JSON.stringify(Array(30).fill(targets[0])), JSON.stringify(Array(21).fill(targets[1]))))
+      .toThrow("invalid_task_board_targets");
+  });
+});

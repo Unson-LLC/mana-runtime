@@ -350,6 +350,7 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   RUNTIME_AUTHORITY_PROJECT_IDS_JSON?: string;
   RUNTIME_TASK_BOARD_ENABLED?: string;
   TASK_BOARD_TARGETS_JSON?: string;
+  TASK_BOARD_ADDITIONAL_TARGETS_JSON?: string;
   RUNTIME_CLAUDE_MODEL?: string;
   RUNTIME_CLAUDE_EFFORT?: string;
   BRAINBASE_SLACK_PERSON_MAP_JSON?: string;

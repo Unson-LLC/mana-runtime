@@ -42,6 +42,7 @@ export interface TaskBoardEnv {
   SLACK_BOT_TOKEN?: string;
   SLACK_BOT_TOKEN_TECHKNIGHT?: string;
   TASK_BOARD_TARGETS_JSON?: string;
+  TASK_BOARD_ADDITIONAL_TARGETS_JSON?: string;
   SLACK_ALLOWED_CHANNEL_ID?: string;
   TASK_BOARD_CANVAS_ID?: string;
   SLACK_EXPECTED_TEAM_ID?: string;

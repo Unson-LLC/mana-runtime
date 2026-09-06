@@ -14,7 +14,8 @@ export function collectMeetingMinutesProjectBindings(config) {
     return parsed;
   };
   const destinations = [...parseArray("MEETING_MINUTES_DESTINATIONS_JSON"), ...parseArray("MEETING_MINUTES_ADDITIONAL_DESTINATIONS_JSON")];
-  const targets = parseArray("TASK_BOARD_TARGETS_JSON");
+  const targets = [...parseArray("TASK_BOARD_TARGETS_JSON"),
+    ...(vars.TASK_BOARD_ADDITIONAL_TARGETS_JSON === undefined ? [] : parseArray("TASK_BOARD_ADDITIONAL_TARGETS_JSON"))];
   const targetsById = new Map(targets.map((target) => [clean(target?.targetId), target]));
   const requiredCodes = new Set();
   const contextCodes = new Set();

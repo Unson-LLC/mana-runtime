@@ -96,7 +96,9 @@ export async function createCanonicalTaskBoardRepairMessage(
 }
 
 export function taskBoardTargets(env: TaskBoardRuntimeEnv): TaskBoardTarget[] {
-  if (env.TASK_BOARD_TARGETS_JSON?.trim()) return parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON);
+  if (env.TASK_BOARD_TARGETS_JSON?.trim() || env.TASK_BOARD_ADDITIONAL_TARGETS_JSON?.trim()) {
+    return parseTaskBoardTargets(env.TASK_BOARD_TARGETS_JSON, env.TASK_BOARD_ADDITIONAL_TARGETS_JSON);
+  }
   const schedulingEnabled = env.RUNTIME_TASK_BOARD_ENABLED === "true"
     || (env.RUNTIME_PLACEMENTS_JSON
       ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON).some((placement) => placement.taskBoardEnabled)
