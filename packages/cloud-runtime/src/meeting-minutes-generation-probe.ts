@@ -171,8 +171,9 @@ export async function runMeetingMinutesGenerationProbe(
     progress.transcriptVerified = run.transcriptSha256 ? true : null;
     stage = "context";
     const identity = { run_id: run.runId, project_code: run.destination.contextProjectCode, transcript_sha256: transcriptSha256 };
-    const contextValue = run.context?.receipt ?? await dependencies.resolveContext(
-      identity, run.context?.receiptId, run.destination.projectId,
+    if (!run.context?.receiptId) throw new Error("meeting_minutes_context_receipt_missing");
+    const contextValue = run.context.receipt ?? await dependencies.resolveContext(
+      identity, run.context.receiptId, run.destination.projectId,
     );
     const context = validateMeetingMinutesContextReceipt(contextValue, identity);
     if (run.context && (run.context.receiptId !== context.receipt_id || run.context.checksum !== context.checksum)) {

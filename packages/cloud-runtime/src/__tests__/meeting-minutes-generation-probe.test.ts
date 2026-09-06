@@ -95,10 +95,13 @@ describe("runMeetingMinutesGenerationProbe", () => {
     expect(run).toEqual(before);
   });
 
-  it("resolves context for a legacy run without persisting the computed identity", async () => {
-    const run = runFor("legacy-run");
-    const resolveContext = vi.fn(async (identity: MeetingMinutesContextReceipt["identity"]) =>
-      receiptFor(identity.run_id));
+  it("resolves a saved receipt ID without persisting a computed hash", async () => {
+    const receipt = await receiptFor("legacy-run");
+    const run = runFor("legacy-run", receipt);
+    delete (run.context as { receipt?: MeetingMinutesContextReceipt }).receipt;
+    delete run.transcriptSha256;
+    const resolveContext = vi.fn(async (identity: MeetingMinutesContextReceipt["identity"], _receiptId?: string,
+      _projectId?: string) => receiptFor(identity.run_id));
     const deps = dependencies({ resolveContext });
 
     const result = await runMeetingMinutesGenerationProbe(run, deps);
@@ -109,8 +112,42 @@ describe("runMeetingMinutesGenerationProbe", () => {
     expect(resolveContext.mock.calls[0]?.[0]).toEqual({
       run_id: "legacy-run", project_code: "mana", transcript_sha256: await digest(transcript),
     });
-    expect(run.context).toBeUndefined();
+    expect(resolveContext.mock.calls[0]?.[1]).toBe("receipt-1");
+    expect(resolveContext.mock.calls[0]?.[2]).toBe("project-mana");
+    expect(run.context).toMatchObject({ receiptId: "receipt-1", checksum: "checksum-1" });
+    expect(run.context).not.toHaveProperty("receipt");
     expect(run.transcriptSha256).toBeUndefined();
+  });
+
+  it("rejects a contextless run without issuing or resolving a new receipt", async () => {
+    const run = runFor("contextless-run");
+    const deps = dependencies();
+
+    const result = await runMeetingMinutesGenerationProbe(run, deps);
+
+    expect(result).toMatchObject({ ok: false, stage: "context", code: "meeting_minutes_context_receipt_missing",
+      progress: { downloaded: true, transcriptVerified: null, contextResolved: false,
+        generationStarted: false, generationCompleted: false }, result: null, generation: null });
+    expect(deps.resolveContext).not.toHaveBeenCalled();
+    expect(deps.generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+  ] as const)("rejects a saved context with a %s receipt ID without resolving or generating", async (_label, receiptId) => {
+    const receipt = await receiptFor("invalid-context-run");
+    const run = runFor("invalid-context-run", receipt);
+    (run.context as { receiptId?: string }).receiptId = receiptId;
+    const deps = dependencies();
+
+    const result = await runMeetingMinutesGenerationProbe(run, deps);
+
+    expect(result).toMatchObject({ ok: false, stage: "context", code: "meeting_minutes_context_receipt_missing",
+      progress: { downloaded: true, transcriptVerified: true, contextResolved: false,
+        generationStarted: false, generationCompleted: false }, result: null, generation: null });
+    expect(deps.resolveContext).not.toHaveBeenCalled();
+    expect(deps.generate).not.toHaveBeenCalled();
   });
 
   it("rejects a changed transcript before resolving context or generating", async () => {
