@@ -970,6 +970,7 @@ async function reissueLongRunningTenantContext(
   env: Env,
   accepted: TenantContextEnvelope,
   expectedScope: ExpectedTenantScope,
+  authorizationCapabilityId = expectedScope.capability_id,
 ): Promise<TenantContextEnvelope> {
   const projectIds = [...(expectedScope.project_ids ?? accepted.authorization.project_ids)];
   if (projectIds.length === 0 || !projectIds.includes(expectedScope.project_id)
@@ -993,7 +994,7 @@ async function reissueLongRunningTenantContext(
     required_authorization: {
       audience: expectedScope.audience,
       project_id: expectedScope.project_id,
-      capability_id: expectedScope.capability_id,
+      capability_id: authorizationCapabilityId,
     },
     trusted_project_ids: projectIds,
     tenant_revision: accepted.tenant.tenant_revision,
@@ -2500,7 +2501,12 @@ export async function executeCompanyAuthorityReplyOperation(
             company_authority_envelope: envelope,
             refresh: {
               issue: async () => {
-                const fresh = await reissueLongRunningTenantContext(env, tenantContext, expectedScope);
+                const fresh = await reissueLongRunningTenantContext(
+                  env,
+                  tenantContext,
+                  expectedScope,
+                  request.requested_action.capability_id,
+                );
                 activeTenantBoundaryExpiresAt = fresh.expires_at;
                 return fresh;
               },
