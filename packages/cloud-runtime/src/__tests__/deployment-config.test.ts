@@ -572,9 +572,11 @@ describe("会社別Cloudflare deployment", () => {
     const taskWritePolicy = JSON.parse(unson.vars.TASK_WRITE_POLICY_JSON) as {
       rules: Array<{ effect: string; placements: string[]; projects: string[] }>;
     };
+    // Task API writes use the project code carried by the placement. Canonical
+    // project IDs remain the authority scope and are mapped separately below.
     expect(taskWritePolicy.rules.find((rule) =>
       rule.effect === "auto" && rule.placements.includes("mana-dev-biz")
-    )?.projects).toEqual(["prj_01KGHVCMA35JHSMXTSWQAS04PS"]);
+    )?.projects).toEqual(["mana"]);
     expect(JSON.parse(unson.vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON)).toEqual({
       prj_01KGHVCMA35JHSMXTSWQAS04PS: "mana",
     });
