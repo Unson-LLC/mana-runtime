@@ -37,11 +37,11 @@ const REPLY_SETTINGS = Object.freeze({
       hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
     }],
     PostToolUse: [{
-      matcher: "^mcp__brainbase__.*$",
+      matcher: "mcp__brainbase__.*",
       hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
     }],
     PostToolUseFailure: [{
-      matcher: "^mcp__brainbase__.*$",
+      matcher: "mcp__brainbase__.*",
       hooks: [{ type: "command", command: "node /opt/mana/brainbase-judgment-hook.mjs", timeout: 45 }],
     }],
     Stop: [{
