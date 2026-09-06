@@ -1689,7 +1689,8 @@ function isTenantTaskBoardRepairBody(value: unknown): value is TenantQueueBody<T
   return body.schema_version === "1.0" && !!body.tenant_context && !!payload
     && payload.eventType === "task_board_repair" && typeof payload.tenantId === "string"
     && typeof payload.targetId === "string" && typeof payload.workspaceId === "string"
-    && typeof payload.channelId === "string" && typeof payload.requestedAt === "string";
+    && typeof payload.channelId === "string" && typeof payload.requestedAt === "string"
+    && (payload.reason === "task_write" || payload.reason === "scheduled" || payload.reason === "manual");
 }
 
 function isTenantMeetingMinutesSelectionBody(value: unknown): value is TenantQueueBody<MeetingMinutesSelection> {

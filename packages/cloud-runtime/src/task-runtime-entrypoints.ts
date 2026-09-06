@@ -45,7 +45,12 @@ export function taskBoardRepairCapabilityId(
   repair: Pick<TaskBoardRepairEvent, "reason">,
   runtimeCapabilityId: string,
 ): string {
-  return repair.reason === "task_write" ? runtimeCapabilityId : "task_board_send";
+  switch (repair.reason) {
+    case "task_write": return runtimeCapabilityId;
+    case "scheduled":
+    case "manual": return "task_board_send";
+    default: throw new Error("task_board_repair_reason_invalid");
+  }
 }
 
 function taskBoardPlacementMatchesTarget(env: TaskBoardRuntimeEnv, target: TaskBoardTarget): boolean {

@@ -59,6 +59,8 @@ describe("Worker task Canvas repair producers", () => {
     expect(source).toContain("resolveMeetingMinutesDestinationProjectScope(");
     expect(source).toContain("capability_id: taskBoardRepairCapabilityId(");
     expect(source).toContain("repair,\n      requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID)");
+    expect(source).toContain('payload.reason === "task_write" || payload.reason === "scheduled"'
+      + ' || payload.reason === "manual"');
     expect(source).toContain("(taskBoardTenantContext) => enqueueMeetingMinutesTaskBoardRepair(");
     expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))
       .toHaveLength(1);

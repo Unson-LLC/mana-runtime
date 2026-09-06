@@ -68,6 +68,10 @@ describe("Cloudflare task runtime entrypoints", () => {
       .toBe("task_board_send");
     expect(taskBoardRepairCapabilityId({ reason: "manual" }, "runtime.execute"))
       .toBe("task_board_send");
+    expect(() => taskBoardRepairCapabilityId(
+      { reason: "unexpected" } as never,
+      "runtime.execute",
+    )).toThrow("task_board_repair_reason_invalid");
   });
 
   it("rejects TaskBoard scheduling when canonical targets are absent instead of creating legacy targets", async () => {
