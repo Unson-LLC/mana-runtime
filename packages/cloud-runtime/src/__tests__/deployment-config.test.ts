@@ -805,6 +805,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("failedCandidateTitle: run.taskRegistration?.failure");
     expect(worker).toContain("sourceStatus: { outcome: run.statusProjection?.outcome");
     expect(worker).toContain("outcomeCaseId: run.outcomeCaseId");
+    expect(worker).toContain("runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,");
+    expect(worker).toContain("status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt }");
     const retryWorkflow = readFileSync(fileURLToPath(new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
     expect(retryWorkflow).toContain("      outcome_case_id:");
     expect(retryWorkflow).toContain("        required: false");
@@ -812,9 +814,18 @@ describe("会社別Cloudflare deployment", () => {
     expect(retryWorkflow).toContain(
       '          [[ -z "$OUTCOME_CASE_ID" || "$OUTCOME_CASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$ ]]',
     );
-    expect(retryWorkflow).toContain('              --arg outcomeCaseId "$OUTCOME_CASE_ID"');
     expect(retryWorkflow).toContain(
-      "              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs} + (if $outcomeCaseId == \"\" then {} else {outcomeCaseId:$outcomeCaseId} end)')",
+      '              def safe_identifier_or_null: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;',
+    );
+    expect(retryWorkflow).toContain("                outcomeCaseId: (.outcomeCaseId | safe_identifier_or_null),");
+    expect(retryWorkflow).toContain("                    caseId: (.runReceipt.caseId | safe_identifier_or_null),");
+    expect(retryWorkflow).toContain("                    receiptId: (.runReceipt.receiptId | safe_identifier_or_null),");
+    expect(retryWorkflow).toContain('                    status: (.runReceipt.status | one_of(["pending","delivered"])),');
+    expect(retryWorkflow).toContain("          baseline_outcome_case_id=\"$(jq -r '.outcomeCaseId // \"\"' \"$response_file\")\"");
+    expect(retryWorkflow).toContain('          expected_outcome_case_id="$OUTCOME_CASE_ID"');
+    expect(retryWorkflow).toContain('              --arg outcomeCaseId "$expected_outcome_case_id"');
+    expect(retryWorkflow).toContain(
+      "              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs,outcomeCaseId:$outcomeCaseId}')",
     );
     const retryBodyStart = retryWorkflow.indexOf('            --data "$(jq -cn');
     const retryBodyEnd = retryWorkflow.indexOf(
@@ -830,6 +841,11 @@ describe("会社別Cloudflare deployment", () => {
     expect(retryWorkflow).toContain('.sourceStatus.outcome == "completed"');
     expect(retryWorkflow).toContain(".sourceStatus.projectedAt != $baselineSourceProjectedAt");
     expect(retryWorkflow).toContain(".sourceStatus.projectionFailure == null");
+    expect(retryWorkflow).toContain('.sourceStatus.outcome != "completed"');
+    expect(retryWorkflow).toContain(".outcomeCaseId == $expectedOutcomeCaseId");
+    expect(retryWorkflow).toContain('.runReceipt.status == "delivered"');
+    expect(retryWorkflow).toContain(".runReceipt.caseId == $expectedOutcomeCaseId");
+    expect(retryWorkflow).toContain("if ! jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true");
     expect(worker).toContain('runAdminMatch[2] === "/adopt-tasks"');
     expect(worker).toContain("meeting_minutes_task_adoption_scope_mismatch");
     expect(worker).toContain("const incompleteAdoption =");

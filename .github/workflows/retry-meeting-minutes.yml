@@ -106,9 +106,19 @@ jobs:
               def bool_or_null: if type == "boolean" then . else null end;
               def one_of($values): . as $value | if $values | index($value) then $value else null end;
               def timestamp: if type == "string" and test("^[0-9TZ:.-]{20,30}$") then . else null end;
+              def safe_identifier_or_null: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;
               {
                 status: (.status | one_of(["awaiting_destination","routed","generated","github_saved","posting","completed","failed"])),
                 updatedAt: (.updatedAt | timestamp),
+                outcomeCaseId: (.outcomeCaseId | safe_identifier_or_null),
+                runReceipt: (
+                  if (.runReceipt | type) == "object" then {
+                    caseId: (.runReceipt.caseId | safe_identifier_or_null),
+                    receiptId: (.runReceipt.receiptId | safe_identifier_or_null),
+                    status: (.runReceipt.status | one_of(["pending","delivered"])),
+                    deliveredAt: (.runReceipt.deliveredAt | timestamp)
+                  } else null end
+                ),
                 checkpoint: {
                   hasGitHub: (.checkpoint.hasGitHub | bool_or_null),
                   hasSlackParent: (.checkpoint.hasSlackParent | bool_or_null),
@@ -146,6 +156,12 @@ jobs:
           baseline_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
           baseline_updated_at="$(jq -r '.updatedAt // ""' "$response_file")"
           baseline_source_projected_at="$(jq -r '.sourceStatus.projectedAt // ""' "$response_file")"
+          baseline_outcome_case_id="$(jq -r '.outcomeCaseId // ""' "$response_file")"
+          expected_outcome_case_id="$OUTCOME_CASE_ID"
+          if [[ -z "$expected_outcome_case_id" ]]; then
+            expected_outcome_case_id="$baseline_outcome_case_id"
+          fi
+          test -n "$expected_outcome_case_id"
           status="$(request_json \
             -X POST \
             -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
@@ -154,8 +170,8 @@ jobs:
               --arg tenantId "$TENANT_ID" \
               --arg workspaceId "$WORKSPACE_ID" \
               --arg actionTs "$action_ts" \
-              --arg outcomeCaseId "$OUTCOME_CASE_ID" \
-              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs} + (if $outcomeCaseId == "" then {} else {outcomeCaseId:$outcomeCaseId} end)')" \
+              --arg outcomeCaseId "$expected_outcome_case_id" \
+              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs,outcomeCaseId:$outcomeCaseId}')" \
             "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-retry")"
           jq -e --arg runId "$RUN_ID" --arg status "$status" \
             '$status == "200" and .runId == $runId and .enqueued == true' \
@@ -173,14 +189,32 @@ jobs:
             current_updated_at="$(jq -r '.updatedAt // ""' "$response_file")"
             if [[ "$run_status" == "completed" && -n "$current_updated_at" && "$current_updated_at" != "$baseline_updated_at" ]]; then
               if jq -e --arg baselineSourceProjectedAt "$baseline_source_projected_at" \
+                --arg expectedOutcomeCaseId "$expected_outcome_case_id" \
                 '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
                 and .taskRegistration.pendingPresent == false and (.taskRegistration.failure == null)
                 and .checkpoint.hasTaskCard == true
                 and .sourceStatus.outcome == "completed"
                 and (.sourceStatus.projectedAt // "") != ""
                 and .sourceStatus.projectedAt != $baselineSourceProjectedAt
-                and (.sourceStatus.projectionFailure == null)' "$response_file" >/dev/null; then
+                and (.sourceStatus.projectionFailure == null)
+                and .outcomeCaseId == $expectedOutcomeCaseId
+                and .runReceipt.status == "delivered"
+                and .runReceipt.caseId == $expectedOutcomeCaseId
+                and (.runReceipt.receiptId // "") != ""
+                and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
                 break
+              fi
+              if jq -e '(.sourceStatus.projectionFailure // null) != null' "$response_file" >/dev/null; then
+                echo "Fresh retry source projection failed" >&2
+                jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+                exit 1
+              fi
+              if jq -e --arg baselineSourceProjectedAt "$baseline_source_projected_at" \
+                '.sourceStatus.outcome != "completed"
+                or (.sourceStatus.projectedAt // "") == ""
+                or .sourceStatus.projectedAt == $baselineSourceProjectedAt' "$response_file" >/dev/null; then
+                sleep 10
+                continue
               fi
               if jq -e '.taskRegistration.pendingPresent == true
                 or ((.taskRegistration.failure.message // "") | endswith("_pending"))' \
@@ -188,8 +222,24 @@ jobs:
                 sleep 10
                 continue
               fi
+              if ! jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
+                and .taskRegistration.pendingPresent == false and (.taskRegistration.failure == null)
+                and .checkpoint.hasTaskCard == true' "$response_file" >/dev/null; then
+                echo "Fresh retry completed with an incomplete task integration" >&2
+                jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+                exit 1
+              fi
+              if jq -e --arg expectedOutcomeCaseId "$expected_outcome_case_id" \
+                '.outcomeCaseId != $expectedOutcomeCaseId
+                or .runReceipt.status != "delivered"
+                or .runReceipt.caseId != $expectedOutcomeCaseId
+                or (.runReceipt.receiptId // "") == ""
+                or (.runReceipt.deliveredAt // "") == ""' "$response_file" >/dev/null; then
+                sleep 10
+                continue
+              fi
               echo "Fresh retry completed with an incomplete task integration" >&2
-              jq '{runId,status,updatedAt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+              jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
               exit 1
             fi
             if [[ "$run_status" == "failed" ]]; then
