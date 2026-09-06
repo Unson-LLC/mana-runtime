@@ -60,6 +60,8 @@ export interface HandleTenantSlackRequestOptions {
    * marker inside TenantContext never selects this route.
    */
   company_authority?: {
+    /** Canonical tenant id used in the signed payload and at the Queue boundary. */
+    tenant_id?: string;
     opted_in_capability_ids: readonly string[];
     desired_effect_by_capability: Readonly<Record<string, CompanyAuthorityDesiredEffect>>;
     client: CompanyAuthorityClient;
@@ -429,6 +431,9 @@ export async function handleTenantSlackRequest(
         "company_authority",
         requiredAuthorization.capability_id,
       );
+      const companyAuthorityEvent = companyAuthority.tenant_id
+        ? { ...event, tenantId: companyAuthority.tenant_id }
+        : event;
       const accepted = await resolveCompanyAuthorityRuntimeEnvelope({
         observation: {
           provider: "slack",
@@ -440,7 +445,7 @@ export async function handleTenantSlackRequest(
           capability_id: requiredAuthorization.capability_id,
           resource_ref: await companyAuthoritySlackResourceRef(
             requiredAuthorization.project_id,
-            event,
+            companyAuthorityEvent,
           ),
           project_hint: requiredAuthorization.project_id,
           channel_id: channelId,
@@ -451,7 +456,7 @@ export async function handleTenantSlackRequest(
         desired_effect_by_capability: companyAuthority.desired_effect_by_capability,
         client: companyAuthority.client,
         acceptance: { ...companyAuthority.acceptance, now: receivedAt },
-        payload: event,
+        payload: companyAuthorityEvent,
       });
       assertSecretArtifactFree(accepted.envelope);
       failureStage = "queue_enqueue";
