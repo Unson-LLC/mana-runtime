@@ -1,5 +1,6 @@
 import { buildMeetingMinutesRunReceipt, classifyMeetingMinutesRunReceiptFailure,
   MeetingMinutesRunReceiptClient } from "../meeting-minutes-run-receipt.js";
+import { TenantBoundaryError } from "../multitenancy/errors.js";
 import type { MeetingMinutesRun } from "../meeting-minutes-contracts.js";
 
 function completedRun(overrides: Partial<MeetingMinutesRun> = {}): MeetingMinutesRun {
@@ -23,6 +24,27 @@ function completedRun(overrides: Partial<MeetingMinutesRun> = {}): MeetingMinute
 }
 
 describe("meeting-minutes run receipt", () => {
+  it("preserves allowlisted receipt failure codes after a tenant boundary replay", () => {
+    expect(classifyMeetingMinutesRunReceiptFailure(
+      new TenantBoundaryError("brainbase_proxy", "RUN_RECEIPT_FORBIDDEN"),
+    )).toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_FORBIDDEN", retryable: false });
+    expect(classifyMeetingMinutesRunReceiptFailure(
+      new TenantBoundaryError("brainbase_proxy", "RUN_RECEIPT_UPSTREAM_FAILED"),
+    )).toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true });
+    expect(classifyMeetingMinutesRunReceiptFailure(
+      new TenantBoundaryError("brainbase_proxy", "RUN_RECEIPT_INGEST_TRANSPORT_FAILED"),
+    )).toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_INGEST_TRANSPORT_FAILED", retryable: true });
+    expect(classifyMeetingMinutesRunReceiptFailure(
+      new TenantBoundaryError("brainbase_proxy", "RUN_RECEIPT_AUTHORITY_UNAVAILABLE"),
+    )).toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_AUTHORITY_UNAVAILABLE", retryable: true });
+    expect(classifyMeetingMinutesRunReceiptFailure(
+      new TenantBoundaryError("brainbase_proxy", "RUN_RECEIPT_AUTHORITY_REJECTED"),
+    )).toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_AUTHORITY_REJECTED", retryable: false });
+    expect(classifyMeetingMinutesRunReceiptFailure(
+      new TypeError("fetch failed: authorization=secret-do-not-persist"),
+    )).toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true });
+  });
+
   it("builds a stable confirmed receipt only after the terminal Slack readback", async () => {
     const receipt = await buildMeetingMinutesRunReceipt(completedRun());
     expect(receipt).toMatchObject({ contract_version: "run_receipt.v1",

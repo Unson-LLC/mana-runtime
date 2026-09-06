@@ -17,6 +17,23 @@ export interface MeetingMinutesRunReceiptFailure {
   retryable: boolean;
 }
 
+const RECEIPT_FAILURES_BY_CODE: Readonly<Record<string, Omit<MeetingMinutesRunReceiptFailure, "stage">>> = {
+  RUN_RECEIPT_CLIENT_UNCONFIGURED: { code: "RUN_RECEIPT_CLIENT_UNCONFIGURED", retryable: false },
+  RUN_RECEIPT_INGEST_URL_INVALID: { code: "RUN_RECEIPT_INGEST_URL_INVALID", retryable: false },
+  RUN_RECEIPT_INGEST_RESPONSE_INVALID: { code: "RUN_RECEIPT_INGEST_RESPONSE_INVALID", retryable: false },
+  RUN_RECEIPT_OUTCOME_CASE_LINK_UNCONFIRMED: { code: "RUN_RECEIPT_OUTCOME_CASE_LINK_UNCONFIRMED", retryable: false },
+  RUN_RECEIPT_READBACK_UNCONFIRMED: { code: "RUN_RECEIPT_READBACK_UNCONFIRMED", retryable: false },
+  RUN_RECEIPT_INGEST_TRANSPORT_FAILED: { code: "RUN_RECEIPT_INGEST_TRANSPORT_FAILED", retryable: true },
+  RUN_RECEIPT_READBACK_TRANSPORT_FAILED: { code: "RUN_RECEIPT_READBACK_TRANSPORT_FAILED", retryable: true },
+  RUN_RECEIPT_AUTHORITY_UNAVAILABLE: { code: "RUN_RECEIPT_AUTHORITY_UNAVAILABLE", retryable: true },
+  RUN_RECEIPT_AUTHORITY_REJECTED: { code: "RUN_RECEIPT_AUTHORITY_REJECTED", retryable: false },
+  RUN_RECEIPT_TIMEOUT: { code: "RUN_RECEIPT_TIMEOUT", retryable: true },
+  RUN_RECEIPT_AUTHENTICATION_FAILED: { code: "RUN_RECEIPT_AUTHENTICATION_FAILED", retryable: false },
+  RUN_RECEIPT_FORBIDDEN: { code: "RUN_RECEIPT_FORBIDDEN", retryable: false },
+  RUN_RECEIPT_UPSTREAM_FAILED: { code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true },
+  RUN_RECEIPT_REQUEST_REJECTED: { code: "RUN_RECEIPT_REQUEST_REJECTED", retryable: false },
+};
+
 interface RunReceiptIngestResponse {
   status?: unknown;
   run?: { id?: unknown };
@@ -35,6 +52,11 @@ interface RunReceiptIngestResponse {
 export function classifyMeetingMinutesRunReceiptFailure(error: unknown): MeetingMinutesRunReceiptFailure {
   const message = error instanceof Error ? error.message : "";
   const stage = "run_receipt" as const;
+  const boundaryCode = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : undefined;
+  const preserved = boundaryCode ? RECEIPT_FAILURES_BY_CODE[boundaryCode] : undefined;
+  if (preserved) return { stage, ...preserved };
   const exact: Record<string, [string, boolean]> = {
     meeting_minutes_run_receipt_client_unconfigured: ["RUN_RECEIPT_CLIENT_UNCONFIGURED", false],
     meeting_minutes_run_receipt_ingest_url_invalid: ["RUN_RECEIPT_INGEST_URL_INVALID", false],
@@ -50,6 +72,11 @@ export function classifyMeetingMinutesRunReceiptFailure(error: unknown): Meeting
   if (classified) return { stage, code: classified[0], retryable: classified[1] };
   if (error instanceof Error && error.name === "TimeoutError") {
     return { stage, code: "RUN_RECEIPT_TIMEOUT", retryable: true };
+  }
+  // fetch() reports transport failures as TypeError. This classifier is used
+  // only at the receipt client boundary, so the code remains content-free.
+  if (error instanceof Error && error.name === "TypeError") {
+    return { stage, code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true };
   }
   const status = Number(message.match(/^meeting_minutes_run_receipt_(?:request|readback)_failed:(\d{3})$/)?.[1]);
   if (Number.isInteger(status)) {

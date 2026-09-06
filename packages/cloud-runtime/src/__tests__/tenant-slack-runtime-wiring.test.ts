@@ -215,6 +215,15 @@ describe("tenant Slack runtime wiring", () => {
     expect(selection).toContain("expectedScope, verifier, now");
   });
 
+  it("turns only classified run-receipt failures into stable Brainbase boundary codes", () => {
+    const clientsStart = source.indexOf("function meetingMinutesClients(");
+    const clientsEnd = source.indexOf("\nasync function processTenantMeetingMinutesSelection", clientsStart);
+    const clients = source.slice(clientsStart, clientsEnd);
+
+    expect(clients).toContain("classifyMeetingMinutesRunReceiptFailure(error)");
+    expect(clients).toContain('new TenantBoundaryError("brainbase_proxy", failure.code)');
+  });
+
   it("scopes redo Slack effect keys to the redo revision", () => {
     const clientsStart = source.indexOf("function meetingMinutesClients(");
     const clientsEnd = source.indexOf("function ", clientsStart + 1);
