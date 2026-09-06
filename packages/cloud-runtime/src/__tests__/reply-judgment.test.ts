@@ -90,6 +90,25 @@ function bindPostToolReceipt(stdout: string, toolUseId: string, toolName: string
   }).join("\n");
 }
 
+function bindStopToolReceipts(stdout: string, toolReceipts: Array<{
+  tool_use_id: string;
+  tool_name: string;
+  outcome: "success" | "error";
+}>): string {
+  return stdout.split("\n").map((line) => {
+    const event = JSON.parse(line);
+    if (event.hook_event !== "Stop") return line;
+    const output = JSON.parse(event.stdout);
+    output.systemMessage = output.systemMessage.split("\n").map((messageLine: string) => {
+      if (!messageLine.startsWith(receiptPrefix)) return messageLine;
+      const receipt = JSON.parse(messageLine.slice(receiptPrefix.length));
+      return `${receiptPrefix}${JSON.stringify({ ...receipt, tool_receipts: toolReceipts })}`;
+    }).join("\n");
+    event.stdout = JSON.stringify(output);
+    return JSON.stringify(event);
+  }).join("\n");
+}
+
 function stream(options: {
   withTool?: boolean;
   toolCount?: number;
@@ -709,6 +728,43 @@ describe("Slack reply Judgment lifecycle", () => {
     stopBeforeSecondTool.splice(secondToolIndex, 0, stopEvent!);
     expect(() => parseReplyJudgmentStream(stopBeforeSecondTool.join("\n")))
       .toThrow("reply_judgment_event_order_invalid");
+  });
+
+  it("uses the authenticated Stop tool journal when stream-json omits one PostToolUse event", () => {
+    const withoutSecondPostTool = stream({ toolCount: 2 }).split("\n")
+      .filter((line) => !line.includes('"hook_event":"PostToolUse"') || !line.includes(secondBrainbaseLine))
+      .join("\n");
+    const withStopJournal = bindStopToolReceipts(withoutSecondPostTool, [
+      {
+        tool_use_id: "tool-1",
+        tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+        outcome: "success",
+      },
+      {
+        tool_use_id: "tool-2",
+        tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+        outcome: "success",
+      },
+    ]);
+
+    expect(parseReplyJudgmentStream(withStopJournal).toolJournal).toEqual([
+      expect.objectContaining({ sequence: 1, toolUseId: "tool-1", outcome: "success" }),
+      expect.objectContaining({ sequence: 2, toolUseId: "tool-2", outcome: "success" }),
+    ]);
+  });
+
+  it("fails closed when the Stop tool journal does not match the executed result", () => {
+    const withoutPostTool = stream({ withTool: true }).split("\n")
+      .filter((line) => !line.includes('"hook_event":"PostToolUse"'))
+      .join("\n");
+    const mismatchedStopJournal = bindStopToolReceipts(withoutPostTool, [{
+      tool_use_id: "tool-1",
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+      outcome: "error",
+    }]);
+
+    expect(() => parseReplyJudgmentStream(mismatchedStopJournal))
+      .toThrow("reply_judgment_tool_audit_mismatch_stop_tool_receipts_identity_mismatch");
   });
 
   it("prepends trusted Stop audit lines when the model returns body only", () => {
