@@ -57,7 +57,7 @@
     "BRAINBASE_COMPANY_AUTHORITY_EXPECTED_DEPLOYMENT_ID": "dep_01M0HMA2282QK43N9FR9690EQS",
     "BRAINBASE_COMPANY_AUTHORITY_PUBLIC_JWK_JSON": "{\"crv\":\"Ed25519\",\"x\":\"eWbEUe--SU-Z0010NfiLcbAMIC3Q57h_Q9oJV9CekoQ\",\"kty\":\"OKP\",\"kid\":\"brainbase-tenant-context-20260819\",\"use\":\"sig\",\"alg\":\"EdDSA\",\"key_ops\":[\"verify\"]}",
     "MANA_COMPANY_AUTHORITY_OPERATIONS_JSON": "{\"runtime.execute\":\"external_side_effect\",\"task_board_send\":\"external_side_effect\"}",
-    "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON": "[{\"workspace_id\":\"T0882T8N9UH\",\"channel_id\":\"C0BKE4D0TK9\",\"authenticated_subject_id\":\"U088D1HBY6L\"}]",
+    "MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON": "[{\"workspace_id\":\"T0882T8N9UH\",\"channel_id\":\"C0BKE4D0TK9\",\"authenticated_subject_id\":\"U088D1HBY6L\"},{\"workspace_id\":\"T0882T8N9UH\",\"channel_id\":\"C0BMNSP6C80\",\"authenticated_subject_id\":\"U088D1HBY6L\"}]",
     "MANA_TASK_BOARD_SERVICE_ACTOR_ID": "svc_mana_runtime",
     "MANA_AUTONOMY_DISABLED": "true",
     "MANA_AUTONOMY_CRON": "*/15 * * * *",

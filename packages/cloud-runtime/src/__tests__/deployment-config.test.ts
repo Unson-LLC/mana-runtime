@@ -280,6 +280,14 @@ describe("会社別Cloudflare deployment", () => {
     ])).toEqual({ ready: true, missing_bindings: [] });
   });
 
+  it("allows the authorized operator through company authority in the mana project channel", () => {
+    expect(JSON.parse(unson.vars.MANA_COMPANY_AUTHORITY_SLACK_ROLLOUT_JSON)).toContainEqual({
+      workspace_id: "T0882T8N9UH",
+      channel_id: "C0BMNSP6C80",
+      authenticated_subject_id: "U088D1HBY6L",
+    });
+  });
+
   it("keeps every same-tenant task board target inside an enabled runtime placement", () => {
     const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       organizationId: string; workspaceId: string; channelId: string; projectCodes: string[]; enabled: boolean;
