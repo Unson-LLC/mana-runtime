@@ -24,11 +24,19 @@ export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[
   if (!raw?.trim()) return [];
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw new Error("invalid_task_board_targets"); }
-  if (!Array.isArray(value) || value.length === 0 || value.length > 50) throw new Error("invalid_task_board_targets");
+  const defaults = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>).defaults
+    : undefined;
+  const items = Array.isArray(value) ? value : (value as Record<string, unknown> | null)?.targets;
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50
+    || (defaults !== undefined && (!defaults || typeof defaults !== "object" || Array.isArray(defaults)))) {
+    throw new Error("invalid_task_board_targets");
+  }
+  const configuredDefaults = defaults as Record<string, unknown> | undefined;
   const targetIds = new Set<string>();
   const canvasKeys = new Set<string>();
   const ownedCanvasKeys = new Set<string>();
-  return value.map((item) => {
+  return items.map((item) => {
     if (!item || typeof item !== "object") throw new Error("invalid_task_board_target");
     const candidate = item as Record<string, unknown>;
     const targetId = typeof candidate.targetId === "string" ? candidate.targetId.trim() : "";
@@ -38,11 +46,12 @@ export function parseTaskBoardTargets(raw: string | undefined): TaskBoardTarget[
     const projectCodes = Array.isArray(candidate.projectCodes)
       ? [...new Set(candidate.projectCodes.map((entry) => typeof entry === "string" ? entry.trim() : "").filter(Boolean))]
       : [];
-    const enabled = candidate.enabled === true;
-    const autoProvision = candidate.autoProvision === true;
+    const enabled = (candidate.enabled ?? configuredDefaults?.enabled) === true;
+    const autoProvision = (candidate.autoProvision ?? configuredDefaults?.autoProvision) === true;
     const manaCanvasId = typeof candidate.manaCanvasId === "string" ? candidate.manaCanvasId.trim() : "";
-    const bindingRevision = typeof candidate.bindingRevision === "number" && Number.isSafeInteger(candidate.bindingRevision)
-      ? candidate.bindingRevision
+    const configuredBindingRevision = candidate.bindingRevision ?? configuredDefaults?.bindingRevision;
+    const bindingRevision = typeof configuredBindingRevision === "number" && Number.isSafeInteger(configuredBindingRevision)
+      ? configuredBindingRevision
       : null;
     if (!TARGET_ID.test(targetId) || !["unson", "unson-business", "tech-knight"].includes(String(organizationId)) ||
       !SLACK_ID.test(workspaceId) || !SLACK_ID.test(channelId) || projectCodes.length === 0 || projectCodes.length > 20) {

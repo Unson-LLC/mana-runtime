@@ -43,6 +43,14 @@ describe("task-board targets", () => {
     expect(taskBoardTargetsForProjects(parsed, ["proj_pms"])).toEqual(parsed);
   });
 
+  it("expands explicit shared defaults for compact deployment configuration", () => {
+    const parsed = parseTaskBoardTargets(JSON.stringify({
+      defaults: { enabled: true, autoProvision: true, bindingRevision: 1 },
+      targets: [{ ...targets[2], enabled: undefined, autoProvision: undefined, manaCanvasId: null, bindingRevision: undefined }],
+    }));
+    expect(parsed[0]).toMatchObject({ enabled: true, autoProvision: true, bindingRevision: 1 });
+  });
+
 
   it("rejects one owned Canvas being bound to two target channels", () => {
     expect(() => parseTaskBoardTargets(JSON.stringify([targets[0], {

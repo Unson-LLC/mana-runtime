@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { assessTenantRuntimeDeploymentConfig } from "../../scripts/tenant-runtime-deploy-readiness.mjs";
+import { parseTaskBoardTargets } from "../task-board-targets.js";
 
 interface DeploymentConfig {
   account_id?: string;
@@ -66,7 +67,7 @@ describe("会社別Cloudflare deployment", () => {
   const unson = loadConfig("wrangler.unson-business.jsonc");
 
   it("story-task-canvas-ownership:ac:5 enables auto-provision for every configured task-board target", () => {
-    const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
+    const targets = parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       targetId: string; organizationId: string; workspaceId: string; channelId: string; projectCodes: string[];
       enabled: boolean; autoProvision?: boolean; manaCanvasId: string | null; bindingRevision: number | null;
     }>;
@@ -293,7 +294,7 @@ describe("会社別Cloudflare deployment", () => {
   });
 
   it("keeps every same-tenant task board target inside an enabled runtime placement", () => {
-    const targets = JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
+    const targets = parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON) as Array<{
       organizationId: string; workspaceId: string; channelId: string; projectCodes: string[]; enabled: boolean;
     }>;
     const placements = JSON.parse(unson.vars.RUNTIME_PLACEMENTS_JSON) as Array<{
@@ -666,7 +667,7 @@ describe("会社別Cloudflare deployment", () => {
         organization: { id: "tech-knight", name: "Tech Knight" },
         github: expect.objectContaining({ owner: "Tech-Knight-inc", repo: "HotelUnitedGAS", pathPrefix: "meetings/" }) }),
     ]));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-kartz", channelId: "C0BQA5BGTEH", projectCodes: ["kartz"],
     }));
     expect(destinations).toContainEqual(expect.objectContaining({
@@ -675,22 +676,22 @@ describe("会社別Cloudflare deployment", () => {
       slackChannelId: "C0BKXCVSDCH",
       github: { owner: "Unson-LLC", repo: "Drive", branch: "main", pathPrefix: "meetings/unson-board/" },
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-unson-board", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
       channelId: "C0BKXCVSDCH", projectCodes: ["unson"],
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-legal-affairs", organizationId: "unson-business", workspaceId: "T0882T8N9UH",
       channelId: "C0BKZ6CF3J8", projectCodes: ["unson"],
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-senpainurse", channelId: "C0A9J7UV1KL", projectCodes: ["senpainurse"],
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-techknight-executives", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
       channelId: "C08UXAH41U4", projectCodes: ["proj_techknight_board"],
     }));
-    expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
+    expect(parseTaskBoardTargets(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-synctoys", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
       channelId: "C0BV97TH422", projectCodes: ["synctoys"],
     }));

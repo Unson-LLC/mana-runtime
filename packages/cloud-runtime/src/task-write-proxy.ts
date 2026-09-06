@@ -12,6 +12,7 @@ export interface TaskWriteProxyEnv {
   RUNTIME_TASK_WRITE_ENABLED?: string;
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_PLACEMENTS_JSON?: string;
+  RUNTIME_AUTHORITY_PROJECT_IDS_JSON?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
   TASK_WRITE_CAPABILITY_SECRET?: string;
@@ -25,6 +26,20 @@ export interface TaskWriteProxyEnv {
   TASK_WRITE_BUDGETS?: TaskWriteBudgetNamespace;
   MANA_AUTONOMY_EXPERIMENT_JSON?: string;
   MANA_AUTONOMY_DISABLED?: string;
+}
+
+function normalizeRequestedProject(env: TaskWriteProxyEnv, placementId: string, projects: readonly string[], requested: string): string {
+  if (projects.includes(requested)) return requested;
+  if (projects.length !== 1 || !env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON) throw new Error("task_write_denied");
+  let configured: unknown;
+  try { configured = JSON.parse(env.RUNTIME_AUTHORITY_PROJECT_IDS_JSON); } catch { throw new Error("task_write_not_configured"); }
+  if (!configured || typeof configured !== "object" || Array.isArray(configured)) throw new Error("task_write_not_configured");
+  const authorityIds = (configured as Record<string, unknown>)[placementId];
+  if (!Array.isArray(authorityIds) || authorityIds.length !== 1 || typeof authorityIds[0] !== "string") {
+    throw new Error("task_write_denied");
+  }
+  if (authorityIds[0] !== requested) throw new Error("task_write_denied");
+  return projects[0]!;
 }
 
 function parsePolicy(value: string | undefined): TaskWritePolicy {
@@ -208,6 +223,7 @@ export function createTaskWriteProxyHandler(fetchImpl?: typeof fetch) {
       const placementId = placement?.placementId ?? env.RUNTIME_PLACEMENT_ID;
       if (!secret || projects.length === 0 || (!env.BRAINBASE_TASK_API_TOKEN && !brokered)
         || !env.SLACK_EXPECTED_TEAM_ID || !placementId) throw new Error("task_write_not_configured");
+      body = { ...body, project: normalizeRequestedProject(env, placementId, projects, body.project) };
       const claims = await verifyTaskWriteCapability(token, secret, { requestId: body.request_id, workspace: env.SLACK_EXPECTED_TEAM_ID, placementId });
       const operation = `task.${body.operation}` as TaskWriteOperation;
       const idempotencyKey = taskIdempotencyKey(claims.actor.provider, body.request_id, body.call_index);
