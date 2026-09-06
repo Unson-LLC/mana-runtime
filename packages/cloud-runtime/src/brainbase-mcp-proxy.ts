@@ -52,7 +52,7 @@ export async function handleBrainbaseMcpProxyRequest(
     return Response.json({ error: { code: "BRAINBASE_PROXY_NOT_CONFIGURED", retryable: true } }, { status: 503 });
   }
   const headers = new Headers();
-  for (const name of ["accept", "content-type", "user-agent"] as const) {
+  for (const name of ["accept", "content-type", "user-agent", "mcp-session-id"] as const) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
@@ -81,10 +81,12 @@ export async function handleBrainbaseMcpProxyRequest(
         errorCode: diagnostic.match(/\b(?:judgment|brainbase)_[a-z0-9_]{1,80}\b/u)?.[0] ?? null,
       }));
     }
-    return new Response(response.body, {
-      status: response.status,
-      headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
+    const responseHeaders = new Headers({
+      "content-type": response.headers.get("content-type") ?? "application/json",
     });
+    const sessionId = response.headers.get("mcp-session-id");
+    if (sessionId) responseHeaders.set("mcp-session-id", sessionId);
+    return new Response(response.body, { status: response.status, headers: responseHeaders });
   } catch {
     return Response.json({ error: { code: "BRAINBASE_UPSTREAM_UNAVAILABLE", retryable: true } }, { status: 502 });
   }
