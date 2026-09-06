@@ -376,6 +376,8 @@ function runtimeEnv(overrides: Record<string, unknown> = {}): RuntimeEnv {
     MANA_REQUIRED_SLACK_SCOPES: "chat:write",
     RUNTIME_CLAUDE_MODEL: "sonnet",
     RUNTIME_TASK_SEARCH_ENABLED: "false",
+    RUNTIME_TASK_WRITE_ENABLED: "true",
+    TASK_WRITE_CAPABILITY_SECRET: "company-authority-task-write-test-secret",
     BRAINBASE_WORKSPACE_CONNECTIONS_JSON: JSON.stringify([{
       ...snapshot,
       tenant_revision: "3",
@@ -384,7 +386,7 @@ function runtimeEnv(overrides: Record<string, unknown> = {}): RuntimeEnv {
       placementId: "tasks",
       channelId,
       projectCodes: [projectId],
-      taskWriteEnabled: false,
+      taskWriteEnabled: true,
       respondTo: { channel: "always", im: "never", mpim: "never", engagedThreads: false },
       agent: { model: "sonnet" },
     }]),
@@ -541,6 +543,10 @@ describe("Company Authority runtime.execute reply executor", () => {
     expect(runtimeMocks.preparedRequesters[0]?.requesterIdentity).toEqual({
       slackUserId: userId,
       personId,
+    });
+    expect(runtimeMocks.preparedRequesters[0]).toMatchObject({
+      taskWriteEnabled: true,
+      taskWriteCapability: expect.any(String),
     });
     expect(runtimeMocks.replyInputs[0]?.options).toMatchObject({
       brainbaseProjectCode: projectId,
