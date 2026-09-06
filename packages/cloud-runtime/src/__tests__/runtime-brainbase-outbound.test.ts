@@ -52,9 +52,39 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
     expect(providerFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("never falls back to a global Hook token/project for Company Authority", async () => {
+  it("binds Company Authority Hook calls to the mapped canonical project", async () => {
     boundaryMocks.resolve.mockResolvedValue({
-      tenant_context: { operation_id: "op-a0" }, company_authority_envelope: { accepted: true },
+      tenant_context: { operation_id: "op-a0", authorization: { project_ids: ["prj_mana"] } },
+      expected_scope: { project_id: "prj_mana", project_ids: ["prj_mana"] },
+      company_authority_envelope: { accepted: true },
+    });
+    const providerFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("x-brainbase-project-code")).toBe("mana");
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+    const response = await authorizeRuntimeBrainbaseOutbound(
+      new Request("https://brainbase-mcp.internal/host/judgment/hook", { method: "POST", body: "{}" }),
+      {
+        TENANT_RUNTIME_STATE: {} as TenantBoundaryContextNamespace,
+        BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp",
+        BRAINBASE_MCP_TOKEN: "global-token-must-not-be-used",
+        BRAINBASE_JUDGMENT_PROJECT_CODE: "other-project",
+        BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON: JSON.stringify({ prj_mana: "mana" }),
+      }, providerFetch,
+    );
+    expect(response.status).toBe(200);
+    expect(providerFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [undefined, ["prj_mana"], ["prj_mana"]],
+    [JSON.stringify({ prj_mana: "mana" }), ["prj_mana", "prj_other"], ["prj_mana"]],
+    [JSON.stringify({ prj_mana: "mana" }), ["prj_mana"], ["prj_other"]],
+  ])("fails closed when the authority project binding is unavailable or ambiguous", async (mapping, authorized, expected) => {
+    boundaryMocks.resolve.mockResolvedValue({
+      tenant_context: { operation_id: "op-a0", authorization: { project_ids: authorized } },
+      expected_scope: { project_id: expected[0], project_ids: expected },
+      company_authority_envelope: { accepted: true },
     });
     const providerFetch = vi.fn();
     const response = await authorizeRuntimeBrainbaseOutbound(
@@ -64,7 +94,8 @@ describe("authorizeRuntimeBrainbaseOutbound", () => {
         BRAINBASE_MCP_BASE_URL: "https://bb.unson.jp/runtime-mcp",
         BRAINBASE_MCP_TOKEN: "global-token-must-not-be-used",
         BRAINBASE_JUDGMENT_PROJECT_CODE: "other-project",
-      }, providerFetch,
+        BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON: mapping,
+      }, providerFetch as typeof fetch,
     );
     expect(response.status).toBe(503);
     expect(providerFetch).not.toHaveBeenCalled();

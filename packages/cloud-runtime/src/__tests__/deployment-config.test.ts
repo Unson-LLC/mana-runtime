@@ -567,6 +567,9 @@ describe("会社別Cloudflare deployment", () => {
       "minutes-ncom-catalyst": ["prj_01KGHVCMA6R6A9MEMGKHRXQ5J0"],
       "mana-dev-biz": ["prj_01KGHVCMA35JHSMXTSWQAS04PS"],
     });
+    expect(JSON.parse(unson.vars.BRAINBASE_JUDGMENT_AUTHORITY_PROJECTS_JSON)).toEqual({
+      prj_01KGHVCMA35JHSMXTSWQAS04PS: "mana",
+    });
     expect(JSON.parse(unson.vars.MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON)).toEqual({
       unson: "prj_01KGCS8C1PSSXPHXPBX1D4CKDT",
       techknight: "prj_01M1DDJ9V6EER4676YPXBSHBZX",
