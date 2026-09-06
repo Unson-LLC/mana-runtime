@@ -332,11 +332,11 @@ export class MeetingMinutesSlackClient {
     return this.token ? { Authorization: `Bearer ${this.token}` } : {};
   }
 
-  private async post(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<SlackApiResponse> {
+  private async post(method: string, body?: Record<string, unknown>, signal?: AbortSignal): Promise<SlackApiResponse> {
     if (!this.token?.trim() && !this.brokered) throw new Error("slack_bot_token_not_configured");
     const response = await this.fetchImpl.call(globalThis, `https://slack.com/api/${method}`, { method: "POST",
-      headers: { ...this.authorization(), "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify(body), signal });
+      headers: { ...this.authorization(), ...(body === undefined ? {} : { "Content-Type": "application/json; charset=utf-8" }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal });
     const result = await response.json() as SlackApiResponse;
     if (!response.ok || !result.ok) throw new Error(`slack_api_failed:${method}:${result.error ?? response.status}`);
     return result;
@@ -532,7 +532,7 @@ export class MeetingMinutesSlackClient {
     if (!run.slack?.processingTs || !run.destination) throw new Error("meeting_minutes_status_coordinates_missing");
     // The terminal source message is an external effect. A successful chat.update
     // response alone is not evidence that Slack stored the exact final message.
-    const auth = await this.post("auth.test", {});
+    const auth = await this.post("auth.test");
     if (auth.team_id !== terminalReadback.workspaceId || !auth.bot_id) {
       throw new Error("meeting_minutes_terminal_slack_identity_mismatch");
     }
