@@ -2155,6 +2155,11 @@ export async function executeCompanyAuthorityReplyOperation(
       phase: `reply_entry_${entryScopeFailure}`,
     });
   }
+  console.log(JSON.stringify({
+    event: "company_authority_reply_entry_accepted",
+    correlation_id: tenantContext.correlation_id,
+    operation_id: tenantContext.operation_id,
+  }));
   const config = parseCompanyAuthorityRuntimeConfiguration(env);
   if (config.state !== "enabled") deny("container_launch", "AUTHORITY_UNAVAILABLE");
   const clients = tenantRuntimeClients(env, tenantContext,
@@ -2185,13 +2190,22 @@ export async function executeCompanyAuthorityReplyOperation(
     return accepted.result as T;
   };
   return boundary("container_launch", async () => {
+    console.log(JSON.stringify({
+      event: "company_authority_container_boundary_accepted",
+      correlation_id: tenantContext.correlation_id,
+      operation_id: tenantContext.operation_id,
+    }));
     const placement = resolveRuntimePlacement(event, {
       tenantId: tenantContext.tenant.tenant_id,
       workspaceId: tenantContext.workspace_connection.workspace_id,
       placements: canonicalRuntimePlacements(env),
     });
     if (placement.projectCodes.length !== 1 || placement.projectCodes[0] !== expectedScope.project_id) {
-      deny("container_launch", "AUTHORITY_SCOPE_MISMATCH");
+      deny("container_launch", "AUTHORITY_SCOPE_MISMATCH", {
+        phase: placement.projectCodes.length !== 1
+          ? "reply_placement_project_cardinality"
+          : "reply_placement_project_identity",
+      });
     }
     const brokerFetch = createTenantCredentialFetch({ envelope: tenantContext,
       expected_scope: expectedScope, broker: clients.credential_broker,
