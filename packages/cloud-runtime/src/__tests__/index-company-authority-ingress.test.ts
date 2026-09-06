@@ -9,7 +9,7 @@ import type {
   UnsignedTenantContextEnvelope,
   WorkspaceConnectionSnapshot,
 } from "../multitenancy/contracts.js";
-import { signTenantContextEnvelope } from "../multitenancy/envelope.js";
+import { signTenantContextEnvelope, validateTenantBoundary } from "../multitenancy/envelope.js";
 import { createIdempotencyKey } from "../multitenancy/idempotency.js";
 import type { TenantQueueBody } from "../multitenancy/runtime-boundaries.js";
 import type { MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
@@ -46,7 +46,7 @@ vi.mock("../multitenancy/http-clients.js", async (importOriginal) => {
   return { ...actual, createTenantRuntimeHttpClients: runtimeMocks.createClients };
 });
 
-import worker from "../index.js";
+import worker, { resolveTaskBoardRepairTenantContext } from "../index.js";
 
 const signingSecret = "test-signing-secret";
 const tenantId = "ten_01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -371,6 +371,75 @@ describe("default Worker Company Authority ingress", () => {
       schema_version: "1.0",
       payload: expect.objectContaining({ tenantId }),
     }));
+  });
+
+  it.each([
+    { reason: "task_write" as const, capabilityId: "runtime.execute", expectedCapabilityId: "runtime.execute" },
+    { reason: "manual" as const, capabilityId: undefined, expectedCapabilityId: "task_board_send" },
+  ])("round-trips destination repair authorization for $reason", async ({
+    reason,
+    capabilityId,
+    expectedCapabilityId,
+  }) => {
+    const bindings = env({
+      ...(await legacyAuthorityBindings()),
+      MANA_REQUIRED_CAPABILITY_ID: "runtime.execute",
+      MANA_TASK_BOARD_SERVICE_ACTOR_ID: "service-task-board",
+      MEETING_MINUTES_AUTHORITY_PROJECT_IDS_JSON: JSON.stringify({ "back-office": "prj_backoffice" }),
+    });
+    const requestedAt = new Date().toISOString();
+    const repair = {
+      eventType: "task_board_repair" as const,
+      tenantId,
+      workspaceId: "T_UNSON",
+      channelId: "C2",
+      targetId: "minutes-back-office",
+      manaCanvasId: null,
+      bindingRevision: 1,
+      reason,
+      requestedAt,
+    };
+
+    const tenantContext = await resolveTaskBoardRepairTenantContext(bindings as never, repair, {
+      appId: "A_UNSON",
+      destination: meetingMinutesDestination,
+      ...(capabilityId ? { capabilityId } : {}),
+    });
+
+    expect(runtimeMocks.legacyAuthority.issue_tenant_context).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        required_authorization: {
+          audience: "mana-runtime",
+          project_id: "prj_backoffice",
+          capability_id: expectedCapabilityId,
+        },
+      }),
+    );
+    expect(tenantContext.authorization.capability_ids).toContain(expectedCapabilityId);
+    await validateTenantBoundary({
+      boundary: "queue_consumer",
+      envelope: tenantContext,
+      authoritative_snapshot: snapshot,
+      expected_scope: {
+        audience: "mana-runtime",
+        workspace_id: "T_UNSON",
+        app_id: "A_UNSON",
+        channel_id: "C2",
+        thread_ts: requestedAt,
+        actor_principal_id: tenantContext.actor.principal_id,
+        project_id: "prj_backoffice",
+        capability_id: expectedCapabilityId,
+        deployment_id: deploymentId,
+      },
+      now: requestedAt,
+      resolve_verification_key: async (keyId) => {
+        const jwks = JSON.parse(String((bindings as Record<string, unknown>).BRAINBASE_TENANT_CONTEXT_JWKS_JSON)) as {
+          keys: JsonWebKey[];
+        };
+        const jwk = jwks.keys.find((key) => (key as JsonWebKey & { kid?: string }).kid === keyId);
+        return jwk ? crypto.subtle.importKey("jwk", jwk, { name: "Ed25519" }, true, ["verify"]) : undefined;
+      },
+    });
   });
 
   it.each([200, 302, 503])("uses the private HTTP client and rejects an untrusted response (HTTP %s)", async (status) => {

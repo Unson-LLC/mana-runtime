@@ -1583,7 +1583,7 @@ async function writeDevelopmentTerminalAccounting(env: Env, input: {
   });
 }
 
-async function resolveTaskBoardRepairTenantContext(
+export async function resolveTaskBoardRepairTenantContext(
   env: Env,
   repair: TaskBoardRepairEvent,
   options: {
@@ -1597,6 +1597,10 @@ async function resolveTaskBoardRepairTenantContext(
   const serviceActorId = requiredRuntimeBinding(env.MANA_TASK_BOARD_SERVICE_ACTOR_ID);
   const destinationAuthorization = destinationAuthorizationForSelection(env, options.destination);
   if (options.destination && !destinationAuthorization) deny("worker_ingress", "PROJECT_SCOPE_MISMATCH");
+  const capabilityId = options.capabilityId ?? taskBoardRepairCapabilityId(
+    repair,
+    requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID),
+  );
   const placementProjectScope = destinationAuthorization ? undefined : placementProjectScopeForEvent(env, {
     tenantId: env.TENANT_ID,
     eventId: taskBoardRepairEventId(repair),
@@ -1609,10 +1613,12 @@ async function resolveTaskBoardRepairTenantContext(
     text: "",
     receivedAt: repair.requestedAt,
   });
-  const requiredAuthorization = destinationAuthorization?.required_authorization ?? {
-    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
-    project_id: placementProjectScope!.project_id,
-    capability_id: options.capabilityId ?? "task_board_send",
+  const requiredAuthorization = {
+    ...(destinationAuthorization?.required_authorization ?? {
+      audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE),
+      project_id: placementProjectScope!.project_id,
+    }),
+    capability_id: capabilityId,
   };
   const appId = requiredRuntimeBinding(options.appId ?? env.SLACK_EXPECTED_APP_ID);
   const resolved = await resolveSlackWorkerIngress({
