@@ -767,6 +767,19 @@ describe("meeting minutes pipeline", () => {
     expect(slackFailure.taskRegistration?.failure?.message).toBe("task_board_missing_scope");
   });
 
+  it("persists a safe task-board cause from a cross-boundary object", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const failed = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "Canvasを更新する" }] }),
+      createTask: vi.fn().mockResolvedValue({ id: "task-canvas" }),
+      repairTaskBoard: vi.fn().mockRejectedValue({ message: "task_board_canvas_binding_mismatch" }),
+    }));
+
+    expect(failed.taskRegistration?.failure?.message).toBe("task_board_canvas_binding_mismatch");
+  });
+
   it("persists an unknown machine-readable task-board code without exposing details", async () => {
     const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
       destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });

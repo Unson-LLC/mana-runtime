@@ -76,6 +76,25 @@ describe("Cloudflare bounded task Canvas", () => {
       .resolves.toBe("FLEGACY");
   });
 
+  it.each([
+    { canvas: "FSTRING" },
+    { canvas: { canvas_id: "FCANVASID" } },
+  ])("reuses the channel Canvas from supported conversations.info canvas shapes", async (properties) => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("conversations.canvases.create")) {
+        return Response.json({ ok: false, error: "channel_canvas_already_exists" });
+      }
+      if (parsed.pathname.endsWith("conversations.info")) {
+        return Response.json({ ok: true, channel: { properties } });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    await expect(createManagedTaskBoardCanvas("C_TRUSTED", "tech-token", { fetch: fetchMock }))
+      .resolves.toMatch(/^F(?:STRING|CANVASID)$/u);
+  });
+
   it("does not guess a Canvas when Slack reports an existing channel Canvas but none is readable", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const parsed = new URL(url);

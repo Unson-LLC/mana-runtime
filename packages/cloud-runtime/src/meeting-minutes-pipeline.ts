@@ -176,7 +176,9 @@ const SAFE_TASK_FAILURE_CODES = new Set(["project_code_not_allowed", "task_scope
   "PROVIDER_OPERATION_UNSUPPORTED", "UPSTREAM_UNAVAILABLE", "UPSTREAM_INVALID_RESPONSE"]);
 
 function safeTaskFailureMessage(error: unknown, fallback: string): string {
-  const message = error instanceof Error ? error.message : "";
+  const message = error instanceof Error ? error.message
+    : error && typeof error === "object" && "message" in error && typeof error.message === "string"
+      ? error.message : "";
   return SAFE_TASK_FAILURE_MESSAGES.has(message) || /^task_board_[a-z0-9_-]{1,96}$/u.test(message)
     ? message : fallback;
 }
@@ -311,6 +313,8 @@ async function deferTaskIntegration(fs: WorkspaceFs, run: MeetingMinutesRun,
       postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0 } };
   run.status = "completed"; delete run.failure; run.updatedAt = now(options);
   await saveMeetingMinutesRun(fs, run);
+  console.error(JSON.stringify({ event: `meeting_minutes_${stage}_deferred`,
+    ...meetingMinutesFailureLog(run) }));
 }
 
 async function markTaskIntegrationPending(fs: WorkspaceFs, run: MeetingMinutesRun,
