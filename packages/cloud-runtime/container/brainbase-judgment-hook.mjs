@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 
@@ -9,12 +9,17 @@ const hookUrl = process.env.BRAINBASE_JUDGMENT_HOOK_URL
   || "https://brainbase-mcp.internal/host/judgment/hook";
 const turnDir = process.env.BRAINBASE_JUDGMENT_TURN_DIR || "/tmp/mana-judgment-turns";
 const MAX_HOOK_PAYLOAD_BYTES = 1024 * 1024;
+const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_JUDGMENT_REQUEST_CHARS = 4_000;
 const JUDGMENT_RECEIPT_PREFIX = "__MANA_JUDGMENT_RECEIPT_V1__:";
 const VERIFIED_ANSWER_PREFIX = "__MANA_VERIFIED_ANSWER_V1__:";
 const JUDGMENT_AUDIT_PREFIXES = ["🧠 判断参照:", "⚠️ 判断参照:"];
 const BRAINBASE_AUDIT_PREFIXES = ["📚 Brainbase", "⚠️ Brainbase"];
 const AUDIT_PREFIXES = [...JUDGMENT_AUDIT_PREFIXES, ...BRAINBASE_AUDIT_PREFIXES, "🔁 ", "🛠️ "];
+const RECOVERABLE_BRAINBASE_TOOLS = new Set([
+  "mcp__brainbase__brainbase_resolve_turn",
+  "mcp__brainbase__brainbase_judgment_state_record",
+]);
 
 // Meeting-minutes generation is a non-interactive, schema-constrained batch
 // operation. Its audit boundary is the Worker-issued context receipt, so an
@@ -357,14 +362,39 @@ async function readTurnState(payload) {
   throw new Error("judgment_turn_identity_missing");
 }
 
+async function transcriptBoundary(payload) {
+  const transcriptPath = typeof payload.transcript_path === "string"
+    ? payload.transcript_path.trim() : "";
+  if (!transcriptPath) return {};
+  try {
+    const info = await stat(transcriptPath);
+    if (!info.isFile()) throw new Error("judgment_hook_transcript_boundary_invalid");
+    if (!Number.isSafeInteger(info.size) || info.size < 0 || info.size > MAX_TRANSCRIPT_BYTES) {
+      throw new Error("judgment_hook_transcript_too_large");
+    }
+    return {
+      transcript_path: transcriptPath,
+      transcript_start_offset: info.size,
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { transcript_path: transcriptPath, transcript_start_offset: 0 };
+    }
+    if (error instanceof Error && error.message.startsWith("judgment_hook_")) throw error;
+    throw new Error("judgment_hook_transcript_boundary_unreadable");
+  }
+}
+
 async function resolveTurnId(payload) {
   const path = statePath(payload);
   if (payload.hook_event_name === "UserPromptSubmit") {
     const turnId = randomUUID();
+    const boundary = await transcriptBoundary(payload);
     await persistTurnState(path, {
       turn_id: turnId,
       resolve_turn_completed: false,
       stop_repair_requested: false,
+      ...boundary,
     });
     return turnId;
   }
@@ -429,6 +459,149 @@ async function completedToolReceipts(payload) {
   return Array.isArray(stored.tool_receipts) ? stored.tool_receipts : [];
 }
 
+function transcriptBlocks(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return [];
+  const message = record.message;
+  if (message && typeof message === "object" && !Array.isArray(message)
+      && Object.hasOwn(message, "content")) {
+    return Array.isArray(message.content)
+      ? message.content : [message.content];
+  }
+  if (Object.hasOwn(record, "content")) {
+    return Array.isArray(record.content) ? record.content : [record.content];
+  }
+  return [];
+}
+
+function transcriptToolResponse(resultBlock, record) {
+  if (Object.hasOwn(record, "toolUseResult") && record.toolUseResult !== null
+      && record.toolUseResult !== undefined) {
+    if (Array.isArray(record.toolUseResult)) return { content: record.toolUseResult };
+    if (record.toolUseResult && typeof record.toolUseResult === "object") {
+      return record.toolUseResult;
+    }
+    throw new Error("judgment_hook_transcript_tool_response_invalid");
+  }
+  if (!Object.hasOwn(resultBlock, "content")) {
+    throw new Error("judgment_hook_transcript_tool_response_missing");
+  }
+  if (Array.isArray(resultBlock.content)) return { content: resultBlock.content };
+  if (resultBlock.content && typeof resultBlock.content === "object") return resultBlock.content;
+  if (typeof resultBlock.content === "string") {
+    return { content: [{ type: "text", text: resultBlock.content }] };
+  }
+  throw new Error("judgment_hook_transcript_tool_response_invalid");
+}
+
+async function readTranscriptLifecycleCalls(payload, stored) {
+  const transcriptPath = typeof payload.transcript_path === "string"
+    ? payload.transcript_path.trim() : "";
+  if (!transcriptPath) return [];
+  if (stored.transcript_path !== transcriptPath
+      || !Number.isSafeInteger(stored.transcript_start_offset)
+      || stored.transcript_start_offset < 0) {
+    throw new Error("judgment_hook_transcript_boundary_missing");
+  }
+  let contents;
+  try {
+    contents = await readFile(transcriptPath);
+  } catch {
+    throw new Error("judgment_hook_transcript_unreadable");
+  }
+  if (contents.length > MAX_TRANSCRIPT_BYTES) throw new Error("judgment_hook_transcript_too_large");
+  if (stored.transcript_start_offset > contents.length) {
+    throw new Error("judgment_hook_transcript_truncated");
+  }
+  const suffix = contents.subarray(stored.transcript_start_offset).toString("utf8");
+  const calls = new Map();
+  const results = new Map();
+  for (const line of suffix.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      throw new Error("judgment_hook_transcript_invalid");
+    }
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      throw new Error("judgment_hook_transcript_invalid");
+    }
+    for (const block of transcriptBlocks(record)) {
+      if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+      if (block.type === "tool_use" && RECOVERABLE_BRAINBASE_TOOLS.has(block.name)) {
+        if (typeof block.id !== "string" || !block.id.trim()) {
+          throw new Error("judgment_hook_transcript_tool_identity_missing");
+        }
+        if (!Object.hasOwn(block, "input")) {
+          throw new Error("judgment_hook_transcript_tool_input_missing");
+        }
+        if (calls.has(block.id)) throw new Error("judgment_hook_transcript_tool_identity_conflict");
+        calls.set(block.id, {
+          tool_use_id: block.id,
+          tool_name: block.name,
+          tool_input: block.input,
+        });
+      }
+      if (block.type === "tool_result") {
+        if (typeof block.tool_use_id !== "string" || !block.tool_use_id.trim()) continue;
+        if (results.has(block.tool_use_id)) {
+          throw new Error("judgment_hook_transcript_tool_result_conflict");
+        }
+        if (block.is_error === true || block.isError === true) {
+          throw new Error("judgment_hook_transcript_tool_failed");
+        }
+        results.set(block.tool_use_id, {
+          tool_response: transcriptToolResponse(block, record),
+        });
+      }
+    }
+  }
+  const recovered = [];
+  for (const call of calls.values()) {
+    const result = results.get(call.tool_use_id);
+    if (!result) throw new Error("judgment_hook_transcript_tool_result_missing");
+    recovered.push({ ...call, ...result });
+  }
+  return recovered;
+}
+
+async function replayMissingLifecycleToolReceipts(payload) {
+  if (payload.hook_event_name !== "Stop") return;
+  const transcriptPath = typeof payload.transcript_path === "string"
+    ? payload.transcript_path.trim() : "";
+  if (!transcriptPath) return;
+  const { stored } = await readTurnState(payload);
+  if (stored.turn_id !== payload.turn_id) throw new Error("judgment_turn_identity_mismatch");
+  const calls = await readTranscriptLifecycleCalls(payload, stored);
+  const existing = Array.isArray(stored.tool_receipts) ? stored.tool_receipts : [];
+  for (const call of calls) {
+    const receipt = existing.find((entry) => entry?.tool_use_id === call.tool_use_id);
+    if (receipt) {
+      if (receipt.tool_name !== call.tool_name || receipt.outcome !== "success") {
+        throw new Error("judgment_hook_tool_receipt_conflict");
+      }
+      continue;
+    }
+    const replayPayload = {
+      hook_event_name: "PostToolUse",
+      session_id: payload.session_id,
+      transcript_path: payload.transcript_path,
+      turn_id: payload.turn_id,
+      tool_use_id: call.tool_use_id,
+      tool_name: call.tool_name,
+      tool_input: call.tool_input,
+      tool_response: call.tool_response,
+    };
+    const output = await validatedOutput(await fetchHookEnvelope(replayPayload), replayPayload);
+    // Keep the local receipt durable after each Host call. If a subsequent
+    // replay or Stop invocation is interrupted, this identity can be skipped
+    // without sending a duplicate journal event to Brainbase.
+    await recordCompletedToolReceipt(replayPayload);
+    if (isResolveTurnTool(replayPayload)) await markResolveTurnCompleted(replayPayload);
+    void output;
+  }
+}
+
 try {
   const payload = await readStdin();
   const trustedRequest = process.env.MANA_JUDGMENT_REQUEST;
@@ -443,6 +616,7 @@ try {
     await requireResolveTurnFirst(payload);
     process.exit(0);
   }
+  await replayMissingLifecycleToolReceipts(payload);
   // The wrapper owns Stop attempt identity. Claude's non-interactive runtime
   // may set stop_hook_active=true even on the first externally invoked Stop,
   // which would make the Host reject the repair before Claude can perform it.
