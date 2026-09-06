@@ -129,7 +129,16 @@ async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
   run.updatedAt = new Date().toISOString();
   await saveMeetingMinutesRun(fs, run);
   if (!options.emitRunReceipt) return;
-  const delivered = await options.emitRunReceipt(receipt);
+  let delivered: ConfirmedRunReceiptDelivery;
+  try {
+    delivered = await options.emitRunReceipt(receipt);
+  } catch (error) {
+    const message = error instanceof Error && /^meeting_minutes_run_receipt_[a-z0-9_:.-]+$/u.test(error.message)
+      ? error.message : "meeting_minutes_run_receipt_delivery_failed";
+    console.error(JSON.stringify({ event: "meeting_minutes_run_receipt_delivery_failed",
+      runId: run.runId, code: message }));
+    throw error;
+  }
   const deliveredAt = new Date().toISOString();
   run.runReceipt = { ...run.runReceipt, receiptId: delivered.receiptId, status: "delivered", deliveredAt };
   run.updatedAt = deliveredAt;
