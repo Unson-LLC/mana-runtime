@@ -757,7 +757,7 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("processMeetingMinutesSlackEvent(");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toMatch(
-      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*placement,\s*requesterResolution\.personId,\s*\)/,
+      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*taskWritePlacement,\s*requesterResolution\.personId,\s*\)/,
     );
     expect(worker).toContain("classifyMeetingMinutesDestinationInSandbox(");
     expect(worker).toContain("download: (fileId) => meetingClients.slack.downloadTextFile(fileId)");
@@ -864,7 +864,7 @@ describe("会社別Cloudflare deployment", () => {
     const worker = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(worker).toContain("issueTaskWriteRequestContext(");
     expect(worker).toMatch(
-      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*placement,\s*requesterResolution\.personId,\s*\)/,
+      /issueTaskWriteRequestContext\(\s*event,\s*env,\s*Date\.now\(\),\s*taskWritePlacement,\s*requesterResolution\.personId,\s*\)/,
     );
     expect(worker).toContain("processTaskBoardRepair(repair, env, runtimeTenantId, tenantCredentialFetch,");
     expect(worker).toContain("enqueueScheduledTaskBoardRepair(");

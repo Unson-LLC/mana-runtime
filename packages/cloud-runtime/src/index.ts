@@ -2918,11 +2918,22 @@ function executeSharedReplyRuntime(input: SharedReplyRuntimeInput): Promise<Repl
       // Company Authority has already fixed both the canonical actor and the
       // exact project scope. Reuse the ordinary signed task-write capability so
       // the sandbox can mutate only that accepted placement and project.
+      // The Task API uses placement project codes, while Company Authority uses
+      // canonical project IDs. Issue the write capability from the configured
+      // placement so the broker can authorize the code sent in the Task body.
+      const taskWritePlacement = env.RUNTIME_PLACEMENTS_JSON
+        ? parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON)
+          .find((candidate) => candidate.placementId === placement.placementId)
+        : placement;
+      if (!taskWritePlacement || taskWritePlacement.channelId !== placement.channelId
+        || taskWritePlacement.projectCodes.length !== placement.projectCodes.length) {
+        throw new ReplyPipelineError("task_write_placement_scope_mismatch");
+      }
       const { taskWriteEnabled, taskWriteCapability } = await issueTaskWriteRequestContext(
         event,
         env,
         Date.now(),
-        placement,
+        taskWritePlacement,
         requesterResolution.personId,
       );
       const graphContext = await hydrateGraphContext(event, canonicalProjectId, graphOptions);
