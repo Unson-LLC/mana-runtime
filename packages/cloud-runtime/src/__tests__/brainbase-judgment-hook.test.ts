@@ -192,7 +192,7 @@ describe("Brainbase judgment Hook forwarder", () => {
         hook_event_name,
         session_id: "session-1",
         ...(hook_event_name === "PostToolUse" || hook_event_name === "PostToolUseFailure" ? {
-          tool_use_id: "tool-use-1",
+          tool_use_id: hook_event_name === "PostToolUse" ? "tool-use-1" : "tool-use-2",
           tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
         } : {}),
         ...(hook_event_name === "Stop" ? {
@@ -224,9 +224,22 @@ describe("Brainbase judgment Hook forwarder", () => {
         expect(embeddedReceipt.route_resolution_sha256).toBe("a".repeat(64));
       } else if (hook_event_name === "PostToolUse" || hook_event_name === "PostToolUseFailure") {
         expect(embeddedReceipt).toMatchObject({
-          tool_use_id: "tool-use-1",
+          tool_use_id: hook_event_name === "PostToolUse" ? "tool-use-1" : "tool-use-2",
           tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
         });
+      } else if (hook_event_name === "Stop") {
+        expect(embeddedReceipt.tool_receipts).toEqual([
+          {
+            tool_use_id: "tool-use-1",
+            tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+            outcome: "success",
+          },
+          {
+            tool_use_id: "tool-use-2",
+            tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+            outcome: "error",
+          },
+        ]);
       }
     }
     expect(new Set(payloads.map((payload) => payload.turn_id)).size).toBe(1);

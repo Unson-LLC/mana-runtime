@@ -47,6 +47,11 @@ interface EmbeddedHookReceipt {
   route_resolution_sha256?: string;
   tool_use_id?: string;
   tool_name?: string;
+  tool_receipts?: Array<{
+    tool_use_id: string;
+    tool_name: string;
+    outcome: "success" | "error";
+  }>;
 }
 
 export type ReplyJudgmentAuditMismatchReason =
@@ -413,6 +418,56 @@ function buildAuditBindingDiagnostics(
   };
 }
 
+function stopToolReceiptHooks(
+  stopHook: { index: number; output: Record<string, unknown>; receipt: EmbeddedHookReceipt },
+  calls: ReadonlyArray<{ index: number; id: string; name: string }>,
+  results: ReadonlyMap<string, { index: number; outcome: "success" | "error" }>,
+  deniedCallIds: ReadonlySet<string>,
+): Array<{ index: number; output: Record<string, unknown>; receipt: EmbeddedHookReceipt }> {
+  const journal = stopHook.receipt.tool_receipts;
+  if (journal === undefined) return [];
+  if (!Array.isArray(journal)) {
+    throw new Error("reply_judgment_tool_audit_mismatch_stop_tool_receipts_invalid");
+  }
+  const seen = new Map<string, { toolName: string; outcome: "success" | "error" }>();
+  return journal.map((entry) => {
+    if (!entry || typeof entry !== "object"
+        || typeof entry.tool_use_id !== "string" || !entry.tool_use_id.trim()
+        || typeof entry.tool_name !== "string" || !entry.tool_name.startsWith("mcp__brainbase__")
+        || (entry.outcome !== "success" && entry.outcome !== "error")) {
+      throw new Error("reply_judgment_tool_audit_mismatch_stop_tool_receipts_invalid");
+    }
+    const existing = seen.get(entry.tool_use_id);
+    if (existing) {
+      if (existing.toolName !== entry.tool_name || existing.outcome !== entry.outcome) {
+        throw new Error("reply_judgment_tool_audit_mismatch_stop_tool_receipts_conflict");
+      }
+      throw new Error("reply_judgment_tool_audit_mismatch_stop_tool_receipts_duplicate");
+    }
+    seen.set(entry.tool_use_id, { toolName: entry.tool_name, outcome: entry.outcome });
+    const matchingCalls = calls.filter((call) => call.id === entry.tool_use_id);
+    const result = results.get(entry.tool_use_id);
+    if (matchingCalls.length !== 1 || matchingCalls[0]!.name !== entry.tool_name
+        || deniedCallIds.has(entry.tool_use_id) || !result || result.outcome !== entry.outcome) {
+      throw new Error("reply_judgment_tool_audit_mismatch_stop_tool_receipts_identity_mismatch");
+    }
+    return {
+      // The Stop Hook is invoked after every completed tool callback. Give its
+      // cumulative identities a position immediately before Stop so existing
+      // lifecycle ordering checks remain fail-closed.
+      index: stopHook.index - 0.5,
+      output: stopHook.output,
+      receipt: {
+        ...stopHook.receipt,
+        hook_event_name: entry.outcome === "success" ? "PostToolUse" : "PostToolUseFailure",
+        tool_use_id: entry.tool_use_id,
+        tool_name: entry.tool_name,
+        tool_receipts: undefined,
+      },
+    };
+  });
+}
+
 function verifiedAnswer(output: Record<string, unknown>): string | undefined {
   if (typeof output.systemMessage !== "string") return undefined;
   const markers = output.systemMessage.split(/\r?\n/)
@@ -572,6 +627,17 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     throw new Error("reply_judgment_route_receipt_missing");
   }
   const successfulStop = stopHooks.at(-1)!;
+  const stopJournalHooks = stopToolReceiptHooks(
+    successfulStop,
+    calls,
+    results,
+    deniedCallIds,
+  );
+  const authenticatedToolHooks = [...brainbaseIdentityBoundHooks];
+  const emittedToolUseIds = new Set(authenticatedToolHooks.map((hook) => hook.receipt.tool_use_id));
+  for (const hook of stopJournalHooks) {
+    if (!emittedToolUseIds.has(hook.receipt.tool_use_id)) authenticatedToolHooks.push(hook);
+  }
   const hostVerifiedAnswer = verifiedAnswer(successfulStop.output);
   if (!final && hostVerifiedAnswer) {
     final = {
@@ -597,10 +663,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
   if (allReceipts.some((receipt) => receipt.session_id !== final!.sessionId || receipt.turn_id !== turnId)) {
     throw new Error("reply_judgment_identity_mismatch");
   }
-  let boundPostToolHooks: typeof brainbaseIdentityBoundHooks;
-  if (brainbaseIdentityBoundHooks.length > 0) {
-    const hooksByToolUseId = new Map<string, typeof brainbaseIdentityBoundHooks[number]>();
-    for (const hook of brainbaseIdentityBoundHooks) {
+  let boundPostToolHooks: typeof authenticatedToolHooks;
+  if (authenticatedToolHooks.length > 0) {
+    const hooksByToolUseId = new Map<string, typeof authenticatedToolHooks[number]>();
+    for (const hook of authenticatedToolHooks) {
       const toolUseId = hook.receipt.tool_use_id!;
       const existing = hooksByToolUseId.get(toolUseId);
       if (existing) {
@@ -619,7 +685,7 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
       if (!hook || hook.receipt.tool_name !== call.name) {
         throw new ReplyJudgmentParseError(
           "reply_judgment_tool_audit_mismatch_posttool_receipt_binding_missing",
-          buildAuditBindingDiagnostics(executedCalls, brainbaseIdentityBoundHooks),
+          buildAuditBindingDiagnostics(executedCalls, authenticatedToolHooks),
         );
       }
       return hook;
@@ -631,10 +697,10 @@ export function parseReplyJudgmentStream(stdout: string): ReplyJudgmentResult {
     if (executedCalls.length > 0) {
       throw new ReplyJudgmentParseError(
         "reply_judgment_tool_audit_mismatch_posttool_receipt_missing",
-        buildAuditBindingDiagnostics(executedCalls, brainbaseIdentityBoundHooks),
+        buildAuditBindingDiagnostics(executedCalls, authenticatedToolHooks),
       );
     }
-    boundPostToolHooks = brainbaseIdentityBoundHooks;
+    boundPostToolHooks = authenticatedToolHooks;
   }
 
   executedCalls.forEach((call, sequence) => {
