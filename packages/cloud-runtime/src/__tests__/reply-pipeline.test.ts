@@ -1220,7 +1220,7 @@ describe("TechKnight Slack reply pipeline", () => {
     sandbox.exec.mockResolvedValueOnce({
       success: true,
       stdout: auditedReplyStreamWithOutOfOrderPostTool(secretCanary),
-      stderr: "",
+      stderr: "judgment_hook_http_404_judgment_episode_not_found with Bearer sk-ant-secret-value",
       exitCode: 0,
     });
 
@@ -1231,6 +1231,8 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
       event: "mana_claude_failed",
       reasonCode: diagnosticCode,
+      errorSummary: "[redacted] with [redacted]",
+      hookReasonCode: "judgment_hook_http_404_judgment_episode_not_found",
     }));
     expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
       event: "mana_reply_failed",
@@ -1240,6 +1242,7 @@ describe("TechKnight Slack reply pipeline", () => {
     const episode = JSON.parse(fs.files.get("/judgment-episodes/EvReply123.json")!);
     expect(episode.attempts).toMatchObject([{ status: "failed", failureCode: diagnosticCode }]);
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(secretCanary);
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("sk-ant-secret-value");
     expect(JSON.stringify(episode)).not.toContain(secretCanary);
     errorSpy.mockRestore();
   });
