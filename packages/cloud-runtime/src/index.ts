@@ -1354,7 +1354,7 @@ function meetingMinutesClients(
         );
         if (destinationToken) {
           await effects.boundary("slack_delivery", (credentialFetch) => processTaskBoardRepair(
-            repair, env, repair.tenantId, credentialFetch,
+            repair, env, repair.tenantId, globalThis.fetch,
             undefined, undefined, repair.workspaceId, credentialFetch,
             destination.taskProjectCodes, destinationToken,
           ));
@@ -3644,7 +3644,7 @@ export default {
                   sourceTarget(source),
                   { kind: "task_board_repair", targetId, runId: run.runId },
                   (credentialFetch) => processTaskBoardRepair(
-                    repair, env, repair.tenantId, fetch,
+                    repair, env, repair.tenantId, globalThis.fetch,
                     undefined, undefined, repair.workspaceId, credentialFetch,
                     run.destination!.taskProjectCodes, destinationToken,
                   ),
