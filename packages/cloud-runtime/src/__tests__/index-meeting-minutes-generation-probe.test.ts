@@ -379,6 +379,25 @@ describe("authorized meeting-minutes generation probe route", () => {
     expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
   });
 
+  it("retries from the persisted run when destination metadata changed after completion", async () => {
+    const receiptRun = await retryableReceiptRun();
+    runtimeMocks.loadRun.mockResolvedValue(receiptRun);
+    const changedDestination = {
+      ...destination,
+      github: { ...destination.github, pathPrefix: "meetings/new-location/" },
+    };
+
+    const response = await fetchWorker(authorizedReceiptRetryRequest({ tenantId: TENANT_ID,
+      workspaceId: WORKSPACE_ID, actionTs: "100.200" }, { authorization: `Bearer ${ADMIN_TOKEN}` }),
+    bindings({ MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([changedDestination]) }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ runId: RUN_ID, status: "completed",
+      runReceipt: { status: "delivered", receiptId: "receipt-001" } });
+    expect(runtimeMocks.executeTenantRuntimeOperation).toHaveBeenCalledOnce();
+    expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
+  });
+
   it("returns a safe 502 delivery failure without exposing the upstream error", async () => {
     runtimeMocks.loadRun.mockResolvedValue(await retryableReceiptRun());
     runtimeMocks.executeTenantRuntimeOperation.mockRejectedValue(new Error("token=must-not-leak"));
