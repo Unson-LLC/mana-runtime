@@ -144,7 +144,13 @@ TechKnightSandbox.outboundByHost = {
             proxyEnv,
             credentialFetch,
             resolved.company_authority_envelope !== undefined
-              ? { allowedTools: ["brainbase_resolve_turn", "brainbase_knowledge_resolve"] }
+              ? {
+                  allowedTools: [
+                    "brainbase_resolve_turn",
+                    "brainbase_judgment_state_record",
+                    "brainbase_knowledge_resolve",
+                  ],
+                }
               : undefined,
           ),
       ),

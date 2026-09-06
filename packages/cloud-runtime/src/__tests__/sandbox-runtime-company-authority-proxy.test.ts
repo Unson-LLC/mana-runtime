@@ -121,7 +121,13 @@ describe("Company Authority sandbox proxy guard", () => {
       expect.any(Request),
       expect.anything(),
       expect.any(Function),
-      { allowedTools: ["brainbase_resolve_turn", "brainbase_knowledge_resolve"] },
+      {
+        allowedTools: [
+          "brainbase_resolve_turn",
+          "brainbase_judgment_state_record",
+          "brainbase_knowledge_resolve",
+        ],
+      },
     );
   });
 
