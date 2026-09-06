@@ -6,7 +6,7 @@ function completedRun(overrides: Partial<MeetingMinutesRun> = {}): MeetingMinute
     version: 1, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceAppId: "A1",
     sourceChannelId: "C1", sourceThreadTs: "1.1", sourceMessageTs: "1.1",
     file: { id: "F1", name: "minutes.txt" }, status: "completed",
-    destination: { id: "brainbase", projectId: "brainbase", contextProjectCode: "brainbase",
+    destination: { id: "brainbase", projectId: "proj_brainbase", contextProjectCode: "brainbase",
       taskProjectCodes: ["brainbase"], taskBoardTargetId: "minutes-brainbase", name: "Brainbase",
       organization: { id: "unson", name: "雲孫" }, slackChannelId: "C2",
       github: { owner: "Unson-LLC", repo: "brainbase" } },
@@ -48,6 +48,16 @@ describe("meeting-minutes run receipt", () => {
     expect(redone?.delivery.idempotency_key).not.toBe(original?.delivery.idempotency_key);
   });
 
+  it("uses the canonical project code, not Mana's internal destination project ID", async () => {
+    const original = await buildMeetingMinutesRunReceipt(completedRun());
+    const sameGraphProject = await buildMeetingMinutesRunReceipt(completedRun({
+      destination: { ...completedRun().destination!, projectId: "proj_brainbase_migrated" },
+    }));
+    expect(original?.run.project_id).toBe("brainbase");
+    expect(sameGraphProject?.run.project_id).toBe("brainbase");
+    expect(sameGraphProject?.delivery.idempotency_key).toBe(original?.delivery.idempotency_key);
+  });
+
   it("marks delivery only after Brainbase reads back the persisted healthy receipt", async () => {
     const receipt = await buildMeetingMinutesRunReceipt(completedRun());
     const fetchImpl = vi.fn()
@@ -60,6 +70,7 @@ describe("meeting-minutes run receipt", () => {
       .emit(receipt!)).resolves.toEqual({ receiptId: "brainbase-run-1" });
     expect(fetchImpl).toHaveBeenNthCalledWith(2,
       expect.objectContaining({ pathname: "/api/run-receipts/brainbase-run-1/diagnosis" }), expect.any(Object));
+    expect((fetchImpl.mock.calls[1]![0] as URL).searchParams.get("project_id")).toBe("brainbase");
   });
 
   it("keeps a declared OutcomeCase pending until Brainbase confirms its durable link", async () => {

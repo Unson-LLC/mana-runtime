@@ -25,9 +25,9 @@ function hex(bytes: ArrayBuffer): string {
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function receiptIdentity(projectId: string, externalRunId: string): Promise<string> {
+async function receiptIdentity(projectCode: string, externalRunId: string): Promise<string> {
   return `rr1_${hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
-    JSON.stringify([projectId, "mana", externalRunId]),
+    JSON.stringify([projectCode, "mana", externalRunId]),
   )))}`;
 }
 
@@ -45,10 +45,14 @@ export async function buildMeetingMinutesRunReceipt(run: MeetingMinutesRun): Pro
   // A redo is a new terminal execution even though it intentionally reuses the
   // durable source run id. Keep its immutable receipt identity separate.
   const externalRunId = `mana:meeting-minutes:${run.runId}:revision:${run.revision ?? 0}`;
-  const idempotencyKey = await receiptIdentity(destination.projectId, externalRunId);
+  // projectId is Mana's internal destination identifier. OutcomeCase links are
+  // authorized against the Graph project code, so both the receipt and its
+  // identity must use that canonical code.
+  const projectCode = destination.contextProjectCode;
+  const idempotencyKey = await receiptIdentity(projectCode, externalRunId);
   return { contract_version: "run_receipt.v1",
     source: { type: "mana", workflow_id: "cloudflare:meeting-minutes", runtime_target: "cloudflare" },
-    run: { project_id: destination.projectId, external_run_id: externalRunId, status: "success",
+    run: { project_id: projectCode, external_run_id: externalRunId, status: "success",
       evidence_state: "confirmed", started_at: run.createdAt, finished_at: readback.confirmedAt,
       action_required: "none", metrics: { slack_terminal_readback: true }, evidence_refs: [
         { kind: "url", ref: run.github.minutesUrl, label: "minutes" },
