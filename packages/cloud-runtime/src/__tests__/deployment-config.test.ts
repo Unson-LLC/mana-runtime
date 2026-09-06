@@ -112,7 +112,7 @@ describe("会社別Cloudflare deployment", () => {
       senpainurse: { context: "senpainurse", tasks: "senpainurse", board: "minutes-senpainurse" },
       "techknight-board": { context: "techknight", tasks: "proj_techknight_board", board: "minutes-techknight-board" },
       "techknight-executives": { context: "techknight", tasks: "proj_techknight_board", board: "minutes-techknight-executives" },
-      synctoys: { context: "techknight", tasks: "proj_synctoys", board: "minutes-synctoys" },
+      synctoys: { context: "techknight", tasks: "synctoys", board: "minutes-synctoys" },
       salestailor: { context: "salestailor", tasks: "salestailor", board: "minutes-salestailor" },
       baao: { context: "baao", tasks: "baao", board: "minutes-baao" },
       yakumokai: { context: "unson", tasks: "unson", board: "minutes-yakumokai" },
@@ -131,7 +131,7 @@ describe("会社別Cloudflare deployment", () => {
       "minutes-hp-sales": ["techknight-hotel-website-production"],
       "minutes-techknight-board": ["proj_techknight_board"],
       "minutes-techknight-executives": ["proj_techknight_board"],
-      "minutes-synctoys": ["proj_synctoys"],
+      "minutes-synctoys": ["synctoys"],
       "minutes-united": ["techknight-hotel-united-phase2-marketing", "proj_united"],
     });
     expect(targets.find((target) => target.targetId === "runtime-mana-dev-biz")).toMatchObject({
@@ -625,7 +625,7 @@ describe("会社別Cloudflare deployment", () => {
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project", branch: "main",
           pathPrefix: "meetings/executives/" } }),
       expect.objectContaining({ id: "synctoys", projectId: "proj_synctoys", name: "SyncToys",
-        contextProjectCode: "techknight", taskProjectCodes: ["proj_synctoys"],
+        contextProjectCode: "techknight", taskProjectCodes: ["synctoys"],
         taskBoardTargetId: "minutes-synctoys", slackChannelId: "C0BV97TH422",
         organization: { id: "tech-knight", name: "Tech Knight" },
         github: { owner: "Tech-Knight-inc", repo: "tech-knight-project", branch: "main",
@@ -692,7 +692,7 @@ describe("会社別Cloudflare deployment", () => {
     }));
     expect(JSON.parse(unson.vars.TASK_BOARD_TARGETS_JSON)).toContainEqual(expect.objectContaining({
       targetId: "minutes-synctoys", organizationId: "tech-knight", workspaceId: "T07A9J3PEMB",
-      channelId: "C0BV97TH422", projectCodes: ["proj_synctoys"],
+      channelId: "C0BV97TH422", projectCodes: ["synctoys"],
     }));
     expect(destinations).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "smartfront" }),
