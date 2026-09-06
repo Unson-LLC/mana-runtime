@@ -386,6 +386,10 @@ function safeExecutionErrorSummary(stderr: string): string {
     .slice(0, 300);
 }
 
+function safeHookReasonCode(stderr: string): string | undefined {
+  return stderr.match(/\bjudgment_[a-z0-9_]{1,120}\b/)?.[0];
+}
+
 export async function deterministicRuntimeUuid(seed: string): Promise<string> {
   const digest = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`techknight:${seed}`)),
@@ -614,6 +618,14 @@ export async function generateClaudeReply(
           emitTurnLog("error", "mana_claude_failed", event, trace, {
             outcome: "error", reasonCode: retryCode,
             ...(retryAuditDiagnostics ? { auditDiagnostics: retryAuditDiagnostics } : {}),
+            ...(result.stderr.trim()
+              ? {
+                errorSummary: safeExecutionErrorSummary(result.stderr),
+                ...(safeHookReasonCode(result.stderr)
+                  ? { hookReasonCode: safeHookReasonCode(result.stderr) }
+                  : {}),
+              }
+              : {}),
             durationMs: Date.now() - startedAt,
           });
           throw new ReplyPipelineError(retryCode, retryAuditDiagnostics);
@@ -623,6 +635,14 @@ export async function generateClaudeReply(
           outcome: "error",
           reasonCode: code,
           ...(auditDiagnostics ? { auditDiagnostics } : {}),
+          ...(result.stderr.trim()
+            ? {
+              errorSummary: safeExecutionErrorSummary(result.stderr),
+              ...(safeHookReasonCode(result.stderr)
+                ? { hookReasonCode: safeHookReasonCode(result.stderr) }
+                : {}),
+            }
+            : {}),
           durationMs: Date.now() - startedAt,
         });
         throw new ReplyPipelineError(code, auditDiagnostics);
