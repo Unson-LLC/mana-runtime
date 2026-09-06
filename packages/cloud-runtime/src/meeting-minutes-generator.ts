@@ -1,6 +1,8 @@
 import type { AuditedGeneratedMeetingMinutes, GeneratedMeetingMinutes, MeetingMinutesDestination,
   MeetingMinutesContextMode, MeetingMinutesContextReceipt, MeetingMinutesContextSourceRef,
-  MeetingMinutesGenerationDiagnostics, MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
+  MeetingMinutesGenerationDiagnostics, MeetingMinutesGenerationStdoutErrorCode,
+  MeetingMinutesGenerationStdoutStatusCode,
+  MeetingMinutesTaskCandidate } from "./meeting-minutes-contracts.js";
 import { buildRuntimeClaudeCommand, runtimeClaudePromptPath, runtimeMeetingMinutesMcpConfigPath,
   type ClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { validateMeetingMinutesContextReceipt } from "./meeting-minutes-brainbase-context.js";
@@ -62,6 +64,220 @@ function classifyGenerationStderr(stderr: string, timeout: boolean): MeetingMinu
   return "UNKNOWN";
 }
 
+type KnownStdoutErrorCode = Exclude<MeetingMinutesGenerationStdoutErrorCode, "UNKNOWN">;
+type StructuredStdoutDiagnostic = {
+  code: MeetingMinutesGenerationStdoutErrorCode;
+  statusCode?: MeetingMinutesGenerationStdoutStatusCode;
+};
+
+const STRUCTURED_RESULT_SUBTYPE_CODES: Readonly<Record<string, KnownStdoutErrorCode>> = {
+  error_during_execution: "EXECUTION_ERROR",
+  hook_error_during_execution: "HOOK_FAILED",
+  error_max_turns: "MAX_TURNS",
+  max_turns_reached: "MAX_TURNS",
+  hit_max_turns: "MAX_TURNS",
+  error_max_budget_usd: "MAX_BUDGET",
+  error_max_structured_output_retries: "STRUCTURED_OUTPUT",
+  error_provider_status: "PROVIDER_STATUS",
+  error_authentication: "AUTHENTICATION_FAILED",
+  error_rate_limit: "RATE_LIMITED",
+  error_model: "MODEL_ERROR",
+  error_boundary: "BOUNDARY_ERROR",
+  error_cli: "CLI_ERROR",
+};
+
+const STRUCTURED_RESULT_VALUE_CODES: Readonly<Record<string, KnownStdoutErrorCode>> = {
+  provider_status: "PROVIDER_STATUS",
+  provider_error: "PROVIDER_STATUS",
+  api_error: "PROVIDER_STATUS",
+  trusted_provider_forward_failed: "PROVIDER_STATUS",
+  invalid_request_error: "PROVIDER_STATUS",
+  overloaded_error: "PROVIDER_STATUS",
+  internal_server_error: "PROVIDER_STATUS",
+  billing_error: "PROVIDER_STATUS",
+  credit_balance: "PROVIDER_STATUS",
+  credit_balance_exhausted: "PROVIDER_STATUS",
+  authentication_error: "AUTHENTICATION_FAILED",
+  authentication_failed: "AUTHENTICATION_FAILED",
+  unauthorized: "AUTHENTICATION_FAILED",
+  invalid_api_key: "AUTHENTICATION_FAILED",
+  credential_lease_rejected: "BOUNDARY_ERROR",
+  rate_limit_error: "RATE_LIMITED",
+  rate_limited: "RATE_LIMITED",
+  too_many_requests: "RATE_LIMITED",
+  model_error: "MODEL_ERROR",
+  invalid_model: "MODEL_ERROR",
+  model_not_found: "MODEL_ERROR",
+  boundary_error: "BOUNDARY_ERROR",
+  tenant_boundary: "BOUNDARY_ERROR",
+  tenant_boundary_error: "BOUNDARY_ERROR",
+  permission_denied: "BOUNDARY_ERROR",
+  forbidden: "BOUNDARY_ERROR",
+  cli_error: "CLI_ERROR",
+  error_during_execution: "EXECUTION_ERROR",
+  hook_error: "HOOK_FAILED",
+  hook_failed: "HOOK_FAILED",
+  max_turns: "MAX_TURNS",
+  max_turns_reached: "MAX_TURNS",
+  hit_max_turns: "MAX_TURNS",
+  max_budget: "MAX_BUDGET",
+  max_budget_usd: "MAX_BUDGET",
+  structured_output: "STRUCTURED_OUTPUT",
+  structured_output_error: "STRUCTURED_OUTPUT",
+  structured_output_retries_exhausted: "STRUCTURED_OUTPUT",
+};
+
+const STRUCTURED_RESULT_ERROR_KEYS = new Set([
+  "error", "errors", "errorCode", "error_code", "errorType", "error_type", "code", "type", "name", "reason",
+  "status", "statusCode", "status_code", "httpStatus", "http_status", "httpCode", "http_code", "subtype",
+  "result", "message", "content", "text",
+]);
+const STRUCTURED_RESULT_STATUS_KEYS = new Set([
+  "status", "statusCode", "status_code", "httpStatus", "http_status", "httpCode", "http_code", "code",
+]);
+const STRUCTURED_RESULT_TEXT_KEYS = new Set([
+  "error", "errors", "message", "content", "text", "result", "reason",
+]);
+const STRUCTURED_HTTP_STATUS_CODES = new Set<MeetingMinutesGenerationStdoutStatusCode>([
+  400, 401, 403, 429, 500, 502, 503, 504,
+]);
+const API_ERROR_STATUS_RE = /\bAPI\s+Error\s*:\s*(400|401|403|429|500|502|503|504)\b/iu;
+
+function statusErrorCode(statusCode: MeetingMinutesGenerationStdoutStatusCode): KnownStdoutErrorCode {
+  if (statusCode === 401) return "AUTHENTICATION_FAILED";
+  if (statusCode === 403) return "BOUNDARY_ERROR";
+  if (statusCode === 429) return "RATE_LIMITED";
+  return "PROVIDER_STATUS";
+}
+
+function structuredDiagnosticToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function structuredStatusCode(value: unknown, depth = 0): MeetingMinutesGenerationStdoutStatusCode | undefined {
+  if (depth > 8) return undefined;
+  if (typeof value === "number" && Number.isSafeInteger(value)
+    && STRUCTURED_HTTP_STATUS_CODES.has(value as MeetingMinutesGenerationStdoutStatusCode)) {
+    return value as MeetingMinutesGenerationStdoutStatusCode;
+  }
+  if (typeof value === "string") {
+    const apiError = API_ERROR_STATUS_RE.exec(value);
+    if (apiError) return Number(apiError[1]) as MeetingMinutesGenerationStdoutStatusCode;
+    const token = structuredDiagnosticToken(value);
+    const match = /^(?:http_)?(400|401|403|429|500|502|503|504)$/u.exec(token);
+    return match ? Number(match[1]) as MeetingMinutesGenerationStdoutStatusCode : undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const statusCode = structuredStatusCode(item, depth + 1);
+      if (statusCode) return statusCode;
+    }
+    return undefined;
+  }
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (!STRUCTURED_RESULT_STATUS_KEYS.has(key) && !STRUCTURED_RESULT_TEXT_KEYS.has(key)) continue;
+    const statusCode = structuredStatusCode(nested, depth + 1);
+    if (statusCode) return statusCode;
+  }
+  return undefined;
+}
+
+function structuredResultValueCode(value: unknown, depth = 0): KnownStdoutErrorCode | undefined {
+  if (depth > 8) return undefined;
+  if (typeof value === "string") {
+    const exact = STRUCTURED_RESULT_VALUE_CODES[structuredDiagnosticToken(value)];
+    if (exact) return exact;
+    for (const candidate of balancedJsonObjects(value.slice(0, 32_000))) {
+      try {
+        const code = structuredResultValueCode(JSON.parse(candidate), depth + 1);
+        if (code) return code;
+      } catch { /* inspect only bounded JSON fragments from an error value */ }
+    }
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isSafeInteger(value)) {
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const code = structuredResultValueCode(item, depth + 1);
+      if (code) return code;
+    }
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const orderedKeys = [
+    "error", "errors", "result", "message", "content", "text", "errorCode", "error_code", "errorType", "error_type",
+    "code", "type", "name", "reason", "subtype",
+  ];
+  for (const key of orderedKeys) {
+    if (!STRUCTURED_RESULT_ERROR_KEYS.has(key) || !(key in record)) continue;
+    const code = structuredResultValueCode(record[key], depth + 1);
+    if (code) return code;
+  }
+  return undefined;
+}
+
+function structuredResultErrorEvent(event: Record<string, unknown>): boolean {
+  const isError = event.is_error ?? event.isError;
+  if (isError === true) return true;
+  if (isError === false) return false;
+  const subtype = typeof event.subtype === "string" ? structuredDiagnosticToken(event.subtype) : "";
+  return subtype in STRUCTURED_RESULT_SUBTYPE_CODES;
+}
+
+function assistantErrorEvent(event: Record<string, unknown>): boolean {
+  if (event.type !== "assistant") return false;
+  const isError = event.is_error ?? event.isError;
+  if (isError === true) return true;
+  if (isError === false) return false;
+  if (Object.prototype.hasOwnProperty.call(event, "error")) return event.error !== null && event.error !== undefined;
+  const message = event.message;
+  return (Boolean(message) && typeof message === "object" && !Array.isArray(message)
+    && Object.prototype.hasOwnProperty.call(message, "error")
+    && (message as Record<string, unknown>).error !== null
+    && (message as Record<string, unknown>).error !== undefined)
+;
+}
+
+function classifyStructuredResultError(event: Record<string, unknown>): StructuredStdoutDiagnostic {
+  const statusCode = structuredStatusCode(event);
+  const detailFields = ["error", "errors", "result", "message", "content", "text", "errorCode", "error_code", "errorType",
+    "error_type", "code", "type", "name", "reason"];
+  const detailedCode = detailFields.flatMap((key) => key in event
+    ? [structuredResultValueCode(event[key])] : []).find((code): code is KnownStdoutErrorCode => Boolean(code));
+  const subtype = typeof event.subtype === "string" ? structuredDiagnosticToken(event.subtype) : "";
+  const subtypeCode = STRUCTURED_RESULT_SUBTYPE_CODES[subtype];
+  const code = detailedCode ?? (statusCode ? statusErrorCode(statusCode) : subtypeCode ?? "UNKNOWN");
+  return { code, ...(statusCode ? { statusCode } : {}) };
+}
+
+function parseGenerationStreamEvents(stdout: string): Record<string, unknown>[] {
+  return stdout.split("\n").filter(Boolean).flatMap((line) => {
+    try {
+      const parsed: unknown = JSON.parse(line);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? [parsed as Record<string, unknown>] : [];
+    } catch { return []; }
+  });
+}
+
+function classifyGenerationStdout(stdout: string): StructuredStdoutDiagnostic | undefined {
+  const events = parseGenerationStreamEvents(stdout);
+  let fallback: StructuredStdoutDiagnostic | undefined;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if ((event.type === "result" && structuredResultErrorEvent(event)) || assistantErrorEvent(event)) {
+      const diagnostic = classifyStructuredResultError(event);
+      if (diagnostic.statusCode || !["UNKNOWN", "EXECUTION_ERROR"].includes(diagnostic.code)) return diagnostic;
+      fallback ??= diagnostic;
+    }
+  }
+  return fallback;
+}
+
 function executionTimedOut(result: {
   outcome?: string;
   exitCode?: number;
@@ -78,12 +294,12 @@ function executionTimedOut(result: {
 }
 
 function generationStreamProgress(stdout: string): Pick<MeetingMinutesGenerationDiagnostics,
-  "stdoutBytes" | "streamEventCount"> & Pick<MeetingMinutesGenerationDiagnostics["progress"],
+  "stdoutBytes" | "streamEventCount" | "stdoutErrorCode" | "stdoutStatusCode"> & Pick<MeetingMinutesGenerationDiagnostics["progress"],
   "stdout_observed" | "hook_observed" | "result_observed"> {
-  const events = stdout.split("\n").filter(Boolean).flatMap((line) => {
-    try { return [JSON.parse(line) as Record<string, unknown>]; } catch { return []; }
-  });
+  const events = parseGenerationStreamEvents(stdout);
+  const stdoutDiagnostic = classifyGenerationStdout(stdout);
   return { stdoutBytes: new TextEncoder().encode(stdout).byteLength, streamEventCount: events.length,
+    ...(stdoutDiagnostic ? { stdoutErrorCode: stdoutDiagnostic.code, stdoutStatusCode: stdoutDiagnostic.statusCode } : {}),
     stdout_observed: stdout.length > 0,
     hook_observed: events.some((event) => event.type === "system" && event.subtype === "hook_response"),
     result_observed: events.some((event) => event.type === "result") };
@@ -768,7 +984,8 @@ export async function generateMeetingMinutesInSandbox(
         stderrCode: classifyGenerationStderr(result.stderr, timeout), progress: { ...base.progress,
           stdout_observed: stream.stdout_observed, hook_observed: stream.hook_observed,
           result_observed: stream.result_observed },
-        stdoutBytes: stream.stdoutBytes, streamEventCount: stream.streamEventCount });
+        stdoutBytes: stream.stdoutBytes, streamEventCount: stream.streamEventCount, ...(stream.stdoutErrorCode
+          ? { stdoutErrorCode: stream.stdoutErrorCode, stdoutStatusCode: stream.stdoutStatusCode } : {}) });
     }
     const generated = parseReceiptBoundGeneratedMeetingMinutesOutput(result.stdout, context);
     Object.defineProperty(generated, "generationDiagnostics", { enumerable: false, configurable: true,

@@ -75,6 +75,8 @@ jobs:
              generation:(.generation|{elapsedMs:(.elapsedMs|n),timeoutMs:(.timeoutMs|n),exitCode:(.exitCode|n),
                outcome:(.outcome|allowed(["success","timeout","nonzero_exit","transport_failure"])),
                stderrCode:(.stderrCode|allowed(["TIMEOUT","RATE_LIMITED","AUTHENTICATION_FAILED","HOOK_FAILED","CLI_ERROR","UNKNOWN"])),
+               stdoutErrorCode:(.stdoutErrorCode|allowed(["PROVIDER_STATUS","AUTHENTICATION_FAILED","RATE_LIMITED","MODEL_ERROR","BOUNDARY_ERROR","CLI_ERROR","HOOK_FAILED","MAX_TURNS","MAX_BUDGET","STRUCTURED_OUTPUT","EXECUTION_ERROR","UNKNOWN"])),
+               stdoutStatusCode:(.stdoutStatusCode|allowed([400,401,403,429,500,502,503,504])),
                stdoutBytes:(.stdoutBytes|n),streamEventCount:(.streamEventCount|n),
                progress:(.progress|{prompt_written:(.prompt_written|b),exec_started:(.exec_started|b),stdout_observed:(.stdout_observed|b),
                  hook_observed:(.hook_observed|b),result_observed:(.result_observed|b)})}),

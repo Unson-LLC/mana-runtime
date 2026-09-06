@@ -1105,7 +1105,7 @@ describe("production multitenancy integration", () => {
       resolve_verification_key: async () => publicKey,
     });
     const error = Object.assign(new Error("meeting_minutes_generation_failed"), {
-      generationDiagnostics: { outcome: "nonzero_exit", stderrCode: "HOOK_FAILED", exitCode: 1,
+      generationDiagnostics: { outcome: "nonzero_exit", stderrCode: "HOOK_FAILED", stdoutErrorCode: "MAX_TURNS", exitCode: 1,
         elapsedMs: 17_842, progress: { prompt_written: true, exec_started: true, stdout_observed: true,
           hook_observed: true, result_observed: false } },
     });
@@ -1120,6 +1120,7 @@ describe("production multitenancy integration", () => {
     expect(logError).toHaveBeenCalledWith(expect.objectContaining({
       failure_reason: "meeting_minutes_generation_failed", generation_outcome: "nonzero_exit",
       generation_stderr_code: "HOOK_FAILED", generation_exit_code: "1", generation_elapsed_ms: "17842",
+      generation_stdout_error_code: "MAX_TURNS",
       generation_prompt_written: "true", generation_exec_started: "true", generation_stdout_observed: "true",
       generation_hook_observed: "true", generation_result_observed: "false",
     }));
