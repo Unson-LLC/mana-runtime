@@ -923,9 +923,11 @@ async function meetingMinutesRunReceiptRetryContext(
   actionTs: string,
 ) {
   const authorization = run.recoveryAuthorization;
-  const destination = meetingMinutesRuntimeConfig(env).destinations.find((item) => item.id === run.destination?.id);
+  // Receipt-only recovery must use the destination that was authorized and
+  // persisted with the completed run. Current routing metadata may legitimately
+  // change later and is not used to repeat any Slack, GitHub, or task effect.
+  const destination = run.destination;
   if (!authorization || !isMeetingMinutesAdminRecoveryEligible(run) || !destination
-    || jcsCanonicalize(destination) !== jcsCanonicalize(run.destination)
     || run.workspaceId !== authorization.workspaceId || run.sourceAppId !== authorization.appId
     || run.sourceChannelId !== authorization.channelId || run.sourceThreadTs !== authorization.threadTs
     || !authorization.requesterId || authorization.projectIds.length === 0) {
