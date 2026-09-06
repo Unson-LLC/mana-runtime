@@ -573,6 +573,7 @@ describe("会社別Cloudflare deployment", () => {
       ncom: "prj_01KGHVCMA6R6A9MEMGKHRXQ5J0",
       brainbase: "prj_01KGCS8CAJKKDWACPNK1E5WX8H",
       "back-office": "prj_01M04XZFSN3TWRE2K05MTD898P",
+      mana: "prj_01KGHVCMA35JHSMXTSWQAS04PS",
     });
     expect(unson.vars.MEETING_MINUTES_ROUTER_CHANNEL_ID).toBe("C0BKTFQ9V38");
     expect(unson.vars.MEETING_MINUTES_OPERATOR_USER_IDS).toBe("U088D1HBY6L,U0BKP8D3KPD,U07B19N048G");
