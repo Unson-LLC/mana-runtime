@@ -104,6 +104,8 @@ export interface ReplyPipelineOptions {
   tenantBoundaryHandle: string;
   /** Absolute expiry from the signed tenant context registered for this operation. */
   tenantBoundaryExpiresAt: string;
+  /** Current expiry after a long-running operation refreshes its registered context. */
+  tenantBoundaryExpiresAtNow?: () => string;
   claudeRuntime: ClaudeRuntimeConfig;
   taskSearchEnabled?: boolean;
   taskWriteEnabled?: boolean;
@@ -406,7 +408,7 @@ async function deterministicClientMessageId(eventId: string): Promise<string> {
 
 export async function generateClaudeReply(
   event: SlackQueueEvent,
-  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "tenantBoundaryExpiresAt" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "brainbaseProjectCode" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "nowMs">,
+  options: Pick<ReplyPipelineOptions, "oauthConfigured" | "tenantBoundaryHandle" | "tenantBoundaryExpiresAt" | "tenantBoundaryExpiresAtNow" | "claudeRuntime" | "createSandbox" | "taskSearchEnabled" | "taskWriteEnabled" | "taskWriteCapability" | "requesterIdentity" | "requesterProfile" | "graphContext" | "brainbaseProjectCode" | "runtimeContext" | "capabilities" | "resolveActorIdentity" | "trace" | "nowMs">,
 ): Promise<ReplyJudgmentResult> {
   if (!options.oauthConfigured) throw new ReplyPipelineError("oauth_not_configured");
   if (!options.tenantBoundaryHandle) throw new ReplyPipelineError("tenant_boundary_required");
@@ -504,7 +506,7 @@ export async function generateClaudeReply(
         ...(resumeSession ? { resumeSession: true } : {}),
       });
       const timeout = remainingReplySandboxTimeoutMs(
-        options.tenantBoundaryExpiresAt,
+        options.tenantBoundaryExpiresAtNow?.() ?? options.tenantBoundaryExpiresAt,
         options.nowMs?.() ?? Date.now(),
       );
       if (!sandbox.startProcess) return sandbox.exec(command, { timeout, env: execEnv });
