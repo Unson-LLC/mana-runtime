@@ -4,7 +4,7 @@ import { MEETING_MINUTES_BACK_TO_ORGANIZATIONS_ACTION_ID, MEETING_MINUTES_CHOOSE
   type MeetingMinutesRedo, type MeetingMinutesSelection } from "./meeting-minutes-contracts.js";
 import { meetingMinutesRuntimeConfig, type MeetingMinutesEnvironment } from "./meeting-minutes-entrypoints.js";
 import { destinationSelectedMessage, organizationSelectionMessage, projectSelectionMessage, redoConfirmationMessage,
-  immediateStatusFailedMessage, interactionEnqueueFailedMessage, redoFailedMessage, redoProcessingMessage,
+  interactionEnqueueFailedMessage, redoFailedMessage, redoProcessingMessage,
   selectionConfirmationFailedMessage, statusProjectionFailedMessage, threadCoordinateMissingMessage,
   tenantInteractionFailedMessage, interactionActionFailedMessage, MeetingMinutesSlackClient,
   type SlackSelectionMessage } from "./meeting-minutes-slack.js";
@@ -791,7 +791,52 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       });
       return;
     }
+    // Project a durable acknowledgement before queueing. Queue delivery can be
+    // slow or unavailable; the operator must still see that Slack accepted the
+    // click immediately and the selector must no longer invite duplicate clicks.
+    let selectionConfirmationFailed = false;
+    if (responseUrl && options.updateOriginal && destination) {
+      try {
+        await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
+          target(channelId, feedbackThreadTs), { kind: "destination_confirmation", runId, destinationId: destination.id },
+          (credentialFetch) => options.updateOriginal!(
+            responseUrl, destinationSelectedMessage(runId, fileName ?? "議事録", destination), credentialFetch));
+      } catch {
+        selectionConfirmationFailed = true;
+        console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
+          stage: "status_projection", code: "SELECTION_CONFIRMATION_FAILED",
+          correlation_id: deriveCorrelationId(runId, "status_projection", "SELECTION_CONFIRMATION_FAILED"), retryable: true }));
+      }
+    }
     let immediateStatusFailed = false;
+    if (options.showProcessing && destination) {
+      try {
+        await guardedSlackEffect(tenantEffects, `processing-show:${runId}:${destination.id}`,
+          target(channelId, feedbackThreadTs), { kind: "processing_status", runId, destinationId: destination.id },
+          (credentialFetch) => options.showProcessing!(
+            { channelId, threadTs: feedbackThreadTs, destinationName: destination.name }, credentialFetch));
+      } catch {
+        immediateStatusFailed = true;
+        console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
+          stage: "status_projection", code: "IMMEDIATE_STATUS_FAILED",
+          correlation_id: deriveCorrelationId(runId, "status_projection", "IMMEDIATE_STATUS_FAILED"), retryable: true }));
+      }
+    }
+    if (selectionConfirmationFailed) {
+      await attemptInteractionFailureProjection({
+        effects: tenantEffects,
+        effectId: `status-failed:${runId}`,
+        effectTarget: target(channelId, feedbackThreadTs),
+        effect: { kind: "status_projection_fallback", runId },
+        responseUrl,
+        runId,
+        message: immediateStatusFailed
+          ? statusProjectionFailedMessage(runId, fileName ?? "議事録")
+          : selectionConfirmationFailedMessage(runId, fileName ?? "議事録"),
+        options,
+        failureEvent: "meeting_minutes_interaction_status_failure_projection_failed",
+      });
+    }
     try {
       await options.send({ kind: "meeting_minutes_selection", runId, destinationId,
         workspaceId: interactionWorkspaceId, appId,
@@ -828,50 +873,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
         }
       }
       return;
-    }
-    if (options.showProcessing && feedbackThreadTs && timestampPattern.test(feedbackThreadTs) && destination) {
-      try {
-        await guardedSlackEffect(tenantEffects, `processing-show:${runId}:${destination.id}`,
-          target(channelId, feedbackThreadTs), { kind: "processing_status", runId, destinationId: destination.id },
-          (credentialFetch) => options.showProcessing!(
-            { channelId, threadTs: feedbackThreadTs!, destinationName: destination.name }, credentialFetch));
-      } catch {
-        immediateStatusFailed = true;
-        console.error(JSON.stringify({ event: "meeting_minutes_immediate_status_failed", runId,
-          stage: "status_projection", code: "IMMEDIATE_STATUS_FAILED",
-          correlation_id: deriveCorrelationId(runId, "status_projection", "IMMEDIATE_STATUS_FAILED"), retryable: true }));
-      }
-    }
-    let selectionConfirmationFailed = false;
-    if (responseUrl && options.updateOriginal && destination && fileName) {
-      try {
-        await guardedSlackEffect(tenantEffects, `destination-confirm:${runId}:${destination.id}`,
-          target(channelId, feedbackThreadTs), { kind: "destination_confirmation", runId, destinationId: destination.id },
-          (credentialFetch) => options.updateOriginal!(
-            responseUrl, destinationSelectedMessage(runId, fileName, destination), credentialFetch));
-      } catch {
-        selectionConfirmationFailed = true;
-        console.error(JSON.stringify({ event: "meeting_minutes_selection_confirmation_failed", runId,
-          stage: "status_projection", code: "SELECTION_CONFIRMATION_FAILED",
-          correlation_id: deriveCorrelationId(runId, "status_projection", "SELECTION_CONFIRMATION_FAILED"), retryable: true }));
-      }
-    }
-    if (selectionConfirmationFailed || immediateStatusFailed) {
-      await attemptInteractionFailureProjection({
-        effects: tenantEffects,
-        effectId: `status-failed:${runId}`,
-        effectTarget: target(channelId, feedbackThreadTs),
-        effect: { kind: "status_projection_fallback", runId },
-        responseUrl,
-        runId,
-        message: immediateStatusFailed && selectionConfirmationFailed
-          ? statusProjectionFailedMessage(runId, fileName ?? "議事録")
-          : selectionConfirmationFailed
-            ? selectionConfirmationFailedMessage(runId, fileName ?? "議事録")
-            : immediateStatusFailedMessage(runId, fileName ?? "議事録"),
-        options,
-        failureEvent: "meeting_minutes_interaction_status_failure_projection_failed",
-      });
     }
   })());
   return Response.json({ ok: true });
