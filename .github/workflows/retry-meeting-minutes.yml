@@ -3,6 +3,14 @@ name: 失敗済み議事録を再実行
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: 状態確認または再実行（再実行はSlack投稿等を伴う）
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - retry
       run_id:
         description: 再実行する議事録run ID
         required: true
@@ -19,6 +27,10 @@ on:
         description: 再実行理由（監査用）
         required: true
         type: string
+
+concurrency:
+  group: meeting-minutes-admin-${{ inputs.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -50,6 +62,7 @@ jobs:
           RUN_ID: ${{ inputs.run_id }}
           TENANT_ID: ${{ inputs.tenant_id }}
           WORKSPACE_ID: ${{ inputs.workspace_id }}
+          OPERATION: ${{ inputs.operation }}
           RETRY_REASON: ${{ inputs.reason }}
           SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
         run: |
@@ -80,6 +93,12 @@ jobs:
             "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-status")"
           jq -e --arg runId "$RUN_ID" --arg status "$status" \
             '$status == "200" and .runId == $runId' "$response_file" >/dev/null
+          if [[ "$OPERATION" == "status" ]]; then
+            jq '{runId,status,updatedAt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
+            echo "状態確認のみ。再投入・外部送信なし。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ "$OPERATION" == "retry" ]]
           baseline_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
           baseline_updated_at="$(jq -r '.updatedAt // ""' "$response_file")"
           baseline_source_projected_at="$(jq -r '.sourceStatus.projectedAt // ""' "$response_file")"
