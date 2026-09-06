@@ -295,7 +295,11 @@ describe("meeting minutes source status lifecycle", () => {
   it("retries only the completion projection without repeating completed work", async () => {
     const fs = await setup(); const logProjectionError = vi.fn();
     const operations = resume();
-    const updateStatus = vi.fn().mockRejectedValueOnce(new Error("slack update down")).mockResolvedValue(undefined);
+    const projectedRuns: MeetingMinutesRun[] = [];
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      projectedRuns.push(structuredClone(run));
+      if (projectedRuns.length === 1) throw new Error("slack update down");
+    });
     await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, operations, {
       updateStatus, logProjectionError,
     })).rejects.toThrow("slack update down");
@@ -305,9 +309,56 @@ describe("meeting minutes source status lifecycle", () => {
     expect(operations.saveGitHub).toHaveBeenCalledTimes(1);
     expect(operations.postParent).toHaveBeenCalledTimes(1);
     expect(updateStatus).toHaveBeenCalledTimes(2);
+    expect(projectedRuns[1]).not.toHaveProperty("projectionFailure");
     expect(logProjectionError).toHaveBeenCalledWith(expect.objectContaining({ outcome: "completed",
       runId: selection.runId, stage: "status_projection", code: "STATUS_PROJECTION_FAILED" }));
     expect(JSON.stringify(logProjectionError.mock.calls)).not.toContain("slack update down");
+  });
+
+  it("clears a durable stale projection failure before retrying the completed source status", async () => {
+    const fs = await setup();
+    const firstStatus = vi.fn().mockRejectedValueOnce(new Error("slack update down"));
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus: firstStatus,
+    })).rejects.toThrow("slack update down");
+
+    const stale = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    stale.projectionFailure!.code = "STALE_PROJECTION_FAILURE";
+    await saveMeetingMinutesRun(fs, stale);
+    const projectedRuns: MeetingMinutesRun[] = [];
+    const retried = await processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus: vi.fn(async (run: MeetingMinutesRun) => { projectedRuns.push(structuredClone(run)); }),
+    });
+
+    expect(projectedRuns).toHaveLength(1);
+    expect(projectedRuns[0]).not.toHaveProperty("projectionFailure");
+    expect(retried).not.toHaveProperty("projectionFailure");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      statusProjection: { outcome: "completed" },
+    });
+  });
+
+  it("records the new projection failure when a stale completion retry fails", async () => {
+    const fs = await setup();
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus: vi.fn().mockRejectedValueOnce(new Error("slack update down")),
+    })).rejects.toThrow("slack update down");
+
+    const stale = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    stale.projectionFailure!.code = "STALE_PROJECTION_FAILURE";
+    await saveMeetingMinutesRun(fs, stale);
+    const projectedRuns: MeetingMinutesRun[] = [];
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus: vi.fn(async (run: MeetingMinutesRun) => {
+        projectedRuns.push(structuredClone(run));
+        throw new Error("slack retry down");
+      }),
+    })).rejects.toThrow("slack retry down");
+
+    expect(projectedRuns[0]).not.toHaveProperty("projectionFailure");
+    expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({
+      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED", retryable: true },
+    });
   });
 
   it("uses a single non-recursive fallback for a failed completion projection", async () => {
