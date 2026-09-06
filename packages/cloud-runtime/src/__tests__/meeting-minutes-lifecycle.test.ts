@@ -279,17 +279,54 @@ describe("meeting minutes source status lifecycle", () => {
     expect(emitRunReceipt).toHaveBeenCalledOnce();
   });
 
-  it("keeps a confirmed source projection when receipt delivery needs a Queue retry", async () => {
+  it("records a retryable receipt delivery failure without disturbing the confirmed source projection", async () => {
     const fs = await setup();
     const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
       run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
         bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
     });
     await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
-      updateStatus, emitRunReceipt: vi.fn().mockRejectedValue(new Error("ingest down")),
-    })).rejects.toThrow("ingest down");
+      updateStatus, emitRunReceipt: vi.fn().mockRejectedValue(new Error("meeting_minutes_run_receipt_request_failed:503")),
+    })).rejects.toThrow("meeting_minutes_run_receipt_request_failed:503");
     expect(await loadMeetingMinutesRun(fs, selection.runId)).toMatchObject({ status: "completed",
-      statusProjection: { outcome: "completed" }, runReceipt: { status: "pending" } });
+      statusProjection: { outcome: "completed" }, runReceipt: { status: "pending",
+        failure: { stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+          failedAt: expect.any(String) } } });
+  });
+
+  it("records a non-retryable receipt contract failure without persisting the upstream response", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
+        bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
+    });
+    const error = Object.assign(new Error("meeting_minutes_run_receipt_outcome_case_link_unconfirmed"), {
+      upstreamResponse: "authorization=secret-do-not-persist",
+    });
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus, emitRunReceipt: vi.fn().mockRejectedValue(error),
+    })).rejects.toThrow("meeting_minutes_run_receipt_outcome_case_link_unconfirmed");
+    const persisted = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(persisted).toMatchObject({ status: "completed", statusProjection: { outcome: "completed" },
+      runReceipt: { status: "pending", failure: { stage: "run_receipt",
+        code: "RUN_RECEIPT_OUTCOME_CASE_LINK_UNCONFIRMED", retryable: false, failedAt: expect.any(String) } } });
+    expect(JSON.stringify(persisted)).not.toContain("secret-do-not-persist");
+  });
+
+  it("clears a prior receipt failure only after confirmed delivery", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
+        bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
+    });
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus, emitRunReceipt: vi.fn().mockRejectedValue(new Error("meeting_minutes_run_receipt_request_failed:503")),
+    })).rejects.toThrow("meeting_minutes_run_receipt_request_failed:503");
+    const delivered = await processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus, emitRunReceipt: vi.fn().mockResolvedValue({ receiptId: "run-receipt-1" }),
+    });
+    expect(delivered.runReceipt).toMatchObject({ status: "delivered", receiptId: "run-receipt-1" });
+    expect(delivered.runReceipt).not.toHaveProperty("failure");
   });
 
   it("logs a safe receipt failure code before preserving the Queue retry", async () => {

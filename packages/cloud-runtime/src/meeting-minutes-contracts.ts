@@ -273,7 +273,9 @@ export interface MeetingMinutesRun {
   terminalSlackReadback?: { outcome: "completed"; channel: string; ts: string; bodyHash: string; confirmedAt: string };
   /** Source-owned delivery checkpoint for the immutable Brainbase run receipt. */
   runReceipt?: { caseId?: string; idempotencyKey: string; receiptId?: string;
-    status: "pending" | "delivered"; deliveredAt?: string };
+    status: "pending" | "delivered"; deliveredAt?: string;
+    /** Sanitized source-owned delivery diagnostic. Never retain upstream bodies or credentials. */
+    failure?: { stage: "run_receipt"; code: string; retryable: boolean; failedAt: string } };
   /** Durable fence for the queued selection that finished processing before source-status projection. */
   processing?: { completedActionTs: string; completedAt: string };
   /** Non-secret authority inputs used to reissue a fresh context for delayed recovery. */

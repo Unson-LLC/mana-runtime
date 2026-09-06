@@ -5,7 +5,8 @@ import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "./meeting-minutes-
 import type { ResumeMeetingMinutesOptions } from "./meeting-minutes-pipeline.js";
 import type { WorkspaceFs } from "./workspace-store.js";
 import { classifyMeetingMinutesFailure, meetingMinutesFailureLog } from "./meeting-minutes-diagnostics.js";
-import { buildMeetingMinutesRunReceipt, type ConfirmedRunReceiptDelivery, type RunReceiptV1 } from "./meeting-minutes-run-receipt.js";
+import { buildMeetingMinutesRunReceipt, classifyMeetingMinutesRunReceiptFailure,
+  type ConfirmedRunReceiptDelivery, type RunReceiptV1 } from "./meeting-minutes-run-receipt.js";
 
 export interface MeetingMinutesStatusProjectionOptions {
   updateStatus(run: MeetingMinutesRun, outcome: "completed" | "failed"): Promise<void>;
@@ -103,6 +104,15 @@ async function recordProjectionSuccess(fs: WorkspaceFs, run: MeetingMinutesRun,
   await saveMeetingMinutesRun(fs, run);
 }
 
+async function recordRunReceiptFailure(fs: WorkspaceFs, run: MeetingMinutesRun, error: unknown): Promise<void> {
+  if (!run.runReceipt) return;
+  const failure = classifyMeetingMinutesRunReceiptFailure(error);
+  const failedAt = new Date().toISOString();
+  run.runReceipt = { ...run.runReceipt, failure: { ...failure, failedAt } };
+  run.updatedAt = failedAt;
+  await saveMeetingMinutesRun(fs, run);
+}
+
 async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
   options: MeetingMinutesStatusProjectionOptions): Promise<void> {
   // A previous terminal-display failure is retry metadata, not a current
@@ -137,10 +147,12 @@ async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
       ? error.message : "meeting_minutes_run_receipt_delivery_failed";
     console.error(JSON.stringify({ event: "meeting_minutes_run_receipt_delivery_failed",
       runId: run.runId, code: message }));
+    await recordRunReceiptFailure(fs, run, error);
     throw error;
   }
   const deliveredAt = new Date().toISOString();
   run.runReceipt = { ...run.runReceipt, receiptId: delivered.receiptId, status: "delivered", deliveredAt };
+  delete run.runReceipt.failure;
   run.updatedAt = deliveredAt;
   await saveMeetingMinutesRun(fs, run);
 }
