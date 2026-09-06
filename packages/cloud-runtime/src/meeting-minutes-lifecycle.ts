@@ -105,6 +105,11 @@ async function recordProjectionSuccess(fs: WorkspaceFs, run: MeetingMinutesRun,
 
 async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
   options: MeetingMinutesStatusProjectionOptions): Promise<void> {
+  // A previous terminal-display failure is retry metadata, not a current
+  // processing failure. Render and read back the clean completed state; if
+  // this attempt fails, recordProjectionFailure below replaces it with the
+  // new failure before the run is persisted.
+  delete run.projectionFailure;
   try {
     await options.updateStatus(run, "completed");
     await recordProjectionSuccess(fs, run, "completed");
