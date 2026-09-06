@@ -2198,14 +2198,23 @@ export async function executeCompanyAuthorityReplyOperation(
     const stub = env.TECHKNIGHT_WORKSPACE.get(env.TECHKNIGHT_WORKSPACE.idFromName(workspaceName(event)));
     return withDisposableResource(() => getWorkspace(stub as unknown as WorkspaceHandle), async (workspace) => {
       const workspaceSession = await readWorkspaceSession(workspace.fs);
-      if (!isReplyEligible(event, { expectedTenantId: tenantContext.tenant.tenant_id,
+      const replyEligible = isReplyEligible(event, { expectedTenantId: tenantContext.tenant.tenant_id,
         expectedWorkspaceId: tenantContext.workspace_connection.workspace_id,
         allowedChannelId: placement.channelId, respondPolicy: placement.respondTo,
         isEngagedThread: workspaceSession.engaged === true,
-        botAttributedAppMentionUserIds: placement.audience?.allowedUserIds })) {
+        botAttributedAppMentionUserIds: placement.audience?.allowedUserIds });
+      console.log(JSON.stringify({ event: "company_authority_reply_eligibility",
+        correlation_id: tenantContext.correlation_id, operation_id: tenantContext.operation_id,
+        event_type: event.eventType, channel_type: event.channelType ?? "unknown",
+        bot_attributed: Boolean(event.botId), subtype: event.subtype ?? "none",
+        session_engaged: workspaceSession.engaged === true, eligible: replyEligible }));
+      if (!replyEligible) {
         return { applied: false, response_observed: true, failure_code: "REPLY_NOT_ELIGIBLE" };
       }
       const claim = await stub.claimRuntimeEvent(runtimeDeliveryId(event), true);
+      console.log(JSON.stringify({ event: "company_authority_runtime_claim",
+        correlation_id: tenantContext.correlation_id, operation_id: tenantContext.operation_id,
+        disposition: claim.disposition }));
       // A prior/ambiguous execution is never turned into a second provider send.
       if (claim.disposition !== "claimed") return { applied: true, response_observed: false };
       await persistEventOnce(workspace.fs, event);
