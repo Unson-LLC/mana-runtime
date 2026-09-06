@@ -49,6 +49,10 @@ function safeExitCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
 }
 
+function safeDurationMs(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 function classifyGenerationStderr(stderr: string, timeout: boolean): MeetingMinutesGenerationDiagnostics["stderrCode"] {
   if (timeout) return "TIMEOUT";
   const normalized = stderr.toLowerCase();
@@ -56,6 +60,21 @@ function classifyGenerationStderr(stderr: string, timeout: boolean): MeetingMinu
   if (normalized.includes("judgment_hook") || normalized.includes("judgment hook")) return "HOOK_FAILED";
   if (normalized.includes("authentication") || normalized.includes("unauthorized")) return "AUTHENTICATION_FAILED";
   return "UNKNOWN";
+}
+
+function executionTimedOut(result: {
+  outcome?: string;
+  exitCode?: number;
+  duration?: number;
+}, timeoutMs: number): boolean {
+  // Some adapters expose an explicit outcome. Preserve that compatibility,
+  // but do not infer a timeout from exit 124 alone: the native SDK documents
+  // ExecResult as exitCode/success/stdout/stderr/command/duration/timestamp and
+  // does not assign semantic meaning to any particular exit code.
+  if (result.outcome === "timeout") return true;
+  const exitCode = safeExitCode(result.exitCode);
+  const durationMs = safeDurationMs(result.duration);
+  return exitCode === 124 && durationMs !== undefined && durationMs >= timeoutMs;
 }
 
 function generationStreamProgress(stdout: string): Pick<MeetingMinutesGenerationDiagnostics,
@@ -738,11 +757,11 @@ export async function generateMeetingMinutesInSandbox(
     const result = await execution;
     const finishedAtMs = Date.now();
     const stream = generationStreamProgress(result.stdout);
-    const elapsedMs = typeof result.elapsedMs === "number" && Number.isFinite(result.elapsedMs)
-      ? Math.max(0, result.elapsedMs) : Math.max(0, finishedAtMs - startedAtMs);
+    const elapsedMs = safeDurationMs(result.duration) ?? safeDurationMs(result.elapsedMs)
+      ?? Math.max(0, finishedAtMs - startedAtMs);
     const exitCode = safeExitCode(result.exitCode);
     if (!result.success) {
-      const timeout = result.outcome === "timeout";
+      const timeout = executionTimedOut(result, MEETING_MINUTES_GENERATION_TIMEOUT_MS);
       throw generationFailure("meeting_minutes_generation_failed", { ...base,
         finishedAt: new Date(finishedAtMs).toISOString(), elapsedMs,
         outcome: timeout ? "timeout" : "nonzero_exit", ...(exitCode === undefined ? {} : { exitCode }),

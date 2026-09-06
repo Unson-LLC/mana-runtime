@@ -55,8 +55,9 @@ describe("meeting minutes generation observability contract (RED)", () => {
     vi.setSystemTime("2026-08-18T10:00:00.000Z");
     const stdout = successfulStream();
     const sandbox = { writeFile: vi.fn(), exec: vi.fn(async () => {
-      vi.setSystemTime("2026-08-18T10:00:02.500Z");
-      return { success: true, stdout, stderr: "" };
+      vi.setSystemTime("2026-08-18T10:00:03.000Z");
+      return { success: true, exitCode: 0, stdout, stderr: "", command: "claude meeting-minutes",
+        duration: 2_750, timestamp: "2026-08-18T10:00:00.000Z" };
     }), destroy: vi.fn().mockResolvedValue(undefined) };
 
     const generated = asRecord(await generateMeetingMinutesInSandbox(
@@ -64,7 +65,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
       "tenant-boundary-handle",
     ));
     expect(generated.generationDiagnostics).toMatchObject({
-      model: "sonnet", timeoutMs: 780_000, outcome: "success", elapsedMs: 2_500,
+      model: "sonnet", timeoutMs: 780_000, outcome: "success", elapsedMs: 2_750,
       progress: { prompt_written: true, exec_started: true, stdout_observed: true,
         hook_observed: true, result_observed: true },
     });
@@ -72,6 +73,44 @@ describe("meeting minutes generation observability contract (RED)", () => {
     expect(generated.generationDiagnostics.streamEventCount).toBeGreaterThan(0);
     expect(JSON.stringify(generated.generationDiagnostics)).not.toContain("TRANSCRIPT_SECRET_123");
     expect(JSON.stringify(generated.generationDiagnostics)).not.toContain(stdout);
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("uses the native SDK duration and diagnoses exit 124 as timeout only at the configured deadline", async () => {
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({
+      success: false, exitCode: 124, stdout: "", stderr: "", command: "claude meeting-minutes",
+      duration: 780_001, timestamp: "2026-08-18T10:00:00.000Z",
+    }), destroy: vi.fn().mockResolvedValue(undefined) };
+    let failure: unknown;
+    try {
+      await generateMeetingMinutesInSandbox("TRANSCRIPT_SECRET", destination, context, "required",
+        { model: "opus", effort: "xhigh" }, sandbox, "tenant-boundary-handle");
+    } catch (error) { failure = error; }
+    const diagnostics = asRecord(failure).generationDiagnostics;
+    expect(diagnostics).toMatchObject({ outcome: "timeout", elapsedMs: 780_001, exitCode: 124,
+      stderrCode: "TIMEOUT", timeoutMs: 780_000 });
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["below the configured deadline", 779_999],
+    ["without a duration", undefined],
+    ["with a NaN duration", Number.NaN],
+    ["with a negative duration", -1],
+  ])("keeps exit 124 unknown when native duration is %s", async (_caseName, duration) => {
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({
+      success: false, exitCode: 124, stdout: "", stderr: "", command: "claude meeting-minutes",
+      ...(duration === undefined ? {} : { duration }),
+      timestamp: "2026-08-18T10:00:00.000Z",
+    }), destroy: vi.fn().mockResolvedValue(undefined) };
+    let failure: unknown;
+    try {
+      await generateMeetingMinutesInSandbox("TRANSCRIPT_SECRET", destination, context, "required",
+        { model: "opus", effort: "xhigh" }, sandbox, "tenant-boundary-handle");
+    } catch (error) { failure = error; }
+    const diagnostics = asRecord(failure).generationDiagnostics;
+    expect(diagnostics).toMatchObject({ outcome: "nonzero_exit", exitCode: 124,
+      stderrCode: "UNKNOWN", timeoutMs: 780_000 });
     expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
