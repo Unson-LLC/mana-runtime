@@ -654,14 +654,24 @@ const MEETING_MINUTES_RUN_RECEIPT_FAILURE_CODES = new Set([
 ]);
 
 function meetingMinutesAdminRunReceiptFailure(failure: unknown):
-  { stage: "run_receipt"; code: string; retryable: boolean; failedAt: string } | undefined {
+  { stage: "run_receipt"; code: string; retryable: boolean; failedAt: string;
+    operation?: "ingest" | "diagnosis"; httpStatus?: number } | undefined {
   if (typeof failure !== "object" || failure === null) return undefined;
-  const candidate = failure as { stage?: unknown; code?: unknown; retryable?: unknown; failedAt?: unknown };
+  const candidate = failure as { stage?: unknown; code?: unknown; retryable?: unknown; failedAt?: unknown;
+    operation?: unknown; httpStatus?: unknown };
   if (candidate.stage !== "run_receipt" || typeof candidate.code !== "string" ||
     !MEETING_MINUTES_RUN_RECEIPT_FAILURE_CODES.has(candidate.code) || typeof candidate.retryable !== "boolean" ||
     typeof candidate.failedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(candidate.failedAt) ||
     Number.isNaN(Date.parse(candidate.failedAt))) return undefined;
-  return { stage: "run_receipt", code: candidate.code, retryable: candidate.retryable, failedAt: candidate.failedAt };
+  const operation = candidate.operation === "ingest" || candidate.operation === "diagnosis"
+    ? candidate.operation
+    : undefined;
+  const httpStatus = typeof candidate.httpStatus === "number" && Number.isInteger(candidate.httpStatus)
+    && candidate.httpStatus >= 100 && candidate.httpStatus <= 599
+    ? candidate.httpStatus
+    : undefined;
+  return { stage: "run_receipt", code: candidate.code, retryable: candidate.retryable, failedAt: candidate.failedAt,
+    ...(operation !== undefined && httpStatus !== undefined ? { operation, httpStatus } : {}) };
 }
 
 function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {

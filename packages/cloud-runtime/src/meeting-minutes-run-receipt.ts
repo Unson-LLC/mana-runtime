@@ -11,10 +11,16 @@ export interface RunReceiptV1 {
 
 export interface ConfirmedRunReceiptDelivery { receiptId: string }
 
+export type MeetingMinutesRunReceiptOperation = "ingest" | "diagnosis";
+
 export interface MeetingMinutesRunReceiptFailure {
   stage: "run_receipt";
   code: string;
   retryable: boolean;
+  /** Stable client-owned location of an HTTP failure; never derives from an upstream response. */
+  operation?: MeetingMinutesRunReceiptOperation;
+  /** Stable HTTP response status; never persist response bodies, headers, or error text. */
+  httpStatus?: number;
 }
 
 const RECEIPT_FAILURES_BY_CODE: Readonly<Record<string, Omit<MeetingMinutesRunReceiptFailure, "stage">>> = {
@@ -44,6 +50,23 @@ interface RunReceiptIngestResponse {
   outcome_case_links?: Array<{ case_id?: unknown; status?: unknown }>;
 }
 
+class MeetingMinutesRunReceiptHttpError extends Error {
+  constructor(readonly operation: MeetingMinutesRunReceiptOperation, readonly httpStatus: number) {
+    super(`meeting_minutes_run_receipt_${operation === "ingest" ? "request" : "readback"}_failed:${httpStatus}`);
+    this.name = "MeetingMinutesRunReceiptHttpError";
+  }
+}
+
+function classifyRunReceiptHttpStatus(status: number): Pick<MeetingMinutesRunReceiptFailure, "code" | "retryable"> {
+  if (status === 401) return { code: "RUN_RECEIPT_AUTHENTICATION_FAILED", retryable: false };
+  if (status === 403) return { code: "RUN_RECEIPT_FORBIDDEN", retryable: false };
+  if (status === 408 || status === 425 || status === 429 || status >= 500) {
+    return { code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true };
+  }
+  if (status >= 400) return { code: "RUN_RECEIPT_REQUEST_REJECTED", retryable: false };
+  return { code: "RUN_RECEIPT_DELIVERY_FAILED", retryable: true };
+}
+
 /**
  * Converts only the client-owned, stable receipt boundary into durable
  * diagnostics. In particular, response bodies and arbitrary Error properties
@@ -52,6 +75,10 @@ interface RunReceiptIngestResponse {
 export function classifyMeetingMinutesRunReceiptFailure(error: unknown): MeetingMinutesRunReceiptFailure {
   const message = error instanceof Error ? error.message : "";
   const stage = "run_receipt" as const;
+  if (error instanceof MeetingMinutesRunReceiptHttpError) {
+    return { stage, ...classifyRunReceiptHttpStatus(error.httpStatus),
+      operation: error.operation, httpStatus: error.httpStatus };
+  }
   const boundaryCode = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
     ? (error as { code: string }).code
     : undefined;
@@ -80,12 +107,7 @@ export function classifyMeetingMinutesRunReceiptFailure(error: unknown): Meeting
   }
   const status = Number(message.match(/^meeting_minutes_run_receipt_(?:request|readback)_failed:(\d{3})$/)?.[1]);
   if (Number.isInteger(status)) {
-    if (status === 401) return { stage, code: "RUN_RECEIPT_AUTHENTICATION_FAILED", retryable: false };
-    if (status === 403) return { stage, code: "RUN_RECEIPT_FORBIDDEN", retryable: false };
-    if (status === 408 || status === 425 || status === 429 || status >= 500) {
-      return { stage, code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true };
-    }
-    if (status >= 400) return { stage, code: "RUN_RECEIPT_REQUEST_REJECTED", retryable: false };
+    return { stage, ...classifyRunReceiptHttpStatus(status) };
   }
   return { stage, code: "RUN_RECEIPT_DELIVERY_FAILED", retryable: true };
 }
@@ -149,7 +171,7 @@ export class MeetingMinutesRunReceiptClient {
       throw new Error("meeting_minutes_run_receipt_request_transport_failed");
     });
     if (response.status !== 200 && response.status !== 201) {
-      throw new Error(`meeting_minutes_run_receipt_request_failed:${response.status}`);
+      throw new MeetingMinutesRunReceiptHttpError("ingest", response.status);
     }
     const result = await response.json().catch(() => null) as RunReceiptIngestResponse | null;
     const receiptId = typeof result?.run?.id === "string" ? result.run.id : undefined;
@@ -174,7 +196,7 @@ export class MeetingMinutesRunReceiptClient {
       if (error instanceof Error && error.name === "TimeoutError") throw error;
       throw new Error("meeting_minutes_run_receipt_readback_transport_failed");
     });
-    if (readback.status !== 200) throw new Error(`meeting_minutes_run_receipt_readback_failed:${readback.status}`);
+    if (readback.status !== 200) throw new MeetingMinutesRunReceiptHttpError("diagnosis", readback.status);
     const confirmation = await readback.json().catch(() => null) as {
       receipt?: { run_id?: unknown; external_run_id?: unknown; source_status?: unknown; evidence_state?: unknown };
       diagnosis?: { state?: unknown };

@@ -91,15 +91,19 @@ jobs:
               def timestamp: if type == "string" and test("^[0-9TZ:.-]{20,30}$") then . else null end;
               def identifier: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;
               def code: if type == "string" and test("^RUN_RECEIPT_[A-Z_]{3,96}$") then . else null end;
+              def receipt_operation: if . == "ingest" or . == "diagnosis" then . else null end;
+              def http_status: if type == "number" and floor == . and . >= 100 and . <= 599 then . else null end;
               {runId: (.runId | identifier), status: .status,
                runReceipt: (if (.runReceipt | type) == "object" then {
                  status: (.runReceipt.status | if . == "pending" or . == "delivered" then . else null end),
                  receiptId: (.runReceipt.receiptId | identifier),
                  deliveredAt: (.runReceipt.deliveredAt | timestamp),
                  failure: (if (.runReceipt.failure | type) == "object" then {
-                   stage: (.runReceipt.failure.stage | if . == "run_receipt" then . else null end),
-                   code: (.runReceipt.failure.code | code), retryable: (.runReceipt.failure.retryable | if type == "boolean" then . else null end),
-                   failedAt: (.runReceipt.failure.failedAt | timestamp)
+                    stage: (.runReceipt.failure.stage | if . == "run_receipt" then . else null end),
+                    code: (.runReceipt.failure.code | code), retryable: (.runReceipt.failure.retryable | if type == "boolean" then . else null end),
+                    failedAt: (.runReceipt.failure.failedAt | timestamp),
+                    operation: (.runReceipt.failure.operation | receipt_operation),
+                    httpStatus: (.runReceipt.failure.httpStatus | http_status)
                  } else null end)
                } else null end)}' "$response_file"
           }
@@ -127,6 +131,12 @@ jobs:
             "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-receipt-retry")"
           if [[ "$status" != "200" ]] || ! jq -e --arg runId "$RUN_ID" '$runId == .runId and .runReceipt.status == "delivered" and (.runReceipt.receiptId // "") != "" and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
             echo "RunReceipt再送失敗: $(safe_code)" >&2
+            status="$(request_json -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" --get \
+              --data-urlencode "tenant_id=$TENANT_ID" --data-urlencode "workspace_id=$WORKSPACE_ID" \
+              "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-status")"
+            if [[ "$status" == "200" ]] && jq -e --arg runId "$RUN_ID" '$runId == .runId and .runReceipt.status == "pending"' "$response_file" >/dev/null; then
+              print_status
+            fi
             exit 1
           fi
           status="$(request_json -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" --get \
