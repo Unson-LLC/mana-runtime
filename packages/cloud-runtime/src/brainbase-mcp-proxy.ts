@@ -19,6 +19,54 @@ async function mcpToolName(request: Request): Promise<string | undefined> {
   } catch { return undefined; }
 }
 
+async function mcpMethod(request: Request): Promise<string | undefined> {
+  if (new URL(request.url).pathname !== BRAINBASE_MCP_PROXY_PATH || request.method !== "POST") return undefined;
+  try {
+    const body = await request.clone().json() as { method?: unknown };
+    return typeof body.method === "string" ? body.method : undefined;
+  } catch { return undefined; }
+}
+
+function filterToolCatalogPayload(payload: unknown, allowedTools: readonly string[]): unknown {
+  if (!payload || Array.isArray(payload) || typeof payload !== "object") throw new Error("invalid_catalog");
+  const envelope = payload as { result?: { tools?: unknown } };
+  if (!envelope.result || !Array.isArray(envelope.result.tools)) throw new Error("invalid_catalog");
+  const allowed = new Set(allowedTools);
+  return {
+    ...envelope,
+    result: {
+      ...envelope.result,
+      tools: envelope.result.tools.filter((tool) =>
+        Boolean(tool && typeof tool === "object" && typeof (tool as { name?: unknown }).name === "string"
+          && allowed.has((tool as { name: string }).name))),
+    },
+  };
+}
+
+async function filterToolCatalogResponse(response: Response, allowedTools: readonly string[]): Promise<Response> {
+  const contentType = response.headers.get("content-type") ?? "application/json";
+  const text = await response.text();
+  try {
+    if (contentType.includes("text/event-stream")) {
+      let filtered = false;
+      const output = text.split("\n").map((line) => {
+        if (!line.startsWith("data:")) return line;
+        const payload = filterToolCatalogPayload(JSON.parse(line.slice(5).trim()), allowedTools);
+        filtered = true;
+        return `data: ${JSON.stringify(payload)}`;
+      }).join("\n");
+      if (!filtered) throw new Error("invalid_catalog");
+      return new Response(output, { status: response.status, headers: response.headers });
+    }
+    return Response.json(filterToolCatalogPayload(JSON.parse(text), allowedTools), {
+      status: response.status,
+      headers: response.headers,
+    });
+  } catch {
+    return Response.json({ error: { code: "BRAINBASE_MCP_TOOL_CATALOG_INVALID", retryable: true } }, { status: 502 });
+  }
+}
+
 export async function handleBrainbaseMcpProxyRequest(
   request: Request,
   env: BrainbaseMcpProxyEnv,
@@ -59,6 +107,7 @@ export async function handleBrainbaseMcpProxyRequest(
     }, { status: 403 });
   }
   const toolName = await mcpToolName(request);
+  const method = await mcpMethod(request);
   if (!env.BRAINBASE_MCP_BASE_URL || (!env.BRAINBASE_MCP_TOKEN && !fetchImpl)) {
     return Response.json({ error: { code: "BRAINBASE_PROXY_NOT_CONFIGURED", retryable: true } }, { status: 503 });
   }
@@ -87,6 +136,9 @@ export async function handleBrainbaseMcpProxyRequest(
     });
     if (response.status >= 300 && response.status < 400) {
       return Response.json({ error: { code: "BRAINBASE_UPSTREAM_REDIRECT_REJECTED", retryable: false } }, { status: 502 });
+    }
+    if (policy && method === "tools/list" && response.ok) {
+      return filterToolCatalogResponse(response, policy.allowedTools);
     }
     if (toolName) {
       const diagnostic = await response.clone().text();

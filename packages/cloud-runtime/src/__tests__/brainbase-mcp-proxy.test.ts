@@ -66,7 +66,8 @@ describe("Brainbase judgment Hook proxy", () => {
   });
 
   it.each(["initialize", "notifications/initialized", "ping", "tools/list", "tools/call"])("preserves required A0 MCP operation %s", async (method) => {
-    const forward = vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 1, result: {} }));
+    const forward = vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 1,
+      result: method === "tools/list" ? { tools: [{ name: "brainbase_resolve_turn" }] } : {} }));
     const response = await handleBrainbaseMcpProxyRequest(
       new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: JSON.stringify({
         jsonrpc: "2.0", id: 1, method,
@@ -83,7 +84,7 @@ describe("Brainbase judgment Hook proxy", () => {
     const forward = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("mcp-session-id")).toBe("session-123");
       return Response.json(
-        { jsonrpc: "2.0", id: 1, result: {} },
+        { jsonrpc: "2.0", id: 1, result: { tools: [{ name: "brainbase_resolve_turn" }] } },
         { headers: { "mcp-session-id": "session-456" } },
       );
     }) as unknown as typeof fetch;
@@ -97,6 +98,49 @@ describe("Brainbase judgment Hook proxy", () => {
       { allowedTools: ["brainbase_resolve_turn"] },
     );
     expect(response.headers.get("mcp-session-id")).toBe("session-456");
+  });
+
+  it("exposes only company-authorized tools in a JSON catalog", async () => {
+    const forward = vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [
+      { name: "brainbase_resolve_turn", inputSchema: { type: "object" } },
+      { name: "brainbase_knowledge_resolve", inputSchema: { type: "object" } },
+      { name: "brainbase_admin_write", inputSchema: { type: "object" } },
+    ] } })) as unknown as typeof fetch;
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "tools/list", params: {},
+      }) }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.example.test" }, forward,
+      { allowedTools: ["brainbase_resolve_turn", "brainbase_knowledge_resolve"] },
+    );
+    const body = await response.json() as { result: { tools: Array<{ name: string }> } };
+    expect(body.result.tools.map((tool) => tool.name)).toEqual([
+      "brainbase_resolve_turn", "brainbase_knowledge_resolve",
+    ]);
+  });
+
+  it("filters an event-stream catalog and fails closed for malformed success payloads", async () => {
+    const catalog = { jsonrpc: "2.0", id: 1, result: { tools: [
+      { name: "brainbase_resolve_turn" }, { name: "brainbase_admin_write" },
+    ] } };
+    for (const [upstream, expectedStatus] of [
+      [new Response(`event: message\ndata: ${JSON.stringify(catalog)}\n\n`, { headers: { "content-type": "text/event-stream" } }), 200],
+      [Response.json({ jsonrpc: "2.0", id: 1, result: {} }), 502],
+    ] as const) {
+      const response = await handleBrainbaseMcpProxyRequest(
+        new Request("https://brainbase-mcp.internal/mcp", { method: "POST", body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "tools/list", params: {},
+        }) }),
+        { BRAINBASE_MCP_BASE_URL: "https://bb.example.test" }, vi.fn(async () => upstream.clone()) as unknown as typeof fetch,
+        { allowedTools: ["brainbase_resolve_turn"] },
+      );
+      expect(response.status).toBe(expectedStatus);
+      if (expectedStatus === 200) {
+        expect(await response.text()).toContain('"tools":[{"name":"brainbase_resolve_turn"}]');
+      } else {
+        expect(await response.json()).toEqual({ error: { code: "BRAINBASE_MCP_TOOL_CATALOG_INVALID", retryable: true } });
+      }
+    }
   });
 
   it.each(["brainbase_admin_write", "brainbase_graph_query", "unknown_tool"])("denies A0 tool %s before forwarding", async (name) => {
