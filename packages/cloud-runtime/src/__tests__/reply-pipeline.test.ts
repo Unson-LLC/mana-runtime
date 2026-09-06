@@ -278,6 +278,36 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(sandboxIds[0]).not.toBe(sandboxIds[1]);
   });
 
+  it("polls a managed process so a long Claude turn does not depend on one Sandbox HTTP request", async () => {
+    const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
+    const getStatus = vi.fn()
+      .mockResolvedValueOnce("running")
+      .mockResolvedValueOnce("completed");
+    const getLogs = vi.fn().mockResolvedValue({ stdout: auditedReplyStream(), stderr: "" });
+    const startProcess = vi.fn().mockResolvedValue({
+      getStatus,
+      getLogs,
+      kill: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.mocked(options.createSandbox).mockReturnValue({ ...sandbox, startProcess });
+
+    await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
+      reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
+    });
+
+    expect(startProcess).toHaveBeenCalledWith(
+      expect.stringContaining("/opt/mana/tenant-claude-runner.mjs"),
+      expect.objectContaining({
+        processId: expect.stringMatching(/^reply-[0-9a-f-]{36}$/),
+        autoCleanup: false,
+        timeout: 270_000,
+      }),
+    );
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    expect(getLogs).toHaveBeenCalledOnce();
+    expect(sandbox.exec).not.toHaveBeenCalled();
+  });
+
   it("does not retry a stale-session-shaped failure and still destroys the fresh Container", async () => {
     const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     sandbox.exec.mockResolvedValueOnce({
