@@ -390,6 +390,7 @@ export function handleMeetingMinutesInteractionEntrypoint(
 }
 
 export async function handleMeetingMinutesInteraction(request: Request, options: InteractionOptions): Promise<Response> {
+  const receivedAt = Date.now();
   let body: string;
   try {
     body = await readSlackRequestBody(request);
@@ -495,8 +496,21 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
       destinationResolutionFailed = true;
     }
   }
+  // Resolve the local destination catalog before projecting navigation feedback
+  // so malformed or stale organization buttons do not overwrite the selector.
+  if (organizationAction || backAction) {
+    try { destinations = options.destinations ?? destinations ?? options.resolveDestinations?.(); }
+    catch { return response("slack_interaction_invalid", 400); }
+    if (!destinations || (organizationAction &&
+      (actionOrganizationId !== string(actionValue?.organizationId) ||
+        !destinations.some((item) => item.organization.id === string(actionValue?.organizationId))))) {
+      return response("slack_interaction_invalid", 400);
+    }
+  }
+
   const continueInteraction = async (): Promise<Response> => {
   let tenantEffects: TenantInteractionEffects;
+  const tenantStartedAt = Date.now();
   try {
     const tenantIdentity: TenantInteractionIdentity = {
       app_id: appId,
@@ -510,6 +524,11 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     tenantEffects = selectedDestination
       ? await options.resolveTenantEffects(tenantIdentity, selectedDestination)
       : await options.resolveTenantEffects(tenantIdentity);
+    if (isMeetingMinutesInteractionAction(actionId)) {
+      console.info(JSON.stringify({ event: "meeting_minutes_interaction_tenant_resolved", interactionId,
+        actionId, runId: string(actionValue?.runId), channel_id: interactionChannelId,
+        elapsed_ms: Date.now() - receivedAt, tenant_resolution_ms: Date.now() - tenantStartedAt }));
+    }
   } catch (error) {
     const responseUrl = slackResponseUrl(payload?.response_url);
     const runId = string(actionValue?.runId) ?? interactionId;
@@ -555,18 +574,6 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
   const fileName = string(value?.fileName);
   const revision = typeof value?.revision === "number" ? value.revision : 0;
   const sourceThreadTs = threadTsCandidates[0];
-
-  // Resolve the local destination catalog before projecting navigation feedback
-  // so malformed or stale organization buttons do not overwrite the selector.
-  if (organizationAction || backAction) {
-    try { destinations = options.destinations ?? destinations ?? options.resolveDestinations?.(); }
-    catch { return response("slack_interaction_invalid", 400); }
-    if (!destinations || (organizationAction &&
-      (actionOrganizationId !== organizationId ||
-        !destinations.some((item) => item.organization.id === organizationId)))) {
-      return response("slack_interaction_invalid", 400);
-    }
-  }
 
   // Project one fast, route-specific acknowledgement after tenant authority is
   // established and before the slower intake/queue work. The outer handler
@@ -949,6 +956,25 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
     const pending: Promise<void>[] = [];
     // Keep nested projections and queue work in the same waitUntil lifetime.
     options = { ...options, defer: (work) => { pending.push(work); } };
+    // This is only a receipt to the person who clicked a signed, locally
+    // validated button. It carries no tenant/catalog/run data and never changes
+    // the shared message. Detailed projections and all work still require the
+    // tenant boundary below. Keep this independent of authority and queue waits.
+    const receiptUrl = slackResponseUrl(payload?.response_url);
+    const projectReceipt = options.updateBeforeTenant;
+    if (receiptUrl && projectReceipt && (!destinationAction || selectedDestination)) {
+      const text = "操作を受け付けました。確認しています。";
+      const receipt: SlackInteractionMessage = { replace_original: false, response_type: "ephemeral", text,
+        blocks: [{ type: "section", text: { type: "plain_text", text } }] };
+      pending.push(Promise.resolve().then(() => projectReceipt(receiptUrl, receipt)).then(() => {
+        console.info(JSON.stringify({ event: "meeting_minutes_interaction_receipt_delivered", interactionId,
+          actionId, runId: string(actionValue?.runId), channel_id: interactionChannelId,
+          elapsed_ms: Date.now() - receivedAt }));
+      }).catch(() => {
+        console.error(JSON.stringify({ event: "meeting_minutes_interaction_receipt_failed", interactionId,
+          actionId, elapsed_ms: Date.now() - receivedAt, code: "STATUS_PROJECTION_FAILED" }));
+      }));
+    }
     defer((async () => {
       try {
         const result = await continueInteraction();
@@ -956,9 +982,15 @@ export async function handleMeetingMinutesInteraction(request: Request, options:
           console.warn(JSON.stringify({ event: "meeting_minutes_deferred_interaction_rejected",
             interactionId, status: result.status }));
         }
-        while (pending.length) await Promise.all(pending.splice(0));
       } catch {
         console.error(JSON.stringify({ event: "meeting_minutes_deferred_interaction_failed", interactionId }));
+      } finally {
+        while (pending.length) {
+          const results = await Promise.allSettled(pending.splice(0));
+          if (results.some((result) => result.status === "rejected")) {
+            console.error(JSON.stringify({ event: "meeting_minutes_deferred_interaction_failed", interactionId }));
+          }
+        }
       }
     })());
     return new Response(null, { status: 200 });
