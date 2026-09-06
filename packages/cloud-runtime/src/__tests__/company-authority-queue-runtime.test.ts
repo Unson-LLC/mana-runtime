@@ -175,7 +175,7 @@ describe("company authority Queue production seam", () => {
       actor_principal_id: "principal-a",
       project_id: "project-a",
       project_ids: ["project-a"],
-      capability_id: "company_authority_v1",
+      capability_id: "company_read",
       deployment_id: "deployment-a",
     });
   });
