@@ -1,10 +1,10 @@
-name: 失敗済み議事録を再実行
+name: 失敗済み議事録のRunReceiptを再送
 
 on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 状態確認または再実行（再実行はSlack投稿等を伴う）
+        description: 状態確認またはRunReceipt再送（Slack投稿等は再実行しない）
         required: true
         default: status
         type: choice
@@ -23,10 +23,6 @@ on:
         description: 対象Slack workspace ID
         required: true
         type: string
-      outcome_case_id:
-        description: 紐付けるBrainbase OutcomeCase ID（任意）
-        required: false
-        type: string
       reason:
         description: 再実行理由（監査用）
         required: true
@@ -41,7 +37,7 @@ permissions:
 
 jobs:
   retry:
-    name: 保存済み権限を再照合して再投入
+    name: 保存済み権限を再照合してRunReceiptを再送
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -54,21 +50,18 @@ jobs:
           RUN_ID: ${{ inputs.run_id }}
           TENANT_ID: ${{ inputs.tenant_id }}
           WORKSPACE_ID: ${{ inputs.workspace_id }}
-          OUTCOME_CASE_ID: ${{ inputs.outcome_case_id }}
         run: |
           set -euo pipefail
           [[ "$RUN_ID" =~ ^[A-Za-z0-9_-]{3,260}$ ]]
           [[ "$TENANT_ID" =~ ^[A-Za-z0-9_-]{3,128}$ ]]
           [[ "$WORKSPACE_ID" =~ ^[A-Z0-9]{3,32}$ ]]
-          [[ -z "$OUTCOME_CASE_ID" || "$OUTCOME_CASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$ ]]
 
-      - name: 失敗済みrunを再投入
+      - name: 失敗済みrunのRunReceiptを再送
         shell: bash
         env:
           RUN_ID: ${{ inputs.run_id }}
           TENANT_ID: ${{ inputs.tenant_id }}
           WORKSPACE_ID: ${{ inputs.workspace_id }}
-          OUTCOME_CASE_ID: ${{ inputs.outcome_case_id }}
           OPERATION: ${{ inputs.operation }}
           RETRY_REASON: ${{ inputs.reason }}
           SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
@@ -194,21 +187,13 @@ jobs:
                   })
                 }
               }' "$response_file"
-            echo "状態確認のみ。再投入・外部送信なし。" >> "$GITHUB_STEP_SUMMARY"
+            echo "状態確認のみ。RunReceipt再送・外部送信なし。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           [[ "$OPERATION" == "retry" ]]
-          baseline_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
-          baseline_source_projected_at="$(jq -r '.sourceStatus.projectedAt // ""' "$response_file")"
-          baseline_outcome_case_id="$(jq -r '.outcomeCaseId // ""' "$response_file")"
-          expected_outcome_case_id="$OUTCOME_CASE_ID"
-          if [[ -z "$expected_outcome_case_id" ]]; then
-            expected_outcome_case_id="$baseline_outcome_case_id"
-          fi
-          test -n "$expected_outcome_case_id"
           if jq -e '.runReceipt.failure.stage == "run_receipt" and .runReceipt.failure.retryable == false' \
             "$response_file" >/dev/null; then
-            echo "Run receipt has a non-retryable contract failure; retry was not enqueued" >&2
+            echo "RunReceipt has a non-retryable contract failure; it was not resent" >&2
             print_safe_run_receipt_failure
             exit 1
           fi
@@ -220,120 +205,31 @@ jobs:
               --arg tenantId "$TENANT_ID" \
               --arg workspaceId "$WORKSPACE_ID" \
               --arg actionTs "$action_ts" \
-              --arg outcomeCaseId "$expected_outcome_case_id" \
-              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs,outcomeCaseId:$outcomeCaseId}')" \
-            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-retry")"
+              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs}')" \
+            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-receipt-retry")"
           jq -e --arg runId "$RUN_ID" --arg status "$status" \
-            '$status == "200" and .runId == $runId and .enqueued == true' \
+            '$status == "200" and .runId == $runId
+              and .runReceipt.status == "delivered"
+              and (.runReceipt.receiptId // "") != ""
+              and (.runReceipt.deliveredAt // "") != ""' \
             "$response_file" >/dev/null
-          retry_confirmed=false
-          for attempt in $(seq 1 90); do
-            status="$(request_json \
-              -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
-              --get \
-              --data-urlencode "tenant_id=$TENANT_ID" \
-              --data-urlencode "workspace_id=$WORKSPACE_ID" \
-              "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-status")"
-            jq -e --arg runId "$RUN_ID" --arg status "$status" \
-              '$status == "200" and .runId == $runId' "$response_file" >/dev/null
-            run_status="$(jq -r '.status' "$response_file")"
-            processing_completed_action_ts="$(jq -r '.processing.completedActionTs // ""' "$response_file")"
-            processing_completed_at="$(jq -r '.processing.completedAt // ""' "$response_file")"
-            if [[ "$run_status" == "completed" && "$processing_completed_action_ts" == "$action_ts" && -n "$processing_completed_at" ]]; then
-              if jq -e --arg actionTs "$action_ts" --arg processingCompletedAt "$processing_completed_at" \
-                --arg baselineSourceProjectedAt "$baseline_source_projected_at" \
-                --arg expectedOutcomeCaseId "$expected_outcome_case_id" \
-                '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
-                and .taskRegistration.pendingPresent == false and (.taskRegistration.failure == null)
-                and .checkpoint.hasTaskCard == true
-                and .processing.completedActionTs == $actionTs
-                and .processing.completedAt == $processingCompletedAt
-                and .sourceStatus.outcome == "completed"
-                and (.sourceStatus.projectedAt // "") != ""
-                and .sourceStatus.projectedAt != $baselineSourceProjectedAt
-                and (.sourceStatus.projectionFailure == null)
-                and .outcomeCaseId == $expectedOutcomeCaseId
-                and .runReceipt.status == "delivered"
-                and .runReceipt.caseId == $expectedOutcomeCaseId
-                and (.runReceipt.receiptId // "") != ""
-                and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
-                retry_confirmed=true
-                break
-              fi
-              if jq -e --arg processingCompletedAt "$processing_completed_at" \
-                '(.sourceStatus.projectionFailure.failedAt // "") >= $processingCompletedAt' \
-                "$response_file" >/dev/null; then
-                echo "Fresh retry source projection failed" >&2
-                jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
-                exit 1
-              fi
-              if jq -e --arg baselineSourceProjectedAt "$baseline_source_projected_at" \
-                '.sourceStatus.outcome != "completed"
-                or (.sourceStatus.projectedAt // "") == ""
-                or .sourceStatus.projectedAt == $baselineSourceProjectedAt' "$response_file" >/dev/null; then
-                sleep 10
-                continue
-              fi
-              if jq -e '.taskRegistration.pendingPresent == true
-                or ((.taskRegistration.failure.message // "") | endswith("_pending"))' \
-                "$response_file" >/dev/null; then
-                if [[ "$attempt" == "90" ]]; then
-                  echo "Fresh retry remained pending until the polling deadline" >&2
-                  jq '{runId,status,updatedAt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
-                  exit 1
-                fi
-                sleep 10
-                continue
-              fi
-              if ! jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
-                and .taskRegistration.pendingPresent == false and (.taskRegistration.failure == null)
-                and .checkpoint.hasTaskCard == true' "$response_file" >/dev/null; then
-                echo "Fresh retry completed with an incomplete task integration" >&2
-                jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
-                exit 1
-              fi
-              if jq -e '.runReceipt.failure.stage == "run_receipt" and .runReceipt.failure.retryable == false' \
-                "$response_file" >/dev/null; then
-                echo "Fresh retry has a non-retryable run receipt contract failure" >&2
-                print_safe_run_receipt_failure
-                exit 1
-              fi
-              if jq -e --arg expectedOutcomeCaseId "$expected_outcome_case_id" \
-                '.outcomeCaseId != $expectedOutcomeCaseId
-                or .runReceipt.status != "delivered"
-                or .runReceipt.caseId != $expectedOutcomeCaseId
-                or (.runReceipt.receiptId // "") == ""
-                or (.runReceipt.deliveredAt // "") == ""' "$response_file" >/dev/null; then
-                sleep 10
-                continue
-              fi
-              echo "Fresh retry completed with an incomplete task integration" >&2
-              jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
-              exit 1
-            fi
-            if [[ "$run_status" == "failed" ]]; then
-              current_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
-              if [[ -n "$current_failed_at" && "$current_failed_at" != "$baseline_failed_at" ]]; then
-                jq . "$response_file"
-                exit 1
-              fi
-            fi
-            if [[ "$attempt" == "90" ]]; then
-              jq . "$response_file"
-              exit 1
-            fi
-            sleep 10
-          done
-          if [[ "$retry_confirmed" != "true" ]]; then
-            echo "Fresh retry did not satisfy the completion contract before the polling deadline" >&2
-            jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
-            exit 1
-          fi
+          status="$(request_json \
+            -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
+            --get \
+            --data-urlencode "tenant_id=$TENANT_ID" \
+            --data-urlencode "workspace_id=$WORKSPACE_ID" \
+            "https://unson-business-mana-runtime.unson.workers.dev/admin/meeting-minutes/runs/${RUN_ID}/authorized-status")"
+          jq -e --arg runId "$RUN_ID" --arg status "$status" \
+            '$status == "200" and .runId == $runId
+              and .runReceipt.status == "delivered"
+              and (.runReceipt.receiptId // "") != ""
+              and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null
           {
-            echo "## 議事録run再投入"
+            echo "## 議事録RunReceipt再送"
             echo "- run ID: \`$RUN_ID\`"
             echo "- tenant ID: \`$TENANT_ID\`"
             echo "- workspace ID: \`$WORKSPACE_ID\`"
             echo "- 理由: $RETRY_REASON"
-            echo "- 結果: GitHub保存、Slack投稿、タスク登録、タスクカード投稿まで完了"
+            echo "- 結果: Brainbase RunReceiptの再送と読戻しを確認"
+            echo "- 範囲外: Slack、GitHub、タスク登録、タスクカードは再実行しない"
           } >> "$GITHUB_STEP_SUMMARY"

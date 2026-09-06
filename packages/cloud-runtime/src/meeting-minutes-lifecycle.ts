@@ -113,6 +113,41 @@ async function recordRunReceiptFailure(fs: WorkspaceFs, run: MeetingMinutesRun, 
   await saveMeetingMinutesRun(fs, run);
 }
 
+/**
+ * Retries only the immutable Brainbase RunReceipt boundary.  This deliberately
+ * does not re-enter selection, generation, Slack, GitHub, or task-board work.
+ * The caller must have already authorized the saved run and receipt identity.
+ */
+export async function retryMeetingMinutesRunReceipt(
+  fs: WorkspaceFs,
+  run: MeetingMinutesRun,
+  emitRunReceipt: (receipt: RunReceiptV1) => Promise<ConfirmedRunReceiptDelivery>,
+): Promise<MeetingMinutesRun | undefined> {
+  const receipt = await buildMeetingMinutesRunReceipt(run);
+  if (!receipt || run.runReceipt?.status !== "pending" ||
+    run.runReceipt.idempotencyKey !== receipt.delivery.idempotency_key) return undefined;
+
+  // Persist the exact retry identity before crossing the Brainbase boundary.
+  // Keep the prior safe diagnostic until confirmed delivery replaces it.
+  run.runReceipt = { ...run.runReceipt, caseId: run.outcomeCaseId,
+    idempotencyKey: receipt.delivery.idempotency_key, status: "pending" };
+  run.updatedAt = new Date().toISOString();
+  await saveMeetingMinutesRun(fs, run);
+  let delivered: ConfirmedRunReceiptDelivery;
+  try {
+    delivered = await emitRunReceipt(receipt);
+  } catch (error) {
+    await recordRunReceiptFailure(fs, run, error);
+    throw error;
+  }
+  const deliveredAt = new Date().toISOString();
+  run.runReceipt = { ...run.runReceipt, receiptId: delivered.receiptId, status: "delivered", deliveredAt };
+  delete run.runReceipt.failure;
+  run.updatedAt = deliveredAt;
+  await saveMeetingMinutesRun(fs, run);
+  return run;
+}
+
 async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
   options: MeetingMinutesStatusProjectionOptions): Promise<void> {
   // A previous terminal-display failure is retry metadata, not a current

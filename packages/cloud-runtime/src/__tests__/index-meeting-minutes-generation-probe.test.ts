@@ -146,11 +146,11 @@ function request(payload: unknown, options: { authorization?: string } = {}): Re
   );
 }
 
-function authorizedRetryRequest(payload: unknown, options: { authorization?: string } = {}): Request {
+function authorizedReceiptRetryRequest(payload: unknown, options: { authorization?: string } = {}): Request {
   const headers = new Headers({ "content-type": "application/json" });
   if (options.authorization !== undefined) headers.set("authorization", options.authorization);
   return new Request(
-    `https://example.com/admin/meeting-minutes/runs/${RUN_ID}/authorized-retry`,
+    `https://example.com/admin/meeting-minutes/runs/${RUN_ID}/authorized-receipt-retry`,
     { method: "POST", headers, body: JSON.stringify(payload) },
   );
 }
@@ -252,7 +252,7 @@ describe("authorized meeting-minutes generation probe route", () => {
     expect(runtimeMocks.runProbe).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-retryable receipt failure before reissuing context or sending the retry event", async () => {
+  it("rejects a non-retryable receipt failure before reauthorizing or emitting a receipt", async () => {
     const events = { send: vi.fn() };
     runtimeMocks.loadRun.mockResolvedValue(run({ runReceipt: {
       idempotencyKey: "meeting-minutes:run-001",
@@ -261,7 +261,7 @@ describe("authorized meeting-minutes generation probe route", () => {
         retryable: false, failedAt: "2026-09-06T00:00:01.000Z" },
     } }));
 
-    const response = await fetchWorker(authorizedRetryRequest({ tenantId: TENANT_ID,
+    const response = await fetchWorker(authorizedReceiptRetryRequest({ tenantId: TENANT_ID,
       workspaceId: WORKSPACE_ID, actionTs: "100.200" }, {
       authorization: `Bearer ${ADMIN_TOKEN}`,
     }), bindings({ TECHKNIGHT_EVENTS: events }));

@@ -15,7 +15,7 @@ import {
   readAdminJsonRequest,
   validateMeetingMinutesAdminTaskIds,
 } from "./admin-json-input.js";
-import { repairMeetingMinutesCompletedProjection } from "./meeting-minutes-lifecycle.js";
+import { repairMeetingMinutesCompletedProjection, retryMeetingMinutesRunReceipt } from "./meeting-minutes-lifecycle.js";
 import {
   handleSandboxAdminRequest,
   isSandboxAdminAuthorized,
@@ -93,7 +93,8 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
-import { classifyMeetingMinutesRunReceiptFailure, MeetingMinutesRunReceiptClient } from "./meeting-minutes-run-receipt.js";
+import { buildMeetingMinutesRunReceipt, classifyMeetingMinutesRunReceiptFailure,
+  MeetingMinutesRunReceiptClient } from "./meeting-minutes-run-receipt.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
 import { hasStableMeetingMinutesRecoveryAuthority, isMeetingMinutesAdminRecoveryEligible,
@@ -646,6 +647,8 @@ const MEETING_MINUTES_RUN_RECEIPT_FAILURE_CODES = new Set([
   "RUN_RECEIPT_UPSTREAM_FAILED",
   "RUN_RECEIPT_REQUEST_REJECTED",
   "RUN_RECEIPT_DELIVERY_FAILED",
+  "RUN_RECEIPT_INGEST_TRANSPORT_FAILED",
+  "RUN_RECEIPT_READBACK_TRANSPORT_FAILED",
 ]);
 
 function meetingMinutesAdminRunReceiptFailure(failure: unknown):
@@ -863,6 +866,55 @@ async function meetingMinutesGenerationProbeContext(env: Env, run: MeetingMinute
     deployment_id: context.placement.deployment_id,
   };
   return { context, expectedScope };
+}
+
+/** Reauthorize a receipt retry against the current destination authority. */
+async function meetingMinutesRunReceiptRetryContext(
+  env: Env,
+  run: MeetingMinutesRun,
+  receiptIdempotencyKey: string,
+  actionTs: string,
+) {
+  const authorization = run.recoveryAuthorization;
+  const destination = meetingMinutesRuntimeConfig(env).destinations.find((item) => item.id === run.destination?.id);
+  if (!authorization || !isMeetingMinutesAdminRecoveryEligible(run) || !destination
+    || jcsCanonicalize(destination) !== jcsCanonicalize(run.destination)
+    || run.workspaceId !== authorization.workspaceId || run.sourceAppId !== authorization.appId
+    || run.sourceChannelId !== authorization.channelId || run.sourceThreadTs !== authorization.threadTs
+    || !authorization.requesterId || authorization.projectIds.length === 0) {
+    deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+  }
+  const revision = run.revision ?? 0;
+  const identity = { provider: "slack" as const, app_id: authorization.appId,
+    workspace_id: authorization.workspaceId, channel_id: authorization.channelId,
+    thread_ts: authorization.threadTs, requester_id: authorization.requesterId,
+    event_id: `meeting_minutes_run_receipt_retry:${run.runId}:revision:${revision}:receipt:${receiptIdempotencyKey}:action:${actionTs}` };
+  const clients = tenantRuntimeClients(env, undefined, tenantConfiguredDesiredEffectByCapability(env));
+  const context = (await resolveSlackWorkerIngress({ identity,
+    required_scopes: requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES).split(",").map((v) => v.trim()).filter(Boolean),
+    required_authorization: { audience: authorization.audience,
+      project_id: authorization.projectIds[0]!, capability_id: authorization.capabilityId },
+    trusted_project_ids: authorization.projectIds, tenant_revision: authorization.tenantRevision,
+    authority: clients.authority, now: new Date().toISOString(),
+    resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+  })).tenant_context;
+  if (!hasStableMeetingMinutesRecoveryAuthority(context, authorization)
+    || context.slack.event_id !== identity.event_id || context.placement.profile !== tenantDeploymentProfile(env)) {
+    deny("worker_ingress", "CROSS_TENANT_CANDIDATE");
+  }
+  const destinationAuthorization = destinationAuthorizationForSelection(env, destination);
+  const projectScope = destinationAuthorization
+    ? resolveMeetingMinutesDestinationProjectScope(context.authorization, destination,
+      destinationAuthorization.required_authorization.project_id, "worker_ingress")
+    : resolveCanonicalProjectScope(context.authorization,
+      placementAuthorizationForIdentity(env, identity).trusted_project_ids, "worker_ingress");
+  const expectedScope: ExpectedTenantScope = {
+    audience: requiredRuntimeBinding(env.MANA_REQUIRED_AUDIENCE), workspace_id: authorization.workspaceId,
+    app_id: authorization.appId, channel_id: authorization.channelId, thread_ts: authorization.threadTs,
+    actor_principal_id: context.actor.principal_id, ...projectScope,
+    capability_id: requiredRuntimeBinding(env.MANA_REQUIRED_CAPABILITY_ID), deployment_id: context.placement.deployment_id,
+  };
+  return { context, expectedScope, operationIdentity: identity.event_id };
 }
 
 async function reissueLongRunningTenantContext(
@@ -3433,6 +3485,104 @@ export default {
       await env.TECHKNIGHT_EVENTS.send({ schema_version: "1.0", tenant_context: tenantContext, payload: selection });
       return Response.json({ runId, status: run.status, destinationId: run.destination.id,
         ...(outcomeCaseId ? { outcomeCaseId } : {}), enqueued: true });
+    }
+    const authorizedRunReceiptRetryMatch = url.pathname.match(
+      /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-receipt-retry$/,
+    );
+    if (request.method === "POST" && authorizedRunReceiptRetryMatch) {
+      if (!(await isSandboxAdminAuthorized(request, env.SANDBOX_PROBE_TOKEN))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      let payload: { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } | null;
+      try {
+        const parsed = await readAdminJsonRequest(request);
+        payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed as { tenantId?: unknown; workspaceId?: unknown; actionTs?: unknown } : null;
+      } catch (error) {
+        const rejected = adminJsonInputErrorResponse(error);
+        if (rejected) return rejected;
+        throw error;
+      }
+      const tenantId = typeof payload?.tenantId === "string" && /^[A-Za-z0-9_-]{3,128}$/.test(payload.tenantId)
+        ? payload.tenantId : undefined;
+      const workspaceId = typeof payload?.workspaceId === "string" && /^[A-Z0-9]{3,32}$/.test(payload.workspaceId)
+        ? payload.workspaceId : undefined;
+      const actionTs = typeof payload?.actionTs === "string" && /^\d{1,20}(?:\.\d{1,12})?$/.test(payload.actionTs)
+        ? payload.actionTs : undefined;
+      if (!tenantId || !workspaceId || !actionTs) {
+        return Response.json({ error: "meeting_minutes_admin_retry_scope_invalid" }, { status: 400 });
+      }
+      const runId = authorizedRunReceiptRetryMatch[1]!;
+      const id = env.MEETING_MINUTES_WORKSPACE.idFromName(meetingMinutesWorkspaceName(
+        tenantId, workspaceId, runId,
+      ));
+      const handle = env.MEETING_MINUTES_WORKSPACE.get(id) as unknown as WorkspaceHandle;
+      const run = await withDisposableResource(() => getWorkspace(handle),
+        (workspace) => loadMeetingMinutesRun(workspace.fs, runId));
+      if (!run) return Response.json({ error: "meeting_minutes_run_not_found" }, { status: 404 });
+      const authorization = run.recoveryAuthorization;
+      if (!authorization || authorization.tenantId !== tenantId ||
+        authorization.workspaceId !== workspaceId || !run.destination || !run.sourceAppId) {
+        return Response.json({ error: "meeting_minutes_admin_retry_not_authorized" }, { status: 409 });
+      }
+      if (run.runReceipt?.failure?.stage === "run_receipt" && run.runReceipt.failure.retryable === false) {
+        return Response.json({ error: "meeting_minutes_admin_retry_run_receipt_non_retryable" }, { status: 409 });
+      }
+      const receipt = await buildMeetingMinutesRunReceipt(run);
+      const revision = run.revision ?? 0;
+      if (!receipt || run.runReceipt?.status !== "pending" ||
+        run.runReceipt.idempotencyKey !== receipt.delivery.idempotency_key) {
+        return Response.json({ error: "meeting_minutes_admin_retry_run_receipt_not_retryable" }, { status: 409 });
+      }
+      const { context, expectedScope, operationIdentity } = await meetingMinutesRunReceiptRetryContext(
+        env, run, receipt.delivery.idempotency_key, actionTs,
+      );
+      const clients = tenantRuntimeClients(env, context, tenantConfiguredDesiredEffectByCapability(env));
+      const verifier = new TenantRuntimeBoundaryVerifier({
+        read_authoritative_snapshot: (connectionId) => clients.authority.read_workspace_connection(connectionId),
+        resolve_verification_key: (keyId) => resolveTenantVerificationKey(env, keyId),
+      });
+      const now = () => new Date().toISOString();
+      const effects = createMeetingMinutesTenantEffectGuard({
+        env, tenant_context: context, expected_scope: expectedScope, verifier, now,
+      });
+      try {
+        const retryResult = await executeTenantRuntimeOperation({
+          tenant_context: context, expected_scope: expectedScope, verifier, quota: clients.quota,
+          accounting: clients.accounting,
+          ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, context),
+          usage_unit: "run_receipt_delivery", accounting_effect_id: operationIdentity, now,
+          process: () => effects.boundary("durable_object", () => withDisposableResource(
+            () => getWorkspace(handle), async (workspace) => {
+              const current = await loadMeetingMinutesRun(workspace.fs, runId);
+              const currentReceipt = current ? await buildMeetingMinutesRunReceipt(current) : undefined;
+              if (!current || (current.revision ?? 0) !== revision || current.runReceipt?.status !== "pending"
+                || current.runReceipt.idempotencyKey !== receipt.delivery.idempotency_key
+                || currentReceipt?.delivery.idempotency_key !== receipt.delivery.idempotency_key) {
+                deny("durable_object", "CROSS_TENANT_CANDIDATE");
+              }
+              const retried = await retryMeetingMinutesRunReceipt(workspace.fs, current,
+                (nextReceipt) => effects.boundary("brainbase_proxy", () => new MeetingMinutesRunReceiptClient(
+                  env.BRAINBASE_RUN_RECEIPT_INGEST_URL
+                    ?? `${(env.BRAINBASE_TASK_API_BASE_URL ?? "https://bb.unson.jp/api").replace(/\/$/, "")}/run-receipts/ingest`,
+                  env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN,
+                ).emit(nextReceipt)));
+              if (!retried) deny("durable_object", "CROSS_TENANT_CANDIDATE");
+              return {
+                outcome: "completed" as const,
+                receiptId: retried.runReceipt!.receiptId!,
+                deliveredAt: retried.runReceipt!.deliveredAt!,
+              };
+            }),
+          ),
+        });
+        return Response.json({ runId, revision, status: "completed", destinationId: run.destination.id,
+          runReceipt: { idempotencyKey: receipt.delivery.idempotency_key, status: "delivered",
+            receiptId: retryResult.receiptId, deliveredAt: retryResult.deliveredAt } });
+      } catch (error) {
+        return Response.json({ error: error instanceof TenantBoundaryError
+          ? error.code : "meeting_minutes_admin_retry_run_receipt_failed" }, { status: 502 });
+      }
     }
     const authorizedStatusMatch = url.pathname.match(
       /^\/admin\/meeting-minutes\/runs\/([A-Za-z0-9_-]{3,260})\/authorized-status$/,
