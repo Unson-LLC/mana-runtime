@@ -66,6 +66,9 @@ interface ExecResult {
   stderr: string;
   exitCode?: number;
   outcome?: string;
+  /** Native @cloudflare/sandbox ExecResult duration in milliseconds. */
+  duration?: number;
+  /** Legacy adapter field retained for callers that have not adopted duration. */
   elapsedMs?: number;
 }
 
