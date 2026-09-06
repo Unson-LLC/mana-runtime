@@ -547,11 +547,9 @@ async function readTranscriptLifecycleCalls(payload, stored) {
         if (results.has(block.tool_use_id)) {
           throw new Error("judgment_hook_transcript_tool_result_conflict");
         }
-        if (block.is_error === true || block.isError === true) {
-          throw new Error("judgment_hook_transcript_tool_failed");
-        }
         results.set(block.tool_use_id, {
           tool_response: transcriptToolResponse(block, record),
+          failed: block.is_error === true || block.isError === true,
         });
       }
     }
@@ -560,6 +558,7 @@ async function readTranscriptLifecycleCalls(payload, stored) {
   for (const call of calls.values()) {
     const result = results.get(call.tool_use_id);
     if (!result) throw new Error("judgment_hook_transcript_tool_result_missing");
+    if (result.failed) throw new Error("judgment_hook_transcript_tool_failed");
     recovered.push({ ...call, ...result });
   }
   return recovered;
