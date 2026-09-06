@@ -433,6 +433,49 @@ describe("TechKnight Slack reply pipeline", () => {
     expect(reconnectedSandbox.destroy).toHaveBeenCalledOnce();
   });
 
+  it("reconnects again when the stopped Container races with sandbox preparation", async () => {
+    const { options, sandbox: disconnectedSandbox } = harness({
+      tenantBoundaryHandle: TENANT_BOUNDARY_A,
+    });
+    const stoppingSandbox = {
+      setSleepAfter: vi.fn().mockResolvedValue(undefined),
+      writeFile: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("The container is not running, consider calling start()")),
+      exec: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    const restartedSandbox = {
+      setSleepAfter: vi.fn().mockResolvedValue(undefined),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      exec: vi.fn().mockResolvedValue({
+        success: true,
+        stdout: auditedReplyStream(),
+        stderr: "",
+        exitCode: 0,
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    disconnectedSandbox.exec.mockRejectedValueOnce(new Error("HTTP error! status: 500"));
+    vi.mocked(options.createSandbox)
+      .mockReturnValueOnce(disconnectedSandbox)
+      .mockReturnValueOnce(stoppingSandbox)
+      .mockReturnValueOnce(restartedSandbox);
+
+    await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
+      reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
+    });
+
+    expect(options.createSandbox).toHaveBeenCalledTimes(3);
+    expect(stoppingSandbox.exec).not.toHaveBeenCalled();
+    expect(restartedSandbox.exec).toHaveBeenCalledOnce();
+    expect(stoppingSandbox.writeFile).toHaveBeenCalledTimes(2);
+    expect(restartedSandbox.writeFile).toHaveBeenCalledTimes(3);
+    expect(disconnectedSandbox.destroy).not.toHaveBeenCalled();
+    expect(stoppingSandbox.destroy).not.toHaveBeenCalled();
+    expect(restartedSandbox.destroy).toHaveBeenCalledOnce();
+  });
+
   it("caps the first Claude exec by the remaining tenant boundary after sandbox preparation", async () => {
     let nowMs = REPLY_START_MS;
     const { options, sandbox } = harness({ nowMs: () => nowMs });
