@@ -1,4 +1,5 @@
 import { meetingMinutesCompletedProjectionRepair, processMeetingMinutesSelectionWithStatus,
+  retryMeetingMinutesRunReceipt,
   repairMeetingMinutesCompletedProjection } from "../meeting-minutes-lifecycle.js";
 import { startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
@@ -327,6 +328,30 @@ describe("meeting minutes source status lifecycle", () => {
     });
     expect(delivered.runReceipt).toMatchObject({ status: "delivered", receiptId: "run-receipt-1" });
     expect(delivered.runReceipt).not.toHaveProperty("failure");
+  });
+
+  it("retries only the durable receipt without repeating Slack, GitHub, or task work", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
+        bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
+    });
+    const operations = resume();
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, operations, {
+      updateStatus, emitRunReceipt: vi.fn().mockRejectedValue(new Error("meeting_minutes_run_receipt_request_transport_failed")),
+    })).rejects.toThrow("meeting_minutes_run_receipt_request_transport_failed");
+    const completedWorkCalls = [operations.generate, operations.saveGitHub, operations.postParent,
+      operations.postThreadChunk, operations.createTask].map((operation) => operation.mock.calls.length);
+    const failed = await loadMeetingMinutesRun(fs, selection.runId);
+    const delivered = await retryMeetingMinutesRunReceipt(fs, failed!,
+      vi.fn().mockResolvedValue({ receiptId: "run-receipt-retried" }));
+
+    expect(delivered?.runReceipt).toMatchObject({ status: "delivered", receiptId: "run-receipt-retried" });
+    expect(delivered?.runReceipt).not.toHaveProperty("failure");
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect([operations.generate, operations.saveGitHub, operations.postParent,
+      operations.postThreadChunk, operations.createTask].map((operation) => operation.mock.calls.length))
+      .toEqual(completedWorkCalls);
   });
 
   it("logs a safe receipt failure code before preserving the Queue retry", async () => {
