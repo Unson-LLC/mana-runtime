@@ -2,7 +2,31 @@ import { describe, expect, it, vi } from "vitest";
 import { handleBrainbaseMcpProxyRequest } from "../brainbase-mcp-proxy.js";
 
 describe("Brainbase judgment Hook proxy", () => {
-  it.each(["GET", "DELETE"])("forwards the %s MCP session transport request", async (method) => {
+  it("rejects the unsupported MCP notification stream without contacting upstream", async () => {
+    const forward = vi.fn();
+    const response = await handleBrainbaseMcpProxyRequest(
+      new Request("https://brainbase-mcp.internal/mcp", {
+        method: "GET",
+        headers: {
+          accept: "text/event-stream",
+          "mcp-session-id": "session-transport",
+          "mcp-protocol-version": "2025-06-18",
+        },
+      }),
+      { BRAINBASE_MCP_BASE_URL: "https://bb.example.test", BRAINBASE_MCP_TOKEN: "token" },
+      forward,
+      { allowedTools: ["brainbase_resolve_turn"] },
+    );
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST, DELETE");
+    expect(await response.json()).toEqual({
+      error: { code: "BRAINBASE_MCP_NOTIFICATION_STREAM_UNSUPPORTED", retryable: false },
+    });
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it("forwards the DELETE MCP session transport request", async () => {
+    const method = "DELETE";
     const forward = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe("https://bb.example.test/mcp");
       expect(init?.method).toBe(method);

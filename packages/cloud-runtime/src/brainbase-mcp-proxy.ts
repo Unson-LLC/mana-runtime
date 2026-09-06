@@ -26,9 +26,17 @@ export async function handleBrainbaseMcpProxyRequest(
   policy?: { allowedTools: readonly string[] },
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.hostname === BRAINBASE_MCP_PROXY_HOST
+      && url.pathname === BRAINBASE_MCP_PROXY_PATH
+      && request.method === "GET") {
+    return Response.json(
+      { error: { code: "BRAINBASE_MCP_NOTIFICATION_STREAM_UNSUPPORTED", retryable: false } },
+      { status: 405, headers: { allow: "POST, DELETE" } },
+    );
+  }
   const isAllowedPath = url.pathname === BRAINBASE_MCP_PROXY_PATH || url.pathname === BRAINBASE_JUDGMENT_HOOK_PROXY_PATH;
   const allowedMethod = url.pathname === BRAINBASE_MCP_PROXY_PATH
-    ? ["POST", "GET", "DELETE"].includes(request.method)
+    ? ["POST", "DELETE"].includes(request.method)
     : request.method === "POST";
   if (url.hostname !== BRAINBASE_MCP_PROXY_HOST || !isAllowedPath || !allowedMethod) {
     return Response.json({ error: { code: "BRAINBASE_OPERATION_FORBIDDEN", retryable: false } }, { status: 403 });
