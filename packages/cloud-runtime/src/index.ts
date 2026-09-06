@@ -636,6 +636,9 @@ function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
       failure: run.taskRegistration?.failure,
       failedCandidateTitle: run.taskRegistration?.failure
         ? run.generated?.tasks?.[run.taskRegistration.failure.index]?.title : undefined },
+    sourceStatus: { outcome: run.statusProjection?.outcome,
+      projectedAt: run.statusProjection?.projectedAt,
+      projectionFailure: run.projectionFailure },
     checkpoint: { hasGitHub: Boolean(run.github), hasSlackParent: Boolean(run.slack?.parentTs),
       postedChunkCount: run.slack?.postedChunkIndexes.length ?? 0,
       hasTaskCard: Boolean(run.slack?.taskCardTs) } };

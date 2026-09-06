@@ -217,7 +217,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
     expect(handleMeetingTaskAction).not.toHaveBeenCalled();
   });
 
-  it("acknowledges immediately and defers Queue without replacing the selector", async () => {
+  it("shows durable feedback before waiting for Queue enqueue", async () => {
     const now = Math.floor(Date.now() / 1000); const signingSecret = "secret";
     const payload = { api_app_id: "A1", team: { id: "T1" }, user: { id: "U1" }, channel: { id: "C1" },
       response_url: "https://hooks.slack.com/actions/T1/B1/token", message: { ts: "1.1", thread_ts: "1.0" }, actions: [{
@@ -226,7 +226,9 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       }] };
     const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
     const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${now}:${body}`).digest("hex")}`;
-    const send = vi.fn().mockResolvedValue(undefined); const slackUpdate = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
+    let finishEnqueue!: () => void;
+    const enqueuePending = new Promise<void>((resolve) => { finishEnqueue = resolve; });
+    const send = vi.fn(() => enqueuePending); const slackUpdate = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
       headers: { "content-type": "application/json" },
     }));
     const slackDelivery = vi.fn<TenantInteractionEffects["slackDelivery"]>(
@@ -248,8 +250,12 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       { waitUntil: (promise: Promise<unknown>) => deferred.push(promise) } as never, new Set(["U1"]),
       undefined, undefined, undefined, send, tenantEffectResolver({ slackDelivery }));
     expect(response.status).toBe(200);
-    expect(deferred).toHaveLength(1); await Promise.all(deferred);
-    expect(send).toHaveBeenCalledOnce();
+    expect(deferred).toHaveLength(1);
+    await vi.waitFor(() => expect(slackUpdate).toHaveBeenCalledWith(
+      "https://hooks.slack.com/actions/T1/B1/token",
+      expect.objectContaining({ method: "POST", body: expect.stringContaining("保存先を受け付けました") }),
+    ));
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
     expect(slackDelivery).toHaveBeenCalledWith(
       "processing-show:Ev1_F1:techknight-board",
       expect.objectContaining({ channel_id: "C1", thread_ts: "1.0" }),
@@ -260,6 +266,7 @@ describe("meeting minutes interaction Worker entrypoint", () => {
       method: "POST", body: JSON.stringify({ channel_id: "C1", thread_ts: "1.0",
         status: "議事録を作成しています…（ボード定例）" }),
     }));
+    finishEnqueue(); await Promise.all(deferred);
   });
 
   it("projects a public tenant failure through the production response_url updater", async () => {

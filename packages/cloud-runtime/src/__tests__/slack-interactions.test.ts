@@ -136,8 +136,8 @@ describe("handleMeetingMinutesInteraction", () => {
     }), expect.any(Function));
     expect(showProcessing).toHaveBeenCalledWith(
       { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
-    expect(send.mock.invocationCallOrder[0]).toBeLessThan(showProcessing.mock.invocationCallOrder[0]!);
-    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(updateOriginal.mock.invocationCallOrder[0]!);
+    expect(updateOriginal.mock.invocationCallOrder[0]).toBeLessThan(showProcessing.mock.invocationCallOrder[0]!);
+    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
     expect(await response.json()).toEqual({ ok: true });
   });
 
@@ -321,7 +321,7 @@ describe("handleMeetingMinutesInteraction", () => {
     await Promise.all(background.work);
     expect(response.status).toBe(200); expect(send).toHaveBeenCalledOnce(); expect(updateOriginal).not.toHaveBeenCalled();
   });
-  it("does not show processing when the queue rejects the selection", async () => {
+  it("shows acceptance before projecting a queue rejection", async () => {
     const send = vi.fn().mockRejectedValue(new Error("queue Authorization Bearer secret")); const updateOriginal = vi.fn();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const showProcessing = vi.fn(); const clearProcessing = vi.fn().mockRejectedValue(new Error("clear Bearer secret"));
@@ -331,11 +331,12 @@ describe("handleMeetingMinutesInteraction", () => {
       destinations, send, showProcessing, clearProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200);
     await expect(Promise.all(background.work)).resolves.toEqual([undefined]);
-    expect(updateOriginal).toHaveBeenCalledOnce();
+    expect(updateOriginal).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updateOriginal.mock.calls[0])).toContain("保存先を受け付けました");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("INTERACTION_ENQUEUE_FAILED");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("処理ID: Ev1_F1");
     expect(JSON.stringify(updateOriginal.mock.calls.at(-1))).toContain("失敗段階: 処理受付");
-    expect(showProcessing).not.toHaveBeenCalled();
+    expect(showProcessing).toHaveBeenCalledOnce();
     expect(clearProcessing).not.toHaveBeenCalled();
     const serialized = consoleError.mock.calls.flat().join(" ");
     expect(serialized).toContain('"stage":"interaction_enqueue"');
@@ -376,7 +377,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(consoleError.mock.calls.flat().join(" ")).not.toContain("Bearer secret");
     consoleError.mockRestore();
   });
-  it("projects a stable public code when immediate Slack status feedback fails", async () => {
+  it("keeps the durable acceptance visible when assistant status feedback fails", async () => {
     const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("status unavailable"));
     const updateOriginal = vi.fn().mockResolvedValue(undefined); const background = deferred();
     const response = await handleMeetingMinutesInteraction(request(payload), { signingSecret: secret,
@@ -384,10 +385,8 @@ describe("handleMeetingMinutesInteraction", () => {
       ...tenantBoundary, destinations, send, showProcessing, updateOriginal, defer: background.defer });
     expect(response.status).toBe(200); await Promise.all(background.work);
     expect(send).toHaveBeenCalledOnce();
-    const fallback = JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1]);
-    expect(fallback).toContain("IMMEDIATE_STATUS_FAILED");
-    expect(fallback).toContain("処理ID: Ev1_F1");
-    expect(fallback).toContain("失敗段階: 状態表示");
+    expect(updateOriginal).toHaveBeenCalledOnce();
+    expect(JSON.stringify(updateOriginal.mock.calls.at(-1)?.[1])).toContain("保存先を受け付けました");
   });
   it("uses one deterministic compound code when both status projections fail", async () => {
     const send = vi.fn(); const showProcessing = vi.fn().mockRejectedValue(new Error("status unavailable"));
@@ -635,7 +634,7 @@ describe("handleMeetingMinutesInteraction", () => {
     expect(resolveThreadTs).toHaveBeenCalledWith("Ev1_F1");
     expect(showProcessing).toHaveBeenCalledWith(
       { channelId: "C1", threadTs: "1.0", destinationName: "Back Office" }, expect.any(Function));
-    expect(send.mock.invocationCallOrder[0]).toBeLessThan(showProcessing.mock.invocationCallOrder[0]!);
+    expect(showProcessing.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
   });
   it("uses the durable retry thread coordinate and rejects conflicting signed coordinates", async () => {
     const retryPayload = structuredClone(payload);
