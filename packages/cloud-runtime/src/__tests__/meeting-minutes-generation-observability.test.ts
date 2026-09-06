@@ -165,6 +165,28 @@ describe("meeting minutes generation observability contract (RED)", () => {
     expect(JSON.stringify(diagnostics)).not.toMatch(/sk-secret|user@example.com|arbitrary_internal_code_X|PARTIAL_STDOUT_SECRET/);
   });
 
+  it.each([
+    ["result errors", [{ type: "result", is_error: true, subtype: "error_during_execution",
+      errors: ['API Error: 401 {"error":{"type":"authentication_error","message":"SECRET"}}'] }], "AUTHENTICATION_FAILED", 401],
+    ["assistant before generic result", [{ type: "assistant", error: "api_error", message: { content: [
+      { type: "text", text: 'API Error: 503 {"error":{"type":"credential_lease_rejected","message":"SECRET"}}' }] } },
+      { type: "result", is_error: true, subtype: "error_during_execution" }], "PROVIDER_STATUS", 503],
+    ["provider request", [{ type: "result", is_error: true, errors: ["API Error: 400 SECRET"] }], "PROVIDER_STATUS", 400],
+    ["unknown", [{ type: "result", is_error: true, errors: ["SECRET"] }], "UNKNOWN", undefined],
+    ["normal assistant text", [{ type: "assistant", message: { content: [{ type: "text", text: "API Error: 401 SECRET" }] } }], undefined, undefined],
+  ])("retains only fixed diagnostics for %s", async (_name, events, code, status) => {
+    const sandbox = { writeFile: vi.fn(), exec: vi.fn().mockResolvedValue({ success: false, exitCode: 1,
+      stdout: events.map(event => JSON.stringify(event)).join("\n"), stderr: "" }),
+      destroy: vi.fn().mockResolvedValue(undefined) };
+    let failure: unknown;
+    try { await generateMeetingMinutesInSandbox("TRANSCRIPT_SECRET", destination, context, "required",
+      { model: "sonnet" }, sandbox, "tenant-boundary-handle"); } catch (error) { failure = error; }
+    const diagnostics = asRecord(failure).generationDiagnostics;
+    expect(diagnostics.stdoutErrorCode).toBe(code);
+    expect(diagnostics.stdoutStatusCode).toBe(status);
+    expect(JSON.stringify(diagnostics)).not.toContain("SECRET");
+  });
+
   it("durably checkpoints exec_started before an unresolved sandbox execution can finish", async () => {
     const fs = new MemoryFs();
     await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER",

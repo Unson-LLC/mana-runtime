@@ -281,6 +281,12 @@ const SAFE_OPERATIONAL_FAILURE_REASONS = new Set([
   "meeting_minutes_task_registration_failed",
 ]);
 
+const SAFE_GENERATION_STDOUT_ERROR_CODES = new Set([
+  "PROVIDER_STATUS", "AUTHENTICATION_FAILED", "RATE_LIMITED", "MODEL_ERROR", "BOUNDARY_ERROR", "CLI_ERROR",
+  "HOOK_FAILED", "MAX_TURNS", "MAX_BUDGET", "STRUCTURED_OUTPUT", "EXECUTION_ERROR", "UNKNOWN",
+]);
+const SAFE_GENERATION_STDOUT_STATUS_CODES = new Set([400, 401, 403, 429, 500, 502, 503, 504]);
+
 function safeGenerationFailureDiagnostics(error: unknown): Record<string, string> {
   if (!error || typeof error !== "object" || !("generationDiagnostics" in error)) return {};
   const diagnostics = (error as { generationDiagnostics?: unknown }).generationDiagnostics;
@@ -291,6 +297,10 @@ function safeGenerationFailureDiagnostics(error: unknown): Record<string, string
   return {
     ...(typeof value.outcome === "string" ? { generation_outcome: value.outcome.slice(0, 32) } : {}),
     ...(typeof value.stderrCode === "string" ? { generation_stderr_code: value.stderrCode.slice(0, 64) } : {}),
+    ...(typeof value.stdoutErrorCode === "string" && SAFE_GENERATION_STDOUT_ERROR_CODES.has(value.stdoutErrorCode)
+      ? { generation_stdout_error_code: value.stdoutErrorCode } : {}),
+    ...(typeof value.stdoutStatusCode === "number" && SAFE_GENERATION_STDOUT_STATUS_CODES.has(value.stdoutStatusCode)
+      ? { generation_stdout_status_code: String(value.stdoutStatusCode) } : {}),
     ...(typeof value.exitCode === "number" && Number.isSafeInteger(value.exitCode)
       ? { generation_exit_code: String(value.exitCode) } : {}),
     ...(typeof value.elapsedMs === "number" && Number.isFinite(value.elapsedMs)

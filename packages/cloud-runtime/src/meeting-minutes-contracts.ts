@@ -79,6 +79,27 @@ export interface GeneratedMeetingMinutes {
   generationDiagnostics?: MeetingMinutesGenerationDiagnostics;
 }
 
+/**
+ * Safe categories extracted from a structured Claude result event.  These are
+ * deliberately separate from stderrCode: a CLI can exit non-zero while the
+ * provider's structured result carries the more useful failure boundary.
+ */
+export type MeetingMinutesGenerationStdoutErrorCode =
+  | "PROVIDER_STATUS"
+  | "AUTHENTICATION_FAILED"
+  | "RATE_LIMITED"
+  | "MODEL_ERROR"
+  | "BOUNDARY_ERROR"
+  | "CLI_ERROR"
+  | "HOOK_FAILED"
+  | "MAX_TURNS"
+  | "MAX_BUDGET"
+  | "STRUCTURED_OUTPUT"
+  | "EXECUTION_ERROR"
+  | "UNKNOWN";
+
+export type MeetingMinutesGenerationStdoutStatusCode = 400 | 401 | 403 | 429 | 500 | 502 | 503 | 504;
+
 export interface MeetingMinutesGenerationDiagnostics {
   schemaVersion: "meeting_minutes_generation_diagnostics.v1";
   startedAt: string;
@@ -89,6 +110,8 @@ export interface MeetingMinutesGenerationDiagnostics {
   outcome?: "success" | "timeout" | "nonzero_exit" | "transport_failure";
   exitCode?: number;
   stderrCode?: "TIMEOUT" | "RATE_LIMITED" | "AUTHENTICATION_FAILED" | "HOOK_FAILED" | "CLI_ERROR" | "UNKNOWN";
+  stdoutErrorCode?: MeetingMinutesGenerationStdoutErrorCode;
+  stdoutStatusCode?: MeetingMinutesGenerationStdoutStatusCode;
   progress: {
     prompt_written: boolean;
     exec_started: boolean;
