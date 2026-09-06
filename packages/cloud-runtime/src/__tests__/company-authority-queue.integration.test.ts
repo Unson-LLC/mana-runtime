@@ -365,8 +365,14 @@ describe("company authority Queue consumer", () => {
       route_approval: vi.fn(async () => "approval"),
       route_human_action: vi.fn(async () => "human_action"),
     };
-    const terminalOptions = options(selected, callbacks);
-    terminalOptions.resolve_runtime.mockRejectedValueOnce({ code: "AUTHORITY_SCOPE_MISMATCH" });
+    const logError = vi.fn();
+    const terminalOptions = { ...options(selected, callbacks), log_error: logError };
+    terminalOptions.resolve_runtime.mockRejectedValueOnce(new TenantBoundaryError(
+      "queue_consumer",
+      "AUTHORITY_SCOPE_MISMATCH",
+      undefined,
+      { phase: "company_authority_project_binding", secret: "not-logged" },
+    ));
     const terminal = message(envelope(selected));
     const retryableOptions = options(selected, callbacks);
     retryableOptions.resolve_runtime.mockRejectedValueOnce(new Error("temporary"));
@@ -380,6 +386,13 @@ describe("company authority Queue consumer", () => {
     expect(retryable.retry).toHaveBeenCalledTimes(1);
     expect(retryable.ack).not.toHaveBeenCalled();
     expect(callbacks.process_auto).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith({
+      event: "company_authority_queue_failed",
+      correlation_id: terminal.body.correlation_id,
+      code: "AUTHORITY_SCOPE_MISMATCH",
+      boundary: "queue_consumer",
+      phase: "company_authority_project_binding",
+    });
   });
 
   it.each([

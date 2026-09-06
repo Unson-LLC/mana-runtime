@@ -627,6 +627,7 @@ describe("handleTenantSlackRequest diagnostics", () => {
       authority: legacyAuthority,
       resolve_verification_key: async () => undefined,
       company_authority: {
+        tenant_id: "tenant-canonical",
         opted_in_capability_ids: ["task.write"],
         desired_effect_by_capability: { "task.write": "write" },
         client: { resolve: companyAuthorityResolve },
@@ -649,7 +650,7 @@ describe("handleTenantSlackRequest diagnostics", () => {
     expect(companyAuthorityResolve).toHaveBeenCalledOnce();
     const observedRequest = companyAuthorityResolve.mock.calls[0]?.[0];
     await expect(companyAuthoritySlackResourceRef("back-office", {
-      tenantId: "unson",
+      tenantId: "tenant-canonical",
       workspaceId: "T_UNSON",
       eventId: "EvCompanyAuthority",
       channelId: "C_ROUTER",

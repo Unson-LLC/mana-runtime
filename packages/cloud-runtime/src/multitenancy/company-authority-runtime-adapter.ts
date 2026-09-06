@@ -670,6 +670,9 @@ export async function consumeCompanyAuthorityQueueMessage<T>(
     };
   } catch (error) {
     const code = error instanceof TenantBoundaryError ? error.code : "UPSTREAM_UNAVAILABLE";
+    const phase = error instanceof TenantBoundaryError && typeof error.details?.phase === "string"
+      ? error.details.phase
+      : undefined;
     options.log_error?.({
       event: "company_authority_queue_failed",
       correlation_id: typeof message.body?.correlation_id === "string"
@@ -677,6 +680,7 @@ export async function consumeCompanyAuthorityQueueMessage<T>(
         : "unknown",
       code,
       ...(error instanceof TenantBoundaryError ? { boundary: error.boundary } : {}),
+      ...(phase ? { phase } : {}),
     });
     if (code === "WORKSPACE_CONNECTION_UNAVAILABLE" || code === "UPSTREAM_UNAVAILABLE") {
       message.retry();
