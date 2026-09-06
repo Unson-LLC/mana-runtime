@@ -101,6 +101,7 @@ function env(overrides: Record<string, unknown> = {}) {
       credential_mode: "customer_oauth",
       contract_revision: "11",
     }]),
+    BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID: tenantId,
     RUNTIME_PLACEMENTS_JSON: JSON.stringify([{
       placementId: "tasks",
       channelId: "C_ROUTER",
@@ -338,13 +339,21 @@ describe("default Worker Company Authority ingress", () => {
       MANA_COMPANY_AUTHORITY_OPERATIONS_JSON: JSON.stringify({
         "task.write": "write",
       }),
+      RUNTIME_AUTHORITY_PROJECT_IDS_JSON: JSON.stringify({
+        tasks: ["prj_backoffice"],
+      }),
     });
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const response = await fetchWorker(signedEventRequest(), bindings);
-
     expect(response.status).toBe(503);
     expect(runtimeMocks.companyAuthority.resolve).toHaveBeenCalledOnce();
+    expect(runtimeMocks.companyAuthority.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      requested_action: expect.objectContaining({
+        project_hint: "back-office",
+        resource_ref: expect.stringMatching(/^project:back-office#payload_sha256=sha256:[a-f0-9]{64}$/),
+      }),
+    }));
     await expect(response.json()).resolves.toMatchObject({
       error: "AUTHORITY_UNAVAILABLE",
       stage: "tenant_context_resolution",

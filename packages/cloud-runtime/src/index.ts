@@ -3934,7 +3934,9 @@ export default {
       const clients = tenantRuntimeClients(env, undefined, desiredEffectByCapability);
       const requiredScopes = requiredRuntimeBinding(env.MANA_REQUIRED_SLACK_SCOPES)
         .split(",").map((value) => value.trim()).filter(Boolean);
-      const placements = canonicalRuntimePlacements(env);
+      // Company Authority resolves the stable project alias into the signed canonical ID.
+      // Canonical placement IDs are applied later at execution boundaries.
+      const placements = parseRuntimePlacements(env.RUNTIME_PLACEMENTS_JSON);
       const companyAuthorityIngress = companyAuthorityIngressConfiguration(
         runtimeConfiguration,
         clients.company_authority,
