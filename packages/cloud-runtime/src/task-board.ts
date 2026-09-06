@@ -231,8 +231,11 @@ function canvasIdsFromInfo(payload: Record<string, unknown>): Set<string> {
       if (typeof id === "string" && id) ids.add(id);
     }
   }
-  const canvas = properties?.canvas as Record<string, unknown> | undefined;
-  const id = canvas?.file_id ?? canvas?.id;
+  const canvasValue = properties?.canvas;
+  if (typeof canvasValue === "string" && canvasValue) ids.add(canvasValue);
+  const canvas = canvasValue && typeof canvasValue === "object"
+    ? canvasValue as Record<string, unknown> : undefined;
+  const id = canvas?.file_id ?? canvas?.canvas_id ?? canvas?.id;
   if (typeof id === "string" && id) ids.add(id);
   return ids;
 }

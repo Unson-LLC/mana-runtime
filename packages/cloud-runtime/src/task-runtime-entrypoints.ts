@@ -203,16 +203,27 @@ export async function processTaskBoardRepair(
       await completeTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates, canvasId);
     }
   }
-  await refresh({ ...env,
-    RUNTIME_TASK_BOARD_ENABLED: "true",
-    BRAINBASE_TASK_API_TOKEN: undefined,
-    SLACK_BOT_TOKEN: slackToken,
-    SLACK_ALLOWED_CHANNEL_ID: target.channelId,
-    TASK_BOARD_CANVAS_ID: canvasId,
-    RUNTIME_PROJECT_CODES: projectCodes.join(",") }, {
-    fetch: credentialFetch,
-    taskFetch: taskCredentialFetch,
-  });
+  try {
+    await refresh({ ...env,
+      RUNTIME_TASK_BOARD_ENABLED: "true",
+      BRAINBASE_TASK_API_TOKEN: undefined,
+      SLACK_BOT_TOKEN: slackToken,
+      SLACK_ALLOWED_CHANNEL_ID: target.channelId,
+      TASK_BOARD_CANVAS_ID: canvasId,
+      RUNTIME_PROJECT_CODES: projectCodes.join(",") }, {
+      fetch: credentialFetch,
+      taskFetch: taskCredentialFetch,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message
+      : error && typeof error === "object" && "message" in error && typeof error.message === "string"
+        ? error.message : "task_board_unknown_failure";
+    const errorCode = /^task_board_[a-z0-9_-]{1,96}$/u.test(message)
+      ? message : "task_board_unknown_failure";
+    console.error(JSON.stringify({ event: "task_board_refresh_failed", targetId: target.targetId,
+      workspaceId: target.workspaceId, channelId: target.channelId, canvasId, errorCode }));
+    throw error;
+  }
   console.log(JSON.stringify({ event: "task_board_repair_completed", targetId: target.targetId,
     workspaceId: target.workspaceId, channelId: target.channelId, canvasId }));
 }
