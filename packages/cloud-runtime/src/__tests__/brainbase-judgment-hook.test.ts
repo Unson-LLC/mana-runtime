@@ -359,6 +359,75 @@ describe("Brainbase judgment Hook forwarder", () => {
       .toBe(`${judgmentLine}\n${brainbaseLine}\n${repairLine}\n本文`);
   });
 
+  it("preserves every receipt when Brainbase PostToolUse hooks complete concurrently", async () => {
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        schema_version: "1", accepted: true,
+        hook_event_name: payload.hook_event_name, session_id: payload.session_id,
+        turn_id: payload.turn_id, receipt_id: `receipt-${payload.hook_event_name}`,
+        ...(payload.hook_event_name === "UserPromptSubmit"
+          ? { route_resolution_sha256: "d".repeat(64) }
+          : {}),
+        output: payload.hook_event_name === "PostToolUse"
+          ? { systemMessage: "Brainbase tool use recorded" }
+          : payload.hook_event_name === "Stop"
+            ? {
+              schema_version: "brainbase-judgment-final-v1",
+              completion_status: "complete",
+              answer_digest: createHash("sha256")
+                .update(String(payload.last_assistant_message ?? ""))
+                .digest("hex"),
+            }
+            : {
+              hookSpecificOutput: {
+                hookEventName: "UserPromptSubmit",
+                additionalContext: "Judgment route resolved",
+              },
+            },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_missing");
+    const stateDir = await mkdtemp(join(tmpdir(), "mana-judgment-hook-"));
+    cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+    const env = {
+      BRAINBASE_JUDGMENT_HOOK_URL: `http://127.0.0.1:${address.port}/host/judgment/hook`,
+      BRAINBASE_JUDGMENT_TURN_DIR: stateDir,
+    };
+    const sessionId = "session-concurrent-tools";
+    expect((await runHook({
+      hook_event_name: "UserPromptSubmit", session_id: sessionId,
+    }, env)).code).toBe(0);
+
+    const toolIds = Array.from({ length: 20 }, (_, index) => `tool-use-${index}`);
+    const postToolResults = await Promise.all(toolIds.map((tool_use_id) => runHook({
+      hook_event_name: "PostToolUse",
+      session_id: sessionId,
+      tool_use_id,
+      tool_name: "mcp__brainbase__brainbase_knowledge_resolve",
+    }, env)));
+    expect(postToolResults.every((result) => result.code === 0)).toBe(true);
+
+    const answer = "🧠 判断参照: 「依頼」を参照 → 対応 ✓\n📚 Brainbase検索: search「依頼」→ 該当なし";
+    const stopped = await runHook({
+      hook_event_name: "Stop", session_id: sessionId, last_assistant_message: answer,
+    }, env);
+    expect(stopped.code).toBe(0);
+    const output = JSON.parse(stopped.stdout);
+    const receiptLine = output.systemMessage.split("\n")
+      .find((line: string) => line.startsWith(receiptPrefix));
+    const receipt = JSON.parse(receiptLine.slice(receiptPrefix.length));
+    expect(receipt.tool_receipts).toHaveLength(toolIds.length);
+    expect(new Set(receipt.tool_receipts.map((entry: { tool_use_id: string }) => entry.tool_use_id)))
+      .toEqual(new Set(toolIds));
+  });
+
   it("returns a tool-required Stop repair to Claude instead of resubmitting an unchanged episode", async () => {
     const forwarded: Array<Record<string, unknown>> = [];
     const server = createServer(async (request, response) => {
