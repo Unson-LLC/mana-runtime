@@ -85,6 +85,29 @@ describe("MeetingMinutesSlackClient", () => {
     expect(JSON.stringify(calls[1]?.body)).toContain("保存先をやり直す");
   });
 
+  it("persists terminal readback only after Slack returns the exact updated source message", async () => {
+    let updateText = "";
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("assistant.threads.setStatus")) return Response.json({ ok: true });
+      if (url.includes("chat.update")) {
+        updateText = String(JSON.parse(String(init?.body)).text);
+        return Response.json({ ok: true });
+      }
+      if (url.includes("auth.test")) return Response.json({ ok: true, team_id: "T1", bot_id: "B1" });
+      if (url.includes("conversations.replies")) return Response.json({ ok: true, messages: [{
+        type: "message", ts: "3.1", thread_ts: "1.0", app_id: "A1", bot_id: "B1", text: updateText,
+      }] });
+      throw new Error(`unexpected Slack request: ${url}`);
+    }) as typeof fetch;
+    const run = routedRun() as MeetingMinutesRun;
+    await new MeetingMinutesSlackClient("token", fetchImpl).updateRunStatus(run, "completed", {
+      workspaceId: "T1", appId: "A1", expiresAt: Date.now() + 30_000,
+    });
+    expect(run.terminalSlackReadback).toMatchObject({ outcome: "completed", channel: "C1", ts: "3.1",
+      bodyHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) });
+  });
+
   it("does not render an in-progress diagnostic checkpoint as a completed-run failure", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

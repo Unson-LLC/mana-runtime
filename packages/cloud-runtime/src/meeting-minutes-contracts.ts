@@ -47,6 +47,8 @@ export interface MeetingMinutesDestination {
   name: string;
   organization: { id: string; name: string };
   slackChannelId: string;
+  /** Optional OutcomeCase reference retained on the source run; Mana never closes this case. */
+  outcomeCaseId?: string;
   /** Optional exact destination Slack connection; legacy deployments use the team-id map. */
   slackWorkspaceId?: string;
   slackAppId?: string;
@@ -261,6 +263,11 @@ export interface MeetingMinutesRun {
   projectionFailure?: Required<Pick<MeetingMinutesDiagnostics, "stage" | "code" | "retryable" | "failedAt">>;
   /** Durable receipt that the source Slack status message was updated for this outcome. */
   statusProjection?: { outcome: "completed" | "failed"; projectedAt: string };
+  /** Confirmed source Slack terminal display; absence is never treated as confirmation. */
+  terminalSlackReadback?: { outcome: "completed"; channel: string; ts: string; bodyHash: string; confirmedAt: string };
+  /** Source-owned delivery checkpoint for the immutable Brainbase run receipt. */
+  runReceipt?: { caseId?: string; idempotencyKey: string; receiptId?: string;
+    status: "pending" | "delivered"; deliveredAt?: string };
   /** Non-secret authority inputs used to reissue a fresh context for delayed recovery. */
   recoveryAuthorization?: MeetingMinutesRecoveryAuthorization;
   lifecycle?: {

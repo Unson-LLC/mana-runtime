@@ -91,6 +91,7 @@ import { CloudflareMeetingMinutesGitHubClient } from "./meeting-minutes-github.j
 import { classifyMeetingMinutesDestinationInSandbox,
   generateMeetingMinutesInSandbox } from "./meeting-minutes-generator.js";
 import { MeetingMinutesBrainbaseContextClient, resolveMeetingMinutesContextMode } from "./meeting-minutes-brainbase-context.js";
+import { MeetingMinutesRunReceiptClient } from "./meeting-minutes-run-receipt.js";
 import { TaskApiClient } from "@openryoko/task-runtime-core";
 import { createMeetingMinutesTaskDeleter } from "./meeting-minutes-task-deletion.js";
 import { hasStableMeetingMinutesRecoveryAuthority, isMeetingMinutesAdminRecoveryEligible,
@@ -332,6 +333,9 @@ interface Env extends SandboxRuntimeEnv, MeetingMinutesEnvironment, ContractLedg
   GITHUB_TOKEN?: string;
   BRAINBASE_TASK_API_BASE_URL?: string;
   BRAINBASE_TASK_API_TOKEN?: string;
+  /** Server-to-server credential scoped only to immutable run receipt ingest. */
+  BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN?: string;
+  BRAINBASE_RUN_RECEIPT_INGEST_URL?: string;
   MEETING_MINUTES_CONTEXT_MODE?: string;
   RUNTIME_PROJECT_CODES?: string;
   RUNTIME_EXECUTION_MODE?: string;
@@ -1240,7 +1244,15 @@ function meetingMinutesClients(
         outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
         effects.slack(`source-status:${run.runId}:${outcome}:${run.updatedAt}`,
           { kind: "source_status", runId: run.runId, outcome },
-          (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome)),
+          (credentialFetch) => sourceSlack(credentialFetch).updateRunStatus(run, outcome))
+          .then(async () => {
+            if (outcome !== "completed") return;
+            await effects.boundary("slack_delivery", (credentialFetch) => sourceSlack(credentialFetch).confirmTerminalRunStatus(run, {
+              workspaceId: tenantContext.workspace_connection.workspace_id,
+              appId: tenantContext.workspace_connection.app_id,
+              expiresAt: Math.min(Date.now() + 30_000, Date.parse(tenantContext.expires_at)),
+            }));
+          }),
       fallbackStatus: (run: MeetingMinutesRun,
         outcome: Parameters<MeetingMinutesSlackClient["updateRunStatus"]>[1]) =>
         effects.slack(`source-status-fallback:${run.runId}:${outcome}`,
@@ -1298,6 +1310,14 @@ function meetingMinutesClients(
         return effects.boundary("brainbase_proxy",
           (credentialFetch) => taskClient(credentialFetch).updateTask(taskId, input, idempotencyKey));
       },
+      emitRunReceipt: (receipt: Parameters<MeetingMinutesRunReceiptClient["emit"]>[0]) =>
+        effects.boundary("brainbase_proxy", () => new MeetingMinutesRunReceiptClient(
+          env.BRAINBASE_RUN_RECEIPT_INGEST_URL
+            ?? (env.BRAINBASE_TASK_API_BASE_URL
+              ? new URL("/api/run-receipts/ingest", env.BRAINBASE_TASK_API_BASE_URL).toString()
+              : ""),
+          env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN,
+        ).emit(receipt)),
       // Destination project IDs belong to the task destination contract and are
       // not Graph person scopes. Resolve globally, then let non-unique names
       // fail closed in resolveGraphPersonByName.
@@ -2885,6 +2905,7 @@ async function processTenantMeetingMinutesSelection(input: {
         await processMeetingMinutesSelectionWithStatus(workspace.fs, selection, config, clients.resume, {
           updateStatus: (run, outcome) => clients.slack.updateRunStatus(run, outcome),
           fallbackStatus: (run, outcome) => clients.slack.fallbackStatus(run, outcome),
+          emitRunReceipt: (receipt) => clients.resume.emitRunReceipt(receipt),
           logProjectionError: (entry) => console.warn(JSON.stringify({
             event: "meeting_minutes_status_projection_failed", ...entry,
           })),

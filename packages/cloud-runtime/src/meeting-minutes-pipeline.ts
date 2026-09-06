@@ -84,7 +84,9 @@ function destinationIsValid(value: MeetingMinutesDestination): boolean {
     typeof value.taskBoardTargetId === "string" &&
     /^[A-Za-z0-9_-]{1,128}$/.test(value.taskBoardTargetId) &&
     /^[A-Za-z0-9_-]{1,128}$/.test(value.organization?.id ?? "") && !!value.organization?.name.trim() &&
-    /^[A-Z0-9]+$/.test(value.slackChannelId) && !!value.github.owner.trim() && !!value.github.repo.trim() &&
+    /^[A-Z0-9]+$/.test(value.slackChannelId) &&
+    (value.outcomeCaseId === undefined || /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value.outcomeCaseId)) &&
+    !!value.github.owner.trim() && !!value.github.repo.trim() &&
     (Array.isArray(taskProjectCodes) && taskProjectCodes.length > 0 &&
       taskProjectCodes.length <= 10 &&
       taskProjectCodes.every((code) => /^[A-Za-z0-9_-]{1,128}$/.test(code)) &&
@@ -433,6 +435,7 @@ export async function redoMeetingMinutesRun(fs: WorkspaceFs, command: MeetingMin
     nextRun.revision = redoRevision + 1;
     delete nextRun.destination; delete nextRun.approvedBy; delete nextRun.context; delete nextRun.generated; delete nextRun.github;
     delete nextRun.taskRegistration; delete nextRun.failure; delete nextRun.redo;
+    delete nextRun.statusProjection; delete nextRun.terminalSlackReadback; delete nextRun.runReceipt;
     nextRun.slack = { selectionTs, postedChunkIndexes: [] };
     nextRun.updatedAt = now(options);
     await saveMeetingMinutesRun(fs, nextRun);
