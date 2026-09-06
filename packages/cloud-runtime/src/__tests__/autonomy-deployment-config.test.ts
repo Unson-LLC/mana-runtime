@@ -90,6 +90,7 @@ describe("Unson Business autonomy deployment contract", () => {
 
     expect(JSON.parse(current.vars.MANA_COMPANY_AUTHORITY_OPERATIONS_JSON)).toEqual({
       "runtime.execute": "external_side_effect",
+      "company_authority_v1": "external_side_effect",
       "task_board_send": "external_side_effect",
     });
   });
