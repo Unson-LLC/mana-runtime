@@ -131,7 +131,7 @@ export async function resolveCompanyAuthoritySlackQueueScope(input: {
     actor_principal_id: tenantContext.actor.principal_id,
     project_id: projectId,
     project_ids: [projectId],
-    capability_id: "company_authority_v1",
+    capability_id: input.request.requested_action.capability_id,
     deployment_id: tenantContext.placement.deployment_id,
   };
 }
