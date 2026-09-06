@@ -1,5 +1,5 @@
 import { meetingMinutesCompletedProjectionRepair, processMeetingMinutesSelectionWithStatus,
-  retryMeetingMinutesRunReceipt,
+  retryMeetingMinutesRunReceipt, repairMeetingMinutesDestinationProjection,
   repairMeetingMinutesCompletedProjection } from "../meeting-minutes-lifecycle.js";
 import { startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
 import { MeetingMinutesRunReceiptClient } from "../meeting-minutes-run-receipt.js";
@@ -488,5 +488,60 @@ describe("meeting minutes source status lifecycle", () => {
     expect(persisted).toMatchObject({ status: "failed", diagnostics: { stage: "github_save", code: "GITHUB_SAVE_FAILED" },
       projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED" } });
     expect(JSON.stringify(logProjectionError.mock.calls)).not.toContain("slack update down");
+  });
+});
+
+
+describe("awaiting destination projection repair", () => {
+  const source = { workspaceId: "T1", appId: "A1", channelId: "CROUTER", threadTs: "1.1" };
+  function awaitingRun(): MeetingMinutesRun {
+    return { version: 1, runId: "run-1", eventId: "Ev1", workspaceId: "T1", sourceAppId: "A1",
+      sourceChannelId: "CROUTER", sourceThreadTs: "1.1", sourceMessageTs: "1.1",
+      file: { id: "F1", name: "meeting.txt" }, status: "awaiting_destination",
+      slack: { selectionTs: "2.1", postedChunkIndexes: [] }, createdAt: "2026-09-06T00:00:00Z", updatedAt: "2026-09-06T00:00:00Z",
+      projectionFailure: { stage: "status_projection", code: "STATUS_PROJECTION_FAILED",
+        retryable: true, failedAt: "2026-09-06T00:00:00Z" } };
+  }
+  it("repairs the same selector before saving without starting or authorizing processing", async () => {
+    const fs = new MemoryFs(); const original = awaitingRun(); await saveMeetingMinutesRun(fs, original);
+    const update = vi.fn(async (run: MeetingMinutesRun) => {
+      expect(run).toEqual(original);
+      expect((await loadMeetingMinutesRun(fs, run.runId))?.projectionFailure).toBeDefined();
+      return "2.1";
+    });
+    const result = await repairMeetingMinutesDestinationProjection(fs, original, source, update);
+    expect(result).toMatchObject({ status: "awaiting_destination", slack: { selectionTs: "2.1" } });
+    expect(result?.projectionFailure).toBeUndefined();
+    expect(result?.destination).toBeUndefined(); expect(result?.generated).toBeUndefined();
+    expect(result?.recoveryAuthorization).toBeUndefined();
+    expect(original.projectionFailure).toBeDefined();
+    expect(await loadMeetingMinutesRun(fs, original.runId)).toEqual(result);
+    expect(update).toHaveBeenCalledOnce();
+  });
+  it.each(["workspaceId", "appId", "channelId", "threadTs"] as const)("rejects mismatched %s before writing", async (key) => {
+    const update = vi.fn();
+    expect(await repairMeetingMinutesDestinationProjection(new MemoryFs(), awaitingRun(),
+      { ...source, [key]: "different" }, update)).toBeUndefined();
+    expect(update).not.toHaveBeenCalled();
+  });
+  it.each([
+    { status: "failed" }, { destination }, { generated: { title: "t", overview: "o", body: "b" } },
+    { github: completedProjectionRun().github }, { slack: { processingTs: "3.1" } },
+    { slack: { parentTs: "4.1", postedChunkIndexes: [] } },
+    { slack: { selectionTs: "1.1", postedChunkIndexes: [] } },
+    { slack: { taskCardTs: "5.1", postedChunkIndexes: [] } },
+  ] as Partial<MeetingMinutesRun>[])("rejects runs that have entered processing: %j", async (overrides) => {
+    const update = vi.fn();
+    expect(await repairMeetingMinutesDestinationProjection(new MemoryFs(), { ...awaitingRun(), ...overrides }, source, update))
+      .toBeUndefined(); expect(update).not.toHaveBeenCalled();
+  });
+  it.each(["display", "storage"])("preserves the original state on %s failure", async (failure) => {
+    const fs = new MemoryFs(); const original = awaitingRun(); await saveMeetingMinutesRun(fs, original);
+    const update = failure === "display" ? vi.fn().mockRejectedValue(new Error("display down"))
+      : vi.fn().mockResolvedValue("2.1");
+    if (failure === "storage") vi.spyOn(fs, "writeFile").mockRejectedValueOnce(new Error("storage down"));
+    await expect(repairMeetingMinutesDestinationProjection(fs, original, source, update)).rejects.toThrow(`${failure} down`);
+    expect(await loadMeetingMinutesRun(fs, original.runId)).toEqual(original);
+    expect(original.projectionFailure).toBeDefined();
   });
 });

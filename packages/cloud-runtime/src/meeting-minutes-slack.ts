@@ -357,6 +357,16 @@ export class MeetingMinutesSlackClient {
     if (bytes.byteLength > maxBytes) throw new Error("slack_file_size_invalid");
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
+  async repairDestinationSelection(run: MeetingMinutesRun,
+    destinations: readonly MeetingMinutesDestination[]): Promise<string> {
+    if (!run.slack?.selectionTs) return this.requestDestination(run, destinations);
+    if (!destinations.length) throw new Error("meeting_minutes_destinations_empty");
+    const message = organizationSelectionMessage(run.runId, run.file.name, destinations);
+    await this.post("chat.update", { channel: run.sourceChannelId, ts: run.slack.selectionTs,
+      text: message.text, blocks: message.blocks });
+    return run.slack.selectionTs;
+  }
+
   async requestDestination(run: MeetingMinutesRun, destinations: readonly MeetingMinutesDestination[]): Promise<string> {
     if (!destinations.length) throw new Error("meeting_minutes_destinations_empty");
     const message = suggestedDestinationMessage(run, destinations) ??
