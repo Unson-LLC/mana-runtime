@@ -497,6 +497,28 @@ describe("Slack reply Judgment lifecycle", () => {
     });
   });
 
+  it("does not require a Brainbase PostToolUse receipt for task-write", () => {
+    const lines = stream({ withTool: true }).split("\n");
+    const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
+    lines.splice(stopIndex, 0,
+      JSON.stringify({
+        type: "assistant", session_id: "session-1", message: { content: [{
+          type: "tool_use", id: "task-write", name: "mcp__task_write__create_task", input: {},
+        }] },
+      }),
+      JSON.stringify({
+        type: "user", session_id: "session-1", message: { content: [{
+          type: "tool_result", tool_use_id: "task-write", content: "{}",
+        }] },
+      }),
+    );
+
+    expect(parseReplyJudgmentStream(lines.join("\n"))).toMatchObject({
+      stop: "completed",
+      toolJournal: [{ toolUseId: "tool-1", outcome: "success" }],
+    });
+  });
+
   it("does not count Judgment control-plane calls as Brainbase source reads", () => {
     const lines = stream().split("\n");
     const stopIndex = lines.findIndex((line) => line.includes('"hook_event":"Stop"'));
