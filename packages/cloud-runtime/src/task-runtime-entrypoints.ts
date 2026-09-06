@@ -205,6 +205,9 @@ export async function processTaskBoardRepair(
         canvasId = await createCanvas(target.channelId, slackToken, { fetch: credentialFetch });
       } catch (error) {
         if (error instanceof TaskBoardCanvasProvisioningError && error.definitive) {
+          console.error(JSON.stringify({ event: "task_board_canvas_provisioning_failed",
+            targetId: target.targetId, workspaceId: target.workspaceId,
+            channelId: target.channelId, errorCode: error.message }));
           await releaseTaskBoardBinding(env.TASK_BOARD_BINDINGS, coordinates);
           throw error;
         }
