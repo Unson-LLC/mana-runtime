@@ -150,6 +150,24 @@ describe("meeting-minutes run receipt", () => {
     });
   });
 
+  it("does not depend on AbortSignal.timeout being available in the worker runtime", async () => {
+    const receipt = await buildMeetingMinutesRunReceipt(completedRun());
+    const originalTimeout = AbortSignal.timeout;
+    Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: undefined });
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json({ status: "created", run: { id: "brainbase-run-1" },
+        outcome_case_links: [{ case_id: "case_01", status: "linked" }] }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ receipt: { run_id: "brainbase-run-1",
+        external_run_id: receipt!.run.external_run_id, source_status: "success", evidence_state: "confirmed" },
+      diagnosis: { state: "healthy" } }));
+    try {
+      await expect(new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token", fetchImpl)
+        .emit(receipt!)).resolves.toEqual({ receiptId: "brainbase-run-1" });
+    } finally {
+      Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: originalTimeout });
+    }
+  });
+
   it("classifies the tenant authority boundary separately from receipt transport", () => {
     expect(classifyMeetingMinutesRunReceiptFailure(new Error("meeting_minutes_run_receipt_authority_unavailable")))
       .toEqual({ stage: "run_receipt", code: "RUN_RECEIPT_AUTHORITY_UNAVAILABLE", retryable: true });
