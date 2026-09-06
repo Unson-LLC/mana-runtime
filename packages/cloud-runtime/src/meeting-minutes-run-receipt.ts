@@ -57,6 +57,20 @@ class MeetingMinutesRunReceiptHttpError extends Error {
   }
 }
 
+async function fetchWithTimeout(fetchImpl: typeof fetch, input: RequestInfo | URL,
+  init: RequestInit, timeoutMs: number): Promise<Response> {
+  if (typeof AbortSignal.timeout === "function") {
+    return fetchImpl(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new DOMException("request timed out", "TimeoutError")), timeoutMs);
+  try {
+    return await fetchImpl(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function classifyRunReceiptHttpStatus(status: number): Pick<MeetingMinutesRunReceiptFailure, "code" | "retryable"> {
   if (status === 401) return { code: "RUN_RECEIPT_AUTHENTICATION_FAILED", retryable: false };
   if (status === 403) return { code: "RUN_RECEIPT_FORBIDDEN", retryable: false };
@@ -163,10 +177,10 @@ export class MeetingMinutesRunReceiptClient {
 
   async emit(receipt: RunReceiptV1): Promise<ConfirmedRunReceiptDelivery> {
     if (!this.ingestUrl || !this.token) throw new Error("meeting_minutes_run_receipt_client_unconfigured");
-    const response = await this.fetchImpl(this.ingestUrl, {
+    const response = await fetchWithTimeout(this.fetchImpl, this.ingestUrl, {
       method: "POST", headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify(receipt), signal: AbortSignal.timeout(15_000),
-    }).catch((error: unknown) => {
+      body: JSON.stringify(receipt),
+    }, 15_000).catch((error: unknown) => {
       if (error instanceof Error && error.name === "TimeoutError") throw error;
       throw new Error("meeting_minutes_run_receipt_request_transport_failed");
     });
@@ -190,9 +204,9 @@ export class MeetingMinutesRunReceiptClient {
     }
     readbackUrl.pathname = `${readbackUrl.pathname.slice(0, -"/ingest".length)}/${encodeURIComponent(receiptId)}/diagnosis`;
     readbackUrl.searchParams.set("project_id", receipt.run.project_id);
-    const readback = await this.fetchImpl(readbackUrl, {
-      headers: { authorization: `Bearer ${this.token}`, accept: "application/json" }, signal: AbortSignal.timeout(15_000),
-    }).catch((error: unknown) => {
+    const readback = await fetchWithTimeout(this.fetchImpl, readbackUrl, {
+      headers: { authorization: `Bearer ${this.token}`, accept: "application/json" },
+    }, 15_000).catch((error: unknown) => {
       if (error instanceof Error && error.name === "TimeoutError") throw error;
       throw new Error("meeting_minutes_run_receipt_readback_transport_failed");
     });
