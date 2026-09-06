@@ -139,6 +139,10 @@ export async function resolveSlackWorkerIngress(input: {
   required_scopes: readonly string[];
   required_authorization: TenantContextIssueRequest["required_authorization"];
   trusted_project_ids?: readonly string[];
+  /** Preserve the signed Company Authority resource binding when refreshing a long-running operation. */
+  authority_resource_ref?: string;
+  /** Preserve the observed project alias used to resolve the canonical project. */
+  authority_project_hint?: string;
   tenant_revision?: string;
   provider_identity?: TenantContextIssueRequest["provider_identity"];
   authority: TenantAuthorityClient;
@@ -186,6 +190,12 @@ export async function resolveSlackWorkerIngress(input: {
     },
     required_authorization: structuredClone(input.required_authorization),
     ...(trustedProjectIds ? { trusted_project_ids: trustedProjectIds } : {}),
+    ...(input.authority_resource_ref
+      ? { authority_resource_ref: input.authority_resource_ref }
+      : {}),
+    ...(input.authority_project_hint
+      ? { authority_project_hint: input.authority_project_hint }
+      : {}),
     ...(input.provider_identity ? { provider_identity: structuredClone(input.provider_identity) } : {}),
   };
   assertSecretArtifactFree(issueRequest);
