@@ -806,6 +806,26 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("sourceStatus: { outcome: run.statusProjection?.outcome");
     expect(worker).toContain("outcomeCaseId: run.outcomeCaseId");
     const retryWorkflow = readFileSync(fileURLToPath(new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
+    expect(retryWorkflow).toContain("      outcome_case_id:");
+    expect(retryWorkflow).toContain("        required: false");
+    expect(retryWorkflow).toContain("          OUTCOME_CASE_ID: ${{ inputs.outcome_case_id }}");
+    expect(retryWorkflow).toContain(
+      '          [[ -z "$OUTCOME_CASE_ID" || "$OUTCOME_CASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$ ]]',
+    );
+    expect(retryWorkflow).toContain('              --arg outcomeCaseId "$OUTCOME_CASE_ID"');
+    expect(retryWorkflow).toContain(
+      "              '{tenantId:$tenantId,workspaceId:$workspaceId,actionTs:$actionTs} + (if $outcomeCaseId == \"\" then {} else {outcomeCaseId:$outcomeCaseId} end)')",
+    );
+    const retryBodyStart = retryWorkflow.indexOf('            --data "$(jq -cn');
+    const retryBodyEnd = retryWorkflow.indexOf(
+      '            "https://unson-business-mana-runtime',
+      retryBodyStart,
+    );
+    expect(retryBodyStart).toBeGreaterThan(-1);
+    expect(retryBodyEnd).toBeGreaterThan(retryBodyStart);
+    expect(retryWorkflow.slice(retryBodyStart, retryBodyEnd)).not.toContain("SANDBOX_PROBE_TOKEN");
+    expect(retryWorkflow).not.toContain('echo "$SANDBOX_PROBE_TOKEN"');
+    expect(retryWorkflow).not.toContain("jq -n --arg token \"$SANDBOX_PROBE_TOKEN\"");
     expect(retryWorkflow).toContain("baseline_source_projected_at");
     expect(retryWorkflow).toContain('.sourceStatus.outcome == "completed"');
     expect(retryWorkflow).toContain(".sourceStatus.projectedAt != $baselineSourceProjectedAt");
