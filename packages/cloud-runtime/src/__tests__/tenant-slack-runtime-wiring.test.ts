@@ -224,9 +224,18 @@ describe("tenant Slack runtime wiring", () => {
     const selection = source.slice(selectionStart, selectionEnd);
 
     expect(clients).toContain("refreshAuthorization:");
-    expect(clients).toContain("reissueLongRunningTenantContext(env, tenantContext, expectedScope)");
+    expect(clients).toContain("reissueLongRunningTenantContext(env, tenantContext, refresh.expectedScope)");
     expect(clients).toContain("tenant_context: fresh");
     expect(selection).toContain("expectedScope, verifier, now");
+  });
+
+  it("reissues Company Authority replies with the original execution capability", () => {
+    const replyStart = source.indexOf("export async function executeCompanyAuthorityReplyOperation(");
+    const replyEnd = source.indexOf("\nasync function processTenantMeetingMinutesSelection", replyStart);
+    const reply = source.slice(replyStart, replyEnd);
+
+    expect(reply).toContain("request.requested_action.capability_id");
+    expect(reply).toContain("reissueLongRunningTenantContext(");
   });
 
   it("turns only classified run-receipt failures into stable Brainbase boundary codes", () => {
