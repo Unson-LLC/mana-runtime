@@ -561,7 +561,20 @@ export async function generateClaudeReply(
         // new stub for the same sandbox ID, then re-project the runtime inputs
         // before resuming that exact session.
         sandbox = options.createSandbox(sandboxId);
-        await prepareSandbox(sandbox);
+        try {
+          await prepareSandbox(sandbox);
+        } catch (reconnectError) {
+          const reconnectMessage = reconnectError instanceof Error
+            ? reconnectError.message
+            : String(reconnectError);
+          if (!reconnectMessage.includes("container is not running")) throw reconnectError;
+          // The failed blocking RPC can finish stopping the Container while the
+          // replacement stub is being prepared. Let that stop settle, then get
+          // one more stub so the SDK can restart the same persisted sandbox.
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          sandbox = options.createSandbox(sandboxId);
+          await prepareSandbox(sandbox);
+        }
         result = await runClaude(true);
       } catch (retryError) {
         emitTurnLog("error", "mana_claude_failed", event, trace, {
