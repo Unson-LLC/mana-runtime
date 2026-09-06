@@ -66,6 +66,9 @@ describe("Worker task Canvas repair producers", () => {
     const interactionRepair = source.slice(interactionRepairStart,
       source.indexOf("defer: (work) => ctx.waitUntil(work)", interactionRepairStart));
     expect(interactionRepair).toContain("const destinationSlackBinding = resolveMeetingMinutesDestinationSlackBinding");
+    expect(interactionRepair).toContain("const destinationToken = resolveCrossWorkspaceMeetingMinutesSlackToken");
+    expect(interactionRepair).toContain("return effects.slackDelivery(");
+    expect(interactionRepair).toContain("run.destination!.taskProjectCodes, destinationToken");
     expect(interactionRepair).toContain("app_id: destinationSlackBinding.app_id");
     expect(interactionRepair).toContain("app_id: taskBoardTenantContext.workspace_connection.app_id");
     expect(source.match(/\(repair\) => resolveTaskBoardRepairTenantContext\(env, repair\)/g))

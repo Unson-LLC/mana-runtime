@@ -3621,6 +3621,35 @@ export default {
                 sourceWorkspaceId: effects.source.workspace_id,
                 sourceAppId: effects.source.app_id,
               });
+              const destinationToken = resolveCrossWorkspaceMeetingMinutesSlackToken(
+                env,
+                run.destination!.organization.id,
+                effects.source.workspace_id,
+                destinationSlackBinding,
+              );
+              if (destinationToken) {
+                const repair: TaskBoardRepairEvent = {
+                  eventType: "task_board_repair",
+                  tenantId: effects.tenant_id,
+                  targetId: target.targetId,
+                  workspaceId: target.workspaceId,
+                  channelId: target.channelId,
+                  manaCanvasId: target.manaCanvasId,
+                  bindingRevision: target.bindingRevision!,
+                  reason: "task_write",
+                  requestedAt: new Date().toISOString(),
+                };
+                return effects.slackDelivery(
+                  `task-board-repair:${targetId}:${run.runId}:${run.updatedAt}`,
+                  sourceTarget(source),
+                  { kind: "task_board_repair", targetId, runId: run.runId },
+                  (credentialFetch) => processTaskBoardRepair(
+                    repair, env, repair.tenantId, credentialFetch,
+                    undefined, undefined, repair.workspaceId, credentialFetch,
+                    run.destination!.taskProjectCodes, destinationToken,
+                  ),
+                );
+              }
               return effects.durableObject(
                 `task-board-repair:${targetId}:${run.runId}:${run.updatedAt}`,
                 { app_id: destinationSlackBinding.app_id,
