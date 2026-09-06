@@ -20,6 +20,7 @@ const runtimeMocks = vi.hoisted(() => ({
   getWorkspace: vi.fn(),
   withDisposableResource: vi.fn(),
   brokerFetch: vi.fn(),
+  getSandbox: vi.fn(),
   mutateReplyEvent: false,
   preparedRequesters: [] as Array<Record<string, unknown>>,
   workspaceStub: {
@@ -47,7 +48,7 @@ vi.mock("@cloudflare/computer", () => ({
 vi.mock("@cloudflare/sandbox", () => ({
   Sandbox: class {},
   ContainerProxy: class {},
-  getSandbox: vi.fn(),
+  getSandbox: runtimeMocks.getSandbox,
 }));
 vi.mock("../multitenancy/cloudflare-worker-runtime.js", () => ({ DurableObject: class {} }));
 vi.mock("../runtime-session-registry.js", () => ({
@@ -445,6 +446,7 @@ describe("Company Authority runtime.execute reply executor", () => {
     runtimeMocks.workspaceFs.ls.mockResolvedValue([]);
     runtimeMocks.readWorkspaceSession.mockResolvedValue({ generation: 1, engaged: true });
     runtimeMocks.getWorkspace.mockReturnValue(runtimeMocks.workspaceHandle);
+    runtimeMocks.getSandbox.mockReturnValue({});
     runtimeMocks.withDisposableResource.mockImplementation(async (_acquire, use) =>
       use(runtimeMocks.workspaceHandle));
     runtimeMocks.createClients.mockReturnValue({
@@ -553,6 +555,15 @@ describe("Company Authority runtime.execute reply executor", () => {
       capabilities: { mcp: [], gatewayTools: [] },
       resolveActorIdentity: undefined,
     });
+    const replyOptions = runtimeMocks.replyInputs[0]?.options as {
+      createSandbox(id: string): unknown;
+    };
+    replyOptions.createSandbox("reply-sandbox-id");
+    expect(runtimeMocks.getSandbox).toHaveBeenCalledWith(
+      undefined,
+      "reply-sandbox-id",
+      { enableDefaultSession: false, sleepAfter: "5m" },
+    );
     expect(runtimeMocks.createCredentialFetch).toHaveBeenCalledOnce();
     expect(runtimeMocks.postTenantSlackReply).toHaveBeenCalledOnce();
     expect(runtimeMocks.postTenantSlackReply.mock.calls[0]?.[0]).toMatchObject({
