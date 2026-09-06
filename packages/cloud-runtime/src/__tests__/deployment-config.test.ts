@@ -784,6 +784,12 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("pendingPresent: Boolean(run.taskRegistration?.pending)");
     expect(worker).toContain("failure: run.taskRegistration?.failure");
     expect(worker).toContain("failedCandidateTitle: run.taskRegistration?.failure");
+    expect(worker).toContain("sourceStatus: { outcome: run.statusProjection?.outcome");
+    const retryWorkflow = readFileSync(fileURLToPath(new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
+    expect(retryWorkflow).toContain("baseline_source_projected_at");
+    expect(retryWorkflow).toContain('.sourceStatus.outcome == "completed"');
+    expect(retryWorkflow).toContain(".sourceStatus.projectedAt != $baselineSourceProjectedAt");
+    expect(retryWorkflow).toContain(".sourceStatus.projectionFailure == null");
     expect(worker).toContain('runAdminMatch[2] === "/adopt-tasks"');
     expect(worker).toContain("meeting_minutes_task_adoption_scope_mismatch");
     expect(worker).toContain("const incompleteAdoption =");

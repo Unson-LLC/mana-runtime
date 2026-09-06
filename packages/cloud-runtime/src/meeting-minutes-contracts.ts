@@ -257,6 +257,8 @@ export interface MeetingMinutesRun {
   diagnostics?: MeetingMinutesDiagnostics;
   /** A projection failure is secondary and must not overwrite the processing failure or completed result. */
   projectionFailure?: Required<Pick<MeetingMinutesDiagnostics, "stage" | "code" | "retryable" | "failedAt">>;
+  /** Durable receipt that the source Slack status message was updated for this outcome. */
+  statusProjection?: { outcome: "completed" | "failed"; projectedAt: string };
   /** Non-secret authority inputs used to reissue a fresh context for delayed recovery. */
   recoveryAuthorization?: MeetingMinutesRecoveryAuthorization;
   lifecycle?: {

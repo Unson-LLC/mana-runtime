@@ -82,6 +82,7 @@ jobs:
             '$status == "200" and .runId == $runId' "$response_file" >/dev/null
           baseline_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
           baseline_updated_at="$(jq -r '.updatedAt // ""' "$response_file")"
+          baseline_source_projected_at="$(jq -r '.sourceStatus.projectedAt // ""' "$response_file")"
           status="$(request_json \
             -X POST \
             -H "Authorization: Bearer $SANDBOX_PROBE_TOKEN" \
@@ -107,9 +108,14 @@ jobs:
             run_status="$(jq -r '.status' "$response_file")"
             current_updated_at="$(jq -r '.updatedAt // ""' "$response_file")"
             if [[ "$run_status" == "completed" && -n "$current_updated_at" && "$current_updated_at" != "$baseline_updated_at" ]]; then
-              if jq -e '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
+              if jq -e --arg baselineSourceProjectedAt "$baseline_source_projected_at" \
+                '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
                 and .taskRegistration.pendingPresent == false and (.taskRegistration.failure == null)
-                and .checkpoint.hasTaskCard == true' "$response_file" >/dev/null; then
+                and .checkpoint.hasTaskCard == true
+                and .sourceStatus.outcome == "completed"
+                and (.sourceStatus.projectedAt // "") != ""
+                and .sourceStatus.projectedAt != $baselineSourceProjectedAt
+                and (.sourceStatus.projectionFailure == null)' "$response_file" >/dev/null; then
                 break
               fi
               if jq -e '.taskRegistration.pendingPresent == true
@@ -119,7 +125,7 @@ jobs:
                 continue
               fi
               echo "Fresh retry completed with an incomplete task integration" >&2
-              jq '{runId,status,updatedAt,checkpoint,taskRegistration,diagnostics}' "$response_file"
+              jq '{runId,status,updatedAt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
               exit 1
             fi
             if [[ "$run_status" == "failed" ]]; then

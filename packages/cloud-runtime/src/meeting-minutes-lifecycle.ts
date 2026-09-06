@@ -49,6 +49,7 @@ export function meetingMinutesCompletedProjectionRepair(
 async function recordProjectionFailure(fs: WorkspaceFs, run: MeetingMinutesRun,
   outcome: "completed" | "failed", error: unknown, options: MeetingMinutesStatusProjectionOptions): Promise<void> {
   const classified = classifyMeetingMinutesFailure("status_projection", error);
+  delete run.statusProjection;
   run.projectionFailure = { stage: "status_projection", code: classified.code!, retryable: classified.retryable!,
     failedAt: new Date().toISOString() };
   run.updatedAt = run.projectionFailure.failedAt;
@@ -64,10 +65,12 @@ async function recordProjectionFailure(fs: WorkspaceFs, run: MeetingMinutesRun,
   }
 }
 
-async function clearProjectionFailure(fs: WorkspaceFs, run: MeetingMinutesRun): Promise<void> {
-  if (!run.projectionFailure) return;
+async function recordProjectionSuccess(fs: WorkspaceFs, run: MeetingMinutesRun,
+  outcome: "completed" | "failed"): Promise<void> {
   delete run.projectionFailure;
-  run.updatedAt = new Date().toISOString();
+  const projectedAt = new Date().toISOString();
+  run.statusProjection = { outcome, projectedAt };
+  run.updatedAt = projectedAt;
   await saveMeetingMinutesRun(fs, run);
 }
 
@@ -75,7 +78,7 @@ async function projectCompleted(fs: WorkspaceFs, run: MeetingMinutesRun,
   options: MeetingMinutesStatusProjectionOptions): Promise<void> {
   try {
     await options.updateStatus(run, "completed");
-    await clearProjectionFailure(fs, run);
+    await recordProjectionSuccess(fs, run, "completed");
   } catch (error) {
     await recordProjectionFailure(fs, run, "completed", error, options);
     if (error instanceof Error && error.message === "meeting_minutes_status_coordinates_missing") return;
@@ -88,7 +91,7 @@ async function projectFailed(fs: WorkspaceFs, run: MeetingMinutesRun | undefined
   if (!run) return false;
   try {
     await options.updateStatus(run, "failed");
-    await clearProjectionFailure(fs, run);
+    await recordProjectionSuccess(fs, run, "failed");
     return true;
   } catch (error) {
     await recordProjectionFailure(fs, run, "failed", error, options);
