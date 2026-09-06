@@ -3922,6 +3922,7 @@ export default {
         ...(companyAuthorityIngress ? {
           company_authority: {
             ...companyAuthorityIngress,
+            tenant_id: requiredRuntimeBinding(env.BRAINBASE_SLACK_BOOTSTRAP_TENANT_ID),
             send: (event) => env.TECHKNIGHT_EVENTS.send(event),
           },
         } : {}),
