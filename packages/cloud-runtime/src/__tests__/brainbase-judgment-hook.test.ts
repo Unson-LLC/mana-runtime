@@ -1130,7 +1130,8 @@ describe("Brainbase judgment Hook forwarder", () => {
       {
         type: "user",
         message: { content: [{
-          type: "tool_result", tool_use_id: "task-write-1", content: "created",
+          type: "tool_result", tool_use_id: "task-write-1", content: "unrelated failure",
+          is_error: true,
         }] },
       },
       {
