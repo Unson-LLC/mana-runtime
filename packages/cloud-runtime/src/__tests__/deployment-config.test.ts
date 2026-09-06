@@ -194,6 +194,7 @@ describe("会社別Cloudflare deployment", () => {
       SLACK_ALLOWED_CHANNEL_ID: "C0BKS6RL99T",
       TASK_WRITE_APPROVAL_CHANNEL_ID: "C0BMNSP6C80",
       BRAINBASE_TASK_API_BASE_URL: "https://bb.unson.jp",
+      BRAINBASE_RUN_RECEIPT_INGEST_URL: "https://bb.unson.jp/api/run-receipts/ingest",
       RUNTIME_PROJECT_CODES: "back-office,unson",
       RUNTIME_EXECUTION_MODE: "meeting_tasks",
       RUNTIME_PLACEMENT_ID: "mana-accounting",
@@ -277,6 +278,7 @@ describe("会社別Cloudflare deployment", () => {
       "SLACK_SIGNING_SECRET",
       "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
       "DEVELOPMENT_CALLBACK_TOKEN",
+      "BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN",
     ])).toEqual({ ready: true, missing_bindings: [] });
   });
 

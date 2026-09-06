@@ -55,6 +55,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BRAINBASE_TASK_API_TOKEN: ${{ secrets.BRAINBASE_TASK_API_TOKEN }}
           BRAINBASE_GRAPH_API_TOKEN: ${{ secrets.BRAINBASE_GRAPH_API_TOKEN }}
+          BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: ${{ secrets.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN }}
           SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
         run: |
           set -euo pipefail
@@ -62,7 +63,18 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$BRAINBASE_TASK_API_TOKEN"
           test -n "$BRAINBASE_GRAPH_API_TOKEN"
+          test -n "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN"
           test -n "$SANDBOX_PROBE_TOKEN"
+
+      - name: 実行受領証トークンをWorkerへ設定
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: ${{ secrets.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN" | pnpm exec wrangler secret put BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN --config packages/cloud-runtime/wrangler.unson-business.jsonc
 
       - name: 既存の安全ゲートを通して配備
         run: pnpm deploy:unson-business
@@ -73,6 +85,7 @@ jobs:
           BRAINBASE_GRAPH_API_BASE_URL: https://bb.unson.jp
           BRAINBASE_TASK_API_TOKEN: ${{ secrets.BRAINBASE_TASK_API_TOKEN }}
           BRAINBASE_GRAPH_API_TOKEN: ${{ secrets.BRAINBASE_GRAPH_API_TOKEN }}
+          BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: ${{ secrets.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN }}
           UNSON_BUSINESS_WORKER_URL: https://unson-business-mana-runtime.unson.workers.dev
           SANDBOX_PROBE_TOKEN: ${{ secrets.SANDBOX_PROBE_TOKEN }}
           MANA_DEPLOY_CANDIDATE_COMMIT: ${{ github.sha }}

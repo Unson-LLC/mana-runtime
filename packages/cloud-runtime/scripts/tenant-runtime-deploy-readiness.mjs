@@ -315,6 +315,14 @@ function safeHttpsUrl(value) {
   }
 }
 
+function validRunReceiptIngestUrl(value) {
+  if (!safeHttpsUrl(value)) return false;
+  const url = new URL(value);
+  return url.pathname === "/api/run-receipts/ingest"
+    && url.search === ""
+    && url.hash === "";
+}
+
 function validSlackOAuthAppId(value) {
   return nonEmpty(value) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 }
@@ -516,6 +524,14 @@ export function assessTenantRuntimeDeploymentConfig(config, secretNames) {
   if (!validMeetingMinutesDestinationSlackBindings(vars)) {
     missing.add("MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON");
   }
+  if (vars.MEETING_MINUTES_ENABLED === "true") {
+    if (!validRunReceiptIngestUrl(vars.BRAINBASE_RUN_RECEIPT_INGEST_URL)) {
+      missing.add("BRAINBASE_RUN_RECEIPT_INGEST_URL");
+    }
+    if (!secrets.has("BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN")) {
+      missing.add("BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN");
+    }
+  }
   if (!hasServiceBinding(config?.services, "BRAINBASE_TENANT_RUNTIME_SERVICE", "brainbase-tenant-runtime")) {
     missing.add("BRAINBASE_TENANT_RUNTIME_SERVICE");
   }
@@ -608,6 +624,9 @@ export async function assertTenantRuntimeDeploymentPreflight({
   assertTenantRuntimeDeploymentConfig(config, [
     ...REQUIRED_SECRET_BINDINGS,
     "DEVELOPMENT_CALLBACK_TOKEN",
+    ...(config.vars?.MEETING_MINUTES_ENABLED === "true"
+      ? ["BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN"]
+      : []),
   ]);
 
   let stdout;

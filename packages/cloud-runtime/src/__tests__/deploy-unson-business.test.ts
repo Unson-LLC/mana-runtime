@@ -37,6 +37,18 @@ describe("unson business deploy wrapper", () => {
     expect(workflow.match(/BRAINBASE_TASK_API_TOKEN: \$\{\{ secrets\.BRAINBASE_TASK_API_TOKEN \}\}/g)).toHaveLength(2);
   });
 
+  it("provisions and passes the run-receipt credential without printing it", async () => {
+    const workflow = await readFile(
+      fileURLToPath(new URL("../../../../.github/workflows/deploy-unson-business.yml", import.meta.url)),
+      "utf8",
+    );
+
+    expect(workflow).toContain('test -n "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN"');
+    expect(workflow).toContain("wrangler secret put BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN");
+    expect(workflow.match(/BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: \$\{\{ secrets\.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN \}\}/g)).toHaveLength(3);
+    expect(workflow).not.toContain('echo "$BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN"');
+  });
+
   it("keeps Container rollout enabled by default and allows an explicit Worker-only recovery", async () => {
     const workflow = await readFile(
       fileURLToPath(new URL("../../../../.github/workflows/deploy-unson-business.yml", import.meta.url)),
@@ -70,6 +82,20 @@ describe("unson business deploy wrapper", () => {
     expect(result.stderr).not.toContain("ENOENT");
   });
 
+  it("fails closed before any network preflight when the receipt credential is absent", () => {
+    const script = fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, [script], {
+      encoding: "utf8",
+      env: {
+        PATH: "/path-that-does-not-contain-pnpm",
+      },
+    });
+
+    expect(result.status).toBe(7);
+    expect(result.stderr).toContain("brainbase_run_receipt_service_token_missing");
+    expect(result.stderr).not.toContain("ENOENT");
+  });
+
   it("stops before deployment when Brainbase project preflight fails", () => {
     const script = fileURLToPath(new URL("../../scripts/deploy-unson-business.mjs", import.meta.url));
     const result = spawnSync(process.execPath, [script], {
@@ -79,6 +105,7 @@ describe("unson business deploy wrapper", () => {
         BRAINBASE_GRAPH_API_BASE_URL: "https://brainbase.invalid",
         BRAINBASE_TASK_API_TOKEN: "",
         BRAINBASE_GRAPH_API_TOKEN: "",
+        BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: "receipt-token-never-log",
       },
     });
 
@@ -122,6 +149,7 @@ describe("unson business deploy wrapper", () => {
         BRAINBASE_GRAPH_API_BASE_URL: baseUrl,
         BRAINBASE_TASK_API_TOKEN: "task-token-never-log",
         BRAINBASE_GRAPH_API_TOKEN: "graph-token-never-log",
+        BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN: "receipt-token-never-log",
         UNSON_BUSINESS_WORKER_URL: baseUrl,
         SANDBOX_PROBE_TOKEN: "probe-token-never-log",
       });

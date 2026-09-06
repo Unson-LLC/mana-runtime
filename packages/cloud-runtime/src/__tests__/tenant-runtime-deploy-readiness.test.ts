@@ -74,6 +74,14 @@ const completeConfig = {
     }]),
     RUNTIME_PLACEMENTS_JSON: JSON.stringify([{ developmentEnabled: true }]),
     DEVELOPMENT_CALLBACK_BASE_URL: "https://mana.example.test",
+    MEETING_MINUTES_ENABLED: "true",
+    BRAINBASE_RUN_RECEIPT_INGEST_URL: "https://bb.example.test/api/run-receipts/ingest",
+    MEETING_MINUTES_DESTINATIONS_JSON: JSON.stringify([{
+      organization: { id: "unson-business" },
+    }]),
+    MEETING_MINUTES_DESTINATION_TEAM_IDS_JSON: JSON.stringify({
+      "unson-business": { workspace_id: "T-TEST", app_id: "A-MANA" },
+    }),
   },
   services: [
     { binding: "BRAINBASE_TENANT_RUNTIME_SERVICE", service: "brainbase-tenant-runtime" },
@@ -89,6 +97,7 @@ const completeSecrets = [
   "SLACK_SIGNING_SECRET",
   "SLACK_INSTALLATION_LIFECYCLE_TOKEN",
   "DEVELOPMENT_CALLBACK_TOKEN",
+  "BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN",
 ];
 
 const sourceLockPaths = {
@@ -375,6 +384,7 @@ describe("tenant runtime deploy readiness", () => {
     expect(result).toEqual({
       ready: false,
       missing_bindings: [
+        "BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN",
         "DEVELOPMENT_CALLBACK_TOKEN",
         "SLACK_SIGNING_SECRET",
       ],
@@ -388,6 +398,23 @@ describe("tenant runtime deploy readiness", () => {
     expect(result).toEqual({
       ready: false,
       missing_bindings: ["SLACK_SIGNING_SECRET"],
+    });
+  });
+
+  it("requires the confirmed Brainbase ingest URL and Worker receipt credential when minutes are enabled", () => {
+    const missingUrl = structuredClone(completeConfig);
+    delete (missingUrl.vars as Record<string, unknown>).BRAINBASE_RUN_RECEIPT_INGEST_URL;
+    expect(assessTenantRuntimeDeploymentConfig(missingUrl, completeSecrets)).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_RUN_RECEIPT_INGEST_URL"],
+    });
+
+    expect(assessTenantRuntimeDeploymentConfig(
+      completeConfig,
+      completeSecrets.filter((name) => name !== "BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN"),
+    )).toEqual({
+      ready: false,
+      missing_bindings: ["BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN"],
     });
   });
 

@@ -76,6 +76,20 @@ function assertReviewedCandidateCheckout(actual) {
   }
 }
 
+function assertRunReceiptServiceToken() {
+  if (typeof process.env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN !== "string"
+    || process.env.BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN.trim() === "") {
+    throw new Error("brainbase_run_receipt_service_token_missing");
+  }
+}
+
+try {
+  assertRunReceiptServiceToken();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "brainbase_run_receipt_service_token_missing");
+  process.exit(7);
+}
+
 try {
   await assertBrainbaseMeetingMinutesRuntimeProjects({
     taskBaseUrl: process.env.BRAINBASE_TASK_API_BASE_URL,

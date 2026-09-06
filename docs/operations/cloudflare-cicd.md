@@ -27,7 +27,13 @@
 - `CLOUDFLARE_ACCOUNT_ID`
 - `BRAINBASE_TASK_API_TOKEN`
 - `BRAINBASE_GRAPH_API_TOKEN`
+- `BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN`
 - `SANDBOX_PROBE_TOKEN`
+
+`BRAINBASE_RUN_RECEIPT_SERVICE_TOKEN`は、議事録の最終Slack読戻し後にのみ
+`run_receipt.v1`をBrainbaseへ登録するWorker secretである。配備ワークフローが標準入力で
+Cloudflare Workerへ設定し、値をログへ出力しない。受信先URLはWorkerの公開設定
+`BRAINBASE_RUN_RECEIPT_INGEST_URL`（`https://bb.unson.jp/api/run-receipts/ingest`）で管理する。
 
 Cloudflareトークンは`mana-runtime-github-actions-production`というAccount API Tokenとし、アカウント`788e556343893a7135c29b782c22fb24`だけを対象にする。請求、メンバー管理、APIトークン作成権限は付けない。
 
@@ -52,7 +58,7 @@ Workerコードだけを変更し、既知正常なContainerイメージを維�
 
 ## 失敗と復旧
 
-- 事前確認失敗: 配備されていない。エラー種別に応じてsource lock、Brainbase束縛、議事録ゲート、秘密情報を修正する。
+- 事前確認失敗: 配備されていない。エラー種別に応じてsource lock、Brainbase束縛、議事録ゲート、実行受領証の受信先URL・Worker secret、その他の秘密情報を修正する。
 - Wrangler配備失敗: Cloudflareのdeployment履歴とWorker状態を読み戻し、部分反映の有無を確認する。
 - 配備後ヘルスチェック失敗: 配備成功とは扱わない。直前の既知正常コミットを新しい認可専用PRで再認可し、同じワークフローから再配備する。
 
