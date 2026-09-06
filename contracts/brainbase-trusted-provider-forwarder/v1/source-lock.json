@@ -90,7 +90,7 @@
     "reviewer_provenance": "codex:user-authorized-production-deploy",
     "reviewed_commit_sha": "765de65bf56ec6eb1064e1646998b326ae99b180",
     "target": "unson-business-mana-runtime",
-    "authorized_at": "2026-09-06T03:17:00.000Z",
+    "authorized_at": "2026-09-06T03:16:00.000Z",
     "expires_at": "2026-09-06T05:17:00.000Z"
   }
 }
