@@ -147,6 +147,8 @@ export interface MeetingMinutesContextReceipt {
 }
 
 export interface MeetingMinutesContextAudit {
+  /** Validated generation input, optional for runs saved before stage-based resume. */
+  receipt?: MeetingMinutesContextReceipt;
   receiptId: string;
   checksum: string;
   status: MeetingMinutesContextStatus;
