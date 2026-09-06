@@ -52,6 +52,9 @@ describe("meeting minutes diagnostics", () => {
     [new Error("meeting_minutes_context_invalid_response"), "CONTEXT_INVALID_RESPONSE", true],
     [new Error("meeting_minutes_context_invalid_receipt"), "CONTEXT_INVALID_RECEIPT", false],
     [new Error("meeting_minutes_context_client_unconfigured"), "CONTEXT_CLIENT_UNCONFIGURED", false],
+    [new Error("meeting_minutes_context_identity_missing"), "CONTEXT_IDENTITY_MISSING", false],
+    [new Error("meeting_minutes_context_receipt_missing"), "CONTEXT_RECEIPT_MISSING", false],
+    [new Error("meeting_minutes_context_changed"), "CONTEXT_CHANGED", false],
     [new Error("meeting_minutes_context_identity_mismatch"), "CONTEXT_IDENTITY_MISMATCH", false],
   ] as const)("classifies context boundary %s", (error, code, retryable) => {
     expect(classifyMeetingMinutesFailure("context_resolve", error))

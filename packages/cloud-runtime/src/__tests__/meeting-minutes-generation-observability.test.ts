@@ -139,7 +139,7 @@ describe("meeting minutes generation observability contract (RED)", () => {
       return new Promise<never>((_, reject) => { rejectGeneration = reject; });
     });
     const processing = resumeMeetingMinutesRun(fs, selection, {
-      destinations: [destination], contextMode: "required", resolveContext: vi.fn(async () => context),
+      destinations: [destination], contextMode: "required", resolveContext: vi.fn(async (identity) => ({ ...context, identity })),
       download: vi.fn().mockResolvedValue("TRANSCRIPT_SECRET"), postProcessingStatus: vi.fn().mockResolvedValue("3.1"),
       generate, saveGitHub: vi.fn(), createTask: vi.fn(), postParent: vi.fn(), postThreadChunk: vi.fn(),
     });

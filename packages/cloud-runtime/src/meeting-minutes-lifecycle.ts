@@ -42,7 +42,33 @@ export function meetingMinutesCompletedProjectionRepair(
   const repaired: MeetingMinutesRun = { ...run, status: "completed" };
   delete repaired.failure;
   delete repaired.diagnostics;
+  const { generation, receiptSnapshot, checkpoint } = run.diagnostics ?? {};
+  if (generation || receiptSnapshot || checkpoint) {
+    repaired.diagnostics = { schemaVersion: "meeting_minutes_diagnostics.v1",
+      ...(generation ? { generation: structuredClone(generation) } : {}),
+      ...(receiptSnapshot ? { receiptSnapshot: structuredClone(receiptSnapshot) } : {}),
+      ...(checkpoint ? { checkpoint: structuredClone(checkpoint) } : {}) };
+  }
   delete repaired.projectionFailure;
+  return repaired;
+}
+
+/**
+ * Repairs the source status projection after the durable output checkpoints
+ * prove completion. The external status update is attempted before the
+ * repaired state is persisted, so a display or persistence failure leaves the
+ * original durable run available for a safe retry.
+ */
+export async function repairMeetingMinutesCompletedProjection(
+  fs: WorkspaceFs,
+  run: MeetingMinutesRun | undefined,
+  source: { channelId: string; threadTs: string },
+  updateStatus: (run: MeetingMinutesRun) => Promise<void>,
+): Promise<MeetingMinutesRun | undefined> {
+  const repaired = meetingMinutesCompletedProjectionRepair(run, source);
+  if (!repaired) return undefined;
+  await updateStatus(repaired);
+  await recordProjectionSuccess(fs, repaired, "completed");
   return repaired;
 }
 

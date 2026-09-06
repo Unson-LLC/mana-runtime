@@ -337,7 +337,7 @@ describe("meeting minutes pipeline", () => {
       destinations: [configuredKartz], resolveContext, createTask, updateTask,
     }));
 
-    expect(resolveContext).toHaveBeenCalledWith(expect.objectContaining({ project_code: "unson" }), "receipt-1", "proj_kartz");
+    expect(resolveContext).not.toHaveBeenCalled();
     expect(createTask).toHaveBeenLastCalledWith(expect.objectContaining({ project_codes: ["unson"] }), expect.any(String));
     expect(updateTask).toHaveBeenCalledWith("task-kartz", { expected_version: 7, project_codes: ["kartz"] },
       expect.any(String));
@@ -345,6 +345,8 @@ describe("meeting minutes pipeline", () => {
       destination: { contextProjectCode: "unson", taskProjectCodes: ["kartz"] } });
     expect(retried.taskRegistration).not.toHaveProperty("failure");
     expect(retried.github).toEqual(original.github);
+    expect(retried.context?.receipt).toMatchObject({ receipt_id: "receipt-1",
+      identity: { project_code: "unson" } });
   });
 
   it("creates one stable awaiting run and does not duplicate the selector", async () => {
@@ -1466,5 +1468,205 @@ describe("meeting minutes pipeline", () => {
       { index: 1, title: "提案資料を今日顧客へ共有する", taskId: "task-similar", status: "needs_review",
         projectCodes: ["mana"] },
     ]);
+  });
+
+  it("retries Task registration from a persisted Receipt without reacquiring context or generation", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockRejectedValueOnce(new Error("task api down"))
+      .mockResolvedValueOnce({ id: "task-retried" });
+    const first = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "保存済みタスク" }] }),
+      createTask,
+    });
+
+    const deferred = await resumeMeetingMinutesRun(fs, selection, first);
+    expect(deferred).toMatchObject({ status: "completed",
+      taskRegistration: { failure: { stage: "task_registration" } } });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    const persistedContext = persisted.context as (typeof persisted.context & {
+      receipt?: MeetingMinutesContextReceipt;
+    }) | undefined;
+    expect(persistedContext?.receipt).toMatchObject({
+      receipt_id: persistedContext?.receiptId,
+      checksum: persistedContext?.checksum,
+      identity: { run_id: selection.runId, project_code: "mana" },
+    });
+
+    const resolveContext = vi.fn().mockRejectedValue(new Error("context resolver stopped"));
+    const download = vi.fn().mockRejectedValue(new Error("transcript download stopped"));
+    const generate = vi.fn().mockRejectedValue(new Error("generation stopped"));
+    const retried = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      resolveContext, download, generate, createTask,
+    }));
+
+    expect(retried).toMatchObject({ status: "completed",
+      taskRegistration: { registered: [{ index: 0, title: "保存済みタスク", taskId: "task-retried", projectCodes: ["mana"] }] } });
+    expect(retried.taskRegistration).not.toHaveProperty("failure");
+    expect(resolveContext).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(createTask).toHaveBeenCalledTimes(2);
+    expect(createTask.mock.calls[0]?.[1]).toBe(createTask.mock.calls[1]?.[1]);
+  });
+
+  it("shares a legacy GitHub result before attempting context for an unregistered Task", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const postParent = vi.fn().mockResolvedValue("10.1");
+    const postThreadChunk = vi.fn()
+      .mockRejectedValueOnce(new Error("slack down"))
+      .mockResolvedValueOnce("10.2");
+    const createTask = vi.fn();
+    const first = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "旧タスク" }] }),
+      postParent, postThreadChunk, createTask,
+    });
+    await expect(resumeMeetingMinutesRun(fs, selection, first)).rejects.toThrow("slack down");
+
+    const legacy = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    const legacyContext = legacy.context as (typeof legacy.context & {
+      receipt?: MeetingMinutesContextReceipt;
+    }) | undefined;
+    delete legacyContext?.receipt;
+    await saveMeetingMinutesRun(fs, legacy);
+
+    const resolveContext = vi.fn().mockRejectedValue(new Error("context resolver stopped"));
+    const download = vi.fn().mockRejectedValue(new Error("transcript download stopped"));
+    const generate = vi.fn().mockRejectedValue(new Error("generation stopped"));
+    const retried = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      resolveContext, download, generate, postParent, postThreadChunk, createTask,
+    }));
+
+    expect(retried).toMatchObject({ status: "completed", slack: { parentTs: "10.1", postedChunkIndexes: [0] },
+      taskRegistration: { failure: { stage: "task_registration" } } });
+    expect(resolveContext).toHaveBeenCalledTimes(1);
+    expect(download).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
+    expect(postParent).toHaveBeenCalledTimes(1);
+    expect(postThreadChunk).toHaveBeenCalledTimes(2);
+    expect(postThreadChunk.mock.calls[0]?.[6]).toBe(postThreadChunk.mock.calls[1]?.[6]);
+  });
+
+  it("shares a GitHub result from a contextless legacy run and defers Task integration", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const postParent = vi.fn().mockResolvedValue("10.1");
+    const postThreadChunk = vi.fn()
+      .mockRejectedValueOnce(new Error("slack down"))
+      .mockResolvedValueOnce("10.2");
+    const createTask = vi.fn();
+    const first = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "旧タスク" }] }),
+      postParent, postThreadChunk, createTask,
+    });
+    await expect(resumeMeetingMinutesRun(fs, selection, first)).rejects.toThrow("slack down");
+
+    const legacy = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    delete legacy.context;
+    await saveMeetingMinutesRun(fs, legacy);
+
+    const resolveContext = vi.fn().mockRejectedValue(new Error("context resolver must not run"));
+    const download = vi.fn().mockRejectedValue(new Error("transcript download must not run"));
+    const generate = vi.fn().mockRejectedValue(new Error("generation must not run"));
+    const retried = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      resolveContext, download, generate, postParent, postThreadChunk, createTask,
+    }));
+
+    expect(retried).toMatchObject({ status: "completed", slack: { parentTs: "10.1", postedChunkIndexes: [0] },
+      taskRegistration: { failure: { stage: "task_registration" } } });
+    expect(resolveContext).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
+    expect(postParent).toHaveBeenCalledTimes(1);
+    expect(postThreadChunk).toHaveBeenCalledTimes(2);
+    expect(postThreadChunk.mock.calls[0]?.[6]).toBe(postThreadChunk.mock.calls[1]?.[6]);
+  });
+
+  it("retries a Task board failure without reacquiring context, tasks, or generated minutes", async () => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn().mockResolvedValue({ id: "task-board" });
+    const repairTaskBoard = vi.fn().mockRejectedValueOnce(new Error("board down")).mockResolvedValueOnce(undefined);
+    const postParent = vi.fn().mockResolvedValue("10.1");
+    const postThreadChunk = vi.fn().mockResolvedValue("10.2");
+    const first = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "ボードへ登録する" }] }),
+      createTask, repairTaskBoard, postParent, postThreadChunk,
+    });
+
+    const deferred = await resumeMeetingMinutesRun(fs, selection, first);
+    expect(deferred).toMatchObject({ status: "completed",
+      taskRegistration: { registered: [{ taskId: "task-board" }], failure: { stage: "task_board" } } });
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    const persistedContext = persisted.context as (typeof persisted.context & {
+      receipt?: MeetingMinutesContextReceipt;
+    }) | undefined;
+    delete persistedContext?.receipt;
+    await saveMeetingMinutesRun(fs, persisted);
+
+    const resolveContext = vi.fn().mockRejectedValue(new Error("context resolver stopped"));
+    const download = vi.fn().mockRejectedValue(new Error("transcript download stopped"));
+    const generate = vi.fn().mockRejectedValue(new Error("generation stopped"));
+    const recovered = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      resolveContext, download, generate, createTask, repairTaskBoard, postParent, postThreadChunk,
+    }));
+
+    expect(recovered).toMatchObject({ status: "completed", slack: { parentTs: "10.1", postedChunkIndexes: [0] } });
+    expect(recovered.taskRegistration).not.toHaveProperty("failure");
+    expect(resolveContext).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(repairTaskBoard).toHaveBeenCalledTimes(2);
+    expect(postParent).toHaveBeenCalledTimes(1);
+    expect(postThreadChunk).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["identity", "checksum"] as const)("rejects a persisted Receipt with a %s mismatch before Task effects", async (mismatch) => {
+    const fs = new MemoryFs(); await startMeetingMinutesRuns(fs, event, { enabled: true, routerChannelId: "CROUTER", sourceAppId: "A1",
+      destinations: [destination], requestDestination: vi.fn().mockResolvedValue("2.1") });
+    const createTask = vi.fn()
+      .mockRejectedValueOnce(new Error("task api down"))
+      .mockResolvedValueOnce({ id: "task-must-not-be-created" });
+    const first = resumeOptions({
+      generate: vi.fn().mockResolvedValue({ title: "定例", overview: "概要", body: "本文",
+        tasks: [{ title: "不一致ReceiptのTask" }] }),
+      createTask,
+    });
+    const deferred = await resumeMeetingMinutesRun(fs, selection, first);
+    expect(deferred.taskRegistration?.failure).toMatchObject({ stage: "task_registration" });
+
+    const persisted = (await loadMeetingMinutesRun(fs, selection.runId))!;
+    const persistedContext = persisted.context as (typeof persisted.context & {
+      receipt?: MeetingMinutesContextReceipt;
+    }) | undefined;
+    expect(persistedContext?.receipt).toBeDefined();
+    if (mismatch === "identity") {
+      persistedContext!.receipt!.identity = { ...persistedContext!.receipt!.identity, project_code: "other" };
+    } else {
+      persistedContext!.receipt!.checksum = "different-checksum";
+    }
+    await saveMeetingMinutesRun(fs, persisted);
+
+    const resolveContext = vi.fn().mockRejectedValue(new Error("context resolver must not run"));
+    const download = vi.fn().mockRejectedValue(new Error("transcript download must not run"));
+    const generate = vi.fn().mockRejectedValue(new Error("generation must not run"));
+    const retried = await resumeMeetingMinutesRun(fs, selection, resumeOptions({
+      resolveContext, download, generate, createTask,
+    }));
+    expect(retried).toMatchObject({ status: "completed",
+      taskRegistration: { failure: { stage: "task_registration" } } });
+    expect(resolveContext).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(createTask).toHaveBeenCalledTimes(1);
   });
 });

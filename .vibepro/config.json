@@ -415,8 +415,20 @@
         "period": null,
         "started_at": null,
         "due_at": null
+      },
+      {
+        "story_id": "meeting-minutes-stage-resume",
+        "title": "議事録の未完了工程だけを安全に再開する",
+        "ssot": "local",
+        "status": "active",
+        "horizon": null,
+        "view": null,
+        "period": null,
+        "started_at": null,
+        "due_at": null,
+        "contract_type": null
       }
     ],
-    "current_story_id": "mana-reply-judgment-hook-503"
+    "current_story_id": "meeting-minutes-stage-resume"
   }
 }
