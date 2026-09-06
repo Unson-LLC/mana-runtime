@@ -637,6 +637,7 @@ function meetingMinutesWorkspaceName(tenantId: string, workspaceId: string, runI
 function meetingMinutesAdminRunStatus(run: MeetingMinutesRun) {
   return { runId: run.runId, status: run.status, updatedAt: run.updatedAt,
     destinationId: run.destination?.id, outcomeCaseId: run.outcomeCaseId, diagnostics: run.diagnostics,
+    processing: run.processing,
     runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,
       status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt } : undefined,
     taskRegistration: { registeredCount: run.taskRegistration?.registered.length ?? 0,

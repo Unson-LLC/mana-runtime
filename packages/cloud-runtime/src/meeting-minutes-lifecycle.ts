@@ -159,6 +159,10 @@ export async function processMeetingMinutesSelectionWithStatus(fs: WorkspaceFs, 
     }
     throw error;
   }
+  const completedAt = new Date().toISOString();
+  run.processing = { completedActionTs: selection.actionTs, completedAt };
+  run.updatedAt = completedAt;
+  await saveMeetingMinutesRun(fs, run);
   await projectCompleted(fs, run, projection);
   return run;
 }

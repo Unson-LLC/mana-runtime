@@ -106,11 +106,16 @@ jobs:
               def bool_or_null: if type == "boolean" then . else null end;
               def one_of($values): . as $value | if $values | index($value) then $value else null end;
               def timestamp: if type == "string" and test("^[0-9TZ:.-]{20,30}$") then . else null end;
+              def action_timestamp: if type == "string" and test("^[0-9]{1,20}(\\.[0-9]{1,12})?$") then . else null end;
               def safe_identifier_or_null: if type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$") then . else null end;
               {
                 status: (.status | one_of(["awaiting_destination","routed","generated","github_saved","posting","completed","failed"])),
                 updatedAt: (.updatedAt | timestamp),
                 outcomeCaseId: (.outcomeCaseId | safe_identifier_or_null),
+                processing: (if (.processing | type) == "object" then {
+                  completedActionTs: (.processing.completedActionTs | action_timestamp),
+                  completedAt: (.processing.completedAt | timestamp)
+                } else null end),
                 runReceipt: (
                   if (.runReceipt | type) == "object" then {
                     caseId: (.runReceipt.caseId | safe_identifier_or_null),
@@ -164,7 +169,6 @@ jobs:
           fi
           [[ "$OPERATION" == "retry" ]]
           baseline_failed_at="$(jq -r '.diagnostics.failedAt // ""' "$response_file")"
-          baseline_updated_at="$(jq -r '.updatedAt // ""' "$response_file")"
           baseline_source_projected_at="$(jq -r '.sourceStatus.projectedAt // ""' "$response_file")"
           baseline_outcome_case_id="$(jq -r '.outcomeCaseId // ""' "$response_file")"
           expected_outcome_case_id="$OUTCOME_CASE_ID"
@@ -196,13 +200,17 @@ jobs:
             jq -e --arg runId "$RUN_ID" --arg status "$status" \
               '$status == "200" and .runId == $runId' "$response_file" >/dev/null
             run_status="$(jq -r '.status' "$response_file")"
-            current_updated_at="$(jq -r '.updatedAt // ""' "$response_file")"
-            if [[ "$run_status" == "completed" && -n "$current_updated_at" && "$current_updated_at" != "$baseline_updated_at" ]]; then
-              if jq -e --arg baselineSourceProjectedAt "$baseline_source_projected_at" \
+            processing_completed_action_ts="$(jq -r '.processing.completedActionTs // ""' "$response_file")"
+            processing_completed_at="$(jq -r '.processing.completedAt // ""' "$response_file")"
+            if [[ "$run_status" == "completed" && "$processing_completed_action_ts" == "$action_ts" && -n "$processing_completed_at" ]]; then
+              if jq -e --arg actionTs "$action_ts" --arg processingCompletedAt "$processing_completed_at" \
+                --arg baselineSourceProjectedAt "$baseline_source_projected_at" \
                 --arg expectedOutcomeCaseId "$expected_outcome_case_id" \
                 '.checkpoint.hasGitHub == true and .checkpoint.hasSlackParent == true
                 and .taskRegistration.pendingPresent == false and (.taskRegistration.failure == null)
                 and .checkpoint.hasTaskCard == true
+                and .processing.completedActionTs == $actionTs
+                and .processing.completedAt == $processingCompletedAt
                 and .sourceStatus.outcome == "completed"
                 and (.sourceStatus.projectedAt // "") != ""
                 and .sourceStatus.projectedAt != $baselineSourceProjectedAt
@@ -214,7 +222,9 @@ jobs:
                 and (.runReceipt.deliveredAt // "") != ""' "$response_file" >/dev/null; then
                 break
               fi
-              if jq -e '(.sourceStatus.projectionFailure // null) != null' "$response_file" >/dev/null; then
+              if jq -e --arg processingCompletedAt "$processing_completed_at" \
+                '(.sourceStatus.projectionFailure.failedAt // "") >= $processingCompletedAt' \
+                "$response_file" >/dev/null; then
                 echo "Fresh retry source projection failed" >&2
                 jq '{runId,status,updatedAt,outcomeCaseId,runReceipt,checkpoint,taskRegistration,sourceStatus,diagnostics}' "$response_file"
                 exit 1
