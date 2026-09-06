@@ -2409,13 +2409,26 @@ export async function executeCompanyAuthorityReplyOperation(
   const clients = tenantRuntimeClients(env, tenantContext,
     config.desired_effect_by_capability);
   const now = () => new Date().toISOString();
-  const readSnapshot = () => clients.authority.read_workspace_connection(
-    tenantContext.workspace_connection.connection_id);
+  let activeTenantContext = tenantContext;
+  let activeRuntimeClients = clients;
+  const readSnapshot = () => activeRuntimeClients.authority.read_workspace_connection(
+    activeTenantContext.workspace_connection.connection_id);
   const resolveKey = (keyId: string) => resolveTenantVerificationKey(env, keyId);
   const verifier = new TenantRuntimeBoundaryVerifier({
     read_authoritative_snapshot: () => readSnapshot(), resolve_verification_key: resolveKey,
   });
+  let tenantContextRefreshed = false;
   const boundary = async <T>(name: BoundaryName, execute: () => Promise<T>): Promise<T> => {
+    // Keep the signed Company Authority check for the original context. Once a
+    // long-running operation reissues its tenant context, use the fresh
+    // context for nested boundaries instead of revalidating the expired
+    // context embedded in the original response.
+    if (tenantContextRefreshed) {
+      return executeTenantBoundary({
+        boundary: name, tenant_context: activeTenantContext, expected_scope: expectedScope,
+        verifier, now: now(), execute,
+      });
+    }
     const accepted = await executeCompanyAuthorityRuntimeBoundary({
       boundary: name, envelope, acceptance: { ...config.acceptance, now: now() },
       tenant_verifier: verifier, expected_tenant_scope: expectedScope, require_auto: true,
@@ -2451,10 +2464,20 @@ export async function executeCompanyAuthorityReplyOperation(
           : "reply_placement_project_identity",
       });
     }
-    const brokerFetch = createTenantCredentialFetch({ envelope: tenantContext,
-      expected_scope: expectedScope, broker: clients.credential_broker,
-      trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: tenantContext }),
-      read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey, now });
+    const createBrokerFetch = (context: TenantContextEnvelope): typeof fetch =>
+      createTenantCredentialFetch({ envelope: context,
+        expected_scope: expectedScope, broker: activeRuntimeClients.credential_broker,
+        trusted_forwarder: createBrainbaseTrustedProviderForwarderFromEnv({ env, tenant_context: context }),
+        read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey, now });
+    let brokerFetchContext = activeTenantContext;
+    let activeBrokerFetch = createBrokerFetch(brokerFetchContext);
+    const brokerFetch: typeof fetch = async (input, init) => {
+      if (brokerFetchContext !== activeTenantContext) {
+        brokerFetchContext = activeTenantContext;
+        activeBrokerFetch = createBrokerFetch(brokerFetchContext);
+      }
+      return activeBrokerFetch(input, init);
+    };
     // The shared pipeline's cosmetic status/reaction requests are not part of
     // this single-effect authority. Only postReply below can send Slack writes.
     const credentialFetch: typeof fetch = async (input, init) => {
@@ -2499,7 +2522,7 @@ export async function executeCompanyAuthorityReplyOperation(
       let deliveryBodyHash: string | undefined;
       let authBotId: string | undefined;
       let deliveryAttempted = false;
-      let activeTenantBoundaryExpiresAt = tenantContext.expires_at;
+      let activeTenantBoundaryExpiresAt = activeTenantContext.expires_at;
       const result = await executeTenantRuntimeOperation({ tenant_context: tenantContext,
         expected_scope: expectedScope, verifier, quota: clients.quota, accounting: clients.accounting,
         ledger: createDurableTenantAccountingClient(env.TENANT_RUNTIME_STATE, tenantContext),
@@ -2522,6 +2545,10 @@ export async function executeCompanyAuthorityReplyOperation(
                       : {}),
                   },
                 );
+                activeTenantContext = fresh;
+                activeRuntimeClients = tenantRuntimeClients(env, fresh,
+                  config.desired_effect_by_capability);
+                tenantContextRefreshed = true;
                 activeTenantBoundaryExpiresAt = fresh.expires_at;
                 return fresh;
               },
@@ -2553,15 +2580,15 @@ export async function executeCompanyAuthorityReplyOperation(
                 const authResponse = await credentialFetch("https://slack.com/api/auth.test");
                 const auth = await authResponse.json() as { ok?: unknown; team_id?: unknown; bot_id?: unknown };
                 if (!authResponse.ok || auth.ok !== true
-                  || auth.team_id !== tenantContext.workspace_connection.workspace_id
+                  || auth.team_id !== activeTenantContext.workspace_connection.workspace_id
                   || typeof auth.bot_id !== "string" || !auth.bot_id) {
                   deny("slack_delivery", "AUTHORITY_SCOPE_MISMATCH");
                 }
                 authBotId = auth.bot_id;
                 const deliveryNow = now();
                 const ts = await boundary("slack_delivery", () => postTenantSlackReply({
-                  tenant_context: tenantContext, expected_scope: expectedScope,
-                  ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, tenantContext.tenant.tenant_id),
+                  tenant_context: activeTenantContext, expected_scope: expectedScope,
+                  ownership: createDurableTenantStateClient(env.TENANT_RUNTIME_STATE, activeTenantContext.tenant.tenant_id),
                   read_authoritative_snapshot: readSnapshot, resolve_verification_key: resolveKey,
                   now: deliveryNow, retention_until: tenantRetentionUntil(deliveryNow),
                   event: replyEvent, text, effect_id: effectId, release_on_failure: false,
@@ -2575,10 +2602,10 @@ export async function executeCompanyAuthorityReplyOperation(
                 const bodyHash = `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
                 deliveryBodyHash = bodyHash;
                 const readback = await readSlackDeliveryReadback({ observed: { channel: replyEvent.channelId, ts },
-                  expected: { workspaceId: tenantContext.workspace_connection.workspace_id,
-                    appId: tenantContext.workspace_connection.app_id, botId: auth.bot_id },
+                  expected: { workspaceId: activeTenantContext.workspace_connection.workspace_id,
+                    appId: activeTenantContext.workspace_connection.app_id, botId: auth.bot_id },
                   threadTs: replyEvent.threadTs, bodyHash, window: { oldest: ts, latest: ts },
-                  expiresAt: Math.min(Date.now() + 30_000, Date.parse(tenantContext.expires_at)),
+                  expiresAt: Math.min(Date.now() + 30_000, Date.parse(activeTenantContext.expires_at)),
                 }, credentialFetch);
                 console.log(JSON.stringify({ event: "company_authority_slack_readback",
                   correlation_id: tenantContext.correlation_id, operation_id: tenantContext.operation_id,
