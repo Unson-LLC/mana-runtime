@@ -835,6 +835,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(receiptRetryWorkflow).toContain("failure.operation");
     expect(receiptRetryWorkflow).toContain("failure.httpStatus");
     expect(receiptRetryWorkflow).toContain("meeting_minutes_admin_retry_run_receipt_stale");
+    expect(receiptRetryWorkflow).toContain('.runReceipt.failure.code != "RUN_RECEIPT_AUTHENTICATION_FAILED"');
+    expect(receiptRetryWorkflow).toContain('.runReceipt.failure.code != "RUN_RECEIPT_FORBIDDEN"');
     expect(receiptRetryWorkflow).toContain("範囲外: Slack、GitHub、タスク登録、タスクカード、議事録生成は再実行しない");
     expect(receiptRetryWorkflow).not.toContain('echo "$SANDBOX_PROBE_TOKEN"');
     expect(receiptRetryWorkflow).not.toContain("jq -n --arg token \"$SANDBOX_PROBE_TOKEN\"");

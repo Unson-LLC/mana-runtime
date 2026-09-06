@@ -120,7 +120,10 @@ jobs:
             exit 0
           fi
           [[ "$OPERATION" == "retry" ]]
-          if jq -e '.runReceipt.failure.stage == "run_receipt" and .runReceipt.failure.retryable == false' "$response_file" >/dev/null; then
+          if jq -e '.runReceipt.failure.stage == "run_receipt"
+            and .runReceipt.failure.retryable == false
+            and .runReceipt.failure.code != "RUN_RECEIPT_AUTHENTICATION_FAILED"
+            and .runReceipt.failure.code != "RUN_RECEIPT_FORBIDDEN"' "$response_file" >/dev/null; then
             echo "RunReceiptは再送不可: $(safe_code)" >&2
             print_status
             exit 1
