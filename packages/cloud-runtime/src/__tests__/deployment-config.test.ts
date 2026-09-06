@@ -808,7 +808,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(worker).toContain("outcomeCaseId: run.outcomeCaseId");
     expect(worker).toContain("runReceipt: run.runReceipt ? { caseId: run.runReceipt.caseId, receiptId: run.runReceipt.receiptId,");
     expect(worker).toContain("status: run.runReceipt.status, deliveredAt: run.runReceipt.deliveredAt,");
-    expect(worker).toContain("failure: run.runReceipt.failure }");
+    expect(worker).toContain("const failure = meetingMinutesAdminRunReceiptFailure(run.runReceipt?.failure);");
+    expect(worker).toContain("...(failure ? { failure } : {}) } : undefined,");
     const retryWorkflow = readFileSync(fileURLToPath(new URL("../../../../.github/workflows/retry-meeting-minutes.yml", import.meta.url)), "utf8");
     expect(retryWorkflow).toContain("      outcome_case_id:");
     expect(retryWorkflow).toContain("        required: false");
