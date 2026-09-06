@@ -832,6 +832,8 @@ describe("会社別Cloudflare deployment", () => {
     expect(receiptRetryWorkflow).toContain("/authorized-receipt-retry");
     expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_UNAVAILABLE");
     expect(receiptRetryWorkflow).toContain("RUN_RECEIPT_AUTHORITY_REJECTED");
+    expect(receiptRetryWorkflow).toContain("failure.operation");
+    expect(receiptRetryWorkflow).toContain("failure.httpStatus");
     expect(receiptRetryWorkflow).toContain("meeting_minutes_admin_retry_run_receipt_stale");
     expect(receiptRetryWorkflow).toContain("範囲外: Slack、GitHub、タスク登録、タスクカード、議事録生成は再実行しない");
     expect(receiptRetryWorkflow).not.toContain('echo "$SANDBOX_PROBE_TOKEN"');

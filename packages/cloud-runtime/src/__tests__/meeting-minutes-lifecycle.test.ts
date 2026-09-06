@@ -2,6 +2,7 @@ import { meetingMinutesCompletedProjectionRepair, processMeetingMinutesSelection
   retryMeetingMinutesRunReceipt,
   repairMeetingMinutesCompletedProjection } from "../meeting-minutes-lifecycle.js";
 import { startMeetingMinutesRuns } from "../meeting-minutes-pipeline.js";
+import { MeetingMinutesRunReceiptClient } from "../meeting-minutes-run-receipt.js";
 import { loadMeetingMinutesRun, saveMeetingMinutesRun } from "../meeting-minutes-state.js";
 import type { GeneratedMeetingMinutes, MeetingMinutesContextReceipt, MeetingMinutesDestination,
   MeetingMinutesRun, MeetingMinutesSelection } from "../meeting-minutes-contracts.js";
@@ -293,6 +294,26 @@ describe("meeting minutes source status lifecycle", () => {
       statusProjection: { outcome: "completed" }, runReceipt: { status: "pending",
         failure: { stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
           failedAt: expect.any(String) } } });
+  });
+
+  it("persists only the receipt operation and HTTP status for an upstream receipt failure", async () => {
+    const fs = await setup();
+    const updateStatus = vi.fn(async (run: MeetingMinutesRun) => {
+      run.terminalSlackReadback = { outcome: "completed", channel: "CROUTER", ts: "3.1",
+        bodyHash: `sha256:${"a".repeat(64)}`, confirmedAt: "2026-09-06T00:00:03.000Z" };
+    });
+    const emitRunReceipt = async (receipt: Parameters<MeetingMinutesRunReceiptClient["emit"]>[0]) =>
+      new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token",
+        vi.fn().mockResolvedValue(new Response("authorization=must-not-persist", { status: 503 }))).emit(receipt);
+    await expect(processMeetingMinutesSelectionWithStatus(fs, selection, config, resume(), {
+      updateStatus, emitRunReceipt,
+    })).rejects.toThrow("meeting_minutes_run_receipt_request_failed:503");
+    const persisted = await loadMeetingMinutesRun(fs, selection.runId);
+    expect(persisted?.runReceipt).toMatchObject({ status: "pending", failure: {
+      stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+      operation: "ingest", httpStatus: 503, failedAt: expect.any(String),
+    } });
+    expect(JSON.stringify(persisted)).not.toContain("must-not-persist");
   });
 
   it("records a non-retryable receipt contract failure without persisting the upstream response", async () => {

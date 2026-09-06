@@ -96,6 +96,29 @@ describe("meeting-minutes run receipt", () => {
     expect((fetchImpl.mock.calls[1]![0] as URL).searchParams.get("project_id")).toBe("brainbase");
   });
 
+  it("classifies only the receipt operation and HTTP status for upstream HTTP failures", async () => {
+    const receipt = await buildMeetingMinutesRunReceipt(completedRun());
+    const ingestFetch = vi.fn().mockResolvedValue(new Response("authorization=must-not-persist", { status: 503 }));
+    const ingestError = await new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token", ingestFetch)
+      .emit(receipt!).catch((error: unknown) => error);
+    expect(classifyMeetingMinutesRunReceiptFailure(ingestError)).toEqual({
+      stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+      operation: "ingest", httpStatus: 503,
+    });
+
+    const diagnosisFetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ status: "created", run: { id: "brainbase-run-1" },
+        outcome_case_links: [{ case_id: "case_01", status: "linked" }] }, { status: 201 }))
+      .mockResolvedValueOnce(new Response("authorization=must-not-persist", { status: 429 }));
+    const diagnosisError = await new MeetingMinutesRunReceiptClient("https://bb.test/api/run-receipts/ingest", "token", diagnosisFetch)
+      .emit(receipt!).catch((error: unknown) => error);
+    expect(classifyMeetingMinutesRunReceiptFailure(diagnosisError)).toEqual({
+      stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+      operation: "diagnosis", httpStatus: 429,
+    });
+    expect(JSON.stringify([ingestError, diagnosisError])).not.toContain("must-not-persist");
+  });
+
   it("keeps a declared OutcomeCase pending until Brainbase confirms its durable link", async () => {
     const receipt = await buildMeetingMinutesRunReceipt(completedRun());
     const fetchImpl = vi.fn().mockResolvedValue(Response.json({ status: "created", run: { id: "brainbase-run-1" } },

@@ -398,14 +398,34 @@ describe("authorized meeting-minutes generation probe route", () => {
     await expect(response.json()).resolves.toEqual({ error: "meeting_minutes_admin_retry_run_receipt_stale" });
   });
 
-  it("returns only the four supported receipt failure diagnostics from authorized status", async () => {
+  it("returns only allowlisted receipt operation and HTTP status diagnostics from authorized status", async () => {
     runtimeMocks.loadRun.mockResolvedValue(run({ runReceipt: {
       idempotencyKey: "meeting-minutes:run-001",
       status: "pending",
       failure: {
         stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
-        failedAt: "2026-09-06T00:00:01.000Z", upstreamResponse: "must-not-leak",
+        failedAt: "2026-09-06T00:00:01.000Z", operation: "ingest", httpStatus: 503,
+        upstreamResponse: "must-not-leak",
       } as never,
+    } }));
+
+    const response = await fetchWorker(authorizedStatusRequest({ authorization: `Bearer ${ADMIN_TOKEN}` }));
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { runReceipt?: { failure?: unknown } };
+    expect(body.runReceipt?.failure).toEqual({
+      stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+      failedAt: "2026-09-06T00:00:01.000Z", operation: "ingest", httpStatus: 503,
+    });
+  });
+
+  it("drops malformed receipt operation and HTTP status diagnostics from authorized status", async () => {
+    runtimeMocks.loadRun.mockResolvedValue(run({ runReceipt: {
+      idempotencyKey: "meeting-minutes:run-001",
+      status: "pending",
+      failure: { stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
+        failedAt: "2026-09-06T00:00:01.000Z", operation: "untrusted", httpStatus: 700,
+        upstreamResponse: "must-not-leak" } as never,
     } }));
 
     const response = await fetchWorker(authorizedStatusRequest({ authorization: `Bearer ${ADMIN_TOKEN}` }));
@@ -416,6 +436,7 @@ describe("authorized meeting-minutes generation probe route", () => {
       stage: "run_receipt", code: "RUN_RECEIPT_UPSTREAM_FAILED", retryable: true,
       failedAt: "2026-09-06T00:00:01.000Z",
     });
+    expect(JSON.stringify(body)).not.toContain("must-not-leak");
   });
 
   it.each([
