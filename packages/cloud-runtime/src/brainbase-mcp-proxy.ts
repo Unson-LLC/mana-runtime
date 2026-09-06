@@ -55,7 +55,9 @@ export async function handleBrainbaseMcpProxyRequest(
     return Response.json({ error: { code: "BRAINBASE_PROXY_NOT_CONFIGURED", retryable: true } }, { status: 503 });
   }
   const headers = new Headers();
-  for (const name of ["accept", "content-type", "user-agent", "mcp-session-id"] as const) {
+  for (const name of [
+    "accept", "content-type", "user-agent", "mcp-session-id", "mcp-protocol-version",
+  ] as const) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }

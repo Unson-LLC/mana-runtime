@@ -7,13 +7,17 @@ describe("Brainbase judgment Hook proxy", () => {
       expect(String(url)).toBe("https://bb.example.test/mcp");
       expect(init?.method).toBe(method);
       expect(new Headers(init?.headers).get("mcp-session-id")).toBe("session-transport");
+      expect(new Headers(init?.headers).get("mcp-protocol-version")).toBe("2025-06-18");
       expect(init?.body).toBeUndefined();
       return new Response(null, { status: 204 });
     });
     const response = await handleBrainbaseMcpProxyRequest(
       new Request("https://brainbase-mcp.internal/mcp", {
         method,
-        headers: { "mcp-session-id": "session-transport" },
+        headers: {
+          "mcp-session-id": "session-transport",
+          "mcp-protocol-version": "2025-06-18",
+        },
       }),
       { BRAINBASE_MCP_BASE_URL: "https://bb.example.test", BRAINBASE_MCP_TOKEN: "token" },
       forward as typeof fetch,
