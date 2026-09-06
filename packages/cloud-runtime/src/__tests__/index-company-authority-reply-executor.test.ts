@@ -569,6 +569,7 @@ describe("Company Authority runtime.execute reply executor", () => {
     });
 
     expect(runtimeMocks.containerInputs).toHaveLength(1);
+    expect(runtimeMocks.containerInputs[0]).toMatchObject({ release: "on_expiration" });
     expect(runtimeMocks.containerInputs[0]?.company_authority_envelope)
       .toEqual(candidate.company_authority_envelope);
     expect(runtimeMocks.replyInputs).toHaveLength(1);
