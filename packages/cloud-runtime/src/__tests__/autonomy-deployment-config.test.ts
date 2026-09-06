@@ -83,13 +83,14 @@ describe("Unson Business autonomy deployment contract", () => {
     expect(JSON.stringify(serviceRules)).not.toMatch(/task\.(?:update|transition)/u);
   });
 
-  it("maps enabled task-board sends to the external-side-effect authority", () => {
+  it("maps reply execution and task-board sends to the external-side-effect authority", () => {
     const current = config();
 
     if (current.vars.RUNTIME_TASK_BOARD_ENABLED !== "true") return;
 
     expect(JSON.parse(current.vars.MANA_COMPANY_AUTHORITY_OPERATIONS_JSON)).toEqual({
       "runtime.execute": "external_side_effect",
+      "company_authority_v1": "external_side_effect",
       "task_board_send": "external_side_effect",
     });
   });
