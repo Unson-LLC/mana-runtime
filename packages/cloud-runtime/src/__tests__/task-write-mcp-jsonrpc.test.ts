@@ -63,4 +63,24 @@ describe("requester-scoped task-write stdio MCP", () => {
       if (previousCapability !== undefined) process.env.MANA_TASK_WRITE_CAPABILITY = previousCapability;
     }
   });
+
+  it("does not report an approval-required response as a successful task write", async () => {
+    const previousRequest = process.env.MANA_TASK_WRITE_REQUEST_ID;
+    const previousCapability = process.env.MANA_TASK_WRITE_CAPABILITY;
+    process.env.MANA_TASK_WRITE_REQUEST_ID = "EvApproval123";
+    process.env.MANA_TASK_WRITE_CAPABILITY = "signed-capability";
+    try {
+      const result = await processTaskWriteRpcMessage({
+        jsonrpc: "2.0", id: 4, method: "tools/call",
+        params: { name: "create_task", arguments: { project: "back-office", call_index: 1, title: "承認待ち" } },
+      }, vi.fn().mockResolvedValue(Response.json({ status: "approval_required", approval_id: "approval-1" }, { status: 202 })));
+      expect(result?.result).toMatchObject({ isError: true });
+      expect(result?.result?.content).toEqual([{ type: "text", text: JSON.stringify({ status: "approval_required", approval_id: "approval-1" }) }]);
+    } finally {
+      if (previousRequest === undefined) delete process.env.MANA_TASK_WRITE_REQUEST_ID;
+      else process.env.MANA_TASK_WRITE_REQUEST_ID = previousRequest;
+      if (previousCapability === undefined) delete process.env.MANA_TASK_WRITE_CAPABILITY;
+      else process.env.MANA_TASK_WRITE_CAPABILITY = previousCapability;
+    }
+  });
 });

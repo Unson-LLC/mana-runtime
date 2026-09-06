@@ -81,10 +81,17 @@ export function evaluateTaskWritePolicy(policy: TaskWritePolicy, intent: TaskWri
     && (rule.targets === undefined || (intent.targetId !== undefined && rule.targets.includes(intent.targetId))));
   const denied = matches.find((rule) => rule.effect === "deny");
   if (denied) return { effect: "deny", policyVersion: policy.version, reason: "rule_denied" };
-  const approval = matches.find((rule) => rule.effect === "approval");
+  const specificity = (rule: TaskWritePolicyRule): number => Number(rule.actors.includes(intent.actor.id))
+    + Number(rule.placements.includes(intent.placementId))
+    + Number(rule.projects.includes(intent.project))
+    + Number(rule.operations.includes(intent.operation))
+    + (rule.targets !== undefined && intent.targetId !== undefined && rule.targets.includes(intent.targetId) ? 1 : 0);
+  const highestSpecificity = Math.max(...matches.map(specificity), -1);
+  const mostSpecific = matches.filter((rule) => specificity(rule) === highestSpecificity);
+  const approval = mostSpecific.find((rule) => rule.effect === "approval");
   if (approval) return { effect: "approval", policyVersion: policy.version,
     approvers: [...approval.approvers!], ttlSeconds: approval.ttlSeconds! };
-  if (matches.some((rule) => rule.effect === "auto")) return { effect: "auto", policyVersion: policy.version };
+  if (mostSpecific.some((rule) => rule.effect === "auto")) return { effect: "auto", policyVersion: policy.version };
   return { effect: "deny", policyVersion: policy.version, reason: "no_matching_rule" };
 }
 
