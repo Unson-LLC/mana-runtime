@@ -517,13 +517,24 @@ export async function generateClaudeReply(
       const process = await sandbox.startProcess(command, {
         processId: `reply-${claudeSessionId}`,
         autoCleanup: false,
-        timeout,
+        timeout: REPLY_SANDBOX_MAX_TIMEOUT_MS,
         env: execEnv,
       });
-      const deadline = Date.now() + timeout;
+      const deadline = (options.nowMs?.() ?? Date.now()) + REPLY_SANDBOX_MAX_TIMEOUT_MS;
       let status = await process.getStatus();
       while (status === "starting" || status === "running") {
-        const remainingMs = deadline - Date.now();
+        const nowMs = options.nowMs?.() ?? Date.now();
+        let boundaryRemainingMs: number;
+        try {
+          boundaryRemainingMs = remainingReplySandboxTimeoutMs(
+            options.tenantBoundaryExpiresAtNow?.() ?? options.tenantBoundaryExpiresAt,
+            nowMs,
+          );
+        } catch (cause) {
+          await process.kill().catch(() => undefined);
+          throw cause;
+        }
+        const remainingMs = Math.min(deadline - nowMs, boundaryRemainingMs);
         if (remainingMs <= 0) {
           await process.kill().catch(() => undefined);
           throw new Error("sandbox_process_timeout");
