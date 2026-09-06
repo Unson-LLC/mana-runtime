@@ -332,6 +332,40 @@ describe("TechKnight Slack reply pipeline", () => {
     );
   });
 
+  it("keeps a managed reply alive when the tenant boundary is refreshed after process start", async () => {
+    let nowMs = REPLY_START_MS;
+    let expiresAt = new Date(nowMs + 108_000).toISOString();
+    const { options, sandbox } = harness({
+      nowMs: () => nowMs,
+      tenantBoundaryExpiresAt: expiresAt,
+      tenantBoundaryExpiresAtNow: () => expiresAt,
+    });
+    const kill = vi.fn().mockResolvedValue(undefined);
+    const getStatus = vi.fn()
+      .mockImplementationOnce(async () => {
+        nowMs += 50_000;
+        expiresAt = new Date(nowMs + 300_000).toISOString();
+        return "running";
+      })
+      .mockResolvedValueOnce("completed");
+    const startProcess = vi.fn().mockResolvedValue({
+      getStatus,
+      getLogs: vi.fn().mockResolvedValue({ stdout: auditedReplyStream(), stderr: "" }),
+      kill,
+    });
+    vi.mocked(options.createSandbox).mockReturnValue({ ...sandbox, startProcess });
+
+    await expect(generateClaudeReply(event(), options)).resolves.toMatchObject({
+      reply: expect.stringContaining("はい、Cloudflare上の八雲まなです。"),
+    });
+
+    expect(startProcess).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ timeout: 270_000 }),
+    );
+    expect(kill).not.toHaveBeenCalled();
+  });
+
   it("does not retry a stale-session-shaped failure and still destroys the fresh Container", async () => {
     const { options, sandbox } = harness({ tenantBoundaryHandle: TENANT_BOUNDARY_A });
     sandbox.exec.mockResolvedValueOnce({
